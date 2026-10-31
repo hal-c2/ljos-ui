@@ -281,6 +281,7 @@ pub(crate) fn register_modules(engine: &Engine) {
     ljos_jsonmodel::register(engine);
     ljos_lottie::register(engine);
     ljos_quick3d::register(engine);
+    ljos_quick3d_physics::register(engine);
     ljos_folderlistmodel::register(engine);
     ljos_positioning::register(engine);
 }

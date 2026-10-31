@@ -7868,6 +7868,7 @@ module QtQuick3D
 		prop skin QtQuick3D.Skin named pointer
 		prop skeleton QtQuick3D.Skeleton named pointer
 		prop inverseBindPoses QtQml.var named
+		prop bounds QtQml.var named readonly
 		signal sourceChanged
 		signal materialsChanged
 		signal geometryChanged
@@ -7879,6 +7880,7 @@ module QtQuick3D
 		signal skinChanged
 		signal skeletonChanged
 		signal inverseBindPosesChanged
+		signal boundsChanged
 	type QtQuick3D.Node Node
 		prototype QtQuick3D.Object3D named
 		enum TransformSpace LocalSpace=0 ParentSpace=1 SceneSpace=2
@@ -8202,10 +8204,12 @@ module QtQuick3D
 		prop camera QtQuick3D.Camera named pointer
 		prop environment QtQuick3D.SceneEnvironment named pointer
 		prop importScene QtQuick3D.Node named pointer
+		prop scene QtQuick3D.Node named pointer readonly
 		prop renderMode RenderMode
 		signal cameraChanged
 		signal environmentChanged
 		signal importSceneChanged
+		signal sceneChanged
 		signal renderModeChanged
 		method pick
 		method pickAll
@@ -8763,6 +8767,201 @@ module QtQuick3D.Helpers
 		signal inputsNeedProcessingChanged
 		method hold
 		method step
+
+module QtQuick3D.Physics
+	BoxShape QtQuick3D.Physics.BoxShape
+	CapsuleShape QtQuick3D.Physics.CapsuleShape
+	CharacterController QtQuick3D.Physics.CharacterController
+	CollisionShape QtQuick3D.Physics.CollisionShape
+	ConvexMeshShape QtQuick3D.Physics.ConvexMeshShape
+	DynamicRigidBody QtQuick3D.Physics.DynamicRigidBody
+	HeightFieldShape QtQuick3D.Physics.HeightFieldShape
+	MeshShape QtQuick3D.Physics.MeshShape
+	PhysicsBody QtQuick3D.Physics.PhysicsBody
+	PhysicsMaterial QtQuick3D.Physics.PhysicsMaterial
+	PhysicsNode QtQuick3D.Physics.PhysicsNode
+	PhysicsWorld QtQuick3D.Physics.PhysicsWorld
+	PlaneShape QtQuick3D.Physics.PlaneShape
+	SphereShape QtQuick3D.Physics.SphereShape
+	StaticRigidBody QtQuick3D.Physics.StaticRigidBody
+	TriangleMeshShape QtQuick3D.Physics.TriangleMeshShape
+	TriggerBody QtQuick3D.Physics.TriggerBody
+	type QtQuick3D.Physics.BoxShape BoxShape
+		prototype QtQuick3D.Physics.CollisionShape named
+		prop extents QtQuick.vector3d named
+		signal extentsChanged
+	type QtQuick3D.Physics.CapsuleShape CapsuleShape
+		prototype QtQuick3D.Physics.CollisionShape named
+		prop diameter QtQml.real named
+		prop height QtQml.real named
+		signal diameterChanged
+		signal heightChanged
+	type QtQuick3D.Physics.CharacterController CharacterController
+		prototype QtQuick3D.Physics.PhysicsBody named
+		flags Collision None=0 Side=1 Up=2 Down=4
+		prop movement QtQuick.vector3d named
+		prop gravity QtQuick.vector3d named
+		prop midAirControl QtQml.bool named
+		prop collisions Collision readonly
+		prop enableShapeHitCallback QtQml.bool named
+		signal movementChanged
+		signal gravityChanged
+		signal midAirControlChanged
+		signal collisionsChanged
+		signal enableShapeHitCallbackChanged
+		signal shapeHit body:QtObject position:var impulse:var normal:var
+		method teleport
+	type QtQuick3D.Physics.CollisionShape CollisionShape
+		prototype QtQuick3D.Node named
+		is uncreatable
+		prop enableDebugDraw QtQml.bool named
+		signal enableDebugDrawChanged
+	type QtQuick3D.Physics.ConvexMeshShape ConvexMeshShape
+		prototype QtQuick3D.Physics.MeshShape named
+	type QtQuick3D.Physics.DynamicRigidBody DynamicRigidBody
+		prototype QtQuick3D.Physics.PhysicsBody named
+		enum MassMode DefaultDensity=0 CustomDensity=1 Mass=2 MassAndInertiaTensor=3 MassAndInertiaMatrix=4
+		flags AxisLock LockNone=0 LockX=1 LockY=2 LockZ=4
+		prop massMode MassMode
+		prop density QtQml.real named
+		prop mass QtQml.real named
+		prop centerOfMassPosition QtQuick.vector3d named
+		prop centerOfMassRotation QtQuick.quaternion named
+		prop inertiaTensor QtQuick.vector3d named
+		prop inertiaMatrix QtQml.var named
+		prop isKinematic QtQml.bool named
+		prop kinematicPosition QtQuick.vector3d named
+		prop kinematicRotation QtQuick.quaternion named
+		prop kinematicEulerRotation QtQuick.vector3d named
+		prop kinematicPivot QtQuick.vector3d named
+		prop gravityEnabled QtQml.bool named
+		prop linearAxisLock AxisLock
+		prop angularAxisLock AxisLock
+		prop isSleeping QtQml.bool named readonly
+		signal massModeChanged
+		signal densityChanged
+		signal massChanged
+		signal centerOfMassPositionChanged
+		signal centerOfMassRotationChanged
+		signal inertiaTensorChanged
+		signal inertiaMatrixChanged
+		signal isKinematicChanged
+		signal kinematicPositionChanged
+		signal kinematicRotationChanged
+		signal kinematicEulerRotationChanged
+		signal kinematicPivotChanged
+		signal gravityEnabledChanged
+		signal linearAxisLockChanged
+		signal angularAxisLockChanged
+		signal isSleepingChanged
+		method applyCentralForce
+		method applyForce
+		method applyTorque
+		method applyCentralImpulse
+		method applyImpulse
+		method applyTorqueImpulse
+		method setLinearVelocity
+		method setAngularVelocity
+		method reset
+	type QtQuick3D.Physics.HeightFieldShape HeightFieldShape
+		prototype QtQuick3D.Physics.CollisionShape named
+		prop source QtQml.url named
+		prop extents QtQuick.vector3d named
+		prop revision QtQml.int named readonly
+		signal sourceChanged
+		signal extentsChanged
+		signal revisionChanged
+	type QtQuick3D.Physics.MeshShape MeshShape
+		prototype QtQuick3D.Physics.CollisionShape named
+		is uncreatable
+		prop source QtQml.url named
+		prop geometry QtQuick3D.Geometry named pointer
+		prop revision QtQml.int named readonly
+		signal sourceChanged
+		signal geometryChanged
+		signal revisionChanged
+	type QtQuick3D.Physics.PhysicsBody PhysicsBody
+		prototype QtQuick3D.Physics.PhysicsNode named
+		is uncreatable
+		prop physicsMaterial QtQuick3D.Physics.PhysicsMaterial named pointer
+		prop simulationEnabled QtQml.bool named
+		signal physicsMaterialChanged
+		signal simulationEnabledChanged
+	type QtQuick3D.Physics.PhysicsMaterial PhysicsMaterial
+		prototype QtQml.QtObject named
+		prop staticFriction QtQml.real named
+		prop dynamicFriction QtQml.real named
+		prop restitution QtQml.real named
+		signal staticFrictionChanged
+		signal dynamicFrictionChanged
+		signal restitutionChanged
+	type QtQuick3D.Physics.PhysicsNode PhysicsNode
+		prototype QtQuick3D.Node named
+		is uncreatable
+		prop collisionShapes QtQml.var named list
+		prop sendContactReports QtQml.bool named
+		prop receiveContactReports QtQml.bool named
+		prop sendTriggerReports QtQml.bool named
+		prop receiveTriggerReports QtQml.bool named
+		prop filterGroup QtQml.int named
+		prop filterIgnoreGroups QtQml.int named
+		signal collisionShapesChanged
+		signal sendContactReportsChanged
+		signal receiveContactReportsChanged
+		signal sendTriggerReportsChanged
+		signal receiveTriggerReportsChanged
+		signal filterGroupChanged
+		signal filterIgnoreGroupsChanged
+		signal bodyContact body:QtObject positions:var impulses:var normals:var
+		signal enteredTriggerBody body:QtObject
+		signal exitedTriggerBody body:QtObject
+	type QtQuick3D.Physics.PhysicsWorld PhysicsWorld
+		prototype QtQml.QtObject named
+		prop scene QtQuick3D.Node named pointer
+		prop gravity QtQuick.vector3d named
+		prop running QtQml.bool named
+		prop forceDebugDraw QtQml.bool named
+		prop enableCCD QtQml.bool named
+		prop typicalLength QtQml.real named
+		prop typicalSpeed QtQml.real named
+		prop defaultDensity QtQml.real named
+		prop minimumTimestep QtQml.real named
+		prop maximumTimestep QtQml.real named
+		prop viewport QtQuick3D.Node named pointer
+		prop numThreads QtQml.int named
+		prop reportKinematicKinematicCollisions QtQml.bool named
+		prop reportStaticKinematicCollisions QtQml.bool named
+		signal sceneChanged
+		signal gravityChanged
+		signal runningChanged
+		signal forceDebugDrawChanged
+		signal enableCCDChanged
+		signal typicalLengthChanged
+		signal typicalSpeedChanged
+		signal defaultDensityChanged
+		signal minimumTimestepChanged
+		signal maximumTimestepChanged
+		signal viewportChanged
+		signal numThreadsChanged
+		signal reportKinematicKinematicCollisionsChanged
+		signal reportStaticKinematicCollisionsChanged
+		signal frameDone timeStep:real
+	type QtQuick3D.Physics.PlaneShape PlaneShape
+		prototype QtQuick3D.Physics.CollisionShape named
+	type QtQuick3D.Physics.SphereShape SphereShape
+		prototype QtQuick3D.Physics.CollisionShape named
+		prop diameter QtQml.real named
+		signal diameterChanged
+	type QtQuick3D.Physics.StaticRigidBody StaticRigidBody
+		prototype QtQuick3D.Physics.PhysicsBody named
+	type QtQuick3D.Physics.TriangleMeshShape TriangleMeshShape
+		prototype QtQuick3D.Physics.MeshShape named
+	type QtQuick3D.Physics.TriggerBody TriggerBody
+		prototype QtQuick3D.Physics.PhysicsNode named
+		prop collisionCount QtQml.int named readonly
+		signal collisionCountChanged
+		signal bodyEntered body:QtObject
+		signal bodyExited body:QtObject
 
 module QtSensors
 	Accelerometer QtSensors.Accelerometer

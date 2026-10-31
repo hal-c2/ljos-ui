@@ -1,0 +1,18 @@
+[package]
+name = "ljos_quick3d_physics"
+description = "The QtQuick3D.Physics module for Ljós: bodies, shapes and a world that moves the nodes of a scene, as an opt-in crate written against the ljos facade and ljos_quick3d"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The facade and the nodes alone: a module crate opens no windows.
+ljos = { path = "../ljos", default-features = false, features = ["quick3d"] }
+ljos_quick3d = { path = "../ljos_quick3d", default-features = false }
+ljos_physics = { path = "../ljos_physics" }
+
+[lints]
+workspace = true

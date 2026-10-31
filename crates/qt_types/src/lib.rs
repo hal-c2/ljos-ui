@@ -168,7 +168,6 @@ const STANDING_IN: &[&str] = &[
     "QtQuick3D.Effects",
     "QtQuick3D.Helpers",
     "QtQuick3D.Particles3D",
-    "QtQuick3D.Physics",
     "QtQuick3D.SpatialAudio",
     "QtQuick3D.Xr",
     "Qt3D",
