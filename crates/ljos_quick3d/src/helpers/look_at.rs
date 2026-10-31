@@ -7,22 +7,13 @@ use crate::space::{self, Place};
 
 /// Turns about X and Y to look along its -Z at `target`, and keeps doing
 /// so as either node moves. With no target it keeps the rotation it has.
-#[derive(Debug, QmlObject)]
+#[derive(Debug, Default, QmlObject)]
 #[qml(module = "QtQuick3D.Helpers", name = "LookAtNode", extends = Node)]
 pub struct LookAtNode {
     #[qml(base)]
     node: Node,
     #[qml(notify)]
     target: Option<ObjectId>,
-}
-
-impl Default for LookAtNode {
-    fn default() -> Self {
-        LookAtNode {
-            node: Node::default(),
-            target: None,
-        }
-    }
 }
 
 #[qml_impl]

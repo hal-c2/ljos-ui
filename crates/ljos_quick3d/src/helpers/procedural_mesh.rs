@@ -168,7 +168,7 @@ fn assemble(
 /// unit length.
 fn face_normals(positions: &[Vector3d], indices: &[u32]) -> Vec<[f32; 3]> {
     let mut sum = vec![[0.0f32; 3]; positions.len()];
-    for t in indices.chunks_exact(3) {
+    for t in indices.as_chunks::<3>().0 {
         let at = |k: usize| {
             let p = positions[t[k] as usize];
             [p.x, p.y, p.z]

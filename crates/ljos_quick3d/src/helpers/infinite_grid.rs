@@ -65,7 +65,8 @@ pub(crate) fn read(e: &Engine, obj: ObjectId) -> Option<(Made, bool)> {
     let visible: bool = ljos::item::prop(e, obj, InfiniteGrid::VISIBLE);
     let axes: bool = ljos::item::prop(e, obj, InfiniteGrid::GRID_AXES);
     let interval: f64 = ljos::item::prop(e, obj, InfiniteGrid::GRID_INTERVAL);
-    if !visible || !(interval > 0.0) || !interval.is_finite() {
+    // `is_finite` also turns away NaN.
+    if !visible || !interval.is_finite() || interval <= 0.0 {
         return None;
     }
     let kept = e

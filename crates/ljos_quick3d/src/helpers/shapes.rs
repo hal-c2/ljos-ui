@@ -500,7 +500,9 @@ mod tests {
 
     fn triangles(b: &Built) -> Vec<[[f32; 3]; 3]> {
         b.indices
-            .chunks_exact(3)
+            .as_chunks::<3>()
+            .0
+            .iter()
             .map(|t| [0, 1, 2].map(|k| b.positions[t[k] as usize]))
             .collect()
     }
@@ -517,7 +519,7 @@ mod tests {
     }
 
     fn agrees(b: &Built) -> bool {
-        b.indices.chunks_exact(3).all(|t| {
+        b.indices.as_chunks::<3>().0.iter().all(|t| {
             let tri = [0, 1, 2].map(|k| b.positions[t[k] as usize]);
             let f = facing(&tri);
             // A pole's triangles have no area; rounding gives them any side.
