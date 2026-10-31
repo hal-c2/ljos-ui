@@ -19,8 +19,8 @@ Feature: Instance tables read from a file or made at random
   proportional range moves every component by the same share, as a scale
   that keeps its shape; a range left alone moves each by its own, as the
   documentation's examples have it (its text calls true the default).
-  Ljós builds no more of QtQuick3D.Helpers than these two: its other types
-  stand in as empty Items, as a module Ljós does not build does.
+  Of QtQuick3D.Helpers Ljós builds most but not all: the types it does not
+  build stand in as empty Items, as a module Ljós does not build does.
 
   # An orthographic camera at magnification 1 shows one scene unit as one
   # pixel, so the view's centre is the scene's origin.
@@ -155,7 +155,7 @@ Feature: Instance tables read from a file or made at random
   @ljos-only
   Rule: The helpers Ljós does not build stand in beside the ones it does
 
-    Scenario: A camera controller stands in and the random table is drawn
+    Scenario: A sky's texture data stands in and the random table is drawn
       Given the QML:
         """qml
         import QtQuick
@@ -167,7 +167,7 @@ Feature: Instance tables read from a file or made at random
             anchors.fill: parent
             environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
             OrthographicCamera { id: camera; z: 600 }
-            OrbitCameraController { camera: camera; origin: camera }
+            ProceduralSkyTextureData { id: sky }
             Model {
               source: "#Rectangle"; scale: Qt.vector3d(0.2, 0.2, 0.2)
               materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "white" }

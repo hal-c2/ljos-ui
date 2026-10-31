@@ -1072,10 +1072,12 @@ fn an_enums_name_is_an_enum_name() {
 }
 
 #[test]
-fn a_module_ljos_has_built_since_does_not_stand_in() {
-    // Ljós's own table lists `QtQuick3D.Helpers` once a type of it is
-    // native; the add-on modules beside it still stand in.
-    assert!(!stands_in("QtQuick3D.Helpers"));
+fn a_module_ljos_builds_part_of_still_stands_in_for_the_rest() {
+    // Of `QtQuick3D.Helpers` a type Ljós's own table has is itself
+    // (`Type::is_built`); the module stands in for the others, as the
+    // add-on modules beside it do.
+    assert!(stands_in("QtQuick3D.Helpers"));
     assert!(stands_in("QtQuick3D.Effects"));
     assert!(stands_in("QtGraphs"));
+    assert!(!stands_in("QtQuick3D"));
 }

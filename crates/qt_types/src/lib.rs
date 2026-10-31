@@ -160,11 +160,13 @@ pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: wit
 /// a window, and the rest of an application that shows one still loads.
 /// Then the ones it has not built yet: the modules below `QtQuick3D`
 /// (which itself is built, `ljos_quick3d`), and a timeline (Qt Design
-/// Studio's), with which an application shows where it starts. One of
-/// those built since is in Ljós's own table, which [`stands_in`] reads.
+/// Studio's), with which an application shows where it starts. Of a module
+/// Ljós has built part of (`QtQuick3D.Helpers`), a type Ljós's own table
+/// has is itself ([`Type::is_built`]) and the others stand in.
 const STANDING_IN: &[&str] = &[
     "QtQuick3D.AssetUtils",
     "QtQuick3D.Effects",
+    "QtQuick3D.Helpers",
     "QtQuick3D.Particles3D",
     "QtQuick3D.Physics",
     "QtQuick3D.SpatialAudio",
@@ -176,27 +178,13 @@ const STANDING_IN: &[&str] = &[
     "QtQuick.Timeline",
 ];
 
-/// Whether `uri` is one of Qt's modules Ljós does not build: a type of it
-/// stands in as an empty `Item`, whether or not Qt's table describes it.
-/// One of them that Ljós's own table lists has been built since, at least
-/// in part, and is the real module: a runtime that registers types of a
-/// module has it, so its other types are unknown rather than empty Items.
+/// Whether `uri` is one of Qt's modules Ljós does not build, or builds only
+/// part of: a type of it stands in as an empty `Item`, whether or not Qt's
+/// table describes it, unless Ljós builds that type.
 pub fn stands_in(uri: &str) -> bool {
     STANDING_IN.iter().any(|module| {
         uri.strip_prefix(module)
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
-    }) && !own_modules().contains(uri)
-}
-
-/// The modules Ljós's own table lists, read from the text whatever Qt's
-/// table says of them.
-fn own_modules() -> &'static HashSet<&'static str> {
-    static OWN_MODULES: OnceLock<HashSet<&'static str>> = OnceLock::new();
-    OWN_MODULES.get_or_init(|| {
-        OWN.lines()
-            .filter_map(|line| line.strip_prefix("module "))
-            .map(str::trim)
-            .collect()
     })
 }
 
