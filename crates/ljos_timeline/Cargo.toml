@@ -1,0 +1,18 @@
+[package]
+name = "ljos_timeline"
+description = "The QtQuick.Timeline module for Ljós: keyframes on any property of any object, driven by a frame number, as an opt-in crate written against the ljos facade alone"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The facade alone: a module crate opens no windows, and keyframes work on 2D
+# items and on 3D nodes alike.
+ljos = { path = "../ljos", default-features = false }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

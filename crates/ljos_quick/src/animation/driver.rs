@@ -216,9 +216,9 @@ pub(crate) fn start(engine: &Engine, anim: ObjectId) {
         return;
     }
     let defaults = engine
-        .with::<Animation, _>(anim, |a| a.on)
+        .with::<Animation, _>(anim, |a| (a.on, a.way.default_on))
         .ok()
-        .flatten()
+        .and_then(|(on, default_on)| on.or_else(|| default_on?(engine, anim)))
         .map(|(obj, prop)| Defaults {
             obj,
             prop,
@@ -466,6 +466,7 @@ fn finish(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
         }
         return;
     }
+    let _ = engine.with_mut(anim, |a: &mut Animation| a.way.ended_by_itself = true);
     if run.finishing.get() {
         emit(engine, anim, "stopped");
     } else {
@@ -474,7 +475,17 @@ fn finish(engine: &Engine, d: &Rc<Driver>, run: &Rc<Run>) {
             emit(engine, anim, "stopped");
         });
     }
-    emit(engine, anim, "finished");
+    if !finished_held(engine, anim) {
+        emit(engine, anim, "finished");
+    }
+}
+
+fn finished_held(engine: &Engine, anim: ObjectId) -> bool {
+    engine
+        .with_mut(anim, |a: &mut Animation| {
+            std::mem::take(&mut a.way.hold_finished)
+        })
+        .unwrap_or(false)
 }
 
 /// Brings a run to the present before something is done to it between
@@ -533,10 +544,17 @@ pub(crate) fn stop(engine: &Engine, anim: ObjectId) {
         // Qt reports an animation without end as finished when stopped.
         emit(engine, anim, "finished");
     }
+    let _ = engine.with_mut(anim, |a: &mut Animation| a.way.ended_by_itself = false);
     engine.batch(|| {
         show(engine, anim, Animation::RUNNING.index, false);
         emit(engine, anim, "stopped");
     });
+    let every = engine
+        .with(anim, |a: &Animation| a.way.every_stop_finishes)
+        .unwrap_or(false);
+    if !finished_held(engine, anim) && every {
+        emit(engine, anim, "finished");
+    }
 }
 
 /// `pause()`, `resume()`, or `paused` set.

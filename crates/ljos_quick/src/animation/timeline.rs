@@ -721,7 +721,12 @@ fn property_kind(engine: &Engine, anim: ObjectId) -> Kind {
 
 /// `loops`, [`FOREVER`] for no end.
 fn loops_of(engine: &Engine, anim: ObjectId) -> i64 {
-    let loops = given(engine, anim, Animation::LOOPS.index).map_or(1.0, |v| v.to_number());
+    let single = engine
+        .with(anim, |a: &Animation| a.way.single_pass)
+        .unwrap_or(false);
+    let loops = given(engine, anim, Animation::LOOPS.index)
+        .filter(|_| !single)
+        .map_or(1.0, |v| v.to_number());
     if loops < 0.0 { FOREVER } else { loops as i64 }
 }
 
@@ -1053,7 +1058,14 @@ pub(crate) fn passage_of(engine: &Engine, anims: &[ObjectId], target: ObjectId) 
     (moves, fades)
 }
 
-fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
+/// The value `p` of the way, already eased, from `from` to `to` of a property
+/// of type `ty`: for what interpolates values of its own.
+pub fn between(from: &Value, to: &Value, ty: &TypeTag, p: f64) -> Option<Value> {
+    Lerp::new(Kind::Any, ty, from, Some(to)).at(p)
+}
+
+/// The easing curve of an object with an `easing` group.
+pub fn curve_of(engine: &Engine, anim: ObjectId) -> Curve {
     // Read at every start: the types that have the group are read by
     // index, with no names to look up.
     let group = if is_a::<PropertyAnimation>(engine, anim) {

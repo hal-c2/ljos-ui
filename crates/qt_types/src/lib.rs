@@ -175,7 +175,6 @@ const STANDING_IN: &[&str] = &[
     "QtWebEngine",
     "QtLocation",
     "QtGraphs",
-    "QtQuick.Timeline",
     "QtQuick.Studio.DesignEffects",
     "QtQuick.Studio.Components",
 ];

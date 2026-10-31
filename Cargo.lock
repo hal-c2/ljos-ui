@@ -3807,6 +3807,7 @@ dependencies = [
  "ljos_render",
  "ljos_runtime",
  "ljos_text",
+ "ljos_timeline",
  "ljos_xml",
  "png",
  "qml_front",
@@ -3886,6 +3887,7 @@ dependencies = [
  "ljos_shader",
  "ljos_shell",
  "ljos_test",
+ "ljos_timeline",
  "ljos_xml",
  "qml_fmt",
  "qml_front",
@@ -4652,6 +4654,14 @@ dependencies = [
  "thiserror 2.0.21",
  "unicode-segmentation",
  "yeslogic-fontconfig-sys",
+]
+
+[[package]]
+name = "ljos_timeline"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

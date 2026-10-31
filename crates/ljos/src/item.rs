@@ -99,6 +99,10 @@ use std::rc::Rc;
 use ljos_engine::{Engine, MetaRef, ObjectId, Prop, QmlType, QmlValue};
 
 pub use ljos_engine::Font;
+/// For a module crate that holds properties of other objects as a state does.
+pub use ljos_engine::{
+    OverrideContent, OverrideId, RestoreMode, TypeTag, Vector2d, Vector4d, WriteKind,
+};
 pub use ljos_quick::LoadError as ImageLoadError;
 pub use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 pub use ljos_quick::keys::{KeyItem, key};
@@ -106,6 +110,11 @@ pub use ljos_quick::keys::{Surrounding, TextInputClient};
 pub use ljos_quick::text_input::{
     CharFormatSpan, HighlightSpan, Highlighter, char_formats, highlights, set_highlighter,
     set_highlights,
+};
+/// For a module crate with animations of its own (`QtQuick.Timeline`).
+pub use ljos_quick::{
+    Animation, EasingGroup, NumberAnimation, PropertyAnimation, between, curve_of, easing,
+    start_animation, stop_animation,
 };
 /// Runs with QtQuick's animations but belongs to QtQuick3D: the module
 /// crate that has QtQuick3D registers it.

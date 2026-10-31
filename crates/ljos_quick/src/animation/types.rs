@@ -49,6 +49,39 @@ pub struct Animation {
     /// `paused: true` was written while `running` was not true yet.
     #[qml(skip)]
     paused_first: bool,
+    /// What a derived type asks of the run.
+    #[qml(skip)]
+    pub way: Way,
+}
+
+/// `start()`, for native code.
+pub fn start_animation(engine: &Engine, anim: ObjectId) {
+    driver::start(engine, anim);
+}
+
+/// `stop()`, for native code.
+pub fn stop_animation(engine: &Engine, anim: ObjectId) {
+    driver::stop(engine, anim);
+}
+
+/// Asked at each start for what an animation animates unless told otherwise.
+pub type DefaultOn = fn(&Engine, ObjectId) -> Option<(ObjectId, PropIndex)>;
+
+/// What a type derived from `Animation` outside this crate changes about how
+/// a run goes.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Way {
+    /// `finished` comes after every `stopped`, told to stop or not.
+    pub every_stop_finishes: bool,
+    /// One pass, whatever `loops` says; the type counts them itself.
+    pub single_pass: bool,
+    /// What it animates when no target is given, as for `Behavior on x`
+    /// but not starting by itself.
+    pub default_on: Option<DefaultOn>,
+    /// Whether the run that stopped reached its end; read in `stopped`.
+    pub ended_by_itself: bool,
+    /// Set in `stopped`: the `finished` after it does not come.
+    pub hold_finished: bool,
 }
 
 impl Default for Animation {
@@ -61,6 +94,7 @@ impl Default for Animation {
             always_run_to_end: false,
             on: None,
             paused_first: false,
+            way: Way::default(),
         }
     }
 }

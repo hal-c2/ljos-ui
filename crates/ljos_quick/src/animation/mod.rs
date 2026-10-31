@@ -46,6 +46,7 @@ use crate::item::is_a;
 pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
 pub use frame::FrameAnimation;
+pub use timeline::{between, curve_of};
 pub use transition::{
     Passage, Transition, run_passage, run_transition, run_transition_to, stop_transition,
 };
@@ -54,7 +55,7 @@ pub use types::{
     OpacityAnimator, ParallelAnimation, ParentAnimation, PauseAnimation, PropertyAction,
     PropertyAnimation, QuaternionAnimation, RotationAnimation, RotationAnimator, ScaleAnimator,
     ScriptAction, SequentialAnimation, SmoothedAnimation, SpringAnimation, UniformAnimator,
-    Vector3dAnimation, XAnimator, YAnimator,
+    Vector3dAnimation, Way, XAnimator, YAnimator, start_animation, stop_animation,
 };
 
 /// `NumberAnimation on eulerRotation.y { }`: the animation moves a

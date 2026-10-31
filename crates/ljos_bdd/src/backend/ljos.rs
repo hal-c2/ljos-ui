@@ -388,6 +388,7 @@ impl LjosBackend {
         ljos_lottie::register(&engine);
         ljos_quick3d::register(&engine);
         ljos_quick3d_physics::register(&engine);
+        ljos_timeline::register(&engine);
         ljos_folderlistmodel::register(&engine);
         ljos_positioning::register(&engine);
         ljos_media::register(&engine);
@@ -577,6 +578,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_lottie::register(&snapshot);
                 ljos_quick3d::register(&snapshot);
                 ljos_quick3d_physics::register(&snapshot);
+                ljos_timeline::register(&snapshot);
                 ljos_folderlistmodel::register(&snapshot);
                 ljos_positioning::register(&snapshot);
                 ljos_media::register(&snapshot);
