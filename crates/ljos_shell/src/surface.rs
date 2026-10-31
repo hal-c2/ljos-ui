@@ -397,6 +397,7 @@ impl Painter {
                     gpu_3d,
                     gpu_post,
                     moved: false,
+                    lost: false,
                 }
             }
             #[cfg(gl_painter)]

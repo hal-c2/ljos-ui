@@ -529,6 +529,8 @@ pub(crate) struct Steps {
     /// Whether the pass moved the pixels of a scrolled clip rather than
     /// drawing them.
     pub(crate) moved: bool,
+    /// The picture did not reach the window, and has to be drawn again.
+    pub(crate) lost: bool,
 }
 
 /// What a painter draws of a picture.

@@ -1207,10 +1207,7 @@ impl<M: Send + 'static> Desktop<M> {
             // A redraw the shell did not ask for is the platform's: what
             // the window showed may be gone (exposed, resized).
             if slot.redraw_asked.is_none() {
-                slot.shown.forget();
-                if let Some(Painter::Cpu(painter)) = slot.painter.as_mut() {
-                    painter.forget();
-                }
+                slot.forget_shown();
             }
             slot.redraw_asked = None;
             slot.stalled = false;
@@ -1405,6 +1402,13 @@ impl<M: Send + 'static> Desktop<M> {
             if slot.view.is_none() && !self.drawn_once {
                 app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
             }
+            // An X server drops what is put in a window it has not mapped.
+            // It says so with a redraw, but one that may come together with
+            // a pass the scene asked for: nothing then tells that redraw
+            // from any other, and the window would stay black.
+            if !surface.shown {
+                painter.forget();
+            }
             show_when_drawn(host, surface, &mut slot.activate, screens_stale);
             slot.drawn(began, Instant::now());
             #[cfg(feature = "mcp")]
@@ -1500,6 +1504,10 @@ impl<M: Send + 'static> Desktop<M> {
                 Some((scene + post).as_secs_f64()),
                 steps.gpu_post.map(|p| p.as_secs_f64()),
             );
+        }
+        if steps.lost {
+            // Kept as shown by the pass that drew it, and it never was.
+            slot.shown.forget();
         }
         #[cfg(not(feature = "mcp"))]
         let _ = steps;
@@ -1660,8 +1668,8 @@ impl<M: Send + 'static> Desktop<M> {
             }
             WindowEvent::Occluded(hidden) => {
                 slot.occluded = hidden;
-                slot.shown.forget();
                 surface.info.occluded = Some(hidden);
+                slot.forget_shown();
                 note_state(slot, &engine, &sys);
                 self.repaints.request(slot.key, Instant::now());
             }
@@ -1913,6 +1921,19 @@ impl<M: Send + 'static> Desktop<M> {
                 // The request stays with the platform: when the window
                 // can be seen again it is drawn, and no longer stalled.
                 slot.stalled = true;
+                // A window with no picture yet is not on the screen, so it
+                // cannot be out of sight: nothing else says why it is blank.
+                if slot.surface.as_ref().is_some_and(|s| !s.shown) {
+                    self.app.engine().log(
+                        LogLevel::Info,
+                        CATEGORY,
+                        format!(
+                            "the platform has not let a new window draw its first \
+                             picture in {} ms",
+                            STALL.as_millis()
+                        ),
+                    );
+                }
                 slot.want_undrawn_pass(now);
             }
             if slot.undrawn_pass_due.is_some_and(|t| t <= now) {

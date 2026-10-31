@@ -212,6 +212,17 @@ impl Slot {
         self.beat = None;
     }
 
+    /// What the window showed may be gone, whichever painter drew it: the
+    /// next pass draws it all. A painter that keeps its own last picture
+    /// would otherwise find nothing changed, and leave the window as the
+    /// platform left it.
+    pub(super) fn forget_shown(&mut self) {
+        self.shown.forget();
+        if let Some(Painter::Cpu(painter)) = self.painter.as_mut() {
+            painter.forget();
+        }
+    }
+
     /// A pass changed nothing to draw; the scene wants the next in
     /// `wake`. Drawn passes are paced by the display, which this one did
     /// not wait for: the next waits for the scene

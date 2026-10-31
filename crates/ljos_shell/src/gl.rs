@@ -14,6 +14,7 @@ use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use egui::epaint::{ClippedShape, CornerRadius, PaintCallback, RectShape, Shape};
@@ -35,6 +36,17 @@ use crate::present::{Change, Frame, Steps, bounds};
 /// How many frames back the areas drawn are remembered: a buffer older
 /// than that is drawn whole.
 const REMEMBERED: usize = 4;
+
+/// Said once: a frame that does not reach the window will fail the same way
+/// on every frame, and a blank window with nothing in the log is one nobody
+/// can explain.
+static SAID_LOST: AtomicBool = AtomicBool::new(false);
+
+fn say_lost(why: impl std::fmt::Display) {
+    if !SAID_LOST.swap(true, Ordering::Relaxed) {
+        eprintln!("GL: a frame did not reach the window: {why}");
+    }
+}
 
 /// How many separate areas a frame draws at most. Each costs a scissored
 /// clear, a draw of every shape that reaches it, and a rectangle told to
@@ -623,7 +635,11 @@ impl GlPainter {
             return Steps::default();
         };
         if !self.gl.make_current(Some((gw.id, &gw.surface))) {
-            return Steps::default();
+            say_lost("its GL surface cannot be made current");
+            return Steps {
+                lost: true,
+                ..Steps::default()
+            };
         }
         let started = Instant::now();
         // The 3D views first, so that what wgpu leaves bound is set again
@@ -722,10 +738,8 @@ impl GlPainter {
         keep(&self.gl.glow, gw);
         let drawn = Instant::now();
         window.pre_present_notify();
-        // A lost frame is drawn again with the next change; there is
-        // nobody to tell. The compositor is told what changed, so it can
-        // take only that.
-        let _ = match part {
+        // The compositor is told what changed, so it can take only that.
+        let swapped = match part {
             Some(areas) => {
                 let rects: Vec<_> = areas.iter().chain(&moved).map(|px| px.egl(gw.px)).collect();
                 gw.surface
@@ -733,6 +747,10 @@ impl GlPainter {
             }
             None => gw.surface.swap_buffers(&self.gl.context),
         };
+        // A lost frame is drawn again with the next change.
+        if let Err(e) = &swapped {
+            say_lost(e);
+        }
         Steps {
             upload,
             draw: Some(drawn - uploaded),
@@ -740,6 +758,7 @@ impl GlPainter {
             gpu_3d,
             gpu_post,
             moved: moved.is_some(),
+            lost: swapped.is_err(),
         }
     }
 
