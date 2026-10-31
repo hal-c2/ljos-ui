@@ -1,0 +1,21 @@
+{
+  "toycustomizer": {
+    "url": "https://ordp.qt.io/qt/bundles/toycustomizer/toy-customizer-assets.zip",
+    "places": {
+      "qml/animations": "animations",
+      "qml/fonts": "fonts",
+      "qml/icons": "images/icons",
+      "qml/images": "images",
+      "qml/meshes": "meshes"
+    }
+  },
+  "car-configurator": {
+    "url": "https://download.qt.io/learning/examples/car-configurator-assets-v3.zip",
+    "without": ["content/images/_Desert.hdr", "content/images/HDR/_Desert.ktx"]
+  },
+  "fx-material-showroom": {
+    "url": "https://download.qt.io/learning/examples/FX_Material_Showroom_Assets/",
+    "listed": "src/imagedownloader.h",
+    "beside": "content"
+  }
+}
