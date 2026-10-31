@@ -143,7 +143,7 @@ ljos attach .
 | `app_trace` | Record a bounded ring of an object's emitted signals, property changes, destruction and (with `bindings: true`) binding evaluations with their cause, cost and whether the value changed | `inspect` |
 | `app_frames` | Record up to 600 frames, UI thread `wakes` (or inspect `last_input` / a single `wake` in order), profile hot `bindings` and binding loops, sample component `growth`, or `export` a Chrome/Perfetto trace file to `~/.local/state/<app>/traces/` | `inspect` |
 | `app_audit` | Run the live design and accessibility audit across the rendered scene (optionally testing across a matrix such as `font-scale=2` or with `act: true` under `input`) | `inspect` (`input` for `act`) |
-| `app_watch` | Park on the server thread until `frames`, `passes`, `logs`, `reloads`, `trace`, `wakes`, `models` or `rests` advance past `since`, waking nothing in the application | `inspect` |
+| `app_watch` | Park on the server thread until `frames`, `passes`, `logs`, `reloads`, `trace`, `wakes`, `models` or `rests` advance past `since`, or with `until_rest` until `rest.at_rest` says the picture stopped moving, waking nothing in the application | `inspect` |
 | `app_eval` | Evaluate JavaScript in the context of a target object (with access to `pragma Singleton` and native singletons) under a time deadline and 64 KB output cap | `eval` |
 
 ### Addressing targets

@@ -622,8 +622,11 @@ impl Inspector {
 
     /// The host's loop goes to sleep: when it wakes by itself next, and
     /// where the primary window's pointer was, for `app_watch`'s `rests`.
-    pub fn record_rest(&mut self, rest: Rest) {
-        self.changes.rested(rest);
+    pub fn record_rest(&mut self, engine: &Engine, rest: Rest) {
+        let animating = ljos_quick::running_animations(engine)
+            .iter()
+            .any(|(_, paused)| !paused);
+        self.changes.rested(rest, animating);
     }
 
     /// The host's loop goes to sleep and wakes at `due` (if not sooner)
@@ -1138,6 +1141,9 @@ impl Inspector {
             kind => kind,
         };
         if let Kind::Act(act) = &kind {
+            // Before the answer goes: a watch that follows it must not be
+            // told of the rest before this.
+            self.changes.stirred();
             if matches!(act, Act::Reload) {
                 self.start_reload(reply, deadline, None);
                 return;

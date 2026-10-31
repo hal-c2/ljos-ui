@@ -31,10 +31,10 @@ use serde_json::json;
 use tokio::sync::watch;
 
 pub const WATCH: &str = "\
-Wait until the app changes: frames, drawn passes (`paints`), logs, reloads, `traces`, followed \
-`models`, kept `wakes`, `items` drawn; by name, `rests` (the UI thread slept: `rest`). Answers \
-when a `topics` count differs from `since` (last `counts`), else after `wait_ms`; \
-`settle_ms` gathers a burst.";
+Wait until the app changes: frames, `paints`, logs, reloads, `traces`, `models`, `wakes`, `items`; \
+by name, `rests` (`rest`). Answers when a `topics` count differs from `since`, else after \
+`wait_ms`; `settle_ms` gathers a burst. `until_rest` waits for `rest.at_rest`: the picture stopped \
+moving.";
 
 /// The longest a watch waits: a client that follows an application at
 /// rest is answered, and asks again, this often.
@@ -162,6 +162,12 @@ pub struct WatchArgs {
     /// recording and followed model: they last while it watches.
     #[serde(default)]
     pub holder: Option<String>,
+    /// Wait until the application is at rest, for at most `wait_ms`,
+    /// whatever `since` and `topics` say; `rest.at_rest` says whether it
+    /// came. Input a tool sent counts at once. Input sent from outside
+    /// does not until the application has seen it: wait for `rests` first.
+    #[serde(default)]
+    pub until_rest: bool,
 }
 
 /// How many of each thing happened since the inspector attached.
@@ -229,6 +235,26 @@ pub struct Rest {
     pub pointer: Option<PointerSeen>,
 }
 
+/// What the feed holds of the UI thread's rests.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Rested {
+    rest: Rest,
+    /// An animation that is not paused is under way.
+    animating: bool,
+    /// The last rest does not count: it came before the first pass, or
+    /// before input a tool sent, which the next pass sees. Without this
+    /// a watch right after a click is told of the rest before it.
+    stale: bool,
+}
+
+impl Rested {
+    /// The picture has stopped moving. A wake that is due does not stop
+    /// it: a timer moves nothing by itself, and `wake_in_ms` tells of it.
+    fn at_rest(self) -> bool {
+        !self.stale && !self.animating && !self.rest.frame_owed
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PointerSeen {
     pub x: f32,
@@ -238,14 +264,20 @@ pub struct PointerSeen {
 }
 
 impl Rest {
-    fn to_json(self, now: Instant) -> serde_json::Value {
+    fn to_json(self, now: Instant, told: Rested) -> serde_json::Value {
         let wake_in_ms = self.wake_at.map(|t| {
             u64::try_from(t.saturating_duration_since(now).as_millis()).unwrap_or(u64::MAX)
         });
         let pointer = self
             .pointer
             .map(|p| json!({"x": p.x, "y": p.y, "pressed": p.pressed}));
-        json!({"wake_in_ms": wake_in_ms, "frame_owed": self.frame_owed, "pointer": pointer})
+        json!({
+            "wake_in_ms": wake_in_ms,
+            "frame_owed": self.frame_owed,
+            "animating": told.animating,
+            "at_rest": told.at_rest(),
+            "pointer": pointer,
+        })
     }
 }
 
@@ -265,7 +297,7 @@ pub(crate) struct ChangeFeed {
     /// Written by watches on the server's thread, counted on the UI
     /// thread after a pass.
     followed: Mutex<Vec<Followed>>,
-    rest: Mutex<Rest>,
+    rest: Mutex<Rested>,
 }
 
 impl ChangeFeed {
@@ -274,7 +306,11 @@ impl ChangeFeed {
         Arc::new(ChangeFeed {
             tx,
             followed: Mutex::new(Vec::new()),
-            rest: Mutex::new(Rest::default()),
+            rest: Mutex::new(Rested {
+                rest: Rest::default(),
+                animating: false,
+                stale: true,
+            }),
         })
     }
 
@@ -373,16 +409,26 @@ impl ChangeFeed {
 
     /// The UI thread goes to sleep. Counted only when it says something
     /// new, so that a loop that turns without change wakes no watch.
-    pub(crate) fn rested(&self, rest: Rest) {
+    pub(crate) fn rested(&self, rest: Rest, animating: bool) {
+        let told = Rested {
+            rest,
+            animating,
+            stale: false,
+        };
         let mut was = self.rest.lock().unwrap_or_else(|e| e.into_inner());
-        if *was != rest {
-            *was = rest;
+        if *was != told {
+            *was = told;
             drop(was);
             self.tx.send_modify(|c| c.rests += 1);
         }
     }
 
-    fn rest(&self) -> Rest {
+    /// A tool sent input: what the UI thread said last is from before it.
+    pub(crate) fn stirred(&self) {
+        self.rest.lock().unwrap_or_else(|e| e.into_inner()).stale = true;
+    }
+
+    fn rest(&self) -> Rested {
         *self.rest.lock().unwrap_or_else(|e| e.into_inner())
     }
 
@@ -427,7 +473,21 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
     let mut rx = feed.tx.subscribe();
     let mut waited = false;
     let mut settled = false;
-    if let Some(since) = &args.since {
+    if args.until_rest {
+        if !feed.rest().at_rest() {
+            waited = true;
+            let wait = Duration::from_millis(args.wait_ms.unwrap_or(DEFAULT_WAIT_MS));
+            let waiting = async {
+                // The application being gone ends the wait too.
+                while rx.changed().await.is_ok() {
+                    if feed.rest().at_rest() {
+                        break;
+                    }
+                }
+            };
+            let _ = tokio::time::timeout(wait, waiting).await;
+        }
+    } else if let Some(since) = &args.since {
         // Takes the counts copied out, so that the channel is not held
         // while the items are looked at.
         let differs = |c: Counts| !changed(&c, &feed.drawn(&args.items), since, &wanted).is_empty();
@@ -464,7 +524,8 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         None => Vec::new(),
     };
     let names: Vec<&str> = moved.iter().map(|t| t.name()).collect();
-    let rest = feed.rest();
+    let told = feed.rest();
+    let rest = told.rest;
     let mut text = format!(
         "frames {}, paints {}, logs {}, reloads {}, traces {}, models {}, wakes {}, rests {}",
         now.frames, now.paints, now.logs, now.reloads, now.traces, now.models, now.wakes, now.rests
@@ -500,6 +561,11 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         let held = if p.pressed { ", held" } else { "" };
         let _ = write!(text, "; pointer at {}, {}{held}", p.x, p.y);
     }
+    text.push_str(if told.at_rest() {
+        "; at rest"
+    } else {
+        "; not at rest"
+    });
     let mut counts = json!({
         "frames": now.frames,
         "paints": now.paints,
@@ -518,7 +584,7 @@ pub(crate) async fn watch(feed: &ChangeFeed, args: &WatchArgs) -> ToolReply {
         "changed": names,
         "waited": waited,
         "settled": settled,
-        "rest": rest.to_json(answered),
+        "rest": rest.to_json(answered, told),
     }))
     .with_text(text)
 }
@@ -608,6 +674,21 @@ mod tests {
     }
 
     #[test]
+    fn input_a_tool_sent_undoes_the_rest_until_the_next() {
+        let feed = ChangeFeed::new();
+        assert!(!feed.rest().at_rest(), "nothing has been told yet");
+        feed.rested(Rest::default(), false);
+        assert!(feed.rest().at_rest());
+        let told = feed.counts().rests;
+        feed.stirred();
+        assert!(!feed.rest().at_rest());
+        // The same words again are news: they are what a waiter waits for.
+        feed.rested(Rest::default(), false);
+        assert!(feed.rest().at_rest());
+        assert_eq!(feed.counts().rests, told + 1);
+    }
+
+    #[test]
     fn a_rest_is_told_only_when_it_says_something_new() {
         let feed = ChangeFeed::new();
         let at = Instant::now() + Duration::from_secs(60);
@@ -620,8 +701,8 @@ mod tests {
                 pressed: true,
             }),
         };
-        feed.rested(rest);
-        feed.rested(rest);
+        feed.rested(rest, false);
+        feed.rested(rest, false);
         assert_eq!(feed.counts().rests, 1);
         let args = WatchArgs {
             topics: vec![Topic::Rests],
@@ -636,12 +717,18 @@ mod tests {
         assert_eq!(told["frame_owed"], json!(true));
         let wake_in = told["wake_in_ms"].as_u64().unwrap();
         assert!((59_000..=60_000).contains(&wake_in), "{wake_in}");
-        feed.rested(Rest::default());
+        feed.rested(Rest::default(), false);
         let reply = run(watch(&feed, &args));
         assert_eq!(reply.structured["counts"]["rests"], json!(2));
         assert_eq!(
             reply.structured["rest"],
-            json!({"wake_in_ms": null, "frame_owed": false, "pointer": null})
+            json!({
+                "wake_in_ms": null,
+                "frame_owed": false,
+                "animating": false,
+                "at_rest": true,
+                "pointer": null,
+            })
         );
     }
 
