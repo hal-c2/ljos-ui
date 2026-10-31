@@ -3705,6 +3705,7 @@ dependencies = [
  "ljos_runtime",
  "ljos_shell",
  "ljos_text",
+ "ljos_web",
  "qml_front",
  "qt_types",
  "serde_json",

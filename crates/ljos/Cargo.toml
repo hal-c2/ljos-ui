@@ -8,7 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
-[dependencies]
+# Natively, what an application links. On wasm32 the engine does not run
+# (docs/LJOS_WEB.md A22 of ljos-web): this facade is `ljos_web` there, and
+# none of these is compiled.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 # The facade names no engine internal: it re-exports the curated surface
 # an application writes native types against, and registers the standard
 # modules (QtQml, QtQuick, QtQuick.Controls) on an Engine it makes.
@@ -60,6 +63,11 @@ ljos_ir = { path = "../ljos_ir", optional = true }
 ljos_aot = { path = "../ljos_aot", optional = true }
 ljos_js = { path = "../ljos_js", optional = true }
 
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+# Only with `web`: the struct behind a generated face. The macro's backend
+# comes with it, so it is on only where this table is.
+ljos_web = { path = "../ljos_web", optional = true }
+
 [dev-dependencies]
 # Tests compile QML strings and, for `dev::compile_dir`, a directory.
 ljos_compiler = { path = "../ljos_compiler" }
@@ -83,6 +91,9 @@ x11rb.workspace = true
 
 [features]
 default = ["shell", "media", "media-audio", "collation"]
+# An application's own Rust on a page: its derive and `#[qml_impl]` also
+# generate the face `ljos-web faces` builds. Nothing on any other target.
+web = ["dep:ljos_web"]
 shell = ["dep:ljos_shell"]
 # `localeCompare` and `ljos::locale::Collator` order text by the locale's
 # alphabet (ICU's collation data, about 1.2 MB of a stripped release

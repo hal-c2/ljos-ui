@@ -155,6 +155,7 @@
 /// engine.set(browser, Browser::ROOT_PATH, Atom::default()).unwrap();
 /// assert_eq!(engine.get(browser, Browser::ERROR), Ok(Atom::default()));
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub mod prelude {
     pub use crate::task::Task;
     pub use ljos_controls::{Application, ApplicationState};
@@ -180,24 +181,33 @@ pub mod prelude {
     pub use ljos_runtime::{Time, TimerId};
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 mod app;
 #[cfg(feature = "build")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod build;
 #[cfg(any(feature = "dev-qml", feature = "build"))]
+#[cfg(not(target_arch = "wasm32"))]
 mod compile;
 #[cfg(feature = "dev-qml")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod dev;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod item;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod locale;
 #[cfg(feature = "mcp")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod mcp;
 #[cfg(any(feature = "dev-qml", feature = "build"))]
+#[cfg(not(target_arch = "wasm32"))]
 mod oracle;
 /// Hot reload in a development build (the `dev` feature): what
 /// [`Setup::watch`](crate::Setup) and its kin tell
 /// [`Setup::on_reload`](crate::Setup), and the type oracles
 /// [`Setup::watch_with`](crate::Setup) compiles against.
 #[cfg(feature = "dev")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod reload {
     pub use ljos_dev::{QtTypeOracle, TypeOracle};
     pub use ljos_shell::{Overlay, ReloadStats, Report};
@@ -209,6 +219,7 @@ pub mod reload {
 /// `media-audio` (on by default); without it the sound library is not
 /// linked and sound goes nowhere.
 #[cfg(feature = "media")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod media {
     pub use ljos_media::{
         DecodeError, Decoder, FrameError, MediaStream, StreamError, StreamFormat, StreamOptions,
@@ -216,23 +227,33 @@ pub mod media {
     };
 }
 #[cfg(feature = "render")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod render;
 #[cfg(any(feature = "render", feature = "testing"))]
+#[cfg(not(target_arch = "wasm32"))]
 mod scene_error;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod system;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod task;
 #[cfg(feature = "testing")]
+#[cfg(not(target_arch = "wasm32"))]
 pub mod testing;
 #[cfg(feature = "dev-qml")]
+#[cfg(not(target_arch = "wasm32"))]
 mod texts;
+#[cfg(not(target_arch = "wasm32"))]
 pub mod types;
 
+#[cfg(not(target_arch = "wasm32"))]
 pub use app::{App, create_root};
 
+#[cfg(not(target_arch = "wasm32"))]
 pub mod window;
 
 /// Key events as a host delivers them, and the application-wide key
 /// filters that see each before a window's shortcuts and focused item.
+#[cfg(not(target_arch = "wasm32"))]
 pub mod keys {
     pub use ljos_quick::keys::{KeyFilter, KeyFilterId, add_key_filter, key, remove_key_filter};
     pub use ljos_quick::{KeyEvent, KeyKind, Modifiers};
@@ -244,6 +265,7 @@ pub mod keys {
 /// [`MapSource`] for [`App::source`]. The program links no parser.
 /// Panics only on a pack its own build did not write whole.
 #[macro_export]
+#[cfg(not(target_arch = "wasm32"))]
 macro_rules! include_qml {
     ($name:literal) => {
         $crate::MapSource::from_pack(::core::include_bytes!(::core::concat!(
@@ -259,6 +281,7 @@ macro_rules! include_qml {
 /// program: `include_compiled!("qml.rs")` includes `$OUT_DIR/qml.rs` and
 /// is its table, for [`App::compiled`].
 #[macro_export]
+#[cfg(not(target_arch = "wasm32"))]
 macro_rules! include_compiled {
     ($name:literal) => {{
         mod __ljos_compiled {
@@ -270,6 +293,7 @@ macro_rules! include_compiled {
 
 /// What code compiled from QML by an application's build runs with
 /// ([`include_compiled!`]); only that code names it.
+#[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::aot;
 
 /// The engine crate itself, for the paths the `QmlObject` derive,
@@ -278,14 +302,18 @@ pub use ljos_engine::aot;
 /// line of its own for them. Writing code against it directly bypasses
 /// the curated surface.
 #[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine;
 #[doc(hidden)]
+#[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::module;
+#[cfg(not(target_arch = "wasm32"))]
 pub use ljos_engine::{ComponentSource, Engine, MapSource, ObjectId};
 
 /// An Engine with the standard modules registered (QtQml, QtQuick,
 /// QtQuick.Controls, with `media` QtMultimedia, and what they pull in), ready for an application's
 /// own `register` functions and its root component.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn engine() -> Engine {
     let engine = Engine::new();
     ljos_quick::register(&engine);
@@ -306,6 +334,7 @@ pub fn engine() -> Engine {
 /// [`App::register`], the setup closure ([`Setup::font_families`] is the
 /// same) or later — not before `run`: there only the bundled font is
 /// visible.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn font_families() -> Vec<String> {
     ljos_quick::font_families()
 }
@@ -313,6 +342,7 @@ pub fn font_families() -> Vec<String> {
 /// The colour scheme the application follows: its own when it set one
 /// (`Qt.styleHints.colorScheme`), else the system's. Tracked: a binding or
 /// a native type's tracked read that asks follows a change of scheme.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn color_scheme(engine: &Engine) -> prelude::ColorScheme {
     ljos_quick::color_scheme(engine)
 }
@@ -322,6 +352,7 @@ pub fn color_scheme(engine: &Engine) -> prelude::ColorScheme {
 /// and whose `colorScheme` it may write to choose the application's
 /// scheme (`Qt.ColorScheme.Unknown` follows the system's again). `None`
 /// only when the Engine cannot make it.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn style_hints(engine: &Engine) -> Option<ObjectId> {
     ljos_quick::style_hints(engine)
 }
@@ -329,6 +360,7 @@ pub fn style_hints(engine: &Engine) -> Option<ObjectId> {
 /// Whether the user asked for less motion
 /// (`Qt.styleHints.accessibility.motionPreference`). Tracked: a binding
 /// or a native type's tracked read that asks follows the setting.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn reduced_motion(engine: &Engine) -> bool {
     ljos_quick::reduced_motion(engine)
 }
@@ -349,12 +381,14 @@ pub fn reduced_motion(engine: &Engine) -> bool {
 /// ljos::set_application_font(&engine, None);
 /// assert_eq!(*ljos::application_font(&engine), Font::default());
 /// ```
+#[cfg(not(target_arch = "wasm32"))]
 pub fn set_application_font(engine: &Engine, font: Option<&item::Font>) {
     ljos_controls::set_application_font(engine, font);
 }
 
 /// The application font. Tracked: a binding or a native type's tracked
 /// read that asks follows [`set_application_font`].
+#[cfg(not(target_arch = "wasm32"))]
 pub fn application_font(engine: &Engine) -> std::sync::Arc<item::Font> {
     ljos_controls::application_font(engine)
 }
@@ -367,6 +401,7 @@ pub fn application_font(engine: &Engine) -> std::sync::Arc<item::Font> {
 ///
 /// Call it on the main thread: some platforms allow a loop nowhere else.
 #[cfg(feature = "shell")]
+#[cfg(not(target_arch = "wasm32"))]
 pub fn run<M: Send + 'static>(
     config: ljos_shell::ShellConfig,
     setup: impl FnOnce(&mut ljos_shell::Setup<'_, M>) -> Result<ObjectId, ljos_shell::SetupError>
@@ -382,6 +417,14 @@ pub fn run<M: Send + 'static>(
 /// stream that must not lose messages. `send_coalesced` keeps only the
 /// newest message under each [`CoalesceKey`].
 #[cfg(feature = "shell")]
+#[cfg(not(target_arch = "wasm32"))]
 pub use ljos_runtime::{CoalesceKey, SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
+#[cfg(not(target_arch = "wasm32"))]
 pub use ljos_shell::{PainterError, Setup, SetupError, ShellConfig, ShellError};
+
+// On a page `ljos` is `ljos_web`: the same names, with no engine behind them.
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+pub use ljos_web;
+#[cfg(all(target_arch = "wasm32", feature = "web"))]
+pub use ljos_web::{Engine, ObjectId, engine, item, module, prelude};
