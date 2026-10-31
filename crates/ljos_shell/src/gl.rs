@@ -219,7 +219,10 @@ impl Gl {
     /// none.
     fn make_current(&self, surface: Option<(u64, &Surface<WindowSurface>)>) -> bool {
         let id = surface.map_or(0, |(id, _)| id);
-        if self.current.get() == id {
+        // Remembering the surface is not enough: bringing up wgpu's own GL
+        // backend (`ljos_3d::offscreen`, for a picture taken of a view)
+        // releases whatever is current on the EGL display it shares with us.
+        if self.current.get() == id && self.context.is_current() {
             return true;
         }
         let made = match surface {
