@@ -945,6 +945,13 @@ impl Engine {
         if let Some(js) = js {
             js.forget(&order);
         }
+        // Told before the batch below ends: the effects it runs may make
+        // objects, which take the slots just freed, and a listener that
+        // still held one of these ids would take it for the new object.
+        let listeners = self.inner.destroy_listeners.borrow().clone();
+        for l in listeners {
+            l(self, &order);
+        }
         self.inner.graph.batch(|| {
             for (_, h) in &headers {
                 if let Some(scope) = h.scope {
@@ -973,10 +980,6 @@ impl Engine {
                 }
             }
         });
-        let listeners = self.inner.destroy_listeners.borrow().clone();
-        for l in listeners {
-            l(self, &order);
-        }
         for (_, h) in &headers {
             if let Some(ext) = &h.ext {
                 for c in &ext.contexts {
@@ -1207,7 +1210,9 @@ impl Engine {
 
     /// Calls `f` each time [`Engine::destroy_now`] has taken objects out
     /// of the store, with all of them: a scene drops what it showed of
-    /// them without a reactive node for each that it shows.
+    /// them without a reactive node for each that it shows. It is called
+    /// before anything the destruction sets off runs, so no new object
+    /// has taken one of their ids yet.
     pub fn on_destroyed(&self, f: impl Fn(&Engine, &[ObjectId]) + 'static) {
         self.inner.destroy_listeners.borrow_mut().push(Rc::new(f));
     }

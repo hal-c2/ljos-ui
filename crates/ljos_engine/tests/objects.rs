@@ -609,6 +609,33 @@ fn binding_on_a_destroyed_source_reruns() {
 }
 
 #[test]
+fn destroy_listeners_hear_before_what_the_destruction_sets_off_makes_objects() {
+    // A new object may take a dead one's slot, and so a key that differs
+    // from its id only in version: a listener that keeps records by id
+    // must hear of the dead before any new object exists.
+    let e = engine();
+    let src = rect(&e);
+    let log = Rc::new(RefCell::new(Vec::new()));
+    let l = log.clone();
+    e.on_destroyed(move |_, gone| {
+        if gone.contains(&src) {
+            l.borrow_mut().push("told");
+        }
+    });
+    let l = log.clone();
+    let _fx = e
+        .effect(move |e| {
+            if e.read(src, Item::WIDTH.index).is_nullish() {
+                e.create_by_name("Test", "Rectangle", None).unwrap();
+                l.borrow_mut().push("made");
+            }
+        })
+        .unwrap();
+    e.destroy_now(src);
+    assert_eq!(*log.borrow(), ["told", "made"]);
+}
+
+#[test]
 fn ownership_tree_and_deferred_delete() {
     let e = engine();
     let root = rect(&e);
