@@ -1622,6 +1622,9 @@ impl<M: Send + 'static> Desktop<M> {
         match *event {
             WindowEvent::Resized { .. } => {
                 slot.shown.forget();
+                if let Some(Painter::Cpu(painter)) = slot.painter.as_mut() {
+                    painter.owe_frame();
+                }
                 slot.held = None;
                 note_size(slot, &engine, &sys, false);
                 note_state(slot, &engine, &sys);

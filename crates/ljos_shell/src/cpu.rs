@@ -65,6 +65,11 @@ pub(crate) struct CpuPainter {
     whole: u8,
     /// What went wrong since the last frame, for the log.
     trouble: Option<String>,
+    /// The window system waits for a frame even if nothing changed: on
+    /// Wayland a configure is applied by the next commit, and sway holds
+    /// every later change of the window (a resize) until it comes or its
+    /// transaction times out.
+    owed: bool,
 }
 
 impl std::fmt::Debug for CpuPainter {
@@ -95,6 +100,7 @@ impl CpuPainter {
             history: VecDeque::with_capacity(HISTORY),
             whole: BUFFERS,
             trouble: None,
+            owed: false,
         }
     }
 
@@ -125,6 +131,13 @@ impl CpuPainter {
         self.forget();
     }
 
+    /// The window system asked for a frame (a Wayland configure): the next
+    /// is shown even if nothing changed, drawing only what the buffer it
+    /// lands in lacks.
+    pub(crate) fn owe_frame(&mut self) {
+        self.owed = true;
+    }
+
     /// What the window showed may be gone: the next frame is drawn whole.
     pub(crate) fn forget(&mut self) {
         self.last = None;
@@ -144,9 +157,10 @@ impl CpuPainter {
     }
 
     /// Draws what changed of `snapshot` since the last frame and shows it.
-    /// False when nothing changed, and nothing was shown. `warn` is told,
-    /// once in the process, what is not drawn, and what went wrong;
-    /// `egui_draws` is whether egui had anything of its own to draw.
+    /// False when nothing changed and no frame was owed, and nothing was
+    /// shown. `warn` is told, once in the process, what is not drawn, and
+    /// what went wrong; `egui_draws` is whether egui had anything of its
+    /// own to draw.
     pub(crate) fn draw(
         &mut self,
         snapshot: &Arc<FrameSnapshot>,
@@ -170,7 +184,7 @@ impl CpuPainter {
             }
             _ => vec![whole],
         };
-        if changed.is_empty() {
+        if changed.is_empty() && !self.owed {
             return false;
         }
         if !SAID_SHADER.load(Ordering::Relaxed) && has_shader(snapshot) {
@@ -220,6 +234,7 @@ impl CpuPainter {
             self.forget();
             return false;
         }
+        self.owed = false;
         self.whole = self.whole.saturating_sub(1);
         self.history.push_front(changed);
         self.history.truncate(HISTORY);
