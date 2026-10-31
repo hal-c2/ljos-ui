@@ -214,6 +214,23 @@ Feature: JsonListModel
       """
     Then the property "seen" of "o" is "a"
 
+  Scenario: A role named modelData is the delegates' modelData
+    Given the QML:
+      """qml
+      import QtQuick
+      import Ljos.Models
+      Item {
+        id: root; objectName: "o"
+        property string seen: ""
+        JsonListModel { id: m; json: '[{"name": "a", "modelData": "b"}]' }
+        Repeater {
+          model: m
+          delegate: Item { Component.onCompleted: root.seen = name + modelData }
+        }
+      }
+      """
+    Then the property "seen" of "o" is "ab"
+
   Scenario: A TableView shows the rows in one column
     Given the QML:
       """qml
