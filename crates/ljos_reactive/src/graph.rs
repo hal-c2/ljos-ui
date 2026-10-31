@@ -45,6 +45,9 @@ struct Layer<V> {
     /// A cover ([`Graph::push_cover`]): an imperative write while it is on
     /// top goes to the property's own base layer.
     cover: bool,
+    /// A hold ([`Graph::push_hold`]): as a cover to a write, while what is
+    /// pushed later still goes above it.
+    hold: bool,
 }
 
 enum Content<V> {
@@ -150,10 +153,18 @@ impl<V> Prop<V> {
     /// holds the property leaves with the State, as it does uncovered;
     /// otherwise the top layer.
     fn written_mut(&mut self) -> (&mut Layer<V>, bool) {
-        if !self.overrides.last().is_some_and(|layer| layer.cover) {
+        if !self
+            .overrides
+            .last()
+            .is_some_and(|layer| layer.cover || layer.hold)
+        {
             return (self.top_mut(), false);
         }
-        match self.overrides.iter().rposition(|layer| !layer.cover) {
+        match self
+            .overrides
+            .iter()
+            .rposition(|layer| !layer.cover && !layer.hold)
+        {
             Some(idx) => (&mut self.overrides[idx], true),
             None => (&mut self.base, true),
         }
@@ -1049,6 +1060,7 @@ impl<V: Clone + 'static> Graph<V> {
                     content: Content::Value(None),
                     provenance,
                     cover: false,
+                    hold: false,
                 },
                 overrides: Overrides::NONE,
                 animated: false,
@@ -1078,6 +1090,7 @@ impl<V: Clone + 'static> Graph<V> {
                         content: Content::Binding(Some(Box::new(f))),
                         provenance: Provenance::Bound,
                         cover: false,
+                        hold: false,
                     },
                     overrides: Overrides::NONE,
                     animated: false,
@@ -2233,7 +2246,7 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
     ) -> Result<OverrideId, ReactiveError> {
-        self.push_layer(n, value, false)
+        self.push_layer(n, value, false, false)
     }
 
     /// Pushes an override that covers the property's own value without
@@ -2246,7 +2259,28 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
     ) -> Result<OverrideId, ReactiveError> {
-        self.push_layer(n, value, true)
+        self.push_layer(n, value, true, false)
+    }
+
+    /// Pushes an override that decides the property against every imperative
+    /// write: such a write goes where a cover's does, unseen, and is forgotten
+    /// when the hold comes off with [`RestoreMode::None`]. Overrides pushed
+    /// later still go above it. Qt's anchors keep what they place this way.
+    pub fn push_hold(
+        &self,
+        n: NodeId,
+        value: OverrideValue<V>,
+    ) -> Result<OverrideId, ReactiveError> {
+        self.push_layer(n, value, false, true)
+    }
+
+    /// Whether a hold is what an imperative write of `n` meets now
+    /// ([`Graph::push_hold`]).
+    pub fn is_held_against_writes(&self, n: NodeId) -> bool {
+        matches!(
+            self.inner.borrow().nodes.get(n).map(|node| &node.kind),
+            Some(Kind::Property(p)) if p.overrides.last().is_some_and(|layer| layer.hold)
+        )
     }
 
     fn push_layer(
@@ -2254,6 +2288,7 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
         cover: bool,
+        hold: bool,
     ) -> Result<OverrideId, ReactiveError> {
         let id = {
             let mut g = self.inner.borrow_mut();
@@ -2283,6 +2318,7 @@ impl<V: Clone + 'static> Graph<V> {
                             content,
                             provenance: Provenance::Assigned,
                             cover,
+                            hold,
                         },
                     );
                     if let Some(v) = active {
@@ -2297,6 +2333,7 @@ impl<V: Clone + 'static> Graph<V> {
                             content: Content::Binding(Some(f)),
                             provenance: Provenance::Bound,
                             cover,
+                            hold,
                         },
                     );
                     if !covered {

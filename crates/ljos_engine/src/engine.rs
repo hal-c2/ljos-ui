@@ -2257,20 +2257,43 @@ impl Engine {
         how: WriteKind,
     ) -> Result<(), EngineError> {
         let g = &self.inner.graph;
+        let told = how == WriteKind::Imperative && self.write_is_undone(n, &v);
         let write = || {
             g.write(n, v, how)?;
             if let Some(cur) = g.settled(n) {
                 self.store_value(obj, prop, &cur);
             }
-            Ok(())
+            Ok::<(), EngineError>(())
         };
         // Batched so effects run after the field cache is updated; in an
         // open batch they wait already.
         if g.batching() {
-            write()
+            write()?;
         } else {
-            g.batch(write)
+            g.batch(write)?;
         }
+        if told {
+            self.tell_undone(obj, prop)?;
+        }
+        Ok(())
+    }
+
+    /// Whether writing `v` to `n` is a move that what holds the property
+    /// undoes at once: not a NaN, which geometry refuses, nor what it holds.
+    fn write_is_undone(&self, n: NodeId, v: &Value) -> bool {
+        let g = &self.inner.graph;
+        g.is_held_against_writes(n)
+            && !matches!(v, Value::Real(r) if r.is_nan())
+            && g.settled(n)
+                .is_none_or(|cur| cur.to_number() != v.to_number())
+    }
+
+    /// A write was undone by what holds the property. Qt moves the item and
+    /// the hold moves it back before either change is told, so what follows
+    /// the property hears of two changes and reads the held value at both.
+    pub(crate) fn tell_undone(&self, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
+        self.notify(obj, prop)?;
+        self.notify(obj, prop)
     }
 
     /// Runs a setter that gets a [`Cx`], with no store borrow held, so it
@@ -2990,7 +3013,7 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
     ) -> Result<OverrideId, EngineError> {
-        self.push_layer(obj, prop, content, false)
+        self.push_layer(obj, prop, content, false, false)
     }
 
     /// Pushes a cover: the property reads what `content` gives, and a write
@@ -3003,7 +3026,19 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
     ) -> Result<OverrideId, EngineError> {
-        self.push_layer(obj, prop, content, true)
+        self.push_layer(obj, prop, content, true, false)
+    }
+
+    /// Pushes a hold: the property reads what `content` gives, and a write
+    /// from QML or JS while it is on top changes nothing, though it is told
+    /// (see `ljos_reactive::Graph::push_hold`).
+    pub fn push_hold(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        content: OverrideContent,
+    ) -> Result<OverrideId, EngineError> {
+        self.push_layer(obj, prop, content, false, true)
     }
 
     fn push_layer(
@@ -3012,6 +3047,7 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
         cover: bool,
+        hold: bool,
     ) -> Result<OverrideId, EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
         let ty = {
@@ -3053,6 +3089,8 @@ impl Engine {
         let id = g.batch(|| {
             let id = if cover {
                 g.push_cover(n, value)?
+            } else if hold {
+                g.push_hold(n, value)?
             } else {
                 g.push_override(n, value)?
             };

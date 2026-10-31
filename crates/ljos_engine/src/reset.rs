@@ -41,6 +41,10 @@ impl Engine {
         internal: bool,
     ) -> Result<(), EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
+        let held = !internal
+            && self
+                .node_if_any(obj, prop)
+                .is_some_and(|n| self.inner.graph.is_held_against_writes(n));
         let reset = {
             let store = self.inner.store.borrow();
             let h = store
@@ -61,7 +65,7 @@ impl Engine {
             p.reset
                 .ok_or_else(|| ConvertError::new("[undefined]", p.ty.qt_name()))?
         };
-        match reset {
+        let reset_done = match reset {
             Reset::Default => self.reset_to_default(obj, prop),
             // Nobody wrote the value it follows, so no interceptor
             // animates it either.
@@ -75,7 +79,12 @@ impl Engine {
                 let v = self.untrack(|| value(self, obj, prop));
                 self.reset_to(obj, prop, v)
             }
+        };
+        reset_done?;
+        if held {
+            self.tell_undone(obj, prop)?;
         }
+        Ok(())
     }
 
     /// Gives the [`Reset::Absent`], [`Reset::FollowFromCreation`] and

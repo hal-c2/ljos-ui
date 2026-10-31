@@ -201,6 +201,13 @@ impl Engine {
         let Some(f) = self.interceptor(obj, prop) else {
             return false;
         };
+        // What holds the property undoes each step of an animation.
+        if self
+            .node_if_any(obj, prop)
+            .is_some_and(|n| self.inner.graph.is_held_against_writes(n))
+        {
+            return true;
+        }
         // A write ends the property's binding whether or not the value
         // gets there at once.
         if self.is_bound(obj, prop) {

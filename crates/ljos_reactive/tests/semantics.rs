@@ -1036,3 +1036,28 @@ fn only_an_assigned_value_holds_what_a_write_would_write() {
     g.write(a, 5, WriteKind::Animation).unwrap();
     assert!(!g.holds_assigned(a, &5));
 }
+
+#[test]
+fn a_write_under_a_hold_is_forgotten_with_it_and_later_overrides_go_above() {
+    let g = Graph::new();
+    let r = g.root();
+    let x = g.property(r, 1).unwrap();
+
+    let held = g.push_hold(x, OverrideValue::Value(5)).unwrap();
+    assert!(g.is_held_against_writes(x));
+    g.set(x, 7);
+    assert_eq!(g.get(x), 5, "the write did not move what the hold keeps");
+
+    let state = g.push_override(x, OverrideValue::Value(9)).unwrap();
+    assert_eq!(g.get(x), 9, "an override pushed later goes above the hold");
+    assert!(!g.is_held_against_writes(x));
+    g.remove_override(x, state, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 5);
+
+    g.remove_override(x, held, RestoreMode::None).unwrap();
+    assert_eq!(g.get(x), 5, "the write did not come back");
+    assert!(!g.is_held_against_writes(x));
+    g.set(x, 8);
+    assert_eq!(g.get(x), 8);
+}

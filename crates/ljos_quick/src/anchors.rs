@@ -8,9 +8,10 @@
 //! is given late is told ([`line_given`]) and starts one then. The effect
 //! reads the item's `anchors.*` and, when any are set, the geometry of the
 //! items it is anchored to; it writes the anchored `x`/`y`/`width`/`height`
-//! through an override layer. The layer sits above whatever the item was
-//! given, so removing an anchor leaves the item where it is (Qt keeps the
-//! geometry too) and the item's own binding is not destroyed.
+//! through a hold: a layer above whatever the item was given, which a
+//! script's write does not move, as Qt's anchors put the item back. Removing
+//! an anchor leaves the item where it is (Qt keeps the geometry too) and the
+//! item's own binding is not destroyed.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -789,7 +790,7 @@ fn apply(
             engine.remove_override(obj, prop, id, RestoreMode::None)
         }
         (Some(v), None) => {
-            slot.set(Some(engine.push_override(
+            slot.set(Some(engine.push_hold(
                 obj,
                 prop,
                 OverrideContent::Value(Value::Real(v)),
@@ -806,7 +807,7 @@ fn apply(
                 .is_err()
             {
                 // Someone removed the layer; start a new one.
-                slot.set(Some(engine.push_override(
+                slot.set(Some(engine.push_hold(
                     obj,
                     prop,
                     OverrideContent::Value(Value::Real(v)),
