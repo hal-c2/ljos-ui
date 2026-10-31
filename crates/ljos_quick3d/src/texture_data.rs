@@ -120,5 +120,7 @@ pub(crate) fn image(e: &Engine, obj: ObjectId) -> Option<TextureImage> {
         return None;
     }
     item::prop(e, obj, TextureData::REVISION);
-    e.with(obj, |t: &TextureData| t.image.clone()).ok().flatten()
+    e.with(obj, |t: &TextureData| t.image.clone())
+        .ok()
+        .flatten()
 }

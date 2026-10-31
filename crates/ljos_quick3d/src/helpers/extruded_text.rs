@@ -143,7 +143,8 @@ fn contours(e: &Engine, text: &str, font: &Font) -> Vec<Contour> {
             };
             let (gx, gy) = (f64::from(g.x), f64::from(g.y));
             // Font units, y up, into ems from the first baseline, y up.
-            let to_em = kurbo::Affine::new([1.0 / em, 0.0, 0.0, 1.0 / em, gx / em, (baseline - gy) / em]);
+            let to_em =
+                kurbo::Affine::new([1.0 / em, 0.0, 0.0, 1.0 / em, gx / em, (baseline - gy) / em]);
             let mut glyph = flatten(&(to_em * path), tolerance);
             // TrueType goes clockwise round what it fills and CFF the other
             // way; the walls' normals need one way.
@@ -169,8 +170,10 @@ impl OutlinePen for Pen {
         self.0.line_to((f64::from(x), f64::from(y)));
     }
     fn quad_to(&mut self, cx0: f32, cy0: f32, x: f32, y: f32) {
-        self.0
-            .quad_to((f64::from(cx0), f64::from(cy0)), (f64::from(x), f64::from(y)));
+        self.0.quad_to(
+            (f64::from(cx0), f64::from(cy0)),
+            (f64::from(x), f64::from(y)),
+        );
     }
     fn curve_to(&mut self, cx0: f32, cy0: f32, cx1: f32, cy1: f32, x: f32, y: f32) {
         self.0.curve_to(
@@ -300,7 +303,9 @@ fn extrude(contours: &[Contour], scale: f32, depth: f32) -> Built {
             } else {
                 (t[2], t[1])
             };
-            built.indices.extend([first + t[0], first + b_i, first + c_i]);
+            built
+                .indices
+                .extend([first + t[0], first + b_i, first + c_i]);
         }
     }
 
@@ -408,9 +413,11 @@ mod tests {
             assert!(cross[0] * n[0] + cross[1] * n[1] + cross[2] * n[2] > 0.0);
         }
         // The hole is not filled: no cap vertex lies inside it.
-        let cap_inside = built.positions.iter().zip(&built.normals).any(|(p, n)| {
-            n[2] != 0.0 && p[0] > 1.0 && p[0] < 2.0 && p[1] > 1.0 && p[1] < 2.0
-        });
+        let cap_inside = built
+            .positions
+            .iter()
+            .zip(&built.normals)
+            .any(|(p, n)| n[2] != 0.0 && p[0] > 1.0 && p[0] < 2.0 && p[1] > 1.0 && p[1] < 2.0);
         assert!(!cap_inside);
     }
 

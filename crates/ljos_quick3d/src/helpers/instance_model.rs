@@ -199,15 +199,35 @@ impl InstanceRepeater {
 /// Moves the delegate of `row` to where its copy is.
 fn place(e: &Engine, me: ObjectId, row: usize, object: ObjectId) {
     let Some(entry) = e
-        .with(me, |r: &InstanceRepeater| r.shared.borrow().rows.get(row).cloned())
+        .with(me, |r: &InstanceRepeater| {
+            r.shared.borrow().rows.get(row).cloned()
+        })
         .ok()
         .flatten()
     else {
         return;
     };
     let (p, s, q) = (entry.position, entry.scale, entry.rotation);
-    host_write(e, object, Node::POSITION, Vector3d { x: p.x, y: p.y, z: p.z });
-    host_write(e, object, Node::SCALE, Vector3d { x: s.x, y: s.y, z: s.z });
+    host_write(
+        e,
+        object,
+        Node::POSITION,
+        Vector3d {
+            x: p.x,
+            y: p.y,
+            z: p.z,
+        },
+    );
+    host_write(
+        e,
+        object,
+        Node::SCALE,
+        Vector3d {
+            x: s.x,
+            y: s.y,
+            z: s.z,
+        },
+    );
     host_write(
         e,
         object,

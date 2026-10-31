@@ -109,9 +109,9 @@ impl TextureData {
             return Err(TextureDataError::Volume);
         }
         let (encoding, read): (_, fn(&[u8]) -> [u8; 4]) = match self.format {
-            format::NONE | format::RGBA8 => (PixelEncoding::Srgb8Straight, |p| {
-                [p[0], p[1], p[2], p[3]]
-            }),
+            format::NONE | format::RGBA8 => {
+                (PixelEncoding::Srgb8Straight, |p| [p[0], p[1], p[2], p[3]])
+            }
             format::RGBE8 => (PixelEncoding::Rgbe, |p| [p[0], p[1], p[2], p[3]]),
             format::RGBA16F => (PixelEncoding::Rgbe, |p| {
                 rgbe(half(p, 0), half(p, 2), half(p, 4))
@@ -121,10 +121,19 @@ impl TextureData {
             }),
             format::R8 => (PixelEncoding::Srgb8Straight, |p| [p[0], 0, 0, 255]),
             format::R16 => (PixelEncoding::Srgb8Straight, |p| {
-                [unit(f32::from(u16::from_le_bytes([p[0], p[1]])) / 65535.0), 0, 0, 255]
+                [
+                    unit(f32::from(u16::from_le_bytes([p[0], p[1]])) / 65535.0),
+                    0,
+                    0,
+                    255,
+                ]
             }),
-            format::R16F => (PixelEncoding::Srgb8Straight, |p| [unit(half(p, 0)), 0, 0, 255]),
-            format::R32F => (PixelEncoding::Srgb8Straight, |p| [unit(float(p, 0)), 0, 0, 255]),
+            format::R16F => (PixelEncoding::Srgb8Straight, |p| {
+                [unit(half(p, 0)), 0, 0, 255]
+            }),
+            format::R32F => (PixelEncoding::Srgb8Straight, |p| {
+                [unit(float(p, 0)), 0, 0, 255]
+            }),
             f @ format::BC1..=format::LAST => {
                 return Err(TextureDataError::Compressed(format::NAMES[f as usize]));
             }
@@ -275,10 +284,7 @@ mod tests {
             compressed.image().unwrap_err(),
             TextureDataError::Compressed("BC1")
         );
-        let short = TextureData {
-            width: 2,
-            ..data
-        };
+        let short = TextureData { width: 2, ..data };
         assert!(matches!(short.image(), Err(TextureDataError::Size { .. })));
     }
 
@@ -291,7 +297,10 @@ mod tests {
             bytes: vec![1, 2, 3, 4],
             ..TextureData::default()
         };
-        let (a, b) = (data.image().unwrap().unwrap(), data.image().unwrap().unwrap());
+        let (a, b) = (
+            data.image().unwrap().unwrap(),
+            data.image().unwrap().unwrap(),
+        );
         assert_ne!(a.id(), b.id());
     }
 }

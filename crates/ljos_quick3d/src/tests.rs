@@ -914,14 +914,21 @@ fn texture_data_reaches_a_texture_once_it_is_updated() {
     let mut source = ljos::MapSource::new();
     source.insert("Main", compiled.file);
     e.set_component_source(source);
-    let view = e.create_from_url("Main", None, Vec::new()).expect("created");
+    let view = e
+        .create_from_url("Main", None, Vec::new())
+        .expect("created");
     let (tex, data) = (named(&e, view, "tex_"), named(&e, view, "data_"));
-    assert!(texture::image_of(&e, view, tex).is_none(), "nothing committed yet");
+    assert!(
+        texture::image_of(&e, view, tex).is_none(),
+        "nothing committed yet"
+    );
 
     e.with_mut(data, |p: &mut Pixels| {
         p.data.set_size(2, 1);
-        p.data.set_format(ljos::item::ljos_3d::texture_data::format::RGBA8);
-        p.data.set_texture_data(vec![255, 0, 0, 255, 0, 255, 0, 255]);
+        p.data
+            .set_format(ljos::item::ljos_3d::texture_data::format::RGBA8);
+        p.data
+            .set_texture_data(vec![255, 0, 0, 255, 0, 255, 0, 255]);
     })
     .expect("filled");
     TextureData::update(&e, data);
@@ -931,5 +938,9 @@ fn texture_data_reaches_a_texture_once_it_is_updated() {
 
     TextureData::update(&e, data);
     let second = texture::image_of(&e, view, tex).expect("committed again");
-    assert_ne!(first.id(), second.id(), "a revision is new pixels to upload");
+    assert_ne!(
+        first.id(),
+        second.id(),
+        "a revision is new pixels to upload"
+    );
 }

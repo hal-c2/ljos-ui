@@ -84,7 +84,10 @@ impl Sky {
         let s = self.sun_direction();
         let cos = (d[0] * s[0] + d[1] * s[1] + d[2] * s[2]).clamp(-1.0, 1.0);
         let angle = cos.acos().to_degrees();
-        let (min, max) = (self.sun_angle_min, self.sun_angle_max.max(self.sun_angle_min));
+        let (min, max) = (
+            self.sun_angle_min,
+            self.sun_angle_max.max(self.sun_angle_min),
+        );
         if angle <= min {
             sun
         } else if angle < max {
@@ -170,7 +173,10 @@ mod tests {
         };
         let close = |a: [f32; 3], b: [f32; 3]| (0..3).all(|i| (a[i] - b[i]).abs() < 1e-3);
         assert!(close(sky.radiance([0.0, 1.0, 0.0]), linear(sky.sky_top)));
-        assert!(close(sky.radiance([0.0, -1.0, 0.0]), linear(sky.ground_bottom)));
+        assert!(close(
+            sky.radiance([0.0, -1.0, 0.0]),
+            linear(sky.ground_bottom)
+        ));
         assert!(close(sky.radiance([0.0, 0.0, -1.0]), [1.0; 3]));
         assert!(!close(sky.radiance([1.0, 0.0, 0.0]), [1.0; 3]));
     }

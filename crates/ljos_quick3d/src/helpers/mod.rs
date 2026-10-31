@@ -19,15 +19,15 @@ mod procedural_texture;
 mod render_statistics;
 mod shapes;
 
+use extruded_text::ExtrudedTextGeometry;
 use geometry::{
     CapsuleGeometry, ConeGeometry, CuboidGeometry, CylinderGeometry, GridGeometry, PlaneGeometry,
     SphereGeometry, TorusGeometry,
 };
-use extruded_text::ExtrudedTextGeometry;
 use height_field::HeightFieldGeometry;
-use instance_model::{InstanceModel, InstanceRepeater};
 pub(crate) use infinite_grid::InfiniteGrid;
 pub(crate) use infinite_grid::read as infinite_grid;
+use instance_model::{InstanceModel, InstanceRepeater};
 use ljos::prelude::*;
 use lod_manager::LodManager;
 use look_at::LookAtNode;
