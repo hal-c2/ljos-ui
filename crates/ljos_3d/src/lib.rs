@@ -16,6 +16,7 @@ pub mod mesh;
 pub mod pick;
 pub mod qml;
 pub mod scene;
+pub mod slot;
 #[cfg(feature = "snippets")]
 pub mod snippet;
 pub mod stats;
@@ -56,6 +57,7 @@ pub use scene::{
     Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
     PrincipledMaps, PrincipledMaterial, Scene, Shadow, Tonemap, Transform,
 };
+pub use slot::SceneSlot;
 pub use texture::{
     Channel, Filter, PixelEncoding, Sampling, Texture, TextureImage, TexturePixels, Tiling,
     UvTransform, fresh_pixels_id,

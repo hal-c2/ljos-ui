@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos::item::kurbo::{Point, Rect, Size};
-use ljos::item::ljos_3d::Scene;
+use ljos::item::ljos_3d::SceneSlot;
 use ljos::item::scene3d::View3dOp;
 use ljos::item::{DisplayListBuilder, ItemPaint, TextEngine};
 use ljos::prelude::*;
@@ -43,7 +43,7 @@ pub struct View3D {
     /// The scene last painted, kept while a walk comes out the same so
     /// that its picture is not drawn again.
     #[qml(skip)]
-    last: RefCell<Option<Arc<Scene>>>,
+    last: RefCell<SceneSlot>,
 }
 
 #[derive(Debug)]
@@ -58,19 +58,13 @@ impl ItemPaint for Picture {
 /// Reads the view's scene. Tracked: any property of a node, material or
 /// environment the walk reads paints the view again when it changes.
 pub(crate) fn read(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
-    let scene = crate::scene::build(e, me);
-    let kept = e
-        .with(me, |v: &View3D| v.last.borrow().clone())
-        .ok()
-        .flatten();
-    let scene = match kept {
-        Some(prev) if prev.same_as(&scene) => prev,
-        _ => {
-            let scene = Arc::new(scene);
-            let _ = e.with(me, |v: &View3D| *v.last.borrow_mut() = Some(scene.clone()));
-            scene
-        }
-    };
+    let built = crate::scene::build(e, me);
+    // The engine's tracking is what paints the view again, so nobody
+    // listens: the slot only keeps a scene that draws the same.
+    // Only a View3D is painted by this, so the read does not fail.
+    let scene = e
+        .with(me, |v: &View3D| v.last.borrow_mut().offer(built))
+        .unwrap_or_default();
     Rc::new(Picture(Arc::new(View3dOp {
         key: me.data().as_ffi(),
         scene,
