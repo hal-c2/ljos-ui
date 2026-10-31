@@ -458,6 +458,24 @@ impl Target {
         self.timer.as_mut().and_then(crate::timing::Timer::take)
     }
 
+    /// How long the GPU took for the passes after the scene pass the last
+    /// time that was read back: the camera's depth, ambient occlusion,
+    /// effects, depth of field, glow, the final tonemap and FXAA, where
+    /// the environment post-processes. Not in [`Self::last_gpu_time`].
+    pub fn last_gpu_post_time(&self) -> Option<std::time::Duration> {
+        self.timer
+            .as_ref()
+            .and_then(crate::timing::Timer::last_post)
+    }
+
+    /// [`Self::last_gpu_post_time`], only if it was read since the last
+    /// time this was asked.
+    pub fn take_gpu_post_time(&mut self) -> Option<std::time::Duration> {
+        self.timer
+            .as_mut()
+            .and_then(crate::timing::Timer::take_post)
+    }
+
     /// How many shadow maps were drawn since the target was made: a
     /// scene that keeps its casters, receivers and lights where they are
     /// draws none again.
@@ -2049,11 +2067,13 @@ impl Renderer {
                 output: &target.color_view,
                 output_format: COLOR_FORMAT,
                 frame: target.frames as f32,
+                timer: target.timer.as_ref(),
+                started: depth_pass,
             }
             .run();
         }
         if let Some(timer) = &mut target.timer {
-            timer.end(encoder, shadows_drawn);
+            timer.end(encoder, shadows_drawn, processed);
         }
         target.drawn_models = draws.len();
         crate::stats::record_render(
@@ -2110,6 +2130,8 @@ impl Renderer {
                 }),
                 stencil_ops: None,
             }),
+            // The post passes' time starts here, as they read this depth.
+            timestamp_writes: target.timer.as_ref().and_then(|t| t.post_pass(true, false)),
             ..Default::default()
         });
         pass.set_bind_group(0, &group, &[0]);

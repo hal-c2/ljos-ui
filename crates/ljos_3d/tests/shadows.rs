@@ -9,9 +9,9 @@ use std::sync::Arc;
 use ljos_3d::math::{Mat4, Quat, Vec3};
 use ljos_3d::offscreen::{Offscreen, Rgba, read_back};
 use ljos_3d::{
-    Background, Camera, Color, DefaultMaterial, Environment, Fade, Instance, InstanceTable,
-    Instancing, Light, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, Scene,
-    Shadow, Target, Transform,
+    AmbientOcclusion, Background, Camera, Color, DefaultMaterial, Environment, Fade, Instance,
+    InstanceTable, Instancing, Light, Material, MeshSource, Model, Node, NodeId, NodeKind,
+    PostProcess, Primitive, Scene, Shadow, Target, Transform,
 };
 
 const SIDE: u32 = 200;
@@ -431,6 +431,75 @@ fn a_targets_gpu_time_is_read_a_frame_or_two_later() {
             "{} with shadows {}: {took:?} on the GPU",
             gpu.adapter.name,
             target.shadow_passes() > 0
+        );
+    }
+}
+
+#[test]
+fn a_post_processed_targets_passes_after_the_scene_are_timed_apart() {
+    let Some(mut gpu) = offscreen() else { return };
+    if !gpu
+        .device
+        .features()
+        .contains(wgpu::Features::TIMESTAMP_QUERY)
+    {
+        eprintln!(
+            "SKIPPED: {} has no timestamps read without waiting",
+            gpu.adapter.name
+        );
+        return;
+    }
+    let tonemapped = Environment {
+        background: Background::Color(Color::BLACK),
+        post: PostProcess {
+            on: true,
+            fxaa: true,
+            ..PostProcess::default()
+        },
+        ..Environment::default()
+    };
+    // Ambient occlusion reads the camera's depth, whose pass starts the
+    // span.
+    let occluded = Environment {
+        ambient_occlusion: Some(AmbientOcclusion {
+            strength: 100.0,
+            distance: 50.0,
+            softness: 50.0,
+            sample_rate: 2,
+            bias: 0.0,
+            dither: false,
+        }),
+        ..tonemapped.clone()
+    };
+    for (name, environment) in [
+        ("plain", None),
+        ("tonemapped", Some(tonemapped)),
+        ("occluded", Some(occluded)),
+    ] {
+        let mut s = sunlit(None);
+        let processed = environment.is_some();
+        if let Some(e) = environment {
+            s.scene.set_environment(e);
+        }
+        let mut target = Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]);
+        for x in 0..4 {
+            s.scene.node_mut(s.cube).unwrap().transform = at(x as f32, 0.0, 100.0);
+            settled_frame(&mut gpu, &s.scene, &mut target);
+        }
+        let scene = target.last_gpu_time().expect("a frame's time read");
+        let post = target.last_gpu_post_time();
+        assert_eq!(post.is_some(), processed, "{name}: {post:?}");
+        if let Some(post) = post {
+            assert!(
+                post > std::time::Duration::ZERO && post < std::time::Duration::from_secs(1),
+                "{name}: {post:?}"
+            );
+            assert_eq!(target.take_gpu_post_time(), Some(post), "{name}: taken");
+            assert_eq!(target.take_gpu_post_time(), None, "{name}: taken once");
+        }
+        eprintln!(
+            "{} {name}: scene {scene:?}, post {post:?} on the GPU",
+            gpu.adapter.name
         );
     }
 }

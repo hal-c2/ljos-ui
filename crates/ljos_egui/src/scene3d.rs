@@ -74,6 +74,17 @@ impl Scene3dResources {
             .reduce(|a, b| a + b)
     }
 
+    /// [`Self::take_gpu_time`] of the passes after the views' scene passes
+    /// (post-processing), which that time leaves out.
+    pub fn take_gpu_post_time(state: &RenderState) -> Option<std::time::Duration> {
+        let mut renderer = state.renderer.write();
+        let r = renderer.callback_resources.get_mut::<Scene3dResources>()?;
+        r.targets
+            .values_mut()
+            .filter_map(Target::take_gpu_post_time)
+            .reduce(|a, b| a + b)
+    }
+
     pub fn views(&self) -> usize {
         self.targets.len()
     }

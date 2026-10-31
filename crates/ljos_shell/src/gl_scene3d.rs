@@ -315,6 +315,14 @@ impl Views {
             .reduce(|a, b| a + b)
     }
 
+    /// [`Self::take_gpu_time`] of the views' post-processing passes.
+    pub(crate) fn take_gpu_post_time(&mut self) -> Option<std::time::Duration> {
+        self.pictures
+            .values_mut()
+            .filter_map(|p| p.target.take_gpu_post_time())
+            .reduce(|a, b| a + b)
+    }
+
     /// Lets go of every picture, while the context is current; whether
     /// there was one.
     pub(crate) fn clear(&mut self) -> bool {

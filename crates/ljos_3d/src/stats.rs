@@ -19,9 +19,12 @@ pub struct RenderStats {
     /// long a frame is while the scene is animated, and a gap when it is
     /// not. 0 before the second scene.
     pub frame_seconds: f64,
-    /// Seconds the GPU took for the last scene, when the host measures it
-    /// ([`set_gpu_seconds`]).
+    /// Seconds the GPU took for the last scene, its post-processing
+    /// included, when the host measures it ([`set_gpu_seconds`]).
     pub gpu_seconds: Option<f64>,
+    /// Of those, the seconds of the passes after the scene pass, where the
+    /// environment post-processes.
+    pub gpu_post_seconds: Option<f64>,
 }
 
 #[derive(Default)]
@@ -38,6 +41,7 @@ static RECORD: Mutex<Record> = Mutex::new(Record {
         shadow_passes: 0,
         frame_seconds: 0.0,
         gpu_seconds: None,
+        gpu_post_seconds: None,
     },
     #[cfg(not(target_arch = "wasm32"))]
     last: None,
@@ -69,8 +73,11 @@ pub fn record_render(draw_calls: u32, shadow_passes: u64) {
     }
 }
 
-/// The host says how long the GPU took for the last scene, from timestamp
-/// queries: the renderer cannot tell.
-pub fn set_gpu_seconds(seconds: Option<f64>) {
-    record().stats.gpu_seconds = seconds;
+/// The host says how long the GPU took for the last scene, and for its
+/// post-processing passes of that: the renderer's timestamps come back
+/// frames later, through the host that asks for them.
+pub fn set_gpu_seconds(seconds: Option<f64>, post: Option<f64>) {
+    let mut r = record();
+    r.stats.gpu_seconds = seconds;
+    r.stats.gpu_post_seconds = post;
 }

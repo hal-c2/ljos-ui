@@ -523,6 +523,9 @@ pub(crate) struct Steps {
     /// The GPU time of 3D views read back during the pass: an earlier
     /// pass's drawing, as nothing waits for the GPU.
     pub(crate) gpu_3d: Option<std::time::Duration>,
+    /// Of the same readings, the GPU time of the views' post-processing
+    /// passes, which `gpu_3d` leaves out.
+    pub(crate) gpu_post: Option<std::time::Duration>,
     /// Whether the pass moved the pixels of a scrolled clip rather than
     /// drawing them.
     pub(crate) moved: bool,

@@ -31,10 +31,15 @@ pub struct RenderStatistics {
     /// Scenes drawn so far.
     #[qml(notify, readonly)]
     frames: i32,
-    /// Milliseconds the GPU took for the last frame; -1 when the host does
-    /// not measure it.
+    /// Milliseconds the GPU took for the last frame, post-processing
+    /// included; -1 when the host does not measure it.
     #[qml(notify, readonly)]
     gpu_time: f64,
+    /// Of those, the milliseconds of the post-processing passes (effects,
+    /// ambient occlusion, depth of field, glow, the final tonemap and
+    /// FXAA); -1 when the scene is not post-processed or not measured.
+    #[qml(notify, readonly)]
+    gpu_post_time: f64,
     #[qml(skip)]
     seen: u64,
 }
@@ -77,5 +82,9 @@ fn refresh(cx: &Cx) {
     let _ = cx.set(
         RenderStatistics::GPU_TIME,
         s.gpu_seconds.map_or(-1.0, |g| g * 1000.0),
+    );
+    let _ = cx.set(
+        RenderStatistics::GPU_POST_TIME,
+        s.gpu_post_seconds.map_or(-1.0, |g| g * 1000.0),
     );
 }

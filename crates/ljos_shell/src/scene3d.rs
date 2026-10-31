@@ -58,3 +58,10 @@ pub(crate) fn paint_views(
 pub(crate) fn take_gpu_time(painter: &egui_wgpu::winit::Painter) -> Option<std::time::Duration> {
     Scene3dResources::take_gpu_time(&painter.render_state()?)
 }
+
+/// [`take_gpu_time`] of the views' post-processing passes.
+pub(crate) fn take_gpu_post_time(
+    painter: &egui_wgpu::winit::Painter,
+) -> Option<std::time::Duration> {
+    Scene3dResources::take_gpu_post_time(&painter.render_state()?)
+}

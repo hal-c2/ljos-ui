@@ -1,6 +1,9 @@
 //! How long the GPU took to draw a target's picture: timestamps written at
 //! the start and end of its shadow passes and of its scene pass (which
 //! shades, tonemaps and resolves the samples), read back without waiting.
+//! A post-processed view's passes after the scene (the camera's depth,
+//! ambient occlusion, effects, depth of field, glow, the final tonemap
+//! and FXAA) are a span of their own, kept apart from the scene's.
 //!
 //! A frame's queries are resolved and copied into a buffer of their own in
 //! the frame's commands. The next time the target is drawn, that buffer
@@ -32,11 +35,13 @@ pub fn timing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::TIMESTAMP_QUERY
 }
 
-/// The queries: the first shadow pass's start and the last's end, then
-/// the scene pass's start and end.
-const QUERIES: u32 = 4;
+/// The queries: the first shadow pass's start and the last's end, the
+/// scene pass's start and end, then the first post pass's start and the
+/// last's end.
+const QUERIES: u32 = 6;
 const SHADOW: u32 = 0;
 const SCENE: u32 = 2;
+const POST: u32 = 4;
 const BYTES: u64 = QUERIES as u64 * wgpu::QUERY_SIZE as u64;
 
 /// Frames whose readings may be on their way at once: one recorded, one
@@ -62,8 +67,13 @@ pub(crate) struct Timer {
     /// Nanoseconds a timestamp tick is on this queue.
     period: f32,
     last: Option<Duration>,
-    /// The last reading has not been taken yet.
+    /// The post passes' time of the last reading, `None` where the frame
+    /// had none.
+    last_post: Option<Duration>,
+    /// The last reading has not been taken yet, its scene time and its
+    /// post time each.
     fresh: bool,
+    fresh_post: bool,
 }
 
 struct Read {
@@ -71,6 +81,8 @@ struct Read {
     state: Arc<AtomicU8>,
     /// Whether the frame drew shadows: its shadow queries were written.
     shadows: bool,
+    /// Whether it drew post passes: its post queries were written.
+    post: bool,
 }
 
 impl Timer {
@@ -88,6 +100,7 @@ impl Timer {
             }),
             state: Arc::new(AtomicU8::new(FREE)),
             shadows: false,
+            post: false,
         };
         Some(Timer {
             queries: device.create_query_set(&wgpu::QuerySetDescriptor {
@@ -105,7 +118,9 @@ impl Timer {
             this: None,
             period: 1.0,
             last: None,
+            last_post: None,
             fresh: false,
+            fresh_post: false,
         })
     }
 
@@ -129,13 +144,15 @@ impl Timer {
                             for (tick, b) in ticks.iter_mut().zip(bytes.as_chunks::<8>().0) {
                                 *tick = u64::from_le_bytes(*b);
                             }
-                            reading(&ticks, read.shadows, self.period)
+                            reading(&ticks, read.shadows, read.post, self.period)
                         });
                     read.buffer.unmap();
                     read.state.store(FREE, Ordering::Release);
-                    if took.is_some() {
-                        self.last = took;
+                    if let Some((scene, post)) = took {
+                        self.last = Some(scene);
+                        self.last_post = post;
                         self.fresh = true;
+                        self.fresh_post = true;
                     }
                 }
                 COPIED => {
@@ -178,6 +195,16 @@ impl Timer {
         self.pass(first, last, SCENE)
     }
 
+    /// Where a post pass writes its timestamps: the first its start, the
+    /// last its end.
+    pub(crate) fn post_pass(
+        &self,
+        first: bool,
+        last: bool,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        self.pass(first, last, POST)
+    }
+
     fn pass(&self, begin: bool, end: bool, at: u32) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
         // A pass between the first and the last writes nothing, and wgpu
         // refuses writes that name no index.
@@ -194,16 +221,18 @@ impl Timer {
     /// The frame's passes are recorded: its timestamps go to its read.
     /// Only the queries the frame wrote are resolved; a query never
     /// written may hold anything, or make the resolve wait for it.
-    pub(crate) fn end(&mut self, encoder: &mut wgpu::CommandEncoder, shadows: bool) {
+    pub(crate) fn end(&mut self, encoder: &mut wgpu::CommandEncoder, shadows: bool, post: bool) {
         let Some(i) = self.this.take() else {
             return;
         };
         let first = if shadows { SHADOW } else { SCENE };
-        let bytes = u64::from(QUERIES - first) * u64::from(wgpu::QUERY_SIZE);
-        encoder.resolve_query_set(&self.queries, first..QUERIES, &self.resolve, 0);
+        let last = if post { QUERIES } else { POST };
+        let bytes = u64::from(last - first) * u64::from(wgpu::QUERY_SIZE);
+        encoder.resolve_query_set(&self.queries, first..last, &self.resolve, 0);
         let read = &mut self.reads[i];
         encoder.copy_buffer_to_buffer(&self.resolve, 0, &read.buffer, 0, bytes);
         read.shadows = shadows;
+        read.post = post;
         read.state.store(COPIED, Ordering::Release);
     }
 
@@ -218,23 +247,51 @@ impl Timer {
             .then_some(self.last)
             .flatten()
     }
+
+    /// The post passes' GPU time of the last frame read, where it had any.
+    pub(crate) fn last_post(&self) -> Option<Duration> {
+        self.last_post
+    }
+
+    /// [`Self::last_post`], only if it was read since the last time this
+    /// was asked.
+    pub(crate) fn take_post(&mut self) -> Option<Duration> {
+        std::mem::take(&mut self.fresh_post)
+            .then_some(self.last_post)
+            .flatten()
+    }
 }
 
 /// The GPU time `ticks` (the shadow passes' start and end when `shadows`,
-/// then the scene pass's) come to, `period` nanoseconds a tick; `None`
-/// for readings that make no sense, as a query a driver did not write.
-fn reading(ticks: &[u64], shadows: bool, period: f32) -> Option<Duration> {
-    let ticks = if shadows { &ticks[..4] } else { &ticks[..2] };
-    let mut sum = 0u64;
-    for &[start, end] in ticks.as_chunks::<2>().0 {
-        if start == 0 || end < start {
-            return None;
+/// then the scene pass's, then the post passes' when `post`) come to,
+/// `period` nanoseconds a tick: the shadows and the scene, and the post
+/// passes apart. `None` for readings that make no sense, as a query a
+/// driver did not write.
+fn reading(
+    ticks: &[u64],
+    shadows: bool,
+    post: bool,
+    period: f32,
+) -> Option<(Duration, Option<Duration>)> {
+    let scene = if shadows { 4 } else { 2 };
+    let span = |ticks: &[u64]| {
+        let mut sum = 0u64;
+        for &[start, end] in ticks.as_chunks::<2>().0 {
+            if start == 0 || end < start {
+                return None;
+            }
+            sum += end - start;
         }
-        sum += end - start;
-    }
-    Some(Duration::from_nanos(
-        (sum as f64 * f64::from(period)) as u64,
-    ))
+        Some(Duration::from_nanos(
+            (sum as f64 * f64::from(period)) as u64,
+        ))
+    };
+    let post = if post {
+        Some(span(&ticks[scene..scene + 2])?)
+    } else {
+        None
+    };
+    Some((span(&ticks[..scene])?, post))
 }
 
 #[cfg(test)]
@@ -243,20 +300,40 @@ mod tests {
 
     #[test]
     fn a_reading_adds_the_passes_and_refuses_what_makes_no_sense() {
+        let ns = Duration::from_nanos;
         assert_eq!(
-            reading(&[100, 300, 400, 1000, 0, 0], true, 1.0),
-            Some(Duration::from_nanos(800))
+            reading(&[100, 300, 400, 1000, 0, 0], true, false, 1.0),
+            Some((ns(800), None))
         );
         // Without shadows the scene's pair comes first.
         assert_eq!(
-            reading(&[400, 1000, 7, 7], false, 2.0),
-            Some(Duration::from_nanos(1200))
+            reading(&[400, 1000, 7, 7], false, false, 2.0),
+            Some((ns(1200), None))
         );
         assert_eq!(
-            reading(&[500, 400], false, 1.0),
+            reading(&[500, 400], false, false, 1.0),
             None,
             "ends before it starts"
         );
-        assert_eq!(reading(&[0, 400], false, 1.0), None, "never written");
+        assert_eq!(reading(&[0, 400], false, false, 1.0), None, "never written");
+    }
+
+    #[test]
+    fn the_post_passes_are_a_span_apart_from_the_scene() {
+        let ns = Duration::from_nanos;
+        assert_eq!(
+            reading(&[100, 300, 400, 1000, 1000, 1500], true, true, 1.0),
+            Some((ns(800), Some(ns(500))))
+        );
+        // Without shadows the post pair follows the scene's.
+        assert_eq!(
+            reading(&[400, 1000, 1100, 1200, 0, 0], false, true, 2.0),
+            Some((ns(1200), Some(ns(200))))
+        );
+        assert_eq!(
+            reading(&[400, 1000, 0, 1200], false, true, 1.0),
+            None,
+            "a post query never written"
+        );
     }
 }

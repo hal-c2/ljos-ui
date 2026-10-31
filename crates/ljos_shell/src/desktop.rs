@@ -1492,6 +1492,15 @@ impl<M: Send + 'static> Desktop<M> {
             &mut slot.pending,
             &surface.window,
         );
+        // DebugView's numbers: a pass with no reading keeps the last.
+        #[cfg(feature = "quick3d")]
+        if let Some(scene) = steps.gpu_3d {
+            let post = steps.gpu_post.unwrap_or_default();
+            ljos_3d::stats::set_gpu_seconds(
+                Some((scene + post).as_secs_f64()),
+                steps.gpu_post.map(|p| p.as_secs_f64()),
+            );
+        }
         #[cfg(not(feature = "mcp"))]
         let _ = steps;
         #[cfg(feature = "mcp")]

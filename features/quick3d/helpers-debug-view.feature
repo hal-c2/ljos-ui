@@ -45,6 +45,14 @@ Feature: A panel of how the scene is drawn
     And the property "frames" of "stats" is at least 1
     And the property "gpuTime" of "stats" is -1
 
+  Scenario: The time of the passes after the scene is apart from the GPU time
+    # gpuTime holds the post-processing passes too and gpuPostTime those
+    # alone. Both stay -1 where the host does not measure them, and
+    # gpuPostTime stays -1 for a scene with no post-processing.
+    When 1 second passes
+    Then the property "gpuTime" of "stats" is -1
+    And the property "gpuPostTime" of "stats" is -1
+
   Scenario: A scene that is not drawn any more has no frame rate
     When 2 seconds pass
     Then the property "fps" of "stats" is 0

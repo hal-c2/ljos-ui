@@ -20,6 +20,7 @@ use crate::custom::{BufferFormat, Effect, GlowBlend, PassTexture, PostProcess};
 use crate::maps::{self, Maps};
 use crate::programs::{self, Header, Programs};
 use crate::scene::{Environment, Tonemap};
+use crate::timing::Timer;
 
 /// What a post-processed scene is drawn into: light past 1 is kept for
 /// the tonemapper, and the format renders and filters everywhere.
@@ -283,6 +284,11 @@ pub(crate) struct Chain<'a> {
     pub output_format: wgpu::TextureFormat,
     /// How many times the target was drawn, the effects' FRAME.
     pub frame: f32,
+    /// Where the chain's passes write their GPU time, when it is timed.
+    pub timer: Option<&'a Timer>,
+    /// Whether a pass before the chain (the camera's depth) started the
+    /// time already.
+    pub started: bool,
 }
 
 struct Pass<'v> {
@@ -293,9 +299,18 @@ struct Pass<'v> {
     format: wgpu::TextureFormat,
     add: bool,
     clear: bool,
+    /// The chain's last pass, which ends its GPU time.
+    last: bool,
 }
 
-impl Chain<'_> {
+impl<'a> Chain<'a> {
+    /// Where a pass writes its timestamps: the chain's first its start,
+    /// its last its end.
+    fn stamp(&mut self, last: bool) -> Option<wgpu::RenderPassTimestampWrites<'a>> {
+        let first = !std::mem::replace(&mut self.started, true);
+        self.timer.and_then(|t| t.post_pass(first, last))
+    }
+
     fn uniform(&self) -> PostUniform {
         let env = self.environment;
         let post = &env.post;
@@ -418,6 +433,7 @@ impl Chain<'_> {
                 },
             ],
         });
+        let timestamp_writes = self.stamp(p.last);
         let pipeline = self.pipes.pipeline(self.device, p.entry, p.format, p.add);
         let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some(p.entry),
@@ -434,6 +450,7 @@ impl Chain<'_> {
                     store: wgpu::StoreOp::Store,
                 },
             })],
+            timestamp_writes,
             ..Default::default()
         });
         pass.set_pipeline(pipeline);
@@ -468,6 +485,7 @@ impl Chain<'_> {
                     format: wgpu::TextureFormat::Rgba8Unorm,
                     add: false,
                     clear: true,
+                    last: false,
                 },
                 &base,
                 size,
@@ -486,6 +504,7 @@ impl Chain<'_> {
                     format: HDR,
                     add: false,
                     clear: true,
+                    last: false,
                 },
                 &base,
                 size,
@@ -515,6 +534,7 @@ impl Chain<'_> {
                     format: HDR,
                     add: false,
                     clear: true,
+                    last: false,
                 },
                 &base,
                 size,
@@ -555,6 +575,7 @@ impl Chain<'_> {
                 format: HDR,
                 add: false,
                 clear: true,
+                last: false,
             };
             self.pass(simple(entry, &from.0, &level), base, from.1, [0.0; 2], None);
             self.pass(simple("fs_blur", &level, &blur), base, s, [1.0, 0.0], None);
@@ -578,6 +599,7 @@ impl Chain<'_> {
                     format: HDR,
                     add: true,
                     clear: first,
+                    last: false,
                 },
                 base,
                 *s,
@@ -596,6 +618,7 @@ impl Chain<'_> {
                 format: HDR,
                 add: false,
                 clear: true,
+                last: false,
             },
             base,
             size,
@@ -626,6 +649,7 @@ impl Chain<'_> {
                 format,
                 add: false,
                 clear: true,
+                last: !fxaa,
             },
             base,
             size,
@@ -642,6 +666,7 @@ impl Chain<'_> {
                     format,
                     add: false,
                     clear: true,
+                    last: true,
                 },
                 base,
                 size,
@@ -742,6 +767,8 @@ impl Chain<'_> {
             let group = self
                 .programs
                 .group(device, program, &buffer, &textures, depth, None);
+            // The final pass comes after every effect, so none ends the time.
+            let timestamp_writes = self.stamp(false);
             let pipeline = self.programs.effect_pipeline(device, program, format);
             let mut rp = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ljos_3d effect"),
@@ -754,6 +781,7 @@ impl Chain<'_> {
                         store: wgpu::StoreOp::Store,
                     },
                 })],
+                timestamp_writes,
                 ..Default::default()
             });
             rp.set_pipeline(pipeline);

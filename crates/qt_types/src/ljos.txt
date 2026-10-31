@@ -8530,12 +8530,14 @@ module QtQuick3D.Helpers
 		prop shadowPasses QtQml.int named readonly
 		prop frames QtQml.int named readonly
 		prop gpuTime QtQml.real named readonly
+		prop gpuPostTime QtQml.real named readonly
 		signal fpsChanged
 		signal frameTimeChanged
 		signal drawCallsChanged
 		signal shadowPassesChanged
 		signal framesChanged
 		signal gpuTimeChanged
+		signal gpuPostTimeChanged
 		method refresh
 	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
 		prototype QtQuick3D.Geometry named

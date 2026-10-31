@@ -49,6 +49,11 @@ Rectangle {
             text: "GPU: " + stats.gpuTime.toFixed(2) + " ms"
         }
         Text {
+            visible: stats.gpuPostTime >= 0
+            color: "white"
+            text: "GPU post: " + stats.gpuPostTime.toFixed(2) + " ms"
+        }
+        Text {
             visible: root.resourceDetailsVisible
             color: "white"
             text: "Draw calls: " + stats.drawCalls

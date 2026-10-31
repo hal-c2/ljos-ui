@@ -1650,6 +1650,7 @@ fn a_painter_that_does_not_time_its_steps_apart_says_none() {
     assert_eq!(p["draw_us"], Value::Null);
     assert_eq!(p["present_us"], Value::Null);
     assert_eq!(p["gpu_3d_us"], Value::Null);
+    assert_eq!(p["gpu_post_us"], Value::Null);
 }
 
 #[test]
@@ -1682,6 +1683,38 @@ fn the_gpu_time_of_3d_views_is_counted_as_it_comes_back() {
         reply
             .text
             .contains("drawing 3D on the GPU last 0.50 ms, longest 0.50 ms"),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn the_gpu_time_of_post_processing_is_counted_apart() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    let us = Duration::from_micros;
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        gpu_3d: Some(us(300)),
+        gpu_post: Some(us(200)),
+        ..PaintReport::default()
+    });
+    // A view that stops post-processing reads a scene time only.
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        gpu_3d: Some(us(400)),
+        ..PaintReport::default()
+    });
+    let reply = app.call("app_metrics", json!({}));
+    let p = &reply.structured["paint"];
+    assert_eq!(p["gpu_3d_us"]["total"], 700, "{p}");
+    let g = &p["gpu_post_us"];
+    assert_eq!(g["last"], 200, "{g}");
+    assert_eq!(g["total"], 200);
+    assert!(
+        reply
+            .text
+            .contains("post-processing 3D on the GPU last 0.20 ms, longest 0.20 ms"),
         "{}",
         reply.text
     );

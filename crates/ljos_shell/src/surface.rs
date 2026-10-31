@@ -384,14 +384,18 @@ impl Painter {
                 let all = started.elapsed();
                 let waited = std::time::Duration::from_secs_f32(waited.max(0.0)).min(all);
                 #[cfg(feature = "quick3d")]
-                let gpu_3d = crate::scene3d::take_gpu_time(painter);
+                let (gpu_3d, gpu_post) = (
+                    crate::scene3d::take_gpu_time(painter),
+                    crate::scene3d::take_gpu_post_time(painter),
+                );
                 #[cfg(not(feature = "quick3d"))]
-                let gpu_3d = None;
+                let (gpu_3d, gpu_post) = (None, None);
                 Steps {
                     upload,
                     draw: Some(all - waited),
                     present: Some(waited),
                     gpu_3d,
+                    gpu_post,
                     moved: false,
                 }
             }

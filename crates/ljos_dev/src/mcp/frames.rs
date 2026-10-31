@@ -132,6 +132,7 @@ pub(super) fn paint_json(p: &PaintReport) -> Value {
         "draw_us": p.draw.map(us),
         "present_us": p.present.map(us),
         "gpu_3d_us": p.gpu_3d.map(us),
+        "gpu_post_us": p.gpu_post.map(us),
         "moved": p.moved,
     })
 }

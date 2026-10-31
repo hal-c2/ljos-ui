@@ -93,6 +93,11 @@ pub struct PaintReport {
     /// nothing waits for the GPU. `None` when none came back, or the device
     /// cannot time without waiting.
     pub gpu_3d: Option<Duration>,
+    /// Of the same readings, how long the GPU took for the views'
+    /// post-processing passes (the camera's depth, ambient occlusion,
+    /// effects, depth of field, glow, the final tonemap and FXAA), which
+    /// `gpu_3d` leaves out. `None` where no view post-processes.
+    pub gpu_post: Option<Duration>,
     /// Pictures handed to the device in the pass, glyph atlas included.
     pub uploads: usize,
     pub upload_bytes: usize,
@@ -214,6 +219,7 @@ pub(crate) struct PaintStats {
     draw: Option<Cost>,
     present: Option<Cost>,
     gpu_3d: Option<Cost>,
+    gpu_post: Option<Cost>,
     uploads: u64,
     upload_bytes: u64,
     asked: Option<Cost>,
@@ -247,8 +253,13 @@ impl PaintStats {
             }
         }
         // A reading can come back with any pass, drawn or not.
-        if let Some(t) = report.gpu_3d {
-            self.gpu_3d.get_or_insert_with(Cost::default).add(t);
+        for (cost, t) in [
+            (&mut self.gpu_3d, report.gpu_3d),
+            (&mut self.gpu_post, report.gpu_post),
+        ] {
+            if let Some(t) = t {
+                cost.get_or_insert_with(Cost::default).add(t);
+            }
         }
         // A pass that presents nothing still hands pictures over.
         self.uploads += report.uploads as u64;
@@ -267,6 +278,7 @@ impl PaintStats {
             "draw_us": self.draw.as_ref().map_or(Value::Null, Cost::json),
             "present_us": self.present.as_ref().map_or(Value::Null, Cost::json),
             "gpu_3d_us": self.gpu_3d.as_ref().map_or(Value::Null, Cost::json),
+            "gpu_post_us": self.gpu_post.as_ref().map_or(Value::Null, Cost::json),
             "uploads": self.uploads,
             "upload_bytes": self.upload_bytes,
             "asked_to_presented_us": self.asked.as_ref().map_or(Value::Null, Cost::json),
@@ -298,6 +310,7 @@ impl PaintStats {
             ("drawing", &self.draw),
             ("presenting", &self.present),
             ("drawing 3D on the GPU", &self.gpu_3d),
+            ("post-processing 3D on the GPU", &self.gpu_post),
         ]
         .into_iter()
         .filter_map(|(name, cost)| {

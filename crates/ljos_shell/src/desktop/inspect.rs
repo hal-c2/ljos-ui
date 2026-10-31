@@ -80,6 +80,7 @@ impl Meter {
             draw: steps.draw,
             present: steps.present,
             gpu_3d: steps.gpu_3d,
+            gpu_post: steps.gpu_post,
             moved: steps.moved,
         }
     }
