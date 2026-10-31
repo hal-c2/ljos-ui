@@ -27,7 +27,7 @@ Sources: [Qt Quick 3D](https://doc.qt.io/qt-6/qtquick3d-index.html), [View3D](ht
 
 - **2D items in 3D beyond clicks.** Items in 3D take presses and what follows them, not hover or the wheel; their pictures are CPU pixels, not a texture shared on the GPU.
 - **What custom shaders cannot have yet.** `DEPTH_TEXTURE`, `AO_TEXTURE` and `NORMAL_ROUGHNESS_TEXTURE` in a material (an effect has `DEPTH_TEXTURE`): the camera's depth is drawn after the scene pass, for the post passes, and a material would need it before. `MORPH_*` built-ins, as morph targets are applied when a file is built. A snippet on the network is not read.
-- **Particles3D, physics and XR.**
+- **Particles3D and XR.**
 - **`QuadTextureProvider`, `RenderOutputProvider` and `SimpleQuadRenderer` from `QtQuick3D.Helpers`.** They are not registered: each works on the textures of render passes, and Ljós has no `RenderPass` API for them to read or draw into. The rest of the module is built (M10, M11, M12).
 - **`TextureData` with depth or a block-compressed format.** Both are reported in the log and not drawn.
 - **Animations in a glTF file**, so a skin's joints and a mesh's morph weights stay as the file leaves them. Joints move when QML moves them.
@@ -315,6 +315,32 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
   - `tests/offscreen.rs` checks the clear colour at the corners, three distinctly lit faces, a transparent background, and that an unchanged revision is not drawn again.
 - `ljos_egui/tests/scene3d.rs` paints red under a view in a real egui-wgpu frame. Red shows where the cube is not, and every opaque pixel of the cube equals the off-screen reference exactly. Two views in one frame keep their own scenes, which is why uniforms are per target and not shared.
 - `cargo check --target wasm32-unknown-unknown -p ljos_3d` passes with and without `gpu`, `SurfaceView` included.
+
+## Physics
+
+`QtQuick3D.Physics` is built natively: `PhysicsWorld`, `PhysicsMaterial`, `StaticRigidBody`, `DynamicRigidBody`, `TriggerBody`, `CharacterController` and the shapes `BoxShape`, `SphereShape`, `CapsuleShape`, `PlaneShape`, `ConvexMeshShape`, `TriangleMeshShape`, `HeightFieldShape`.
+
+**Engine (decision).** [rapier3d](https://rapier.rs) 0.36.1, Apache-2.0, with `f32`, pinned in `[workspace.dependencies]`. It is pure Rust, so it builds for every target without a C++ toolchain, wasm included.
+
+**Two crates.** `ljos_physics` holds the simulation and knows nothing of QML or the engine. `ljos_quick3d_physics` holds the QML types over it; an app registers them by calling `ljos_quick3d_physics::register`, and `ljos`, `ljos_quick3d` and `ljos_shell` do not depend on it, so an app without physics links no rapier.
+
+**Web embedding contract.** `ljos_physics` builds for `wasm32-unknown-unknown` (`cargo check --target wasm32-unknown-unknown -p ljos_physics`). It takes plain numbers and returns plain numbers: bodies and shapes are described and commanded through its API, `step` is called with a time, and what moved and what touched is read back afterwards. It owns no clock, thread, file or GPU handle. A web embedding therefore drives it from its own frame callback, writes the poses into its own scene, and loads mesh bytes itself.
+
+**Writing back.** A world steps on a hidden `FrameAnimation`, and each body that moved has `position` and `rotation` written as ordinary properties, so bindings on them and the scene's tracking work as for any other write. The clock stops when every body is asleep and nothing was asked of the world, and an application's write or command wakes it, so a resting world costs no processor time (`features/quick3d/physics-idle.feature`).
+
+**Where it differs from PhysX, which Qt uses.**
+
+- One friction coefficient: rapier has no separate static and dynamic friction. `staticFriction` is kept and not used.
+- Sleeping follows the PhysX rule of 1 % of `typicalSpeed`, but bodies do not fall asleep on the same step as under PhysX, so a simulation is not the same step for step.
+- A `CharacterController` does not push what it walks into, and `shapeHit`'s impulse is zero.
+- A contact's start may be reported slightly before the shapes touch, as rapier predicts contacts.
+- `forceDebugDraw`, `numThreads` and `viewport` are kept without effect. The tuning values are read when the world is made.
+- `frameDone` is signalled only while steps run.
+- A body's mass is worked out before the commands of a step are applied. `MassAndInertiaMatrix` takes `inertiaMatrix` as a list of nine numbers; anything else counts as identity.
+
+**Cost.** 100 box dice with continuous collision detection on a plane, stepping 1/60 s, in release, rapier's step only: dropped from a spaced grid, 0.114 ms a step on average and 0.213 ms at most, all asleep at step 143; a pile of 5×5×4, 0.116 ms over the first 20 steps and 0.085 ms over the next 20, asleep at step 48. Writing the poses back to properties is not in those numbers.
+
+**`.mesh` files.** `Model.source` reads the binary `.mesh` format (`ljos_3d::mesh_file`), each subset becoming a part with its own material, and a physics mesh shape reads the triangles from the same file. Positions, normals, both texture coordinates and indices are read; joints, tangents, colours and morph targets are not.
 
 ## Decisions
 
