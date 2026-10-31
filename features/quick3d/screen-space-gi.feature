@@ -13,8 +13,9 @@ Feature: Screen-space global illumination of ExtendedSceneEnvironment
   light. With ssgiIndirectLightEnabled off only the darkening is left,
   like ambient occlusion.
 
-  # A white wall stands 10 units behind a red box that faces the camera;
-  # a light from the camera's side lights both.
+  # A red box stands on a white floor, seen from the front and above, with
+  # the light coming from behind the camera. The floor at the box's foot is
+  # beside the box's lit front.
   Background:
     Given the QML:
       """qml
@@ -29,14 +30,14 @@ Feature: Screen-space global illumination of ExtendedSceneEnvironment
             objectName: "env"
             clearColor: "black"; backgroundMode: SceneEnvironment.Color
           }
-          OrthographicCamera { z: 600; clipNear: 1; clipFar: 1000 }
-          DirectionalLight { brightness: 1 }
+          PerspectiveCamera { y: 200; z: 300; eulerRotation.x: -33.7 }
+          DirectionalLight { eulerRotation.x: -45 }
           Model {
-            source: "#Rectangle"; z: -60; scale: Qt.vector3d(4, 4, 1)
+            source: "#Rectangle"; eulerRotation.x: -90; scale: Qt.vector3d(8, 8, 1)
             materials: DefaultMaterial { diffuseColor: "white" }
           }
           Model {
-            source: "#Cube"
+            source: "#Cube"; y: 50
             materials: DefaultMaterial { diffuseColor: "red" }
           }
         }
@@ -57,28 +58,28 @@ Feature: Screen-space global illumination of ExtendedSceneEnvironment
       And the property "ssgiSimulatedBounceFactor" of "env" is 0.5
       And the property "ssgiSliceCount" of "env" is 4
 
-    Scenario: Without it the wall beside the box is evenly lit
-      Then the pixel at 45, 100 of the window is within 2 of "#ffffff"
-      And the pixel at 10, 100 of the window is within 2 of "#ffffff"
+    Scenario: Without it the floor is evenly lit
+      Then the pixel at 100, 120 of the window is within 2 of "#dbdbdb"
+      And the pixel at 100, 190 of the window is within 2 of "#dbdbdb"
 
-  Rule: The box throws its red light onto the wall beside it
+  Rule: The box throws its red light onto the floor at its foot
 
-    Scenario: With it the wall by the box turns red
+    Scenario: With it the floor by the box turns red
       When the property "ssgiEnabled" of "env" is set to true
-      Then the pixel at 45, 100 of the window is not "#ffffff"
-      And the pixel at 10, 100 of the window is within 8 of "#ffffff"
+      Then the pixel at 100, 120 of the window is within 8 of "#ffc2c2"
+      And the pixel at 100, 190 of the window is within 3 of "#dbdbdb"
 
   Rule: Without the indirect light only the darkening is left
 
-    Scenario: The wall by the box only darkens
+    Scenario: The floor by the box only darkens
       When the property "ssgiIndirectLightEnabled" of "env" is set to false
       And the property "ssgiEnabled" of "env" is set to true
-      Then the pixel at 45, 100 of the window is not "#ffffff"
-      And the pixel at 10, 100 of the window is within 8 of "#ffffff"
+      Then the pixel at 100, 120 of the window is within 8 of "#c2c2c2"
+      And the pixel at 100, 190 of the window is within 3 of "#dbdbdb"
 
   Rule: A still scene with global illumination does no work
 
     Scenario: Nothing is scheduled once it is drawn
       When the property "ssgiEnabled" of "env" is set to true
-      Then the pixel at 45, 100 of the window is not "#ffffff"
+      Then the pixel at 100, 120 of the window is within 8 of "#ffc2c2"
       And the application has nothing scheduled

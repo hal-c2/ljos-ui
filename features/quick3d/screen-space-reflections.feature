@@ -33,10 +33,7 @@ Feature: Screen-space reflections of ExtendedSceneEnvironment
           PerspectiveCamera { y: 100; z: 300; eulerRotation.x: -18.43 }
           Model {
             source: "#Rectangle"; eulerRotation.x: -90; scale: Qt.vector3d(6, 6, 1)
-            materials: PrincipledMaterial {
-              objectName: "floor"
-              baseColor: "white"; metalness: 1; roughness: 0
-            }
+            materials: PrincipledMaterial { objectName: "floor"; baseColor: "white"; metalness: 1; roughness: 0 }
           }
           Model {
             source: "#Cube"; y: 50; scale: Qt.vector3d(0.5, 0.5, 0.5)

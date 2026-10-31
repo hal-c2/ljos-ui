@@ -55,7 +55,7 @@ Feature: The lens flare of ExtendedSceneEnvironment
       And the property "lensFlareBlurAmount" of "env" is 3
       And the property "lensFlareApplyDirtTexture" of "env" is false
       And the property "lensFlareApplyStarburstTexture" of "env" is false
-      And the property "lensFlareCameraDirection" of "env" is "QVector3D(0, 0, -1)"
+      And the property "lensFlareCameraDirection" of "env" is {"x":0,"y":0,"z":-1}
 
     Scenario: Without the flare the far side of the view stays black
       Then the pixel at 160, 160 of the window is within 2 of "#000000"
@@ -80,6 +80,12 @@ Feature: The lens flare of ExtendedSceneEnvironment
       And the property "lensFlareHaloWidth" of "env" is set to 0
       And the property "lensFlareEnabled" of "env" is set to true
       Then the pixel at 160, 160 of the window is within 2 of "#000000"
+
+    Scenario: Without ghosts the halo still flares
+      When the property "lensFlareBloomBias" of "env" is set to 0
+      And the property "lensFlareGhostCount" of "env" is set to 0
+      And the property "lensFlareEnabled" of "env" is set to true
+      Then the pixel at 94, 94 of the window is not "#000000"
 
     Scenario Outline: The flare still shows with the <texture> texture applied
       When the property "lensFlareBloomBias" of "env" is set to 0
