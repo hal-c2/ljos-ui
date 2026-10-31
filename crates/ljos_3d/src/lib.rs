@@ -17,11 +17,13 @@ pub mod mesh;
 pub mod pick;
 pub mod qml;
 pub mod scene;
+pub mod sky;
 pub mod slot;
 #[cfg(feature = "snippets")]
 pub mod snippet;
 pub mod stats;
 pub mod texture;
+pub mod texture_data;
 
 #[cfg(feature = "gpu")]
 pub mod gpu;
