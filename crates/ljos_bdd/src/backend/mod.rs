@@ -4,6 +4,7 @@ use std::fmt;
 
 use serde_json::Value;
 
+#[cfg(target_os = "linux")]
 pub mod desktop;
 pub mod fake_platform;
 pub mod inspector;
@@ -1357,6 +1358,8 @@ impl BackendMode {
     pub fn backends_for(self, qt_parity: bool, desktop: bool) -> Vec<Box<dyn Backend>> {
         let mut out: Vec<Box<dyn Backend>> = Vec::new();
         if desktop {
+            // Off Linux the runner has left these scenarios out already.
+            #[cfg(target_os = "linux")]
             if matches!(self, Self::Ljos | Self::Both) {
                 out.push(Box::new(desktop::DesktopBackend::new()));
             }
@@ -1410,9 +1413,13 @@ pub(crate) fn own_home(
         let Some(from) = from.map(|f| f.join(to.file_name().unwrap_or_default())) else {
             continue;
         };
+        #[cfg(unix)]
         if from.is_dir() && !to.exists() {
             std::os::unix::fs::symlink(&from, &to)?;
         }
+        // Where there are no symbolic links the sandbox goes without them.
+        #[cfg(not(unix))]
+        let _ = (from, &to);
     }
     command
         .env("HOME", &home)

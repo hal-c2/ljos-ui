@@ -73,6 +73,7 @@ fn changes_files(
 pub fn run() -> bool {
     let mode = BackendMode::from_env();
     // Without Ljós in the run, a scenario that Qt cannot see has nothing to run on.
+    #[cfg_attr(not(target_os = "linux"), expect(unused_mut))]
     let mut selection = Selection {
         require_tag: (mode == BackendMode::Qt).then(|| "qt-parity".to_owned()),
         oracle_only: mode == BackendMode::Qt,
@@ -80,6 +81,11 @@ pub fn run() -> bool {
     };
     // The desktop surface is Ljós on the desktop sandbox; without one its
     // scenarios are left out, and the run says why.
+    #[cfg(not(target_os = "linux"))]
+    if mode != BackendMode::Qt {
+        eprintln!("@desktop scenarios not run: the desktop sandbox is a Wayland compositor");
+    }
+    #[cfg(target_os = "linux")]
     if mode != BackendMode::Qt {
         match crate::backend::desktop::unavailable() {
             None => selection.surfaces.push("desktop".into()),

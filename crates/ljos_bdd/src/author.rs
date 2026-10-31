@@ -740,9 +740,19 @@ fn octal(mode: &str) -> Result<u32, String> {
 }
 
 #[cfg(unix)]
-fn permissions(bits: u32) -> std::fs::Permissions {
+fn set_mode(path: &Path, bits: u32) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::Permissions::from_mode(bits)
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(bits))
+}
+
+#[cfg(not(unix))]
+fn set_mode(_path: &Path, _bits: u32) -> std::io::Result<()> {
+    Err(std::io::ErrorKind::Unsupported.into())
+}
+
+#[cfg(not(unix))]
+fn has_mode(_: &Path, _: &str) -> Result<(), String> {
+    Err("files have no mode here".to_owned())
 }
 
 #[cfg(unix)]
@@ -1009,7 +1019,7 @@ impl Slot {
         let bits = octal(mode)?;
         let path = self.rig(files)?.dir.path().join(dir);
         std::fs::create_dir_all(&path)
-            .and_then(|()| std::fs::set_permissions(&path, permissions(bits)))
+            .and_then(|()| set_mode(&path, bits))
             .map_err(|e| format!("cannot make {}: {e}", path.display()))
     }
 

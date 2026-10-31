@@ -12,7 +12,6 @@ use std::{
     fs,
     io::{Read, Write},
     net::{SocketAddr, TcpStream},
-    os::unix::{fs::PermissionsExt as _, net::UnixStream},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
     time::{Duration, Instant},
@@ -93,6 +92,7 @@ fn short_dir() -> Result<tempfile::TempDir> {
 /// Where a client of the served inspector connects.
 enum Target {
     Tcp(SocketAddr),
+    #[cfg_attr(not(unix), expect(dead_code))]
     Unix(PathBuf),
 }
 
@@ -198,11 +198,14 @@ fn exchange(
             stream.set_read_timeout(Some(CLIENT_PATIENCE))?;
             exchange_on(stream, headers, body)
         }
+        #[cfg(unix)]
         Target::Unix(path) => {
-            let stream = UnixStream::connect(path)?;
+            let stream = std::os::unix::net::UnixStream::connect(path)?;
             stream.set_read_timeout(Some(CLIENT_PATIENCE))?;
             exchange_on(stream, headers, body)
         }
+        #[cfg(not(unix))]
+        Target::Unix(_) => Err(std::io::ErrorKind::Unsupported.into()),
     }
 }
 
@@ -304,19 +307,19 @@ impl Rig {
         let socket_dir = if on_socket { Some(short_dir()?) } else { None };
         let socket = socket_dir.as_ref().map(|d| d.path().join("i.sock"));
         let listen = match &socket {
-            Some(path) => Listen::Unix(path.clone()),
+            Some(path) => socket_listen(path)?,
             None => Listen::Loopback(0),
         };
         let server = mcp::serve(self.surface.clone(), listen, &token_file).map_err(failed)?;
         let written: Value = serde_json::from_str(&fs::read_to_string(&token_file)?)
             .map_err(|e| failed(format!("the token file is not JSON: {e}")))?;
         self.seen.token_file = Some(TokenFile {
-            mode: fs::metadata(&token_file)?.permissions().mode(),
+            mode: file_mode(&token_file)?,
             url: written["url"].as_str().unwrap_or_default().to_owned(),
             loopback: server.addr().is_some_and(|a| a.ip().is_loopback()),
         });
         if let Some(path) = &socket {
-            self.seen.socket_mode = Some(fs::metadata(path)?.permissions().mode());
+            self.seen.socket_mode = Some(file_mode(path)?);
         }
         self.served = Some(Served {
             server,
@@ -346,7 +349,7 @@ impl Rig {
         let dir = token_dir()?;
         let token_file = dir.path().join("mcp.json");
         let mut config = HttpConfig::loopback(CapSet::of([Cap::Inspect]));
-        config.listen = Listen::Unix(path.clone());
+        config.listen = socket_listen(&path)?;
         let mut listening = Listening::default();
         match mcp::serve_with(self.surface.clone(), config, &token_file) {
             Ok(server) => {
@@ -828,6 +831,28 @@ impl LjosBackend {
             .seen
             .clone())
     }
+}
+
+#[cfg(unix)]
+fn socket_listen(path: &Path) -> Result<Listen> {
+    Ok(Listen::Unix(path.to_owned()))
+}
+
+#[cfg(not(unix))]
+fn socket_listen(_: &Path) -> Result<Listen> {
+    Err(failed("there are no Unix sockets here"))
+}
+
+#[cfg(unix)]
+fn file_mode(path: &Path) -> std::io::Result<u32> {
+    use std::os::unix::fs::PermissionsExt as _;
+    Ok(fs::metadata(path)?.permissions().mode())
+}
+
+/// Nothing on this system has a mode: a scenario about one fails on the value.
+#[cfg(not(unix))]
+fn file_mode(path: &Path) -> std::io::Result<u32> {
+    fs::metadata(path).map(|_| 0)
 }
 
 /// A directory for a token file, which has to be the user's alone.

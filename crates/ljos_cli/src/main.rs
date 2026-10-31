@@ -10,6 +10,7 @@ use ljos_mcp_core::CapSet;
 
 mod attach;
 mod audit;
+#[cfg(target_os = "linux")]
 mod bench;
 mod check;
 mod demand;
@@ -91,6 +92,7 @@ enum Command {
     /// memory and CPU (a systemd scope); writes `report.json` and
     /// `report.md`. Exits with 2 when an application was not inside the
     /// limit asked for.
+    #[cfg(target_os = "linux")]
     Bench(Box<bench::Bench>),
     /// Open a window on a running application, as Erlang's observer
     /// opens one on a node: its processes, its mailboxes, its objects
@@ -109,6 +111,7 @@ enum Command {
         command: design::DesignCommand,
     },
     /// What `ljos bench` starts an application through.
+    #[cfg(target_os = "linux")]
     #[command(hide = true)]
     BenchGate(bench::Gate),
 }
@@ -202,11 +205,13 @@ fn run() -> anyhow::Result<()> {
             0 => Ok(()),
             status => exit(status),
         },
+        #[cfg(target_os = "linux")]
         Command::Bench(bench) => match bench.run()? {
             0 => Ok(()),
             status => exit(status),
         },
         // Returns only when the application could not be started.
+        #[cfg(target_os = "linux")]
         Command::BenchGate(gate) => Err(gate.run()),
     }
 }

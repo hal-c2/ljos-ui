@@ -19,11 +19,12 @@
 //! has handled everything before it. That is the acknowledgement; no sleep
 //! is needed.
 
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::{
     fmt::Debug,
     io::{self, Read, Write},
     net::{Ipv4Addr, TcpListener, TcpStream},
-    path::PathBuf,
     process::Command,
     thread,
     time::{Duration, Instant},

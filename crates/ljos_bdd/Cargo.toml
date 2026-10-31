@@ -37,9 +37,6 @@ gif.workspace = true
 ljos_a11y = { path = "../ljos_a11y" }
 # Every process a backend or the author starts ends with it.
 ljos_child = { path = "../ljos_child" }
-# The @desktop surface: the sandbox compositor's virtual pointer and its
-# windows (src/backend/desktop.rs).
-ljos_bench = { path = "../ljos_bench" }
 # The author's desktop: a session bus and settings portal of the
 # scenario's own (src/author/desktop.rs).
 zbus.workspace = true
@@ -91,6 +88,12 @@ ljos_ir = { path = "../ljos_ir" }
 qt_types = { path = "../qt_types" }
 # Only the R (vello_cpu) backend: egui stays out of this crate.
 ljos_render = { path = "../ljos_render", default-features = false }
+
+# The @desktop surface: the sandbox compositor's virtual pointer and its
+# windows (src/backend/desktop.rs). The sandbox is a Wayland compositor, so
+# the surface exists only on Linux.
+[target.'cfg(target_os = "linux")'.dependencies]
+ljos_bench = { path = "../ljos_bench" }
 
 [lints]
 workspace = true
