@@ -304,3 +304,30 @@ Feature: The Binding element
     Scenario: Once its value changes after them, what it holds comes back as before
       When the method "run" of "root" is called with true
       Then the property "seen" of "root" is "1,1,1;30,7,30;40,7,40;"
+
+  # A property QML cannot write, a Binding does not take either. One that
+  # never changes after creation is read without a dependency, so a layer on
+  # it would not reach what read it.
+  Rule: A Binding does not take a read-only property
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          QtObject { id: o; readonly property int r: 1 }
+          property int seen: o.r
+          property bool same: Qt.styleHints.accessibility === root
+          Binding { target: o; property: "r"; value: 7 }
+          Binding { target: Qt.styleHints; property: "accessibility"; value: root }
+        }
+        """
+
+    Scenario: A read-only property keeps its value and the Binding says why
+      Then the property "seen" of "root" is 1
+      And the log has a warning matching "Binding: Property 'r' on QtObject is read-only"
+
+    Scenario: A property that never changes after creation keeps its value
+      Then the property "same" of "root" is false
+      And the log has a warning matching "Binding: Property 'accessibility' on \w+ is read-only"

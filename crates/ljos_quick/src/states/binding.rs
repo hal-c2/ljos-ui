@@ -11,8 +11,8 @@
 
 use ljos_engine::{
     Atom, Cx, Engine, EngineError, ForeignMember, ForeignValue, LogLevel, ObjectId,
-    OverrideContent, OverrideId, PropIndex, QmlObject, QtObject, RestoreMode, TypeTag, Value,
-    qml_impl,
+    OverrideContent, OverrideId, PropIndex, PropertyFlags, QmlObject, QtObject, RestoreMode,
+    TypeTag, Value, qml_impl,
 };
 use ljos_reactive::WriteKind;
 
@@ -159,9 +159,16 @@ fn sync(engine: &Engine, me: ObjectId) {
     let name = read(Binding::PROPERTY.index).to_js_string();
     let aim = match target {
         Some(t) if !name.is_empty() => match engine.property_index(t, &name) {
+            // What QML cannot write a Binding does not take either: a
+            // property that never changes after creation is read without
+            // a dependency, so a layer on it would go unseen.
+            Ok(p) if read_only(engine, t, p) => {
+                warn_once(engine, me, t, &name, Wrong::ReadOnly);
+                None
+            }
             Ok(p) => Some((t, p)),
             Err(_) => {
-                warn_once(engine, me, t, &name);
+                warn_once(engine, me, t, &name, Wrong::Missing);
                 None
             }
         },
@@ -276,7 +283,7 @@ fn sync_members(engine: &Engine, me: ObjectId) {
             continue;
         };
         let Ok(p) = engine.property_index(t, &name) else {
-            warn_once(engine, me, t, &name);
+            warn_once(engine, me, t, &name, Wrong::Missing);
             continue;
         };
         if is_item(engine, t) {
@@ -308,7 +315,21 @@ fn sync_members(engine: &Engine, me: ObjectId) {
     let _ = engine.with_mut::<Binding, _>(me, |b| b.holds = Some(holds));
 }
 
-fn warn_once(engine: &Engine, me: ObjectId, target: ObjectId, name: &str) {
+fn read_only(engine: &Engine, target: ObjectId, prop: PropIndex) -> bool {
+    engine
+        .meta_of(target)
+        .and_then(|m| m.property(prop).map(|p| p.flags))
+        .is_some_and(|f| f.intersects(PropertyFlags::READONLY | PropertyFlags::CONSTANT))
+}
+
+/// Why a Binding takes no property of its target.
+#[derive(Clone, Copy)]
+enum Wrong {
+    Missing,
+    ReadOnly,
+}
+
+fn warn_once(engine: &Engine, me: ObjectId, target: ObjectId, name: &str, wrong: Wrong) {
     let first = engine
         .with_mut::<Binding, _>(me, |b| !std::mem::replace(&mut b.warned, true))
         .unwrap_or(false);
@@ -320,14 +341,12 @@ fn warn_once(engine: &Engine, me: ObjectId, target: ObjectId, name: &str) {
         .map(|m| m.name.to_string())
         .unwrap_or_default();
     let at = engine.declared_at(me).unwrap_or_default();
-    engine.log(
-        LogLevel::Warning,
-        "qml",
-        format!(
-            "{at}QML {}: Property '{name}' does not exist on {ty}.",
-            engine.warning_type_name(me, "Binding")
-        ),
-    );
+    let binding = engine.warning_type_name(me, "Binding");
+    let message = match wrong {
+        Wrong::Missing => format!("{at}QML {binding}: Property '{name}' does not exist on {ty}."),
+        Wrong::ReadOnly => format!("{at}QML {binding}: Property '{name}' on {ty} is read-only."),
+    };
+    engine.log(LogLevel::Warning, "qml", message);
 }
 
 /// `value` changed: passed on to the property held, or the first given

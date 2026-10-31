@@ -3020,7 +3020,15 @@ impl Engine {
                 .objects
                 .get(obj)
                 .ok_or_else(|| EngineError::dead(obj))?;
-            self.check_writable(h, prop, true)?.clone()
+            let ty = self.check_writable(h, prop, true)?;
+            // What never changes after creation is read without keeping
+            // the read (try_read): a layer on it would go unseen.
+            if let Some(p) = h.meta.property(prop)
+                && p.flags.contains(PropertyFlags::CONSTANT)
+            {
+                return Err(EngineError::ReadOnly(p.name.to_string()));
+            }
+            ty.clone()
         };
         let n = self.ensure_node(obj, prop)?;
         let g = &self.inner.graph;
