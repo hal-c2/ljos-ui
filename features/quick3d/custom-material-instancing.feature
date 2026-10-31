@@ -51,16 +51,20 @@ Feature: A CustomMaterial on an instanced model reads its copy
       """
     And the text file "lift.vert":
       """
+      VARYING vec4 tint;
       void MAIN()
       {
+          tint = vec4(1.0);
           VERTEX.y += 250.0;
           POSITION = INSTANCE_MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0);
       }
       """
     And the text file "stacked.vert":
       """
+      VARYING vec4 tint;
       void MAIN()
       {
+          tint = vec4(1.0);
           POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0);
       }
       """
@@ -151,3 +155,66 @@ Feature: A CustomMaterial on an instanced model reads its copy
       Then the pixel at 100, 100 of the window is within 2 of "#ffffff"
       And the pixel at 50, 100 of the window is "#202020"
       And the pixel at 150, 100 of the window is "#202020"
+
+  Rule: Every kind of table hands its custom data to INSTANCE_DATA
+
+    Scenario: A RandomInstancing's customData range reaches the snippet
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(0.2, 0.2, 0.2)
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                vertexShader: "copy.vert"; fragmentShader: "data.frag"
+              }
+              instancing: RandomInstancing {
+                instanceCount: 1
+                position: InstanceRange { from: Qt.vector3d(-50, 0, 0); to: Qt.vector3d(-50, 0, 0) }
+                customData: InstanceRange { from: Qt.vector4d(1, 0, 1, 0); to: Qt.vector4d(1, 0, 1, 0) }
+              }
+            }
+          }
+        }
+        """
+      Then the pixel at 50, 100 of the window is within 2 of "#ff00ff"
+      And the pixel at 150, 100 of the window is "#202020"
+
+    Scenario: A FileInstancing's custom attribute reaches the snippet
+      Given the text file "table.xml":
+        """
+        <InstanceTable>
+          <Instance position="50 0 0" custom="1 1 0"/>
+        </InstanceTable>
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(0.2, 0.2, 0.2)
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                vertexShader: "copy.vert"; fragmentShader: "data.frag"
+              }
+              instancing: FileInstancing { source: "table.xml" }
+            }
+          }
+        }
+        """
+      Then the pixel at 150, 100 of the window is within 2 of "#ffff00"
+      And the pixel at 50, 100 of the window is "#202020"

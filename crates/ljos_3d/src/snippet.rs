@@ -20,7 +20,7 @@ use naga::{Module, ShaderStage};
 
 use crate::custom::{
     EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT, MATERIAL_FRAGMENT_STRAIGHT,
-    MATERIAL_VERTEX, Program, ProgramKind, UniformKind,
+    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, UniformKind,
 };
 
 /// At most this many VARYINGs, each one location: WebGL2 guarantees few
@@ -455,25 +455,59 @@ fn lines(s: &str) -> u32 {
     s.matches('\n').count() as u32
 }
 
+/// The skin's joints, the model's group's second binding: the renderer
+/// fills it as lit.wgsl reads it, each joint's place times its inverse
+/// bind pose.
+const BONES: &str = "\
+layout(std140, set = 1, binding = 1) uniform LjosBones { mat4 ljosbones[256]; };\n\
+#define BONE_TRANSFORMS ljosbones\n";
+
 fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (String, u32) {
     let mut s = String::from(header);
+    s.push_str(BONES);
     s.push_str(
         "vec3 VERTEX; vec3 NORMAL; vec2 UV0; vec2 UV1; vec3 TANGENT; vec3 BINORMAL;\n\
-         vec4 COLOR; vec4 POSITION;\n",
+         vec4 COLOR; vec4 POSITION; ivec4 JOINTS; vec4 WEIGHTS;\n\
+         vec4 INSTANCE_COLOR; vec4 INSTANCE_DATA; int INSTANCE_INDEX; mat4 ljosinstance;\n\
+         #define INSTANCE_MODEL_MATRIX (ljosinstance * ljosmodel)\n\
+         #define INSTANCE_MODELVIEWPROJECTION_MATRIX (ljosviewprojection * ljosinstance * ljosmodel)\n\
+         mat3 ljoscofactor(mat4 ljosm) {\n\
+         \x20   vec3 ljosa = ljosm[0].xyz; vec3 ljosb = ljosm[1].xyz; vec3 ljosc = ljosm[2].xyz;\n\
+         \x20   return mat3(cross(ljosb, ljosc), cross(ljosc, ljosa), cross(ljosa, ljosb));\n\
+         }\n\
+         mat3 ljosbonenormal(int ljosi) {\n\
+         \x20   mat4 ljosm = ljosbones[clamp(ljosi, 0, 255)];\n\
+         \x20   float ljosdet = dot(ljosm[0].xyz, cross(ljosm[1].xyz, ljosm[2].xyz));\n\
+         \x20   return ljoscofactor(ljosm) / (abs(ljosdet) > 1e-12 ? ljosdet : 1.0);\n\
+         }\n",
     );
     let before = lines(&s);
-    s.push_str(user);
+    s.push_str(&bone_normals(user));
     s.push_str("\nstruct LjosVertex {\n    vec4 ljosclip; vec3 ljosworld; vec3 ljosnormal; vec4 ljosuvs;\n    vec3 ljostangent; vec3 ljosbinormal; vec4 ljoscolor;\n");
     for i in 0..out.len() {
         let _ = writeln!(s, "    vec4 ljosvary{};", letters(i));
     }
+    // The copy's place goes in front of the model's and the skin behind
+    // it, as lit.wgsl puts them; a skinned model's MODEL_MATRIX is the
+    // identity, its joints taking it into the scene.
     s.push_str(
         "};\n\
-         LjosVertex ljosvertex(vec3 ljosposition, vec3 ljosnormalin, vec2 ljosuv, vec4 ljostangentin) {\n\
-         \x20   VERTEX = ljosposition; NORMAL = ljosnormalin; UV0 = ljosuv; UV1 = ljosuv;\n\
+         LjosVertex ljosvertex(vec3 ljosposition, vec3 ljosnormalin, vec2 ljosuv, vec2 ljosuv1,\n\
+         \x20   vec4 ljostangentin, mat4 ljoscopy, vec4 ljoscopycolor, vec4 ljoscopydata, int ljoscopyindex,\n\
+         \x20   ivec4 ljosjoints, vec4 ljosweights, bool ljosskinned) {\n\
+         \x20   VERTEX = ljosposition; NORMAL = ljosnormalin; UV0 = ljosuv; UV1 = ljosuv1;\n\
          \x20   TANGENT = ljostangentin.xyz;\n\
          \x20   BINORMAL = cross(ljosnormalin, ljostangentin.xyz) * ljostangentin.w;\n\
-         \x20   COLOR = vec4(1.0); POSITION = vec4(0.0);\n",
+         \x20   COLOR = vec4(1.0); POSITION = vec4(0.0);\n\
+         \x20   JOINTS = ljosjoints; WEIGHTS = ljosweights;\n\
+         \x20   ljosinstance = ljoscopy; INSTANCE_COLOR = ljoscopycolor; INSTANCE_DATA = ljoscopydata;\n\
+         \x20   INSTANCE_INDEX = ljoscopyindex;\n\
+         \x20   mat4 ljosskin = mat4(1.0);\n\
+         \x20   if (ljosskinned) {\n\
+         \x20       ivec4 ljosj = clamp(ljosjoints, ivec4(0), ivec4(255));\n\
+         \x20       ljosskin = ljosbones[ljosj.x] * ljosweights.x + ljosbones[ljosj.y] * ljosweights.y\n\
+         \x20           + ljosbones[ljosj.z] * ljosweights.z + ljosbones[ljosj.w] * ljosweights.w;\n\
+         \x20   }\n",
     );
     for v in out {
         let _ = writeln!(s, "    {} = {}(0.0);", v.name, glsl_type(v.width));
@@ -482,16 +516,19 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
         s.push_str("    MAIN();\n");
     }
     if !mentions(src, "POSITION") {
-        s.push_str("    POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0);\n");
+        s.push_str(
+            "    POSITION = INSTANCE_MODELVIEWPROJECTION_MATRIX * ljosskin * vec4(VERTEX, 1.0);\n",
+        );
     }
     s.push_str(
-        "    LjosVertex ljosout;\n\
+        "    mat4 ljosplace = INSTANCE_MODEL_MATRIX * ljosskin;\n\
+         \x20   LjosVertex ljosout;\n\
          \x20   ljosout.ljosclip = POSITION;\n\
-         \x20   ljosout.ljosworld = (MODEL_MATRIX * vec4(VERTEX, 1.0)).xyz;\n\
-         \x20   ljosout.ljosnormal = NORMAL_MATRIX * NORMAL;\n\
+         \x20   ljosout.ljosworld = (ljosplace * vec4(VERTEX, 1.0)).xyz;\n\
+         \x20   ljosout.ljosnormal = ljoscofactor(ljosinstance) * (NORMAL_MATRIX * (ljoscofactor(ljosskin) * NORMAL));\n\
          \x20   ljosout.ljosuvs = vec4(UV0, UV1);\n\
-         \x20   ljosout.ljostangent = (MODEL_MATRIX * vec4(TANGENT, 0.0)).xyz;\n\
-         \x20   ljosout.ljosbinormal = (MODEL_MATRIX * vec4(BINORMAL, 0.0)).xyz;\n\
+         \x20   ljosout.ljostangent = (ljosplace * vec4(TANGENT, 0.0)).xyz;\n\
+         \x20   ljosout.ljosbinormal = (ljosplace * vec4(BINORMAL, 0.0)).xyz;\n\
          \x20   ljosout.ljoscolor = COLOR;\n",
     );
     for (i, v) in out.iter().enumerate() {
@@ -499,6 +536,63 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
     }
     s.push_str("    return ljosout;\n}\nvoid main() {}\n");
     (s, before)
+}
+
+/// `BONE_NORMAL_TRANSFORMS[i]` as a call: the normal matrices are made from
+/// the joints' when read, not kept beside them. The lines stay where they
+/// are, so an error still names the author's.
+fn bone_normals(user: &str) -> String {
+    const WORD: &str = "BONE_NORMAL_TRANSFORMS";
+    let mut out = String::with_capacity(user.len());
+    let mut rest = user;
+    while let Some(at) = rest.find(WORD) {
+        let whole = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !(c.is_alphanumeric() || c == '_'))
+            && rest[at + WORD.len()..]
+                .chars()
+                .next()
+                .is_none_or(|c| !(c.is_alphanumeric() || c == '_'));
+        out.push_str(&rest[..at]);
+        rest = &rest[at + WORD.len()..];
+        if !whole {
+            out.push_str(WORD);
+            continue;
+        }
+        let gap = rest.len() - rest.trim_start().len();
+        if !rest[gap..].starts_with('[') {
+            // Not indexed: left as it is, for the compiler to name.
+            out.push_str(WORD);
+            continue;
+        }
+        let mut depth = 0usize;
+        let mut close = None;
+        for (i, c) in rest.char_indices().skip(gap) {
+            match c {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close = Some(i);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(close) = close else {
+            out.push_str(WORD);
+            continue;
+        };
+        out.push_str("ljosbonenormal(");
+        out.push_str(&rest[..gap]);
+        out.push_str(&rest[gap + 1..close]);
+        out.push(')');
+        rest = &rest[close + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 fn glsl_type(width: usize) -> &'static str {
@@ -810,6 +904,8 @@ fn varying_args(out: &[Varying], ins: &[Varying]) -> String {
 
 fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) -> String {
     let mut s = material_io(out);
+    // A mesh with no second buffer has no second UV set, joints or
+    // weights: UV1 is UV0 and the rest zero, as the documentation says.
     let _ = write!(
         s,
         "@vertex\n\
@@ -818,8 +914,33 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   @location(1) normal: vec3<f32>,\n\
          \x20   @location(2) uv: vec2<f32>,\n\
          \x20   @location(3) tangent: vec4<f32>,\n\
+         \x20   copy: Instance,\n\
+         \x20   @location(11) data: vec4<f32>,\n\
+         \x20   @builtin(instance_index) index: u32,\n\
          ) -> CmVsOut {{\n\
-         \x20   let v = cmv_ljosvertex(position, normal, uv, tangent);\n\
+         \x20   return cm_vertex(position, normal, uv, uv, tangent, copy, data, index,\n\
+         \x20       vec4<u32>(0u), vec4<f32>(0.0));\n\
+         }}\n\
+         @vertex\n\
+         fn {MATERIAL_VERTEX_EXTRA}(\n\
+         \x20   @location(0) position: vec3<f32>,\n\
+         \x20   @location(1) normal: vec3<f32>,\n\
+         \x20   @location(2) uv: vec2<f32>,\n\
+         \x20   @location(3) tangent: vec4<f32>,\n\
+         \x20   copy: Instance,\n\
+         \x20   @location(11) data: vec4<f32>,\n\
+         \x20   @builtin(instance_index) index: u32,\n\
+         \x20   @location(8) uv1: vec2<f32>,\n\
+         \x20   @location(9) joints: vec4<u32>,\n\
+         \x20   @location(10) weights: vec4<f32>,\n\
+         ) -> CmVsOut {{\n\
+         \x20   return cm_vertex(position, normal, uv, uv1, tangent, copy, data, index, joints, weights);\n\
+         }}\n\
+         fn cm_vertex(position: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, uv1: vec2<f32>,\n\
+         \x20   tangent: vec4<f32>, copy: Instance, data: vec4<f32>, index: u32, joints: vec4<u32>,\n\
+         \x20   weights: vec4<f32>) -> CmVsOut {{\n\
+         \x20   let v = cmv_ljosvertex(position, normal, uv, uv1, tangent, instance_matrix(copy),\n\
+         \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, model.maps.w != 0u);\n\
          \x20   var out: CmVsOut;\n\
          \x20   out.clip = v.ljosclip;\n\
          \x20   out.normal = v.ljosnormal;\n\
@@ -1135,7 +1256,13 @@ mod tests {
     #[test]
     fn the_programs_translate_to_webgl2() {
         let p = material(
-            Some("VARYING vec2 t;\nvoid MAIN() { t = UV0; }"),
+            Some(
+                "VARYING vec2 t;\nVARYING vec3 n;\nvoid MAIN() {\n\
+                 t = UV0 + INSTANCE_DATA.xy + INSTANCE_COLOR.zw + WEIGHTS.xy;\n\
+                 n = BONE_NORMAL_TRANSFORMS[JOINTS.x + INSTANCE_INDEX] * NORMAL;\n\
+                 POSITION = INSTANCE_MODELVIEWPROJECTION_MATRIX * BONE_TRANSFORMS[JOINTS.y]\n\
+                 \x20   * vec4(VERTEX, 1.0);\n}",
+            ),
             Some("VARYING vec2 t;\nvoid MAIN() { BASE_COLOR = texture(picture, t); }\nvoid POINT_LIGHT() { DIFFUSE += LIGHT_COLOR * LIGHT_ATTENUATION; }"),
             true,
             &[],
@@ -1150,8 +1277,21 @@ mod tests {
         )
         .unwrap();
         for (wgsl, entries) in [
-            (p.wgsl(), [MATERIAL_VERTEX, MATERIAL_FRAGMENT]),
-            (e.wgsl(), [EFFECT_VERTEX, EFFECT_FRAGMENT]),
+            (
+                p.wgsl(),
+                &[
+                    (MATERIAL_VERTEX, ShaderStage::Vertex),
+                    (MATERIAL_VERTEX_EXTRA, ShaderStage::Vertex),
+                    (MATERIAL_FRAGMENT, ShaderStage::Fragment),
+                ][..],
+            ),
+            (
+                e.wgsl(),
+                &[
+                    (EFFECT_VERTEX, ShaderStage::Vertex),
+                    (EFFECT_FRAGMENT, ShaderStage::Fragment),
+                ][..],
+            ),
         ] {
             let module = naga::front::wgsl::parse_str(wgsl).unwrap();
             let info = naga::valid::Validator::new(
@@ -1160,10 +1300,7 @@ mod tests {
             )
             .validate(&module)
             .unwrap();
-            for (entry, stage) in entries
-                .into_iter()
-                .zip([ShaderStage::Vertex, ShaderStage::Fragment])
-            {
+            for &(entry, stage) in entries {
                 let options = naga::back::glsl::Options {
                     version: naga::back::glsl::Version::new_gles(300),
                     ..Default::default()
@@ -1185,6 +1322,36 @@ mod tests {
                 .and_then(|mut w| w.write())
                 .unwrap_or_else(|e| panic!("{entry}: {e}"));
             }
+        }
+    }
+
+    #[test]
+    fn bone_normal_transforms_are_read_through_a_call() {
+        assert_eq!(
+            bone_normals("n = BONE_NORMAL_TRANSFORMS[ a[1] ]\n * N; MY_BONE_NORMAL_TRANSFORMS[0];"),
+            "n = ljosbonenormal( a[1] )\n * N; MY_BONE_NORMAL_TRANSFORMS[0];"
+        );
+        assert_eq!(
+            bone_normals("BONE_NORMAL_TRANSFORMS [JOINTS.x]"),
+            "ljosbonenormal( JOINTS.x)"
+        );
+        // Left for the compiler to name where it is not indexed.
+        assert_eq!(
+            bone_normals("BONE_NORMAL_TRANSFORMS;"),
+            "BONE_NORMAL_TRANSFORMS;"
+        );
+    }
+
+    #[test]
+    fn an_instanced_or_skinned_vertex_is_placed_without_author_code() {
+        let p = material(Some("void MAIN() {}"), None, false, &[], &[]).unwrap();
+        // The default POSITION goes through the copy and the skin.
+        assert!(p.wgsl().contains("cmv_ljosinstance"), "{}", p.wgsl());
+        let module = naga::front::wgsl::parse_str(p.wgsl()).unwrap();
+        for entry in [MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA] {
+            let ep = module.entry_points.iter().find(|e| e.name == entry);
+            let ep = ep.unwrap_or_else(|| panic!("{entry}"));
+            assert_eq!(ep.stage, ShaderStage::Vertex);
         }
     }
 

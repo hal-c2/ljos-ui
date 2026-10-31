@@ -15,12 +15,15 @@ use crate::math::Mat4;
 use crate::mesh::Mesh;
 
 /// One copy: the top three rows of the matrix put in front of the model's
-/// world transform, and its linear colour.
+/// world transform, its linear colour and its custom data. Only a
+/// CustomMaterial reads the data; it rides in the same row, 16 bytes a
+/// copy, so that one buffer and one binding serve every pipeline.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable, PartialEq, Debug)]
 pub(crate) struct InstanceRow {
     rows: [[f32; 4]; 3],
     color: [f32; 4],
+    data: [f32; 4],
 }
 
 impl InstanceRow {
@@ -31,6 +34,7 @@ impl InstanceRow {
             [0.0, 0.0, 1.0, 0.0],
         ],
         color: [1.0; 4],
+        data: [0.0; 4],
     };
 
     /// The copy's place as a matrix.
@@ -44,21 +48,25 @@ impl InstanceRow {
         ])
     }
 
-    pub(crate) fn new(m: &Mat4, color: [f32; 4]) -> Self {
+    pub(crate) fn new(m: &Mat4, color: [f32; 4], data: [f32; 4]) -> Self {
         let c = &m.0;
         let row = |r: usize| [c[0][r], c[1][r], c[2][r], c[3][r]];
         InstanceRow {
             rows: [row(0), row(1), row(2)],
             color,
+            data,
         }
     }
 }
 
-pub(crate) const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
+/// The custom data is at location 11, after the second vertex buffer's,
+/// so that the built-in shaders, which do not read it, keep their own.
+pub(crate) const INSTANCE_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     4 => Float32x4,
     5 => Float32x4,
     6 => Float32x4,
     7 => Float32x4,
+    11 => Float32x4,
 ];
 
 pub(crate) fn instance_layout() -> wgpu::VertexBufferLayout<'static> {

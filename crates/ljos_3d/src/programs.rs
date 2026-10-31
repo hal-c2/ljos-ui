@@ -15,7 +15,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::custom::{
     Blend, CustomMaterial, EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT,
-    MATERIAL_FRAGMENT_STRAIGHT, MATERIAL_VERTEX, Program, ProgramKind,
+    MATERIAL_FRAGMENT_STRAIGHT, MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind,
 };
 use crate::maps::{self, Maps};
 use crate::mesh::Topology;
@@ -79,6 +79,8 @@ pub(crate) struct MaterialKey {
     /// premultiplied blending otherwise.
     pub blend: Option<(Blend, Blend)>,
     pub topology: Topology,
+    /// The mesh has a second vertex buffer.
+    pub extra: bool,
 }
 
 /// What one custom draw binds on a target, kept while the material keeps
@@ -282,9 +284,17 @@ impl Programs {
             layout: Some(&c.pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &c.module,
-                entry_point: Some(MATERIAL_VERTEX),
+                entry_point: Some(if key.extra {
+                    MATERIAL_VERTEX_EXTRA
+                } else {
+                    MATERIAL_VERTEX
+                }),
                 compilation_options: Default::default(),
-                buffers: &[Some(vertex)],
+                buffers: &[
+                    Some(vertex),
+                    Some(crate::gpu_extra::instance_layout()),
+                    key.extra.then(crate::gpu_extra::extra_layout),
+                ],
             },
             primitive: wgpu::PrimitiveState {
                 topology: key.topology.wgpu(),

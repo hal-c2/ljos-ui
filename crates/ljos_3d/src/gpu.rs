@@ -1440,7 +1440,7 @@ fn copy_rows(
         if opaque {
             color[3] = 1.0;
         }
-        InstanceRow::new(&(global * e.transform * back), color)
+        InstanceRow::new(&(global * e.transform * back), color, e.custom)
     }));
     if instancing.depth_sort {
         let origin = world.translation();
@@ -1586,16 +1586,12 @@ impl Renderer {
                         (mesh.extra.is_some(), mesh.has_joints)
                     }
                 };
-                // An author's program reads one copy and no joints (its
-                // vertex stage has no INSTANCE_ or skin built-ins yet), so
-                // it is drawn, cast and culled as one unbent model.
-                let plain = matches!(model.material, Material::Custom(_));
                 // A skinned mesh is placed by its joints alone: their
                 // matrices take it into the scene.
                 let palette = node
                     .skin
                     .as_ref()
-                    .filter(|_| has_joints && !plain)
+                    .filter(|_| has_joints)
                     .map(|s| s.palette(scene));
                 let placed = if palette.is_some() {
                     Mat4::IDENTITY
@@ -1617,7 +1613,7 @@ impl Renderer {
                 };
                 let mut copies = Copies::ONE;
                 let mut transparent = false;
-                let (centre, radius) = match node.instancing.as_ref().filter(|_| !plain) {
+                let (centre, radius) = match &node.instancing {
                     None => gpu_extra::union(spheres.iter().copied()).unwrap_or_default(),
                     Some(instancing) => {
                         let first = rows.len();
@@ -1683,6 +1679,7 @@ impl Renderer {
                             format,
                             blend: blends.then_some((m.source_blend, m.destination_blend)),
                             topology: self.topology_of(key),
+                            extra,
                         },
                     )),
                     _ => None,

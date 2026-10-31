@@ -230,6 +230,8 @@ pub const HEADER_ROWS: usize = 28;
 
 /// The entry points a program has, by kind.
 pub const MATERIAL_VERTEX: &str = "cm_vs";
+/// For a mesh with a second vertex buffer: a second UV set or joints.
+pub const MATERIAL_VERTEX_EXTRA: &str = "cm_vs_extra";
 /// Premultiplied, as the built-in materials blend.
 pub const MATERIAL_FRAGMENT: &str = "cm_fs";
 /// Straight, for the blend factors a CustomMaterial names.
