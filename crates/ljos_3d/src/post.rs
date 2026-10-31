@@ -741,7 +741,7 @@ impl Chain<'_> {
             self.programs.effect_pipeline(device, program, format);
             let group = self
                 .programs
-                .group(device, program, &buffer, &textures, depth);
+                .group(device, program, &buffer, &textures, depth, None);
             let pipeline = self.programs.effect_pipeline(device, program, format);
             let mut rp = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ljos_3d effect"),

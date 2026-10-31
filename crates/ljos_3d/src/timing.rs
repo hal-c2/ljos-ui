@@ -167,9 +167,15 @@ impl Timer {
         self.pass(i == 0, i + 1 == n, SHADOW)
     }
 
-    /// Where the scene pass writes its timestamps.
-    pub(crate) fn scene_pass(&self) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
-        self.pass(true, true, SCENE)
+    /// Where a part of the scene pass writes its timestamps: the first
+    /// its start, the last its end. The pass is cut in parts where a
+    /// material reads the screen.
+    pub(crate) fn scene_part(
+        &self,
+        first: bool,
+        last: bool,
+    ) -> Option<wgpu::RenderPassTimestampWrites<'_>> {
+        self.pass(first, last, SCENE)
     }
 
     fn pass(&self, begin: bool, end: bool, at: u32) -> Option<wgpu::RenderPassTimestampWrites<'_>> {

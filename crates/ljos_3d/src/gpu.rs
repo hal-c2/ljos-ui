@@ -19,7 +19,7 @@ use std::sync::{Arc, Weak};
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::custom::CustomMaterial;
+use crate::custom::{CustomMaterial, Screen};
 use crate::geometry::CustomGeometry;
 use crate::gpu_extra::{self, InstanceRow, JOINT_SLOT, JointSlot, Rows};
 use crate::ibl::{self, Bound, Ibl};
@@ -33,6 +33,7 @@ use crate::scene::{
     AlphaMode, Background, Camera, CullMode, Environment, Light, LightProbe, Lighting, Material,
     MeshSource, NodeKind, Primitive, Scene, Tonemap,
 };
+use crate::screen::ScreenTexture;
 use crate::shadow::{self, Layer as ShadowLayer, Plan};
 
 /// What the picture is kept in: sRGB values written by the shader, so the
@@ -176,6 +177,8 @@ pub struct Renderer {
     /// The authors' programs: custom materials and effects.
     programs: Programs,
     post: Pipes,
+    /// Copies the picture for the materials that read the screen.
+    screen: crate::screen::Pipes,
     /// Whether the device renders into and filters half floats, which the
     /// probe's maps are; without, the scene draws with no probe.
     probes: bool,
@@ -261,6 +264,8 @@ pub struct Target {
     custom_slots: Vec<Slot>,
     /// The pictures between the post-processing passes.
     post: Buffers,
+    /// The scene behind the materials that read it, while one does.
+    screen: Option<ScreenTexture>,
     /// How many times the picture was drawn: the programs' FRAME.
     frames: u64,
 }
@@ -433,6 +438,7 @@ impl Target {
             timer: crate::timing::Timer::new(device),
             custom_slots: Vec::new(),
             post: Buffers::default(),
+            screen: None,
             frames: 0,
         }
     }
@@ -1057,6 +1063,7 @@ impl Renderer {
             skies: HashMap::new(),
             programs: Programs::new(device),
             post: Pipes::new(device),
+            screen: crate::screen::Pipes::new(device),
             // WebGPU has half floats to draw into and filter; a host on
             // another backend says whether it has with
             // `use_adapter_formats`.
@@ -1362,6 +1369,11 @@ impl Topology {
 
 /// Whether a draw is in the depth the post-processing passes read: the
 /// depth pass draws triangles, and segments and points have no surface.
+fn screen_of(draw: &Draw<'_>) -> Screen {
+    draw.custom
+        .map_or(Screen::None, |(m, _)| m.program.screen())
+}
+
 fn writes_camera_depth(draw: &Draw<'_>) -> bool {
     draw.key.depth_write && draw.key.topology == Topology::Triangles
 }
@@ -1755,8 +1767,25 @@ impl Renderer {
         // is behind it. A stable sort keeps the tree's order where two are
         // as far.
         blended.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        let mut draws = opaque;
+        // What reads the screen is drawn after it is taken, so it is not
+        // in it; the screen is taken after the first `cut`.
+        let (mut draws, mut reading): (Vec<_>, Vec<_>) = opaque
+            .into_iter()
+            .partition(|d| screen_of(d) == Screen::None);
+        let screen = reading
+            .iter()
+            .chain(&blended)
+            .map(screen_of)
+            .max()
+            .unwrap_or(Screen::None);
+        let cut = if screen == Screen::None {
+            usize::MAX
+        } else {
+            draws.len()
+        };
+        draws.append(&mut reading);
         draws.append(&mut blended);
+        self.screen.fit(device, &mut target.screen, [w, h], screen);
 
         for (i, draw) in draws.iter().enumerate() {
             if let Some(c) = draw.caster {
@@ -1827,6 +1856,10 @@ impl Renderer {
                         slot,
                         material,
                         &header,
+                        (material.program.screen() != Screen::None)
+                            .then_some(target.screen.as_ref())
+                            .flatten()
+                            .map(|s| (&s.view, s.generation)),
                     );
                     slot += 1;
                 }
@@ -1886,15 +1919,36 @@ impl Renderer {
         };
         let scene_view =
             processed.then(|| target.post.view(device, post::SCENE, [w, h], post::HDR));
-        {
-            // Multisampled, the picture is drawn into the samples and
-            // resolved into the target's texture, which is all the blit
-            // and a read back ever see. Post-processed, it is drawn into
-            // half floats the passes read.
-            let picture = scene_view.as_ref().unwrap_or(&target.color_view);
+        // Multisampled, the picture is drawn into the samples and resolved
+        // into the target's texture, which is all the blit and a read back
+        // ever see. Post-processed, it is drawn into half floats the
+        // passes read. Where a material reads the screen the pass is cut
+        // in two, the first keeping what it drew for the second.
+        let picture = scene_view.as_ref().unwrap_or(&target.color_view);
+        let cut = cut.min(draws.len());
+        let parts: &[_] = if cut < draws.len() {
+            &[0..cut, cut..draws.len()]
+        } else {
+            &[0..draws.len()]
+        };
+        let mut slot = 0;
+        for (part, range) in parts.iter().enumerate() {
+            let first = part == 0;
+            let last = part + 1 == parts.len();
+            if !first && let Some(screen) = &target.screen {
+                self.screen
+                    .capture(device, encoder, picture, screen, processed);
+            }
             let (view, resolve, depth) = match &target.multisample {
                 Some(m) => (&m.color, Some(picture), &m.depth),
                 None => (picture, None, &target.depth_view),
+            };
+            let keep = |kept: bool| {
+                if kept {
+                    wgpu::StoreOp::Store
+                } else {
+                    wgpu::StoreOp::Discard
+                }
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ljos_3d scene"),
@@ -1903,31 +1957,35 @@ impl Renderer {
                     resolve_target: resolve,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
-                        store: if resolve.is_some() {
-                            wgpu::StoreOp::Discard
+                        load: if first {
+                            wgpu::LoadOp::Clear(clear)
                         } else {
-                            wgpu::StoreOp::Store
+                            wgpu::LoadOp::Load
                         },
+                        store: keep(resolve.is_none() || !last),
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                        load: if first {
+                            wgpu::LoadOp::Clear(1.0)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: keep(!last),
                     }),
                     stencil_ops: None,
                 }),
                 timestamp_writes: target
                     .timer
                     .as_ref()
-                    .and_then(crate::timing::Timer::scene_pass),
+                    .and_then(|t| t.scene_part(first, last)),
                 ..Default::default()
             });
             pass.set_bind_group(0, &target.frame_group, &[]);
             pass.set_bind_group(3, self.ibl.group(bound), &[]);
-            if sky {
+            if sky && first {
                 // Its layout is the materials', so every group is bound
                 // for it, though it reads only the frame and the probe.
                 pass.set_pipeline(&self.skies[&(samples, format)]);
@@ -1937,8 +1995,7 @@ impl Renderer {
             }
             let mut bound = None;
             let mut bound_maps = None;
-            let mut slot = 0;
-            for (i, draw) in draws.iter().enumerate() {
+            for (i, draw) in draws.iter().enumerate().take(range.end).skip(range.start) {
                 if let Some((_, key)) = draw.custom {
                     // A program's pipeline and block are its own, so the
                     // next lit draw binds its own again.

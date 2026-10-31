@@ -20,7 +20,7 @@ use naga::{Module, ShaderStage};
 
 use crate::custom::{
     EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT, MATERIAL_FRAGMENT_STRAIGHT,
-    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, UniformKind,
+    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen, UniformKind,
 };
 
 /// At most this many VARYINGs, each one location: WebGL2 guarantees few
@@ -74,15 +74,33 @@ pub fn material(
     let fragment_src = fragment.map(strip_comments).unwrap_or_default();
     let out = varyings(&vertex_src, "vertex")?;
     let ins = varyings(&fragment_src, "fragment")?;
-    if fragment_src.split(is_break).any(|w| w == "SCREEN_TEXTURE") {
-        return Err(SnippetError::Unsupported {
-            stage: "fragment",
-            message: "SCREEN_TEXTURE is not available".into(),
-        });
-    }
+    let names = |w: &str| {
+        fragment_src
+            .split(is_break)
+            .chain(vertex_src.split(is_break))
+            .any(|n| n == w)
+    };
+    let screen = if names("SCREEN_MIP_TEXTURE") {
+        Screen::Mipmapped
+    } else if names("SCREEN_TEXTURE") {
+        Screen::Texture
+    } else {
+        Screen::None
+    };
 
     let set = 2;
-    let header = header(set, uniforms, textures, &[], false);
+    let mut header = header(set, uniforms, textures, &[], false);
+    if screen != Screen::None {
+        // One picture serves both names; only the mip levels differ, and
+        // those are made when either asks for them.
+        let _ = writeln!(
+            header,
+            "layout(set = {set}, binding = 28) uniform texture2D ljosscreen;\n\
+             layout(set = {set}, binding = 29) uniform sampler ljosscreensampler;\n\
+             #define SCREEN_TEXTURE sampler2D(ljosscreen, ljosscreensampler)\n\
+             #define SCREEN_MIP_TEXTURE sampler2D(ljosscreen, ljosscreensampler)"
+        );
+    }
     let vs = stage_module(
         "vertex",
         ShaderStage::Vertex,
@@ -106,13 +124,10 @@ pub fn material(
     } else {
         ProgramKind::Unshaded
     };
-    Ok(Program::new(
-        kind,
-        wgsl,
-        uniforms.to_vec(),
-        textures.to_vec(),
-        false,
-    ))
+    Ok(
+        Program::new(kind, wgsl, uniforms.to_vec(), textures.to_vec(), false)
+            .reading_screen(screen),
+    )
 }
 
 /// A pass of an Effect: its fragment snippet runs over the whole output,
@@ -1263,7 +1278,7 @@ mod tests {
                  POSITION = INSTANCE_MODELVIEWPROJECTION_MATRIX * BONE_TRANSFORMS[JOINTS.y]\n\
                  \x20   * vec4(VERTEX, 1.0);\n}",
             ),
-            Some("VARYING vec2 t;\nvoid MAIN() { BASE_COLOR = texture(picture, t); }\nvoid POINT_LIGHT() { DIFFUSE += LIGHT_COLOR * LIGHT_ATTENUATION; }"),
+            Some("VARYING vec2 t;\nvoid MAIN() { BASE_COLOR = texture(picture, t) * texture(SCREEN_TEXTURE, t); }\nvoid POINT_LIGHT() { DIFFUSE += LIGHT_COLOR * LIGHT_ATTENUATION; }"),
             true,
             &[],
             &["picture".to_owned()],
@@ -1323,6 +1338,22 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{entry}: {e}"));
             }
         }
+    }
+
+    #[test]
+    fn a_material_names_the_screen_it_reads() {
+        let reads = |src: &str| material(None, Some(src), false, &[], &[]).unwrap().screen();
+        assert_eq!(reads("void MAIN() {}"), Screen::None);
+        assert_eq!(
+            reads("void MAIN() { FRAGCOLOR = texture(SCREEN_TEXTURE, UV0); }"),
+            Screen::Texture
+        );
+        assert_eq!(
+            reads("void MAIN() { FRAGCOLOR = textureLod(SCREEN_MIP_TEXTURE, UV0, 2.0); }"),
+            Screen::Mipmapped
+        );
+        // A comment is not a read.
+        assert_eq!(reads("// SCREEN_TEXTURE\nvoid MAIN() {}"), Screen::None);
     }
 
     #[test]

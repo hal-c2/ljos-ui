@@ -38,6 +38,8 @@ mod post;
 #[cfg(feature = "gpu")]
 mod programs;
 #[cfg(feature = "gpu")]
+mod screen;
+#[cfg(feature = "gpu")]
 mod shadow;
 #[cfg(feature = "gpu")]
 pub mod surface;
@@ -47,7 +49,7 @@ mod timing;
 pub use custom::{
     Adjustments, AmbientOcclusion, Blend, BufferFormat, CustomMaterial, DepthDraw, DepthOfField,
     Effect, EffectBuffer, Glow, GlowBlend, Lut, Pass, PassTexture, PostProcess, Program,
-    ProgramKind, UniformKind, UniformValue, Vignette,
+    ProgramKind, Screen, UniformKind, UniformValue, Vignette,
 };
 pub use fetch::Fetch;
 pub use geometry::{

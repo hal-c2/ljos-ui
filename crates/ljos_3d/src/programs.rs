@@ -16,6 +16,7 @@ use bytemuck::{Pod, Zeroable};
 use crate::custom::{
     Blend, CustomMaterial, EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT,
     MATERIAL_FRAGMENT_STRAIGHT, MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind,
+    Screen,
 };
 use crate::maps::{self, Maps};
 use crate::mesh::Topology;
@@ -26,6 +27,8 @@ use crate::texture::Sampling;
 /// with its sampler after it, and the depth is at 30 and 31.
 const BLOCK: u32 = 32;
 const DEPTH: u32 = 30;
+/// SCREEN_TEXTURE and its sampler.
+const SCREEN: u32 = 28;
 
 /// What the renderer tells every program, in the block's first rows.
 #[repr(C)]
@@ -88,6 +91,8 @@ pub(crate) struct MaterialKey {
 pub(crate) struct Slot {
     program: u64,
     textures: Vec<Option<(u64, Sampling)>>,
+    /// The generation of the screen texture it binds.
+    screen: Option<u64>,
     buffer: wgpu::Buffer,
     pub(crate) group: wgpu::BindGroup,
     written: Vec<u8>,
@@ -101,6 +106,8 @@ pub(crate) struct Programs {
     black: Option<wgpu::TextureView>,
     sampler: wgpu::Sampler,
     depth_sampler: wgpu::Sampler,
+    /// Linear between mip levels, for SCREEN_MIP_TEXTURE's.
+    screen_sampler: wgpu::Sampler,
 }
 
 impl Programs {
@@ -118,6 +125,13 @@ impl Programs {
             }),
             depth_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("ljos_3d program depth"),
+                ..Default::default()
+            }),
+            screen_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("ljos_3d program screen"),
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..Default::default()
             }),
         }
@@ -206,6 +220,24 @@ impl Programs {
                     binding: DEPTH + 1,
                     visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                });
+            }
+            if program.screen() != Screen::None {
+                entries.push(wgpu::BindGroupLayoutEntry {
+                    binding: SCREEN,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                });
+                entries.push(wgpu::BindGroupLayoutEntry {
+                    binding: SCREEN + 1,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 });
             }
@@ -379,7 +411,8 @@ impl Programs {
     }
 
     /// A group of `program` binding `buffer` as its block, `textures` in
-    /// their order and `depth` where it reads the depth.
+    /// their order, `depth` where it reads the depth and `screen` where it
+    /// reads the scene behind it.
     pub(crate) fn group(
         &self,
         device: &wgpu::Device,
@@ -387,6 +420,7 @@ impl Programs {
         buffer: &wgpu::Buffer,
         textures: &[(wgpu::TextureView, wgpu::Sampler)],
         depth: Option<&wgpu::TextureView>,
+        screen: Option<&wgpu::TextureView>,
     ) -> wgpu::BindGroup {
         let mut entries = vec![wgpu::BindGroupEntry {
             binding: BLOCK,
@@ -414,6 +448,17 @@ impl Programs {
                 resource: wgpu::BindingResource::Sampler(&self.depth_sampler),
             });
         }
+        if program.screen() != Screen::None {
+            let view = screen.expect("a program that reads the screen is given it");
+            entries.push(wgpu::BindGroupEntry {
+                binding: SCREEN,
+                resource: wgpu::BindingResource::TextureView(view),
+            });
+            entries.push(wgpu::BindGroupEntry {
+                binding: SCREEN + 1,
+                resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
+            });
+        }
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ljos_3d program"),
             layout: &self.compiled[&program.id()].layout,
@@ -422,7 +467,8 @@ impl Programs {
     }
 
     /// Makes `slots[i]` bind `material` with `header`, uploading what
-    /// changed since it last did.
+    /// changed since it last did. `screen` is the target's screen texture
+    /// and its generation, for a material that reads it.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn bind_material(
         &mut self,
@@ -433,6 +479,7 @@ impl Programs {
         i: usize,
         material: &CustomMaterial,
         header: &Header,
+        screen: Option<(&wgpu::TextureView, u64)>,
     ) {
         let program = &material.program;
         let mut textures = Vec::with_capacity(material.textures.len());
@@ -453,9 +500,9 @@ impl Programs {
             }
         }
         let bytes = block(program, header, &material.values);
-        let fresh = slots
-            .get(i)
-            .is_none_or(|s| s.program != program.id() || s.textures != keys);
+        let fresh = slots.get(i).is_none_or(|s| {
+            s.program != program.id() || s.textures != keys || s.screen != screen.map(|s| s.1)
+        });
         if fresh {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("ljos_3d custom material"),
@@ -463,10 +510,18 @@ impl Programs {
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
-            let group = self.group(device, program, &buffer, &textures, None);
+            let group = self.group(
+                device,
+                program,
+                &buffer,
+                &textures,
+                None,
+                screen.map(|s| s.0),
+            );
             let slot = Slot {
                 program: program.id(),
                 textures: keys,
+                screen: screen.map(|s| s.1),
                 buffer,
                 group,
                 written: Vec::new(),

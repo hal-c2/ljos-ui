@@ -53,7 +53,7 @@ Feature: A CustomMaterial reads the scene behind it
             OrthographicCamera { z: 600 }
             Model {
               source: "#Rectangle"; x: -30; z: -10; scale: Qt.vector3d(0.6, 0.6, 0.6)
-              materials: DefaultMaterial { objectName: "red"; lighting: DefaultMaterial.NoLighting; diffuseColor: "red" }
+              materials: PrincipledMaterial { objectName: "red"; lighting: PrincipledMaterial.NoLighting; baseColor: "red" }
             }
             Model {
               source: "#Rectangle"; scale: Qt.vector3d(0.6, 0.6, 0.6)

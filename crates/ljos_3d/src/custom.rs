@@ -122,6 +122,17 @@ pub enum ProgramKind {
     Effect,
 }
 
+/// What a material reads of the scene drawn before it: `SCREEN_TEXTURE`,
+/// or `SCREEN_MIP_TEXTURE`, which makes the texture's mip levels too.
+/// Ordered by what it costs: a view with both makes the mip levels.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Screen {
+    #[default]
+    None,
+    Texture,
+    Mipmapped,
+}
+
 /// Snippets translated for the renderer. Made by
 /// `snippet::material` and `snippet::effect`; two programs are the same
 /// only when they are one.
@@ -133,6 +144,7 @@ pub struct Program {
     uniforms: Vec<(String, UniformKind)>,
     textures: Vec<String>,
     reads_depth: bool,
+    screen: Screen,
     /// Where each uniform is in the block, after the header.
     offsets: Vec<usize>,
     /// The bytes the uniforms take, a whole number of rows and at least
@@ -166,6 +178,7 @@ impl Program {
             uniforms,
             textures,
             reads_depth,
+            screen: Screen::None,
             offsets,
             size: end.max(1).next_multiple_of(16),
         }
@@ -197,6 +210,17 @@ impl Program {
     /// Whether it samples DEPTH_TEXTURE, which needs a depth pass.
     pub fn reads_depth(&self) -> bool {
         self.reads_depth
+    }
+
+    /// Whether, and how, it samples the scene drawn behind it.
+    pub fn screen(&self) -> Screen {
+        self.screen
+    }
+
+    #[cfg_attr(not(feature = "snippets"), allow(dead_code))]
+    pub(crate) fn reading_screen(mut self, screen: Screen) -> Self {
+        self.screen = screen;
+        self
     }
 
     #[cfg(all(test, feature = "snippets"))]
