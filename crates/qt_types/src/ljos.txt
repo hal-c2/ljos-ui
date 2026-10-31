@@ -7868,7 +7868,6 @@ module QtQuick3D
 		prop skin QtQuick3D.Skin named pointer
 		prop skeleton QtQuick3D.Skeleton named pointer
 		prop inverseBindPoses QtQml.var named
-		prop bounds QtQml.var named readonly
 		signal sourceChanged
 		signal materialsChanged
 		signal geometryChanged
@@ -7880,7 +7879,6 @@ module QtQuick3D
 		signal skinChanged
 		signal skeletonChanged
 		signal inverseBindPosesChanged
-		signal boundsChanged
 	type QtQuick3D.Node Node
 		prototype QtQuick3D.Object3D named
 		enum TransformSpace LocalSpace=0 ParentSpace=1 SceneSpace=2
