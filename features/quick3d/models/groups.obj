@@ -1,0 +1,17 @@
+# Two objects, each square 40 units across and 50 units from the
+# origin, and each of its corners named from the end of the list.
+mtllib groups.mtl
+o left
+v -70 -20 0
+v -30 -20 0
+v -30 20 0
+v -70 20 0
+usemtl green
+f -4 -3 -2 -1
+o right
+v 30 -20 0
+v 70 -20 0
+v 70 20 0
+v 30 20 0
+usemtl blue
+f -4 -3 -2 -1

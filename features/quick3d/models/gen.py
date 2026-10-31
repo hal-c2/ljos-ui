@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Writes the glTF models the RuntimeLoader scenarios and bench load.
+"""Writes the glTF and OBJ models the RuntimeLoader scenarios and bench load.
 
 Run from anywhere: python3 features/quick3d/models/gen.py
 
@@ -458,6 +458,76 @@ def morph_gltf():
     write(HERE / "morph.gltf", json.dumps(document, indent=1).encode())
 
 
+def obj_files():
+    """Wavefront OBJ files: text, so every number is what the file says."""
+    # Illumination model 0 is a constant colour: what these scenarios read
+    # is the file's colours, not a light's.
+    write(
+        HERE / "square.obj",
+        b"""# One square 100 units across facing +Z, one polygon, red.
+mtllib square.mtl
+o square
+v -50 -50 0
+v 50 -50 0
+v 50 50 0
+v -50 50 0
+usemtl red
+f 1 2 3 4
+""",
+    )
+    write(HERE / "square.mtl", b"newmtl red\nillum 0\nKd 1 0 0\n")
+    write(
+        HERE / "groups.obj",
+        b"""# Two objects, each square 40 units across and 50 units from the
+# origin, and each of its corners named from the end of the list.
+mtllib groups.mtl
+o left
+v -70 -20 0
+v -30 -20 0
+v -30 20 0
+v -70 20 0
+usemtl green
+f -4 -3 -2 -1
+o right
+v 30 -20 0
+v 70 -20 0
+v 70 20 0
+v 30 20 0
+usemtl blue
+f -4 -3 -2 -1
+""",
+    )
+    write(
+        HERE / "groups.mtl",
+        b"newmtl green\nillum 0\nKd 0 1 0\nnewmtl blue\nillum 0\nKd 0 0 1\n",
+    )
+    write(
+        HERE / "picture.obj",
+        b"""# A square 100 units across whose picture is its material's.
+mtllib picture.mtl
+o picture
+v -50 -50 0
+v 50 -50 0
+v 50 50 0
+v -50 50 0
+vt 0 0
+vt 1 0
+vt 1 1
+vt 0 1
+vn 0 0 1
+usemtl picture
+f 1/1/1 2/2/1 3/3/1 4/4/1
+""",
+    )
+    write(HERE / "picture.mtl", b"newmtl picture\nillum 0\nmap_Kd quadrants.png\n")
+    side = 8
+    red, green = (255, 0, 0, 255), (0, 255, 0, 255)
+    blue, white = (0, 0, 255, 255), (255, 255, 255, 255)
+    top = [red] * (side // 2) + [green] * (side // 2)
+    bottom = [blue] * (side // 2) + [white] * (side // 2)
+    write(HERE / "quadrants.png", png(side, side, [top] * (side // 2) + [bottom] * (side // 2)))
+
+
 if __name__ == "__main__":
     square_gltf()
     pair_gltf()
@@ -467,3 +537,4 @@ if __name__ == "__main__":
     uv2_gltf()
     skin_gltf()
     morph_gltf()
+    obj_files()
