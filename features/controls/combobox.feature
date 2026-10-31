@@ -988,6 +988,17 @@ Feature: ComboBox
       Then the property "currentIndex" of "c" is 23
       And the property "popup.visible" of "c" is false
 
+    Scenario: A new model after the popup was scrolled and closed shows its rows
+      When the property "popup.visible" of "c" is set to true
+      And the user presses "End"
+      And 1 second passes
+      And the user presses "Escape"
+      And the property "model" of "c" is set to ["a", "b", "c"]
+      And the property "popup.visible" of "c" is set to true
+      Then the property "count" of "c" is 3
+      And the property "popup.height" of "c" is 90
+      And the property "popup.contentItem.contentY" of "c" is 0
+
   Rule: A popup that does not fit below the combo box opens above it
 
     Issue #152. The popup is mirrored around the combo box when less of
