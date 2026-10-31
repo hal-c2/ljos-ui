@@ -374,9 +374,13 @@ impl ItemModel for NativeModel {
     }
 
     fn model_data(&self, _: &Engine, row: usize) -> Option<Value> {
-        // As Qt: a model with one role has that role as `modelData`.
+        // As Qt: a model with one role has that role as `modelData`, and
+        // a model with a role of that name has it there.
         match self.model.role_names().as_slice() {
             [only] => Some(self.model.data(row, only)),
+            roles if roles.iter().any(|r| r.as_str() == "modelData") => {
+                Some(self.model.data(row, "modelData"))
+            }
             _ => None,
         }
     }
