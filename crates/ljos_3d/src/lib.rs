@@ -28,6 +28,8 @@ pub mod texture;
 pub mod texture_data;
 
 #[cfg(feature = "gpu")]
+mod gbuffer;
+#[cfg(feature = "gpu")]
 pub mod gpu;
 #[cfg(feature = "gpu")]
 mod gpu_extra;

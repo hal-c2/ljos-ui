@@ -493,3 +493,62 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     }
     return vec4<f32>(tonemap(rgb, frame.tone) * a, a);
 }
+
+struct SurfaceOut {
+    // The normal in the scene's space; w the roughness, 2 for a surface
+    // that reflects nothing and 3 for one that is not lit.
+    @location(0) normal: vec4<f32>,
+    // The base colour in linear light; w the metalness.
+    @location(1) material: vec4<f32>,
+};
+
+// What the screen-space reflections and global illumination read of a
+// surface, drawn where the picture has it.
+@fragment
+fn fs_surface(in: VsOut, @builtin(front_facing) front: bool) -> SurfaceOut {
+    let base_t = textureSample(base_map, base_sampler, map_uv(0u, in));
+    let metal_t = textureSample(metalness_map, metalness_sampler, map_uv(1u, in));
+    let rough_t = textureSample(roughness_map, roughness_sampler, map_uv(2u, in));
+    let normal_t = textureSample(normal_map, normal_sampler, map_uv(3u, in));
+    let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in));
+    let base = model.base * base_t * in.color;
+    if model.params2.x >= 0.0 && base.a * channel(opacity_t, 6u) < model.params2.x {
+        discard;
+    }
+    var n = normalize(in.normal);
+    if !front {
+        n = -n;
+    }
+    if has_map(3u) {
+        let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
+        let b = in.tangent.w * cross(n, t);
+        var m = normal_t.xyz * 2.0 - vec3<f32>(1.0);
+        m = vec3<f32>(m.xy * model.map_params.x, m.z);
+        n = normalize(t * m.x + b * m.y + n * m.z);
+    }
+    var out: SurfaceOut;
+    if model.params.x < 0.5 {
+        out.normal = vec4<f32>(n, 3.0);
+        out.material = vec4<f32>(0.0);
+        return out;
+    }
+    if model.params.y > 0.5 {
+        let roughness = clamp(model.params.w * channel(rough_t, 2u), 0.0, 1.0);
+        out.normal = vec4<f32>(n, roughness);
+        out.material = vec4<f32>(base.rgb, clamp(model.params.z * channel(metal_t, 0u), 0.0, 1.0));
+    } else {
+        out.normal = vec4<f32>(n, 2.0);
+        out.material = vec4<f32>(base.rgb, 0.0);
+    }
+    return out;
+}
+
+// A custom material's surface: its shading is its own, so it is taken as
+// not lit, and neither effect changes it.
+@fragment
+fn fs_surface_unlit(in: VsOut) -> SurfaceOut {
+    var out: SurfaceOut;
+    out.normal = vec4<f32>(normalize(in.normal), 3.0);
+    out.material = vec4<f32>(0.0);
+    return out;
+}

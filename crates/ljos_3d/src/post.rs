@@ -4,9 +4,11 @@
 //! A scene with effects, ambient occlusion or an ExtendedSceneEnvironment
 //! is drawn into half floats with its light as it is (tone mode 5). Then,
 //! in order: ambient occlusion darkens it, the environment's effects run
-//! their passes, depth of field and glow follow, and the last pass
-//! tonemaps and grades it into the target, with FXAA after it where asked.
-//! The depth those passes read is drawn by a pass of its own.
+//! their passes, global illumination, reflections, depth of field, glow
+//! and the lens flare follow, and the last pass tonemaps and grades it
+//! into the target, with FXAA after it where asked. The depth those passes
+//! read is drawn by a pass of its own, with the surfaces' normals and
+//! materials where reflections or global illumination read them.
 //!
 //! Each pass's uniforms and bind group are made when the scene is drawn,
 //! which is only when it changed: a still scene runs none of this.
@@ -16,7 +18,9 @@ use std::collections::HashMap;
 use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
-use crate::custom::{BufferFormat, Effect, GlowBlend, PassTexture, PostProcess};
+use crate::custom::{
+    BufferFormat, Effect, GlowBlend, Illumination, LensFlare, PassTexture, PostProcess,
+};
 use crate::maps::{self, Maps};
 use crate::programs::{self, Header, Programs};
 use crate::scene::{Environment, Tonemap};
@@ -40,6 +44,15 @@ const PONG: u32 = 2;
 const OCCLUSION: u32 = 3;
 const FINISHED: u32 = 4;
 pub(crate) const DEPTH_KEY: u32 = 5;
+pub(crate) const NORMAL_KEY: u32 = 6;
+pub(crate) const MATERIAL_KEY: u32 = 7;
+const REFLECTED: u32 = 8;
+const GATHERED: u32 = 40;
+const SOFTENED: u32 = 41;
+const SOFTENED_FIRST: u32 = 42;
+const FLARE_BRIGHT: u32 = 50;
+const FLARE: u32 = 51;
+const FLARE_BLUR: u32 = 52;
 const GLOW: u32 = 10;
 const GLOW_BLUR: u32 = 20;
 const GLOW_SUM: u32 = 30;
@@ -64,6 +77,13 @@ struct PostUniform {
     vignette: [f32; 4],
     vignette2: [f32; 4],
     lut: [f32; 4],
+    view: [[f32; 4]; 4],
+    flare: [f32; 4],
+    flare2: [f32; 4],
+    flare3: [f32; 4],
+    ssr: [f32; 4],
+    gi: [f32; 4],
+    gi2: [f32; 4],
 }
 
 /// The built-in passes' pipelines on one device.
@@ -112,6 +132,8 @@ impl Pipes {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                texture(5, true),
+                texture(6, true),
             ],
         });
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -253,6 +275,25 @@ pub(crate) fn needs_depth(environment: &Environment) -> bool {
     environment.ambient_occlusion.is_some_and(|ao| ao.shows())
         || environment.post.depth_of_field.is_some()
         || environment.effects.iter().any(Effect::reads_depth)
+        || needs_surfaces(environment)
+}
+
+/// Whether the passes read the surfaces' normals and materials too.
+pub(crate) fn needs_surfaces(environment: &Environment) -> bool {
+    let post = &environment.post;
+    post.on && (post.reflections.is_some() || post.illumination.is_some())
+}
+
+/// The starburst's turn for a camera looking `d`, in its own space: none
+/// looking straight ahead, and as much as it turns or tilts away.
+fn starburst_turn(d: [f32; 3]) -> f32 {
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    if len <= f32::EPSILON {
+        return 0.0;
+    }
+    let [x, y, z] = d.map(|c| c / len);
+    // Not -z: looking straight up that is -0, whose angle is a half turn.
+    x.atan2(0.0 - z) + y.clamp(-1.0, 1.0).asin()
 }
 
 /// The camera the passes see the scene with.
@@ -289,6 +330,9 @@ pub(crate) struct Chain<'a> {
     /// Whether a pass before the chain (the camera's depth) started the
     /// time already.
     pub started: bool,
+    /// Whether the surfaces' normals and materials were drawn, without
+    /// which reflections and global illumination are left out.
+    pub surfaces: bool,
 }
 
 struct Pass<'v> {
@@ -373,6 +417,54 @@ impl<'a> Chain<'a> {
             ];
         }
         u.lut[3] = post.sharpness.clamp(0.0, 1.0);
+        u.view = self.view.view;
+        if let Some(f) = &post.lens_flare {
+            let from = |t: &Option<Option<_>>| match t {
+                None => 0.0,
+                Some(None) => 1.0,
+                Some(Some(_)) => 2.0,
+            };
+            u.flare = [
+                f.bloom_scale,
+                f.bloom_bias,
+                f.ghost_dispersal,
+                f.ghost_count as f32,
+            ];
+            u.flare2 = [
+                f.halo_width,
+                f.stretch_to_aspect,
+                f.distortion,
+                f.blur_amount,
+            ];
+            u.flare3 = [
+                0.0,
+                from(&f.dirt),
+                from(&f.starburst),
+                starburst_turn(f.camera_direction),
+            ];
+        }
+        if let Some(r) = post.reflections {
+            u.ssr = [
+                r.max_steps as f32,
+                r.thickness,
+                self.view.near,
+                self.view.far,
+            ];
+        }
+        if let Some(g) = post.illumination {
+            u.gi = [
+                g.hit_thickness,
+                g.indirect_boost,
+                f32::from(u8::from(g.indirect)),
+                g.sample_count as f32,
+            ];
+            u.gi2 = [
+                g.sample_radius,
+                g.bounce.unwrap_or(0.0),
+                g.slice_count as f32,
+                g.buffer_size,
+            ];
+        }
         u
     }
 
@@ -396,6 +488,19 @@ impl<'a> Chain<'a> {
         texel: [u32; 2],
         dir: [f32; 2],
         depth: Option<&wgpu::TextureView>,
+    ) {
+        self.pass_reading(p, base, texel, dir, depth, [None, None]);
+    }
+
+    /// [`Chain::pass`] with a third and a fourth picture.
+    fn pass_reading(
+        &mut self,
+        p: Pass<'_>,
+        base: &PostUniform,
+        texel: [u32; 2],
+        dir: [f32; 2],
+        depth: Option<&wgpu::TextureView>,
+        [c, d]: [Option<&wgpu::TextureView>; 2],
     ) {
         let mut u = *base;
         u.texel = [1.0 / texel[0] as f32, 1.0 / texel[1] as f32, dir[0], dir[1]];
@@ -430,6 +535,14 @@ impl<'a> Chain<'a> {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(&self.pipes.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(c.unwrap_or(&none)),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(d.unwrap_or(&none)),
                 },
             ],
         });
@@ -521,6 +634,21 @@ impl<'a> Chain<'a> {
             }
         }
 
+        if self.surfaces
+            && let Some(depth) = &depth
+        {
+            if let Some(gi) = env.post.illumination {
+                let out = next(current);
+                self.illumination(&base, gi, depth, current, out);
+                current = out;
+            }
+            if env.post.reflections.is_some() {
+                let out = next(current);
+                self.reflections(&base, depth, current, out);
+                current = out;
+            }
+        }
+
         if env.post.on && env.post.depth_of_field.is_some() {
             let out = next(current);
             let a = self.buffers.view(self.device, current, size, HDR);
@@ -550,6 +678,14 @@ impl<'a> Chain<'a> {
         {
             let out = next(current);
             self.glow(&base, glow.levels, current, out);
+            current = out;
+        }
+
+        if env.post.on
+            && let Some(flare) = &env.post.lens_flare
+        {
+            let out = next(current);
+            self.lens_flare(&base, flare, current, out);
             current = out;
         }
 
@@ -624,6 +760,213 @@ impl<'a> Chain<'a> {
             size,
             [0.0; 2],
             None,
+        );
+    }
+
+    /// The surfaces' normals and materials, which the surface pass drew.
+    fn surfaces(&mut self) -> [wgpu::TextureView; 2] {
+        let size = self.size;
+        [
+            self.buffers
+                .view(self.device, NORMAL_KEY, size, crate::gbuffer::NORMAL),
+            self.buffers
+                .view(self.device, MATERIAL_KEY, size, crate::gbuffer::MATERIAL),
+        ]
+    }
+
+    fn illumination(
+        &mut self,
+        base: &PostUniform,
+        gi: Illumination,
+        depth: &wgpu::TextureView,
+        current: u32,
+        out: u32,
+    ) {
+        let size = self.size;
+        let small = [
+            ((size[0] as f32 * gi.buffer_size).round() as u32).max(1),
+            ((size[1] as f32 * gi.buffer_size).round() as u32).max(1),
+        ];
+        let [normal, material] = self.surfaces();
+        let scene = self.buffers.view(self.device, current, size, HDR);
+        let gathered = self.buffers.view(self.device, GATHERED, small, HDR);
+        let softened = self.buffers.view(self.device, SOFTENED, small, HDR);
+        let first = gi
+            .bounce
+            .map(|_| self.buffers.view(self.device, SOFTENED_FIRST, small, HDR));
+        let simple = |entry, a, b, out| Pass {
+            entry,
+            a,
+            b,
+            out,
+            format: HDR,
+            add: false,
+            clear: true,
+            last: false,
+        };
+        // The bounce gathers again from what the first gathering lit, in the
+        // same frame: a still scene draws one frame, so a bounce kept from the
+        // last one would show only once something moved.
+        if let Some(first) = &first {
+            let mut u = *base;
+            u.gi2[1] = 0.0;
+            self.pass_reading(
+                simple("fs_gi", &scene, None, &gathered),
+                &u,
+                size,
+                [0.0; 2],
+                Some(depth),
+                [Some(&normal), Some(&material)],
+            );
+            self.pass_reading(
+                simple("fs_gi_blur", &gathered, None, first),
+                &u,
+                small,
+                [0.0; 2],
+                Some(depth),
+                [Some(&normal), None],
+            );
+        }
+        self.pass_reading(
+            simple("fs_gi", &scene, first.as_ref(), &gathered),
+            base,
+            size,
+            [0.0; 2],
+            Some(depth),
+            [Some(&normal), Some(&material)],
+        );
+        self.pass_reading(
+            simple("fs_gi_blur", &gathered, None, &softened),
+            base,
+            small,
+            [0.0; 2],
+            Some(depth),
+            [Some(&normal), None],
+        );
+        let o = self.buffers.view(self.device, out, size, HDR);
+        self.pass_reading(
+            simple("fs_gi_apply", &scene, Some(&softened), &o),
+            base,
+            size,
+            [0.0; 2],
+            Some(depth),
+            [Some(&normal), Some(&material)],
+        );
+    }
+
+    fn reflections(
+        &mut self,
+        base: &PostUniform,
+        depth: &wgpu::TextureView,
+        current: u32,
+        out: u32,
+    ) {
+        let size = self.size;
+        let [normal, material] = self.surfaces();
+        let scene = self.buffers.view(self.device, current, size, HDR);
+        let reflected = self.buffers.view(self.device, REFLECTED, size, HDR);
+        let simple = |entry, a, b, out| Pass {
+            entry,
+            a,
+            b,
+            out,
+            format: HDR,
+            add: false,
+            clear: true,
+            last: false,
+        };
+        self.pass_reading(
+            simple("fs_ssr", &scene, None, &reflected),
+            base,
+            size,
+            [0.0; 2],
+            Some(depth),
+            [Some(&normal), None],
+        );
+        let o = self.buffers.view(self.device, out, size, HDR);
+        self.pass_reading(
+            simple("fs_ssr_apply", &scene, Some(&reflected), &o),
+            base,
+            size,
+            [0.0; 2],
+            Some(depth),
+            [Some(&normal), Some(&material)],
+        );
+    }
+
+    fn lens_flare(&mut self, base: &PostUniform, flare: &LensFlare, current: u32, out: u32) {
+        let size = self.size;
+        let half = [(size[0] >> 1).max(1), (size[1] >> 1).max(1)];
+        let (device, queue) = (self.device, self.queue);
+        let mut single = |t: Option<&crate::texture::Texture>| {
+            t.and_then(|t| self.maps.single(device, queue, t))
+                .map(|(view, _)| view)
+        };
+        let colour = single(flare.color_texture.as_ref());
+        let dirt = single(flare.dirt.as_ref().and_then(Option::as_ref));
+        let starburst = single(flare.starburst.as_ref().and_then(Option::as_ref));
+        let mut u = *base;
+        u.flare3[0] = f32::from(u8::from(colour.is_some()));
+        // A texture asked for and not had is the built-in one.
+        if dirt.is_none() && u.flare3[1] > 1.5 {
+            u.flare3[1] = 1.0;
+        }
+        if starburst.is_none() && u.flare3[2] > 1.5 {
+            u.flare3[2] = 1.0;
+        }
+        let scene = self.buffers.view(device, current, size, HDR);
+        let bright = self.buffers.view(device, FLARE_BRIGHT, half, HDR);
+        let ghosts = self.buffers.view(device, FLARE, half, HDR);
+        let blur = self.buffers.view(device, FLARE_BLUR, half, HDR);
+        let simple = |entry, a, b, out| Pass {
+            entry,
+            a,
+            b,
+            out,
+            format: HDR,
+            add: false,
+            clear: true,
+            last: false,
+        };
+        self.pass(
+            simple("fs_flare_bright", &scene, None, &bright),
+            &u,
+            size,
+            [0.0; 2],
+            None,
+        );
+        self.pass(
+            simple("fs_flare_ghosts", &bright, colour.as_ref(), &ghosts),
+            &u,
+            half,
+            [0.0; 2],
+            None,
+        );
+        let spread = flare.blur_amount * 0.5;
+        if spread > 0.0 {
+            self.pass(
+                simple("fs_blur", &ghosts, None, &blur),
+                &u,
+                half,
+                [spread, 0.0],
+                None,
+            );
+            self.pass(
+                simple("fs_blur", &blur, None, &ghosts),
+                &u,
+                half,
+                [0.0, spread],
+                None,
+            );
+        }
+        let o = self.buffers.view(device, out, size, HDR);
+        self.pass_reading(
+            simple("fs_flare_apply", &scene, Some(&ghosts), &o),
+            &u,
+            size,
+            [0.0; 2],
+            None,
+            [dirt.as_ref(), starburst.as_ref()],
         );
     }
 
@@ -810,5 +1153,20 @@ fn buffer_format(f: BufferFormat) -> wgpu::TextureFormat {
         BufferFormat::R16 | BufferFormat::R16F | BufferFormat::R32F => {
             wgpu::TextureFormat::R16Float
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_starburst_turns_with_the_camera() {
+        assert_eq!(starburst_turn([0.0, 0.0, -1.0]), 0.0);
+        assert_eq!(starburst_turn([0.0; 3]), 0.0);
+        let right = starburst_turn([1.0, 0.0, 0.0]);
+        assert!((right - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
+        let up = starburst_turn([0.0, 1.0, 0.0]);
+        assert!((up - std::f32::consts::FRAC_PI_2).abs() < 1e-5);
     }
 }

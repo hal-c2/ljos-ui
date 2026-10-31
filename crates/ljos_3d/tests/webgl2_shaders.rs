@@ -72,6 +72,14 @@ fn the_post_processing_passes_run_on_webgl2() {
             "fs_glow",
             "fs_final",
             "fs_fxaa",
+            "fs_ssr",
+            "fs_ssr_apply",
+            "fs_gi",
+            "fs_gi_blur",
+            "fs_gi_apply",
+            "fs_flare_bright",
+            "fs_flare_ghosts",
+            "fs_flare_apply",
         ],
     );
 }
@@ -84,7 +92,7 @@ fn the_lit_shader_runs_on_webgl2() {
         "lit",
         &format!("{TONE}{source}"),
         &["vs_main", "vs_extra"],
-        &["fs_main"],
+        &["fs_main", "fs_surface", "fs_surface_unlit"],
     );
     // Seven maps, the probe's two cubes and the shadow maps' array:
     // within the 16 textures a WebGL2 fragment shader may sample.

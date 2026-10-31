@@ -20,6 +20,7 @@ use bytemuck::{Pod, Zeroable};
 use wgpu::util::DeviceExt;
 
 use crate::custom::{CustomMaterial, Screen};
+use crate::gbuffer;
 use crate::geometry::CustomGeometry;
 use crate::gpu_extra::{self, InstanceRow, JOINT_SLOT, JointSlot, Rows};
 use crate::ibl::{self, Bound, Ibl};
@@ -191,6 +192,7 @@ pub struct Renderer {
     layer_stride: u64,
     /// By cull mode, and whether the mesh has a second vertex buffer.
     shadow_pipelines: HashMap<(CullMode, bool), wgpu::RenderPipeline>,
+    surfaces: gbuffer::Surfaces,
     shadow_sampler: wgpu::Sampler,
     /// What a frame without shadows binds where the maps go.
     no_shadows: shadow::Maps,
@@ -1093,6 +1095,7 @@ impl Renderer {
             layer_layout,
             layer_stride,
             shadow_pipelines: HashMap::new(),
+            surfaces: gbuffer::Surfaces::default(),
             shadow_sampler: shadow::sampler(device),
             no_shadows: shadow::maps(device, 1, shadow::layer_count(0)),
         }
@@ -1390,6 +1393,15 @@ impl Topology {
 fn screen_of(draw: &Draw<'_>) -> Screen {
     draw.custom
         .map_or(Screen::None, |(m, _)| m.program.screen())
+}
+
+fn surface_key(draw: &Draw<'_>) -> (Option<wgpu::Face>, bool, bool) {
+    let cull = match draw.key.cull {
+        CullMode::Back => Some(wgpu::Face::Back),
+        CullMode::Front => Some(wgpu::Face::Front),
+        CullMode::None => None,
+    };
+    (cull, draw.key.extra, draw.custom.is_some())
 }
 
 fn writes_camera_depth(draw: &Draw<'_>) -> bool {
@@ -1896,10 +1908,27 @@ impl Renderer {
             }
         }
         target.custom_slots.truncate(slot);
-        let depth_pass = processed && post::needs_depth(environment);
+        let surface_pass =
+            processed && post::needs_surfaces(environment) && self.surfaces.available(device);
+        let depth_pass = processed && !surface_pass && post::needs_depth(environment);
         if depth_pass {
             for draw in draws.iter().filter(|d| writes_camera_depth(d)) {
                 self.shadow_pipeline(device, draw.key.cull, draw.key.extra);
+            }
+        }
+        if surface_pass {
+            for draw in draws.iter().filter(|d| writes_camera_depth(d)) {
+                self.surfaces.prepare(
+                    device,
+                    &self.shader,
+                    &self.pipeline_layout,
+                    &[
+                        Some(vertex_layout()),
+                        Some(gpu_extra::instance_layout()),
+                        draw.key.extra.then(gpu_extra::extra_layout),
+                    ],
+                    surface_key(draw),
+                );
             }
         }
         for caster in &casters {
@@ -2052,6 +2081,9 @@ impl Renderer {
             if depth_pass {
                 self.draw_depth(device, encoder, target, &draws, view_proj);
             }
+            if surface_pass {
+                self.draw_surfaces(device, encoder, target, &draws, bound, &plain_maps);
+            }
             Chain {
                 device,
                 queue,
@@ -2076,7 +2108,8 @@ impl Renderer {
                 output_format: COLOR_FORMAT,
                 frame: target.frames as f32,
                 timer: target.timer.as_ref(),
-                started: depth_pass,
+                started: depth_pass || surface_pass,
+                surfaces: surface_pass,
             }
             .run();
         }
@@ -2153,6 +2186,76 @@ impl Renderer {
                 pass.set_pipeline(&self.shadow_pipelines[&pipeline]);
                 bound = Some(pipeline);
             }
+            let mesh = self.gpu_mesh(draw.mesh);
+            let offset = (i as u64 * self.model_stride) as u32;
+            let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
+            pass.set_bind_group(1, &target.model_group, &[offset, joints]);
+            bind_mesh(&mut pass, mesh, &target.instances.buffer, draw.copies);
+            pass.draw_indexed(0..mesh.count, 0, 0..draw.copies.count);
+        }
+    }
+
+    /// Draws the depth with each surface's normal and material, for the
+    /// passes that read all three.
+    fn draw_surfaces(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        target: &mut Target,
+        draws: &[Draw<'_>],
+        bound: Bound,
+        plain_maps: &GroupKey,
+    ) {
+        let size = target.size;
+        let depth = target.post.view(device, post::DEPTH_KEY, size, post::DEPTH);
+        let normal = target
+            .post
+            .view(device, post::NORMAL_KEY, size, gbuffer::NORMAL);
+        let material = target
+            .post
+            .view(device, post::MATERIAL_KEY, size, gbuffer::MATERIAL);
+        let attachment = |view, clear| {
+            Some(wgpu::RenderPassColorAttachment {
+                view,
+                resolve_target: None,
+                depth_slice: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear),
+                    store: wgpu::StoreOp::Store,
+                },
+            })
+        };
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("ljos_3d surfaces"),
+            color_attachments: &[
+                attachment(&normal, gbuffer::EMPTY),
+                attachment(&material, wgpu::Color::TRANSPARENT),
+            ],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &depth,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            // The post passes' time starts here, as they read these.
+            timestamp_writes: target.timer.as_ref().and_then(|t| t.post_pass(true, false)),
+            ..Default::default()
+        });
+        pass.set_bind_group(0, &target.frame_group, &[]);
+        pass.set_bind_group(3, self.ibl.group(bound), &[]);
+        for (i, draw) in draws.iter().enumerate() {
+            if !writes_camera_depth(draw) {
+                continue;
+            }
+            pass.set_pipeline(self.surfaces.pipeline(surface_key(draw)));
+            let maps = if draw.custom.is_some() {
+                plain_maps
+            } else {
+                &draw.maps
+            };
+            pass.set_bind_group(2, self.maps.group(maps), &[]);
             let mesh = self.gpu_mesh(draw.mesh);
             let offset = (i as u64 * self.model_stride) as u32;
             let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;

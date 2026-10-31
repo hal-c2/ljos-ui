@@ -3640,6 +3640,7 @@ dependencies = [
  "pollster 1.0.1",
  "slotmap",
  "thiserror 2.0.21",
+ "tracing",
  "wgpu",
  "zune-jpeg",
 ]
