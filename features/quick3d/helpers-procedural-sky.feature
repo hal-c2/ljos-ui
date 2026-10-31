@@ -31,8 +31,7 @@ Feature: A sky made from colours
                 objectName: "sky"; textureQuality: ProceduralSkyTextureData.SkyTextureQualityLow
                 skyTopColor: "#4080c0"; skyHorizonColor: "#c0d0e0"
                 groundBottomColor: "#302010"; groundHorizonColor: "#605040"
-                sunColor: "#ffffff"; sunLatitude: 0; sunLongitude: 0
-                sunAngleMin: 5; sunAngleMax: 6; sunEnergy: 1
+                sunColor: "#ffffff"; sunLatitude: 0; sunLongitude: 0; sunAngleMin: 5; sunAngleMax: 6; sunEnergy: 1
               }
             }
           }

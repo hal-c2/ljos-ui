@@ -24,25 +24,13 @@ Feature: Levels of detail picked by the camera's distance
       Rectangle {
         width: 100; height: 100; color: "black"
         View3D {
-          anchors.fill: parent
-          environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+          anchors.fill: parent; environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
           PerspectiveCamera { id: cam; objectName: "cam"; z: 300 }
           LodManager {
-            objectName: "lod"
-            camera: cam
-            distances: [400, 800]
-            Model {
-              objectName: "near"; source: "#Cube"
-              materials: DefaultMaterial { diffuseColor: "red"; lighting: DefaultMaterial.NoLighting }
-            }
-            Model {
-              objectName: "middle"; source: "#Cube"
-              materials: DefaultMaterial { diffuseColor: "lime"; lighting: DefaultMaterial.NoLighting }
-            }
-            Model {
-              objectName: "far"; source: "#Cube"
-              materials: DefaultMaterial { diffuseColor: "blue"; lighting: DefaultMaterial.NoLighting }
-            }
+            objectName: "lod"; camera: cam; distances: [400, 800]
+            Model { objectName: "near"; source: "#Cube"; materials: DefaultMaterial { diffuseColor: "red"; lighting: DefaultMaterial.NoLighting } }
+            Model { objectName: "middle"; source: "#Cube"; materials: DefaultMaterial { diffuseColor: "lime"; lighting: DefaultMaterial.NoLighting } }
+            Model { objectName: "far"; source: "#Cube"; materials: DefaultMaterial { diffuseColor: "blue"; lighting: DefaultMaterial.NoLighting } }
           }
           LodManager {
             objectName: "loose"

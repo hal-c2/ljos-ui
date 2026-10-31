@@ -22,31 +22,23 @@ Feature: A texture made of data
       import QtQuick3D
       import QtQuick3D.Helpers
       Rectangle {
-        id: scene; objectName: "scene"
-        property string fill: "red"
+        id: scene; objectName: "scene"; property string fill: "red"
         width: 200; height: 200; color: "black"
         function bytes(r, g, b) {
-          var buffer = new ArrayBuffer(16)
-          var u = new Uint8Array(buffer)
-          for (var i = 0; i < 4; ++i) u.set([r, g, b, 255], i * 4)
-          return buffer
+          var u = new Uint8Array(16); for (var i = 0; i < 4; ++i) u.set([r, g, b, 255], i * 4); return u.buffer
         }
         View3D {
-          anchors.fill: parent
-          environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+          anchors.fill: parent; environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
           OrthographicCamera { z: 600 }
           Model {
             source: "#Rectangle"; scale: Qt.vector3d(2, 2, 1)
-            materials: DefaultMaterial {
-              lighting: DefaultMaterial.NoLighting
+            materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting
               diffuseMap: Texture {
                 objectName: "tex"; source: "blue.png"
                 textureData: ProceduralTextureData {
                   objectName: "data"; width: 2; height: 2
                   textureData: scene.fill === "red" ? scene.bytes(255, 0, 0) : scene.bytes(0, 255, 0)
-                }
-              }
-            }
+                } } }
           }
         }
       }
