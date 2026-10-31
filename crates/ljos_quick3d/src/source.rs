@@ -418,6 +418,7 @@ fn vectors(p: Prop3d) -> &'static [Prop<Vector3d>] {
         P::Position => &[Node::POSITION],
         P::EulerRotation => &[Node::EULER_ROTATION],
         P::Scale => &[Node::SCALE],
+        P::Pivot => &[Node::PIVOT],
         P::EmissiveFactor => &[PrincipledMaterial::EMISSIVE_FACTOR],
         P::ProbeOrientation => &[SceneEnvironment::PROBE_ORIENTATION],
         P::LensFlareCameraDirection => &[X::LENS_FLARE_CAMERA_DIRECTION],

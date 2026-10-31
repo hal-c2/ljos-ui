@@ -9,6 +9,7 @@
 
 use ljos::item::ljos_3d::math::{Mat4, Quat, Vec3};
 use ljos::item::ljos_3d::pick::Viewport;
+use ljos::item::ljos_3d::scene::Transform;
 use ljos::prelude::*;
 
 use ljos::item::Item;
@@ -160,8 +161,10 @@ pub(crate) fn place(e: &Engine, obj: ObjectId) -> Place {
     let position = vec3(e.get(obj, Node::POSITION).unwrap_or_default());
     let rotation = quat(e.get(obj, Node::ROTATION).unwrap_or(IDENTITY));
     let scale = vec3(e.get(obj, Node::SCALE).unwrap_or(ONE));
+    let pivot = vec3(e.get(obj, Node::PIVOT).unwrap_or_default());
+    let own = Transform::about_pivot(position, rotation, scale, pivot);
     Place {
-        world: parent.world * Mat4::from_trs(position, rotation, scale),
+        world: parent.world * own.matrix(),
         rotation: parent.rotation * rotation,
         scale: Vec3::new(
             parent.scale.x * scale.x,

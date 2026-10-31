@@ -70,7 +70,8 @@ pub struct Node {
     pub euler_rotation: Vector3d,
     #[qml(notify)]
     pub scale: Vector3d,
-    /// Kept; the drawing does not use it yet.
+    /// The point in the node's own space it scales and turns about, and
+    /// that `position` places.
     #[qml(notify)]
     pub pivot: Vector3d,
     /// Kept; the drawing does not use it yet.

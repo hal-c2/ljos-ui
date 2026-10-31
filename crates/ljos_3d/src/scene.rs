@@ -77,6 +77,26 @@ impl Default for Transform {
 }
 
 impl Transform {
+    /// A node placed at `position` that scales and turns about `pivot`,
+    /// a point in its own space: the pivot is what lands on `position`,
+    /// so the node's origin moves away from it by the scaled, turned pivot.
+    pub fn about_pivot(position: Vec3, rotation: Quat, scale: Vec3, pivot: Vec3) -> Transform {
+        let origin = rotation.rotate(Vec3::new(
+            -pivot.x * scale.x,
+            -pivot.y * scale.y,
+            -pivot.z * scale.z,
+        ));
+        Transform {
+            position: Vec3::new(
+                position.x + origin.x,
+                position.y + origin.y,
+                position.z + origin.z,
+            ),
+            rotation,
+            scale,
+        }
+    }
+
     pub fn matrix(&self) -> Mat4 {
         Mat4::from_trs(self.position, self.rotation, self.scale)
     }

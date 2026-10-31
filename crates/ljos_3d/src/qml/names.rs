@@ -147,6 +147,7 @@ props! {
     Rotation = "rotation",
     EulerRotation = "eulerRotation",
     Scale = "scale",
+    Pivot = "pivot",
     Opacity = "opacity",
     Visible = "visible",
     // Model

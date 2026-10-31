@@ -9,6 +9,7 @@ use super::enums;
 pub mod node {
     pub const POSITION: [f32; 3] = [0.0, 0.0, 0.0];
     pub const SCALE: [f32; 3] = [1.0, 1.0, 1.0];
+    pub const PIVOT: [f32; 3] = [0.0, 0.0, 0.0];
     pub const OPACITY: f64 = 1.0;
     pub const VISIBLE: bool = true;
 }

@@ -88,6 +88,27 @@ Feature: What a scene's objects say, read the same however they say it
       And the property "position.x" of "pair" is 5
       And the property "position.z" of "pair" is 10
 
+  Rule: A node scales and turns about its pivot
+
+    # The window is 100 across and the camera 300 away, so the cube's middle
+    # is on the window's middle until something moves it. A pivot of -100 on
+    # x puts the node's origin 100 to the right of its position.
+    Scenario: A pivot moves the node the other way
+      When the property "pivot.x" of "cube" is set to -100
+      Then the pixel at 50, 50 of the window is "#202020"
+
+    # Turned half way round y, the node's +x points to scene -x, so the same
+    # pivot now puts its origin on the other side.
+    Scenario: The pivot turns with the node
+      When the property "pivot.x" of "cube" is set to -100
+      And the property "eulerRotation.y" of "cube" is set to 180
+      Then the property "scenePosition.x" of "cube" is within 0.01 of -100
+
+    Scenario: The pivot scales with the node
+      When the property "pivot.x" of "cube" is set to -100
+      And the property "scale.x" of "cube" is set to 2
+      Then the property "scenePosition.x" of "cube" is within 0.01 of 200
+
   Rule: A member left out says Qt's default
 
     Scenario Outline: Writing <member> as its default changes nothing drawn

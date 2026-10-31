@@ -302,11 +302,12 @@ fn transform<S: SceneSource>(s: &S, obj: S::Object) -> Transform {
                 .map(Quat::from_euler_degrees)
         })
         .map_or(Quat::IDENTITY, unit);
-    Transform {
+    Transform::about_pivot(
         position,
         rotation,
-        scale: vec3(s, obj, P::Scale, d::node::SCALE),
-    }
+        vec3(s, obj, P::Scale, d::node::SCALE),
+        vec3(s, obj, P::Pivot, d::node::PIVOT),
+    )
 }
 
 /// What the light `obj` casts shadows with, if it is a light that casts
