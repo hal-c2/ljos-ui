@@ -43,7 +43,7 @@ skrifa.workspace = true
 egui = { workspace = true, optional = true }
 # B0 turns paths into triangles with it (ARCHITECTURE.md section 7.1). Not in
 # the workspace pins: only this backend uses it.
-lyon_tessellation = { version = "1.0.22", optional = true }
+lyon_tessellation = { workspace = true, optional = true }
 
 [lints]
 workspace = true

@@ -4368,9 +4368,11 @@ dependencies = [
  "ljos_compiler",
  "ljos_ir",
  "ljos_render",
+ "lyon_tessellation",
  "png",
  "qt_types",
  "quick-xml 0.42.0",
+ "skrifa 0.44.0",
  "slotmap",
 ]
 

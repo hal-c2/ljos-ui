@@ -5,6 +5,7 @@
 //! lists them, so a type added later touches its own file and one line here.
 
 mod extended_environment;
+mod extruded_text;
 mod geometry;
 mod height_field;
 mod infinite_grid;
@@ -22,6 +23,7 @@ use geometry::{
     CapsuleGeometry, ConeGeometry, CuboidGeometry, CylinderGeometry, GridGeometry, PlaneGeometry,
     SphereGeometry, TorusGeometry,
 };
+use extruded_text::ExtrudedTextGeometry;
 use height_field::HeightFieldGeometry;
 use instance_model::{InstanceModel, InstanceRepeater};
 pub(crate) use infinite_grid::InfiniteGrid;
@@ -60,6 +62,7 @@ pub(crate) fn register(engine: &Engine) {
         InstanceRepeater,
         ProceduralTextureData,
         ProceduralSkyTextureData,
+        ExtrudedTextGeometry,
     ]));
     library::register(engine);
 }

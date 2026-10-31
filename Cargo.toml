@@ -79,6 +79,9 @@ icu_segmenter = { version = "2.3", default-features = false, features = ["compil
 yeslogic-fontconfig-sys = "6.0.1"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
 skrifa = "0.44"
+# Fills a flattened outline with triangles: ljos_render's B0 shapes and the
+# 3D helpers' extruded text.
+lyon_tessellation = "1.0.22"
 
 # Images
 zune-jpeg = "0.5.15"

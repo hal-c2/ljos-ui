@@ -32,6 +32,9 @@ pub(super) const ERROR: i32 = 3;
 pub(super) trait Generated: QmlType + 'static {
     /// `None` for a geometry that has no `status`.
     const STATUS: Option<Prop<i32>>;
+    /// Whether an empty mesh is what was asked for (`Ready`) rather than
+    /// parameters that make no shape (`Error`).
+    const EMPTY_IS_READY: bool = false;
     fn geometry(&mut self) -> &mut Geometry;
     fn complete(&mut self) -> &mut bool;
     /// `None` when a property could not be read.
@@ -46,7 +49,11 @@ pub(super) fn rebuild<T: Generated>(cx: &Cx) {
     let Some(built) = T::built(cx) else {
         return;
     };
-    let status = if built.is_empty() { ERROR } else { READY };
+    let status = if built.is_empty() && !T::EMPTY_IS_READY {
+        ERROR
+    } else {
+        READY
+    };
     let _ = cx.with_mut(|t: &mut T| built.into_geometry(t.geometry()));
     Geometry::update(cx.engine, cx.this);
     if let Some(p) = T::STATUS {

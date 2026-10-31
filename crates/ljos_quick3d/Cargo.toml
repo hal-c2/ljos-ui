@@ -26,6 +26,10 @@ ljos_ir = { path = "../ljos_ir" }
 slotmap = { workspace = true }
 # FileInstancing's XML tables, read with the reader ljos_xml uses.
 quick-xml.workspace = true
+# ExtrudedTextGeometry: the glyph outlines of the text stack's fonts, and
+# their fill as triangles. Both are already linked through ljos_render.
+skrifa.workspace = true
+lyon_tessellation.workspace = true
 
 [build-dependencies]
 # The module's QML is compiled when this crate is built; the crate never
