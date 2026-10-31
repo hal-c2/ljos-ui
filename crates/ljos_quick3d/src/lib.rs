@@ -98,6 +98,7 @@ mod repeater;
 mod runtime_loader;
 mod scene;
 mod skin;
+mod source;
 mod space;
 mod texture;
 mod view;
@@ -122,6 +123,7 @@ pub use random_instancing::{InstanceRange, RandomInstancing};
 pub use repeater::Repeater3D;
 pub use runtime_loader::RuntimeLoader;
 pub use skin::{Joint, Skeleton, Skin};
+pub use source::EngineSource;
 pub use texture::Texture;
 pub use view::View3D;
 

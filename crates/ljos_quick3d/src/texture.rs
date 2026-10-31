@@ -3,25 +3,15 @@
 
 use std::cell::RefCell;
 
-use ljos::item::ljos_3d::{
-    self, Filter, PixelEncoding, Sampling, TextureImage, TexturePixels, Tiling, UvTransform,
-};
+use ljos::item::ljos_3d::{self, PixelEncoding, TextureImage, TexturePixels, Tiling};
 use ljos::item::{self, ImageEncoding, ImageHandle, kurbo};
 use ljos::prelude::*;
 
 use crate::Object3D;
+use crate::source::EngineSource;
 
-pub(crate) mod tiling {
-    pub const CLAMP_TO_EDGE: i32 = 0;
-    pub const MIRRORED_REPEAT: i32 = 1;
-    pub const REPEAT: i32 = 2;
-}
-
-pub(crate) mod filter {
-    pub const NONE: i32 = 0;
-    pub const NEAREST: i32 = 1;
-    pub const LINEAR: i32 = 2;
-}
+use ljos::item::ljos_3d::qml::defaults as d;
+pub(crate) use ljos::item::ljos_3d::qml::enums::{filter, tiling};
 
 fn texture_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![
@@ -122,25 +112,25 @@ impl Default for Texture {
             object3d: Object3D::default(),
             source: Url::default(),
             source_item: None,
-            scale_u: 1.0,
-            scale_v: 1.0,
-            position_u: 0.0,
-            position_v: 0.0,
-            rotation_uv: 0.0,
-            pivot_u: 0.0,
-            pivot_v: 0.0,
-            flip_u: false,
-            flip_v: false,
-            index_uv: 0,
+            scale_u: d::texture::SCALE_U,
+            scale_v: d::texture::SCALE_V,
+            position_u: d::texture::POSITION_U,
+            position_v: d::texture::POSITION_V,
+            rotation_uv: d::texture::ROTATION_UV,
+            pivot_u: d::texture::PIVOT_U,
+            pivot_v: d::texture::PIVOT_V,
+            flip_u: d::texture::FLIP_U,
+            flip_v: d::texture::FLIP_V,
+            index_uv: d::texture::INDEX_UV,
             mapping_mode: 0,
-            tiling_mode_horizontal: tiling::REPEAT,
-            tiling_mode_vertical: tiling::REPEAT,
-            tiling_mode_depth: tiling::REPEAT,
-            min_filter: filter::LINEAR,
-            mag_filter: filter::LINEAR,
-            mip_filter: filter::NONE,
-            generate_mipmaps: false,
-            auto_orientation: true,
+            tiling_mode_horizontal: d::texture::TILING_MODE,
+            tiling_mode_vertical: d::texture::TILING_MODE,
+            tiling_mode_depth: d::texture::TILING_MODE,
+            min_filter: d::texture::MIN_FILTER,
+            mag_filter: d::texture::MAG_FILTER,
+            mip_filter: d::texture::MIP_FILTER,
+            generate_mipmaps: d::texture::GENERATE_MIPMAPS,
+            auto_orientation: d::texture::AUTO_ORIENTATION,
             loaded: RefCell::new(Loaded::default()),
         }
     }
@@ -239,48 +229,27 @@ impl TexturePixels for ItemPixels {
 /// picture is not ready (the view is painted again when it is), or when it
 /// has none. Tracked.
 pub(crate) fn read(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3d::Texture> {
+    ljos_3d::qml::texture(&EngineSource::new(e), view, obj)
+}
+
+/// The pixels the texture `obj` shows in `view`: its `sourceItem`'s
+/// picture or its loaded `source`. Tracked.
+pub(crate) fn image_of(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<TextureImage> {
     if !e.is::<Texture>(obj) {
         return None;
     }
-    let image = match item::prop(e, obj, Texture::SOURCE_ITEM) {
+    match item::prop(e, obj, Texture::SOURCE_ITEM) {
         // "If this property is set, the source property is ignored."
         Some(src) => {
             let picture = item::item_picture(e, view, src, item::PictureArea::Bounds)?;
-            TextureImage::new(ItemPixels(picture.image))
+            Some(TextureImage::new(ItemPixels(picture.image)))
         }
         None => {
             let source = item::prop(e, obj, Texture::SOURCE);
             // A source a file wrote is relative to that file, as an Image's.
             let url = e.resolve_url(obj, source.0.as_str());
-            image(e, view, obj, &url)?
+            image(e, view, obj, &url)
         }
-    };
-    let sampling = Sampling {
-        min: self::filter(item::prop(e, obj, Texture::MIN_FILTER)),
-        mag: self::filter(item::prop(e, obj, Texture::MAG_FILTER)),
-        mip: self::filter(item::prop(e, obj, Texture::MIP_FILTER)),
-        tiling_u: self::tiling(item::prop(e, obj, Texture::TILING_MODE_HORIZONTAL)),
-        tiling_v: self::tiling(item::prop(e, obj, Texture::TILING_MODE_VERTICAL)),
-        generate_mipmaps: item::prop(e, obj, Texture::GENERATE_MIPMAPS),
-    };
-    Some(ljos_3d::Texture {
-        image,
-        sampling,
-        uv: uv_transform(e, obj),
-        // QtQuick3D has two UV sets: a larger index reads the second.
-        uv_set: item::prop(e, obj, Texture::INDEX_UV).clamp(0, 1) as u32,
-    })
-}
-
-fn uv_transform(e: &Engine, obj: ObjectId) -> UvTransform {
-    let p = |prop| item::prop(e, obj, prop) as f32;
-    UvTransform {
-        scale: [p(Texture::SCALE_U), p(Texture::SCALE_V)],
-        position: [p(Texture::POSITION_U), p(Texture::POSITION_V)],
-        rotation: p(Texture::ROTATION_UV),
-        pivot: [p(Texture::PIVOT_U), p(Texture::PIVOT_V)],
-        flip_u: item::prop(e, obj, Texture::FLIP_U),
-        flip_v: item::prop(e, obj, Texture::FLIP_V),
     }
 }
 
@@ -289,11 +258,11 @@ fn uv_transform(e: &Engine, obj: ObjectId) -> UvTransform {
 pub(crate) fn item_at(e: &Engine, obj: ObjectId, uv: [f32; 2]) -> Option<(ObjectId, kurbo::Point)> {
     e.untrack(|| {
         let src = item::prop(e, obj, Texture::SOURCE_ITEM)?;
-        let [r0, r1] = uv_transform(e, obj).rows();
+        let [r0, r1] = ljos_3d::qml::uv_transform(&EngineSource::new(e), obj).rows();
         let at = |r: [f32; 3], tiling| {
             let t = f64::from(r[0] * uv[0] + r[1] * uv[1] + r[2]);
             // As the sampler reads it: the image the point shows.
-            match self::tiling(item::prop(e, obj, tiling)) {
+            match ljos_3d::qml::tiling_mode(item::prop(e, obj, tiling)) {
                 Tiling::ClampToEdge => t.clamp(0.0, 1.0),
                 Tiling::Repeat => t.rem_euclid(1.0),
                 Tiling::MirroredRepeat => 1.0 - (t.rem_euclid(2.0) - 1.0).abs(),
@@ -309,22 +278,6 @@ pub(crate) fn item_at(e: &Engine, obj: ObjectId, uv: [f32; 2]) -> Option<(Object
             ),
         ))
     })
-}
-
-fn filter(f: i32) -> Filter {
-    match f {
-        filter::NONE => Filter::None,
-        filter::NEAREST => Filter::Nearest,
-        _ => Filter::Linear,
-    }
-}
-
-fn tiling(t: i32) -> Tiling {
-    match t {
-        tiling::CLAMP_TO_EDGE => Tiling::ClampToEdge,
-        tiling::MIRRORED_REPEAT => Tiling::MirroredRepeat,
-        _ => Tiling::Repeat,
-    }
 }
 
 /// The picture at `url`, read the first time a view asks for it.

@@ -21,7 +21,7 @@ use geometry::{
     SphereGeometry, TorusGeometry,
 };
 use height_field::HeightFieldGeometry;
-use infinite_grid::InfiniteGrid;
+pub(crate) use infinite_grid::InfiniteGrid;
 pub(crate) use infinite_grid::read as infinite_grid;
 use ljos::prelude::*;
 use lod_manager::LodManager;

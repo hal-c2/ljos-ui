@@ -669,3 +669,222 @@ View3D {
         .collect();
     assert_eq!(names, ["tint", "level", "picture"]);
 }
+
+/// The mapping read through a name-keyed graph, as the web holds its
+/// objects, builds the scene the engine builds from the same QML.
+mod same_mapping {
+    use ljos::item::ljos_3d::math::Vec3;
+    use ljos::item::ljos_3d::qml::{self, MapGraph, MapValue as V, Type3d as T, enums, srgb8};
+
+    use super::*;
+
+    fn rgb(r: u8, g: u8, b: u8) -> V {
+        V::Color(srgb8([r, g, b, 255]))
+    }
+
+    /// Each object of the graph is the scene node the engine's object of
+    /// the same name became, and the two scenes draw the same.
+    fn assert_same(e: &Engine, view: ObjectId, g: &MapGraph, gv: usize, pairs: &[(&str, usize)]) {
+        let native = scene::build_with_ids(e, view);
+        let web = qml::build(g, gv);
+        for &(name, o) in pairs {
+            assert_eq!(
+                native.ids.get(&named(e, view, name)),
+                web.ids.get(&o),
+                "{name} is another node"
+            );
+        }
+        assert!(
+            native.scene.same_as(&web.scene),
+            "engine {:#?}\nweb {:#?}",
+            native.scene,
+            web.scene
+        );
+    }
+
+    #[test]
+    fn a_lit_cube_from_a_name_keyed_graph_is_the_engines_scene() {
+        let (e, view) = load(
+            r##"
+View3D {
+    property QtObject camera_: camera
+    property QtObject sun_: sun
+    property QtObject cube_: cube
+    width: 100; height: 100
+    camera: camera
+    environment: SceneEnvironment {
+        clearColor: "#202020"; backgroundMode: SceneEnvironment.Color
+        antialiasingMode: SceneEnvironment.MSAA
+    }
+    PerspectiveCamera { id: camera; z: 300; fieldOfView: 45 }
+    DirectionalLight {
+        id: sun; eulerRotation.x: -30; brightness: 2; color: "#ffeecc"
+        castsShadow: true; shadowMapQuality: Light.ShadowMapQualityHigh
+    }
+    Model {
+        id: cube; source: "#Cube"
+        position: Qt.vector3d(10, 20, 0); eulerRotation.y: 45; scale: Qt.vector3d(2, 2, 2)
+        materials: PrincipledMaterial { baseColor: "#ff8000"; metalness: 0.5; roughness: 0.25 }
+    }
+}
+"##,
+        );
+        let mut g = MapGraph::new();
+        let gv = g.add(T::View3D);
+        let env = g.add(T::SceneEnvironment);
+        g.set(env, "clearColor", rgb(0x20, 0x20, 0x20))
+            .set(
+                env,
+                "backgroundMode",
+                V::Number(f64::from(enums::background::COLOR)),
+            )
+            .set(
+                env,
+                "antialiasingMode",
+                V::Number(f64::from(enums::antialiasing::MSAA)),
+            );
+        let camera = g.add(T::PerspectiveCamera);
+        g.set(camera, "z", V::Number(300.0))
+            .set(camera, "fieldOfView", V::Number(45.0));
+        let sun = g.add(T::DirectionalLight);
+        g.set(
+            sun,
+            "eulerRotation",
+            V::Vector3d(Vec3::new(-30.0, 0.0, 0.0)),
+        )
+        .set(sun, "brightness", V::Number(2.0))
+        .set(sun, "color", rgb(0xff, 0xee, 0xcc))
+        .set(sun, "castsShadow", V::Bool(true))
+        .set(
+            sun,
+            "shadowMapQuality",
+            V::Number(f64::from(enums::shadow_map::HIGH)),
+        );
+        let cube = g.add(T::Model);
+        let paint = g.add(T::PrincipledMaterial);
+        g.set(cube, "source", V::Url("#Cube".into()))
+            .set(cube, "position", V::Vector3d(Vec3::new(10.0, 20.0, 0.0)))
+            .set(
+                cube,
+                "eulerRotation",
+                V::Vector3d(Vec3::new(0.0, 45.0, 0.0)),
+            )
+            .set(cube, "scale", V::Vector3d(Vec3::new(2.0, 2.0, 2.0)))
+            .set(cube, "materials", V::Objects(vec![paint]))
+            .set(paint, "baseColor", rgb(0xff, 0x80, 0x00))
+            .set(paint, "metalness", V::Number(0.5))
+            .set(paint, "roughness", V::Number(0.25));
+        g.set(gv, "environment", V::Object(env))
+            .set(gv, "camera", V::Object(camera))
+            .append(gv, camera)
+            .append(gv, sun)
+            .append(gv, cube);
+        assert_same(
+            &e,
+            view,
+            &g,
+            gv,
+            &[("camera_", camera), ("sun_", sun), ("cube_", cube)],
+        );
+        // The comparison sees a member's difference.
+        g.set(paint, "metalness", V::Number(0.6));
+        let web = qml::build(&g, gv);
+        assert!(!scene::build(&e, view).same_as(&web.scene));
+    }
+
+    // Every member left out on both sides: the graph's `None` takes the
+    // mapping's default, the engine's member holds its type's `Default`.
+    // One scene means the two are written once and agree.
+    #[test]
+    fn a_member_the_graph_leaves_out_draws_as_the_engines_default() {
+        let (e, view) = load(
+            r##"
+View3D {
+    property QtObject ortho_: ortho
+    property QtObject point_: point
+    property QtObject spot_: spot
+    property QtObject plain_: plain
+    property QtObject shiny_: shiny
+    environment: ExtendedSceneEnvironment {}
+    OrthographicCamera { id: ortho }
+    PointLight { id: point; castsShadow: true }
+    SpotLight { id: spot }
+    Model { id: plain; source: "#Sphere"; materials: DefaultMaterial {} }
+    Model { id: shiny; source: "#Cone"; materials: PrincipledMaterial {} }
+}
+"##,
+        );
+        let mut g = MapGraph::new();
+        let gv = g.add(T::View3D);
+        let env = g.add(T::ExtendedSceneEnvironment);
+        let ortho = g.add(T::OrthographicCamera);
+        let point = g.add(T::PointLight);
+        g.set(point, "castsShadow", V::Bool(true));
+        let spot = g.add(T::SpotLight);
+        let plain = g.add(T::Model);
+        let dm = g.add(T::DefaultMaterial);
+        g.set(plain, "source", V::Url("#Sphere".into())).set(
+            plain,
+            "materials",
+            V::Objects(vec![dm]),
+        );
+        let shiny = g.add(T::Model);
+        let pm = g.add(T::PrincipledMaterial);
+        g.set(shiny, "source", V::Url("#Cone".into())).set(
+            shiny,
+            "materials",
+            V::Objects(vec![pm]),
+        );
+        g.set(gv, "environment", V::Object(env));
+        for o in [ortho, point, spot, plain, shiny] {
+            g.append(gv, o);
+        }
+        assert_same(
+            &e,
+            view,
+            &g,
+            gv,
+            &[
+                ("ortho_", ortho),
+                ("point_", point),
+                ("spot_", spot),
+                ("plain_", plain),
+                ("shiny_", shiny),
+            ],
+        );
+    }
+
+    #[test]
+    fn an_enumeration_by_name_maps_as_the_graphs_number() {
+        let (e, view) = load(
+            r##"
+View3D {
+    property QtObject cube_: cube
+    environment: SceneEnvironment { tonemapMode: SceneEnvironment.TonemapModeAces }
+    Model {
+        id: cube; source: "#Cube"
+        materials: PrincipledMaterial {
+            lighting: PrincipledMaterial.NoLighting; cullMode: Material.FrontFaceCulling
+            alphaMode: PrincipledMaterial.Blend; metalnessChannel: Material.R
+        }
+    }
+}
+"##,
+        );
+        let n = |v: i32| V::Number(f64::from(v));
+        let mut g = MapGraph::new();
+        let gv = g.add(T::View3D);
+        let env = g.add(T::SceneEnvironment);
+        g.set(env, "tonemapMode", n(enums::tonemap::ACES));
+        let cube = g.add(T::Model);
+        let pm = g.add(T::PrincipledMaterial);
+        g.set(cube, "source", V::Url("#Cube".into()))
+            .set(cube, "materials", V::Objects(vec![pm]))
+            .set(pm, "lighting", n(enums::lighting::NO_LIGHTING))
+            .set(pm, "cullMode", n(enums::cull::FRONT))
+            .set(pm, "alphaMode", n(enums::alpha::BLEND))
+            .set(pm, "metalnessChannel", n(enums::channel::R));
+        g.set(gv, "environment", V::Object(env)).append(gv, cube);
+        assert_same(&e, view, &g, gv, &[("cube_", cube)]);
+    }
+}

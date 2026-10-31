@@ -5,12 +5,8 @@ use ljos::prelude::*;
 
 use crate::SceneEnvironment;
 
-pub(crate) mod glow_blend {
-    pub const ADDITIVE: i32 = 0;
-    pub const SCREEN: i32 = 1;
-    pub const SOFT_LIGHT: i32 = 2;
-    pub const REPLACE: i32 = 3;
-}
+use ljos::item::ljos_3d::qml::defaults::extended_scene_environment as x;
+pub(crate) use ljos::item::ljos_3d::qml::enums::glow_blend;
 
 fn extended_environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![
@@ -153,37 +149,37 @@ impl Default for ExtendedSceneEnvironment {
     fn default() -> Self {
         ExtendedSceneEnvironment {
             environment: SceneEnvironment::default(),
-            exposure: 1.0,
-            white_point: 1.0,
-            sharpness_amount: 0.0,
-            fxaa_enabled: false,
-            dithering_enabled: false,
-            color_adjustments_enabled: false,
-            adjustment_brightness: 1.0,
-            adjustment_contrast: 1.0,
-            adjustment_saturation: 1.0,
-            depth_of_field_enabled: false,
-            depth_of_field_focus_distance: 600.0,
-            depth_of_field_focus_range: 100.0,
-            depth_of_field_blur_amount: 4.0,
-            glow_enabled: false,
-            glow_quality_high: false,
+            exposure: x::EXPOSURE,
+            white_point: x::WHITE_POINT,
+            sharpness_amount: x::SHARPNESS_AMOUNT,
+            fxaa_enabled: x::FXAA_ENABLED,
+            dithering_enabled: x::DITHERING_ENABLED,
+            color_adjustments_enabled: x::COLOR_ADJUSTMENTS_ENABLED,
+            adjustment_brightness: x::ADJUSTMENT_BRIGHTNESS,
+            adjustment_contrast: x::ADJUSTMENT_CONTRAST,
+            adjustment_saturation: x::ADJUSTMENT_SATURATION,
+            depth_of_field_enabled: x::DEPTH_OF_FIELD_ENABLED,
+            depth_of_field_focus_distance: x::DEPTH_OF_FIELD_FOCUS_DISTANCE,
+            depth_of_field_focus_range: x::DEPTH_OF_FIELD_FOCUS_RANGE,
+            depth_of_field_blur_amount: x::DEPTH_OF_FIELD_BLUR_AMOUNT,
+            glow_enabled: x::GLOW_ENABLED,
+            glow_quality_high: x::GLOW_QUALITY_HIGH,
             glow_use_bicubic_upscale: false,
-            glow_strength: 1.0,
-            glow_intensity: 1.0,
-            glow_bloom: 0.0,
-            glow_hdr_maximum_value: 12.0,
-            glow_hdr_minimum_value: 1.0,
-            glow_hdr_scale: 2.0,
-            glow_level: 1,
-            glow_blend_mode: glow_blend::SOFT_LIGHT,
-            vignette_enabled: false,
-            vignette_strength: 15.0,
-            vignette_color: Color::from_rgba8(128, 128, 128, 255),
-            vignette_radius: 0.35,
-            lut_enabled: false,
-            lut_size: 16.0,
-            lut_filter_alpha: 1.0,
+            glow_strength: x::GLOW_STRENGTH,
+            glow_intensity: x::GLOW_INTENSITY,
+            glow_bloom: x::GLOW_BLOOM,
+            glow_hdr_maximum_value: x::GLOW_HDR_MAXIMUM_VALUE,
+            glow_hdr_minimum_value: x::GLOW_HDR_MINIMUM_VALUE,
+            glow_hdr_scale: x::GLOW_HDR_SCALE,
+            glow_level: x::GLOW_LEVEL,
+            glow_blend_mode: x::GLOW_BLEND_MODE,
+            vignette_enabled: x::VIGNETTE_ENABLED,
+            vignette_strength: x::VIGNETTE_STRENGTH,
+            vignette_color: crate::node::rgba(x::VIGNETTE_COLOR),
+            vignette_radius: x::VIGNETTE_RADIUS,
+            lut_enabled: x::LUT_ENABLED,
+            lut_size: x::LUT_SIZE,
+            lut_filter_alpha: x::LUT_FILTER_ALPHA,
             lut_texture: None,
             lens_flare_enabled: false,
             lens_flare_bloom_scale: 10.0,

@@ -8,6 +8,12 @@ use ljos::item::ljos_3d::{ComponentType, CustomGeometry, PrimitiveType, Semantic
 use ljos::ljos_engine::WriteKind;
 use ljos::prelude::*;
 
+use ljos::item::ljos_3d::qml::defaults as d;
+pub(crate) use ljos::item::ljos_3d::qml::enums::{
+    alpha, antialiasing, background, channel, cull, depth_draw, fov_orientation, lighting,
+    shadow_map, soft_shadow, tonemap,
+};
+
 /// `Object3D`: what every object in a scene is. Its default property
 /// holds the objects declared in it: a node's child nodes.
 #[derive(Debug, Default, QmlObject)]
@@ -106,14 +112,10 @@ impl Default for Node {
             position: Vector3d::default(),
             rotation: IDENTITY,
             euler_rotation: Vector3d::default(),
-            scale: Vector3d {
-                x: 1.0,
-                y: 1.0,
-                z: 1.0,
-            },
+            scale: vector(d::node::SCALE),
             pivot: Vector3d::default(),
-            opacity: 1.0,
-            visible: true,
+            opacity: d::node::OPACITY,
+            visible: d::node::VISIBLE,
             scene_position: Vector3d::default(),
             scene_rotation: IDENTITY,
             scene_scale: Vector3d {
@@ -220,6 +222,16 @@ pub(crate) fn vec3(v: Vector3d) -> Vec3 {
     Vec3::new(v.x, v.y, v.z)
 }
 
+/// A default of [`d`] as the member's value.
+pub(crate) fn vector([x, y, z]: [f32; 3]) -> Vector3d {
+    Vector3d { x, y, z }
+}
+
+/// A default colour of [`d`] as the member's value.
+pub(crate) fn rgba([r, g, b, a]: [u8; 4]) -> Color {
+    Color::from_rgba8(r, g, b, a)
+}
+
 // Euler angles name a rotation many ways (and a quaternion and its
 // negation are the same turn), so the two are compared as rotations: one
 // side's change must not write the other back in a form of its own.
@@ -314,8 +326,8 @@ impl Default for Model {
             source: Url::default(),
             materials: QmlList::default(),
             geometry: None,
-            casts_shadows: true,
-            receives_shadows: true,
+            casts_shadows: d::model::CASTS_SHADOWS,
+            receives_shadows: d::model::RECEIVES_SHADOWS,
             pickable: false,
             instancing: None,
             instance_root: None,
@@ -453,7 +465,10 @@ pub struct Camera {
 fn perspective_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     vec![(
         "FieldOfViewOrientation",
-        vec![("Vertical", 0), ("Horizontal", 1)],
+        vec![
+            ("Vertical", i64::from(fov_orientation::VERTICAL)),
+            ("Horizontal", i64::from(fov_orientation::HORIZONTAL)),
+        ],
     )]
 }
 
@@ -483,10 +498,10 @@ impl Default for PerspectiveCamera {
     fn default() -> Self {
         PerspectiveCamera {
             camera: Camera::default(),
-            field_of_view: 60.0,
-            field_of_view_orientation: 0,
-            clip_near: 10.0,
-            clip_far: 10000.0,
+            field_of_view: d::perspective_camera::FIELD_OF_VIEW,
+            field_of_view_orientation: d::perspective_camera::FIELD_OF_VIEW_ORIENTATION,
+            clip_near: d::perspective_camera::CLIP_NEAR,
+            clip_far: d::perspective_camera::CLIP_FAR,
         }
     }
 }
@@ -512,22 +527,12 @@ impl Default for OrthographicCamera {
     fn default() -> Self {
         OrthographicCamera {
             camera: Camera::default(),
-            clip_near: 10.0,
-            clip_far: 10000.0,
-            horizontal_magnification: 1.0,
-            vertical_magnification: 1.0,
+            clip_near: d::orthographic_camera::CLIP_NEAR,
+            clip_far: d::orthographic_camera::CLIP_FAR,
+            horizontal_magnification: d::orthographic_camera::HORIZONTAL_MAGNIFICATION,
+            vertical_magnification: d::orthographic_camera::VERTICAL_MAGNIFICATION,
         }
     }
-}
-
-pub(crate) mod shadow_map {
-    pub const LOW: i32 = 0;
-    pub const ULTRA: i32 = 4;
-}
-
-pub(crate) mod soft_shadow {
-    pub const HARD: i32 = 0;
-    pub const PCF64: i32 = 5;
 }
 
 fn light_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -536,9 +541,9 @@ fn light_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
             "ShadowMapQuality",
             vec![
                 ("ShadowMapQualityLow", i64::from(shadow_map::LOW)),
-                ("ShadowMapQualityMedium", 1),
-                ("ShadowMapQualityHigh", 2),
-                ("ShadowMapQualityVeryHigh", 3),
+                ("ShadowMapQualityMedium", i64::from(shadow_map::MEDIUM)),
+                ("ShadowMapQualityHigh", i64::from(shadow_map::HIGH)),
+                ("ShadowMapQualityVeryHigh", i64::from(shadow_map::VERY_HIGH)),
                 ("ShadowMapQualityUltra", i64::from(shadow_map::ULTRA)),
             ],
         ),
@@ -546,10 +551,10 @@ fn light_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
             "SoftShadowQuality",
             vec![
                 ("Hard", i64::from(soft_shadow::HARD)),
-                ("PCF4", 1),
-                ("PCF8", 2),
-                ("PCF16", 3),
-                ("PCF32", 4),
+                ("PCF4", i64::from(soft_shadow::PCF4)),
+                ("PCF8", i64::from(soft_shadow::PCF8)),
+                ("PCF16", i64::from(soft_shadow::PCF16)),
+                ("PCF32", i64::from(soft_shadow::PCF32)),
                 ("PCF64", i64::from(soft_shadow::PCF64)),
             ],
         ),
@@ -603,17 +608,17 @@ impl Default for Light {
     fn default() -> Self {
         Light {
             node: Node::default(),
-            color: Color::WHITE,
-            ambient_color: Color::BLACK,
-            brightness: 1.0,
-            casts_shadow: false,
-            shadow_factor: 75.0,
-            shadow_bias: 10.0,
-            shadow_map_quality: shadow_map::LOW,
-            shadow_map_far: 5000.0,
-            soft_shadow_quality: 1,
-            pcf_factor: 2.0,
-            shadow_filter: 5.0,
+            color: rgba(d::light::COLOR),
+            ambient_color: rgba(d::light::AMBIENT_COLOR),
+            brightness: d::light::BRIGHTNESS,
+            casts_shadow: d::light::CASTS_SHADOW,
+            shadow_factor: d::light::SHADOW_FACTOR,
+            shadow_bias: d::light::SHADOW_BIAS,
+            shadow_map_quality: d::light::SHADOW_MAP_QUALITY,
+            shadow_map_far: d::light::SHADOW_MAP_FAR,
+            soft_shadow_quality: d::light::SOFT_SHADOW_QUALITY,
+            pcf_factor: d::light::PCF_FACTOR,
+            shadow_filter: d::light::SHADOW_FILTER,
             use32_bit_shadowmap: false,
         }
     }
@@ -645,34 +650,14 @@ impl Default for DirectionalLight {
     fn default() -> Self {
         DirectionalLight {
             light: Light::default(),
-            csm_num_splits: 0,
-            csm_split1: 0.1,
-            csm_split2: 0.25,
-            csm_split3: 0.5,
-            csm_blend_ratio: 0.05,
-            lock_shadowmap_texels: false,
+            csm_num_splits: d::directional_light::CSM_NUM_SPLITS,
+            csm_split1: d::directional_light::CSM_SPLIT1,
+            csm_split2: d::directional_light::CSM_SPLIT2,
+            csm_split3: d::directional_light::CSM_SPLIT3,
+            csm_blend_ratio: d::directional_light::CSM_BLEND_RATIO,
+            lock_shadowmap_texels: d::directional_light::LOCK_SHADOWMAP_TEXELS,
         }
     }
-}
-
-pub(crate) mod cull {
-    pub const BACK: i32 = 0;
-    pub const FRONT: i32 = 1;
-    pub const NONE: i32 = 2;
-}
-
-pub(crate) mod depth_draw {
-    pub const OPAQUE_ONLY: i32 = 0;
-    pub const ALWAYS: i32 = 1;
-    pub const NEVER: i32 = 2;
-    pub const OPAQUE_PRE_PASS: i32 = 3;
-}
-
-pub(crate) mod channel {
-    pub const R: i32 = 0;
-    pub const G: i32 = 1;
-    pub const B: i32 = 2;
-    pub const A: i32 = 3;
 }
 
 fn material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -753,9 +738,9 @@ impl Default for PointLight {
     fn default() -> Self {
         PointLight {
             light: Light::default(),
-            constant_fade: 1.0,
-            linear_fade: 0.0,
-            quadratic_fade: 1.0,
+            constant_fade: d::fade::CONSTANT,
+            linear_fade: d::fade::LINEAR,
+            quadratic_fade: d::fade::QUADRATIC,
         }
     }
 }
@@ -785,18 +770,13 @@ impl Default for SpotLight {
     fn default() -> Self {
         SpotLight {
             light: Light::default(),
-            constant_fade: 1.0,
-            linear_fade: 0.0,
-            quadratic_fade: 1.0,
-            cone_angle: 40.0,
-            inner_cone_angle: 30.0,
+            constant_fade: d::fade::CONSTANT,
+            linear_fade: d::fade::LINEAR,
+            quadratic_fade: d::fade::QUADRATIC,
+            cone_angle: d::spot_light::CONE_ANGLE,
+            inner_cone_angle: d::spot_light::INNER_CONE_ANGLE,
         }
     }
-}
-
-pub(crate) mod lighting {
-    pub const NO_LIGHTING: i32 = 0;
-    pub const FRAGMENT_LIGHTING: i32 = 1;
 }
 
 fn default_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -841,20 +821,13 @@ impl Default for DefaultMaterial {
     fn default() -> Self {
         DefaultMaterial {
             material: Material::default(),
-            diffuse_color: Color::WHITE,
+            diffuse_color: rgba(d::default_material::DIFFUSE_COLOR),
             diffuse_map: None,
-            lighting: lighting::FRAGMENT_LIGHTING,
-            specular_amount: 0.0,
-            specular_roughness: 0.0,
+            lighting: d::default_material::LIGHTING,
+            specular_amount: d::default_material::SPECULAR_AMOUNT,
+            specular_roughness: d::default_material::SPECULAR_ROUGHNESS,
         }
     }
-}
-
-pub(crate) mod alpha {
-    pub const DEFAULT: i32 = 0;
-    pub const BLEND: i32 = 1;
-    pub const OPAQUE: i32 = 2;
-    pub const MASK: i32 = 3;
 }
 
 fn principled_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -949,50 +922,29 @@ impl Default for PrincipledMaterial {
     fn default() -> Self {
         PrincipledMaterial {
             material: Material::default(),
-            base_color: Color::WHITE,
-            metalness: 0.0,
-            roughness: 0.0,
-            emissive_factor: Vector3d::default(),
-            opacity: 1.0,
-            alpha_mode: alpha::DEFAULT,
-            alpha_cutoff: 0.5,
-            lighting: lighting::FRAGMENT_LIGHTING,
+            base_color: rgba(d::principled_material::BASE_COLOR),
+            metalness: d::principled_material::METALNESS,
+            roughness: d::principled_material::ROUGHNESS,
+            emissive_factor: vector(d::principled_material::EMISSIVE_FACTOR),
+            opacity: d::principled_material::OPACITY,
+            alpha_mode: d::principled_material::ALPHA_MODE,
+            alpha_cutoff: d::principled_material::ALPHA_CUTOFF,
+            lighting: d::principled_material::LIGHTING,
             base_color_map: None,
             metalness_map: None,
-            metalness_channel: channel::B,
+            metalness_channel: d::principled_material::METALNESS_CHANNEL,
             roughness_map: None,
-            roughness_channel: channel::G,
+            roughness_channel: d::principled_material::ROUGHNESS_CHANNEL,
             normal_map: None,
-            normal_strength: 1.0,
+            normal_strength: d::principled_material::NORMAL_STRENGTH,
             emissive_map: None,
             occlusion_map: None,
-            occlusion_channel: channel::R,
-            occlusion_amount: 1.0,
+            occlusion_channel: d::principled_material::OCCLUSION_CHANNEL,
+            occlusion_amount: d::principled_material::OCCLUSION_AMOUNT,
             opacity_map: None,
-            opacity_channel: channel::A,
+            opacity_channel: d::principled_material::OPACITY_CHANNEL,
         }
     }
-}
-
-pub(crate) mod antialiasing {
-    pub const MSAA: i32 = 2;
-    pub const MEDIUM: i32 = 0;
-    pub const HIGH: i32 = 1;
-    pub const VERY_HIGH: i32 = 2;
-}
-
-pub(crate) mod background {
-    pub const TRANSPARENT: i32 = 0;
-    pub const COLOR: i32 = 1;
-    pub const SKY_BOX: i32 = 2;
-}
-
-pub(crate) mod tonemap {
-    pub const NONE: i32 = 0;
-    pub const LINEAR: i32 = 1;
-    pub const ACES: i32 = 2;
-    pub const HEJL_DAWSON: i32 = 3;
-    pub const FILMIC: i32 = 4;
 }
 
 fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -1003,8 +955,8 @@ fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
                 ("Transparent", i64::from(background::TRANSPARENT)),
                 ("Color", i64::from(background::COLOR)),
                 ("SkyBox", i64::from(background::SKY_BOX)),
-                ("SkyBoxCubeMap", 3),
-                ("SkyMaterial", 4),
+                ("SkyBoxCubeMap", i64::from(background::SKY_BOX_CUBE_MAP)),
+                ("SkyMaterial", i64::from(background::SKY_MATERIAL)),
             ],
         ),
         (
@@ -1015,16 +967,16 @@ fn environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
                 ("TonemapModeAces", i64::from(tonemap::ACES)),
                 ("TonemapModeHejlDawson", i64::from(tonemap::HEJL_DAWSON)),
                 ("TonemapModeFilmic", i64::from(tonemap::FILMIC)),
-                ("TonemapModeCustom", 5),
+                ("TonemapModeCustom", i64::from(tonemap::CUSTOM)),
             ],
         ),
         (
             "AntialiasingMode",
             vec![
-                ("NoAA", 0),
-                ("SSAA", 1),
+                ("NoAA", i64::from(antialiasing::NO_AA)),
+                ("SSAA", i64::from(antialiasing::SSAA)),
                 ("MSAA", i64::from(antialiasing::MSAA)),
-                ("ProgressiveAA", 3),
+                ("ProgressiveAA", i64::from(antialiasing::PROGRESSIVE_AA)),
             ],
         ),
         (
@@ -1128,24 +1080,24 @@ impl Default for SceneEnvironment {
     fn default() -> Self {
         SceneEnvironment {
             object3d: Object3D::default(),
-            clear_color: Color::BLACK,
-            background_mode: background::TRANSPARENT,
-            tonemap_mode: tonemap::LINEAR,
+            clear_color: rgba(d::scene_environment::CLEAR_COLOR),
+            background_mode: d::scene_environment::BACKGROUND_MODE,
+            tonemap_mode: d::scene_environment::TONEMAP_MODE,
             light_probe: None,
-            probe_exposure: 1.0,
-            probe_horizon: 0.0,
-            probe_orientation: Vector3d::default(),
-            skybox_blur_amount: 0.0,
-            antialiasing_mode: 0,
-            antialiasing_quality: antialiasing::HIGH,
+            probe_exposure: d::scene_environment::PROBE_EXPOSURE,
+            probe_horizon: d::scene_environment::PROBE_HORIZON,
+            probe_orientation: vector(d::scene_environment::PROBE_ORIENTATION),
+            skybox_blur_amount: d::scene_environment::SKYBOX_BLUR_AMOUNT,
+            antialiasing_mode: d::scene_environment::ANTIALIASING_MODE,
+            antialiasing_quality: d::scene_environment::ANTIALIASING_QUALITY,
             effects: QmlList::default(),
-            ao_enabled: false,
-            ao_strength: 0.0,
-            ao_distance: 5.0,
-            ao_softness: 50.0,
-            ao_sample_rate: 2,
-            ao_bias: 0.0,
-            ao_dither: false,
+            ao_enabled: d::scene_environment::AO_ENABLED,
+            ao_strength: d::scene_environment::AO_STRENGTH,
+            ao_distance: d::scene_environment::AO_DISTANCE,
+            ao_softness: d::scene_environment::AO_SOFTNESS,
+            ao_sample_rate: d::scene_environment::AO_SAMPLE_RATE,
+            ao_bias: d::scene_environment::AO_BIAS,
+            ao_dither: d::scene_environment::AO_DITHER,
         }
     }
 }
