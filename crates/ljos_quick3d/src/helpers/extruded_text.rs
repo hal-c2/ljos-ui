@@ -294,7 +294,7 @@ fn extrude(contours: &[Contour], scale: f32, depth: f32) -> Built {
             let p = [f64::from(v[0]), f64::from(v[1])];
             built.vertex(at(p, z), n, uv(p));
         }
-        for t in fill.indices.chunks_exact(3) {
+        for t in fill.indices.as_chunks::<3>().0 {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| fill.vertices[i as usize]);
             let ccw = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) > 0.0;
             // Counter-clockwise seen from where the face looks.
@@ -398,7 +398,7 @@ mod tests {
             hole
         }];
         let built = extrude(&ring, 1.0, 1.0);
-        for t in built.indices.chunks_exact(3) {
+        for t in built.indices.as_chunks::<3>().0 {
             let [a, b, c] = [t[0], t[1], t[2]].map(|i| built.positions[i as usize]);
             let n = built.normals[t[0] as usize];
             let (u, v) = (

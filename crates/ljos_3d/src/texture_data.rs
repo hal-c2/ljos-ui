@@ -98,6 +98,9 @@ pub struct TextureData {
     pub bytes: Vec<u8>,
 }
 
+/// One pixel of the data's bytes as four bytes of its encoding.
+type ReadPixel = fn(&[u8]) -> [u8; 4];
+
 impl TextureData {
     /// The pixels the data is, read now under an id of their own; `None`
     /// for no pixels at all.
@@ -108,7 +111,7 @@ impl TextureData {
         if self.depth > 0 {
             return Err(TextureDataError::Volume);
         }
-        let (encoding, read): (_, fn(&[u8]) -> [u8; 4]) = match self.format {
+        let (encoding, read): (_, ReadPixel) = match self.format {
             format::NONE | format::RGBA8 => {
                 (PixelEncoding::Srgb8Straight, |p| [p[0], p[1], p[2], p[3]])
             }
