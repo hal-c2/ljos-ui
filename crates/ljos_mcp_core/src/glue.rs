@@ -70,6 +70,16 @@ impl<S: McpSurface> RmcpServer<S> {
         }
     }
 
+    /// A server for calls that come in on `connection`.
+    #[cfg(feature = "http")]
+    fn on_connection(surface: Arc<S>, caps: CapSet, connection: ConnectionId) -> Self {
+        Self {
+            surface,
+            caps,
+            connection,
+        }
+    }
+
     fn ctx(&self) -> CallCtx {
         CallCtx {
             caps: self.caps,

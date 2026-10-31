@@ -31,6 +31,7 @@ use rmcp::transport::streamable_http_server::{
 use tokio::sync::{Notify, Semaphore};
 
 use super::RmcpServer;
+use crate::ConnectionId;
 use crate::{CapSet, McpSurface, RateLimit, Token, TokenFile, TokenFileError};
 
 /// The path the server answers on.
@@ -199,6 +200,13 @@ impl StdListener {
 
 type Body = BoxBody<Bytes, Infallible>;
 
+tokio::task_local! {
+    /// The accepted connection a request came in on. There are no sessions
+    /// here (see the top of this file), so a client that stays connected
+    /// keeps its id, and one that connects anew gets another.
+    static CONNECTION: ConnectionId;
+}
+
 struct State<S: McpSurface> {
     token: Token,
     port: Option<u16>,
@@ -320,7 +328,14 @@ impl HttpServer {
                     runtime.take().block_on(async move {
                         let caps = config.caps;
                         let service = StreamableHttpService::new(
-                            move || Ok(RmcpServer::new(surface.clone(), caps)),
+                            // Asked for each `POST`, which is answered on its
+                            // own: the connection is what outlasts one.
+                            move || {
+                                let connection = CONNECTION
+                                    .try_with(|c| *c)
+                                    .unwrap_or_else(|_| ConnectionId::next());
+                                Ok(RmcpServer::on_connection(surface.clone(), caps, connection))
+                            },
                             Arc::new(NeverSessionManager::default()),
                             StreamableHttpServerConfig::default()
                                 // Each of these would be a timer.
@@ -484,10 +499,13 @@ async fn accept<S: McpSurface>(
                     continue;
                 };
                 let state = state.clone();
+                let connection = ConnectionId::next();
                 tokio::spawn(async move {
                     let service = hyper::service::service_fn(move |req| {
                         let state = state.clone();
-                        async move { Ok::<_, Infallible>(answer(&state, req).await) }
+                        CONNECTION.scope(connection, async move {
+                            Ok::<_, Infallible>(answer(&state, req).await)
+                        })
                     });
                     let _ = hyper::server::conn::http1::Builder::new()
                         .timer(TokioTimer::new())

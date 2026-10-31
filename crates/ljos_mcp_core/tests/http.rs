@@ -7,7 +7,9 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 use ljos_mcp_core::glue::http::{HttpConfig, HttpServer, Listen};
-use ljos_mcp_core::{Cap, CapSet, McpSurface, ServerMeta, ToolDef, ToolRegistry, ToolReply, typed};
+use ljos_mcp_core::{
+    Cap, CapSet, McpSurface, NoArgs, ServerMeta, ToolDef, ToolRegistry, ToolReply, typed,
+};
 use serde_json::{Value, json};
 
 #[derive(serde::Deserialize, schemars::JsonSchema)]
@@ -19,10 +21,17 @@ struct Demo(ToolRegistry);
 
 impl Demo {
     fn new() -> Arc<Self> {
-        Arc::new(Self(ToolRegistry::new().with(
-            ToolDef::new::<Say>("echo", "Says it back."),
-            typed(|_, a: Say| Ok(json!({ "said": a.say }))),
-        )))
+        Arc::new(Self(
+            ToolRegistry::new()
+                .with(
+                    ToolDef::new::<Say>("echo", "Says it back."),
+                    typed(|_, a: Say| Ok(json!({ "said": a.say }))),
+                )
+                .with(
+                    ToolDef::new::<NoArgs>("who", "Names the connection the call came in on."),
+                    typed(|ctx, _: NoArgs| Ok(json!({ "connection": ctx.connection.get() }))),
+                ),
+        ))
     }
 }
 
@@ -225,6 +234,44 @@ fn a_client_with_the_token_is_answered() {
         CALL,
     );
     assert_eq!(by_name.status, 200, "{}", by_name.body);
+}
+
+/// The connection ids of `calls` calls sent one after the other on one
+/// connection, which stays open until the last is answered.
+fn ids_on_one_connection(rig: &Rig, calls: usize) -> Vec<String> {
+    let body =
+        r#"{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"who","arguments":{}}}"#;
+    let mut stream = std::net::TcpStream::connect(rig.server.addr().unwrap()).unwrap();
+    let mut request = String::new();
+    for call in 1..=calls {
+        request.push_str("POST /mcp HTTP/1.1\r\n");
+        if call == calls {
+            request.push_str("Connection: close\r\n");
+        }
+        for (k, v) in mcp_headers(&rig.host, &rig.bearer) {
+            request.push_str(&format!("{k}: {v}\r\n"));
+        }
+        request.push_str(&format!("Content-Length: {}\r\n\r\n{body}", body.len()));
+    }
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    // Each answer says it twice, in the structured value and its text.
+    raw.split(r#""structuredContent":{"connection":"#)
+        .skip(1)
+        .map(|rest| rest.split('}').next().unwrap().to_owned())
+        .collect()
+}
+
+#[test]
+fn a_connection_keeps_its_id_over_calls_and_another_has_its_own() {
+    let rig = Rig::start(config());
+    let first = ids_on_one_connection(&rig, 2);
+    assert_eq!(first.len(), 2, "{first:?}");
+    assert_eq!(first[0], first[1]);
+    let second = ids_on_one_connection(&rig, 1);
+    assert_eq!(second.len(), 1, "{second:?}");
+    assert_ne!(first[0], second[0]);
 }
 
 #[test]
