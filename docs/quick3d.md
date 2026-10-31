@@ -259,6 +259,21 @@ The three shadowed lights cost 0.2 to 0.5 ms of GPU a frame, and the 1000 cubes 
 
 On a scene this light, post-processing takes 11 to 15 times the scene's own time, and it is still 0.3 to 0.6 ms of a 16.7 ms frame. The passes are not timed one by one. The full-size passes over the picture (SSAO and its blur, depth of field, the final pass and FXAA) are the likely bulk, as the glow levels are a quarter of the size and smaller.
 
+**The first frame that answers input** (phase 4). `mise run bench` showed `quick3d-cube` and `quick3d-gltf` answering their first input, a resize sent as the first frame shows, at 307 and 313 ms, against 87 to 112 ms for the other benches. The sandbox's sway has no GPU, so the shell draws these windows on the processor, and a `View3D` is drawn off-screen and read back (`ljos_render::scene3d`). The time was not Ljós's own. Traced with the resize sent at the first frame, as the bench does: the window drew its first frame at 64 ms, then had the configure that maps it at 65 ms, found nothing changed and committed nothing. The bench's resize reached it only at 265 ms, and it answered in 4 ms. A Wayland configure is applied by the next commit. sway holds every later change of the window (the bench's resize) until that commit comes, or for 200 ms, its transaction timeout. The GL and wgpu painters draw a whole frame after a configure. The processor's painter now owes one too, drawing only what the buffer it lands in lacks (`CpuPainter::owe_frame`). The animated benches committed a frame within 16 ms anyway. A 2D window traced the same way (`bench/rectangles.qml`) happened to draw again right after its configure. The cause was not followed, and the fix covers it either way.
+
+Before → after, the phase-3 build (`599eb264`) against this one, taking turns in each of 3 rounds so both saw the same load (one-minute load average 8 to 18), median of 3:
+
+| App | answers input | first frame | CPU animating |
+|---|---|---|---|
+| `quick3d-cube` | 320 → 125 ms | 103 → 93 ms | idle 0 % on both |
+| `quick3d-gltf` | 322 → 111 ms | 106 → 78 ms | idle 0 % on both |
+| `quick3d-spin` | 173 → 95 ms | 156 → 79 ms | 9.4 → 7.8 % (8.5–9.4 → 6.6–9.2) |
+| `quick3d-instances` | 101 → 90 ms | 84 → 73 ms | 16.5 → 15.1 % (15.4–16.9 → 15.0–15.2) |
+
+Answers input now comes one to two frames after the first frame, as for the other benches. The first frames vary with the load in both builds; this change does not touch them.
+
+**Animating CPU, rechecked** (phase 4). The table above shows no regression since phase 3. Phase 3's quiet run (load 3 to 5) had `quick3d-spin` at 8.6 % (5.8–9.2) and `quick3d-instances` at 15.0 % (14.0–15.1). The sandbox draws on the processor there, which is why these are higher than the GPU numbers above (6.4 %) and the M10 row's (10.8 %, 6.7 %). A run of this build alone at a load of 16 to 34 read 8.4 % and 17.7 %. The difference was the load: the interleaved run puts this build lower. Reproduce: `mise run bench quick3d-cube quick3d-gltf quick3d-spin quick3d-instances --runtime ljos --profile desktop` with `BENCH_DEFAULTS="--warm-up --repeat 3"`.
+
 ## Milestones
 
 | # | Builds | Exit criteria |
@@ -356,6 +371,7 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
 - **`SceneSlot` has no Gherkin.** It changes nothing QML can see: the still-scene scenarios and the idle checks already say a scene that draws the same is not drawn again. Its unit tests say it tells its listener once per change taken. The `View3D`'s slot has no listener, because the engine's tracking paints it.
 - **The renderer is shared with the device** (`Gpu`), not made per view. What it keeps is let go when no scene holds it any more (the textures, probes, programs and custom meshes are held by weak references), not per view, so sharing it is correct as well as cheaper. It is behind a `Mutex` so a `SurfaceView` stays `Send` where wgpu's types are. `Gpu::new` takes no surface target: making an adapter that can present to a surface needs the surface, made from the instance `Gpu` makes, so the first view makes its `Gpu` (`SurfaceView::new`) and hands it on (`SurfaceView::gpu`).
 - **`Fetch` replies by callback with a context** (`type Cx`): the native reply needs the engine, which a callback cannot keep, and a browser's needs nothing. No futures, so no executor and no thread on either side. Files a glTF names are fetched together, where the loader used to fetch remote ones one at a time.
+- **A configure is answered with a frame on every painter.** The processor's painter draws what its buffer lacks and commits, even if nothing changed. Committing nothing left sway's transaction to time out after 200 ms and held the window's next resize that long (§ Performance, first frame that answers input).
 
 ## Open risks
 
