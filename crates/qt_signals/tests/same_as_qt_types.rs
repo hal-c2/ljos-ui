@@ -102,3 +102,47 @@ fn a_type_is_found_through_what_its_module_imports() {
         .expect("QtQuick has Rectangle");
     assert!(item.property("width").is_some(), "inherited from Item");
 }
+
+#[test]
+fn creatable_is_what_qt_types_says_and_exports_are_listed() {
+    let mut wrong = Vec::new();
+    let (mut creatable, mut not) = (0, 0);
+    for uri in qt_types::modules() {
+        let full = qt_types::module(uri).expect("listed");
+        let small = qt_signals::module(uri).expect("listed alike");
+        for name in small.exported() {
+            let (Some(full), Some(small)) = (full.type_named(name), small.type_named(name)) else {
+                wrong.push(format!("{uri} {name}: found by one table only"));
+                continue;
+            };
+            if full.is_creatable != small.creatable {
+                wrong.push(format!("{uri} {name}"));
+            }
+            if small.creatable {
+                creatable += 1;
+            } else {
+                not += 1;
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    assert!(creatable > 0 && not > 0, "{creatable} creatable, {not} not");
+}
+
+#[test]
+fn inherited_members_are_listed_once_nearest_first() {
+    let quick = qt_signals::module("QtQuick").expect("QtQuick is described");
+    let rectangle = quick.type_named("Rectangle").expect("exported");
+    assert!(rectangle.creatable);
+    let names: Vec<_> = rectangle.all_properties().iter().map(|p| p.name).collect();
+    assert!(names.contains(&"width"), "from Item");
+    assert!(names.contains(&"radius"), "its own");
+    let unique: std::collections::HashSet<_> = names.iter().collect();
+    assert_eq!(unique.len(), names.len());
+    assert!(
+        rectangle
+            .all_signals()
+            .iter()
+            .any(|s| s.name == "widthChanged")
+    );
+}

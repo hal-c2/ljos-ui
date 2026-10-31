@@ -43,6 +43,14 @@ pub struct Module {
 }
 
 impl Module {
+    /// The name of every type this module exports itself, in order; not those
+    /// of the modules it brings along.
+    pub fn exported(&self) -> Vec<&'static str> {
+        let mut names: Vec<&'static str> = self.exports.keys().copied().collect();
+        names.sort_unstable();
+        names
+    }
+
     /// The type `name` is in a file that imports this module: one of its own
     /// or of a module that comes with it.
     pub fn type_named(&self, name: &str) -> Option<&'static Type> {
@@ -59,10 +67,40 @@ pub struct Type {
     /// The type's own members; the lookups below also see inherited ones.
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
+    /// May be written as `Name { }`. False for a type that can only be a
+    /// base or an attached type, a singleton, a value or a namespace
+    /// (`Keys`, `Layout`).
+    pub creatable: bool,
     prototype: Option<usize>,
 }
 
 impl Type {
+    /// Every property the type has, its own and inherited, each name once and
+    /// the nearest first.
+    pub fn all_properties(&'static self) -> Vec<&'static Property> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let mut ty = Some(self);
+        while let Some(t) = ty {
+            out.extend(t.properties.iter().filter(|p| seen.insert(p.name)));
+            ty = t.prototype();
+        }
+        out
+    }
+
+    /// Every signal the type has, its own and inherited, each name once and
+    /// the nearest first.
+    pub fn all_signals(&'static self) -> Vec<&'static Signal> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        let mut ty = Some(self);
+        while let Some(t) = ty {
+            out.extend(t.signals.iter().filter(|s| seen.insert(s.name)));
+            ty = t.prototype();
+        }
+        out
+    }
+
     pub fn prototype(&self) -> Option<&'static Type> {
         self.prototype.map(|index| &table().types[index])
     }
@@ -158,6 +196,9 @@ fn read(text: &'static str) -> Table {
                 properties: Vec::new(),
                 signals: Vec::new(),
                 prototype: index(words.next()),
+                // A word the table of before this flag lacks reads as
+                // creatable.
+                creatable: words.next() != Some("u"),
             }),
             (Some("p"), Some(first)) => {
                 let Some(ty) = types.last_mut() else { continue };

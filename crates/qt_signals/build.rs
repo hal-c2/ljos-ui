@@ -12,7 +12,7 @@
 //! m QtQuick                     a module
 //! i QtQml                       a module importing it brings along
 //! e Item 3                      a type it exports, by index
-//! t Item 1                      type 3: its name and its prototype's index, or `-`
+//! t Item 1 [u]                 type 3: its name and its prototype's index, or `-`; `u`: not creatable
 //! p x y width+                  its properties; `+`: `widthChanged` is a signal without arguments
 //! s clicked mouse:QQuickMouseEvent    another signal, its arguments with their types where known
 //! ```
@@ -91,7 +91,8 @@ impl Writer {
             let prototype = ty
                 .prototype()
                 .map_or("-".to_owned(), |p| self.index(p).to_string());
-            let _ = writeln!(self.types, "t {} {prototype}", ty.name);
+            let uncreatable = if ty.is_creatable { "" } else { " u" };
+            let _ = writeln!(self.types, "t {} {prototype}{uncreatable}", ty.name);
             let (properties, signals) = members(ty);
             let names: HashSet<&str> = properties.iter().copied().collect();
             let implied = |s: &qt_types::Signal| {
