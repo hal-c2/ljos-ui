@@ -7628,6 +7628,7 @@ module QtQuick3D
 	Skin QtQuick3D.Skin
 	SpotLight QtQuick3D.SpotLight
 	Texture QtQuick3D.Texture
+	TextureData QtQuick3D.TextureData
 	TextureInput QtQuick3D.TextureInput
 	View3D QtQuick3D.View3D
 	type QtQuick3D.Buffer Buffer
@@ -8096,6 +8097,7 @@ module QtQuick3D
 		enum Filter None=0 Nearest=1 Linear=2
 		prop source QtQml.url named
 		prop sourceItem QtQuick.Item named pointer
+		prop textureData QtQuick3D.TextureData named pointer
 		prop scaleU QtQml.real named
 		prop scaleV QtQml.real named
 		prop positionU QtQml.real named
@@ -8117,6 +8119,7 @@ module QtQuick3D
 		prop autoOrientation QtQml.bool named
 		signal sourceChanged
 		signal sourceItemChanged
+		signal textureDataChanged
 		signal scaleUChanged
 		signal scaleVChanged
 		signal positionUChanged
@@ -8136,6 +8139,12 @@ module QtQuick3D
 		signal mipFilterChanged
 		signal generateMipmapsChanged
 		signal autoOrientationChanged
+	type QtQuick3D.TextureData TextureData
+		prototype QtQuick3D.Object3D named
+		is uncreatable
+		enum Format None=0 RGBA8=1 RGBA16F=2 RGBA32F=3 RGBE8=4 R8=5 R16=6 R16F=7 R32F=8 BC1=9 BC2=10 BC3=11 BC4=12 BC5=13 BC6H=14 BC7=15 DXT1_RGBA=16 DXT1_RGB=17 DXT3_RGBA=18 DXT5_RGBA=19 ETC2_RGB8=20 ETC2_RGB8A1=21 ETC2_RGBA8=22 ASTC_4x4=23 ASTC_5x4=24 ASTC_5x5=25 ASTC_6x5=26 ASTC_6x6=27 ASTC_8x5=28 ASTC_8x6=29 ASTC_8x8=30 ASTC_10x5=31 ASTC_10x6=32 ASTC_10x8=33 ASTC_10x10=34 ASTC_12x10=35 ASTC_12x12=36
+		prop revision QtQml.int named readonly
+		signal revisionChanged
 	type QtQuick3D.TextureInput TextureInput
 		prototype QtQuick3D.Object3D named
 		prop texture QtQuick3D.Texture named pointer
@@ -8168,16 +8177,21 @@ module QtQuick3D.Helpers
 	CylinderGeometry QtQuick3D.Helpers.CylinderGeometry
 	DebugView QtQuick3D/Helpers/DebugView.qml
 	ExtendedSceneEnvironment QtQuick3D.Helpers.ExtendedSceneEnvironment
+	ExtrudedTextGeometry QtQuick3D.Helpers.ExtrudedTextGeometry
 	GridGeometry QtQuick3D.Helpers.GridGeometry
 	HeightFieldGeometry QtQuick3D.Helpers.HeightFieldGeometry
 	InfiniteGrid QtQuick3D.Helpers.InfiniteGrid
+	InstanceModel QtQuick3D.Helpers.InstanceModel
 	InstanceRange QtQuick3D.Helpers.InstanceRange
+	InstanceRepeater QtQuick3D.Helpers.InstanceRepeater
 	LodManager QtQuick3D.Helpers.LodManager
 	LookAtNode QtQuick3D.Helpers.LookAtNode
 	OrbitCameraController QtQuick3D/Helpers/OrbitCameraController.qml
 	PlaneGeometry QtQuick3D.Helpers.PlaneGeometry
 	ProceduralMesh QtQuick3D.Helpers.ProceduralMesh
 	ProceduralMeshSubset QtQuick3D.Helpers.ProceduralMeshSubset
+	ProceduralSkyTextureData QtQuick3D.Helpers.ProceduralSkyTextureData
+	ProceduralTextureData QtQuick3D.Helpers.ProceduralTextureData
 	RandomInstancing QtQuick3D.Helpers.RandomInstancing
 	RenderStatistics QtQuick3D.Helpers.RenderStatistics
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
@@ -8376,6 +8390,21 @@ module QtQuick3D.Helpers
 		signal lensFlareLensColorTextureChanged
 		signal lensFlareLensDirtTextureChanged
 		signal lensFlareLensStarburstTextureChanged
+	type QtQuick3D.Helpers.ExtrudedTextGeometry ExtrudedTextGeometry
+		prototype QtQuick3D.Geometry named
+		enum Status Null=0 Loading=1 Ready=2 Error=3
+		prop asynchronous QtQml.bool named
+		prop status Status readonly
+		prop text QtQml.string named
+		prop font QtQuick.font named
+		prop scale QtQml.real named
+		prop depth QtQml.real named
+		signal asynchronousChanged
+		signal statusChanged
+		signal textChanged
+		signal fontChanged
+		signal scaleChanged
+		signal depthChanged
 	type QtQuick3D.Helpers.GridGeometry GridGeometry
 		prototype QtQuick3D.Geometry named
 		prop horizontalLines QtQml.int named
@@ -8405,6 +8434,10 @@ module QtQuick3D.Helpers
 		signal gridAxesChanged
 		signal gridIntervalChanged
 		signal visibleChanged
+	type QtQuick3D.Helpers.InstanceModel InstanceModel
+		prototype QtQuick3D.Object3D named
+		prop instancingTable QtQuick3D.Instancing named pointer
+		signal instancingTableChanged
 	type QtQuick3D.Helpers.InstanceRange InstanceRange
 		prototype QtQuick3D.Object3D named
 		prop from QtQml.var named
@@ -8413,6 +8446,11 @@ module QtQuick3D.Helpers
 		signal fromChanged
 		signal toChanged
 		signal proportionalChanged
+	type QtQuick3D.Helpers.InstanceRepeater InstanceRepeater
+		prototype QtQuick3D.Repeater3D named
+		default delegate
+		prop instancingTable QtQuick3D.Instancing named pointer
+		signal instancingTableChanged
 	type QtQuick3D.Helpers.LodManager LodManager
 		prototype QtQuick3D.Node named
 		prop camera QtQml.QtObject named pointer
@@ -8503,6 +8541,55 @@ module QtQuick3D.Helpers
 		signal nameChanged
 		signal lengthChanged
 		signal offsetChanged
+	type QtQuick3D.Helpers.ProceduralSkyTextureData ProceduralSkyTextureData
+		prototype QtQuick3D.TextureData named
+		enum SkyTextureQuality SkyTextureQualityLow=512 SkyTextureQualityMedium=1024 SkyTextureQualityHigh=2048 SkyTextureQualityVeryHigh=4096
+		prop skyTopColor QtQuick.color named
+		prop skyHorizonColor QtQuick.color named
+		prop skyCurve QtQml.real named
+		prop skyEnergy QtQml.real named
+		prop groundBottomColor QtQuick.color named
+		prop groundHorizonColor QtQuick.color named
+		prop groundCurve QtQml.real named
+		prop groundEnergy QtQml.real named
+		prop sunColor QtQuick.color named
+		prop sunLatitude QtQml.real named
+		prop sunLongitude QtQml.real named
+		prop sunAngleMin QtQml.real named
+		prop sunAngleMax QtQml.real named
+		prop sunCurve QtQml.real named
+		prop sunEnergy QtQml.real named
+		prop textureQuality SkyTextureQuality
+		signal skyTopColorChanged
+		signal skyHorizonColorChanged
+		signal skyCurveChanged
+		signal skyEnergyChanged
+		signal groundBottomColorChanged
+		signal groundHorizonColorChanged
+		signal groundCurveChanged
+		signal groundEnergyChanged
+		signal sunColorChanged
+		signal sunLatitudeChanged
+		signal sunLongitudeChanged
+		signal sunAngleMinChanged
+		signal sunAngleMaxChanged
+		signal sunCurveChanged
+		signal sunEnergyChanged
+		signal textureQualityChanged
+	type QtQuick3D.Helpers.ProceduralTextureData ProceduralTextureData
+		prototype QtQuick3D.TextureData named
+		prop width QtQml.int named
+		prop height QtQml.int named
+		prop depth QtQml.int named
+		prop format TextureData::Format
+		prop hasTransparency QtQml.bool named
+		prop textureData QtQml.var named
+		signal widthChanged
+		signal heightChanged
+		signal depthChanged
+		signal formatChanged
+		signal hasTransparencyChanged
+		signal textureDataChanged
 	type QtQuick3D.Helpers.RandomInstancing RandomInstancing
 		prototype QtQuick3D.Instancing named
 		enum ColorModel RGB=0 HSV=1 HSL=2
