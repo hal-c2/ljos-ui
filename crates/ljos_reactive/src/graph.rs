@@ -1373,13 +1373,16 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// Like [`Graph::get`], but `None` for a dead node or an effect.
     pub fn try_get(&self, n: NodeId) -> Option<V> {
+        // The node is looked up once: a clean read is most of what a page
+        // does, and each lookup is a page, a slot and a version compared.
         {
             let mut g = self.inner.borrow_mut();
-            let node = g.nodes.get(n)?;
+            let i = &mut *g;
+            let node = i.nodes.get_mut(n)?;
             node.value.as_ref()?;
             if node.state == NodeState::Clean {
-                g.record_read(n);
-                return g.nodes[n].value.clone();
+                record_read_of(n, node, &mut i.frames, &mut i.stats);
+                return node.value.clone();
             }
         }
         self.read_slow(n)
