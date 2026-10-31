@@ -515,7 +515,9 @@ fn ten_plain_items_torn_down() {
     // item's place and geometry as marks and not as two effects an item,
     // four fewer since B29, which has no inherit effect an item, and four
     // fewer since B30, which has no structure effect an item, and eight
-    // fewer for the `parent` and `focus` it no longer watches. 6.9 kB
+    // fewer for the `parent` and `focus` it no longer watches. Three
+    // allocations fewer since the scene sweeps the dead its destroy hook
+    // lists, not a list it gathered by walking all its items. 6.9 kB
     // given back an instance; the rest of what one kept is room the next
     // ones use.
     assert_eq!(
@@ -524,7 +526,7 @@ fn ten_plain_items_torn_down() {
             objects: 20,
             scopes: 20,
             nodes: 30,
-            allocations: 56,
+            allocations: 53,
             freed: 68734,
         }
     );

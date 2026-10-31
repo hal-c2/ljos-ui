@@ -615,15 +615,28 @@ pub(crate) fn restructured(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
     mark_shown(cx.engine, obj, |s| s.set(obj, Dirty::STRUCTURE, |_| ()));
 }
 
-/// [`Engine::on_destroyed`]: a scene that showed one of `gone` sweeps its
-/// dead at the next frame.
+/// [`Engine::on_destroyed`]: a scene forgets the marks of each of `gone`
+/// now, and the rest of what it showed of them before it adopts anything.
+/// The engine may give a dead item's slot to a new item before the next
+/// frame, and a record kept under the old id would then sit in the new
+/// one's place. An item given marks as it was made under a shown parent
+/// may die before it is ever adopted, and only this forgets it.
 pub(crate) fn destroyed(e: &Engine, gone: &[ObjectId]) {
     let scenes = e.extension::<Scenes>();
     scenes.forget_pending(gone);
     for s in scenes.live() {
-        let first = gone.iter().find(|o| s.borrow().marks.contains(**o));
-        if let Some(o) = first {
-            mark(&s, |s| s.dead.push(*o));
+        let had = {
+            let mut sh = s.borrow_mut();
+            let before = sh.dead.len();
+            for o in gone {
+                if sh.forget(*o).is_some() {
+                    sh.dead.push(*o);
+                }
+            }
+            sh.dead.len() > before
+        };
+        if had {
+            mark(&s, |_| ());
         }
     }
 }
@@ -1524,11 +1537,8 @@ impl QuickScene {
         engine.deliver_faults();
         lap(&mut laps, &mut steps.timers);
         // 4. Deferred deletes.
-        let deleted = engine.process_deferred_deletes();
-        let dead = std::mem::take(&mut self.shared.borrow_mut().dead);
-        if deleted > 0 || !dead.is_empty() {
-            self.sweep_dead(engine);
-        }
+        engine.process_deferred_deletes();
+        self.sweep_dead(engine);
         // Focus asked for while objects were being made.
         crate::focus::tree::settle(engine);
         self.sync_layer(engine);
@@ -1711,8 +1721,10 @@ impl QuickScene {
         !self.incubator.is_empty() || engine.has_incubations()
     }
 
+    /// Forgets what it showed of the items destroyed since the last sweep
+    /// ([`destroyed`]), while their ids still name only them.
     fn sweep_dead(&mut self, engine: &Engine) {
-        let dead: Vec<ObjectId> = self.items.keys().filter(|o| !engine.is_alive(*o)).collect();
+        let dead = std::mem::take(&mut self.shared.borrow_mut().dead);
         for o in dead {
             if self.root == Some(o) {
                 self.root = None;
@@ -1868,6 +1880,10 @@ impl QuickScene {
     ) -> Result<(), EngineError> {
         if self.items.contains(obj) {
             return Ok(());
+        }
+        // A dead item's record may hold the slot `obj` was given.
+        if !self.shared.borrow().dead.is_empty() {
+            self.sweep_dead(engine);
         }
         let class = ItemClass::of(engine, obj).ok_or_else(|| EngineError::dead(obj))?;
         if parent.is_none() {
