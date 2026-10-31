@@ -29,6 +29,7 @@ Feature: What a scene's objects say, read the same however they say it
             backgroundMode: SceneEnvironment.Color
           }
           PerspectiveCamera { objectName: "camera"; z: 300 }
+          Node { objectName: "pair"; property real at: 0; x: at; z: at * 2 }
           DirectionalLight { objectName: "sun" }
           Model {
             objectName: "cube"; source: "#Cube"
@@ -76,6 +77,16 @@ Feature: What a scene's objects say, read the same however they say it
       Then the pixel at 45, 50 of the window is "#202020"
       And the pixel at 75, 50 of the window is within 2 of "#ff0000"
       And the property "x" of "cube" is 60
+
+    # Writing one part writes position, and position writes its parts:
+    # the part whose binding has not run yet must not get its old value
+    # back from that.
+    Scenario: Bindings on two parts that change together both hold
+      When the property "at" of "pair" is set to 5
+      Then the property "x" of "pair" is 5
+      And the property "z" of "pair" is 10
+      And the property "position.x" of "pair" is 5
+      And the property "position.z" of "pair" is 10
 
   Rule: A member left out says Qt's default
 
