@@ -409,10 +409,6 @@ impl Marks {
 /// Dirty state written by change hooks and effects and drained by `frame`.
 #[derive(Default)]
 struct Shared {
-    /// For how many times in this flush a write through its cover has had
-    /// an item covered anew ([`inherit_one`]). Few items ever are, so it
-    /// is kept beside the marks.
-    recovered: (u64, FxHashMap<ObjectId, usize>),
     /// One for each item the scene shows or is creating under an item it
     /// shows, made before its effects are, so a mark for anything else is
     /// nothing.
@@ -821,94 +817,21 @@ fn prepare_inherited(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, pendin
     true
 }
 
-/// Everything below `obj` takes what it inherits within one batch, walking
-/// the tree here rather than through each child's change hook: that hook
-/// would run inside the change of its parent, so that each level of a tree
-/// stood on the stack of the one above, and a binding or a handler far down
-/// had no stack left. The hooks are told when the batch ends, one after the
-/// other, by when every level already reads what it inherits; they find
-/// nothing left to pass on, and open no batch: its end would tell the next
-/// hook from inside this one.
 fn pass_down(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, prepare: bool, pending: bool) {
-    if !prepare && !something_to_pass_on(e, obj, shared) {
-        return;
-    }
-    e.batch(|| {
-        let mut parents = vec![obj];
-        while let Some(parent) = parents.pop() {
-            for c in e.visual_children(parent) {
-                let present = if prepare {
-                    prepare_inherited(e, c, shared, pending)
-                } else {
-                    shared.borrow().marks.contains(c)
-                };
-                if !present {
-                    continue;
-                }
-                let before = shared.borrow().marks.get(c).map(|m| m.inherit).unwrap();
-                inherit(e, c, shared);
-                let after = shared.borrow().marks.get(c).map(|m| m.inherit);
-                // A child whose cover stayed as it was gives its children
-                // what it gave them, but for a `MouseArea`, whose `enabled`
-                // its children skip.
-                let covers = |i: &Inherit| (i.visible.is_some(), i.enabled.is_some());
-                let moved = after.is_some_and(|a| covers(&a) != covers(&before));
-                if prepare || before.mouse_area || moved {
-                    parents.push(c);
-                }
-            }
+    for c in e.visual_children(obj) {
+        let present = if prepare {
+            prepare_inherited(e, c, shared, pending)
+        } else {
+            shared.borrow().marks.contains(c)
+        };
+        if !present {
+            continue;
         }
-    });
-}
-
-/// Whether a child of `obj` would take something else from it, or a child
-/// of a `MouseArea` among them, which passes on past its own `enabled`.
-fn something_to_pass_on(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) -> bool {
-    let mut parents = vec![obj];
-    while let Some(parent) = parents.pop() {
-        for c in e.visual_children(parent) {
-            let Some(i) = shared.borrow().marks.get(c).map(|m| m.inherit) else {
-                continue;
-            };
-            if i.busy || would_inherit(e, c, i) {
-                return true;
-            }
-            if i.mouse_area {
-                parents.push(c);
-            }
+        let st = shared.borrow().marks.get(c).map(|m| m.inherit).unwrap();
+        inherit(e, c, shared);
+        if prepare || st.mouse_area {
+            pass_down(e, c, shared, prepare, pending);
         }
-    }
-    false
-}
-
-/// Whether [`inherit`] would change what covers `obj`.
-fn would_inherit(e: &Engine, obj: ObjectId, i: Inherit) -> bool {
-    let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
-    [
-        (Item::VISIBLE.index, i.visible),
-        (Item::ENABLED.index, i.enabled),
-    ]
-    .into_iter()
-    .any(|(p, cover)| {
-        let on = parent_on(e, parent, p, i.mouse_area);
-        match (on, cover) {
-            (true, None) => false,
-            (true, Some(_)) | (false, None) => true,
-            (false, Some(_)) => {
-                e.read(obj, p).to_boolean() && e.provenance(obj, p) != Some(Provenance::Bound)
-            }
-        }
-    })
-}
-
-/// What `obj`'s parent passes on of `p`. `MouseArea.enabled` is the area's
-/// own switch: it neither follows a disabled ancestor nor disables what is
-/// inside.
-fn parent_on(e: &Engine, parent: Option<ObjectId>, p: PropIndex, mouse_area: bool) -> bool {
-    if p == Item::ENABLED.index {
-        mouse_area || parent.is_none_or(|q| item_enabled(e, q))
-    } else {
-        parent.is_none_or(|q| e.read(q, p).to_boolean())
     }
 }
 
@@ -4182,8 +4105,14 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) {
     let uncovered = loop {
         let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
         for p in [Item::VISIBLE.index, Item::ENABLED.index] {
-            let on = parent_on(e, parent, p, mouse_area);
-            match inherit_one(e, obj, p, shared, on) {
+            let parent_on = if p == Item::ENABLED.index {
+                // `MouseArea.enabled` is the area's own switch: it neither
+                // follows a disabled ancestor nor disables what is inside.
+                mouse_area || parent.is_none_or(|q| item_enabled(e, q))
+            } else {
+                parent.is_none_or(|q| e.read(q, p).to_boolean())
+            };
+            match inherit_one(e, obj, p, shared, parent_on) {
                 Ok(true) => last = p,
                 Ok(false) => {}
                 Err(err) => e.log(
@@ -4307,9 +4236,6 @@ fn inherit_one(
             // would give it again under a new cover.
             let assigned = own && e.provenance(obj, p) != Some(Provenance::Bound);
             if assigned {
-                if recovered_too_often(e, obj, p, shared) {
-                    return Ok(false);
-                }
                 // `true` was given while the parent is off: keep it as
                 // the own value, and keep reading false.
                 if p == Item::VISIBLE.index
@@ -4325,33 +4251,6 @@ fn inherit_one(
             Ok(assigned)
         }
     }
-}
-
-/// What writes through a cover each time the item reads covered does so
-/// when the flush tells it, which comes after [`inherit`] has gone round
-/// when the change came in a batch from [`pass_down`], so its rounds never
-/// see it: this counts them across calls. Past the bound the fault is told
-/// once and the item keeps what was written, which ends the flush.
-fn recovered_too_often(e: &Engine, obj: ObjectId, p: PropIndex, shared: &RefCell<Shared>) -> bool {
-    let flush = e.graph().stats().flushes;
-    let times = {
-        let mut s = shared.borrow_mut();
-        let (at, counts) = &mut s.recovered;
-        if std::mem::replace(at, flush) != flush {
-            counts.clear();
-        }
-        let n = counts.entry(obj).or_default();
-        *n += 1;
-        *n
-    };
-    if times < MAX_INHERIT_ROUNDS {
-        return false;
-    }
-    let bound = MAX_INHERIT_ROUNDS + 4 * depth(e, obj);
-    if times == bound {
-        inherit_loop(e, obj, p);
-    }
-    times >= bound
 }
 
 fn push_off(e: &Engine, obj: ObjectId, p: PropIndex) -> Result<OverrideId, EngineError> {
