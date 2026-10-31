@@ -1,6 +1,7 @@
 //! The scene's objects: `Object3D`, `Node` and the nodes and resources
 //! derived from them.
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use ljos::item::ljos_3d::math::{Quat, Vec3};
@@ -155,35 +156,53 @@ pub(crate) fn host_write<T: QmlValue>(e: &Engine, me: ObjectId, p: Prop<T>, v: T
     }
 }
 
-// One axis at a time: `position` writing `x` must not see the `y` it has
-// not written yet and write an old `position` back.
-fn axis_changed(
-    cx: &Cx<'_>,
-    axis: Prop<f64>,
-    set: fn(&mut Vector3d, f32),
-    get: fn(&Vector3d) -> f32,
-) {
+thread_local! {
+    /// The nodes whose `position` is being written into its parts.
+    static SPLITTING: RefCell<Vec<ObjectId>> = const { RefCell::new(Vec::new()) };
+}
+
+fn splitting(me: ObjectId) -> bool {
+    SPLITTING.with_borrow(|s| s.contains(&me))
+}
+
+// A part changed: the parts are the truth, all three of them. Taking the
+// other two from `position` would lose a part whose binding changed with
+// this one and has not been written into `position` yet. While `position`
+// is being split into its parts it is the truth instead, and its parts not
+// yet written must not write their old values back into it.
+fn axis_changed(cx: &Cx<'_>) {
     let (e, me) = (cx.engine, cx.this);
-    let (Ok(v), Ok(mut p)) = (e.get(me, axis), e.get(me, Node::POSITION)) else {
+    if splitting(me) {
+        return;
+    }
+    let (Ok(x), Ok(y), Ok(z), Ok(p)) = (
+        e.get(me, Node::X),
+        e.get(me, Node::Y),
+        e.get(me, Node::Z),
+        e.get(me, Node::POSITION),
+    ) else {
         return;
     };
-    let v = v as f32;
-    if get(&p) != v {
-        set(&mut p, v);
-        host_write(e, me, Node::POSITION, p);
+    let parts = Vector3d {
+        x: x as f32,
+        y: y as f32,
+        z: z as f32,
+    };
+    if parts != p {
+        host_write(e, me, Node::POSITION, parts);
     }
 }
 
 fn x_changed(cx: &Cx<'_>, _: PropIndex) {
-    axis_changed(cx, Node::X, |p, v| p.x = v, |p| p.x);
+    axis_changed(cx);
 }
 
 fn y_changed(cx: &Cx<'_>, _: PropIndex) {
-    axis_changed(cx, Node::Y, |p, v| p.y = v, |p| p.y);
+    axis_changed(cx);
 }
 
 fn z_changed(cx: &Cx<'_>, _: PropIndex) {
-    axis_changed(cx, Node::Z, |p, v| p.z = v, |p| p.z);
+    axis_changed(cx);
 }
 
 fn position_changed(cx: &Cx<'_>, _: PropIndex) {
@@ -191,11 +210,17 @@ fn position_changed(cx: &Cx<'_>, _: PropIndex) {
     let Ok(p) = e.get(me, Node::POSITION) else {
         return;
     };
+    SPLITTING.with_borrow_mut(|s| s.push(me));
     for (axis, v) in [(Node::X, p.x), (Node::Y, p.y), (Node::Z, p.z)] {
         if e.get(me, axis).is_ok_and(|a| a as f32 != v) {
             host_write(e, me, axis, f64::from(v));
         }
     }
+    SPLITTING.with_borrow_mut(|s| {
+        if let Some(i) = s.iter().rposition(|n| *n == me) {
+            s.swap_remove(i);
+        }
+    });
 }
 
 pub(crate) fn quat(q: Quaternion) -> Quat {
