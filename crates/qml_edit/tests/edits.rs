@@ -698,3 +698,88 @@ fn a_second_child_after_the_bindings_blank_line_is_not_spaced() {
         "Item {\n    width: 200\n\n    Rectangle {}\n    Item {}\n}\n"
     );
 }
+
+const SNUG: &str = "Item {\n    A {\n        x: 1\n    }\n    B {\n        x: 2\n    }\n}\n";
+
+fn put(source: &str, index: usize, apart: bool) -> String {
+    let (parent, text) = (root(), "N {\n    x: 3\n}".to_owned());
+    let edit = if apart {
+        Edit::InsertObjectApart {
+            parent,
+            index,
+            text,
+        }
+    } else {
+        Edit::InsertObject {
+            parent,
+            index,
+            text,
+        }
+    };
+    apply(source, &edit).expect("the edit applies").text
+}
+
+#[test]
+fn an_object_between_tight_siblings_gets_empty_lines_only_when_asked() {
+    assert_eq!(
+        put(SNUG, 1, false),
+        "Item {\n    A {\n        x: 1\n    }\n    N {\n        x: 3\n    }\n    B {\n        x: 2\n    }\n}\n"
+    );
+    assert_eq!(
+        put(SNUG, 1, true),
+        "Item {\n    A {\n        x: 1\n    }\n\n    N {\n        x: 3\n    }\n\n    B {\n        x: 2\n    }\n}\n"
+    );
+}
+
+#[test]
+fn an_object_first_or_last_is_apart_from_its_one_neighbour() {
+    assert_eq!(
+        put(SNUG, 0, true),
+        "Item {\n    N {\n        x: 3\n    }\n\n    A {\n        x: 1\n    }\n    B {\n        x: 2\n    }\n}\n"
+    );
+    assert_eq!(
+        put(SNUG, 2, true),
+        "Item {\n    A {\n        x: 1\n    }\n    B {\n        x: 2\n    }\n\n    N {\n        x: 3\n    }\n}\n"
+    );
+}
+
+#[test]
+fn an_empty_line_already_there_is_not_doubled() {
+    let spaced = "Item {\n    A {\n        x: 1\n    }\n\n    B {\n        x: 2\n    }\n}\n";
+    let out = put(spaced, 1, true);
+    assert_eq!(
+        out,
+        "Item {\n    A {\n        x: 1\n    }\n\n    N {\n        x: 3\n    }\n\n    B {\n        x: 2\n    }\n}\n"
+    );
+    assert!(!out.contains("\n\n\n"));
+    // Where the file already had the lines, asking changes nothing.
+    assert_eq!(out, put(spaced, 1, false));
+    let one_gap = put(SNUG, 1, true);
+    assert!(!one_gap.contains("\n\n\n"));
+}
+
+#[test]
+fn an_object_apart_is_taken_out_to_give_the_file_back_with_its_lines() {
+    let with = put(SNUG, 1, true);
+    let removed = apply(
+        &with,
+        &Edit::RemoveObject {
+            object: root().child(1),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    // The text is the file with one empty line between A and B; nothing else
+    // of the file changed.
+    assert_eq!(
+        removed.replace("\n\n", "\n"),
+        SNUG,
+        "only the empty line is left"
+    );
+}
+
+#[test]
+fn an_object_apart_in_an_empty_object_is_put_as_it_always_was() {
+    let source = "Item {\n}\n";
+    assert_eq!(put(source, 0, true), put(source, 0, false));
+}

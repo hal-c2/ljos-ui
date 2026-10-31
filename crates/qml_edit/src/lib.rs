@@ -209,6 +209,18 @@ pub enum Edit {
         index: usize,
         text: String,
     },
+    /// [`InsertObject`](Self::InsertObject), and an empty line keeps the
+    /// object apart from the member above it and the one below it, wherever
+    /// the file had none. A blank line that is already there is not doubled.
+    /// It only applies to an object put on lines of its own: one set into a
+    /// line with other members, or into an object with no members yet, goes
+    /// as `InsertObject` puts it. `InsertObject` itself never adds the line
+    /// the file did not have, so what it wrote before is unchanged.
+    InsertObjectApart {
+        parent: NodePath,
+        index: usize,
+        text: String,
+    },
     RemoveObject {
         object: NodePath,
     },
@@ -574,6 +586,23 @@ impl<'s> Text<'s> {
                     self.insertion(target, &members, at, &snippet, true, None)?,
                 ])
             }
+            Edit::InsertObjectApart {
+                parent,
+                index,
+                text,
+            } => {
+                let target = resolve(root, parent)?;
+                let members: Vec<&QmlMember<'_>> = target.members.iter().collect();
+                let at = child_member_index(&members, *index)
+                    .ok_or_else(|| Error::NotFound(parent.child(*index)))?;
+                let snippet = Snippet {
+                    text: text.clone(),
+                    base: String::new(),
+                    gaps: None,
+                };
+                let put = self.insertion(target, &members, at, &snippet, true, None)?;
+                Ok(vec![self.apart(put, at > 0, at < members.len())])
+            }
             Edit::RemoveObject { object } => {
                 let (parent, n) = object
                     .split_child()
@@ -729,6 +758,45 @@ impl<'s> Text<'s> {
                 base: self.indent_at(span.start as usize).to_owned(),
                 gaps: None,
             },
+        }
+    }
+
+    /// `put`, an insertion of whole lines, with one empty line to its
+    /// neighbours above and below (where it has them) unless the text there
+    /// already has one. Whatever empty line `insertion` wrote around the
+    /// object is taken off first, so the result does not depend on how it
+    /// grouped the object.
+    fn apart(&self, put: Change, above: bool, below: bool) -> Change {
+        let nl = self.nl;
+        if put.range.start != put.range.end || !put.replacement.ends_with(nl) || !(above || below) {
+            return put;
+        }
+        let at = put.range.start;
+        let mut core = put.replacement.as_str();
+        core = core.strip_prefix(nl).unwrap_or(core);
+        let double = format!("{nl}{nl}");
+        while core.ends_with(&double) {
+            core = &core[..core.len() - nl.len()];
+        }
+        let blank = |line: &str| line.trim().is_empty();
+        let before = &self.src[..at];
+        let above_blank = before
+            .strip_suffix('\n')
+            .and_then(|b| b.rsplit('\n').next())
+            .is_some_and(blank);
+        let below_blank =
+            self.src[at..].split('\n').next().is_some_and(blank) && self.src[at..].contains('\n');
+        let mut replacement = String::new();
+        if above && !above_blank {
+            replacement.push_str(nl);
+        }
+        replacement.push_str(core);
+        if below && !below_blank {
+            replacement.push_str(nl);
+        }
+        Change {
+            range: put.range,
+            replacement,
         }
     }
 
