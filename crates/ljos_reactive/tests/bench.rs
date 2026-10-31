@@ -119,3 +119,39 @@ fn clean_reads_10k() {
     report("clean reads (10k per round)", ROUNDS, start, 0);
     black_box(sum);
 }
+
+/// Steady-state reads of clean bindings, from inside a running binding: the
+/// read a page makes most, recorded as a dependency once per run.
+#[test]
+#[ignore]
+fn clean_binding_reads_10k() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let src = g.property(r, 1).unwrap();
+    let trigger = g.property(r, 0).unwrap();
+    let nodes: Rc<Vec<NodeId>> = Rc::new(
+        (0..N as i64)
+            .map(|i| g.binding(r, 0, move |g| g.get(src) + i).unwrap())
+            .collect(),
+    );
+    let read = nodes.clone();
+    let reader = g
+        .binding(r, 0, move |g| {
+            let mut sum = g.get(trigger);
+            for _ in 0..ROUNDS {
+                for n in read.iter() {
+                    sum += g.get(*n);
+                }
+            }
+            sum
+        })
+        .unwrap();
+    // The first run evaluates the 10k bindings; the timed one finds them
+    // clean, and each read after a binding's first in the run is one the
+    // run has already recorded.
+    g.get(reader);
+    g.set(trigger, 1);
+    let start = Instant::now();
+    black_box(g.get(reader));
+    report("clean binding reads, tracked (10k)", ROUNDS, start, 0);
+}
