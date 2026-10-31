@@ -30,9 +30,10 @@ fn extended_environment_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)>
 }
 
 /// `ExtendedSceneEnvironment`: exposure and white point for the
-/// tonemapper, glow and bloom, depth of field, colour adjustments, a
-/// vignette, a look-up table, sharpening, FXAA and dithering, each on by
-/// its own property. The scene is drawn in high dynamic range and
+/// tonemapper, glow and bloom, a lens flare, screen-space reflections and
+/// global illumination, depth of field, colour adjustments, a vignette, a
+/// look-up table, sharpening, FXAA and dithering, each on by its own
+/// property. The scene is drawn in high dynamic range and
 /// finished by passes over it whatever is on.
 #[derive(Debug, QmlObject)]
 #[qml(
@@ -111,8 +112,6 @@ pub struct ExtendedSceneEnvironment {
     pub lut_filter_alpha: f64,
     #[qml(notify, object = "Texture")]
     pub lut_texture: Option<ObjectId>,
-    /// Kept, as are the other lens flare properties: the flare is not
-    /// built.
     #[qml(notify)]
     pub lens_flare_enabled: bool,
     #[qml(notify)]
@@ -143,6 +142,36 @@ pub struct ExtendedSceneEnvironment {
     pub lens_flare_lens_dirt_texture: Option<ObjectId>,
     #[qml(notify, object = "Texture")]
     pub lens_flare_lens_starburst_texture: Option<ObjectId>,
+    #[qml(notify)]
+    pub ssr_enabled: bool,
+    #[qml(notify)]
+    pub ssr_max_steps: i32,
+    /// In scene units.
+    #[qml(notify)]
+    pub ssr_thickness: f64,
+    #[qml(notify)]
+    pub ssgi_enabled: bool,
+    #[qml(notify)]
+    pub ssgi_buffer_size_factor: f64,
+    #[qml(notify)]
+    pub ssgi_hit_thickness: f64,
+    #[qml(notify)]
+    pub ssgi_indirect_light_boost: f64,
+    #[qml(notify)]
+    pub ssgi_indirect_light_enabled: bool,
+    #[qml(notify)]
+    pub ssgi_sample_count: i32,
+    /// A fraction of the view's height.
+    #[qml(notify)]
+    pub ssgi_sample_radius: f64,
+    /// Feeds the light gathered the frame before back in, so light
+    /// bounces more than once over frames.
+    #[qml(notify)]
+    pub ssgi_simulated_bounce_enabled: bool,
+    #[qml(notify)]
+    pub ssgi_simulated_bounce_factor: f64,
+    #[qml(notify)]
+    pub ssgi_slice_count: i32,
 }
 
 impl Default for ExtendedSceneEnvironment {
@@ -181,25 +210,37 @@ impl Default for ExtendedSceneEnvironment {
             lut_size: x::LUT_SIZE,
             lut_filter_alpha: x::LUT_FILTER_ALPHA,
             lut_texture: None,
-            lens_flare_enabled: false,
-            lens_flare_bloom_scale: 10.0,
-            lens_flare_bloom_bias: 0.95,
-            lens_flare_ghost_dispersal: 0.5,
-            lens_flare_ghost_count: 4,
-            lens_flare_halo_width: 0.25,
-            lens_flare_stretch_to_aspect: 0.5,
-            lens_flare_distortion: 5.0,
-            lens_flare_blur_amount: 3.0,
-            lens_flare_apply_dirt_texture: false,
-            lens_flare_apply_starburst_texture: false,
-            lens_flare_camera_direction: Vector3d {
-                x: 0.0,
-                y: 0.0,
-                z: -1.0,
+            lens_flare_enabled: x::LENS_FLARE_ENABLED,
+            lens_flare_bloom_scale: x::LENS_FLARE_BLOOM_SCALE,
+            lens_flare_bloom_bias: x::LENS_FLARE_BLOOM_BIAS,
+            lens_flare_ghost_dispersal: x::LENS_FLARE_GHOST_DISPERSAL,
+            lens_flare_ghost_count: x::LENS_FLARE_GHOST_COUNT,
+            lens_flare_halo_width: x::LENS_FLARE_HALO_WIDTH,
+            lens_flare_stretch_to_aspect: x::LENS_FLARE_STRETCH_TO_ASPECT,
+            lens_flare_distortion: x::LENS_FLARE_DISTORTION,
+            lens_flare_blur_amount: x::LENS_FLARE_BLUR_AMOUNT,
+            lens_flare_apply_dirt_texture: x::LENS_FLARE_APPLY_DIRT_TEXTURE,
+            lens_flare_apply_starburst_texture: x::LENS_FLARE_APPLY_STARBURST_TEXTURE,
+            lens_flare_camera_direction: {
+                let [x, y, z] = x::LENS_FLARE_CAMERA_DIRECTION;
+                Vector3d { x, y, z }
             },
             lens_flare_lens_color_texture: None,
             lens_flare_lens_dirt_texture: None,
             lens_flare_lens_starburst_texture: None,
+            ssr_enabled: x::SSR_ENABLED,
+            ssr_max_steps: x::SSR_MAX_STEPS,
+            ssr_thickness: x::SSR_THICKNESS,
+            ssgi_enabled: x::SSGI_ENABLED,
+            ssgi_buffer_size_factor: x::SSGI_BUFFER_SIZE_FACTOR,
+            ssgi_hit_thickness: x::SSGI_HIT_THICKNESS,
+            ssgi_indirect_light_boost: x::SSGI_INDIRECT_LIGHT_BOOST,
+            ssgi_indirect_light_enabled: x::SSGI_INDIRECT_LIGHT_ENABLED,
+            ssgi_sample_count: x::SSGI_SAMPLE_COUNT,
+            ssgi_sample_radius: x::SSGI_SAMPLE_RADIUS,
+            ssgi_simulated_bounce_enabled: x::SSGI_SIMULATED_BOUNCE_ENABLED,
+            ssgi_simulated_bounce_factor: x::SSGI_SIMULATED_BOUNCE_FACTOR,
+            ssgi_slice_count: x::SSGI_SLICE_COUNT,
         }
     }
 }

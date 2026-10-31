@@ -566,6 +566,55 @@ pub struct Lut {
     pub alpha: f32,
 }
 
+/// The flare a lens makes of bright light: ghosts mirrored through the
+/// view's middle and a halo, blurred and laid over the picture.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LensFlare {
+    pub bloom_scale: f32,
+    pub bloom_bias: f32,
+    pub ghost_dispersal: f32,
+    pub ghost_count: u32,
+    pub halo_width: f32,
+    pub stretch_to_aspect: f32,
+    pub distortion: f32,
+    pub blur_amount: f32,
+    /// Turns the starburst; in the camera's space.
+    pub camera_direction: [f32; 3],
+    /// Colours the ghosts by how far from the middle they are; without
+    /// one, a built-in rainbow.
+    pub color_texture: Option<Texture>,
+    /// `None` without the dirt; `Some(None)` with the built-in dirt.
+    pub dirt: Option<Option<Texture>>,
+    pub starburst: Option<Option<Texture>>,
+}
+
+/// Reflections found by marching each reflected ray across the view's
+/// depth.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Reflections {
+    pub max_steps: u32,
+    /// In scene units, how deep behind a surface a ray still hits it.
+    pub thickness: f32,
+}
+
+/// Screen-space global illumination: light the surfaces in view throw at
+/// each other, and the occlusion of light from all around.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Illumination {
+    /// The fraction of the view's size it gathers at, 0.1 to 1.
+    pub buffer_size: f32,
+    pub hit_thickness: f32,
+    pub indirect_boost: f32,
+    /// Off for the occlusion alone.
+    pub indirect: bool,
+    pub sample_count: u32,
+    /// A fraction of the view's height.
+    pub sample_radius: f32,
+    /// Feeds the last frame's light back in, `Some(factor)` when it does.
+    pub bounce: Option<f32>,
+    pub slice_count: u32,
+}
+
 /// ExtendedSceneEnvironment's built-in post-processing, each effect
 /// there when it is enabled. They run after the environment's effects.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -578,6 +627,9 @@ pub struct PostProcess {
     pub adjustments: Option<Adjustments>,
     pub vignette: Option<Vignette>,
     pub lut: Option<Lut>,
+    pub lens_flare: Option<LensFlare>,
+    pub reflections: Option<Reflections>,
+    pub illumination: Option<Illumination>,
     pub fxaa: bool,
     pub dithering: bool,
     /// 0 to 1.

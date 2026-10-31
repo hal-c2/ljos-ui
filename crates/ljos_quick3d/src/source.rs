@@ -313,6 +313,19 @@ fn numbers(p: Prop3d) -> &'static [Prop<f64>] {
         P::VignetteRadius => &[X::VIGNETTE_RADIUS],
         P::LutSize => &[X::LUT_SIZE],
         P::LutFilterAlpha => &[X::LUT_FILTER_ALPHA],
+        P::LensFlareBloomScale => &[X::LENS_FLARE_BLOOM_SCALE],
+        P::LensFlareBloomBias => &[X::LENS_FLARE_BLOOM_BIAS],
+        P::LensFlareGhostDispersal => &[X::LENS_FLARE_GHOST_DISPERSAL],
+        P::LensFlareHaloWidth => &[X::LENS_FLARE_HALO_WIDTH],
+        P::LensFlareStretchToAspect => &[X::LENS_FLARE_STRETCH_TO_ASPECT],
+        P::LensFlareDistortion => &[X::LENS_FLARE_DISTORTION],
+        P::LensFlareBlurAmount => &[X::LENS_FLARE_BLUR_AMOUNT],
+        P::SsrThickness => &[X::SSR_THICKNESS],
+        P::SsgiBufferSizeFactor => &[X::SSGI_BUFFER_SIZE_FACTOR],
+        P::SsgiHitThickness => &[X::SSGI_HIT_THICKNESS],
+        P::SsgiIndirectLightBoost => &[X::SSGI_INDIRECT_LIGHT_BOOST],
+        P::SsgiSampleRadius => &[X::SSGI_SAMPLE_RADIUS],
+        P::SsgiSimulatedBounceFactor => &[X::SSGI_SIMULATED_BOUNCE_FACTOR],
         _ => &[],
     }
 }
@@ -344,6 +357,10 @@ fn ints(p: Prop3d) -> &'static [Prop<i32>] {
         P::AoSampleRate => &[SceneEnvironment::AO_SAMPLE_RATE],
         P::GlowLevel => &[X::GLOW_LEVEL],
         P::GlowBlendMode => &[X::GLOW_BLEND_MODE],
+        P::LensFlareGhostCount => &[X::LENS_FLARE_GHOST_COUNT],
+        P::SsrMaxSteps => &[X::SSR_MAX_STEPS],
+        P::SsgiSampleCount => &[X::SSGI_SAMPLE_COUNT],
+        P::SsgiSliceCount => &[X::SSGI_SLICE_COUNT],
         P::Index => &[Joint::INDEX],
         _ => &[],
     }
@@ -371,6 +388,13 @@ fn bools(p: Prop3d) -> &'static [Prop<bool>] {
         P::GlowQualityHigh => &[X::GLOW_QUALITY_HIGH],
         P::VignetteEnabled => &[X::VIGNETTE_ENABLED],
         P::LutEnabled => &[X::LUT_ENABLED],
+        P::LensFlareEnabled => &[X::LENS_FLARE_ENABLED],
+        P::LensFlareApplyDirtTexture => &[X::LENS_FLARE_APPLY_DIRT_TEXTURE],
+        P::LensFlareApplyStarburstTexture => &[X::LENS_FLARE_APPLY_STARBURST_TEXTURE],
+        P::SsrEnabled => &[X::SSR_ENABLED],
+        P::SsgiEnabled => &[X::SSGI_ENABLED],
+        P::SsgiIndirectLightEnabled => &[X::SSGI_INDIRECT_LIGHT_ENABLED],
+        P::SsgiSimulatedBounceEnabled => &[X::SSGI_SIMULATED_BOUNCE_ENABLED],
         _ => &[],
     }
 }
@@ -396,6 +420,7 @@ fn vectors(p: Prop3d) -> &'static [Prop<Vector3d>] {
         P::Scale => &[Node::SCALE],
         P::EmissiveFactor => &[PrincipledMaterial::EMISSIVE_FACTOR],
         P::ProbeOrientation => &[SceneEnvironment::PROBE_ORIENTATION],
+        P::LensFlareCameraDirection => &[X::LENS_FLARE_CAMERA_DIRECTION],
         _ => &[],
     }
 }
@@ -422,6 +447,9 @@ fn objects(p: Prop3d) -> &'static [Prop<Option<ObjectId>>] {
         P::OpacityMap => &[PrincipledMaterial::OPACITY_MAP],
         P::LightProbe => &[SceneEnvironment::LIGHT_PROBE],
         P::LutTexture => &[X::LUT_TEXTURE],
+        P::LensFlareLensColorTexture => &[X::LENS_FLARE_LENS_COLOR_TEXTURE],
+        P::LensFlareLensDirtTexture => &[X::LENS_FLARE_LENS_DIRT_TEXTURE],
+        P::LensFlareLensStarburstTexture => &[X::LENS_FLARE_LENS_STARBURST_TEXTURE],
         _ => &[],
     }
 }

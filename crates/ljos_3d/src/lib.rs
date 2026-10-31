@@ -52,8 +52,8 @@ mod timing;
 
 pub use custom::{
     Adjustments, AmbientOcclusion, Blend, BufferFormat, CustomMaterial, DepthDraw, DepthOfField,
-    Effect, EffectBuffer, Glow, GlowBlend, Lut, Pass, PassTexture, PostProcess, Program,
-    ProgramKind, Screen, UniformKind, UniformValue, Vignette,
+    Effect, EffectBuffer, Glow, GlowBlend, Illumination, LensFlare, Lut, Pass, PassTexture,
+    PostProcess, Program, ProgramKind, Reflections, Screen, UniformKind, UniformValue, Vignette,
 };
 pub use fetch::Fetch;
 pub use geometry::{

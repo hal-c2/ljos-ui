@@ -9,7 +9,8 @@ use super::enums::{
 };
 use super::{GridLines, Prop3d as P, SceneSource, Type3d as T, defaults as d};
 use crate::custom::{
-    Adjustments, AmbientOcclusion, DepthOfField, Glow, GlowBlend, Lut, PostProcess, Vignette,
+    Adjustments, AmbientOcclusion, DepthOfField, Glow, GlowBlend, Illumination, LensFlare, Lut,
+    PostProcess, Reflections, Vignette,
 };
 use crate::geometry::CustomGeometry;
 use crate::instancing::{MAX_JOINTS, Skin};
@@ -738,6 +739,65 @@ fn extended<S: SceneSource>(s: &S, view: S::Object, env: S::Object, out: &mut En
                 .and_then(|t| texture(s, view, t)),
             size: n(P::LutSize, x::LUT_SIZE),
             alpha: n(P::LutFilterAlpha, x::LUT_FILTER_ALPHA),
+        }),
+        lens_flare: b(P::LensFlareEnabled, x::LENS_FLARE_ENABLED).then(|| {
+            let map = |p| s.object(env, p).and_then(|t| texture(s, view, t));
+            let d = vec3(
+                s,
+                env,
+                P::LensFlareCameraDirection,
+                x::LENS_FLARE_CAMERA_DIRECTION,
+            );
+            LensFlare {
+                bloom_scale: n(P::LensFlareBloomScale, x::LENS_FLARE_BLOOM_SCALE).max(0.0),
+                bloom_bias: n(P::LensFlareBloomBias, x::LENS_FLARE_BLOOM_BIAS).max(0.0),
+                ghost_dispersal: n(P::LensFlareGhostDispersal, x::LENS_FLARE_GHOST_DISPERSAL)
+                    .max(0.0),
+                ghost_count: int(s, env, P::LensFlareGhostCount, x::LENS_FLARE_GHOST_COUNT)
+                    .clamp(0, 20) as u32,
+                halo_width: n(P::LensFlareHaloWidth, x::LENS_FLARE_HALO_WIDTH).clamp(0.0, 1.0),
+                stretch_to_aspect: n(P::LensFlareStretchToAspect, x::LENS_FLARE_STRETCH_TO_ASPECT)
+                    .clamp(0.0, 1.0),
+                distortion: n(P::LensFlareDistortion, x::LENS_FLARE_DISTORTION).max(0.0),
+                blur_amount: n(P::LensFlareBlurAmount, x::LENS_FLARE_BLUR_AMOUNT).max(0.0),
+                camera_direction: [d.x, d.y, d.z],
+                color_texture: map(P::LensFlareLensColorTexture),
+                dirt: b(
+                    P::LensFlareApplyDirtTexture,
+                    x::LENS_FLARE_APPLY_DIRT_TEXTURE,
+                )
+                .then(|| map(P::LensFlareLensDirtTexture)),
+                starburst: b(
+                    P::LensFlareApplyStarburstTexture,
+                    x::LENS_FLARE_APPLY_STARBURST_TEXTURE,
+                )
+                .then(|| map(P::LensFlareLensStarburstTexture)),
+            }
+        }),
+        reflections: b(P::SsrEnabled, x::SSR_ENABLED).then(|| Reflections {
+            max_steps: int(s, env, P::SsrMaxSteps, x::SSR_MAX_STEPS).clamp(1, 4096) as u32,
+            thickness: n(P::SsrThickness, x::SSR_THICKNESS).max(0.0),
+        }),
+        illumination: b(P::SsgiEnabled, x::SSGI_ENABLED).then(|| Illumination {
+            buffer_size: n(P::SsgiBufferSizeFactor, x::SSGI_BUFFER_SIZE_FACTOR).clamp(0.1, 1.0),
+            hit_thickness: n(P::SsgiHitThickness, x::SSGI_HIT_THICKNESS).clamp(0.001, 4.0),
+            indirect_boost: n(P::SsgiIndirectLightBoost, x::SSGI_INDIRECT_LIGHT_BOOST)
+                .clamp(1.0, 100.0),
+            indirect: b(P::SsgiIndirectLightEnabled, x::SSGI_INDIRECT_LIGHT_ENABLED),
+            sample_count: int(s, env, P::SsgiSampleCount, x::SSGI_SAMPLE_COUNT).clamp(1, 16) as u32,
+            sample_radius: n(P::SsgiSampleRadius, x::SSGI_SAMPLE_RADIUS).clamp(0.001, 4.0),
+            bounce: b(
+                P::SsgiSimulatedBounceEnabled,
+                x::SSGI_SIMULATED_BOUNCE_ENABLED,
+            )
+            .then(|| {
+                n(
+                    P::SsgiSimulatedBounceFactor,
+                    x::SSGI_SIMULATED_BOUNCE_FACTOR,
+                )
+                .clamp(0.0, 1.0)
+            }),
+            slice_count: int(s, env, P::SsgiSliceCount, x::SSGI_SLICE_COUNT).clamp(1, 8) as u32,
         }),
         fxaa: b(P::FxaaEnabled, x::FXAA_ENABLED),
         dithering: b(P::DitheringEnabled, x::DITHERING_ENABLED),
