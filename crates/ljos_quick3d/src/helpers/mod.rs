@@ -65,4 +65,5 @@ pub(crate) fn register(engine: &Engine) {
         ExtrudedTextGeometry,
     ]));
     library::register(engine);
+    crate::effects::register(engine);
 }

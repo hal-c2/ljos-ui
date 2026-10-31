@@ -16,7 +16,11 @@ const URL_PREFIX: &str = "ljos-quick3d-helpers:/";
 
 const CATEGORY: &str = "ljos.quick3d";
 const URI: &str = "QtQuick3D.Helpers";
-const DIRECTORY: &str = "QtQuick3D/Helpers";
+/// The modules in the pack, each with the directory of its files.
+const MODULES: [(&str, &str); 2] = [
+    (URI, "QtQuick3D/Helpers"),
+    ("QtQuick3D.Effects", "QtQuick3D/Effects"),
+];
 
 #[derive(Debug)]
 struct Library {
@@ -62,7 +66,8 @@ impl ComponentSource for Library {
     }
 }
 
-/// Registers the QML-written types of `QtQuick3D.Helpers` 6.0.
+/// Registers the QML-written types of `QtQuick3D.Helpers` and
+/// `QtQuick3D.Effects` 6.0.
 pub(super) fn register(engine: &Engine) {
     let (library, undecoded) = Library::embedded();
     let keys = library.keys();
@@ -80,9 +85,11 @@ pub(super) fn register(engine: &Engine) {
             ),
         );
     }
-    for key in keys.iter().filter(|k| k.starts_with(DIRECTORY)) {
-        if let Err(e) = engine.register_qml_type(URI, Version::new(6, 0), key) {
-            engine.log(LogLevel::Warning, CATEGORY, format!("{URI}: {e}"));
+    for (uri, directory) in MODULES {
+        for key in keys.iter().filter(|k| k.starts_with(directory)) {
+            if let Err(e) = engine.register_qml_type(uri, Version::new(6, 0), key) {
+                engine.log(LogLevel::Warning, CATEGORY, format!("{uri}: {e}"));
+            }
         }
     }
 }

@@ -166,7 +166,6 @@ pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: wit
 /// has is itself ([`Type::is_built`]) and the others stand in.
 const STANDING_IN: &[&str] = &[
     "QtQuick3D.AssetUtils",
-    "QtQuick3D.Effects",
     "QtQuick3D.Helpers",
     "QtQuick3D.Particles3D",
     "QtQuick3D.SpatialAudio",

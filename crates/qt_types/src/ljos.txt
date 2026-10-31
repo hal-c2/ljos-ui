@@ -8497,6 +8497,34 @@ module QtQuick3D
 		method mapFrom3DScene
 		method mapTo3DScene
 
+module QtQuick3D.Effects
+	ColorMaster QtQuick3D/Effects/ColorMaster.qml
+	HDRBloomTonemap QtQuick3D/Effects/HDRBloomTonemap.qml
+	type QtQuick3D/Effects/ColorMaster.qml ColorMaster
+		prototype QtQuick3D.Effect named
+		prop redStrength QtQml.real named
+		prop greenStrength QtQml.real named
+		prop blueStrength QtQml.real named
+		prop saturation QtQml.real named
+		signal redStrengthChanged
+		signal greenStrengthChanged
+		signal blueStrengthChanged
+		signal saturationChanged
+	type QtQuick3D/Effects/HDRBloomTonemap.qml HDRBloomTonemap
+		prototype QtQuick3D.Effect named
+		prop blurFalloff QtQml.real named
+		prop bloomThreshold QtQml.real named
+		prop channelThreshold QtQml.real named
+		prop exposure QtQml.real named
+		prop gamma QtQml.real named
+		prop tonemappingLerp QtQml.real named
+		signal blurFalloffChanged
+		signal bloomThresholdChanged
+		signal channelThresholdChanged
+		signal exposureChanged
+		signal gammaChanged
+		signal tonemappingLerpChanged
+
 module QtQuick3D.Helpers
 	AxisHelper QtQuick3D/Helpers/AxisHelper.qml
 	CapsuleGeometry QtQuick3D.Helpers.CapsuleGeometry
