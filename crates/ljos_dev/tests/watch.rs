@@ -58,9 +58,31 @@ fn app_with(files: &[(&str, &str)], properties: Vec<(String, Value)>) -> App {
 /// As [`app_with`], with the project in the directory `sub` of the
 /// temporary one.
 fn app_in(sub: &str, files: &[(&str, &str)], properties: Vec<(String, Value)>) -> App {
+    app_at(sub, false, files, properties)
+}
+
+/// As [`app_in`], with the project the temporary directory itself and the
+/// entry `Main.qml` in `sub` of it, so that a theme can be in the entry's
+/// directory or above it. `dir` is the project.
+fn app_below(sub: &str, files: &[(&str, &str)]) -> App {
+    app_at(sub, true, files, Vec::new())
+}
+
+fn app_at(
+    sub: &str,
+    project_above: bool,
+    files: &[(&str, &str)],
+    properties: Vec<(String, Value)>,
+) -> App {
     let tmp = tempfile::tempdir().unwrap();
-    let dir = tmp.path().canonicalize().unwrap().join(sub);
+    let root = tmp.path().canonicalize().unwrap();
+    let dir = root.join(sub);
     fs::create_dir_all(&dir).unwrap();
+    let (dir, entry) = if project_above {
+        (root, dir.join("Main.qml"))
+    } else {
+        (dir.clone(), dir.join("Main.qml"))
+    };
     for (name, text) in files {
         write(&dir, name, text);
     }
@@ -72,8 +94,8 @@ fn app_in(sub: &str, files: &[(&str, &str)], properties: Vec<(String, Value)>) -
     let (tx, woke) = mpsc::channel();
     let session = DevSession::open_with(
         &engine,
-        &dir.join("Main.qml"),
-        None,
+        &entry,
+        project_above.then_some(dir.as_path()),
         properties,
         QtTypeOracle,
         Arc::new(move || {
@@ -1053,4 +1075,60 @@ fn a_flush_applies_a_theme_edit_before_the_answer_to_it() {
         "{reports:?}"
     );
     assert_eq!(app.num("root", "gap"), 20.0);
+}
+
+/// The theme file in use is the nearest there is: one made in a directory
+/// nearer the entry than the one in use takes over, and removing it gives
+/// the farther one back.
+#[test]
+fn a_theme_made_nearer_the_entry_takes_over_and_removing_it_gives_the_farther_back() {
+    let mut app = app_below(
+        "app",
+        &[
+            ("app/Main.qml", THEMED),
+            ("theme.json", r##"{ "Spacing": { "md": 20 } }"##),
+        ],
+    );
+    assert_eq!(app.num("root", "gap"), 20.0);
+
+    app.save("app/theme.json", r##"{ "Spacing": { "md": 30 } }"##);
+    let reports = app.wait_for_report();
+    assert!(
+        matches!(reports[..], [Report::Theme { generation: 1, .. }]),
+        "{reports:?}"
+    );
+    assert_eq!(app.num("root", "gap"), 30.0);
+
+    fs::remove_file(app.dir.join("app/theme.json")).unwrap();
+    let reports = app.wait_for_report();
+    assert!(
+        matches!(reports[..], [Report::Theme { generation: 2, .. }]),
+        "{reports:?}"
+    );
+    assert_eq!(app.num("root", "gap"), 20.0);
+    assert_eq!(app.session.reloads(), 0);
+}
+
+/// Saving the farther theme while a nearer one is in use changes nothing.
+#[test]
+fn a_farther_theme_saved_under_a_nearer_one_changes_nothing() {
+    let mut app = app_below(
+        "app",
+        &[
+            ("app/Main.qml", THEMED),
+            ("app/theme.json", r##"{ "Spacing": { "md": 30 } }"##),
+            ("theme.json", r##"{ "Spacing": { "md": 20 } }"##),
+        ],
+    );
+    assert_eq!(app.num("root", "gap"), 30.0);
+    app.save("theme.json", r##"{ "Spacing": { "md": 25 } }"##);
+    // A save of the nearer one, as a witness that the watcher has been
+    // through the farther one's event first.
+    app.save("app/theme.json", r##"{ "Spacing": { "md": 31 } }"##);
+    let reports = app.wait_for_report();
+    assert!(
+        matches!(reports[..], [Report::Theme { generation: 1, .. }]),
+        "{reports:?}"
+    );
+    assert_eq!(app.num("root", "gap"), 31.0);
 }

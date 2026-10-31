@@ -230,18 +230,25 @@ pub const FILE: &str = "theme.json";
 /// project's. Nothing above `project` is looked in; an entry outside it
 /// is looked for beside alone. None when there is none.
 pub fn find(entry_dir: &Path, project: &Path) -> Option<PathBuf> {
+    candidates(entry_dir, project)
+        .into_iter()
+        .find(|file| file.is_file())
+}
+
+/// Every place [`find`] looks, nearest first: a [`FILE`] in each directory
+/// from `entry_dir` up to `project`. A watcher watches them all, so a theme
+/// made nearer the entry, or one removed, is seen.
+pub fn candidates(entry_dir: &Path, project: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
     let mut dir = Some(entry_dir);
     while let Some(d) = dir {
-        let file = d.join(FILE);
-        if file.is_file() {
-            return Some(file);
-        }
+        out.push(d.join(FILE));
         if d == project || !d.starts_with(project) {
-            return None;
+            break;
         }
         dir = d.parent();
     }
-    None
+    out
 }
 
 /// Reads a theme. `file` names it in errors. Every mistake is told, the

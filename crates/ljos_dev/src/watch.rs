@@ -245,7 +245,7 @@ impl Watcher {
         let root = roots.first().ok_or(WatchError::NoRoot)?.clone();
         let (tx, rx) = mpsc::sync_channel(EVENT_QUEUE);
         let overflow = Arc::new(AtomicBool::new(false));
-        let theme = lock(&reloader).theme_path().map(Path::to_owned);
+        let theme = lock(&reloader).theme_paths();
         let followed: Arc<Mutex<BTreeSet<PathBuf>>> = Arc::default();
         let events = Events {
             followed: followed.clone(),
@@ -275,16 +275,30 @@ impl Watcher {
                 Err(_) => {}
             }
         }
-        // A theme named outside the project is watched in its directory
-        // alone; Events lets only the theme through from there.
-        if let Some(dir) = theme.as_deref().and_then(Path::parent)
-            && !watched.contains(dir)
-        {
-            fs.watch(dir, RecursiveMode::NonRecursive)
-                .map_err(|source| WatchError::Watch {
-                    path: dir.to_owned(),
-                    source,
-                })?;
+        // A theme outside the project, or in a directory the walk did not
+        // find (the place a theme is written first), is watched in its
+        // directory alone; Events lets only the theme through from there.
+        // Directories, not the files: a file made later has no watch to
+        // be on, and an editor's save replaces the file.
+        let theme_dirs: BTreeSet<&Path> = theme.iter().filter_map(|p| p.parent()).collect();
+        for dir in theme_dirs {
+            if watched.contains(dir) {
+                continue;
+            }
+            match fs.watch(dir, RecursiveMode::NonRecursive) {
+                Ok(()) => {
+                    watched.insert(dir.to_owned());
+                }
+                // A place the theme may be made in later; the project is
+                // rescanned when its directories change.
+                Err(_) if !dir.exists() => {}
+                Err(source) => {
+                    return Err(WatchError::Watch {
+                        path: dir.to_owned(),
+                        source,
+                    });
+                }
+            }
         }
         let wakes = Arc::new(AtomicU64::new(0));
         let watching = Arc::new(Mutex::new(Watching {
@@ -378,7 +392,7 @@ impl Drop for Watcher {
 /// beside the project does not wake the watcher.
 struct Events {
     followed: Arc<Mutex<BTreeSet<PathBuf>>>,
-    theme: Option<PathBuf>,
+    theme: Vec<PathBuf>,
     roots: Vec<PathBuf>,
     tx: SyncSender<Cmd>,
     overflow: Arc<AtomicBool>,
@@ -413,7 +427,7 @@ impl Events {
             if !is_dir && lock(&self.followed).contains(&path) {
                 self.post(Cmd::DataFile(path.clone(), save));
             }
-            if self.theme.as_ref() == Some(&path) {
+            if self.theme.contains(&path) {
                 self.post(Cmd::Touched(path, false, save));
                 continue;
             }

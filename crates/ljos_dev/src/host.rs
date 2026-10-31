@@ -616,7 +616,7 @@ impl DevSession {
         else {
             return Err(DevError::NotQml(main));
         };
-        let theme = theme_path(theme, &dir, &entry);
+        let (theme, candidates) = theme_path(theme, &dir, &entry);
         let reloader = Reloader::open_reaching_aliased(&dir, &entry, aliases, oracle)?;
         Self::start(
             engine,
@@ -624,7 +624,7 @@ impl DevSession {
             vec![dir],
             vec![entry],
             properties,
-            theme,
+            (theme, candidates),
             wake,
         )
     }
@@ -726,7 +726,7 @@ impl DevSession {
         roots: Vec<PathBuf>,
         entries: Vec<String>,
         properties: Vec<(String, Value)>,
-        theme: PathBuf,
+        (theme, candidates): (PathBuf, Vec<PathBuf>),
         wake: WakeHook,
     ) -> Result<Self, DevError>
     where
@@ -743,6 +743,7 @@ impl DevSession {
             .err()
             .and_then(|faults| faults.first().map(fault_of));
         reloader.watch_theme(&theme_file, Some(theme), text);
+        reloader.watch_theme_candidates(candidates);
         let texts = ProjectTexts::over(&roots);
         engine.set_qml_text_compiler(Some(texts.compiler()));
         reloader.start();
@@ -1264,17 +1265,32 @@ pub const THEME_FILE: &str = ljos_design::theme::FILE;
 
 /// The theme file to read and watch: `named`, else the nearest
 /// [`THEME_FILE`] from the entry `entry` (a key in `root`) up to `root`,
-/// else the one `root` would have, where a new theme is written first.
-fn theme_path(named: Option<&Path>, root: &Path, entry: &str) -> PathBuf {
+/// else the one `root` would have, where a new theme is written first. With
+/// it, every other place the nearest is looked for (none when `named`), so
+/// that a theme made nearer the entry, or the one in use removed, is seen.
+fn theme_path(named: Option<&Path>, root: &Path, entry: &str) -> (PathBuf, Vec<PathBuf>) {
     match named {
         // Absolute, as the watcher is told absolute paths; a file that is
         // not there yet keeps the path as given, made absolute.
-        Some(p) => std::fs::canonicalize(p)
-            .unwrap_or_else(|_| std::path::absolute(p).unwrap_or_else(|_| p.to_owned())),
+        Some(p) => (
+            std::fs::canonicalize(p)
+                .unwrap_or_else(|_| std::path::absolute(p).unwrap_or_else(|_| p.to_owned())),
+            Vec::new(),
+        ),
         None => {
             let main = root.join(entry);
-            ljos_design::theme::find(main.parent().unwrap_or(root), root)
-                .unwrap_or_else(|| root.join(THEME_FILE))
+            let dir = main.parent().unwrap_or(root);
+            let mut candidates = ljos_design::theme::candidates(dir, root);
+            let chosen = candidates
+                .iter()
+                .find(|file| file.is_file())
+                .cloned()
+                .unwrap_or_else(|| root.join(THEME_FILE));
+            // Where a new theme is written first is a place to look too.
+            if !candidates.contains(&root.join(THEME_FILE)) {
+                candidates.push(root.join(THEME_FILE));
+            }
+            (chosen, candidates)
         }
     }
 }

@@ -93,6 +93,10 @@ struct ThemeFile {
     path: Option<PathBuf>,
     /// A save given as text; the inner None is a file that is gone.
     staged: Option<Option<String>>,
+    /// Where else the application looks for it, nearest first (none when
+    /// it was named): any of them made or removed can change which file is
+    /// the theme.
+    candidates: Vec<PathBuf>,
     /// Something happened to the file: it is read at the next build.
     touched: bool,
     /// What the file said when last read, so a save that says the same
@@ -186,9 +190,33 @@ impl<O: TypeOracle + Clone> Reloader<O> {
             name: name.to_owned(),
             path,
             staged: None,
+            candidates: Vec::new(),
             touched: false,
             seen: text,
         });
+    }
+
+    /// Every place the theme file is looked for, nearest first, after
+    /// [`watch_theme`](Self::watch_theme).
+    pub fn watch_theme_candidates(&mut self, candidates: Vec<PathBuf>) {
+        if let Some(t) = &mut self.theme {
+            t.candidates = candidates;
+        }
+    }
+
+    /// Every file whose making or removal can change the theme: where it
+    /// is read and the places it is looked for.
+    pub fn theme_paths(&self) -> Vec<PathBuf> {
+        let Some(t) = &self.theme else {
+            return Vec::new();
+        };
+        let mut paths = t.candidates.clone();
+        if let Some(p) = &t.path
+            && !paths.contains(p)
+        {
+            paths.push(p.clone());
+        }
+        paths
     }
 
     /// Where the theme file is read, to be watched.
@@ -208,7 +236,23 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// theme. None when nothing changed. The QML of the same saves is
     /// built by [`build`](Self::build).
     pub fn take_theme(&mut self) -> Option<ThemeChange> {
+        let places = self.session.places();
         let t = self.theme.as_mut()?;
+        if t.touched && !t.candidates.is_empty() {
+            // The file in use is the nearest there is now.
+            let path = t
+                .candidates
+                .iter()
+                .find(|file| file.is_file())
+                .or_else(|| t.candidates.last())
+                .cloned();
+            if path != t.path {
+                if let Some(p) = &path {
+                    t.name = crate::host::theme_name(&places, p);
+                }
+                t.path = path;
+            }
+        }
         let text = match (t.staged.take(), std::mem::take(&mut t.touched), &t.path) {
             (Some(text), ..) => text,
             (None, true, Some(path)) => match std::fs::read_to_string(path) {
@@ -313,7 +357,7 @@ impl<O: TypeOracle + Clone> Reloader<O> {
     /// the quiet time too: [`take_pictures`](Self::take_pictures).
     pub fn touch(&mut self, path: &Path, is_dir: bool) -> bool {
         if let Some(t) = &mut self.theme
-            && t.path.as_deref() == Some(path)
+            && (t.path.as_deref() == Some(path) || t.candidates.iter().any(|c| c == path))
         {
             t.touched = true;
             return true;
