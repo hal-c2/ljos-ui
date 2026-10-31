@@ -508,6 +508,8 @@ module Ljos.Models
 		signal rolesChanged
 		signal statusChanged
 		signal errorChanged
+		signal rowsAboutToBeMoved sourceParent:var sourceStart:int sourceEnd:int destinationParent:var destinationRow:int
+		signal rowsMoved sourceParent:var sourceStart:int sourceEnd:int destinationParent:var destinationRow:int
 		signal dataChanged topLeft:var bottomRight:var roles:var
 		signal modelAboutToBeReset
 		signal modelReset
@@ -517,6 +519,13 @@ module Ljos.Models
 		signal rowsRemoved parent:var first:int last:int
 		method reload
 		method get
+		method append
+		method insert
+		method remove
+		method move
+		method set
+		method setProperty
+		method clear
 
 module Qt.labs.folderlistmodel
 	FolderListModel Qt.labs.folderlistmodel.FolderListModel

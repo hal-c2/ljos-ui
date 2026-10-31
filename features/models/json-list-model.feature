@@ -6,8 +6,10 @@
 
 @ljos-only
 Feature: JsonListModel
-  A JsonListModel is a read-only list model whose rows come from JSON: an
-  array of objects, as text in `json` or in the file or URL `source` names.
+  A JsonListModel is a list model whose rows come from JSON: an array of
+  objects, as text in `json` or in the file or URL `source` names. A script
+  edits the rows with the methods of a ListModel; the edits stay in the model
+  and are not written to the file.
   Its roles are the keys of the objects, in the order they are first seen.
   When the data changes the model says only what differs, so the delegates
   of the rows that stayed the same are kept. JSON it cannot use leaves the
@@ -29,6 +31,7 @@ Feature: JsonListModel
           function onRowsInserted(p, f, l) { rec.say("+" + f + "-" + l) }
           function onRowsRemoved(p, f, l) { rec.say("x" + f + "-" + l) }
           function onModelReset() { rec.say("reset") }
+          function onRowsMoved(sp, f, l, dp, row) { rec.say("m" + f + "-" + l + ">" + row) }
           function onRolesChanged() { rec.say("roles") }
         }
       }
@@ -756,3 +759,155 @@ Feature: JsonListModel
       And 500 milliseconds pass
       Then the property "status" of "m" is 1
       And the property "count" of "m" is 3
+
+  Rule: A script edits the rows as it does those of a ListModel
+
+    Scenario Outline: <call> is said as <seen>
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          objectName: "o"
+          property string rows: ""
+          JsonListModel {
+            id: m; objectName: "m"
+            json: '[{"n": 1, "s": "a"}, {"n": 2, "s": "b"}, {"n": 3, "s": "c"}]'
+          }
+          Recorder { id: rec; objectName: "rec"; model: m }
+          function go() {
+            rec.seen = ""
+            <call>
+            var out = []
+            for (var i = 0; i < m.count; ++i) out.push(m.get(i).n)
+            rows = out.join(",")
+          }
+        }
+        """
+      When the method "go" of "o" is called
+      Then the property "seen" of "rec" is "<seen>"
+      And the property "rows" of "o" is "<rows>"
+      And the log has no warnings
+
+      Examples:
+        | call                                           | seen                | rows    |
+        | m.append({n: 4, s: "d"})                       | +3-3 count4         | 1,2,3,4 |
+        | m.append([{n: 4}, {n: 5}])                     | +3-4 count5         | 1,2,3,4,5 |
+        | m.insert(1, {n: 9, s: "z"})                    | +1-1 count4         | 1,9,2,3 |
+        | m.insert(3, {n: 9})                            | +3-3 count4         | 1,2,3,9 |
+        | m.remove(1)                                    | x1-1 count2         | 1,3     |
+        | m.remove(0, 2)                                 | x0-1 count1         | 3       |
+        | m.move(0, 2, 1)                                | m0-0>3              | 2,3,1   |
+        | m.move(2, 0, 1)                                | m2-2>0              | 3,1,2   |
+        | m.clear()                                      | x0-2 count0         |         |
+        | m.set(1, {n: 7})                               | data1-1[0]          | 1,7,3   |
+        | m.set(3, {n: 4, s: "d"})                       | +3-3 count4         | 1,2,3,4 |
+        | m.setProperty(2, "n", 8)                       | data2-2[0]          | 1,2,8   |
+        | m.setProperty(2, "s", "c")                     | data2-2[1]          | 1,2,3   |
+
+    Scenario: A key no row has is a new role, said before the row that has it
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          objectName: "o"
+          property string names: m.roles.join(",")
+          JsonListModel { id: m; objectName: "m"; json: '[{"a": 1}, {"a": 2}]' }
+          Recorder { id: rec; objectName: "rec"; model: m }
+          function go() { rec.seen = ""; m.setProperty(1, "b", "x"); m.append({a: 3, c: true}) }
+        }
+        """
+      When the method "go" of "o" is called
+      Then the property "names" of "o" is "a,b,c"
+      And the property "seen" of "rec" is "roles data1-1[1] roles +2-2 count3"
+
+    Scenario Outline: <call> is refused with a warning and changes nothing
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          objectName: "o"
+          JsonListModel { id: m; objectName: "m"; json: '[{"n": 1}, {"n": 2}]' }
+          Recorder { id: rec; objectName: "rec"; model: m }
+          function go() { rec.seen = ""; <call> }
+        }
+        """
+      When the method "go" of "o" is called
+      Then the property "count" of "m" is 2
+      And the property "seen" of "rec" is ""
+      And the log has a warning matching "QML JsonListModel: <says>"
+
+      Examples:
+        | call                      | says                    |
+        | m.append(5)               | append: value is not an object |
+        | m.insert(3, {n: 1})       | insert: index 3 out of range |
+        | m.insert(0, "x")          | insert: value is not an object |
+        | m.remove(2)               | remove: indices .2 - 3. out of range .0 - 2. |
+        | m.remove(0, 3)            | remove: indices .0 - 3. out of range .0 - 2. |
+        | m.move(0, 2, 1)           | move: out of range      |
+        | m.set(3, {n: 1})          | set: index 3 out of range |
+        | m.set(0, 4)               | set: value is not an object |
+        | m.setProperty(2, "n", 1)  | set: index 2 out of range |
+
+    Scenario: A view follows the edits
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          id: root; objectName: "o"; width: 200; height: 200
+          property string shown: ""
+          JsonListModel { id: m; json: '[{"name": "a"}, {"name": "b"}]' }
+          Repeater { id: rep; model: m; delegate: Text { required property string name; text: name } }
+          function go() {
+            m.append({name: "c"}); m.setProperty(0, "name", "z"); m.move(2, 0, 1); m.remove(1)
+            var out = []
+            for (var i = 0; i < rep.count; ++i) out.push(rep.itemAt(i).text)
+            shown = out.join(",")
+          }
+        }
+        """
+      When the method "go" of "o" is called
+      Then the property "shown" of "o" is "c,b"
+
+    Scenario: A delegate writes a role of its row
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          objectName: "o"
+          JsonListModel { id: m; objectName: "m"; json: '[{"title": "a"}, {"title": "b"}]' }
+          Recorder { id: rec; objectName: "rec"; model: m }
+          Repeater {
+            id: rep; model: m
+            delegate: Item { function rename() { model.title = model.title + "!" } }
+          }
+          property string second: ""
+          function go() { rec.seen = ""; rep.itemAt(1).rename(); second = m.get(1).title }
+        }
+        """
+      When the method "go" of "o" is called
+      Then the property "second" of "o" is "b!"
+      And the property "seen" of "rec" is "data1-1[0]"
+
+    Scenario: Reading the source again replaces the edits
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Models
+        Item {
+          objectName: "o"
+          JsonListModel { id: m; objectName: "m"; json: '[{"n": 1}, {"n": 2}]' }
+          function edit() { m.setProperty(0, "n", 9); m.append({n: 3}) }
+          function again() { m.reload() }
+          property string rows: { var out = []; for (var i = 0; i < m.count; ++i) out.push(m.get(i).n); return out.join(",") }
+        }
+        """
+      When the method "edit" of "o" is called
+      Then the property "rows" of "o" is "9,2,3"
+      When the method "again" of "o" is called
+      Then the property "rows" of "o" is "1,2"
+      And the property "count" of "m" is 2

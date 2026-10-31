@@ -271,6 +271,13 @@ pub trait QmlListModel {
         false
     }
 
+    /// [`set_data`](Self::set_data) with the engine, for a model that tells
+    /// objects of the change it takes. The default is `set_data`.
+    fn write_data(&self, engine: &Engine, row: usize, role: &str, value: &Value) -> bool {
+        let _ = engine;
+        self.set_data(row, role, value)
+    }
+
     /// What identifies the row while it is in the model. The default, its
     /// position, is right only for a model whose rows never move; a view
     /// keeps a row's measured size and the scroll position by this.
@@ -365,8 +372,8 @@ impl ItemModel for NativeModel {
         self.model.data(row, role)
     }
 
-    fn set_data(&self, _: &Engine, row: usize, role: &str, value: &Value) -> bool {
-        self.model.set_data(row, role, value)
+    fn set_data(&self, engine: &Engine, row: usize, role: &str, value: &Value) -> bool {
+        self.model.write_data(engine, row, role, value)
     }
 
     fn row_key(&self, row: usize) -> RowKey {

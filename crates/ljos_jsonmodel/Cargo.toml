@@ -1,6 +1,6 @@
 [package]
 name = "ljos_jsonmodel"
-description = "The Ljos.Models module: JsonListModel, a read-only list model over JSON text or a JSON file, as an opt-in crate written against the ljos facade alone"
+description = "The Ljos.Models module: JsonListModel, a list model over JSON text or a JSON file, as an opt-in crate written against the ljos facade alone"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

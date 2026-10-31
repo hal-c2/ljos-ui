@@ -1,4 +1,4 @@
-//! The `Ljos.Models` module: `JsonListModel`, a read-only list model whose
+//! The `Ljos.Models` module: `JsonListModel`, a list model whose
 //! rows come from JSON.
 //!
 //! This is an opt-in module crate written against the public `ljos` facade
@@ -24,8 +24,10 @@
 //! wins when both are set), `count`, `roles` (the role names), `status`
 //! (`JsonListModel.{Null,Ready,Loading,Error}`), `error` (empty, or why the
 //! last read failed), `get(i)` (the row as a plain object, `undefined` beyond
-//! the rows), `reload()`, and the row signals a `ListModel` has, with the
-//! same arguments. `dataChanged`'s roles are numbers, as a `ListModel`'s are:
+//! the rows), `reload()`, the edits a `ListModel` has (`append`, `insert`,
+//! `remove`, `move`, `set`, `setProperty`, `clear`, and a delegate writing
+//! `model.role`), and the row signals a `ListModel` has, with the same
+//! arguments. `dataChanged`'s roles are numbers, as a `ListModel`'s are:
 //! positions in `roles`.
 //!
 //! ## The data
@@ -40,6 +42,13 @@
 //! non-empty document no longer has a key, the model resets, with the roles
 //! read afresh. A document of no rows keeps the roles, having nothing to say
 //! of them.
+//!
+//! ## Edits
+//!
+//! The edits change the model's own copy of the rows and say the same as the
+//! same call on a `ListModel`. Nothing is written back to the file or the
+//! text; the next read (`reload()`, a saved file, a new `json` or `source`)
+//! replaces them with what it reads. A value JSON has no word for is `null`.
 //!
 //! ## Changes
 //!
@@ -64,12 +73,17 @@
 //! `Loading`, so nothing that shows the status flickers. Nothing polls.
 
 mod diff;
+mod edit;
 mod parse;
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use edit::{
+    handle, index_of, insert_rows, map_of, node_of, remove_rows, rows_of, set_fields, shift_rows,
+    warn,
+};
 use ljos::prelude::*;
 use parse::{Fault, Node, Row};
 
@@ -115,6 +129,8 @@ struct Shared {
     rows: Vec<Kept>,
     next_key: RowKey,
     signals: Option<ModelSignals>,
+    /// The QML object, so that a delegate's write is told to its handlers.
+    me: Option<ObjectId>,
 }
 
 impl Shared {
@@ -143,6 +159,10 @@ impl QmlListModel for Rows {
             .get(row)
             .and_then(|r| r.row.field(role))
             .map_or(Value::Undefined, value_of)
+    }
+
+    fn write_data(&self, engine: &Engine, row: usize, role: &str, value: &Value) -> bool {
+        edit::write_role(engine, &self.0, row, role, value)
     }
 
     fn row_key(&self, row: usize) -> RowKey {
@@ -185,7 +205,7 @@ fn object(fields: &[(Box<str>, Node)]) -> Value {
     )
 }
 
-/// `JsonListModel` (Ljos.Models): a read-only list model of the array of
+/// `JsonListModel` (Ljos.Models): a list model of the array of
 /// objects in `json` or at `source`.
 #[derive(Debug, QmlObject)]
 #[qml(
@@ -250,7 +270,11 @@ fn attach(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
         return Ok(());
     }
     let signals = e.set_list_model(me, Rc::new(Rows(Rc::clone(&shared))))?;
-    shared.borrow_mut().signals = Some(signals);
+    {
+        let mut s = shared.borrow_mut();
+        s.signals = Some(signals);
+        s.me = Some(me);
+    }
     Ok(())
 }
 
@@ -292,6 +316,152 @@ impl JsonListModel {
             .get(i)
             .map_or(Value::Undefined, |r| object(&r.row.fields))
     }
+
+    /// Adds a row from an object, or one per object of an array.
+    #[qml(invokable)]
+    fn append(cx: &Cx, item: Copied) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        match rows_of(&item.0) {
+            Some(rows) => {
+                let at = shared.borrow().rows.len();
+                insert_rows(e, me, &shared, at, rows);
+            }
+            None => warn(e, "append: value is not an object"),
+        }
+    }
+
+    #[qml(invokable)]
+    fn insert(cx: &Cx, index: Value, item: Copied) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        let at = index_of(&index).unwrap_or(-1);
+        if at < 0 || at as usize > shared.borrow().rows.len() {
+            warn(e, &format!("insert: index {at} out of range"));
+            return;
+        }
+        match rows_of(&item.0) {
+            Some(rows) => insert_rows(e, me, &shared, at as usize, rows),
+            None => warn(e, "insert: value is not an object"),
+        }
+    }
+
+    /// Removes `count` rows (one when not given) from `index`.
+    #[qml(invokable)]
+    fn remove(cx: &Cx, index: Value, count: Value) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        let first = index_of(&index).unwrap_or(-1);
+        let n = match count {
+            Value::Undefined => 1,
+            c => index_of(&c).unwrap_or(0),
+        };
+        let len = shared.borrow().rows.len() as i64;
+        if first < 0 || n <= 0 || first + n > len {
+            warn(
+                e,
+                &format!(
+                    "remove: indices [{first} - {}] out of range [0 - {len}]",
+                    first + n
+                ),
+            );
+            return;
+        }
+        remove_rows(e, me, &shared, first as usize, n as usize);
+    }
+
+    /// Moves `count` rows from `from` so that the first of them ends up at
+    /// `to`.
+    #[qml(invokable, name = "move")]
+    fn move_rows(cx: &Cx, from: Value, to: Value, count: Value) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        let (from, to, n) = (
+            index_of(&from).unwrap_or(-1),
+            index_of(&to).unwrap_or(-1),
+            index_of(&count).unwrap_or(-1),
+        );
+        let len = shared.borrow().rows.len() as i64;
+        if n < 0 || from < 0 || to < 0 || from + n > len || to + n > len {
+            warn(e, "move: out of range");
+            return;
+        }
+        if n == 0 || from == to {
+            return;
+        }
+        shift_rows(e, me, &shared, from as usize, to as usize, n as usize);
+    }
+
+    /// Changes the roles of the row at `index` that `item` names. At `count`
+    /// it appends.
+    #[qml(invokable)]
+    fn set(cx: &Cx, index: Value, item: Copied) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        let at = index_of(&index).unwrap_or(-1);
+        let len = shared.borrow().rows.len();
+        if at < 0 || at as usize > len {
+            warn(e, &format!("set: index {at} out of range"));
+            return;
+        }
+        let Value::Map(fields) = &item.0 else {
+            warn(e, "set: value is not an object");
+            return;
+        };
+        let fields = map_of(fields);
+        if at as usize == len {
+            insert_rows(e, me, &shared, len, vec![Row { fields }]);
+        } else {
+            set_fields(e, me, &shared, at as usize, fields);
+        }
+    }
+
+    #[qml(invokable, name = "setProperty")]
+    fn set_property(cx: &Cx, index: Value, property: Value, value: Copied) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        let at = index_of(&index).unwrap_or(-1);
+        if at < 0 || at as usize >= shared.borrow().rows.len() {
+            warn(e, &format!("set: index {at} out of range"));
+            return;
+        }
+        let name = e.to_js_string(&property).to_string();
+        set_fields(
+            e,
+            me,
+            &shared,
+            at as usize,
+            vec![(name.into(), node_of(&value.0))],
+        );
+    }
+
+    #[qml(invokable)]
+    fn clear(cx: &Cx) {
+        let (e, me) = (cx.engine, cx.this);
+        let Some(shared) = handle(e, me) else { return };
+        let count = shared.borrow().rows.len();
+        if count > 0 {
+            remove_rows(e, me, &shared, 0, count);
+        }
+    }
+
+    #[qml(signal, name = "rowsAboutToBeMoved")]
+    fn rows_about_to_be_moved(
+        source_parent: Value,
+        source_start: i32,
+        source_end: i32,
+        destination_parent: Value,
+        destination_row: i32,
+    );
+
+    #[qml(signal, name = "rowsMoved")]
+    fn rows_moved(
+        source_parent: Value,
+        source_start: i32,
+        source_end: i32,
+        destination_parent: Value,
+        destination_row: i32,
+    );
 
     #[qml(signal, name = "dataChanged")]
     fn data_changed(top_left: Value, bottom_right: Value, roles: Value);
@@ -493,7 +663,7 @@ fn union_of(rows: &[Row]) -> Vec<Atom> {
     names
 }
 
-fn roles_value(names: &[Atom]) -> Value {
+pub(crate) fn roles_value(names: &[Atom]) -> Value {
     Value::list(names.iter().map(|n| Value::String(n.clone())).collect())
 }
 
