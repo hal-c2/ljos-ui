@@ -8,64 +8,64 @@ use syn::{Attribute, Data, DeriveInput, Error, Fields, Ident, LitStr, Result, Ty
 use crate::{camel, engine_path, is_qml};
 
 #[derive(Default)]
-struct ContainerAttrs {
-    name: Option<String>,
-    module: Option<String>,
-    extends: Option<Type>,
-    default: Option<String>,
-    attached: Option<Type>,
-    uncreatable: bool,
-    plain_object: bool,
+pub(crate) struct ContainerAttrs {
+    pub(crate) name: Option<String>,
+    pub(crate) module: Option<String>,
+    pub(crate) extends: Option<Type>,
+    pub(crate) default: Option<String>,
+    pub(crate) attached: Option<Type>,
+    pub(crate) uncreatable: bool,
+    pub(crate) plain_object: bool,
     /// `block`: a functional block; `category` and `summary` are what a
     /// palette shows of it.
-    block: bool,
-    category: Option<String>,
-    summary: Option<String>,
-    enums: Option<syn::Path>,
+    pub(crate) block: bool,
+    pub(crate) category: Option<String>,
+    pub(crate) summary: Option<String>,
+    pub(crate) enums: Option<syn::Path>,
     /// (camelCase name, the `Reset`) for properties of the base.
-    reset_inherited: Vec<(String, syn::Expr)>,
+    pub(crate) reset_inherited: Vec<(String, syn::Expr)>,
 }
 
 #[derive(Default)]
-struct FieldAttrs {
-    base: bool,
-    notify: bool,
-    readonly: bool,
-    required: bool,
-    constant: bool,
-    group: bool,
+pub(crate) struct FieldAttrs {
+    pub(crate) base: bool,
+    pub(crate) notify: bool,
+    pub(crate) readonly: bool,
+    pub(crate) required: bool,
+    pub(crate) constant: bool,
+    pub(crate) group: bool,
     /// With `group`: an `Option<Box<T>>` made on the first write.
-    lazy: bool,
+    pub(crate) lazy: bool,
     /// `lazy = path`: what an unset lazy group is.
-    lazy_default: Option<syn::Path>,
-    list: bool,
-    append: Option<syn::Path>,
-    insert: Option<syn::Path>,
-    remove: Option<syn::Path>,
-    skip: bool,
-    rename: Option<String>,
-    enumeration: Option<String>,
+    pub(crate) lazy_default: Option<syn::Path>,
+    pub(crate) list: bool,
+    pub(crate) append: Option<syn::Path>,
+    pub(crate) insert: Option<syn::Path>,
+    pub(crate) remove: Option<syn::Path>,
+    pub(crate) skip: bool,
+    pub(crate) rename: Option<String>,
+    pub(crate) enumeration: Option<String>,
     /// With `enumeration`: it was written `flags = "Name"`.
-    flags: bool,
+    pub(crate) flags: bool,
     /// `reset` or `reset = expr`: what `undefined` does to the property.
-    reset: Option<Option<syn::Expr>>,
+    pub(crate) reset: Option<Option<syn::Expr>>,
     /// `object = "Name"`: the QML type of the object the field refers to.
-    object: Option<String>,
+    pub(crate) object: Option<String>,
     /// `holds = "Name"`: the QML type a description says the field holds.
-    holds: Option<String>,
+    pub(crate) holds: Option<String>,
     /// `write = path`: what every write goes through before it is stored.
-    write: Option<syn::Path>,
+    pub(crate) write: Option<syn::Path>,
     /// `not_nan`: a NaN written is ignored, and every other value goes
     /// through as it would with no filter.
-    not_nan: bool,
+    pub(crate) not_nan: bool,
     /// `given = path`: told when the property is given a value, a binding
     /// or an override.
-    given: Option<syn::Path>,
+    pub(crate) given: Option<syn::Path>,
     /// `change = path`: told when the property changes, however it does.
-    change: Option<syn::Path>,
+    pub(crate) change: Option<syn::Path>,
 }
 
-fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
+pub(crate) fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
     let mut c = ContainerAttrs::default();
     for a in attrs.iter().filter(|a| is_qml(a)) {
         a.parse_nested_meta(|m| {
@@ -117,7 +117,7 @@ fn container_attrs(attrs: &[Attribute]) -> Result<ContainerAttrs> {
 
 /// `path` with a leading `Self` spelled as `ty`: the accessors are items
 /// nested in a function, where `Self` does not reach.
-fn self_to(path: &syn::Path, ty: &Ident) -> TokenStream2 {
+pub(crate) fn self_to(path: &syn::Path, ty: &Ident) -> TokenStream2 {
     let mut segments = path.segments.iter();
     match segments.next() {
         Some(first) if first.ident == "Self" && path.leading_colon.is_none() => {
@@ -128,7 +128,7 @@ fn self_to(path: &syn::Path, ty: &Ident) -> TokenStream2 {
     }
 }
 
-fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
+pub(crate) fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
     let mut f = FieldAttrs::default();
     for a in attrs.iter().filter(|a| is_qml(a)) {
         a.parse_nested_meta(|m| {
@@ -198,7 +198,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
 }
 
 /// `T` of `Option<Box<T>>`.
-fn boxed_inner(t: &Type) -> Option<Type> {
+pub(crate) fn boxed_inner(t: &Type) -> Option<Type> {
     fn only_arg(t: &Type, outer: &str) -> Option<Type> {
         let Type::Path(tp) = t else { return None };
         let seg = tp.path.segments.last()?;

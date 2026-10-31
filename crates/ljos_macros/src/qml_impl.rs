@@ -12,19 +12,19 @@ use syn::{
 
 use crate::{camel, engine_path, is_qml};
 
-enum Kind {
+pub(crate) enum Kind {
     Signal,
     Invokable,
     Complete,
 }
 
-struct Member {
-    kind: Kind,
-    name: Option<String>,
+pub(crate) struct Member {
+    pub(crate) kind: Kind,
+    pub(crate) name: Option<String>,
 }
 
 /// Reads and removes the `#[qml(...)]` attributes of an impl item.
-fn take_member(attrs: &mut Vec<Attribute>) -> Result<Option<Member>> {
+pub(crate) fn take_member(attrs: &mut Vec<Attribute>) -> Result<Option<Member>> {
     let mut out: Option<Member> = None;
     let mut err = None;
     attrs.retain(|a| {
@@ -66,9 +66,9 @@ fn take_member(attrs: &mut Vec<Attribute>) -> Result<Option<Member>> {
 }
 
 /// A bodyless `fn name(..);`, which syn leaves as verbatim tokens.
-struct BodylessFn {
-    attrs: Vec<Attribute>,
-    sig: Signature,
+pub(crate) struct BodylessFn {
+    pub(crate) attrs: Vec<Attribute>,
+    pub(crate) sig: Signature,
 }
 
 impl Parse for BodylessFn {
@@ -81,18 +81,18 @@ impl Parse for BodylessFn {
     }
 }
 
-enum Receiver {
+pub(crate) enum Receiver {
     None,
     Ref,
     Mut,
 }
 
 /// What an exposed method takes, apart from its QML arguments.
-struct Shape {
-    receiver: Receiver,
+pub(crate) struct Shape {
+    pub(crate) receiver: Receiver,
     /// `None`, `Some(false)` for `&Cx`, `Some(true)` for `&mut Cx`.
-    cx: Option<bool>,
-    args: Vec<(String, Type)>,
+    pub(crate) cx: Option<bool>,
+    pub(crate) args: Vec<(String, Type)>,
 }
 
 /// Whether `t` is `&Cx`/`&mut Cx` (any lifetime, any path to it).
@@ -102,7 +102,7 @@ fn cx_ref(t: &Type) -> Option<bool> {
     (p.path.segments.last()?.ident == "Cx").then_some(r.mutability.is_some())
 }
 
-fn shape(sig: &Signature) -> Result<Shape> {
+pub(crate) fn shape(sig: &Signature) -> Result<Shape> {
     if !sig.generics.params.is_empty() {
         return Err(Error::new(
             sig.generics.span(),
@@ -180,7 +180,7 @@ fn type_name(t: &Type) -> String {
 }
 
 /// For `-> Result<T, E>`, `Some(T)`.
-fn result_ok(t: &Type) -> Option<&Type> {
+pub(crate) fn result_ok(t: &Type) -> Option<&Type> {
     let Type::Path(p) = t else { return None };
     let seg = p.path.segments.last()?;
     if seg.ident != "Result" {
@@ -196,8 +196,7 @@ fn result_ok(t: &Type) -> Option<&Type> {
 }
 
 /// The call expression for an exposed method, given argument idents.
-fn call(fn_ident: &Ident, s: &Shape, args: &[Ident]) -> TokenStream2 {
-    let e = engine_path();
+pub(crate) fn call(fn_ident: &Ident, s: &Shape, args: &[Ident], e: &TokenStream2) -> TokenStream2 {
     match (&s.receiver, s.cx) {
         (Receiver::Ref, _) => quote! {
             cx.with::<Self, _>(|this| this.#fn_ident(#(#args),*))?
@@ -214,7 +213,9 @@ fn call(fn_ident: &Ident, s: &Shape, args: &[Ident]) -> TokenStream2 {
     }
 }
 
-pub(crate) fn qml_impl_inner(mut item: ItemImpl) -> Result<TokenStream2> {
+/// What the macro keeps of the block, and what it generates beside it for
+/// the engine.
+pub(crate) fn qml_impl_parts(mut item: ItemImpl) -> Result<(ItemImpl, TokenStream2)> {
     if item.trait_.is_some() {
         return Err(Error::new(
             item.span(),
@@ -336,7 +337,7 @@ pub(crate) fn qml_impl_inner(mut item: ItemImpl) -> Result<TokenStream2> {
                 let s = shape(&sig)?;
                 let idents: Vec<Ident> =
                     (0..s.args.len()).map(|i| format_ident!("a{}", i)).collect();
-                let call = call(&fn_ident, &s, &idents);
+                let call = call(&fn_ident, &s, &idents, &e);
                 let ret_ty: Option<&Type> = match &sig.output {
                     ReturnType::Default => None,
                     ReturnType::Type(_, t) => Some(t),
@@ -420,9 +421,7 @@ pub(crate) fn qml_impl_inner(mut item: ItemImpl) -> Result<TokenStream2> {
         Some(t) => quote!(#p::Option::Some(#t)),
         None => quote!(#p::Option::None),
     };
-    Ok(quote! {
-        #item
-
+    let generated = quote! {
         #[allow(dead_code)]
         impl #self_ty {
             #(#generated)*
@@ -437,5 +436,6 @@ pub(crate) fn qml_impl_inner(mut item: ItemImpl) -> Result<TokenStream2> {
                 }
             }
         }
-    })
+    };
+    Ok((item, generated))
 }

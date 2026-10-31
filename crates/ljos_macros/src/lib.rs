@@ -133,14 +133,16 @@ use syn::{
 
 mod derive;
 mod qml_impl;
+mod web;
 
 use derive::derive;
-use qml_impl::qml_impl_inner;
+use qml_impl::qml_impl_parts;
 
 #[proc_macro_derive(QmlObject, attributes(qml))]
 pub fn derive_qml_object(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     derive(&input)
+        .and_then(|native| web::beside(native, |w| web::derive(&input, w)))
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }
@@ -201,11 +203,12 @@ fn singleton(attr: TokenStream2, input: &DeriveInput) -> Result<TokenStream2> {
     let name = &input.ident;
     let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
     let e = engine_path();
-    Ok(quote! {
+    let native = quote! {
         impl #impl_generics #e::QmlSingleton for #name #ty_generics #where_clause {
             const SCOPE: #e::SingletonScope = #e::SingletonScope::#which;
         }
-    })
+    };
+    web::beside(native, |w| Ok(web::singleton(name, &which, w)))
 }
 
 #[proc_macro_attribute]
@@ -216,7 +219,12 @@ pub fn qml_impl(attr: TokenStream, item: TokenStream) -> TokenStream {
             .into();
     }
     let item = parse_macro_input!(item as ItemImpl);
-    qml_impl_inner(item)
+    let original = item.clone();
+    qml_impl_parts(item)
+        .and_then(|(kept, native)| {
+            let generated = web::beside(native, |w| web::qml_impl(original, w))?;
+            Ok(quote!(#kept #generated))
+        })
         .unwrap_or_else(Error::into_compile_error)
         .into()
 }

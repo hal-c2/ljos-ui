@@ -19,3 +19,8 @@ proc-macro-crate.workspace = true
 
 [lints]
 workspace = true
+
+# The face on a page beside the engine's output: each behind
+# `cfg(target_arch)`, as a proc macro runs on the host and cannot ask.
+[features]
+web = []
