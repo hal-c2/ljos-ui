@@ -35,6 +35,14 @@ pub struct Object3D {
     /// (`space.rs`).
     #[qml(notify, object = "Object3D", change = crate::space::parent_written)]
     pub parent: Option<ObjectId>,
+    /// The object's states, as an item's: `State`s whose changes apply to it,
+    /// the one it is in and the transitions between them.
+    #[qml(notify, list)]
+    pub states: QmlList,
+    #[qml(notify)]
+    pub state: Atom,
+    #[qml(notify, list)]
+    pub transitions: QmlList,
     /// Whose `data` holds it, once it completed; `parent` before that is
     /// only what was declared.
     #[qml(skip)]

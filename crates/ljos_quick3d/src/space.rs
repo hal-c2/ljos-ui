@@ -263,6 +263,7 @@ impl Node {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         hold(cx.engine, cx.this)?;
+        ljos::item::attach_stateless(cx.engine, cx.this);
         bind_scene_properties(cx.engine, cx.this)
     }
 

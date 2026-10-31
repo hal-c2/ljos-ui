@@ -138,6 +138,12 @@ use ljos::prelude::*;
 
 /// Registers `QtQuick3D` on `engine`: the one seam a host calls.
 pub fn register(engine: &Engine) {
+    ljos::item::register_state_owner::<Object3D>(
+        engine,
+        Object3D::STATE.index,
+        Object3D::STATES.index,
+        Object3D::TRANSITIONS.index,
+    );
     engine.register_singleton::<quaternion::Quaternion>(
         "QtQuick3D",
         ljos::prelude::Version::new(6, 0),

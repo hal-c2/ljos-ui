@@ -24,7 +24,7 @@ pub(crate) mod types;
 
 use std::cell::Cell;
 
-use ljos_engine::{Engine, QmlType};
+use ljos_engine::{Engine, PropIndex, QmlType};
 
 use crate::item::is_a;
 
@@ -50,6 +50,20 @@ struct Registered(Cell<bool>);
 
 /// Hooks the state types into the engine. Once per engine; more calls do
 /// nothing.
+/// Makes `T`, a type outside this crate, a holder of states as an item is:
+/// `state`, `states` and `transitions` are its members of those names. Its
+/// objects call [`attach_stateless`] when complete.
+pub fn register_state_owner<T: QmlType + 'static>(
+    engine: &Engine,
+    state: PropIndex,
+    states: PropIndex,
+    transitions: PropIndex,
+) {
+    group::register_owner(engine, is_a::<T>, [state, states, transitions]);
+}
+
+pub use group::attach_stateless;
+
 pub(crate) fn register(engine: &Engine) {
     if engine.extension::<Registered>().0.replace(true) {
         return;

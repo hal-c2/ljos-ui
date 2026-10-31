@@ -179,6 +179,43 @@ pub(crate) struct Group {
     serial: Cell<u64>,
 }
 
+/// The types outside this crate that hold states: how to tell one, and its
+/// `state`, `states` and `transitions`.
+#[derive(Default)]
+struct Owners(RefCell<Vec<(fn(&Engine, ObjectId) -> bool, [PropIndex; 3])>>);
+
+pub(super) fn register_owner(
+    engine: &Engine,
+    is: fn(&Engine, ObjectId) -> bool,
+    props: [PropIndex; 3],
+) {
+    engine.extension::<Owners>().0.borrow_mut().push((is, props));
+}
+
+/// `obj`'s `state`, `states` and `transitions`, for what can hold states.
+pub(super) fn owner_props(engine: &Engine, obj: ObjectId) -> Option<[PropIndex; 3]> {
+    if is_a::<StateGroup>(engine, obj) {
+        return Some([
+            StateGroup::STATE.index,
+            StateGroup::STATES.index,
+            StateGroup::TRANSITIONS.index,
+        ]);
+    }
+    if is_item(engine, obj) {
+        return Some([
+            Item::STATE.index,
+            Item::STATES.index,
+            Item::TRANSITIONS.index,
+        ]);
+    }
+    let owners = engine.extension::<Owners>();
+    let owners = owners.0.borrow();
+    owners
+        .iter()
+        .find(|(is, _)| is(engine, obj))
+        .map(|(_, props)| *props)
+}
+
 /// Gives `owner` its states: from here on its `state` and the `when` of
 /// each state decide what its states have changed. The state it is in at
 /// this moment is entered without a transition. More calls do nothing.
@@ -187,19 +224,7 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
     if groups.by_owner.borrow().contains_key(&owner) {
         return;
     }
-    let (state, states, transitions) = if is_a::<StateGroup>(engine, owner) {
-        (
-            StateGroup::STATE.index,
-            StateGroup::STATES.index,
-            StateGroup::TRANSITIONS.index,
-        )
-    } else if is_item(engine, owner) {
-        (
-            Item::STATE.index,
-            Item::STATES.index,
-            Item::TRANSITIONS.index,
-        )
-    } else {
+    let Some([state, states, transitions]) = owner_props(engine, owner) else {
         return;
     };
     let g = Rc::new(Group {
@@ -317,7 +342,10 @@ pub(crate) fn attach(engine: &Engine, owner: ObjectId) {
 /// Gives an item that is complete its states when it has none but was
 /// given a `state` or transitions: the state is still told as a change,
 /// and a change to a state no state has runs the transitions for it.
-pub(crate) fn attach_stateless(engine: &Engine, item: ObjectId) {
+pub fn attach_stateless(engine: &Engine, item: ObjectId) {
+    let Some([state, _, transitions]) = owner_props(engine, item) else {
+        return;
+    };
     if is_deferred(engine, item)
         || engine
             .extension::<Groups>()
@@ -327,8 +355,8 @@ pub(crate) fn attach_stateless(engine: &Engine, item: ObjectId) {
     {
         return;
     }
-    let given = !text(engine, item, Item::STATE.index).is_empty();
-    if given || !objects(engine, item, Item::TRANSITIONS.index).is_empty() {
+    let given = !text(engine, item, state).is_empty();
+    if given || !objects(engine, item, transitions).is_empty() {
         attach(engine, item);
     }
 }

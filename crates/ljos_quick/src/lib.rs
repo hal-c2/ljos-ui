@@ -163,7 +163,8 @@ pub use shader_effect::{GridMesh, ShaderEffect, ShaderEffectSource};
 pub use shapes::{Shape, ShapePaint, ShapePath};
 pub use states::{
     AnchorChanges, AnchorChangesAnchors, Binding, ParentChange, PropertyChanges, State,
-    StateChangeScript, StateGroup, defer_states, start_states,
+    StateChangeScript, StateGroup, attach_stateless, defer_states, register_state_owner,
+    start_states,
 };
 pub use system_palette::{SystemPalette, color_group};
 pub use system_prefs::{

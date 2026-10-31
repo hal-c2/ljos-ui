@@ -10,7 +10,6 @@ use ljos_engine::{
 };
 
 use super::group;
-use crate::item::{Item, is_a, is_item};
 
 /// `State` (QtQuick): a name and the changes that make the state.
 #[derive(Debug, Default, QmlObject)]
@@ -60,11 +59,7 @@ impl State {
 /// declaring one owns.
 fn holder(engine: &Engine, declarer: ObjectId, state: ObjectId) -> Option<ObjectId> {
     let holds = |o: ObjectId| {
-        let prop = if is_a::<StateGroup>(engine, o) {
-            StateGroup::STATES.index
-        } else if is_item(engine, o) {
-            Item::STATES.index
-        } else {
+        let Some([_, prop, _]) = group::owner_props(engine, o) else {
             return false;
         };
         match engine.untrack(|| engine.read(o, prop)) {
@@ -91,7 +86,7 @@ fn holder(engine: &Engine, declarer: ObjectId, state: ObjectId) -> Option<Object
         queue.extend(engine.children(o));
     }
     // A state not in any list yet still starts its declarer's states.
-    (is_item(engine, declarer) || is_a::<StateGroup>(engine, declarer)).then_some(declarer)
+    group::owner_props(engine, declarer).map(|_| declarer)
 }
 
 /// `StateGroup` (QtQuick): states for what is not an item, or a second
