@@ -14,6 +14,7 @@ pub mod instancing;
 pub mod math;
 pub mod mesh;
 pub mod pick;
+pub mod qml;
 pub mod scene;
 #[cfg(feature = "snippets")]
 pub mod snippet;
