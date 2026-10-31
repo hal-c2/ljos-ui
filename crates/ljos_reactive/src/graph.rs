@@ -1534,36 +1534,38 @@ impl<V: Clone + 'static> Graph<V> {
     /// Takes back the sources the running binding or effect read after its
     /// first `at`, as if it had not read them: a read of one again records
     /// it. For a caller that runs the same code two ways in one run and
-    /// keeps the reads of one of them.
-    pub fn take_reads_since(&self, at: usize) -> Vec<NodeId> {
+    /// keeps the reads of one of them. They go to `out`, which the caller
+    /// may keep between runs.
+    pub fn take_reads_since(&self, at: usize, out: &mut impl Extend<NodeId>) {
         let mut g = self.inner.borrow_mut();
         let i = &mut *g;
         let Some(f) = i.frames.last_mut() else {
-            return Vec::new();
+            return;
         };
         if f.node.is_none() || at >= f.reads.len() {
-            return Vec::new();
+            return;
         }
-        let taken = f.reads.split_off(at);
-        for &n in &taken {
+        for n in f.reads.drain(at..) {
             if let Some(node) = i.nodes.get_mut(n) {
                 // No run has stamp 0: the next read records it again.
                 node.read_stamp = 0;
             }
+            out.extend([n]);
         }
-        taken
     }
 
     /// The sources the running binding or effect read after its first
-    /// `at`.
-    pub fn reads_since(&self, at: usize) -> Vec<NodeId> {
+    /// `at`, to `out`.
+    pub fn reads_since(&self, at: usize, out: &mut impl Extend<NodeId>) {
         let i = self.inner.borrow();
-        i.frames
+        if let Some(reads) = i
+            .frames
             .last()
             .filter(|f| f.node.is_some())
             .and_then(|f| f.reads.get(at..))
-            .map(<[NodeId]>::to_vec)
-            .unwrap_or_default()
+        {
+            out.extend(reads.iter().copied());
+        }
     }
 
     /// Whether what `r` read still counts: the run is in progress, or it

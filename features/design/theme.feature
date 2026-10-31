@@ -266,6 +266,59 @@ Feature: A theme file sets the roles of Ljos.Design
     And the property "gap" of "root" is 16
     And the reload generation is 1
 
+  # Tier 1 runs the binding without the theme's override on the role: the
+  # read it keeps must be one the override is heard through. The cross-check
+  # is off because it runs the binding again in tier 2, which would hide a
+  # read tier 1 did not keep.
+  Scenario: A role the theme first sets while the files are watched updates its readers
+    Given the tier 1 cross-check is off
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        property string gap: "gap " + Spacing.md
+        property color accent: Colors.accent
+      }
+      """
+    When the theme file "theme.json" is changed to:
+      """json
+      { "Colors": { "accent": "#9c4dc4" }, "Spacing": { "md": 24 } }
+      """
+    And a reload happens
+    Then the property "gap" of "root" is "gap 24"
+    And the property "accent" of "root" is "#9c4dc4"
+    When the theme file "theme.json" is changed to:
+      """json
+      { "Spacing": { "md": 28 } }
+      """
+    And a reload happens
+    Then the property "gap" of "root" is "gap 28"
+    And the property "accent" of "root" is "#007cb7"
+    And 0 reloads have happened
+
+  # The cross-check compares what the two tiers read as well as what they
+  # give: a read only one of them keeps is a difference it reports.
+  Scenario: With the tier 1 cross-check on, both tiers read a role alike
+    Given the tier 1 cross-check is on
+    And the QML:
+      """qml
+      import QtQuick
+      import Ljos.Design
+      Item {
+        objectName: "root"
+        property string gap: "gap " + Spacing.md
+      }
+      """
+    When the theme file "theme.json" is changed to:
+      """json
+      { "Spacing": { "md": 24 } }
+      """
+    And a reload happens
+    Then the property "gap" of "root" is "gap 24"
+    And the log has no warning matching "tier 1 and tier 2 differ"
+
   Scenario: An edit of the QML keeps the theme
     Given the theme file "theme.json" is:
       """json

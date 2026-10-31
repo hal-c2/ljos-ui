@@ -29,9 +29,11 @@
 //!
 //! With the check on (debug builds, or `LJOS_TIER1_CHECK=1`) every
 //! evaluation that tier 1 completes is run in tier 2 as well. The two
-//! values, and the two writes, are compared; a difference is reported as
-//! a warning with the expression and both, and tier 2's result is the one
-//! used. `LJOS_TIER1=0` (or [`Engine::set_tier1`]) turns tier 1 off.
+//! values, the two writes and, for a binding, what the two read are
+//! compared: a read only one tier keeps is a dependency the other misses.
+//! A difference is reported as a warning with the expression and both,
+//! and tier 2's result, and its reads, are the ones used. `LJOS_TIER1=0`
+//! (or [`Engine::set_tier1`]) turns tier 1 off.
 //!
 //! # What it takes for granted
 //!
@@ -44,7 +46,7 @@ use std::fmt::Write as _;
 use std::rc::{Rc, Weak};
 use std::sync::OnceLock;
 
-use ljos_ir::{Binding, CompiledFile, Const, ExprId, Op, Reg, Tier1};
+use ljos_ir::{Binding, BindingKind, CompiledFile, Const, ExprId, Op, Reg, Tier1};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -54,6 +56,7 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{MethodIndex, ObjectId, PropIndex};
 use crate::incubator::Instance;
+use crate::incubator::aot::Reads;
 use crate::loader::LoadedFile;
 use crate::meta::MetaRef;
 use crate::types::TypeTag;
@@ -843,7 +846,19 @@ impl Engine {
             args,
             called: false,
         };
-        let Some(done) = run.run() else {
+        // What a binding reads is what it depends on: the check compares
+        // what the two tiers read too, and tier 2's reads are the ones kept.
+        let spy = if check && b.kind != BindingKind::Handler {
+            self.spy_reads()
+        } else {
+            None
+        };
+        let done = run.run();
+        let tier1_reads = spy.as_ref().map(|s| self.spied_reads(s, done.is_some()));
+        let Some(done) = done else {
+            if let Some(spy) = spy {
+                self.end_spy(spy, tier1_reads.as_ref());
+            }
             p.bailed();
             st.count(|s| s.bails += 1);
             return None;
@@ -896,6 +911,11 @@ impl Engine {
         });
         // Tier 0 may have answered before the key was taken off.
         st.skip.borrow_mut().truncate(depth);
+        let tier2_reads = spy.map(|spy| {
+            let reads = self.spied_reads(&spy, false);
+            self.end_spy(spy, Some(&reads));
+            reads
+        });
         let seen = st.spy.replace(outer).unwrap_or_default();
         {
             // A check further out sees these writes too: they were made
@@ -929,6 +949,14 @@ impl Engine {
             // unchecked, not a failure of its own.
             (None, None) => self.js_interrupted(),
         };
+        // A tier 2 that threw or was cut off read only part of the way.
+        let reads = match (tier1_reads, tier2_reads) {
+            (Some(one), Some(two)) if js.is_some() && !self.reads_alike(&one, &two) => {
+                Some((one, two))
+            }
+            _ => None,
+        };
+        let agree = agree && reads.is_none();
         p.done();
         st.count(|s| {
             s.runs += 1;
@@ -938,7 +966,7 @@ impl Engine {
             }
         });
         if !agree {
-            self.tier1_mismatch(inst, b, &done, js.as_ref(), &seen);
+            self.tier1_mismatch(inst, b, &done, js.as_ref(), &seen, reads.as_ref());
         }
         Some(js)
     }
@@ -950,6 +978,7 @@ impl Engine {
         tier1: &vm::Done,
         tier2: Option<&Value>,
         seen: &[Written],
+        reads: Option<&(Reads, Reads)>,
     ) {
         let place = |(o, p, v): &Written| {
             let (ty, name) = self.describe(*o, *p);
@@ -974,6 +1003,14 @@ impl Engine {
         }
         for w in seen {
             let _ = write!(msg, " and wrote {}", place(w));
+        }
+        if let Some((one, two)) = reads {
+            let _ = write!(
+                msg,
+                "; tier 1 read {} and tier 2 read {}",
+                self.reads_text(one),
+                self.reads_text(two)
+            );
         }
         log_line(&format!("mismatch {msg}"));
         self.warn(msg);

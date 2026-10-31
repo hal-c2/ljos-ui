@@ -455,23 +455,23 @@ fn alike(e: &Engine, compiled: &[Effect], dynamic: &[Effect]) -> bool {
 }
 
 /// What one run of an expression read: the nodes, and the properties
-/// without one.
+/// without one. Inline: the cross-check notes them on every run a debug
+/// build makes, and what a binding reads is mostly a few.
 #[derive(Default)]
-struct Reads {
-    nodes: Vec<NodeId>,
-    fields: Vec<(ObjectId, PropIndex)>,
+pub(super) struct Reads {
+    nodes: SmallVec<[NodeId; 8]>,
+    fields: SmallVec<[(ObjectId, PropIndex); 4]>,
 }
 
-impl Reads {
-    fn same_as(&self, other: &Reads) -> bool {
-        fn set<T: Ord + Copy>(v: &[T]) -> Vec<T> {
-            let mut v = v.to_vec();
-            v.sort_unstable();
-            v.dedup();
-            v
-        }
-        set(&self.nodes) == set(&other.nodes) && set(&self.fields) == set(&other.fields)
-    }
+/// A cross-check noting what the running binding reads, while it runs an
+/// expression two ways in one run ([`Engine::spy_reads`]).
+pub(super) struct ReadSpy {
+    reader: Reader,
+    at: usize,
+    outer_reading: Option<Reader>,
+    /// Where this spy's reads of properties without a node begin: those
+    /// before are an outer spy's.
+    fields_at: usize,
 }
 
 impl Engine {
@@ -635,6 +635,81 @@ impl Engine {
         }
     }
 
+    /// Whether two runs of one expression read alike. A property read
+    /// without a node and given one since, by a write the other run made
+    /// at once where this one held it, is a read of that node: the node
+    /// took the read over.
+    pub(super) fn reads_alike(&self, one: &Reads, two: &Reads) -> bool {
+        // Two runs of one expression mostly read in one order.
+        if one.nodes == two.nodes && one.fields == two.fields {
+            return true;
+        }
+        let set = |r: &Reads| {
+            let store = self.inner.store.borrow();
+            let mut nodes = r.nodes.to_vec();
+            let mut fields = Vec::new();
+            for &(o, p) in &r.fields {
+                match store.objects.get(o).and_then(|h| h.node(p)) {
+                    Some(n) => nodes.push(n),
+                    None => fields.push((o, p)),
+                }
+            }
+            nodes.sort_unstable();
+            nodes.dedup();
+            fields.sort_unstable();
+            fields.dedup();
+            (nodes, fields)
+        };
+        set(one) == set(two)
+    }
+
+    /// Starts noting what the running binding or effect reads, for a
+    /// cross-check that runs an expression two ways in one run: `None`
+    /// outside a tracked run, where a read is no dependency.
+    pub(super) fn spy_reads(&self) -> Option<ReadSpy> {
+        let g = &self.inner.graph;
+        let (reader, at) = g.reader().zip(g.reads_len())?;
+        let st = &self.inner.aot;
+        Some(ReadSpy {
+            reader,
+            at,
+            outer_reading: st.reading.replace(Some(reader)),
+            fields_at: st.field_reads.borrow().len(),
+        })
+    }
+
+    /// What was read since [`Engine::spy_reads`], or since the last
+    /// taking. `take`: the nodes are taken back, as if not read, so that
+    /// the run that follows is the one whose reads are kept.
+    pub(super) fn spied_reads(&self, spy: &ReadSpy, take: bool) -> Reads {
+        let g = &self.inner.graph;
+        let mut reads = Reads::default();
+        if take {
+            g.take_reads_since(spy.at, &mut reads.nodes);
+        } else {
+            g.reads_since(spy.at, &mut reads.nodes);
+        }
+        // The buffer keeps its room: a run reading no field makes none.
+        let mut fields = self.inner.aot.field_reads.borrow_mut();
+        let from = spy.fields_at.min(fields.len());
+        reads.fields.extend(fields.drain(from..));
+        reads
+    }
+
+    /// Ends `spy`. `kept` are the reads of the run that counts: a check
+    /// further out, of the same run, read them too.
+    pub(super) fn end_spy(&self, spy: ReadSpy, kept: Option<&Reads>) {
+        let st = &self.inner.aot;
+        st.reading.set(spy.outer_reading);
+        let mut fields = st.field_reads.borrow_mut();
+        fields.truncate(spy.fields_at);
+        if let Some(kept) = kept
+            && spy.outer_reading == Some(spy.reader)
+        {
+            fields.extend_from_slice(&kept.fields);
+        }
+    }
+
     /// Runs `expr` as compiled code. `None`: it has none, or the code
     /// stopped with nothing done; the dynamic tiers are to run it.
     /// `propagate`: code that stops as a script throws throws to the
@@ -704,23 +779,9 @@ impl Engine {
 
         // What a binding reads is what it depends on: the two runs read
         // alike, and the dynamic run's reads are the ones it keeps.
-        let g = &self.inner.graph;
-        let tracked = if handler {
-            None
-        } else {
-            g.reader().zip(g.reads_len())
-        };
-        let outer_reading = st.reading.replace(tracked.map(|(r, _)| r));
-        let outer_fields = st.field_reads.take();
+        let spy = if handler { None } else { self.spy_reads() };
         let done = code(&frame);
-        let compiled_reads = tracked.map(|(_, at)| Reads {
-            nodes: g.take_reads_since(at),
-            fields: st.field_reads.take(),
-        });
-        let restore = || {
-            st.reading.set(outer_reading);
-            *st.field_reads.borrow_mut() = outer_fields.clone();
-        };
+        let compiled_reads = spy.as_ref().map(|s| self.spied_reads(s, true));
         let held = frame
             .held
             .take()
@@ -729,12 +790,16 @@ impl Engine {
         let value = match done {
             Ok(v) => v,
             Err(Stop::Fallback) => {
-                restore();
+                if let Some(spy) = spy {
+                    self.end_spy(spy, None);
+                }
                 st.count(|s| s.fallbacks += 1);
                 return None;
             }
             Err(Stop::Thrown | Stop::Inconclusive) => {
-                restore();
+                if let Some(spy) = spy {
+                    self.end_spy(spy, None);
+                }
                 st.count(|s| s.inconclusive += 1);
                 return None;
             }
@@ -752,11 +817,11 @@ impl Engine {
         let js = self.eval_expr_as(inst, expr, hint, args, propagate, kept);
         let js_plain = js.as_ref().map(|v| self.plain(v));
         st.skip.borrow_mut().truncate(depth);
-        let dynamic_reads = tracked.map(|(_, at)| Reads {
-            nodes: g.reads_since(at),
-            fields: st.field_reads.take(),
+        let dynamic_reads = spy.map(|spy| {
+            let reads = self.spied_reads(&spy, false);
+            self.end_spy(spy, Some(&reads));
+            reads
         });
-        restore();
         st.nest.set(outer_nest);
         let seen = st.spy.replace(outer).unwrap_or_default();
         {
@@ -772,7 +837,7 @@ impl Engine {
         let held: Vec<Effect> = held.iter().map(|h| self.settled(h)).collect();
         let seen: Vec<Effect> = seen.iter().map(|s| self.settled(s)).collect();
         let reads_agree = match (&compiled_reads, &dynamic_reads) {
-            (Some(c), Some(d)) => c.same_as(d),
+            (Some(c), Some(d)) => self.reads_alike(c, d),
             _ => true,
         };
         let as_held = |v: &Value| hint.coerce(v).unwrap_or_else(|_| v.clone());
@@ -864,7 +929,7 @@ impl Engine {
         }
     }
 
-    fn reads_text(&self, reads: &Reads) -> String {
+    pub(super) fn reads_text(&self, reads: &Reads) -> String {
         let mut out = format!("{} nodes", reads.nodes.len());
         // A second read of one follows nothing more.
         let mut fields = reads.fields.clone();
