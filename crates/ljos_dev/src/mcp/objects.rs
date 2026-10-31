@@ -19,14 +19,14 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use slotmap::{Key, KeyData};
 
+use super::observe::declared_at;
 use super::redact::mask_text;
-use super::tools::{flag, text_property};
+use super::tools::{flag, text_property, window_box};
 
 pub const OBJECTS: &str = "\
-Every object below `root` (default: the scene's root), with `@handle`, type, id, objectName, \
-depth, bytes; `depth` limits, `next_cursor` pages. `models` lists models; `model` reads rows \
-(`offset`, `limit`), a `holder` follows it. `components` lists loaded ones, `component` (an id) \
-its instances.";
+Every object below `root` (default: the scene's root): `@handle`, type, id, depth, `at` (file:line), \
+an item's window `bounds`; `depth` limits, `next_cursor` pages. `models` lists models; `model` reads \
+rows, a `holder` follows it. `components` lists loaded ones, `component` (an id) its instances.";
 
 /// The most objects one answer lists unless told otherwise, and at all.
 const DEFAULT_MAX: usize = 500;
@@ -298,9 +298,11 @@ pub(crate) fn objects(
                     "item": item,
                     "children": children,
                     "bytes": engine.object_bytes(obj),
+                    "at": declared_at(engine, obj),
                 });
                 if item {
                     row["visible"] = json!(flag(engine, obj, "visible"));
+                    row["bounds"] = json!(window_box(engine, obj));
                 }
                 if hidden > 0 {
                     row["hidden"] = json!(hidden);
