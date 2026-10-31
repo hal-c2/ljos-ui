@@ -19,8 +19,8 @@ use crate::node::{Held, IDENTITY, host_write, quat, vec3};
 use crate::{Camera, Node, Object3D, View3D};
 
 /// A node's transform in scene space.
-#[derive(Clone, Copy)]
-pub(crate) struct Place {
+#[derive(Clone, Copy, Debug)]
+pub struct Place {
     pub world: Mat4,
     pub rotation: Quat,
     pub scale: Vec3,
@@ -35,8 +35,25 @@ impl Place {
 }
 
 /// `obj`'s parent node, if its parent is one. Tracked.
-pub(crate) fn parent_node(e: &Engine, obj: ObjectId) -> Option<ObjectId> {
+pub fn parent_node(e: &Engine, obj: ObjectId) -> Option<ObjectId> {
     parent(e, obj).filter(|p| e.is::<Node>(*p))
+}
+
+/// Whether `node` is `scene` or in it: `scene` above it, or a view whose
+/// `scene` it is. Not tracked: asked while sweeping for new nodes.
+pub fn in_scene(e: &Engine, node: ObjectId, scene: ObjectId) -> bool {
+    e.untrack(|| {
+        let mut at = Some(node);
+        while let Some(o) = at {
+            if o == scene
+                || (e.is::<View3D>(o) && e.get(o, View3D::SCENE).ok().flatten() == Some(scene))
+            {
+                return true;
+            }
+            at = parent(e, o);
+        }
+        false
+    })
 }
 
 /// What `obj` is in: what holds it once it completed, its owner before
@@ -153,7 +170,7 @@ fn data_lists(e: &Engine, holder: ObjectId) -> Vec<PropIndex> {
 
 /// `obj`'s place in the scene; the scene's own for an object that is not
 /// a node. Tracked.
-pub(crate) fn place(e: &Engine, obj: ObjectId) -> Place {
+pub fn place(e: &Engine, obj: ObjectId) -> Place {
     if !e.is::<Node>(obj) {
         return Place::SCENE;
     }

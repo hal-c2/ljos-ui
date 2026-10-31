@@ -178,6 +178,16 @@ fn ray_of(origin: &Value, direction: &Value) -> Option<Ray> {
 
 #[qml_impl]
 impl View3D {
+    /// What was bound to `scene` before now is told of the node by its
+    /// change.
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let node = cx
+            .engine
+            .create_native(crate::Node::default(), Some(cx.this))?;
+        cx.engine.set_internal(cx.this, View3D::SCENE, Some(node))
+    }
+
     /// The nearest pickable model under a point of the view.
     #[qml(invokable)]
     fn pick(cx: &Cx, x: f64, y: f64) -> Value {

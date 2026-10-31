@@ -127,6 +127,7 @@ pub use repeater::Repeater3D;
 pub use runtime_loader::RuntimeLoader;
 pub use skin::{Joint, Skeleton, Skin};
 pub use source::EngineSource;
+pub use space::{Place, in_scene, parent_node, place};
 pub use texture::Texture;
 pub use texture_data::TextureData;
 pub use view::View3D;

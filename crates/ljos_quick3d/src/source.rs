@@ -67,7 +67,15 @@ impl<'e> EngineSource<'e> {
     fn list(&self, o: ObjectId, p: Prop3d, holes: bool) -> Vec<Option<ObjectId>> {
         let e = self.e;
         if p == Prop3d::Data && e.is::<View3D>(o) {
-            return item::resources(e, o).into_iter().map(Some).collect();
+            let mut nodes: Vec<_> = item::resources(e, o).into_iter().map(Some).collect();
+            // The root holds only what is made into it at run time. Until
+            // then it is no node of the walk, which still hears of the first.
+            let root = e.read(o, View3D::SCENE.index).as_object();
+            nodes.extend(
+                root.filter(|r| !self.list(*r, Prop3d::Data, false).is_empty())
+                    .map(Some),
+            );
+            return nodes;
         }
         let index = match p {
             Prop3d::Data if e.is::<Object3D>(o) => Object3D::DATA.index,

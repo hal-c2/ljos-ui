@@ -37,6 +37,11 @@ pub struct View3D {
     /// Another tree of nodes shown as well as this view's own.
     #[qml(notify, object = "Node")]
     pub import_scene: Option<ObjectId>,
+    /// The root of the view's scene, which the nodes declared in the view
+    /// are in, for what asks after a scene (a `PhysicsWorld`) and to make
+    /// nodes in at run time. There from the view's completion on.
+    #[qml(notify, readonly, object = "Node")]
+    pub scene: Option<ObjectId>,
     /// Kept: every mode is drawn in paint order, as `Offscreen` is.
     #[qml(notify, enumeration = "RenderMode")]
     pub render_mode: i32,
