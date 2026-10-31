@@ -266,12 +266,14 @@ impl HttpServer {
                 (StdListener::Unix(l), url, None, Some(path.clone()))
             }
         };
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .map_err(HttpError::Thread)?;
+        let runtime = Unstarted(Some(
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(HttpError::Thread)?,
+        ));
         let listener = {
-            let _in_runtime = runtime.enter();
+            let _in_runtime = runtime.get().enter();
             listener.into_tokio().map_err(|source| {
                 // Bound a moment ago by this call, so no one else's.
                 if let Some(path) = &socket {
@@ -287,7 +289,7 @@ impl HttpServer {
         // process, so a signal that comes the moment a client reads the
         // file is already cleaned up after.
         let ends = if config.clean_up_on_signals {
-            let _in_runtime = runtime.enter();
+            let _in_runtime = runtime.get().enter();
             Ends::install()
         } else {
             None
@@ -315,7 +317,7 @@ impl HttpServer {
             std::thread::Builder::new()
                 .name("ljos-mcp".into())
                 .spawn(move || {
-                    runtime.block_on(async move {
+                    runtime.take().block_on(async move {
                         let caps = config.caps;
                         let service = StreamableHttpService::new(
                             move || Ok(RmcpServer::new(surface.clone(), caps)),
@@ -409,6 +411,30 @@ impl HttpServer {
             let _ = std::fs::remove_file(path);
         }
         ended.map_err(|panic| HttpError::Panicked(panic_message(panic.as_ref())))
+    }
+}
+
+/// The server's runtime until its thread has it. `start` may be called
+/// inside an application's own runtime, where dropping a runtime the usual
+/// way blocks and so panics; one that `start` gives up on, or that a thread
+/// that could not be made never ran, is let go without waiting.
+struct Unstarted(Option<tokio::runtime::Runtime>);
+
+impl Unstarted {
+    fn get(&self) -> &tokio::runtime::Runtime {
+        self.0.as_ref().expect("taken only by the server's thread")
+    }
+
+    fn take(mut self) -> tokio::runtime::Runtime {
+        self.0.take().expect("taken only once")
+    }
+}
+
+impl Drop for Unstarted {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.0.take() {
+            runtime.shutdown_background();
+        }
     }
 }
 

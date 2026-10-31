@@ -754,3 +754,92 @@ fn an_idle_connection_expires_before_sending_any_headers() {
     assert_eq!(stream.read(&mut [0]).unwrap(), 0);
     assert_eq!(rig.call(&rig.bearer).status, 200);
 }
+
+/// The application's own runtime, of either kind, around whatever a test
+/// does with the server.
+fn in_runtimes(test: impl Fn() + Send + Sync + Clone + 'static) {
+    for multi_thread in [false, true] {
+        let runtime = if multi_thread {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+        }
+        .unwrap();
+        let test = test.clone();
+        runtime.block_on(async move { test() });
+    }
+}
+
+#[test]
+fn a_server_started_and_dropped_in_an_async_task_ends() {
+    in_runtimes(|| {
+        let rig = Rig::start(config());
+        assert_eq!(rig.call(&rig.bearer).status, 200);
+        let addr = rig.server.addr().unwrap();
+        let bearer = rig.bearer.clone();
+        drop(rig);
+        assert_not_served(addr, &bearer);
+    });
+}
+
+#[test]
+fn a_server_stopped_in_an_async_task_and_dropped_there_ends() {
+    in_runtimes(|| {
+        let mut rig = Rig::start(config());
+        let addr = rig.server.addr().unwrap();
+        rig.server.stop().unwrap();
+        // A second stop, and the drop's, find nothing left to do.
+        rig.server.stop().unwrap();
+        let bearer = rig.bearer.clone();
+        drop(rig);
+        assert_not_served(addr, &bearer);
+    });
+}
+
+#[test]
+fn a_server_started_outside_any_runtime_is_dropped_in_an_async_task() {
+    let rig = Rig::start(config());
+    let addr = rig.server.addr().unwrap();
+    let bearer = rig.bearer.clone();
+    let rig = std::sync::Mutex::new(Some(rig));
+    let rig = Arc::new(rig);
+    in_runtimes(move || {
+        drop(rig.lock().unwrap().take());
+    });
+    assert_not_served(addr, &bearer);
+}
+
+#[test]
+fn a_server_outlives_the_runtime_it_was_started_in() {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let rig = runtime.block_on(async { Rig::start(config()) });
+    drop(runtime);
+    // The server's runtime is its own, so it still answers.
+    assert_eq!(rig.call(&rig.bearer).status, 200);
+    let addr = rig.server.addr().unwrap();
+    let bearer = rig.bearer.clone();
+    drop(rig);
+    assert_not_served(addr, &bearer);
+}
+
+#[test]
+fn a_server_that_cannot_start_in_an_async_task_is_an_error() {
+    in_runtimes(|| {
+        let dir = tempfile::tempdir().unwrap();
+        // A file where the token file's directory has to be.
+        let in_the_way = dir.path().join("ljos");
+        std::fs::write(&in_the_way, "").unwrap();
+        let refused = HttpServer::start(
+            Demo::new(),
+            config().token_file(in_the_way.join("mcp.json")),
+        );
+        assert!(refused.is_err());
+    });
+}
