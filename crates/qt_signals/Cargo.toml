@@ -1,0 +1,18 @@
+[package]
+name = "qt_signals"
+description = "What a QML object type can signal: the modules, types, property names and signals of qt_types' table and nothing else, small enough for a web build."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[build-dependencies]
+qt_types = { path = "../qt_types" }
+
+[dev-dependencies]
+qt_types = { path = "../qt_types" }
+
+[lints]
+workspace = true

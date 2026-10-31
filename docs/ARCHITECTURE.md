@@ -182,10 +182,11 @@ ljos-ui/
 │   ├── qml_syntax/             re-exports + parse helpers + member-level recovery [shared]
 │   ├── qml_front/              discover, project (TypeOracle), types, scope, names [shared]
 │   ├── qt_types/               Qt type-table reader (table generated locally)      [shared]
+│   ├── qt_signals/             the table's modules, properties, signals only (web)  [shared]
 │   ├── qmltypes/               generator CLI (.qmltypes + qmldir only)            [shared, tool]
 │   ├── qml_compare/            pixelmatch port, content score, ratchet, report    [shared, tool]
 │   ├── qml_fmt/                QML formatter behind `ljos fmt` and `qml_format`    [tool]
-│   ├── qml_edit/               structured edits that keep every untouched byte     [tool]
+│   ├── qml_edit/               structured edits, rebase, keys and tree diff        [tool]
 │   ├── ljos_ir/                owned IR: ComponentDef, ObjectKey, bindings, signatures
 │   ├── ljos_compiler/          lowering, tier-0 resolution, tier-1 codegen, JS codegen,
 │   │                           IR diff → ReloadPatch, i18n extraction, lints (salsa)

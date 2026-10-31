@@ -366,6 +366,14 @@ impl Type {
         self.prototype.map(|index| &table().types[index])
     }
 
+    /// The class whose properties, signals and methods are the type's own
+    /// too, looked in before what it inherits. None when it has none, or
+    /// one that is there for its enums only.
+    pub fn member_extension(&self) -> Option<&'static Type> {
+        let index = self.extension.filter(|_| !self.extension_is_namespace)?;
+        Some(&table().types[index])
+    }
+
     /// Whether Ljós adds a member called `name` to the type or to one it
     /// inherits, where Qt's table describes them: the runtime has it,
     /// though Qt does not.

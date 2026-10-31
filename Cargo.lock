@@ -6150,6 +6150,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "qt_signals"
+version = "0.0.0"
+dependencies = [
+ "qt_types",
+]
+
+[[package]]
 name = "qt_types"
 version = "0.0.0"
 
