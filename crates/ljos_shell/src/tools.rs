@@ -296,7 +296,7 @@ impl<M> ShellApp<M> {
 
     pub(crate) fn record_rest(&mut self, rest: ljos_dev::mcp::Rest, collect_due: Option<Instant>) {
         if let Some(inspector) = self.tools.inspector_mut() {
-            inspector.record_rest(rest);
+            inspector.record_rest(self.view.engine(), rest);
             inspector.record_collect_due(collect_due);
         }
     }
@@ -687,7 +687,17 @@ mod inspector {
             inspector.watch_log(self.engine, on_log);
             let mut config = HttpConfig::loopback(access.caps);
             config.listen = match (access.socket, access.bind) {
+                #[cfg(unix)]
                 (Some(path), _) => Listen::Unix(path),
+                #[cfg(not(unix))]
+                (Some(path), _) => {
+                    return Err(format!(
+                        "cannot listen on the socket {}: this platform has no Unix sockets; \
+                         listen on a port instead",
+                        path.display()
+                    )
+                    .into());
+                }
                 (None, Some(addr)) => Listen::Address(addr),
                 (None, None) => Listen::Loopback(options.port),
             };
