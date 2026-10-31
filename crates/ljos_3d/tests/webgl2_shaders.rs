@@ -129,3 +129,14 @@ fn the_shadow_pass_runs_on_webgl2() {
         &["fs_main"],
     );
 }
+
+#[test]
+fn the_screen_texture_copy_runs_on_webgl2() {
+    let source = include_str!("../src/shaders/screen.wgsl");
+    translates_stages(
+        "screen",
+        &format!("{TONE}{source}"),
+        &["vs_main"],
+        &["fs_copy", "fs_encode"],
+    );
+}
