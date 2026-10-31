@@ -14,6 +14,7 @@ pub mod gltf;
 pub mod instancing;
 pub mod math;
 pub mod mesh;
+pub mod mesh_file;
 #[cfg(feature = "gltf")]
 pub mod obj;
 pub mod pick;
