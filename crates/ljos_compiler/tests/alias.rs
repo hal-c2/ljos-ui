@@ -72,6 +72,21 @@ fn the_module_at_its_own_path_is_the_one_imported_and_not_a_stand_in_beside_it()
 }
 
 #[test]
+fn a_module_of_native_code_at_its_own_path_does_not_hide_the_stand_in_the_app_ships() {
+    let dir = tree();
+    let app = dir.path().join("app");
+    std::fs::remove_dir_all(app.join("App/Media")).unwrap();
+    write(
+        &app,
+        "App/Media/CMakeLists.txt",
+        "qt_add_qml_module(media\n    URI App.Media\n    SOURCES\n        player.cpp\n)\n",
+    );
+    let mut s = ReloadSession::open_roots(&[&app], QtTypeOracle).unwrap();
+    s.start();
+    assert_eq!(player(&s), "mocks/Media/Player");
+}
+
+#[test]
 fn an_alias_inside_the_project_imports_its_directory_and_can_be_dropped() {
     let dir = tree();
     let app = dir.path().join("app");

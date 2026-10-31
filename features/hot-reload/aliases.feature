@@ -62,11 +62,41 @@ Feature: A module imported from a directory of another's choosing
       import QtQuick
       Item { property string source: "elsewhere" }
       """
+    And the file "app/Native.qml":
+      """qml
+      import QtQuick
+      import App.Backend
+      Item { Player { objectName: "player" } }
+      """
+    And the file "app/App/Backend/CMakeLists.txt":
+      """
+      qt_add_qml_module(backend
+          URI App.Backend
+          SOURCES
+              player.cpp
+      )
+      """
+    And the file "app/backend_mock/App/Backend/qmldir":
+      """
+      module App.Backend
+      Player 1.0 Player.qml
+      """
+    And the file "app/backend_mock/App/Backend/Player.qml":
+      """qml
+      import QtQuick
+      Item { property string source: "shipped" }
+      """
     And the QML:
       """qml
       import QtQuick
       Item { objectName: "root" }
       """
+
+  Rule: A module at its own path that has no QML
+
+    Scenario: A module of native code does not hide the stand-in the application ships
+      When the application watches the roots "app" for the entries "Native"
+      Then the property "source" of "player" is "shipped"
 
   Rule: An alias given at the start
 

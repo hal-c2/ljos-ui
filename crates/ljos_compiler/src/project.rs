@@ -655,13 +655,15 @@ fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item =
 /// a directory is at the URI's own path from a root (`App/Media` for
 /// `App.Media`), that is where an import path finds the module, and
 /// another directory that names the same URI (a stand-in kept beside the
-/// real one) is not seen. With no such directory every description
-/// counts.
+/// real one) is not seen. A directory there that describes no QML type
+/// (a module of native code, whose build names only its sources) has
+/// nothing for an import to find, and hides nothing. With no such
+/// directory every description counts.
 fn counted(found: &[(String, PathBuf, Module)], aliases: &Aliases) -> Vec<bool> {
     let home = |uri: &str| uri.replace('.', "/");
     let at_home: HashSet<&str> = found
         .iter()
-        .filter(|(dir, _, m)| *dir == home(&m.uri))
+        .filter(|(dir, _, m)| *dir == home(&m.uri) && !m.types.is_empty())
         .map(|(_, _, m)| m.uri.as_str())
         .collect();
     let mut real: HashMap<&Path, Option<PathBuf>> = HashMap::new();
