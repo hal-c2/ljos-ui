@@ -13,6 +13,7 @@ qml_syntax = { path = "../qml_syntax" }
 thiserror.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 qml_fmt = { path = "../qml_fmt" }
 
 [lints]

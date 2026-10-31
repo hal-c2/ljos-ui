@@ -47,6 +47,12 @@
 //! refused ([`Error::Syntax`]): a splice computed on a partial tree could
 //! land in the part the parser skipped.
 //!
+//! # Two writers
+//!
+//! [`transform`] rebases one writer's changes over another's made from the
+//! same text, refusing a change that touches bytes the other changed
+//! ([`Overlap`]).
+//!
 //! # Where it lives
 //!
 //! A tool crate beside `qml_fmt`, on `qml_syntax` alone. No runtime crate
@@ -55,6 +61,10 @@
 
 use std::fmt;
 use std::ops::Range;
+
+mod transform;
+
+pub use transform::{Overlap, Ties, transform, transform_all, transform_all_with, transform_with};
 
 use qml_syntax::{
     Allocator, GetSpan, Span,
