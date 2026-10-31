@@ -484,3 +484,21 @@ Feature: A value a binding gives a property of another type
       }
       """
     Then the property "seen" of "root" is "0.5000076293945312"
+
+  # Found by ljos-fuzz (bindings), seen beside warning:assign(ljos-only):Unable_to_assign_int_to_QFont.
+  Scenario Outline: A refused number <value> is named <name>
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property font face: (<value>)
+      }
+      """
+    Then the log has 1 warning matching "Unable to assign <name> to QFont"
+
+    Examples:
+      | value | name   |
+      | 1     | int    |
+      | -0    | double |
+      | 1.5   | double |

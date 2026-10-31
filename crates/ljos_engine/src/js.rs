@@ -889,7 +889,7 @@ impl HostObjects for EngineHost {
         // What Qt's engine calls the value when it is refused, where that
         // is not what the conversion calls it.
         let from = match &value {
-            JsValue::Number(n) if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) => Some("int"),
+            JsValue::Number(n) if crate::types::is_whole_int(*n) => Some("int"),
             JsValue::Null => Some("std::nullptr_t"),
             JsValue::Object(_) => Some("QObject*"),
             // No property but a var takes a function.

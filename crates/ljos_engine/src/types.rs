@@ -502,8 +502,8 @@ pub(crate) fn describe(v: &Value) -> String {
         Value::Null => "null".into(),
         Value::Bool(_) => "bool".into(),
         Value::Int(_) => "int".into(),
-        // A script's number is an int while it is a whole one.
-        Value::Real(n) if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) => "int".into(),
+        // A script's number is an int while it is a whole one; an int has no -0.
+        Value::Real(n) if is_whole_int(*n) => "int".into(),
         Value::Real(_) => "double".into(),
         Value::String(_) => "QString".into(),
         Value::Color(_) => "QColor".into(),
@@ -523,6 +523,11 @@ pub(crate) fn describe(v: &Value) -> String {
         Value::Js(_) => "QJSValue".into(),
         Value::Custom(c) => c.ty().name().into(),
     }
+}
+
+/// Whether a script's number is one Qt's engine holds as an int.
+pub(crate) fn is_whole_int(n: f64) -> bool {
+    n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) && !(n == 0.0 && n.is_sign_negative())
 }
 
 /// A value could not be assigned to a typed property or argument.
