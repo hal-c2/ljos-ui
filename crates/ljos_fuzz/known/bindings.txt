@@ -193,3 +193,11 @@ warning:TypeError(qt-only):Cannot_call_method_'_'_of_undefined  a font bound to 
 # Qt's own, which Ljós is not to copy: a binding made with the object, reading a property whose
 # handler writes another thing the binding reads, is told as a loop; both end with the same values.
 warning:binding-loop(qt-only):load-handlers  Qt reports a loop for a binding whose input's handler writes its other input while the objects are made
+
+value:alias-to-member:rounding        a Text keeps eight bits a channel of its colour, read through an alias (features/language/color-member-aliases.feature, features/language/color-values.feature)
+value:load-handlers:record-vs-color   a handler run while the object is made takes a later binding away (features/bindings/creation-order.feature)
+value:load-handlers:string-vs-record  a handler run while the object is made takes a later binding away (features/bindings/creation-order.feature)
+warning:assign(ljos-only):Cannot_assign_double_to_Text::HAlignment  NaN given to width is ignored, so the handler that would fail does not run (features/items/geometry-nan.feature)
+warning:assign(ljos-only):Unable_to_assign_bool_to_QFont  an empty list given an empty list is told as a change, so what reads it warns again (features/language/list-properties.feature)
+warning:assign(ljos-only):Unable_to_assign_int_to_QFont   a value refused while made, then replaced by a change handler, is not logged (features/bindings/errors-during-creation.feature)
+warning:assign(ljos-only):Unable_to_assign_double_to_QFont  a value refused while made, then replaced by a change handler, is not logged (features/bindings/errors-during-creation.feature)

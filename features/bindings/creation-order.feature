@@ -95,3 +95,54 @@ Feature: A change handler run while the object is made
       }
       """
     Then the property "log" of "root" is "width;completed;"
+
+  # Found by ljos-fuzz (bindings), bucket value:load-handlers:record-vs-color: the same
+  # difference as value:load-handlers:string-vs-color, with a record as what is written.
+  @backlog
+  Scenario: A handler run while made gives a later object's var a record in place of its binding
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property list<string> names: []
+        property int written: o3.kept.k0 ? o3.kept.k0.length : 0
+        Text {
+          id: o1
+          Item {
+            property alias seen: root.names
+            onSeenChanged: o3.kept = ({k0: [1, 2]})
+          }
+        }
+        Item {
+          id: o3
+          property var kept: o1.color
+        }
+      }
+      """
+    Then the property "written" of "root" is 2
+
+  # Found by ljos-fuzz (bindings), bucket value:load-handlers:string-vs-record: a rect is told
+  # through its alias as a list is, and the handler takes away the binding of a child made later.
+  @backlog
+  Scenario: A handler run while made gives a child's var a string in place of its binding
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property rect area: Qt.rect(0, 0, 0, "#000000".r)
+        property string written: typeof child.kept
+        Text {
+          property alias seen: root.area
+          onSeenChanged: child.kept = ""
+          Text {
+            id: child
+            property var kept: Qt.point(0, 0)
+          }
+        }
+      }
+      """
+    Then the property "written" of "root" is "string"

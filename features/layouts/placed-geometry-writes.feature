@@ -314,3 +314,50 @@ Feature: What anchors or a positioner place, a write does not move
       }
       """
     Then the property "log" of "root" is "b0;c0;"
+
+  # Found by ljos-fuzz (geometry), bucket value:step-free:number: a binding that gives the value
+  # the size already has leaves it following its implicit size; only a literal makes it explicit.
+  @backlog
+  Scenario: A size bound to the value it has still follows its implicit size
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Item { id: bound; width: (+false) }
+        Item { id: literal; width: 0 }
+        Item { id: other; width: (2 - 1) }
+        property real boundWidth: bound.width
+        property real literalWidth: literal.width
+        property real otherWidth: other.width
+        function grow() { bound.implicitWidth = 33; literal.implicitWidth = 33; other.implicitWidth = 33 }
+      }
+      """
+    When the method "grow" of "root" is called
+    Then the property "boundWidth" of "root" is 33
+    And the property "literalWidth" of "root" is 0
+    And the property "otherWidth" of "root" is 1
+
+  # Found by ljos-fuzz (geometry), bucket warning:binding-loop(ljos-only):width: both warn of this
+  # loop; Qt names the implicit size that was bound, Ljós the width that follows it.
+  @backlog
+  Scenario: A loop through an implicit size is told by the implicit size
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        width: 150
+        Rectangle {
+          id: box
+          anchors.right: parent.horizontalCenter
+        }
+        function follow() { box.implicitWidth = Qt.binding(function () { return box.x }) }
+        function shrink() { root.width = 0 }
+      }
+      """
+    When the method "follow" of "root" is called
+    And the method "shrink" of "root" is called
+    Then the log has a warning matching "Binding loop detected for property .implicitWidth."
+    And the log has no warning matching "Binding loop detected for property .width."

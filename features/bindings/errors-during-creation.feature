@@ -196,3 +196,20 @@ Feature: A binding that fails while its object is made is forgiven if it recover
         }
         """
       Then the property "log" of "root" is "second;first;root;"
+
+    # Found by ljos-fuzz (bindings), bucket warning:assign(ljos-only):Unable_to_assign_int_to_QFont:
+    # as a binding a change handler replaces, with a value refused in place of one that throws.
+    @backlog
+    Scenario: A refused value a change handler replaces while the object is made is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property list<int> numbers: []
+          property font face: (1)
+          onNumbersChanged: root.face = Qt.font({pixelSize: 10})
+        }
+        """
+      Then the log has no warning matching "Unable to assign"

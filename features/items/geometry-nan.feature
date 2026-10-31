@@ -63,3 +63,48 @@ Feature: An item's geometry is never NaN
       | scale    |
       | opacity  |
       | z        |
+
+  # Found by ljos-fuzz (bindings), bucket warning:assign(ljos-only):Cannot_assign_double_to_Text::HAlignment,
+  # (geometry) value:load-handlers-free:int-range: the handler that would fail never runs.
+  @backlog
+  Scenario: The handler of a size given NaN does not run while the object is made
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property bool ran: false
+        z: NaN
+        Text {
+          width: root.z
+          onWidthChanged: { root.ran = true; other.horizontalAlignment = ("number" * 1) }
+          Text { id: other }
+        }
+      }
+      """
+    Then the property "ran" of "root" is false
+    And the log has no warning matching "assign"
+
+  # Found by ljos-fuzz (geometry), bucket value:load-handlers-positioner:number: the width stays
+  # 0, so the Column leaves the child out whatever height it is then given.
+  @backlog
+  Scenario: A positioner's child whose width was given NaN stays out of its size
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Column {
+          id: column
+          Item {
+            id: child
+            width: ("ab" * 1)
+            Component.onCompleted: child.height = 100
+          }
+        }
+        property real settled: column.implicitHeight
+      }
+      """
+    When 50 milliseconds pass
+    Then the property "settled" of "root" is 0

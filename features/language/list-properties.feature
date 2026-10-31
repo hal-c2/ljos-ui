@@ -307,3 +307,20 @@ Feature: A list property declared in QML
       """
     Then the property "status" of "l" is 3
     And the log has a warning matching "Bad\.qml:3:31: Expected (token )?`,"
+
+  # Found by ljos-fuzz (bindings), bucket warning:assign(ljos-only):Unable_to_assign_bool_to_QFont:
+  # the binding warns once when made, and again on Ljós when the empty list is told as a change.
+  @backlog
+  Scenario: An initialized empty list given an empty list does not run what reads it
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property list<string> names: []
+        property font face: (names.indexOf(0) === 0)
+        function clear() { names = [] }
+      }
+      """
+    When the method "clear" of "root" is called
+    Then the log has 1 warning matching "Unable to assign bool to QFont"

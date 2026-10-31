@@ -92,3 +92,19 @@ Feature: An alias of a channel of a colour property
       """
     When the method "paint" of "root" is called
     Then the property "seen" of "root" is 1
+
+  # Found by ljos-fuzz (bindings), bucket value:alias-to-member:rounding: the same difference as
+  # "A Text keeps eight bits a channel of its colour" (features/language/color-values.feature).
+  @backlog
+  Scenario: An alias of a channel of a Text's colour reads the eight bits the Text kept
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: label; color: Qt.rgba(0, 0.5, 0.25, 1) }
+        property alias blue: label.color.b
+        property bool eight: Math.abs(blue - 64 / 255) < 1e-6
+      }
+      """
+    Then the property "eight" of "root" is true

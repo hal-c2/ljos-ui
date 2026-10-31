@@ -202,3 +202,26 @@ Feature: Positioner polish settles
     When the method "go" of "root" is called
     And 50 milliseconds pass
     Then the property "width" of "o1" is 2.25
+
+  # Found by ljos-fuzz (geometry), buckets value:step-positioner:number and
+  # value:step-in-positioner:rounding.
+  @backlog
+  Scenario: A child given a size in a method joins its Column at the next polish
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property real sameTurn: -1
+        function give() { child.height = 40; sameTurn = column.implicitHeight }
+        Column {
+          id: column
+          objectName: "column"
+          Item { id: child; width: 10 }
+        }
+      }
+      """
+    When the method "give" of "root" is called
+    Then the property "sameTurn" of "root" is 0
+    When 50 milliseconds pass
+    Then the property "implicitHeight" of "column" is 40
