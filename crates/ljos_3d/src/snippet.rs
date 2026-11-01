@@ -23,8 +23,9 @@ use crate::custom::{
     MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen, UniformKind,
 };
 
-/// At most this many VARYINGs, each one location: WebGL2 guarantees few
-/// more inter-stage components than the material's own and these take.
+/// At most this many locations of VARYINGs, packed four numbers to each:
+/// WebGL2 guarantees few more inter-stage components than the material's
+/// own and these take.
 pub const MAX_VARYINGS: usize = 8;
 /// At most this many TextureInputs, WebGL2's sixteen samplers less the
 /// renderer's own.
@@ -338,10 +339,26 @@ fn varyings(src: &str, stage: &'static str) -> Result<Vec<Varying>, SnippetError
             "vec2" => 2,
             "vec3" => 3,
             "vec4" => 4,
+            // A matrix goes as its columns, a location each, and the
+            // wrappers read and write `name[i]` as they do any vector.
+            "mat2" | "mat3" | "mat4" => {
+                let columns = if ty == "mat2" {
+                    2
+                } else if ty == "mat3" {
+                    3
+                } else {
+                    4
+                };
+                out.extend((0..columns).map(|c| Varying {
+                    name: format!("{name}[{c}]"),
+                    width: columns,
+                }));
+                continue;
+            }
             _ => {
                 return Err(SnippetError::Unsupported {
                     stage,
-                    message: format!("VARYING {ty} {name}: only float and vec types pass"),
+                    message: format!("VARYING {ty} {name}: only float, vec and mat types pass"),
                 });
             }
         };
@@ -350,10 +367,10 @@ fn varyings(src: &str, stage: &'static str) -> Result<Vec<Varying>, SnippetError
             width,
         });
     }
-    if out.len() > MAX_VARYINGS {
+    if locations(&out) > MAX_VARYINGS {
         return Err(SnippetError::Unsupported {
             stage,
-            message: format!("more than {MAX_VARYINGS} VARYINGs"),
+            message: format!("VARYINGs of more than {} numbers", MAX_VARYINGS * 4),
         });
     }
     Ok(out)
@@ -372,6 +389,40 @@ fn letters(i: usize) -> String {
         }
         n -= 1;
     }
+}
+
+/// How many locations `out` takes, in the order `pack_writes` fills them.
+fn locations(out: &[Varying]) -> usize {
+    out.iter().map(|v| v.width).sum::<usize>().div_ceil(4)
+}
+
+const COMPONENTS: [char; 4] = ['x', 'y', 'z', 'w'];
+
+/// Where the `at`th number of the VARYINGs goes: a location's name and a
+/// component of it.
+fn slot(at: usize) -> (String, char) {
+    (letters(at / 4), COMPONENTS[at % 4])
+}
+
+/// The vertex stage's writes: every number of every VARYING, one after the
+/// other, a vector across two locations if that is where it falls. A
+/// location each would hold fewer than WebGL2 lets through.
+fn pack_writes(out: &[Varying]) -> String {
+    let mut s = String::from("    vec4 ljospacked;\n");
+    let mut at = 0;
+    for v in out {
+        let _ = writeln!(s, "    ljospacked = {};", pack(v));
+        for c in 0..v.width {
+            let (location, component) = slot(at + c);
+            let _ = writeln!(
+                s,
+                "    ljosout.ljosvary{location}.{component} = ljospacked.{};",
+                COMPONENTS[c]
+            );
+        }
+        at += v.width;
+    }
+    s
 }
 
 fn pack(v: &Varying) -> String {
@@ -526,7 +577,7 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
     let before = lines(&s);
     s.push_str(&bone_normals(user));
     s.push_str("\nstruct LjosVertex {\n    vec4 ljosclip; vec3 ljosworld; vec3 ljosnormal; vec4 ljosuvs;\n    vec3 ljostangent; vec3 ljosbinormal; vec4 ljoscolor;\n");
-    for i in 0..out.len() {
+    for i in 0..locations(out) {
         let _ = writeln!(s, "    vec4 ljosvary{};", letters(i));
     }
     // The copy's place goes in front of the model's and the skin behind
@@ -573,9 +624,7 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          \x20   ljosout.ljosbinormal = (ljosplace * vec4(BINORMAL, 0.0)).xyz;\n\
          \x20   ljosout.ljoscolor = COLOR;\n",
     );
-    for (i, v) in out.iter().enumerate() {
-        let _ = writeln!(s, "    ljosout.ljosvary{} = {};", letters(i), pack(v));
-    }
+    s.push_str(&pack_writes(out));
     s.push_str("    return ljosout;\n}\nvoid main() {}\n");
     (s, before)
 }
@@ -777,7 +826,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
     let before = lines(&s);
     s.push_str(user);
     s.push_str("\nstruct LjosVertex {\n    vec4 ljosclip; vec4 ljosuvs;\n");
-    for i in 0..out.len() {
+    for i in 0..locations(out) {
         let _ = writeln!(s, "    vec4 ljosvary{};", letters(i));
     }
     s.push_str(
@@ -799,9 +848,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
         "    LjosVertex ljosout;\n\
          \x20   ljosout.ljosclip = POSITION; ljosout.ljosuvs = vec4(INPUT_UV, TEXTURE_UV);\n",
     );
-    for (i, v) in out.iter().enumerate() {
-        let _ = writeln!(s, "    ljosout.ljosvary{} = {};", letters(i), pack(v));
-    }
+    s.push_str(&pack_writes(out));
     s.push_str("    return ljosout;\n}\nvoid main() {}\n");
     (s, before)
 }
@@ -927,7 +974,7 @@ fn material_io(out: &[Varying]) -> String {
          \x20   @location(4) binormal: vec3<f32>,\n\
          \x20   @location(5) color: vec4<f32>,\n",
     );
-    for i in 0..out.len() {
+    for i in 0..locations(out) {
         let _ = writeln!(s, "    @location({}) vary{}: vec4<f32>,", 6 + i, letters(i));
     }
     s.push_str("};\n");
@@ -939,12 +986,22 @@ fn material_io(out: &[Varying]) -> String {
 fn varying_args(out: &[Varying], ins: &[Varying]) -> String {
     let mut s = String::new();
     for v in ins {
-        match out.iter().position(|o| o.name == v.name) {
-            Some(i) => {
-                let _ = write!(s, ", in.vary{}", letters(i));
-            }
-            None => s.push_str(", vec4<f32>(0.0)"),
-        }
+        let Some(i) = out.iter().position(|o| o.name == v.name) else {
+            s.push_str(", vec4<f32>(0.0)");
+            continue;
+        };
+        let at: usize = out[..i].iter().map(|o| o.width).sum();
+        let numbers: Vec<String> = (0..4)
+            .map(|c| {
+                if c < out[i].width {
+                    let (location, component) = slot(at + c);
+                    format!("in.vary{location}.{component}")
+                } else {
+                    "0.0".to_owned()
+                }
+            })
+            .collect();
+        let _ = write!(s, ", vec4<f32>({})", numbers.join(", "));
     }
     s
 }
@@ -998,7 +1055,7 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   out.binormal = v.ljosbinormal;\n\
          \x20   out.color = v.ljoscolor;\n"
     );
-    for i in 0..out.len() {
+    for i in 0..locations(out) {
         let l = letters(i);
         let _ = writeln!(s, "    out.vary{l} = v.ljosvary{l};");
     }
@@ -1171,7 +1228,7 @@ fn effect_glue(out: &[Varying], ins: &[Varying]) -> String {
          \x20   @builtin(position) clip: vec4<f32>,\n\
          \x20   @location(0) uvs: vec4<f32>,\n",
     );
-    for i in 0..out.len() {
+    for i in 0..locations(out) {
         let _ = writeln!(s, "    @location({}) vary{}: vec4<f32>,", 1 + i, letters(i));
     }
     // One triangle over the output, as blit.wgsl draws.
@@ -1186,7 +1243,7 @@ fn effect_glue(out: &[Varying], ins: &[Varying]) -> String {
          \x20   out.clip = v.ljosclip;\n\
          \x20   out.uvs = v.ljosuvs;\n"
     );
-    for i in 0..out.len() {
+    for i in 0..locations(out) {
         let l = letters(i);
         let _ = writeln!(s, "    out.vary{l} = v.ljosvary{l};");
     }
@@ -1253,6 +1310,18 @@ mod tests {
         material(
             Some("VARYING vec3 pos;\nVARYING float k;\nvoid MAIN() { pos = VERTEX; k = 1.0; }"),
             Some("VARYING vec3 pos;\nVARYING float k;\nvoid MAIN() { FRAGCOLOR = vec4(pos * k, 1.0); }"),
+            false,
+            &[],
+            &[],
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_matrix_varying_passes_as_its_columns() {
+        material(
+            Some("VARYING mat3 tbn;\nvoid MAIN() { tbn = mat3(TANGENT, BINORMAL, NORMAL); }"),
+            Some("VARYING mat3 tbn;\nvoid MAIN() { FRAGCOLOR = vec4(tbn[2], 1.0); }"),
             false,
             &[],
             &[],

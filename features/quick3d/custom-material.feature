@@ -387,6 +387,28 @@ Feature: CustomMaterial runs the author's shader snippets
       When 100 milliseconds pass
       Then the pixel at 100, 100 of the window is "#00ff00"
 
+    Scenario: A matrix passes from the vertex shader to the fragment shader
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              __vertexShaderCode: "VARYING mat3 seen; void MAIN() { seen = mat3(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0)); POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0); }"
+              __fragmentShaderCode: "VARYING mat3 seen; void MAIN() { FRAGCOLOR = vec4(seen[1], 1.0); }"
+            } }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 100, 100 of the window is "#00ff00"
+
   Rule: A material of no opacity draws nothing
 
     Scenario: Whatever its alpha mode
