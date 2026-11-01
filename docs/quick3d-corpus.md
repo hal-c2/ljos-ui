@@ -21,7 +21,7 @@ as robotarm's `Backend` and car-configurator's `AssetDownloader`.
 | App | Starts | Picture opened | What's wrong | Cause |
 |---|---|---|---|---|
 | dice | yes | yes: settings panel over an empty grey room, no table, no dice | nothing can be thrown; the table is not in view | `QtQuick3D.Physics` is not built, its types stand in as empty Items |
-| osmbuildings | yes | yes: blue, the token line, nothing else | no map, no buildings, no controls | `Fog` missing, `Quaternion.fromEulerAngles` missing, `OSMManager`, `OSMGeometry` and `CustomTextureData` are C++, a map needs the network and a token |
+| osmbuildings | yes | yes: map tiles and buildings from the network, fog to the horizon, with a white highlight at the lower left at the start | camera controls not driven | stand-ins in `corpus/standins/osmbuildings/` over `Geometry` and `TextureData` in QML; no Qt to compare with, judged against Qt's doc picture, taken from a steeper tilt where that highlight is off screen |
 | toycustomizer | yes | yes: "Tap to Start", no toy | no toy, nothing loads | assets are downloaded at build time; `QtQuick3D.Effects` and `QtQuick.Timeline` stand in as empty Items |
 | robotarm | yes (mock found) | yes, on the GPU: controls and circles at the right joints, no arm | the arm is not drawn; `+Material/` files are not chosen | `Model.source` takes only built-in meshes, `.mesh` files are left out without a word; file selectors not built |
 | car-configurator | yes (stand-in) | yes: "Built with Qt", "Initializing..." | stays at the splash | not yet known; material and environment properties missing (`clearcoatAmount`, `indexOfRefraction`, `specularAmount`, `blendMode`, `receivesReflections`, `fog`, ...), `MorphTarget`, `QtQuick.Timeline`, `Particles3D`, `Effects` |

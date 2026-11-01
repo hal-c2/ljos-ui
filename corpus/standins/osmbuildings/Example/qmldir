@@ -1,0 +1,4 @@
+module Example
+OSMManager 1.0 OSMManager.qml
+OSMGeometry 1.0 OSMGeometry.qml
+CustomTextureData 1.0 CustomTextureData.qml
