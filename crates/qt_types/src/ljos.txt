@@ -4025,6 +4025,7 @@ module QtQuick
 		prop cache QtQml.bool named
 		prop sourceSize QtQml.size named reset
 		prop mirror QtQml.bool named
+		prop retainWhileLoading QtQml.bool named
 		signal sourceChanged
 		signal statusChanged
 		signal progressChanged
@@ -4032,6 +4033,7 @@ module QtQuick
 		signal cacheChanged
 		signal sourceSizeChanged
 		signal mirrorChanged
+		signal retainWhileLoadingChanged
 	type QtQuick.BorderImageBorder BorderImageBorder
 		is uncreatable
 		prop left QtQml.int named

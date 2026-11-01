@@ -157,6 +157,9 @@ pub struct ImageBase {
     pub source_size: Size,
     #[qml(notify)]
     pub mirror: bool,
+    /// Whether the picture shown stays until the next `source` is ready.
+    #[qml(notify)]
+    pub retain_while_loading: bool,
     #[qml(skip)]
     run: Run,
 }
@@ -172,6 +175,7 @@ impl Default for ImageBase {
             cache: true,
             source_size: Size::default(),
             mirror: false,
+            retain_while_loading: false,
             run: Run::default(),
         }
     }
@@ -633,11 +637,19 @@ fn reload(e: &Engine, me: ObjectId) {
         }
         return;
     }
+    let retain = e.untrack(|| {
+        e.read(me, ImageBase::RETAIN_WHILE_LOADING.index)
+            .to_boolean()
+    });
     with_run(e, me, |r| {
-        r.key = None;
-        r.held = None;
+        // What was retained goes when the load ends: `finish` replaces it
+        // and `unload` clears it.
+        if !retain {
+            r.key = None;
+            r.held = None;
+            r.sharp = None;
+        }
         r.reshowing = false;
-        r.sharp = None;
         r.sharpening = None;
     });
     // The size of the old picture stays until the new one is there.
