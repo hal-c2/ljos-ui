@@ -583,6 +583,27 @@ mod tests {
         assert!(derive("Nowhere", "Item", None).is_none());
     }
 
+    /// `Qt` is one object every script has and no module registers: its own
+    /// table says what the engine puts on it.
+    #[test]
+    fn what_a_script_finds_on_qt_is_supported() {
+        for (member, kind) in [
+            ("color", MemberKind::Method),
+            ("colorEqual", MemberKind::Method),
+            ("callLater", MemberKind::Method),
+            ("application", MemberKind::Property),
+            ("AlignLeft", MemberKind::Enum),
+        ] {
+            let row = derive("QtQml", "Qt", Some(member)).unwrap();
+            assert_eq!(
+                (row.status, row.kind),
+                (ApiStatus::Supported, kind),
+                "{member}"
+            );
+        }
+        assert!(derive("QtQml", "Qt", Some("noSuchFunction")).is_none());
+    }
+
     /// Ljós's table says `ComboBox.popup` holds a `QtObject`; Qt's says a
     /// `Popup`, and that is where the rest of the path is looked for.
     #[test]

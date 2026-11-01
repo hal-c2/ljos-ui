@@ -32,7 +32,7 @@ use std::{
 
 use ljos_engine::{
     Engine, EnumInfo, MetaObject, MetaRef, PropertyAccess, PropertyFlags, PropertyInfo, TypeTag,
-    VALUE_TYPES, qt_namespace,
+    VALUE_TYPES, Value, qt_namespace,
 };
 use qml_front::{QtTypeOracle, TypeOracle};
 
@@ -371,6 +371,48 @@ impl<'a, 'c> Module<'a, 'c> {
                 let _ = write!(self.types, " {key}={number}");
             }
             self.types.push('\n');
+        }
+        self.describe_namespace_members();
+    }
+
+    /// The functions and properties of `Qt`. Nothing declares them: the
+    /// engine and the modules put them on the object as they start, so the
+    /// object is what is asked. Numbers are enum keys and capitals enums,
+    /// both written above; a leading `_` is the engine's own.
+    fn describe_namespace_members(&mut self) {
+        const MEMBERS: &str = r#"
+            Object.getOwnPropertyNames(Qt)
+                .filter(name => !/^[A-Z_]/.test(name) && typeof Qt[name] !== "number")
+                .sort()
+                .map(name => {
+                    const kind = typeof Qt[name];
+                    const { writable, set } = Object.getOwnPropertyDescriptor(Qt, name);
+                    return [name, kind, writable || set ? "" : " readonly"].join(",");
+                })
+                .join("\n")
+        "#;
+        let members = self
+            .all
+            .engine
+            .eval_js(MEMBERS)
+            .expect("what is on Qt can be listed");
+        let Value::String(members) = members else {
+            panic!("the list of what is on Qt is a string: {members:?}");
+        };
+        for member in members.lines() {
+            let mut words = member.split(',');
+            let (name, kind) = (words.next().unwrap_or(""), words.next().unwrap_or(""));
+            let readonly = words.next().unwrap_or("");
+            let held = match kind {
+                "function" => {
+                    let _ = writeln!(self.types, "\t\tmethod {name}");
+                    continue;
+                }
+                "string" => "QtQml.string",
+                "object" => OBJECT,
+                other => panic!("Qt.{name} is a {other}: say what a description calls that"),
+            };
+            let _ = writeln!(self.types, "\t\tprop {name} {held} named{readonly}");
         }
     }
 
