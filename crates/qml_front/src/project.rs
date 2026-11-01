@@ -287,6 +287,22 @@ impl Project {
         directories.into_iter().collect()
     }
 
+    /// The scripts the files import by path (`import "lib/x.js" as X`), as
+    /// the keys they are to be added under.
+    pub fn imported_scripts(&self) -> Vec<String> {
+        let mut scripts = BTreeSet::new();
+        for (file, summary) in &self.files {
+            for import in &summary.imports {
+                if let Source::Path(path) = &import.source
+                    && is_script(path)
+                {
+                    scripts.insert(self.import_dir(file, path));
+                }
+            }
+        }
+        scripts.into_iter().collect()
+    }
+
     /// Says the module `uri` has the type `name`, which is the file `file`:
     /// what a `qmldir` says, or the build that makes the module.
     pub fn add_type(&mut self, uri: &str, name: &str, file: &str) {

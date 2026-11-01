@@ -344,7 +344,34 @@ fn project(root: &Path, imports: &[PathBuf]) -> anyhow::Result<Project<QtTypeOra
         add_import(&mut project, root, dir);
     }
     add_directories_above(&mut project, root);
+    add_scripts_outside(&mut project, root);
     Ok(project)
+}
+
+/// Reads the scripts the files import that the walk over the root did not
+/// come to: beside a file of a directory above the root or of an import
+/// directory, or by a path that leads out of the root. A relative import
+/// is the importing file's own (Qt's "Importing a JavaScript Resource from
+/// a QML Document"), wherever that file is.
+fn add_scripts_outside(project: &mut Project<QtTypeOracle>, root: &Path) {
+    let mut read = std::collections::HashSet::new();
+    loop {
+        let unread: Vec<String> = project
+            .unread_scripts()
+            .into_iter()
+            .filter(|key| !read.contains(key))
+            .collect();
+        if unread.is_empty() {
+            return;
+        }
+        for key in unread {
+            // One that is not there is the compiler's to report.
+            if let Ok(text) = std::fs::read_to_string(dir_of(root, &key)) {
+                project.add_script(&key, text);
+            }
+            read.insert(key);
+        }
+    }
 }
 
 /// Adds the directories the files import by a path that leads out of the

@@ -246,6 +246,28 @@ impl<O: TypeOracle> Project<O> {
         self.scripts.get(path).map(String::as_str)
     }
 
+    /// The keys of the JavaScript files that the files and the scripts of
+    /// the project import and it does not have. What is added for them may
+    /// import others, so this is asked again after they are added.
+    pub fn unread_scripts(&self) -> Vec<String> {
+        let imported = self.scripts.iter().flat_map(|(key, text)| {
+            crate::script::lower("", key, text)
+                .imports
+                .into_iter()
+                .map(|import| import.key)
+        });
+        let wanted: BTreeSet<String> = self
+            .front
+            .imported_scripts()
+            .into_iter()
+            .chain(imported)
+            .collect();
+        wanted
+            .into_iter()
+            .filter(|key| !self.scripts.contains_key(key))
+            .collect()
+    }
+
     /// Forgets the JavaScript file at `path`.
     pub fn remove_script(&mut self, path: &str) {
         if self.scripts.remove(path).is_some() {

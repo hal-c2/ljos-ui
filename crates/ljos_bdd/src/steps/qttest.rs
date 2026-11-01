@@ -36,6 +36,15 @@ fn tests_run_in(w: &mut LjosWorld, dir: String) -> StepResult {
     })
 }
 
+#[when(regex = r#"^the tests in "([^"]+)" are run with the import path "([^"]+)"$"#)]
+fn tests_run_in_with_import(w: &mut LjosWorld, dir: String, import: String) -> StepResult {
+    w.run_tests(&TestRun {
+        dir: Some(dir),
+        import_paths: vec![import],
+        ..TestRun::default()
+    })
+}
+
 // `TZ`, as a program is started in a zone: an IANA name (`Europe/Berlin`)
 // or a POSIX rule.
 #[when(regex = r#"^the tests are run in the time zone "([^"]+)"$"#)]

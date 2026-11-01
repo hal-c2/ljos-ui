@@ -413,6 +413,89 @@ Feature: Test files, test cases and what they import
         """
 
     @qt-parity
+    Scenario Outline: A file outside the directory of the tests has the scripts it imports
+      Given the file "lib/js/small.js":
+        """
+        .pragma library
+        .import "more.js" as More
+        function path(n) { return "M0 0L" + More.tail(n) }
+        """
+      And the file "lib/js/more.js":
+        """
+        .pragma library
+        function tail(n) { return n }
+        """
+      And the file "lib/A.qml":
+        """qml
+        import QtQuick
+        import "js/small.js" as S
+        Item { property string p: S.path("1") }
+        """
+      And the file "tests/near/N.qml":
+        """qml
+        import QtQuick
+        import "../../lib/js/small.js" as S
+        Item { property string p: S.path("1") }
+        """
+      And the file "tests/tst_far.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        import "../lib"
+        import "near"
+        TestCase {
+          name: "Far"
+          <type> { id: made }
+          function test_it() { compare(made.p, "M0 0L1") }
+        }
+        """
+      When the tests in "tests" are run
+      Then the test report has the lines:
+        """
+        PASS   : Far::test_it()
+        """
+      And the test run exits with status 0
+
+      Examples:
+        | type |
+        | A    |
+        | N    |
+
+    @qt-parity
+    Scenario: A file of a module in an import path has the script beside it
+      Given the file "imports/Helpers/qmldir":
+        """
+        module Helpers
+        Tripler 1.0 Tripler.qml
+        """
+      And the file "imports/Helpers/times.js":
+        """
+        function by(a, b) { return a * b }
+        """
+      And the file "imports/Helpers/Tripler.qml":
+        """qml
+        import QtQuick
+        import "times.js" as Times
+        QtObject { property int output: Times.by(4, 3) }
+        """
+      And the file "tests/tst_far.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        import Helpers
+        TestCase {
+          name: "Far"
+          Tripler { id: tripler }
+          function test_it() { compare(tripler.output, 12) }
+        }
+        """
+      When the tests in "tests" are run with the import path "imports"
+      Then the test report has the lines:
+        """
+        PASS   : Far::test_it()
+        """
+
+    @qt-parity
     Scenario: A module in an import path given to the run can be imported
       Given the file "imports/Helpers/qmldir":
         """
