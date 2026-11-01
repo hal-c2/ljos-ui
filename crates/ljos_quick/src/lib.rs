@@ -263,7 +263,16 @@ pub fn register(engine: &Engine) {
     // As Qt's `createObject` and `Qt.createQmlObject` do.
     engine.on_placed_under(|e, made, parent| {
         if !item::is_item(e, parent) {
-            return false;
+            // A default `data` (a Window's, a 3D Node's) is how the parent
+            // takes its children. Any other default is a list of its own,
+            // as a `Path`'s elements are: the object is only owned by it
+            // until something puts it in the list.
+            let takes_children = e
+                .default_property(parent)
+                .ok()
+                .and_then(|p| Some(e.meta_of(parent)?.property(p)?.name.as_str() == "data"))
+                .unwrap_or(false);
+            return !takes_children && !item::is_item(e, made);
         }
         // The item's own `data`, which a Loader also hears of.
         if item::is_item(e, made)

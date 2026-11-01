@@ -58,6 +58,28 @@ Feature: Where an object made under a parent goes
     Then the property "got" of "root" is "in the slot slot"
     And the log has no warnings
 
+  Scenario: An object made under an object that is not an item is in none of its lists
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property int kept: -1
+        QtObject {
+          id: owner
+          default property list<QtObject> kids
+        }
+        Component { id: made; QtObject { } }
+        Component.onCompleted: {
+          made.createObject(owner)
+          Qt.createQmlObject("import QtQml; QtObject { }", owner)
+          kept = owner.kids.length
+        }
+      }
+      """
+    Then the property "kept" of "root" is 0
+    And the log has no warnings
+
   Scenario: An object that is not an item made under an item is in none of its lists
     Given the QML:
       """qml
