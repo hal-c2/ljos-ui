@@ -50,3 +50,16 @@ Feature: A node has states, as an item has
     Then the property "x" of "mover" is 0
     When 300 milliseconds pass
     Then the property "x" of "mover" is 40
+
+  Scenario: A node's staticFlags is kept, and only saves work
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      View3D {
+        width: 100; height: 100
+        Node { objectName: "still"; staticFlags: 0 }
+      }
+      """
+    Then the property "staticFlags" of "still" is 0
+    And the log has no warnings

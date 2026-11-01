@@ -54,3 +54,15 @@ Feature: Render type
       | Material  |
       | Fusion    |
       | Universal |
+
+  Scenario: A text item takes a render type quality and keeps it
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        Text { objectName: "t"; text: "a" }
+        Text { objectName: "fine"; text: "a"; renderTypeQuality: Text.VeryHighRenderTypeQuality }
+      }
+      """
+    Then the property "renderTypeQuality" of "t" is -1
+    And the property "renderTypeQuality" of "fine" is 208

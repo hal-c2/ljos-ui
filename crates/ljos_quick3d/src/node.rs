@@ -85,6 +85,9 @@ pub struct Node {
     /// Kept; the drawing does not use it yet.
     #[qml(notify)]
     pub opacity: f64,
+    /// Kept: it says a node will not move, which only saves work.
+    #[qml(notify)]
+    pub static_flags: i32,
     #[qml(notify)]
     pub visible: bool,
     /// Where the node is in the scene: its own place through its parents'
@@ -125,6 +128,7 @@ impl Default for Node {
             position: Vector3d::default(),
             rotation: IDENTITY,
             euler_rotation: Vector3d::default(),
+            static_flags: 0,
             scale: vector(d::node::SCALE),
             pivot: Vector3d::default(),
             opacity: d::node::OPACITY,

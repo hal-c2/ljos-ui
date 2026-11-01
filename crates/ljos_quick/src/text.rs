@@ -193,6 +193,9 @@ pub struct Text {
     /// Kept; there is one way of drawing text.
     #[qml(notify, enumeration = "RenderType")]
     pub render_type: i32,
+    /// Kept; there is one way of drawing text.
+    #[qml(notify, enumeration = "RenderTypeQuality")]
+    pub render_type_quality: i32,
     #[qml(notify, readonly)]
     pub content_width: f64,
     #[qml(notify, readonly)]
@@ -259,6 +262,16 @@ fn text_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
         .collect(),
     ));
     table.push((
+        "RenderTypeQuality",
+        vec![
+            ("DefaultRenderTypeQuality", -1),
+            ("LowRenderTypeQuality", 26),
+            ("NormalRenderTypeQuality", 52),
+            ("HighRenderTypeQuality", 104),
+            ("VeryHighRenderTypeQuality", 208),
+        ],
+    ));
+    table.push((
         "FontSizeMode",
         [
             ("FixedSize", font_size_mode::FIXED_SIZE),
@@ -320,6 +333,7 @@ impl Default for Text {
             line_height: 1.0,
             line_height_mode: line_height_mode::PROPORTIONAL,
             render_type: 0,
+            render_type_quality: -1,
             content_width: 0.0,
             content_height: 0.0,
             // Empty text is still one line.
