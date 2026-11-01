@@ -58,6 +58,40 @@ Feature: A transparent item still takes input
       Then the property "clicks" of "above" is 1
       And the property "clicks" of "below" is 0
 
+    Scenario: A transparent button in a layout is clicked before anything has hovered it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import QtQuick.Layouts
+        Rectangle {
+          width: 100; height: 100
+          HoverHandler { id: hover }
+          RowLayout { anchors.fill: parent; opacity: hover.hovered ? 1 : 0
+            Button { objectName: "over"; Layout.fillWidth: true; Layout.fillHeight: true
+              property int clicks: 0; onClicked: clicks++ } }
+        }
+        """
+      When the user presses the pointer at 50, 50
+      And the user releases the pointer at 50, 50
+      Then the property "clicks" of "over" is 1
+
+    Scenario: A transparent control in a row of a list is clicked
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ListView {
+          id: list; objectName: "list"; width: 100; height: 100; model: 2
+          property int clicks: 0
+          delegate: Item { required property int index; width: 100; height: 50; opacity: 0
+            Button { anchors.fill: parent; onClicked: list.clicks += index + 1 } }
+        }
+        """
+      When the user presses the pointer at 50, 75
+      And the user releases the pointer at 50, 75
+      Then the property "clicks" of "list" is 2
+
     Scenario: An item that is not visible takes no click
       Given the QML:
         """qml
