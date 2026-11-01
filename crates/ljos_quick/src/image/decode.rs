@@ -407,6 +407,9 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     if let Some(size) = super::radiance::dimensions(bytes) {
         return Some(size);
     }
+    if let Some(size) = super::ktx::dimensions(bytes) {
+        return Some(size);
+    }
     jpeg_frame(bytes).map(|f| (f.width, f.height))
 }
 
@@ -429,9 +432,13 @@ pub(crate) fn load_bytes(url: &str, bytes: &[u8], request: Request) -> Result<Lo
         });
     }
     within_budget(url, bytes, request)?;
-    if request.texture && super::radiance::is_radiance(bytes) {
-        let p = super::radiance::decode(bytes, MOST_PIXEL_BYTES)
-            .map_err(|reason| LoadError::decode(url, reason))?;
+    if request.texture && (super::radiance::is_radiance(bytes) || super::ktx::is_ktx(bytes)) {
+        let p = if super::ktx::is_ktx(bytes) {
+            super::ktx::decode(bytes, MOST_PIXEL_BYTES)
+        } else {
+            super::radiance::decode(bytes, MOST_PIXEL_BYTES)
+        }
+        .map_err(|reason| LoadError::decode(url, reason))?;
         let image = ImageHandle::from_rgbe(p.width, p.height, p.data)
             .map_err(|err| LoadError::decode(url, err.to_string()))?;
         return Ok(Loaded {
@@ -967,10 +974,7 @@ pub(crate) fn has_no_suffix(name: &str) -> bool {
 /// Only files count, and the suffix is matched as written: `logo.SVG` is
 /// not found for `logo`.
 fn read_file(path: &std::path::Path) -> Option<Vec<u8>> {
-    use std::io::Read;
-    let mut bytes = Vec::new();
-    open_file(path)?.read_to_end(&mut bytes).ok()?;
-    Some(bytes)
+    super::ktx::read_through_first_level(&mut open_file(path)?).ok()
 }
 
 /// The file [`read_file`] reads.

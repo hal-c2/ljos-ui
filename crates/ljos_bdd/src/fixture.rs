@@ -98,6 +98,63 @@ pub fn radiance(
     Ok(out)
 }
 
+/// A KTX 1.1 cube of half floats with no levels but the first: the sky face
+/// is `upper`, the ground face `lower`, and the sides are `upper` above the
+/// horizon and `lower` below it, as a baked probe of [`radiance`]'s halves
+/// would be. Values are 0, 0.25, 0.5 or 1, which half floats hold exactly.
+pub fn ktx_cube(side: u32, upper: f32, lower: f32) -> Result<Vec<u8>, String> {
+    if side == 0 || side % 2 != 0 {
+        return Err("a cube's side is even and at least 2".to_owned());
+    }
+    let half = |v: f32| -> Result<u16, String> {
+        match v {
+            0.0 => Ok(0),
+            0.25 => Ok(0x3400),
+            0.5 => Ok(0x3800),
+            1.0 => Ok(0x3c00),
+            _ => Err(format!("{v} is not one of 0, 0.25, 0.5 and 1")),
+        }
+    };
+    let (up, down) = (half(upper)?, half(lower)?);
+    let mut out = vec![
+        0xab, b'K', b'T', b'X', b' ', b'1', b'1', 0xbb, b'\r', b'\n', 0x1a, b'\n',
+    ];
+    // Order mark, half float, its size, RGBA, RGBA16F, RGBA, the side twice,
+    // no depth, no array, six faces, one level, no key and value data.
+    for word in [
+        0x0403_0201u32,
+        0x140b,
+        2,
+        0x1908,
+        0x881a,
+        0x1908,
+        side,
+        side,
+        0,
+        0,
+        6,
+        1,
+        0,
+    ] {
+        out.extend(word.to_le_bytes());
+    }
+    out.extend((side * side * 8).to_le_bytes());
+    for face in 0..6 {
+        for y in 0..side {
+            let value = match face {
+                2 => up,
+                3 => down,
+                _ if y < side / 2 => up,
+                _ => down,
+            };
+            for x in 0..side * 4 {
+                out.extend((if x % 4 == 3 { 0x3c00 } else { value }).to_le_bytes());
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// One colour in Radiance's shared-exponent form.
 fn rgbe([r, g, b]: [f32; 3]) -> [u8; 4] {
     let max = r.max(g).max(b);

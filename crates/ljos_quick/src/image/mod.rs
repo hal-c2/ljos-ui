@@ -21,6 +21,7 @@
 mod animated;
 mod border;
 mod decode;
+mod ktx;
 mod radiance;
 mod store;
 mod tint;

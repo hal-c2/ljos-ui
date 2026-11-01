@@ -105,6 +105,29 @@ fn a_radiance_file_of_halves(
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// What light probes are baked into; see `fixture::ktx_cube`.
+#[given(
+    regex = r#"^an? (\d+) KTX cube file "([^"]+)" with an upper half of ([\d.]+) and a lower half of ([\d.]+)$"#
+)]
+fn a_ktx_cube_file(
+    w: &mut LjosWorld,
+    side: u32,
+    name: String,
+    upper: f32,
+    lower: f32,
+) -> StepResult {
+    let bytes = fixture::ktx_cube(side, upper, lower)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
+// A cube whose last bytes are gone, as a download that stopped would leave.
+#[given(regex = r#"^an? (\d+) KTX cube file "([^"]+)" cut short$"#)]
+fn a_ktx_cube_file_cut_short(w: &mut LjosWorld, side: u32, name: String) -> StepResult {
+    let mut bytes = fixture::ktx_cube(side, 0.5, 0.5)?;
+    bytes.truncate(bytes.len() - 8);
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 /// "R, G, B" as three numbers of linear radiance.
 fn parse_radiance(text: &str) -> Result<[f32; 3], String> {
     let parts = text

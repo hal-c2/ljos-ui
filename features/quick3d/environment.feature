@@ -25,6 +25,8 @@ Feature: A light probe, the sky box and tone mapping
   Background:
     Given a 64 by 32 Radiance image file "grey.hdr" filled with 0.5, 0.5, 0.5
     And a 64 by 32 Radiance image file "halves.hdr" with an upper half of 0.5, 0.5, 0.5 and a lower half of 0, 0, 0
+    And a 16 KTX cube file "halves.ktx" with an upper half of 0.5 and a lower half of 0
+    And a 16 KTX cube file "cut.ktx" cut short
     And a 64 by 32 image file "grey.png" filled with "#808080"
     And a 4 by 4 image file "black.png" filled with "#000000"
     And the QML:
@@ -77,6 +79,15 @@ Feature: A light probe, the sky box and tone mapping
       When the property "source" of "probe" is set to "halves.hdr"
       Then the pixel at 100, 20 of the window is within 3 of "#bcbcbc"
       And the pixel at 100, 180 of the window is within 3 of "#000000"
+
+    Scenario: A baked KTX cube is a light probe too
+      When the property "source" of "probe" is set to "halves.ktx"
+      Then the pixel at 100, 20 of the window is within 3 of "#bcbcbc"
+      And the pixel at 100, 180 of the window is within 3 of "#000000"
+
+    Scenario: A KTX file cut short says so and lights nothing
+      When the property "source" of "probe" is set to "cut.ktx"
+      Then the log has a warning matching "ends inside its first level"
 
     Scenario: probeOrientation turns the probe
       When the property "source" of "probe" is set to "halves.hdr"
