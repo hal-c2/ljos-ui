@@ -173,6 +173,64 @@ Feature: An application run with no window
       And the answer's "/matches/0/role" is null
       And the answer's "/matches/0/name" is null
 
+  # What `qml6 -platform offscreen` says of the same files: the one window
+  # there is is active, and an item that asks for focus has active focus.
+  Rule: The window is active, as the only window there is
+
+    Background:
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        ApplicationWindow {
+            objectName: "root"
+            width: 300; height: 200; visible: true
+            TextField { objectName: "first"; focus: true; width: 200 }
+            TextField { objectName: "second"; y: 50; width: 200 }
+        }
+        """
+
+    Scenario: An item that asks for focus has it from the start
+      When the author starts "ljos run Main.qml --headless --mcp=inspect,eval"
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#root", "source": "active"}
+        """
+      Then the answer's "/value" is true
+      When the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#first", "source": "activeFocus"}
+        """
+      Then the answer's "/value" is true
+
+    Scenario: What is typed goes to the field clicked
+      When the author starts "ljos run Main.qml --headless --mcp=inspect,input,eval"
+      And the agent calls the tool "app_click" with:
+        """json
+        {"target": "#second"}
+        """
+      And the agent calls the tool "app_type" with:
+        """json
+        {"text": "x"}
+        """
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#second", "source": "text"}
+        """
+      Then the answer's "/value" is "x"
+
+    Scenario: Tab goes to the next field
+      When the author starts "ljos run Main.qml --headless --mcp=inspect,input,eval"
+      And the agent calls the tool "app_press" with:
+        """json
+        {"keys": "Tab"}
+        """
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#second", "source": "activeFocus"}
+        """
+      Then the answer's "/value" is true
+
   Rule: Saves are applied as they are on a window
 
     Scenario: A save is applied and what the application did is kept

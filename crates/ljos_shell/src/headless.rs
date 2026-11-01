@@ -250,7 +250,9 @@ impl<M: Send + 'static> Headless<M> {
                 egui::Pos2::ZERO,
                 self.size.into(),
             )),
-            focused: false,
+            // The only window there is is the active one, as under
+            // `qml6 -platform offscreen`: nothing else can take the keyboard.
+            focused: true,
             time: Some(began.duration_since(self.started).as_secs_f64()),
             ..egui::RawInput::default()
         };
