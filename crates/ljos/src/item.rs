@@ -123,6 +123,8 @@ pub use ljos_quick::{
 /// An item drawn off the screen for another (a 3D texture of it): see
 /// [`item_picture`].
 pub use ljos_quick::{ItemPicture, PictureArea, item_picture};
+/// For a module crate whose objects hold states as items do.
+pub use ljos_quick::{attach_stateless, register_state_owner};
 pub use ljos_render::{
     Border, Brush, BrushGradient, Decorations, DisplayList, DisplayListBuilder, DrawOp, FillRule,
     GlyphRun, GradientGeometry, GradientStop, LinearGradient, Paint, PathStyle, PositionedGlyph,

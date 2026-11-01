@@ -528,11 +528,12 @@ f 1/1/1 2/2/1 3/3/1 4/4/1
     write(HERE / "quadrants.png", png(side, side, [top] * (side // 2) + [bottom] * (side // 2)))
 
 
-def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joints=0):
+def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joints=0, targets=None):
     """A `.mesh` file: `rows` as one vertex buffer, `attributes` as (name,
     number kind, count, offset). Each subset is (first index, index count).
     The format goes on to the next multiple of four after each part, by four
-    when it is at one already."""
+    when it is at one already. `targets` is (layer names, target count, the
+    layers' numbers), which only version 7 keeps where this writes them."""
     body = bytearray()
 
     def align():
@@ -542,15 +543,15 @@ def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joint
     index_bytes = struct.pack("<%dH" % len(indices), *indices)
     body += struct.pack(
         "<14I",
-        0,  # target attributes
+        len(targets[0]) if targets else 0,  # target attributes
         len(attributes),
         stride,
-        0,  # target bytes
+        len(targets[2]) * 4 if targets else 0,  # target bytes
         len(vertices),
         3,  # 16 bit indices
         0,
         len(index_bytes),
-        0,  # targets
+        targets[1] if targets else 0,  # targets
         len(subsets),
         joints,
         0,
@@ -572,6 +573,20 @@ def mesh_file(path, rows, indices, subsets, attributes, stride, version=5, joint
         # The box of the subset is left wide open: these are few corners.
         body += struct.pack("<2I6f2I", count, first, -1e4, -1e4, -1e4, 1e4, 1e4, 1e4, 0, 0)
         body += struct.pack("<2I", 0, 0)  # the size of its light map
+        if version >= 6:
+            body += struct.pack("<I", 0)  # its levels of detail
+    if targets:
+        align()
+        for _ in subsets:
+            align()
+        align()
+        body += b"\0" * (len(targets[0]) * 16)
+        align()
+        for name in targets[0]:
+            raw = name.encode() + b"\0"
+            body += struct.pack("<I", len(raw)) + raw
+            align()
+        body += struct.pack("<%df" % len(targets[2]), *targets[2])
     out = struct.pack("<IHHI", 3365961549, version, 0, 0) + bytes(body)
     table = struct.pack("<QII", 0, 0, 0)  # where the file's one mesh starts
     write(path, out + table + struct.pack("<4I", 555777497, 0, 0, 1))
@@ -581,6 +596,40 @@ def square_rows(x0, x1, half):
     """A square in the XY plane facing +Z, as positions, normals and UVs."""
     corners = [(x0, -half), (x1, -half), (x1, half), (x0, half)]
     return [struct.pack("<8f", x, y, 0, 0, 0, 1, 0, 0) for x, y in corners]
+
+
+def morph_mesh():
+    """A square 100 units across with one target that moves every corner 100
+    units right, in a texture of 2 by 2."""
+    numbers = [100.0, 0.0, 0.0, 0.0] * 4
+    mesh_file(
+        HERE / "morph.mesh",
+        square_rows(-50, 50, 50),
+        [0, 1, 2, 0, 2, 3],
+        [(0, 6)],
+        [("attr_pos", 10, 3, 0), ("attr_norm", 10, 3, 12), ("attr_uv0", 10, 2, 24)],
+        32,
+        version=7,
+        targets=(["attr_pos"], 1, numbers),
+    )
+
+
+def colored_mesh():
+    """A square 100 units across, every corner of it red."""
+    rows = [r + struct.pack("<4f", 1, 0, 0, 1) for r in square_rows(-50, 50, 50)]
+    mesh_file(
+        HERE / "colored.mesh",
+        rows,
+        [0, 1, 2, 0, 2, 3],
+        [(0, 6)],
+        [
+            ("attr_pos", 10, 3, 0),
+            ("attr_norm", 10, 3, 12),
+            ("attr_uv0", 10, 2, 24),
+            ("attr_color", 10, 4, 32),
+        ],
+        48,
+    )
 
 
 def two_squares_mesh():
@@ -646,4 +695,6 @@ if __name__ == "__main__":
     obj_files()
     two_squares_mesh()
     cube_mesh()
+    morph_mesh()
+    colored_mesh()
     jointed_mesh()

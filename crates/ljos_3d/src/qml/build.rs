@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::enums::{
-    alpha, antialiasing, background, channel, cull, filter, fov_orientation, lighting, shadow_map,
-    soft_shadow, tiling, tonemap,
+    alpha, antialiasing, background, blend, channel, cull, filter, fov_orientation, lighting,
+    shadow_map, soft_shadow, tiling, tonemap,
 };
 use super::{GridLines, Prop3d as P, SceneSource, Type3d as T, defaults as d};
 use crate::custom::{
@@ -17,9 +17,10 @@ use crate::instancing::{MAX_JOINTS, Skin};
 use crate::math::{Quat, Vec3};
 use crate::mesh_file::MeshFile;
 use crate::scene::{
-    AlphaMode, Background, Camera, Cascades, Color, CullMode, DefaultMaterial, Environment, Fade,
-    Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
-    PrincipledMaps, PrincipledMaterial, Scene, Shadow, Tonemap, Transform,
+    AlphaMode, Background, BlendMode, Camera, Cascades, Color, CullMode, DefaultMaps,
+    DefaultMaterial, Environment, Fade, Fog, Fresnel, Light, LightProbe, Lighting, Material,
+    MeshSource, Model, Node, NodeId, NodeKind, Primitive, PrincipledMaps, PrincipledMaterial,
+    Scene, Shadow, Surface, Tonemap, Transform,
 };
 use crate::texture::{Channel, Filter, Sampling, Texture, Tiling, UvTransform};
 
@@ -45,6 +46,7 @@ pub fn build<S: SceneSource>(src: &S, view: S::Object) -> Built<S::Object> {
         ids: HashMap::new(),
         loaded: Vec::new(),
         later: Vec::new(),
+        scoped: Vec::new(),
     };
     for o in src.objects(view, P::Data) {
         walk.node(None, o);
@@ -178,6 +180,8 @@ struct Walk<'s, S: SceneSource> {
     /// Models whose instance root or joints are other nodes, which may
     /// come later in the walk: given once every node has its place.
     later: Vec<(S::Object, NodeId)>,
+    /// The lights, whose scope may be a node that comes later in the walk.
+    scoped: Vec<(S::Object, NodeId)>,
 }
 
 impl<S: SceneSource> Walk<'_, S> {
@@ -220,12 +224,16 @@ impl<S: SceneSource> Walk<'_, S> {
             n.casts_shadows = on(s, obj, P::CastsShadows, d::model::CASTS_SHADOWS);
             n.receives_shadows = on(s, obj, P::ReceivesShadows, d::model::RECEIVES_SHADOWS);
             n.instancing = s.object(obj, P::Instancing).and_then(|t| s.instancing(t));
+            n.depth_bias = num(s, obj, P::DepthBias, d::model::DEPTH_BIAS);
         }
         n.shadow = shadow(s, obj);
         let id = self.scene.add(parent, n);
         self.ids.insert(obj, id);
         if is_model {
             self.later.push((obj, id));
+        }
+        if s.is(obj, T::Light) {
+            self.scoped.push((obj, id));
         }
         if is_model && let Some(file) = mesh_file(s, self.view, obj) {
             self.mesh_file(obj, id, &file);
@@ -249,6 +257,15 @@ impl<S: SceneSource> Walk<'_, S> {
     /// Gives the models their instance roots and skins.
     fn finish(&mut self) {
         let s = self.s;
+        // After the walk: a scope may be declared after its light.
+        for (obj, id) in std::mem::take(&mut self.scoped) {
+            let scope = s
+                .object(obj, P::Scope)
+                .and_then(|o| self.ids.get(&o).copied());
+            if let Some(node) = self.scene.node_mut(id) {
+                node.scope = scope;
+            }
+        }
         for (obj, id) in std::mem::take(&mut self.later) {
             let root = s
                 .object(obj, P::InstanceRoot)
@@ -274,6 +291,16 @@ impl<S: SceneSource> Walk<'_, S> {
             Some(n) => (n.casts_shadows, n.receives_shadows, n.instancing.clone()),
             None => return,
         };
+        let targets: Vec<(f32, i32)> = s
+            .objects(obj, P::MorphTargets)
+            .into_iter()
+            .map(|t| {
+                (
+                    num(s, t, P::Weight, d::morph_target::WEIGHT),
+                    int(s, t, P::Attributes, d::morph_target::ATTRIBUTES),
+                )
+            })
+            .collect();
         for (i, part) in file.parts.iter().enumerate() {
             if part.empty {
                 continue;
@@ -285,7 +312,7 @@ impl<S: SceneSource> Walk<'_, S> {
                 continue;
             };
             let mut n = Node::new(NodeKind::Model(Model {
-                mesh: MeshSource::Custom(part.geometry.clone()),
+                mesh: MeshSource::Custom(file.morphed(i, &targets)),
                 material,
             }));
             n.casts_shadows = casts;
@@ -484,6 +511,11 @@ fn mesh_file<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<A
 
 fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Material> {
     let map = |p| s.object(obj, p).and_then(|t| texture(s, view, t));
+    let blend_mode = |default| match int(s, obj, P::BlendMode, default) {
+        blend::SCREEN => BlendMode::Screen,
+        blend::MULTIPLY => BlendMode::Multiply,
+        _ => BlendMode::SourceOver,
+    };
     let channel = |p, default| match int(s, obj, p, default) {
         channel::G => Channel::G,
         channel::B => Channel::B,
@@ -511,10 +543,44 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
             specular_amount: num(s, obj, P::SpecularAmount, dm::SPECULAR_AMOUNT),
             specular_roughness: num(s, obj, P::SpecularRoughness, dm::SPECULAR_ROUGHNESS),
             cull_mode: cull_mode(),
+            opacity: num(s, obj, P::Opacity, dm::OPACITY),
+            opacity_channel: channel(P::OpacityChannel, dm::OPACITY_CHANNEL),
+            emissive: {
+                let e = vec3(s, obj, P::EmissiveFactor, dm::EMISSIVE_FACTOR);
+                [e.x, e.y, e.z]
+            },
+            maps: Box::new(DefaultMaps {
+                opacity: map(P::OpacityMap),
+                emissive: map(P::EmissiveMap),
+                normal: map(P::NormalMap),
+                roughness: map(P::RoughnessMap),
+                specular: map(P::SpecularMap),
+            }),
+            specular_tint: color(s, obj, P::SpecularTint, dm::SPECULAR_TINT),
+            fresnel_power: num(s, obj, P::FresnelPower, dm::FRESNEL_POWER),
+            blend_mode: blend_mode(dm::BLEND_MODE),
+            vertex_colors: on(s, obj, P::VertexColorsEnabled, dm::VERTEX_COLORS_ENABLED),
         }));
     }
     if s.is(obj, T::PrincipledMaterial) {
         use d::principled_material as pm;
+        // Scale and bias count only once switched on; the power always.
+        let fresnel = |power, enabled, scale, bias| {
+            let on_ = on(s, obj, enabled, false);
+            Fresnel {
+                power: num(s, obj, power, pm::FRESNEL_POWER),
+                scale: if on_ {
+                    num(s, obj, scale, pm::FRESNEL_SCALE)
+                } else {
+                    1.0
+                },
+                bias: if on_ {
+                    num(s, obj, bias, pm::FRESNEL_BIAS)
+                } else {
+                    0.0
+                },
+            }
+        };
         let emissive = vec3(s, obj, P::EmissiveFactor, pm::EMISSIVE_FACTOR);
         return Some(Material::Principled(PrincipledMaterial {
             base_color: color(s, obj, P::BaseColor, pm::BASE_COLOR),
@@ -545,6 +611,50 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
                 occlusion_amount: num(s, obj, P::OcclusionAmount, pm::OCCLUSION_AMOUNT),
                 opacity: map(P::OpacityMap),
                 opacity_channel: channel(P::OpacityChannel, pm::OPACITY_CHANNEL),
+                transmission: map(P::TransmissionMap),
+                transmission_channel: channel(P::TransmissionChannel, pm::TRANSMISSION_CHANNEL),
+                height: map(P::HeightMap),
+                height_channel: channel(P::HeightChannel, pm::HEIGHT_CHANNEL),
+                surface: Surface {
+                    specular_amount: num(s, obj, P::SpecularAmount, pm::SPECULAR_AMOUNT),
+                    specular_tint: num(s, obj, P::SpecularTint, pm::SPECULAR_TINT),
+                    index_of_refraction: num(s, obj, P::IndexOfRefraction, pm::INDEX_OF_REFRACTION),
+                    fresnel: fresnel(
+                        P::FresnelPower,
+                        P::FresnelScaleBiasEnabled,
+                        P::FresnelScale,
+                        P::FresnelBias,
+                    ),
+                    clearcoat_amount: num(s, obj, P::ClearcoatAmount, pm::CLEARCOAT_AMOUNT),
+                    clearcoat_roughness: num(
+                        s,
+                        obj,
+                        P::ClearcoatRoughnessAmount,
+                        pm::CLEARCOAT_ROUGHNESS_AMOUNT,
+                    ),
+                    clearcoat_fresnel: fresnel(
+                        P::ClearcoatFresnelPower,
+                        P::ClearcoatFresnelScaleBiasEnabled,
+                        P::ClearcoatFresnelScale,
+                        P::ClearcoatFresnelBias,
+                    ),
+                    transmission_factor: num(
+                        s,
+                        obj,
+                        P::TransmissionFactor,
+                        pm::TRANSMISSION_FACTOR,
+                    ),
+                    height_amount: num(s, obj, P::HeightAmount, pm::HEIGHT_AMOUNT),
+                    height_samples: [
+                        int(s, obj, P::MinHeightMapSamples, pm::MIN_HEIGHT_MAP_SAMPLES).max(1)
+                            as u32,
+                        int(s, obj, P::MaxHeightMapSamples, pm::MAX_HEIGHT_MAP_SAMPLES).max(1)
+                            as u32,
+                    ],
+                    blend_mode: blend_mode(pm::BLEND_MODE),
+                    vertex_colors: on(s, obj, P::VertexColorsEnabled, pm::VERTEX_COLORS_ENABLED),
+                    light_probe: map(P::LightProbe),
+                },
             }),
         }));
     }
@@ -729,7 +839,11 @@ fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object) -> Enviro
         dither: on(s, env, P::AoDither, se::AO_DITHER),
     })
     .filter(|ao| ao_on && ao.shows());
+    let fog = s.object(env, P::Fog).and_then(|f| fog(s, f));
     let mut environment = Environment {
+        fog,
+        specular_aa: on(s, env, P::SpecularAAEnabled, se::SPECULAR_AA_ENABLED),
+        depth_test: on(s, env, P::DepthTestEnabled, se::DEPTH_TEST_ENABLED),
         background,
         msaa_samples,
         light_probe,
@@ -742,6 +856,37 @@ fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object) -> Enviro
         extended(s, view, env, &mut environment);
     }
     environment
+}
+
+/// The `Fog` `f`, if it is one and it is enabled.
+fn fog<S: SceneSource>(s: &S, f: S::Object) -> Option<Fog> {
+    use d::fog as df;
+    if !s.is(f, T::Fog) || !on(s, f, P::Enabled, df::ENABLED) {
+        return None;
+    }
+    let depth = on(s, f, P::DepthEnabled, df::DEPTH_ENABLED).then(|| {
+        [
+            num(s, f, P::DepthNear, df::DEPTH_NEAR),
+            num(s, f, P::DepthFar, df::DEPTH_FAR),
+            num(s, f, P::DepthCurve, df::DEPTH_CURVE),
+        ]
+    });
+    let height = on(s, f, P::HeightEnabled, df::HEIGHT_ENABLED).then(|| {
+        [
+            num(s, f, P::LeastIntenseY, df::LEAST_INTENSE_Y),
+            num(s, f, P::MostIntenseY, df::MOST_INTENSE_Y),
+            num(s, f, P::HeightCurve, df::HEIGHT_CURVE),
+        ]
+    });
+    let transmit = on(s, f, P::TransmitEnabled, df::TRANSMIT_ENABLED)
+        .then(|| num(s, f, P::TransmitCurve, df::TRANSMIT_CURVE));
+    Some(Fog {
+        color: color(s, f, P::Color, df::COLOR),
+        density: num(s, f, P::Density, df::DENSITY).clamp(0.0, 1.0),
+        depth,
+        height,
+        transmit,
+    })
 }
 
 /// ExtendedSceneEnvironment's exposure, white point and built-in effects.

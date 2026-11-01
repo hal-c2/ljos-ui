@@ -473,6 +473,13 @@ impl CustomGeometry {
                 }
             }
         }
+        // Only as floats: colours kept any other way are not read.
+        if let Some(colors) = self
+            .attribute(Semantic::Color)
+            .and_then(|_| self.read_vec::<4>(Semantic::Color).ok())
+        {
+            mesh.colors = from.iter().map(|v| colors[*v as usize]).collect();
+        }
         if let Some(uv1) = uv1 {
             mesh.uv1 = from.iter().map(|v| uv1[*v as usize]).collect();
         }

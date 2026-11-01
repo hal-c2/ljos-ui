@@ -117,6 +117,38 @@ pub mod enums {
         pub const SKY_MATERIAL: i32 = 4;
     }
 
+    /// `blendMode` of the built-in materials.
+    pub mod blend {
+        pub const SOURCE_OVER: i32 = 0;
+        pub const SCREEN: i32 = 1;
+        pub const MULTIPLY: i32 = 2;
+    }
+
+    /// `ReflectionProbe`'s, kept for code that names them.
+    pub mod reflection_probe {
+        pub const VERY_LOW: i32 = 0;
+        pub const LOW: i32 = 1;
+        pub const MEDIUM: i32 = 2;
+        pub const HIGH: i32 = 3;
+        pub const VERY_HIGH: i32 = 4;
+        pub const FIRST_FRAME: i32 = 0;
+        pub const EVERY_FRAME: i32 = 1;
+        pub const NO_TIME_SLICING: i32 = 0;
+        pub const ALL_FACES_AT_ONCE: i32 = 1;
+        pub const INDIVIDUAL_FACES: i32 = 2;
+    }
+
+    /// `MorphTarget.attributes`, flags to or together.
+    pub mod morph {
+        pub const POSITION: i32 = 1;
+        pub const NORMAL: i32 = 2;
+        pub const TANGENT: i32 = 4;
+        pub const BINORMAL: i32 = 8;
+        pub const TEX_COORD_0: i32 = 16;
+        pub const TEX_COORD_1: i32 = 32;
+        pub const COLOR: i32 = 64;
+    }
+
     /// `SceneEnvironment.tonemapMode`.
     pub mod tonemap {
         pub const NONE: i32 = 0;

@@ -7,7 +7,8 @@
 //! sorts each by itself. Files come from anywhere: every count and offset in
 //! one is checked before it is used, and what does not add up is an error.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, Weak};
 
 use crate::geometry::{ComponentType, CustomGeometry, PrimitiveType, Semantic};
 use crate::math::Vec3;
@@ -53,6 +54,9 @@ pub struct Part {
     /// Nothing to draw: a subset of no shapes still takes up a place in the
     /// list of materials.
     pub empty: bool,
+    /// Which corner of the file each of its vertices is: what the file's
+    /// morph targets are numbered by.
+    pub corners: Vec<u32>,
 }
 
 /// A morph target layer per attribute and target, as the file keeps them from
@@ -76,6 +80,122 @@ pub struct MeshFile {
     /// How many joints the corners may name.
     pub joints: u32,
     pub morph_targets: Option<MorphTargets>,
+    morphed: Arc<Mutex<Morphed>>,
+}
+
+/// Geometries as morphed by a part and its targets' weights and attributes,
+/// so that a model whose weights hold still keeps one upload. Weak: what no
+/// scene holds any more goes.
+type Morphed = HashMap<(usize, Vec<(u32, i32)>), Weak<CustomGeometry>>;
+
+impl MeshFile {
+    /// Part `which`'s geometry with `targets` weighed in: a weight and the
+    /// `MorphTarget.attributes` it moves, per target of the file.
+    pub fn morphed(&self, which: usize, targets: &[(f32, i32)]) -> Arc<CustomGeometry> {
+        let part = &self.parts[which];
+        let Some(morphs) = &self.morph_targets else {
+            return part.geometry.clone();
+        };
+        if targets.iter().all(|(weight, _)| *weight == 0.0) {
+            return part.geometry.clone();
+        }
+        let key = (
+            which,
+            targets.iter().map(|(w, a)| (w.to_bits(), *a)).collect(),
+        );
+        let mut made = self.morphed.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(geometry) = made.get(&key).and_then(Weak::upgrade) {
+            return geometry;
+        }
+        made.retain(|_, geometry| geometry.strong_count() > 0);
+        let geometry = Arc::new(morph_part(part, morphs, targets));
+        made.insert(key, Arc::downgrade(&geometry));
+        geometry
+    }
+}
+
+/// `part`'s geometry with each target's layers added in, times its weight.
+fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[(f32, i32)]) -> CustomGeometry {
+    let source = &part.geometry;
+    let stride = source.stride().max(1);
+    let mut data = source.vertex_data().to_vec();
+    let per_layer = morphs.width as usize * morphs.width as usize;
+    let layers = morphs.attributes.len();
+    let offset_of = |semantic| {
+        source
+            .attributes()
+            .iter()
+            .find(|a| a.semantic == semantic)
+            .map(|a| a.offset)
+    };
+    for (t, (weight, attributes)) in targets.iter().enumerate().take(morphs.count as usize) {
+        for (a, name) in morphs.attributes.iter().enumerate() {
+            let Some((flag, semantic, numbers)) = morph_layer(name) else {
+                continue;
+            };
+            if attributes & flag == 0 {
+                continue;
+            }
+            let Some(at) = offset_of(semantic) else {
+                continue;
+            };
+            let layer = (t * layers + a) * per_layer;
+            for (vertex, corner) in part.corners.iter().enumerate() {
+                let texel = (layer + *corner as usize) * 4;
+                let Some(delta) = morphs.texels.get(texel..texel + 4) else {
+                    continue;
+                };
+                for (n, d) in delta.iter().enumerate().take(numbers) {
+                    let i = vertex * stride + at + n * 4;
+                    let Some(bytes) = data.get_mut(i..i + 4) else {
+                        continue;
+                    };
+                    let old = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    bytes.copy_from_slice(&(old + d * weight).to_le_bytes());
+                }
+            }
+        }
+    }
+    let mut geometry = CustomGeometry::new();
+    for a in source.attributes() {
+        geometry.add_attribute(a.semantic, a.offset, a.component);
+    }
+    geometry.set_stride(stride);
+    geometry.set_primitive_type(source.primitive_type());
+    // The base shape's box would cull what has moved out of it.
+    if let Some(at) = offset_of(Semantic::Position) {
+        let mut least = [f32::MAX; 3];
+        let mut most = [f32::MIN; 3];
+        for row in data.chunks_exact(stride) {
+            for (n, bytes) in row[at..].as_chunks::<4>().0.iter().take(3).enumerate() {
+                let v = f32::from_le_bytes(*bytes);
+                least[n] = least[n].min(v);
+                most[n] = most[n].max(v);
+            }
+        }
+        geometry.set_bounds(
+            Vec3::new(least[0], least[1], least[2]),
+            Vec3::new(most[0], most[1], most[2]),
+        );
+    }
+    geometry.set_vertex_data(data);
+    geometry.set_index_data(source.index_data().to_vec());
+    geometry.update();
+    geometry
+}
+
+/// A layer's `MorphTarget.attributes` flag, what it changes in the vertices
+/// and how many numbers. Tangents are not kept, so they are not moved.
+fn morph_layer(name: &str) -> Option<(i32, Semantic, usize)> {
+    use crate::qml::enums::morph;
+    Some(match name {
+        "attr_pos" => (morph::POSITION, Semantic::Position, 3),
+        "attr_norm" => (morph::NORMAL, Semantic::Normal, 3),
+        "attr_uv0" => (morph::TEX_COORD_0, Semantic::TexCoord0, 2),
+        "attr_uv1" => (morph::TEX_COORD_1, Semantic::TexCoord1, 2),
+        "attr_color" => (morph::COLOR, Semantic::Color, 4),
+        _ => return None,
+    })
 }
 
 /// Bounds-checked reading. Nothing here adds without checking, as every number
@@ -210,6 +330,7 @@ struct Columns {
     normal: Option<Column>,
     uv0: Option<Column>,
     uv1: Option<Column>,
+    color: Option<Column>,
     joints: Option<Column>,
     weights: Option<Column>,
 }
@@ -233,6 +354,14 @@ impl Columns {
         }
         if let Some(c) = self.uv1 {
             floats(&c.read::<2>(corner));
+        }
+        if let Some(c) = self.color {
+            let mut rgba = c.weights(corner);
+            // Three numbers are an opaque colour.
+            if c.count < 4 {
+                rgba[3] = 1.0;
+            }
+            floats(&rgba);
         }
         if let (Some(j), Some(w)) = (self.joints, self.weights) {
             floats(&w.weights(corner));
@@ -258,6 +387,9 @@ impl Columns {
         }
         if self.uv1.is_some() {
             add(Semantic::TexCoord1, 2);
+        }
+        if self.color.is_some() {
+            add(Semantic::Color, 4);
         }
         if self.joints.is_some() && self.weights.is_some() {
             add(Semantic::Weight, 4);
@@ -483,6 +615,7 @@ fn read_mesh(bytes: &[u8], base: usize, version: u16) -> Result<MeshFile, MeshFi
             "attr_norm" => columns.normal = column,
             "attr_uv0" => columns.uv0 = column,
             "attr_uv1" => columns.uv1 = column,
+            "attr_color" => columns.color = column,
             "attr_joints" => columns.joints = column,
             "attr_weights" => columns.weights = column,
             _ => {}
@@ -563,6 +696,7 @@ fn read_mesh(bytes: &[u8], base: usize, version: u16) -> Result<MeshFile, MeshFi
         parts,
         joints,
         morph_targets,
+        morphed: Arc::default(),
     })
 }
 
@@ -668,6 +802,7 @@ fn part(
 
     // Each corner keeps its number in the order it is first used.
     let mut placed = vec![u32::MAX; corners];
+    let mut kept = Vec::new();
     let mut data = Vec::new();
     let mut compact = Vec::with_capacity(run.len());
     for index in run {
@@ -676,6 +811,7 @@ fn part(
             .ok_or(MeshFileError::IndexOutside { index, corners })?;
         if *slot == u32::MAX {
             *slot = (data.len() / new_stride.max(1)) as u32;
+            kept.push(index);
             columns.write(&vertices[index as usize * stride..], &mut data);
         }
         compact.push(*slot);
@@ -708,6 +844,7 @@ fn part(
     Ok(Part {
         geometry: Arc::new(geometry),
         empty,
+        corners: kept,
     })
 }
 

@@ -83,12 +83,14 @@ struct ExtraVertex {
     uv1: [f32; 2],
     joints: [u16; 4],
     weights: [f32; 4],
+    color: [f32; 4],
 }
 
-pub(crate) const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
+pub(crate) const EXTRA_ATTRIBUTES: [wgpu::VertexAttribute; 4] = wgpu::vertex_attr_array![
     8 => Float32x2,
     9 => Uint16x4,
     10 => Float32x4,
+    12 => Float32x4,
 ];
 
 pub(crate) fn extra_layout() -> wgpu::VertexBufferLayout<'static> {
@@ -99,10 +101,10 @@ pub(crate) fn extra_layout() -> wgpu::VertexBufferLayout<'static> {
     }
 }
 
-/// The second vertex buffer of a mesh that has a second UV set or joints;
-/// `None` for one that has neither, which needs none.
+/// The second vertex buffer of a mesh that has a second UV set, joints or
+/// colours; `None` for one that has none of them, which needs none.
 pub(crate) fn upload_extra(device: &wgpu::Device, mesh: &Mesh) -> Option<wgpu::Buffer> {
-    if mesh.uv1.is_empty() && mesh.joints.is_empty() {
+    if mesh.uv1.is_empty() && mesh.joints.is_empty() && mesh.colors.is_empty() {
         return None;
     }
     let vertices: Vec<ExtraVertex> = (0..mesh.positions.len())
@@ -115,6 +117,7 @@ pub(crate) fn upload_extra(device: &wgpu::Device, mesh: &Mesh) -> Option<wgpu::B
                 .unwrap_or_default(),
             joints: mesh.joints.get(i).copied().unwrap_or_default(),
             weights: mesh.weights.get(i).copied().unwrap_or_default(),
+            color: mesh.colors.get(i).copied().unwrap_or([1.0; 4]),
         })
         .collect();
     Some(

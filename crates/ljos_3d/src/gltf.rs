@@ -589,6 +589,7 @@ pub fn scene_material(m: &AssetMaterial) -> Material {
         occlusion_amount: t.occlusion_strength,
         opacity: map(&t.opacity),
         opacity_channel: t.opacity_channel,
+        ..PrincipledMaps::default()
     });
     Material::Principled(material)
 }

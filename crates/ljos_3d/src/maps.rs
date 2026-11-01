@@ -16,9 +16,10 @@ use crate::scene::Material;
 use crate::texture::{Filter, PixelEncoding, Sampling, Texture, TexturePixels, Tiling};
 
 /// The maps a material binds, in the order of their bindings: base colour
-/// (or diffuse), metalness, roughness, normal, emissive, occlusion and
-/// opacity. Each sampler's binding is its texture's plus [`MAPS`].
-pub(crate) const MAPS: usize = 7;
+/// (or diffuse), metalness (or a `DefaultMaterial`'s specular), roughness,
+/// normal, emissive, occlusion, opacity, transmission and height. Each
+/// sampler's binding is its texture's plus [`MAPS`].
+pub(crate) const MAPS: usize = 9;
 pub(crate) const BASE: usize = 0;
 pub(crate) const METALNESS: usize = 1;
 pub(crate) const ROUGHNESS: usize = 2;
@@ -26,6 +27,8 @@ pub(crate) const NORMAL: usize = 3;
 pub(crate) const EMISSIVE: usize = 4;
 pub(crate) const OCCLUSION: usize = 5;
 pub(crate) const OPACITY: usize = 6;
+pub(crate) const TRANSMISSION: usize = 7;
+pub(crate) const HEIGHT: usize = 8;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TextureKey {
@@ -48,7 +51,14 @@ pub(crate) type GroupKey = [Option<(TextureKey, Sampling)>; MAPS];
 pub(crate) fn slots(material: &Material) -> [Option<(&Texture, bool)>; MAPS] {
     let mut out = [None; MAPS];
     match material {
-        Material::Default(m) => out[BASE] = m.diffuse_map.as_ref().map(|t| (t, true)),
+        Material::Default(m) => {
+            out[BASE] = m.diffuse_map.as_ref().map(|t| (t, true));
+            out[METALNESS] = m.maps.specular.as_ref().map(|t| (t, true));
+            out[ROUGHNESS] = m.maps.roughness.as_ref().map(|t| (t, false));
+            out[NORMAL] = m.maps.normal.as_ref().map(|t| (t, false));
+            out[EMISSIVE] = m.maps.emissive.as_ref().map(|t| (t, true));
+            out[OPACITY] = m.maps.opacity.as_ref().map(|t| (t, false));
+        }
         Material::Principled(m) => {
             let maps = &m.maps;
             out[BASE] = maps.base_color.as_ref().map(|t| (t, true));
@@ -58,6 +68,8 @@ pub(crate) fn slots(material: &Material) -> [Option<(&Texture, bool)>; MAPS] {
             out[EMISSIVE] = maps.emissive.as_ref().map(|t| (t, true));
             out[OCCLUSION] = maps.occlusion.as_ref().map(|t| (t, false));
             out[OPACITY] = maps.opacity.as_ref().map(|t| (t, false));
+            out[TRANSMISSION] = maps.transmission.as_ref().map(|t| (t, false));
+            out[HEIGHT] = maps.height.as_ref().map(|t| (t, false));
         }
         // A custom material's textures are its own samplers, bound apart.
         Material::Custom(_) => {}

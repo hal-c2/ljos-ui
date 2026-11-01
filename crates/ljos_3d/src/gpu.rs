@@ -31,8 +31,8 @@ use crate::mesh::{Mesh, Topology};
 use crate::post::{self, Buffers, Chain, Pipes};
 use crate::programs::{Header, MaterialKey, Programs, Slot};
 use crate::scene::{
-    AlphaMode, Background, Camera, CullMode, Environment, Light, LightProbe, Lighting, Material,
-    MeshSource, NodeKind, Primitive, Scene, Tonemap,
+    AlphaMode, Background, BlendMode, Camera, CullMode, Environment, Light, LightProbe, Lighting,
+    Material, MeshSource, Node, NodeId, NodeKind, Primitive, Scene, Tonemap,
 };
 use crate::screen::ScreenTexture;
 use crate::shadow::{self, Layer as ShadowLayer, Plan};
@@ -86,6 +86,15 @@ struct FrameUniform {
     tone: [f32; 4],
     lights: [LightUniform; MAX_LIGHTS],
     shadow_layers: [ShadowLayer; shadow::MAX_LAYERS],
+    /// The fog's linear colour and density.
+    fog: [f32; 4],
+    /// Where the distance's fog starts and is whole, its curve, 1 when on.
+    fog_depth: [f32; 4],
+    /// The y of the least and of the most, the curve, 1 when on.
+    fog_height: [f32; 4],
+    /// The transmission's curve, 1 when on, and 1 where highlights are
+    /// widened against aliasing.
+    fog_transmit: [f32; 4],
 }
 
 #[repr(C)]
@@ -108,6 +117,23 @@ struct ModelUniform {
     maps: [u32; 4],
     /// The normal map's strength and the occlusion map's amount.
     map_params: [f32; 4],
+    /// A dielectric's reflection: its amount, its tint, what it is head on,
+    /// and the Fresnel power; a `DefaultMaterial` has the power alone.
+    shine: [f32; 4],
+    /// The Fresnel scale and bias, the clearcoat's amount and its roughness.
+    edge: [f32; 4],
+    /// The clearcoat's Fresnel power, scale and bias, and the transmission.
+    coat_edge: [f32; 4],
+    /// A `DefaultMaterial`'s linear specular tint; w the height amount.
+    tint: [f32; 4],
+    /// A bit per light that lights it, 1 to use the vertices' colours, the
+    /// fewest and most height samples (low and high half), and the channels
+    /// of transmission (bits 0-1) and height (2-3).
+    flags: [u32; 4],
+    /// The ambient of the lights scoped to it.
+    ambient: [f32; 4],
+    /// Its own probe's last level, 1 where it has one, and its exposure.
+    probe: [f32; 4],
 }
 
 #[repr(C)]
@@ -152,6 +178,9 @@ struct PipelineKey {
     /// into.
     format: wgpu::TextureFormat,
     topology: Topology,
+    blend: BlendMode,
+    /// Off, a surface is drawn over all that was drawn before it.
+    depth_test: bool,
 }
 
 /// The pipelines and meshes of one device. One per device, shared by every
@@ -791,6 +820,13 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
         uv: [[0.0; 4]; maps::MAPS * 2],
         maps: [0; 4],
         map_params: [1.0, 1.0, 1.0, 0.0],
+        shine: [1.0, 0.0, 0.04, 5.0],
+        edge: [1.0, 0.0, 0.0, 0.0],
+        coat_edge: [5.0, 1.0, 0.0, 0.0],
+        tint: [1.0, 1.0, 1.0, 0.0],
+        flags: [u32::MAX, 0, 0, 0],
+        ambient: [0.0; 4],
+        probe: [0.0; 4],
     };
     for (i, slot) in maps::slots(material).iter().enumerate() {
         let Some((texture, _)) = slot else {
@@ -811,7 +847,13 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.params[0] = lit(m.lighting);
             u.params2[1] = m.specular_amount.clamp(0.0, 1.0);
             u.params2[2] = m.specular_roughness.clamp(0.0, 1.0);
-            u.maps[1] = 3 << 6;
+            u.maps[1] = m.opacity_channel.index() << 6;
+            u.emissive = [m.emissive[0], m.emissive[1], m.emissive[2], 0.0];
+            let tint = m.specular_tint.to_linear();
+            u.tint = [tint[0], tint[1], tint[2], 0.0];
+            u.shine[3] = m.fresnel_power;
+            u.flags[1] = u32::from(m.vertex_colors);
+            u.base[3] = material.alpha().clamp(0.0, 1.0);
         }
         Material::Principled(m) => {
             let c = m.base_color.to_linear();
@@ -841,11 +883,85 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
                 1.0,
                 0.0,
             ];
+            let s = &maps.surface;
+            let ior = s.index_of_refraction;
+            let f0 = ((ior - 1.0) / (ior + 1.0)).powi(2);
+            u.shine = [
+                s.specular_amount.clamp(0.0, 1.0),
+                s.specular_tint.clamp(0.0, 1.0),
+                f0,
+                s.fresnel.power,
+            ];
+            u.edge = [
+                s.fresnel.scale,
+                s.fresnel.bias,
+                s.clearcoat_amount.clamp(0.0, 1.0),
+                s.clearcoat_roughness.clamp(0.0, 1.0),
+            ];
+            u.coat_edge = [
+                s.clearcoat_fresnel.power,
+                s.clearcoat_fresnel.scale,
+                s.clearcoat_fresnel.bias,
+                s.transmission_factor.clamp(0.0, 1.0),
+            ];
+            u.tint[3] = s.height_amount;
+            u.flags[1] = u32::from(s.vertex_colors);
+            u.flags[2] = s.height_samples[0].min(0xffff) | s.height_samples[1].min(0xffff) << 16;
+            u.flags[3] = maps.transmission_channel.index() | maps.height_channel.index() << 2;
         }
         // Its snippets read only the matrices and whether it takes shadows.
         Material::Custom(_) => u.base = [1.0; 4],
     }
     u
+}
+
+/// How a surface is laid over what is behind it. The shader's colours are
+/// premultiplied, which is what these factors take.
+fn blend_state(mode: BlendMode) -> wgpu::BlendState {
+    use wgpu::{BlendComponent, BlendFactor, BlendOperation, BlendState};
+    let color = |src_factor, dst_factor| BlendComponent {
+        src_factor,
+        dst_factor,
+        operation: BlendOperation::Add,
+    };
+    let alpha = BlendComponent {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::OneMinusSrcAlpha,
+        operation: BlendOperation::Add,
+    };
+    match mode {
+        BlendMode::SourceOver => BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+        BlendMode::Screen => BlendState {
+            color: color(BlendFactor::One, BlendFactor::OneMinusSrc),
+            alpha,
+        },
+        BlendMode::Multiply => BlendState {
+            color: color(BlendFactor::Dst, BlendFactor::OneMinusSrcAlpha),
+            alpha,
+        },
+    }
+}
+
+/// Writes the environment's fog and whether highlights are widened.
+/// A depth fog with no far of its own is whole at the camera's far clip.
+fn fog_uniforms(frame: &mut FrameUniform, environment: &Environment, clip_far: f32) {
+    frame.fog_transmit[2] = f32::from(u8::from(environment.specular_aa));
+    let Some(fog) = &environment.fog else {
+        return;
+    };
+    let c = fog.color.to_linear();
+    frame.fog = [c[0], c[1], c[2], fog.density];
+    if let Some([near, far, curve]) = fog.depth {
+        let far = if far > 0.0 { far } else { clip_far };
+        frame.fog_depth = [near, far, curve, 1.0];
+    }
+    if let Some([least, most, curve]) = fog.height {
+        frame.fog_height = [least, most, curve, 1.0];
+    }
+    if let Some(curve) = fog.transmit {
+        frame.fog_transmit[0] = curve;
+        frame.fog_transmit[1] = 1.0;
+    }
 }
 
 /// The camera's near and far clip planes.
@@ -925,6 +1041,36 @@ struct Draw<'a> {
     depth: f32,
     /// Its entry among the shadow casters.
     caster: Option<usize>,
+    /// The material's own light probe, bound for it in place of the scene's.
+    probe: Option<Bound>,
+}
+
+/// Masks the lights scoped away from model `id` and adds the ambient of the
+/// ones it is inside.
+fn scope_uniform(
+    u: &mut ModelUniform,
+    scene: &Scene,
+    id: NodeId,
+    scoped: &[(NodeId, u32, [f32; 4])],
+) {
+    for &(scope, bit, ambient) in scoped {
+        let mut at = Some(id);
+        let mut inside = false;
+        while let Some(n) = at {
+            if n == scope {
+                inside = true;
+                break;
+            }
+            at = scene.node(n).and_then(Node::parent);
+        }
+        if inside {
+            for (sum, c) in u.ambient.iter_mut().zip(ambient) {
+                *sum += c;
+            }
+        } else {
+            u.flags[0] &= !bit;
+        }
+    }
 }
 
 /// The lit shader, with the tone mapping it shares with the sky box.
@@ -1187,8 +1333,12 @@ impl Renderer {
                 },
                 depth_stencil: Some(wgpu::DepthStencilState {
                     format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(key.depth_write),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
+                    depth_write_enabled: Some(key.depth_write && key.depth_test),
+                    depth_compare: Some(if key.depth_test {
+                        wgpu::CompareFunction::Less
+                    } else {
+                        wgpu::CompareFunction::Always
+                    }),
                     stencil: Default::default(),
                     bias: Default::default(),
                 }),
@@ -1202,7 +1352,7 @@ impl Renderer {
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: key.format,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                        blend: Some(blend_state(key.blend)),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
                 }),
@@ -1558,6 +1708,8 @@ impl Renderer {
         frame.sky = sky.0;
         let last_level = self.ibl.last_level(bound);
         environment_uniforms(&mut frame, environment, probe, bound, last_level);
+        let clip_far = camera.map_or(1.0, |(c, _)| clip_planes(&c).1);
+        fog_uniforms(&mut frame, environment, clip_far);
         if processed {
             // Tone mapping is the last pass's.
             frame.tone[0] = 5.0;
@@ -1573,6 +1725,9 @@ impl Renderer {
         let mut count = 0;
         // The lights casting shadows, and where each is among the lights.
         let mut shadowing = Vec::new();
+        // The lights that light only what is inside a node: the node, the
+        // light's bit and its ambient.
+        let mut scoped = Vec::new();
         for (_, node, world) in &walked {
             let NodeKind::Light(light) = &node.kind else {
                 continue;
@@ -1581,8 +1736,12 @@ impl Renderer {
                 break;
             }
             let a = light.common().2.to_linear();
-            for (sum, c) in ambient.iter_mut().zip(a) {
-                *sum += c;
+            if let Some(scope) = node.scope {
+                scoped.push((scope, 1u32 << count, a));
+            } else {
+                for (sum, c) in ambient.iter_mut().zip(a) {
+                    *sum += c;
+                }
             }
             frame.lights[count] = light_uniform(light, world);
             if let Some(shadow) = &node.shadow
@@ -1616,7 +1775,7 @@ impl Renderer {
                 let opacity = faded
                     .as_ref()
                     .map_or(1.0, |f| f.get(*id).copied().unwrap_or(1.0));
-                if opacity <= 0.0 {
+                if opacity <= 0.0 || model.material.is_clear() {
                     continue;
                 }
                 let key = match &model.mesh {
@@ -1689,6 +1848,21 @@ impl Renderer {
                 let mut uniform = model_uniform(&model.material, &placed);
                 uniform.params2[3] = f32::from(u8::from(node.receives_shadows));
                 uniform.map_params[2] = opacity;
+                if !scoped.is_empty() {
+                    scope_uniform(&mut uniform, scene, *id, &scoped);
+                }
+                let own_probe = match &model.material {
+                    Material::Principled(m) if self.probes => {
+                        m.maps.surface.light_probe.as_ref().map(|texture| {
+                            self.ibl.prepare_texture(device, queue, encoder, texture)
+                        })
+                    }
+                    _ => None,
+                }
+                .filter(|b| *b != Bound::None);
+                if let Some(own) = own_probe {
+                    uniform.probe = [self.ibl.last_level(own), 1.0, frame.tone[1].signum(), 0.0];
+                }
                 if let Some(palette) = &palette {
                     copies.joints = joint_slots.len() as u32;
                     joint_slots.push(gpu_extra::joint_slot(palette));
@@ -1748,11 +1922,14 @@ impl Renderer {
                         extra,
                         format,
                         topology: self.topology_of(key),
+                        blend: model.material.blend_mode(),
+                        depth_test: environment.depth_test,
                     },
                     uniform,
                     copies,
-                    depth: -transform_point(&view, centre).z,
+                    depth: -transform_point(&view, centre).z + node.depth_bias,
                     caster,
+                    probe: own_probe,
                 };
                 if blends {
                     blended.push(draw);
@@ -2048,9 +2225,16 @@ impl Renderer {
                 pass.set_bind_group(2, self.maps.group(&plain_maps), &[]);
                 pass.draw(0..3, 0..1);
             }
+            let scene_probe = bound;
+            let mut bound_probe = scene_probe;
             let mut bound = None;
             let mut bound_maps = None;
             for (i, draw) in draws.iter().enumerate().take(range.end).skip(range.start) {
+                let probe = draw.probe.unwrap_or(scene_probe);
+                if probe != bound_probe {
+                    pass.set_bind_group(3, self.ibl.group(probe), &[]);
+                    bound_probe = probe;
+                }
                 if let Some((_, key)) = draw.custom {
                     // A program's pipeline and block are its own, so the
                     // next lit draw binds its own again.

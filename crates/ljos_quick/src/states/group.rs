@@ -179,17 +179,20 @@ pub(crate) struct Group {
     serial: Cell<u64>,
 }
 
+/// How to tell a type that holds states.
+type IsOwner = fn(&Engine, ObjectId) -> bool;
+
 /// The types outside this crate that hold states: how to tell one, and its
 /// `state`, `states` and `transitions`.
 #[derive(Default)]
-struct Owners(RefCell<Vec<(fn(&Engine, ObjectId) -> bool, [PropIndex; 3])>>);
+struct Owners(RefCell<Vec<(IsOwner, [PropIndex; 3])>>);
 
-pub(super) fn register_owner(
-    engine: &Engine,
-    is: fn(&Engine, ObjectId) -> bool,
-    props: [PropIndex; 3],
-) {
-    engine.extension::<Owners>().0.borrow_mut().push((is, props));
+pub(super) fn register_owner(engine: &Engine, is: IsOwner, props: [PropIndex; 3]) {
+    engine
+        .extension::<Owners>()
+        .0
+        .borrow_mut()
+        .push((is, props));
 }
 
 /// `obj`'s `state`, `states` and `transitions`, for what can hold states.

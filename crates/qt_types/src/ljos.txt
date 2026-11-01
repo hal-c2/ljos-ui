@@ -7647,6 +7647,7 @@ module QtQuick3D
 	DirectionalLight QtQuick3D.DirectionalLight
 	Effect QtQuick3D.Effect
 	FileInstancing QtQuick3D.FileInstancing
+	Fog QtQuick3D.Fog
 	Geometry QtQuick3D.Geometry
 	InstanceList QtQuick3D.InstanceList
 	InstanceListEntry QtQuick3D.InstanceListEntry
@@ -7655,6 +7656,7 @@ module QtQuick3D
 	Light QtQuick3D.Light
 	Material QtQuick3D.Material
 	Model QtQuick3D.Model
+	MorphTarget QtQuick3D.MorphTarget
 	Node QtQuick3D.Node
 	Object3D QtQuick3D.Object3D
 	OrthographicCamera QtQuick3D.OrthographicCamera
@@ -7663,7 +7665,9 @@ module QtQuick3D
 	PickResult QtQuick3D.PickResult
 	PointLight QtQuick3D.PointLight
 	PrincipledMaterial QtQuick3D.PrincipledMaterial
+	Quaternion QtQuick3D.Quaternion
 	QuaternionAnimation QtQuick3D.QuaternionAnimation
+	ReflectionProbe QtQuick3D.ReflectionProbe
 	Repeater3D QtQuick3D.Repeater3D
 	RuntimeLoader QtQuick3D.RuntimeLoader
 	SceneEnvironment QtQuick3D.SceneEnvironment
@@ -7724,6 +7728,8 @@ module QtQuick3D
 		prop destinationAlphaBlend BlendMode
 		prop alwaysDirty QtQml.bool named
 		prop lineWidth QtQml.real named
+		prop __vertexShaderCode QtQml.string named
+		prop __fragmentShaderCode QtQml.string named
 		signal shadingModeChanged
 		signal vertexShaderChanged
 		signal fragmentShaderChanged
@@ -7733,19 +7739,67 @@ module QtQuick3D
 		signal destinationAlphaBlendChanged
 		signal alwaysDirtyChanged
 		signal lineWidthChanged
+		signal __vertexShaderCodeChanged
+		signal __fragmentShaderCodeChanged
 	type QtQuick3D.DefaultMaterial DefaultMaterial
 		prototype QtQuick3D.Material named
 		enum Lighting NoLighting=0 FragmentLighting=1
+		enum BlendMode SourceOver=0 Screen=1 Multiply=2
+		enum SpecularModel Default=0 KGGX=1
 		prop diffuseColor QtQuick.color named
 		prop diffuseMap QtQuick3D.Texture named pointer
 		prop lighting Lighting
 		prop specularAmount QtQml.real named
 		prop specularRoughness QtQml.real named
+		prop opacity QtQml.real named
+		prop opacityMap QtQuick3D.Texture named pointer
+		prop opacityChannel TextureChannelMapping
+		prop emissiveFactor QtQuick.vector3d named
+		prop emissiveMap QtQuick3D.Texture named pointer
+		prop normalMap QtQuick3D.Texture named pointer
+		prop roughnessMap QtQuick3D.Texture named pointer
+		prop specularMap QtQuick3D.Texture named pointer
+		prop specularTint QtQuick.color named
+		prop fresnelPower QtQml.real named
+		prop blendMode BlendMode
+		prop vertexColorsEnabled QtQml.bool named
+		prop specularModel SpecularModel
+		prop indexOfRefraction QtQml.real named
+		prop specularReflectionMap QtQuick3D.Texture named pointer
+		prop bumpMap QtQuick3D.Texture named pointer
+		prop bumpAmount QtQml.real named
+		prop translucencyMap QtQuick3D.Texture named pointer
+		prop translucentFalloff QtQml.real named
+		prop diffuseLightWrap QtQml.real named
+		prop pointSize QtQml.real named
+		prop lineWidth QtQml.real named
 		signal diffuseColorChanged
 		signal diffuseMapChanged
 		signal lightingChanged
 		signal specularAmountChanged
 		signal specularRoughnessChanged
+		signal opacityChanged
+		signal opacityMapChanged
+		signal opacityChannelChanged
+		signal emissiveFactorChanged
+		signal emissiveMapChanged
+		signal normalMapChanged
+		signal roughnessMapChanged
+		signal specularMapChanged
+		signal specularTintChanged
+		signal fresnelPowerChanged
+		signal blendModeChanged
+		signal vertexColorsEnabledChanged
+		signal specularModelChanged
+		signal indexOfRefractionChanged
+		signal specularReflectionMapChanged
+		signal bumpMapChanged
+		signal bumpAmountChanged
+		signal translucencyMapChanged
+		signal translucentFalloffChanged
+		signal diffuseLightWrapChanged
+		signal pointSizeChanged
+		signal lineWidthChanged
 	type QtQuick3D.DirectionalLight DirectionalLight
 		prototype QtQuick3D.Light named
 		prop csmNumSplits QtQml.int named
@@ -7770,6 +7824,34 @@ module QtQuick3D
 		prop instanceCount QtQml.int named readonly
 		signal sourceChanged
 		signal instanceCountChanged
+	type QtQuick3D.Fog Fog
+		prototype QtQuick3D.Object3D named
+		prop enabled QtQml.bool named
+		prop color QtQuick.color named
+		prop density QtQml.real named
+		prop depthEnabled QtQml.bool named
+		prop depthNear QtQml.real named
+		prop depthFar QtQml.real named
+		prop depthCurve QtQml.real named
+		prop heightEnabled QtQml.bool named
+		prop leastIntenseY QtQml.real named
+		prop mostIntenseY QtQml.real named
+		prop heightCurve QtQml.real named
+		prop transmitEnabled QtQml.bool named
+		prop transmitCurve QtQml.real named
+		signal enabledChanged
+		signal colorChanged
+		signal densityChanged
+		signal depthEnabledChanged
+		signal depthNearChanged
+		signal depthFarChanged
+		signal depthCurveChanged
+		signal heightEnabledChanged
+		signal leastIntenseYChanged
+		signal mostIntenseYChanged
+		signal heightCurveChanged
+		signal transmitEnabledChanged
+		signal transmitCurveChanged
 	type QtQuick3D.Geometry Geometry
 		prototype QtQuick3D.Object3D named
 		is uncreatable
@@ -7833,6 +7915,7 @@ module QtQuick3D
 		prop pcfFactor QtQml.real named
 		prop shadowFilter QtQml.real named
 		prop use32BitShadowmap QtQml.bool named
+		prop scope QtQuick3D.Node named pointer
 		signal colorChanged
 		signal ambientColorChanged
 		signal brightnessChanged
@@ -7845,6 +7928,7 @@ module QtQuick3D
 		signal pcfFactorChanged
 		signal shadowFilterChanged
 		signal use32BitShadowmapChanged
+		signal scopeChanged
 	type QtQuick3D.Material Material
 		prototype QtQuick3D.Object3D named
 		is uncreatable
@@ -7868,6 +7952,11 @@ module QtQuick3D
 		prop skin QtQuick3D.Skin named pointer
 		prop skeleton QtQuick3D.Skeleton named pointer
 		prop inverseBindPoses QtQml.var named
+		prop depthBias QtQml.real named
+		prop morphTargets QtQml.var named list
+		prop castsReflections QtQml.bool named
+		prop receivesReflections QtQml.bool named
+		prop levelOfDetailBias QtQml.real named
 		signal sourceChanged
 		signal materialsChanged
 		signal geometryChanged
@@ -7879,6 +7968,18 @@ module QtQuick3D
 		signal skinChanged
 		signal skeletonChanged
 		signal inverseBindPosesChanged
+		signal depthBiasChanged
+		signal morphTargetsChanged
+		signal castsReflectionsChanged
+		signal receivesReflectionsChanged
+		signal levelOfDetailBiasChanged
+	type QtQuick3D.MorphTarget MorphTarget
+		prototype QtQuick3D.Object3D named
+		enum Attributes Position=1 Normal=2 Tangent=4 Binormal=8 TexCoord0=16 TexCoord1=32 Color=64
+		prop weight QtQml.real named
+		prop attributes QtQml.int named
+		signal weightChanged
+		signal attributesChanged
 	type QtQuick3D.Node Node
 		prototype QtQuick3D.Object3D named
 		enum TransformSpace LocalSpace=0 ParentSpace=1 SceneSpace=2
@@ -7929,8 +8030,14 @@ module QtQuick3D
 		is uncreatable
 		prop data QtQml.var named list
 		prop parent QtQuick3D.Object3D named pointer
+		prop states QtQml.var named list
+		prop state QtQml.string named
+		prop transitions QtQml.var named list
 		signal dataChanged
 		signal parentChanged
+		signal statesChanged
+		signal stateChanged
+		signal transitionsChanged
 	type QtQuick3D.OrthographicCamera OrthographicCamera
 		prototype QtQuick3D.Camera named
 		prop clipNear QtQml.real named
@@ -7976,6 +8083,7 @@ module QtQuick3D
 		prototype QtQuick3D.Material named
 		enum Lighting NoLighting=0 FragmentLighting=1
 		enum AlphaMode Default=0 Blend=1 Opaque=2 Mask=3
+		enum BlendMode SourceOver=0 Screen=1 Multiply=2
 		prop baseColor QtQuick.color named
 		prop metalness QtQml.real named
 		prop roughness QtQml.real named
@@ -7997,6 +8105,45 @@ module QtQuick3D
 		prop occlusionAmount QtQml.real named
 		prop opacityMap QtQuick3D.Texture named pointer
 		prop opacityChannel TextureChannelMapping
+		prop blendMode BlendMode
+		prop vertexColorsEnabled QtQml.bool named
+		prop specularAmount QtQml.real named
+		prop specularTint QtQml.real named
+		prop indexOfRefraction QtQml.real named
+		prop fresnelPower QtQml.real named
+		prop fresnelScaleBiasEnabled QtQml.bool named
+		prop fresnelScale QtQml.real named
+		prop fresnelBias QtQml.real named
+		prop clearcoatAmount QtQml.real named
+		prop clearcoatRoughnessAmount QtQml.real named
+		prop clearcoatFresnelPower QtQml.real named
+		prop clearcoatFresnelScaleBiasEnabled QtQml.bool named
+		prop clearcoatFresnelScale QtQml.real named
+		prop clearcoatFresnelBias QtQml.real named
+		prop transmissionFactor QtQml.real named
+		prop transmissionMap QtQuick3D.Texture named pointer
+		prop transmissionChannel TextureChannelMapping
+		prop heightMap QtQuick3D.Texture named pointer
+		prop heightAmount QtQml.real named
+		prop heightChannel TextureChannelMapping
+		prop minHeightMapSamples QtQml.int named
+		prop maxHeightMapSamples QtQml.int named
+		prop lightProbe QtQuick3D.Texture named pointer
+		prop specularMap QtQuick3D.Texture named pointer
+		prop specularReflectionMap QtQuick3D.Texture named pointer
+		prop clearcoatMap QtQuick3D.Texture named pointer
+		prop clearcoatChannel TextureChannelMapping
+		prop clearcoatRoughnessMap QtQuick3D.Texture named pointer
+		prop clearcoatRoughnessChannel TextureChannelMapping
+		prop clearcoatNormalMap QtQuick3D.Texture named pointer
+		prop clearcoatNormalStrength QtQml.real named
+		prop thicknessMap QtQuick3D.Texture named pointer
+		prop thicknessChannel TextureChannelMapping
+		prop thicknessFactor QtQml.real named
+		prop attenuationDistance QtQml.real named
+		prop attenuationColor QtQuick.color named
+		prop pointSize QtQml.real named
+		prop lineWidth QtQml.real named
 		signal baseColorChanged
 		signal metalnessChanged
 		signal roughnessChanged
@@ -8018,6 +8165,52 @@ module QtQuick3D
 		signal occlusionAmountChanged
 		signal opacityMapChanged
 		signal opacityChannelChanged
+		signal blendModeChanged
+		signal vertexColorsEnabledChanged
+		signal specularAmountChanged
+		signal specularTintChanged
+		signal indexOfRefractionChanged
+		signal fresnelPowerChanged
+		signal fresnelScaleBiasEnabledChanged
+		signal fresnelScaleChanged
+		signal fresnelBiasChanged
+		signal clearcoatAmountChanged
+		signal clearcoatRoughnessAmountChanged
+		signal clearcoatFresnelPowerChanged
+		signal clearcoatFresnelScaleBiasEnabledChanged
+		signal clearcoatFresnelScaleChanged
+		signal clearcoatFresnelBiasChanged
+		signal transmissionFactorChanged
+		signal transmissionMapChanged
+		signal transmissionChannelChanged
+		signal heightMapChanged
+		signal heightAmountChanged
+		signal heightChannelChanged
+		signal minHeightMapSamplesChanged
+		signal maxHeightMapSamplesChanged
+		signal lightProbeChanged
+		signal specularMapChanged
+		signal specularReflectionMapChanged
+		signal clearcoatMapChanged
+		signal clearcoatChannelChanged
+		signal clearcoatRoughnessMapChanged
+		signal clearcoatRoughnessChannelChanged
+		signal clearcoatNormalMapChanged
+		signal clearcoatNormalStrengthChanged
+		signal thicknessMapChanged
+		signal thicknessChannelChanged
+		signal thicknessFactorChanged
+		signal attenuationDistanceChanged
+		signal attenuationColorChanged
+		signal pointSizeChanged
+		signal lineWidthChanged
+	type QtQuick3D.Quaternion Quaternion
+		prototype QtQml.QtObject named
+		is singleton
+		method fromEulerAngles
+		method fromAxisAndAngle
+		method fromAxesAndAngles
+		method lookAt
 	type QtQuick3D.QuaternionAnimation QuaternionAnimation
 		prototype QtQuick.PropertyAnimation named
 		enum Type Slerp=0 Nlerp=1
@@ -8035,6 +8228,29 @@ module QtQuick3D
 		signal toXRotationChanged
 		signal toYRotationChanged
 		signal toZRotationChanged
+	type QtQuick3D.ReflectionProbe ReflectionProbe
+		prototype QtQuick3D.Node named
+		enum ReflectionQuality VeryLow=0 Low=1 Medium=2 High=3 VeryHigh=4
+		enum ReflectionRefreshMode FirstFrame=0 EveryFrame=1
+		enum ReflectionTimeSlicing None=0 AllFacesAtOnce=1 IndividualFaces=2
+		prop quality ReflectionQuality
+		prop clearColor QtQuick.color named
+		prop refreshMode ReflectionRefreshMode
+		prop timeSlicing ReflectionTimeSlicing
+		prop parallaxCorrection QtQml.bool named
+		prop boxSize QtQuick.vector3d named
+		prop boxOffset QtQuick.vector3d named
+		prop debugView QtQml.bool named
+		prop texture QtQuick3D.Texture named pointer
+		signal qualityChanged
+		signal clearColorChanged
+		signal refreshModeChanged
+		signal timeSlicingChanged
+		signal parallaxCorrectionChanged
+		signal boxSizeChanged
+		signal boxOffsetChanged
+		signal debugViewChanged
+		signal textureChanged
 	type QtQuick3D.Repeater3D Repeater3D
 		prototype QtQuick3D.Node named
 		default delegate
@@ -8084,6 +8300,12 @@ module QtQuick3D
 		prop aoSampleRate QtQml.int named
 		prop aoBias QtQml.real named
 		prop aoDither QtQml.bool named
+		prop fog QtQuick3D.Fog named pointer
+		prop specularAAEnabled QtQml.bool named
+		prop depthTestEnabled QtQml.bool named
+		prop depthPrePassEnabled QtQml.bool named
+		prop temporalAAEnabled QtQml.bool named
+		prop temporalAAStrength QtQml.real named
 		signal clearColorChanged
 		signal backgroundModeChanged
 		signal tonemapModeChanged
@@ -8102,6 +8324,12 @@ module QtQuick3D
 		signal aoSampleRateChanged
 		signal aoBiasChanged
 		signal aoDitherChanged
+		signal fogChanged
+		signal specularAAEnabledChanged
+		signal depthTestEnabledChanged
+		signal depthPrePassEnabledChanged
+		signal temporalAAEnabledChanged
+		signal temporalAAStrengthChanged
 	type QtQuick3D.SetUniformValue SetUniformValue
 		prototype QtQuick3D.Command named
 		prop target QtQml.string named

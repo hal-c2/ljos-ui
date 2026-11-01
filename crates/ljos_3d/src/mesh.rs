@@ -29,6 +29,9 @@ pub struct Mesh {
     /// for a mesh that is not skinned.
     pub joints: Vec<[u16; 4]>,
     pub weights: Vec<[f32; 4]>,
+    /// Linear colours that multiply the material's; empty for a mesh that
+    /// has none.
+    pub colors: Vec<[f32; 4]>,
     pub topology: Topology,
 }
 

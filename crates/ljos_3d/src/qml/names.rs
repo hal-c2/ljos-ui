@@ -29,6 +29,8 @@ pub enum Type3d {
     Joint,
     RuntimeLoader,
     InfiniteGrid,
+    Fog,
+    MorphTarget,
 }
 
 impl Type3d {
@@ -60,6 +62,8 @@ impl Type3d {
             Type3d::Joint => "Joint",
             Type3d::RuntimeLoader => "RuntimeLoader",
             Type3d::InfiniteGrid => "InfiniteGrid",
+            Type3d::Fog => "Fog",
+            Type3d::MorphTarget => "MorphTarget",
         }
     }
 
@@ -77,7 +81,9 @@ impl Type3d {
             | T::Effect
             | T::Instancing
             | T::Skin
-            | T::InfiniteGrid => Some(T::Object3D),
+            | T::InfiniteGrid
+            | T::Fog
+            | T::MorphTarget => Some(T::Object3D),
             T::Model | T::Camera | T::Light | T::Skeleton | T::Joint | T::RuntimeLoader => {
                 Some(T::Node)
             }
@@ -135,6 +141,23 @@ macro_rules! props {
 props! {
     // View3D
     Environment = "environment",
+    // SceneEnvironment
+    Fog = "fog",
+    SpecularAAEnabled = "specularAAEnabled",
+    DepthTestEnabled = "depthTestEnabled",
+    // Fog
+    Enabled = "enabled",
+    Density = "density",
+    DepthEnabled = "depthEnabled",
+    DepthNear = "depthNear",
+    DepthFar = "depthFar",
+    DepthCurve = "depthCurve",
+    HeightEnabled = "heightEnabled",
+    LeastIntenseY = "leastIntenseY",
+    MostIntenseY = "mostIntenseY",
+    HeightCurve = "heightCurve",
+    TransmitEnabled = "transmitEnabled",
+    TransmitCurve = "transmitCurve",
     Camera = "camera",
     ImportScene = "importScene",
     /// A node's children; a View3D's 3D nodes; the environment's helpers.
@@ -163,6 +186,11 @@ props! {
     Skeleton = "skeleton",
     /// `Model.inverseBindPoses` and `Skin.inverseBindPoses`.
     InverseBindPoses = "inverseBindPoses",
+    DepthBias = "depthBias",
+    MorphTargets = "morphTargets",
+    // MorphTarget
+    Weight = "weight",
+    Attributes = "attributes",
     // Skin, Joint
     Joints = "joints",
     Index = "index",
@@ -197,6 +225,8 @@ props! {
     QuadraticFade = "quadraticFade",
     ConeAngle = "coneAngle",
     InnerConeAngle = "innerConeAngle",
+    /// Only this node and what is inside it are lit.
+    Scope = "scope",
     // Materials
     CullMode = "cullMode",
     Lighting = "lighting",
@@ -223,6 +253,30 @@ props! {
     OpacityChannel = "opacityChannel",
     AlphaMode = "alphaMode",
     AlphaCutoff = "alphaCutoff",
+    BlendMode = "blendMode",
+    VertexColorsEnabled = "vertexColorsEnabled",
+    /// A number on `PrincipledMaterial`, a colour on `DefaultMaterial`.
+    SpecularTint = "specularTint",
+    SpecularMap = "specularMap",
+    IndexOfRefraction = "indexOfRefraction",
+    FresnelPower = "fresnelPower",
+    FresnelScaleBiasEnabled = "fresnelScaleBiasEnabled",
+    FresnelScale = "fresnelScale",
+    FresnelBias = "fresnelBias",
+    ClearcoatAmount = "clearcoatAmount",
+    ClearcoatRoughnessAmount = "clearcoatRoughnessAmount",
+    ClearcoatFresnelPower = "clearcoatFresnelPower",
+    ClearcoatFresnelScaleBiasEnabled = "clearcoatFresnelScaleBiasEnabled",
+    ClearcoatFresnelScale = "clearcoatFresnelScale",
+    ClearcoatFresnelBias = "clearcoatFresnelBias",
+    TransmissionFactor = "transmissionFactor",
+    TransmissionMap = "transmissionMap",
+    TransmissionChannel = "transmissionChannel",
+    HeightMap = "heightMap",
+    HeightAmount = "heightAmount",
+    HeightChannel = "heightChannel",
+    MinHeightMapSamples = "minHeightMapSamples",
+    MaxHeightMapSamples = "maxHeightMapSamples",
     // Texture
     ScaleU = "scaleU",
     ScaleV = "scaleV",

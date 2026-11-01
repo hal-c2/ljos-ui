@@ -59,6 +59,15 @@ struct Frame {
     tone: vec4<f32>,
     lights: array<Light, MAX_LIGHTS>,
     shadow_layers: array<ShadowLayer, MAX_SHADOW_LAYERS>,
+    // rgb the fog's linear colour; w its density.
+    fog: vec4<f32>,
+    // Where the distance's fog starts and is whole, its curve, 1 when on.
+    fog_depth: vec4<f32>,
+    // The y of the least and of the most, the curve, 1 when on.
+    fog_height: vec4<f32>,
+    // x the transmission's curve, y 1 when on; z 1 where highlights are
+    // widened against aliasing.
+    fog_transmit: vec4<f32>,
 };
 
 struct Model {
@@ -76,8 +85,9 @@ struct Model {
     // shadows fall on it.
     params2: vec4<f32>,
     // Per map (base, metalness, roughness, normal, emissive, occlusion,
-    // opacity), two rows taking the mesh's UV to the image's.
-    uv: array<vec4<f32>, 14>,
+    // opacity, transmission, height), two rows taking the mesh's UV to the
+    // image's.
+    uv: array<vec4<f32>, 18>,
     // x a bit per map that is there; y the channels of metalness (bits
     // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7); z a bit per
     // map read through the second UV set; w 1 where the joints of
@@ -86,6 +96,26 @@ struct Model {
     // x the normal map's strength, y how much the occlusion map shades, z the
     // node's opacity with its parents'.
     map_params: vec4<f32>,
+    // x how much of a dielectric's reflection there is, y how far towards
+    // the base colour it is tinted, z what it is head on, w the Fresnel
+    // power; a plain material has the power alone.
+    shine: vec4<f32>,
+    // x the Fresnel scale, y its bias, z the clearcoat's amount, w its
+    // roughness.
+    edge: vec4<f32>,
+    // x the clearcoat's Fresnel power, y its scale, z its bias; w how much of
+    // the diffuse light gives way to what is behind.
+    coat_edge: vec4<f32>,
+    // rgb a plain material's linear specular tint; w the height amount.
+    tint: vec4<f32>,
+    // x a bit per light that lights it; y 1 to use the vertices' colours; z
+    // the fewest and most height samples, low and high half; w the channels
+    // of transmission (bits 0-1) and height (2-3).
+    flags: vec4<u32>,
+    // rgb the ambient of the lights scoped to it.
+    ambient: vec4<f32>,
+    // x its own probe's last level, y 1 where it has one, z its exposure.
+    probe: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -105,13 +135,17 @@ struct Model {
 @group(2) @binding(4) var emissive_map: texture_2d<f32>;
 @group(2) @binding(5) var occlusion_map: texture_2d<f32>;
 @group(2) @binding(6) var opacity_map: texture_2d<f32>;
-@group(2) @binding(7) var base_sampler: sampler;
-@group(2) @binding(8) var metalness_sampler: sampler;
-@group(2) @binding(9) var roughness_sampler: sampler;
-@group(2) @binding(10) var normal_sampler: sampler;
-@group(2) @binding(11) var emissive_sampler: sampler;
-@group(2) @binding(12) var occlusion_sampler: sampler;
-@group(2) @binding(13) var opacity_sampler: sampler;
+@group(2) @binding(7) var transmission_map: texture_2d<f32>;
+@group(2) @binding(8) var height_map: texture_2d<f32>;
+@group(2) @binding(9) var base_sampler: sampler;
+@group(2) @binding(10) var metalness_sampler: sampler;
+@group(2) @binding(11) var roughness_sampler: sampler;
+@group(2) @binding(12) var normal_sampler: sampler;
+@group(2) @binding(13) var emissive_sampler: sampler;
+@group(2) @binding(14) var occlusion_sampler: sampler;
+@group(2) @binding(15) var opacity_sampler: sampler;
+@group(2) @binding(16) var transmission_sampler: sampler;
+@group(2) @binding(17) var height_sampler: sampler;
 @group(3) @binding(0) var specular_cube: texture_cube<f32>;
 @group(3) @binding(1) var irradiance_cube: texture_cube<f32>;
 @group(3) @binding(2) var cube_sampler: sampler;
@@ -204,7 +238,8 @@ fn skin_matrix(joints: vec4<u32>, weights: vec4<f32>) -> mat4x4<f32> {
         + skin_joints[j.z] * weights.z + skin_joints[j.w] * weights.w;
 }
 
-// A mesh with a second UV set or joints: those come from a second buffer.
+// A mesh with a second UV set, joints or colours: those come from a second
+// buffer.
 @vertex
 fn vs_extra(
     @location(0) position: vec3<f32>,
@@ -215,9 +250,14 @@ fn vs_extra(
     @location(8) uv1: vec2<f32>,
     @location(9) joints: vec4<u32>,
     @location(10) weights: vec4<f32>,
+    @location(12) color: vec4<f32>,
 ) -> VsOut {
     let skin = skin_matrix(joints, weights);
-    return shade_vertex(position, normal, uv, uv1, tangent, copy, skin);
+    var out = shade_vertex(position, normal, uv, uv1, tangent, copy, skin);
+    if model.flags.y != 0u {
+        out.color = out.color * color;
+    }
+    return out;
 }
 
 fn map_uv(i: u32, in: VsOut) -> vec2<f32> {
@@ -245,6 +285,17 @@ fn channel(t: vec4<f32>, shift: u32) -> f32 {
     return t.a;
 }
 
+// One of four channels, numbered as a `TextureChannelMapping`.
+fn channel_of(t: vec4<f32>, c: u32) -> f32 {
+    return t[c & 3u];
+}
+
+// How much a surface reflects at the cosine `c`, from `f0` head on.
+fn schlick(f0: vec3<f32>, c: f32, power: f32, scale: f32, bias: f32) -> vec3<f32> {
+    let edge = pow(max(1.0 - c, 1e-4), power);
+    return f0 + (vec3<f32>(1.0) - f0) * clamp(bias + scale * edge, 0.0, 1.0);
+}
+
 // Karis's fit of the split-sum's scale and bias for the Fresnel term,
 // which spares a lookup table.
 fn env_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
@@ -254,6 +305,83 @@ fn env_brdf(f0: vec3<f32>, roughness: f32, nv: f32) -> vec3<f32> {
     let a004 = min(r.x * r.x, exp2(-9.28 * nv)) * r.x + r.y;
     let ab = vec2<f32>(-1.04, 1.04) * a004 + r.zw;
     return f0 * ab.x + vec3<f32>(ab.y);
+}
+
+// What a probe gives of its reflection: the fit where the Fresnel is the
+// usual one, and else an approximation of it with the same scale and bias,
+// roughness keeping the edge down.
+fn env_edge(f0: vec3<f32>, roughness: f32, nv: f32, power: f32, scale: f32, bias: f32) -> vec3<f32> {
+    if power == 5.0 && scale == 1.0 && bias == 0.0 {
+        return env_brdf(f0, roughness, nv);
+    }
+    let top = max(vec3<f32>(1.0 - roughness), f0);
+    let edge = pow(max(1.0 - nv, 1e-4), power);
+    return clamp(vec3<f32>(bias) + scale * (f0 + (top - f0) * edge), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// The fog over a lit surface's light `lit` at `p`, by distance and by height.
+fn eased(from_: f32, to: f32, at: f32) -> f32 {
+    let t = clamp((at - from_) / max(abs(to - from_), 1e-6) * sign(to - from_), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+fn fogged(lit: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
+    if frame.fog_depth.w < 0.5 && frame.fog_height.w < 0.5 {
+        return lit;
+    }
+    var color = frame.fog.rgb;
+    var amount = 0.0;
+    if frame.fog_depth.w > 0.5 {
+        let far = eased(frame.fog_depth.x, frame.fog_depth.y, length(frame.camera.xyz - p));
+        amount = pow(far, frame.fog_depth.z) * frame.fog.w;
+        if frame.fog_transmit.y > 0.5 {
+            color = mix(max(lit, color), color, pow(far, frame.fog_transmit.x));
+        }
+    }
+    if frame.fog_height.w > 0.5 {
+        let high = eased(frame.fog_height.x, frame.fog_height.y, p.y);
+        amount = max(amount, pow(high, frame.fog_height.z) * frame.fog.w);
+    }
+    return mix(lit, color, clamp(amount, 0.0, 1.0));
+}
+
+// Where a height map has the eye see, walking along the view inside the
+// surface until it is below the map's height.
+fn carved(in: VsOut, front: bool) -> VsOut {
+    var at = in;
+    if !has_map(8u) || model.tint.w == 0.0 {
+        return at;
+    }
+    var n = normalize(in.normal);
+    if !front {
+        n = -n;
+    }
+    let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
+    let b = in.tangent.w * cross(n, t);
+    var v = -frame.camera_dir.xyz;
+    if frame.camera.w < 0.5 {
+        v = normalize(frame.camera.xyz - in.world);
+    }
+    let seen = vec3<f32>(dot(v, t), dot(v, b), max(dot(v, n), 0.05));
+    let fewest = f32(model.flags.z & 0xffffu);
+    let most = f32(model.flags.z >> 16u);
+    let layers = max(mix(most, fewest, seen.z), 1.0);
+    let step_ = -seen.xy / seen.z * model.tint.w / layers;
+    let shift = (model.flags.w >> 2u) & 3u;
+    let uv = map_uv(8u, in);
+    var off = vec2<f32>(0.0);
+    var depth = 0.0;
+    for (var k = 0u; k < u32(layers); k++) {
+        let h = channel_of(textureSampleLevel(height_map, height_sampler, uv + off, 0.0), shift);
+        if depth >= 1.0 - h {
+            break;
+        }
+        depth += 1.0 / layers;
+        off += step_;
+    }
+    at.uv = at.uv + off;
+    at.uv1 = at.uv1 + off;
+    return at;
 }
 
 fn probe_dir(d: vec3<f32>) -> vec3<f32> {
@@ -377,7 +505,8 @@ fn shadowed(light: Light, p: vec3<f32>, l: vec3<f32>) -> f32 {
 }
 
 @fragment
-fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let in = carved(raw, front);
     // Every map is read here, before anything branches, as sampling with
     // derivatives must be.
     let base_t = textureSample(base_map, base_sampler, map_uv(0u, in));
@@ -387,6 +516,11 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     let emissive_t = textureSample(emissive_map, emissive_sampler, map_uv(4u, in));
     let occlusion_t = textureSample(occlusion_map, occlusion_sampler, map_uv(5u, in));
     let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in));
+    let transmission_t = textureSample(transmission_map, transmission_sampler, map_uv(7u, in));
+    // Normalized first: a scaled node's normals come here longer or shorter.
+    let unit_normal = normalize(in.normal);
+    let normal_dx = dpdx(unit_normal);
+    let normal_dy = dpdy(unit_normal);
 
     let base = model.base * base_t * in.color;
     var a = base.a * channel(opacity_t, 6u);
@@ -399,13 +533,16 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     }
     // After the mask: a node's fade is not a material's cut-out.
     a *= model.map_params.z;
-    var rgb = base.rgb;
+    let through = model.coat_edge.w * channel_of(transmission_t, model.flags.w);
+    var rgb = base.rgb * (1.0 - through);
     if model.params.x > 0.5 {
         // A face seen from behind (with culling off) is lit as its front.
         var n = normalize(in.normal);
         if !front {
             n = -n;
         }
+        // The clearcoat lies over the mesh's own shape, under no normal map.
+        let coat_n = n;
         if has_map(3u) {
             let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
             let b = in.tangent.w * cross(n, t);
@@ -420,11 +557,36 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
         let nv = max(dot(n, v), 1e-4);
         let principled = model.params.y > 0.5;
         let metal = model.params.z * channel(metal_t, 0u);
-        let roughness = model.params.w * channel(rough_t, 2u);
+        var roughness = model.params.w * channel(rough_t, 2u);
+        var plain_rough = model.params2.z * channel(rough_t, 2u);
+        if frame.fog_transmit.z > 0.5 {
+            // Tokuyoshi and Kaplanyan: the variance of the normal across a
+            // pixel widens the distribution, so a highlight smaller than a
+            // pixel is dimmed rather than flickering.
+            let kernel = min(0.5 * (dot(normal_dx, normal_dx) + dot(normal_dy, normal_dy)), 0.18);
+            roughness = pow(clamp(pow(squared(roughness), 2.0) + kernel, 0.0, 1.0), 0.25);
+            plain_rough = pow(clamp(pow(squared(plain_rough), 2.0) + kernel, 0.0, 1.0), 0.25);
+        }
         let ao = mix(1.0, channel(occlusion_t, 4u), model.map_params.y);
-        let f0 = mix(vec3<f32>(0.04), base.rgb, metal);
-        var sum = base.rgb * frame.ambient.rgb * ao;
+        let shine = model.shine;
+        let f0 = mix(vec3<f32>(shine.z), base.rgb, metal);
+        // What a dielectric's reflection is made of; a metal's is always
+        // all of its base colour.
+        let spec_color = mix(
+            shine.x * mix(vec3<f32>(1.0), base.rgb, shine.y),
+            vec3<f32>(1.0),
+            metal,
+        );
+        let coat = model.edge.z;
+        let coat_rough = model.edge.w;
+        let coat_nv = max(dot(coat_n, v), 1e-4);
+        // Diffuse light gives way to what shows through; reflections do not.
+        var diffuse = base.rgb * (frame.ambient.rgb + model.ambient.rgb) * ao;
+        var glossy = vec3<f32>(0.0);
         for (var i = 0u; i < min(frame.counts.x, MAX_LIGHTS); i++) {
+            if (model.flags.x & (1u << i)) == 0u {
+                continue;
+            }
             let light = frame.lights[i];
             var l = -light.direction.xyz;
             var radiance = light.color.rgb;
@@ -453,45 +615,95 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
             let h = normalize(l + v);
             let nh = max(dot(n, h), 0.0);
             if principled {
-                let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);
+                let vh = max(dot(v, h), 0.0);
+                let fresnel = schlick(f0, vh, shine.w, model.edge.x, model.edge.y);
                 let spec = ggx(nh, squared(roughness)) * smith(nl, nv, roughness) / (4.0 * nl * nv);
-                let kd = (vec3<f32>(1.0) - fresnel) * (1.0 - metal);
-                sum += (kd * base.rgb + PI * spec * fresnel) * radiance * nl;
+                let kd = (vec3<f32>(1.0) - fresnel * spec_color) * (1.0 - metal);
+                var under = 1.0;
+                if coat > 0.0 {
+                    let coat_nl = max(dot(coat_n, l), 1e-4);
+                    let coat_f = schlick(
+                        vec3<f32>(0.04),
+                        vh,
+                        model.coat_edge.x,
+                        model.coat_edge.y,
+                        model.coat_edge.z,
+                    ).x;
+                    let coat_d = ggx(max(dot(coat_n, h), 0.0), squared(coat_rough));
+                    let coat_g = smith(coat_nl, coat_nv, coat_rough) / (4.0 * coat_nl * coat_nv);
+                    glossy += vec3<f32>(PI * coat_d * coat_g * coat_f * coat) * radiance * coat_nl;
+                    under = 1.0 - coat * coat_f;
+                }
+                diffuse += under * kd * base.rgb * radiance * nl;
+                glossy += under * PI * spec * fresnel * spec_color * radiance * nl;
             } else {
-                let rough = model.params2.z;
-                let spec = model.params2.y * ggx(nh, squared(rough)) * smith(nl, nv, rough) / (4.0 * nl * nv);
-                sum += (base.rgb + vec3<f32>(PI * spec)) * radiance * nl;
+                let spec = model.params2.y * ggx(nh, squared(plain_rough))
+                    * smith(nl, nv, plain_rough) / (4.0 * nl * nv);
+                var tint = model.tint.rgb * metal_t.rgb;
+                if shine.w != 0.0 {
+                    tint = tint * pow(max(1.0 - nv, 1e-4), shine.w);
+                }
+                diffuse += base.rgb * radiance * nl;
+                glossy += PI * spec * tint * radiance * nl;
             }
         }
-        if frame.env.w > 0.5 {
+        let own_probe = model.probe.y > 0.5;
+        if frame.env.w > 0.5 || own_probe {
+            // A material's own probe is as it is: not turned, and without
+            // the environment's horizon.
+            let exposure = select(frame.env.x, model.probe.z, own_probe);
+            let last = select(frame.env.z, model.probe.x, own_probe);
+            let horizon = select(frame.env.y, 0.0, own_probe);
+            let turned = select(probe_dir(n), n, own_probe);
             // probeHorizon darkens what comes from below, in the scene's
             // up, whichever way the probe is turned: all of it straight
             // down, none of it level.
-            let horizon = frame.env.y;
-            let irradiance = textureSampleLevel(irradiance_cube, cube_sampler, probe_dir(n), 0.0).rgb
+            let irradiance = textureSampleLevel(irradiance_cube, cube_sampler, turned, 0.0).rgb
                 * (1.0 - horizon * (1.0 - n.y) * 0.5);
-            var indirect = vec3<f32>(0.0);
             if principled {
                 let r = reflect(-v, n);
-                let lod = roughness * frame.env.z;
+                let lod = roughness * last;
                 let below = mix(select(0.0, 1.0, r.y < 0.0), (1.0 - r.y) * 0.5, roughness);
-                let prefiltered = textureSampleLevel(specular_cube, cube_sampler, probe_dir(r), lod).rgb
+                let r_turned = select(probe_dir(r), r, own_probe);
+                let prefiltered = textureSampleLevel(specular_cube, cube_sampler, r_turned, lod).rgb
                     * (1.0 - horizon * below);
-                let specular = env_brdf(f0, roughness, nv);
+                let specular = env_edge(f0, roughness, nv, shine.w, model.edge.x, model.edge.y)
+                    * spec_color;
                 let kd = (vec3<f32>(1.0) - specular) * (1.0 - metal);
-                indirect = kd * base.rgb * irradiance + prefiltered * specular;
+                var under = 1.0;
+                if coat > 0.0 {
+                    let coat_r = reflect(-v, coat_n);
+                    let coat_turned = select(probe_dir(coat_r), coat_r, own_probe);
+                    let coat_light = textureSampleLevel(
+                        specular_cube,
+                        cube_sampler,
+                        coat_turned,
+                        coat_rough * last,
+                    ).rgb;
+                    let coat_f = env_edge(
+                        vec3<f32>(0.04),
+                        coat_rough,
+                        coat_nv,
+                        model.coat_edge.x,
+                        model.coat_edge.y,
+                        model.coat_edge.z,
+                    );
+                    glossy += coat_light * coat_f * coat * ao * exposure;
+                    under = 1.0 - coat * coat_f.x;
+                }
+                diffuse += under * kd * base.rgb * irradiance * ao * exposure;
+                glossy += under * prefiltered * specular * ao * exposure;
             } else {
-                indirect = base.rgb * irradiance;
+                diffuse += base.rgb * irradiance * ao * exposure;
             }
-            sum += indirect * ao * frame.env.x;
         }
         var emissive = model.emissive.rgb;
         if has_map(4u) {
             emissive = emissive * emissive_t.rgb;
         }
-        rgb = sum + emissive;
+        rgb = fogged(diffuse * (1.0 - through) + glossy + emissive, in.world);
     }
-    return vec4<f32>(tonemap(rgb, frame.tone) * a, a);
+    return vec4<f32>(tonemap(rgb, frame.tone) * a, a * (1.0 - through));
 }
 
 struct SurfaceOut {

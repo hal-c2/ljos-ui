@@ -118,9 +118,9 @@ pub use helpers::ExtendedSceneEnvironment;
 pub use instancing::{FileInstancing, InstanceList, InstanceListEntry, Instancing};
 pub use ljos::item::ljos_3d::{ComponentType, PrimitiveType, Semantic, math::Vec3};
 pub use node::{
-    Camera, DefaultMaterial, DirectionalLight, Geometry, Light, Material, Model, Node, Object3D,
-    OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial, SceneEnvironment,
-    SpotLight, host_write,
+    Camera, DefaultMaterial, DirectionalLight, Fog, Geometry, Light, Material, Model, MorphTarget,
+    Node, Object3D, OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial,
+    ReflectionProbe, SceneEnvironment, SpotLight, host_write,
 };
 pub use pick::PickResult;
 pub use random_instancing::{InstanceRange, RandomInstancing};
@@ -161,6 +161,9 @@ pub fn register(engine: &Engine) {
         DirectionalLight,
         PointLight,
         SpotLight,
+        Fog,
+        MorphTarget,
+        ReflectionProbe,
         Material,
         DefaultMaterial,
         PrincipledMaterial,

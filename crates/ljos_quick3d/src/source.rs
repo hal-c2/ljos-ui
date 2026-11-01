@@ -16,10 +16,10 @@ use ljos::prelude::*;
 
 use crate::helpers::ExtendedSceneEnvironment as X;
 use crate::{
-    Camera, CustomMaterial, DefaultMaterial, DirectionalLight, Effect, Geometry, Instancing, Joint,
-    Light, Material, Model, Node, Object3D, OrthographicCamera, PerspectiveCamera, PointLight,
-    PrincipledMaterial, RuntimeLoader, SceneEnvironment, Skeleton, Skin, SpotLight, Texture,
-    View3D,
+    Camera, CustomMaterial, DefaultMaterial, DirectionalLight, Effect, Fog, Geometry, Instancing,
+    Joint, Light, Material, Model, MorphTarget, Node, Object3D, OrthographicCamera,
+    PerspectiveCamera, PointLight, PrincipledMaterial, RuntimeLoader, SceneEnvironment, Skeleton,
+    Skin, SpotLight, Texture, View3D,
 };
 
 /// The engine `e`'s objects, read by the mapping. Reads are tracked: a
@@ -80,6 +80,7 @@ impl<'e> EngineSource<'e> {
         let index = match p {
             Prop3d::Data if e.is::<Object3D>(o) => Object3D::DATA.index,
             Prop3d::Materials if e.is::<Model>(o) => Model::MATERIALS.index,
+            Prop3d::MorphTargets if e.is::<Model>(o) => Model::MORPH_TARGETS.index,
             Prop3d::Effects if e.is::<SceneEnvironment>(o) => SceneEnvironment::EFFECTS.index,
             Prop3d::Joints if e.is::<Skin>(o) => Skin::JOINTS.index,
             _ => return Vec::new(),
@@ -127,6 +128,8 @@ impl SceneSource for EngineSource<'_> {
             Type3d::Joint => e.is::<Joint>(o),
             Type3d::RuntimeLoader => e.is::<RuntimeLoader>(o),
             Type3d::InfiniteGrid => e.is::<crate::helpers::InfiniteGrid>(o),
+            Type3d::Fog => e.is::<Fog>(o),
+            Type3d::MorphTarget => e.is::<MorphTarget>(o),
         }
     }
 
@@ -269,7 +272,36 @@ fn numbers(p: Prop3d) -> &'static [Prop<f64>] {
         P::X => &[Node::X],
         P::Y => &[Node::Y],
         P::Z => &[Node::Z],
-        P::Opacity => &[Node::OPACITY, PrincipledMaterial::OPACITY],
+        P::Opacity => &[
+            Node::OPACITY,
+            PrincipledMaterial::OPACITY,
+            DefaultMaterial::OPACITY,
+        ],
+        P::DepthBias => &[Model::DEPTH_BIAS],
+        P::Weight => &[MorphTarget::WEIGHT],
+        P::IndexOfRefraction => &[PrincipledMaterial::INDEX_OF_REFRACTION],
+        P::FresnelPower => &[
+            PrincipledMaterial::FRESNEL_POWER,
+            DefaultMaterial::FRESNEL_POWER,
+        ],
+        P::SpecularTint => &[PrincipledMaterial::SPECULAR_TINT],
+        P::FresnelScale => &[PrincipledMaterial::FRESNEL_SCALE],
+        P::FresnelBias => &[PrincipledMaterial::FRESNEL_BIAS],
+        P::ClearcoatAmount => &[PrincipledMaterial::CLEARCOAT_AMOUNT],
+        P::ClearcoatRoughnessAmount => &[PrincipledMaterial::CLEARCOAT_ROUGHNESS_AMOUNT],
+        P::ClearcoatFresnelPower => &[PrincipledMaterial::CLEARCOAT_FRESNEL_POWER],
+        P::ClearcoatFresnelScale => &[PrincipledMaterial::CLEARCOAT_FRESNEL_SCALE],
+        P::ClearcoatFresnelBias => &[PrincipledMaterial::CLEARCOAT_FRESNEL_BIAS],
+        P::TransmissionFactor => &[PrincipledMaterial::TRANSMISSION_FACTOR],
+        P::HeightAmount => &[PrincipledMaterial::HEIGHT_AMOUNT],
+        P::Density => &[Fog::DENSITY],
+        P::DepthNear => &[Fog::DEPTH_NEAR],
+        P::DepthFar => &[Fog::DEPTH_FAR],
+        P::DepthCurve => &[Fog::DEPTH_CURVE],
+        P::LeastIntenseY => &[Fog::LEAST_INTENSE_Y],
+        P::MostIntenseY => &[Fog::MOST_INTENSE_Y],
+        P::HeightCurve => &[Fog::HEIGHT_CURVE],
+        P::TransmitCurve => &[Fog::TRANSMIT_CURVE],
         P::FieldOfView => &[PerspectiveCamera::FIELD_OF_VIEW],
         P::ClipNear => &[PerspectiveCamera::CLIP_NEAR, OrthographicCamera::CLIP_NEAR],
         P::ClipFar => &[PerspectiveCamera::CLIP_FAR, OrthographicCamera::CLIP_FAR],
@@ -289,7 +321,10 @@ fn numbers(p: Prop3d) -> &'static [Prop<f64>] {
         P::QuadraticFade => &[PointLight::QUADRATIC_FADE, SpotLight::QUADRATIC_FADE],
         P::ConeAngle => &[SpotLight::CONE_ANGLE],
         P::InnerConeAngle => &[SpotLight::INNER_CONE_ANGLE],
-        P::SpecularAmount => &[DefaultMaterial::SPECULAR_AMOUNT],
+        P::SpecularAmount => &[
+            DefaultMaterial::SPECULAR_AMOUNT,
+            PrincipledMaterial::SPECULAR_AMOUNT,
+        ],
         P::SpecularRoughness => &[DefaultMaterial::SPECULAR_ROUGHNESS],
         P::Metalness => &[PrincipledMaterial::METALNESS],
         P::Roughness => &[PrincipledMaterial::ROUGHNESS],
@@ -358,7 +393,16 @@ fn ints(p: Prop3d) -> &'static [Prop<i32>] {
         P::MetalnessChannel => &[PrincipledMaterial::METALNESS_CHANNEL],
         P::RoughnessChannel => &[PrincipledMaterial::ROUGHNESS_CHANNEL],
         P::OcclusionChannel => &[PrincipledMaterial::OCCLUSION_CHANNEL],
-        P::OpacityChannel => &[PrincipledMaterial::OPACITY_CHANNEL],
+        P::OpacityChannel => &[
+            PrincipledMaterial::OPACITY_CHANNEL,
+            DefaultMaterial::OPACITY_CHANNEL,
+        ],
+        P::BlendMode => &[PrincipledMaterial::BLEND_MODE, DefaultMaterial::BLEND_MODE],
+        P::TransmissionChannel => &[PrincipledMaterial::TRANSMISSION_CHANNEL],
+        P::HeightChannel => &[PrincipledMaterial::HEIGHT_CHANNEL],
+        P::MinHeightMapSamples => &[PrincipledMaterial::MIN_HEIGHT_MAP_SAMPLES],
+        P::MaxHeightMapSamples => &[PrincipledMaterial::MAX_HEIGHT_MAP_SAMPLES],
+        P::Attributes => &[MorphTarget::ATTRIBUTES],
         P::AlphaMode => &[PrincipledMaterial::ALPHA_MODE],
         P::IndexUV => &[Texture::INDEX_UV],
         P::TilingModeHorizontal => &[Texture::TILING_MODE_HORIZONTAL],
@@ -386,6 +430,20 @@ fn bools(p: Prop3d) -> &'static [Prop<bool>] {
     use Prop3d as P;
     match p {
         P::Visible => &[Node::VISIBLE],
+        P::VertexColorsEnabled => &[
+            PrincipledMaterial::VERTEX_COLORS_ENABLED,
+            DefaultMaterial::VERTEX_COLORS_ENABLED,
+        ],
+        P::FresnelScaleBiasEnabled => &[PrincipledMaterial::FRESNEL_SCALE_BIAS_ENABLED],
+        P::ClearcoatFresnelScaleBiasEnabled => {
+            &[PrincipledMaterial::CLEARCOAT_FRESNEL_SCALE_BIAS_ENABLED]
+        }
+        P::SpecularAAEnabled => &[SceneEnvironment::SPECULAR_AA_ENABLED],
+        P::DepthTestEnabled => &[SceneEnvironment::DEPTH_TEST_ENABLED],
+        P::Enabled => &[Fog::ENABLED],
+        P::DepthEnabled => &[Fog::DEPTH_ENABLED],
+        P::HeightEnabled => &[Fog::HEIGHT_ENABLED],
+        P::TransmitEnabled => &[Fog::TRANSMIT_ENABLED],
         P::CastsShadows => &[Model::CASTS_SHADOWS],
         P::ReceivesShadows => &[Model::RECEIVES_SHADOWS],
         P::FrustumCullingEnabled => &[Camera::FRUSTUM_CULLING_ENABLED],
@@ -418,7 +476,8 @@ fn bools(p: Prop3d) -> &'static [Prop<bool>] {
 fn colors(p: Prop3d) -> &'static [Prop<Color>] {
     use Prop3d as P;
     match p {
-        P::Color => &[Light::COLOR],
+        P::Color => &[Light::COLOR, Fog::COLOR],
+        P::SpecularTint => &[DefaultMaterial::SPECULAR_TINT],
         P::AmbientColor => &[Light::AMBIENT_COLOR],
         P::DiffuseColor => &[DefaultMaterial::DIFFUSE_COLOR],
         P::BaseColor => &[PrincipledMaterial::BASE_COLOR],
@@ -435,7 +494,10 @@ fn vectors(p: Prop3d) -> &'static [Prop<Vector3d>] {
         P::EulerRotation => &[Node::EULER_ROTATION],
         P::Scale => &[Node::SCALE],
         P::Pivot => &[Node::PIVOT],
-        P::EmissiveFactor => &[PrincipledMaterial::EMISSIVE_FACTOR],
+        P::EmissiveFactor => &[
+            PrincipledMaterial::EMISSIVE_FACTOR,
+            DefaultMaterial::EMISSIVE_FACTOR,
+        ],
         P::ProbeOrientation => &[SceneEnvironment::PROBE_ORIENTATION],
         P::LensFlareCameraDirection => &[X::LENS_FLARE_CAMERA_DIRECTION],
         _ => &[],
@@ -457,12 +519,29 @@ fn objects(p: Prop3d) -> &'static [Prop<Option<ObjectId>>] {
         P::DiffuseMap => &[DefaultMaterial::DIFFUSE_MAP],
         P::BaseColorMap => &[PrincipledMaterial::BASE_COLOR_MAP],
         P::MetalnessMap => &[PrincipledMaterial::METALNESS_MAP],
-        P::RoughnessMap => &[PrincipledMaterial::ROUGHNESS_MAP],
-        P::NormalMap => &[PrincipledMaterial::NORMAL_MAP],
-        P::EmissiveMap => &[PrincipledMaterial::EMISSIVE_MAP],
+        P::RoughnessMap => &[
+            PrincipledMaterial::ROUGHNESS_MAP,
+            DefaultMaterial::ROUGHNESS_MAP,
+        ],
+        P::SpecularMap => &[DefaultMaterial::SPECULAR_MAP],
+        P::TransmissionMap => &[PrincipledMaterial::TRANSMISSION_MAP],
+        P::HeightMap => &[PrincipledMaterial::HEIGHT_MAP],
+        P::Scope => &[Light::SCOPE],
+        P::Fog => &[SceneEnvironment::FOG],
+        P::NormalMap => &[PrincipledMaterial::NORMAL_MAP, DefaultMaterial::NORMAL_MAP],
+        P::EmissiveMap => &[
+            PrincipledMaterial::EMISSIVE_MAP,
+            DefaultMaterial::EMISSIVE_MAP,
+        ],
         P::OcclusionMap => &[PrincipledMaterial::OCCLUSION_MAP],
-        P::OpacityMap => &[PrincipledMaterial::OPACITY_MAP],
-        P::LightProbe => &[SceneEnvironment::LIGHT_PROBE],
+        P::OpacityMap => &[
+            PrincipledMaterial::OPACITY_MAP,
+            DefaultMaterial::OPACITY_MAP,
+        ],
+        P::LightProbe => &[
+            SceneEnvironment::LIGHT_PROBE,
+            PrincipledMaterial::LIGHT_PROBE,
+        ],
         P::LutTexture => &[X::LUT_TEXTURE],
         P::LensFlareLensColorTexture => &[X::LENS_FLARE_LENS_COLOR_TEXTURE],
         P::LensFlareLensDirtTexture => &[X::LENS_FLARE_LENS_DIRT_TEXTURE],

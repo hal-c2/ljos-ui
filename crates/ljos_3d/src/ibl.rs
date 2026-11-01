@@ -22,7 +22,7 @@ use std::sync::{Arc, Weak};
 use bytemuck::{Pod, Zeroable};
 
 use crate::scene::LightProbe;
-use crate::texture::{PixelEncoding, TexturePixels};
+use crate::texture::{PixelEncoding, Texture, TexturePixels};
 
 /// The format of the probe's maps: light beyond 1 needs more than a byte.
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -356,7 +356,18 @@ impl Ibl {
         encoder: &mut wgpu::CommandEncoder,
         probe: &LightProbe,
     ) -> Bound {
-        let image = &probe.texture.image;
+        self.prepare_texture(device, queue, encoder, &probe.texture)
+    }
+
+    /// As [`Ibl::prepare`], for a picture a material lights itself by.
+    pub(crate) fn prepare_texture(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        texture: &Texture,
+    ) -> Bound {
+        let image = &texture.image;
         let id = image.id();
         if self.probes.contains_key(&id) {
             return Bound::Probe(id);

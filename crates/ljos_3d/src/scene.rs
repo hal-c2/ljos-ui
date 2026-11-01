@@ -184,8 +184,18 @@ pub enum CullMode {
     None,
 }
 
+/// `blendMode` of the built-in materials: how a surface is laid over what
+/// is behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BlendMode {
+    #[default]
+    SourceOver,
+    Screen,
+    Multiply,
+}
+
 /// `DefaultMaterial`, as far as it is built: a diffuse colour lit by the
-/// scene's lights, with a white highlight of `specular_amount`.
+/// scene's lights, with a highlight of `specular_amount` and `specular_tint`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DefaultMaterial {
     pub diffuse_color: Color,
@@ -197,6 +207,31 @@ pub struct DefaultMaterial {
     /// 0 to 1: how far the highlight spreads.
     pub specular_roughness: f32,
     pub cull_mode: CullMode,
+    /// Multiplies `diffuse_color`'s alpha.
+    pub opacity: f32,
+    pub opacity_channel: Channel,
+    /// Linear light the surface gives by itself.
+    pub emissive: [f32; 3],
+    /// Boxed for the reason [`PrincipledMaterial::maps`] is.
+    pub maps: Box<DefaultMaps>,
+    pub specular_tint: Color,
+    /// 0 has the highlight the same seen from any side; above it, the
+    /// highlight grows towards the edges.
+    pub fresnel_power: f32,
+    pub blend_mode: BlendMode,
+    pub vertex_colors: bool,
+}
+
+/// The maps of a [`DefaultMaterial`] past its diffuse one; each only once
+/// its image is loaded.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DefaultMaps {
+    pub opacity: Option<Texture>,
+    pub emissive: Option<Texture>,
+    pub normal: Option<Texture>,
+    pub roughness: Option<Texture>,
+    /// Multiplies the highlight.
+    pub specular: Option<Texture>,
 }
 
 impl Default for DefaultMaterial {
@@ -208,6 +243,14 @@ impl Default for DefaultMaterial {
             specular_amount: 0.0,
             specular_roughness: 0.0,
             cull_mode: CullMode::Back,
+            opacity: 1.0,
+            opacity_channel: Channel::A,
+            emissive: [0.0; 3],
+            maps: Box::default(),
+            specular_tint: Color::WHITE,
+            fresnel_power: 0.0,
+            blend_mode: BlendMode::SourceOver,
+            vertex_colors: false,
         }
     }
 }
@@ -267,6 +310,76 @@ pub struct PrincipledMaps {
     pub occlusion_amount: f32,
     pub opacity: Option<Texture>,
     pub opacity_channel: Channel,
+    /// How much of the background shows through the diffuse light.
+    pub transmission: Option<Texture>,
+    pub transmission_channel: Channel,
+    /// Moves what the other maps read, so that the surface looks carved.
+    pub height: Option<Texture>,
+    pub height_channel: Channel,
+    pub surface: Surface,
+}
+
+/// What a [`PrincipledMaterial`] has beyond the metal-roughness model.
+/// In its box as most materials leave all of it as it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Surface {
+    /// How much of a dielectric's reflection there is; metals keep theirs.
+    pub specular_amount: f32,
+    /// 0 reflects white, 1 the base colour; metals always the base colour.
+    pub specular_tint: f32,
+    /// What a dielectric reflects head on comes from it.
+    pub index_of_refraction: f32,
+    pub fresnel: Fresnel,
+    /// A second, dielectric layer over the surface: how much there is.
+    pub clearcoat_amount: f32,
+    pub clearcoat_roughness: f32,
+    pub clearcoat_fresnel: Fresnel,
+    pub transmission_factor: f32,
+    pub height_amount: f32,
+    /// The fewest and the most samples a pixel's height is looked for with.
+    pub height_samples: [u32; 2],
+    pub blend_mode: BlendMode,
+    pub vertex_colors: bool,
+    /// Lights this material in place of the environment's light probe.
+    pub light_probe: Option<Texture>,
+}
+
+/// How a reflection grows towards the edges.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fresnel {
+    pub power: f32,
+    pub scale: f32,
+    pub bias: f32,
+}
+
+impl Default for Fresnel {
+    fn default() -> Self {
+        Fresnel {
+            power: 5.0,
+            scale: 1.0,
+            bias: 0.0,
+        }
+    }
+}
+
+impl Default for Surface {
+    fn default() -> Self {
+        Surface {
+            specular_amount: 1.0,
+            specular_tint: 0.0,
+            index_of_refraction: 1.5,
+            fresnel: Fresnel::default(),
+            clearcoat_amount: 0.0,
+            clearcoat_roughness: 0.0,
+            clearcoat_fresnel: Fresnel::default(),
+            transmission_factor: 0.0,
+            height_amount: 0.0,
+            height_samples: [8, 32],
+            blend_mode: BlendMode::SourceOver,
+            vertex_colors: true,
+            light_probe: None,
+        }
+    }
 }
 
 impl Default for PrincipledMaps {
@@ -285,6 +398,11 @@ impl Default for PrincipledMaps {
             occlusion_amount: 1.0,
             opacity: None,
             opacity_channel: Channel::A,
+            transmission: None,
+            transmission_channel: Channel::R,
+            height: None,
+            height_channel: Channel::R,
+            surface: Surface::default(),
         }
     }
 }
@@ -315,6 +433,16 @@ pub enum Material {
 }
 
 impl Material {
+    /// Whether its own opacity leaves nothing to draw. Whatever its alpha
+    /// mode: a model used only for its place has a material like this.
+    pub fn is_clear(&self) -> bool {
+        match self {
+            Material::Default(m) => m.opacity <= 0.0,
+            Material::Principled(m) => m.opacity <= 0.0,
+            Material::Custom(_) => false,
+        }
+    }
+
     pub fn cull_mode(&self) -> CullMode {
         match self {
             Material::Default(m) => m.cull_mode,
@@ -324,9 +452,18 @@ impl Material {
     }
 
     /// The opacity a pixel of the material has before its alpha mode.
+    pub fn blend_mode(&self) -> BlendMode {
+        match self {
+            Material::Default(m) => m.blend_mode,
+            Material::Principled(m) => m.maps.surface.blend_mode,
+            // Its own source and destination factors say.
+            Material::Custom(_) => BlendMode::SourceOver,
+        }
+    }
+
     pub fn alpha(&self) -> f32 {
         match self {
-            Material::Default(m) => m.diffuse_color.a,
+            Material::Default(m) => m.diffuse_color.a * m.opacity,
             Material::Principled(m) => m.base_color.a * m.opacity,
             // What the snippet writes is not known here.
             Material::Custom(_) => 1.0,
@@ -338,7 +475,18 @@ impl Material {
     pub fn blends(&self) -> bool {
         let see_through = |map: &Option<Texture>| map.as_ref().is_some_and(|t| !t.image.opaque());
         match self {
-            Material::Default(m) => self.alpha() < 1.0 || see_through(&m.diffuse_map),
+            Material::Default(m) => {
+                self.alpha() < 1.0
+                    || m.maps.opacity.is_some()
+                    || m.blend_mode != BlendMode::SourceOver
+                    || see_through(&m.diffuse_map)
+            }
+            Material::Principled(m)
+                if m.maps.surface.blend_mode != BlendMode::SourceOver
+                    || m.maps.surface.transmission_factor > 0.0 =>
+            {
+                true
+            }
             Material::Principled(m) => match m.alpha_mode {
                 AlphaMode::Default => {
                     self.alpha() < 1.0
@@ -635,6 +783,11 @@ pub struct Node {
     pub instancing: Option<Instancing>,
     /// A model's joints, which bend its mesh in place of its transform.
     pub skin: Option<Skin>,
+    /// A model's `depthBias`: added to its distance from the camera, which
+    /// orders what is blended.
+    pub depth_bias: f32,
+    /// A light's `scope`: it lights only this node and what is inside it.
+    pub scope: Option<NodeId>,
     parent: Option<NodeId>,
     children: Vec<NodeId>,
 }
@@ -651,6 +804,8 @@ impl Node {
             shadow: None,
             instancing: None,
             skin: None,
+            depth_bias: 0.0,
+            scope: None,
             parent: None,
             children: Vec::new(),
         }
@@ -727,6 +882,20 @@ impl LightProbe {
     }
 }
 
+/// `SceneEnvironment.fog`, when enabled: what lit surfaces fade into.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    pub color: Color,
+    pub density: f32,
+    /// By the distance from the camera: where it starts, where it is
+    /// whole (0 at or below is the camera's far clip) and the curve.
+    pub depth: Option<[f32; 3]>,
+    /// By height: the y of the least, the y of the most, and the curve.
+    pub height: Option<[f32; 3]>,
+    /// The curve of light from behind the fog brightening it.
+    pub transmit: Option<f32>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Environment {
     pub background: Background,
@@ -748,6 +917,12 @@ pub struct Environment {
     pub post: PostProcess,
     /// `None` while its strength or distance is 0.
     pub ambient_occlusion: Option<AmbientOcclusion>,
+    pub fog: Option<Fog>,
+    /// `specularAAEnabled`: widens highlights where normals change fast
+    /// across a pixel.
+    pub specular_aa: bool,
+    /// `depthTestEnabled`: off, a surface hides nothing and nothing hides it.
+    pub depth_test: bool,
 }
 
 impl Environment {
@@ -770,6 +945,9 @@ impl Default for Environment {
             effects: Vec::new(),
             post: PostProcess::default(),
             ambient_occlusion: None,
+            fog: None,
+            specular_aa: false,
+            depth_test: true,
         }
     }
 }

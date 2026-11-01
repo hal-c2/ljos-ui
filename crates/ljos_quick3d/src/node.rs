@@ -11,8 +11,8 @@ use ljos::prelude::*;
 
 use ljos::item::ljos_3d::qml::defaults as d;
 pub(crate) use ljos::item::ljos_3d::qml::enums::{
-    alpha, antialiasing, background, channel, cull, depth_draw, fov_orientation, lighting,
-    shadow_map, soft_shadow, tonemap,
+    alpha, antialiasing, background, blend, channel, cull, depth_draw, fov_orientation, lighting,
+    morph, reflection_probe, shadow_map, soft_shadow, tonemap,
 };
 
 /// `Object3D`: what every object in a scene is. Its default property
@@ -351,6 +351,21 @@ pub struct Model {
     /// `skeleton`'s inverse bind poses, as `Qt.matrix4x4` values.
     #[qml(notify)]
     pub inverse_bind_poses: Value,
+    /// Added to the model's distance from the camera, which orders what is
+    /// blended.
+    #[qml(notify)]
+    pub depth_bias: f64,
+    /// What a file's mesh morphs by; each target's `weight` says how far.
+    #[qml(notify, list)]
+    pub morph_targets: QmlList,
+    /// Kept: `ReflectionProbe`s do not capture yet (see docs/quick3d.md).
+    #[qml(notify)]
+    pub casts_reflections: bool,
+    #[qml(notify)]
+    pub receives_reflections: bool,
+    /// Kept: a mesh's levels of detail are not read.
+    #[qml(notify)]
+    pub level_of_detail_bias: f64,
     #[qml(skip)]
     pub(crate) mesh: RefCell<crate::mesh_source::Loaded>,
 }
@@ -370,7 +385,141 @@ impl Default for Model {
             skin: None,
             skeleton: None,
             inverse_bind_poses: Value::Undefined,
+            depth_bias: d::model::DEPTH_BIAS,
+            morph_targets: QmlList::default(),
+            casts_reflections: d::model::CASTS_REFLECTIONS,
+            receives_reflections: d::model::RECEIVES_REFLECTIONS,
+            level_of_detail_bias: d::model::LEVEL_OF_DETAIL_BIAS,
             mesh: RefCell::default(),
+        }
+    }
+}
+
+fn morph_target_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![(
+        "Attributes",
+        vec![
+            ("Position", i64::from(morph::POSITION)),
+            ("Normal", i64::from(morph::NORMAL)),
+            ("Tangent", i64::from(morph::TANGENT)),
+            ("Binormal", i64::from(morph::BINORMAL)),
+            ("TexCoord0", i64::from(morph::TEX_COORD_0)),
+            ("TexCoord1", i64::from(morph::TEX_COORD_1)),
+            ("Color", i64::from(morph::COLOR)),
+        ],
+    )]
+}
+
+/// `MorphTarget`: one of a mesh's shapes, and how far towards it the model is.
+#[derive(Debug, QmlObject)]
+#[qml(
+    module = "QtQuick3D",
+    name = "MorphTarget",
+    extends = Object3D,
+    enums = morph_target_enums
+)]
+pub struct MorphTarget {
+    #[qml(base)]
+    pub object3d: Object3D,
+    #[qml(notify)]
+    pub weight: f64,
+    /// Which attributes it moves, flags or-ed together.
+    #[qml(notify)]
+    pub attributes: i32,
+}
+
+impl Default for MorphTarget {
+    fn default() -> Self {
+        MorphTarget {
+            object3d: Object3D::default(),
+            weight: d::morph_target::WEIGHT,
+            attributes: d::morph_target::ATTRIBUTES,
+        }
+    }
+}
+
+fn reflection_probe_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "ReflectionQuality",
+            vec![
+                ("VeryLow", i64::from(reflection_probe::VERY_LOW)),
+                ("Low", i64::from(reflection_probe::LOW)),
+                ("Medium", i64::from(reflection_probe::MEDIUM)),
+                ("High", i64::from(reflection_probe::HIGH)),
+                ("VeryHigh", i64::from(reflection_probe::VERY_HIGH)),
+            ],
+        ),
+        (
+            "ReflectionRefreshMode",
+            vec![
+                ("FirstFrame", i64::from(reflection_probe::FIRST_FRAME)),
+                ("EveryFrame", i64::from(reflection_probe::EVERY_FRAME)),
+            ],
+        ),
+        (
+            "ReflectionTimeSlicing",
+            vec![
+                ("None", i64::from(reflection_probe::NO_TIME_SLICING)),
+                (
+                    "AllFacesAtOnce",
+                    i64::from(reflection_probe::ALL_FACES_AT_ONCE),
+                ),
+                (
+                    "IndividualFaces",
+                    i64::from(reflection_probe::INDIVIDUAL_FACES),
+                ),
+            ],
+        ),
+    ]
+}
+
+/// `ReflectionProbe`: every member is kept, nothing is captured yet: models
+/// keep lighting by the environment's light probe (docs/quick3d.md).
+#[derive(Debug, QmlObject)]
+#[qml(
+    module = "QtQuick3D",
+    name = "ReflectionProbe",
+    extends = Node,
+    enums = reflection_probe_enums
+)]
+pub struct ReflectionProbe {
+    #[qml(base)]
+    pub node: Node,
+    #[qml(notify, enumeration = "ReflectionQuality")]
+    pub quality: i32,
+    #[qml(notify)]
+    pub clear_color: Color,
+    #[qml(notify, enumeration = "ReflectionRefreshMode")]
+    pub refresh_mode: i32,
+    #[qml(notify, enumeration = "ReflectionTimeSlicing")]
+    pub time_slicing: i32,
+    #[qml(notify)]
+    pub parallax_correction: bool,
+    #[qml(notify)]
+    pub box_size: Vector3d,
+    #[qml(notify)]
+    pub box_offset: Vector3d,
+    #[qml(notify)]
+    pub debug_view: bool,
+    #[qml(notify, object = "Texture")]
+    pub texture: Option<ObjectId>,
+}
+
+impl Default for ReflectionProbe {
+    fn default() -> Self {
+        use d::reflection_probe as r;
+        ReflectionProbe {
+            node: Node::default(),
+            quality: r::QUALITY,
+            clear_color: rgba(r::CLEAR_COLOR),
+            refresh_mode: r::REFRESH_MODE,
+            time_slicing: r::TIME_SLICING,
+            parallax_correction: r::PARALLAX_CORRECTION,
+            box_size: vector(r::BOX_SIZE),
+            box_offset: vector(r::BOX_OFFSET),
+            debug_view: r::DEBUG_VIEW,
+            texture: None,
         }
     }
 }
@@ -639,6 +788,9 @@ pub struct Light {
     /// Kept; the maps are always 32-bit depth.
     #[qml(notify)]
     pub use32_bit_shadowmap: bool,
+    /// Lights, and adds its ambient to, only this node and what is in it.
+    #[qml(notify, object = "Node")]
+    pub scope: Option<ObjectId>,
 }
 
 impl Default for Light {
@@ -657,6 +809,7 @@ impl Default for Light {
             pcf_factor: d::light::PCF_FACTOR,
             shadow_filter: d::light::SHADOW_FILTER,
             use32_bit_shadowmap: false,
+            scope: None,
         }
     }
 }
@@ -816,19 +969,34 @@ impl Default for SpotLight {
     }
 }
 
-fn default_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
-    vec![(
-        "Lighting",
+fn blend_modes() -> (&'static str, Vec<(&'static str, i64)>) {
+    (
+        "BlendMode",
         vec![
-            ("NoLighting", i64::from(lighting::NO_LIGHTING)),
-            ("FragmentLighting", i64::from(lighting::FRAGMENT_LIGHTING)),
+            ("SourceOver", i64::from(blend::SOURCE_OVER)),
+            ("Screen", i64::from(blend::SCREEN)),
+            ("Multiply", i64::from(blend::MULTIPLY)),
         ],
-    )]
+    )
+}
+
+fn default_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "Lighting",
+            vec![
+                ("NoLighting", i64::from(lighting::NO_LIGHTING)),
+                ("FragmentLighting", i64::from(lighting::FRAGMENT_LIGHTING)),
+            ],
+        ),
+        blend_modes(),
+        ("SpecularModel", vec![("Default", 0), ("KGGX", 1)]),
+    ]
 }
 
 /// `DefaultMaterial`: a diffuse colour, lit by the scene's lights unless
-/// `lighting` is `NoLighting`, with a white highlight of
-/// `specularAmount`.
+/// `lighting` is `NoLighting`, with a highlight of `specularAmount` and
+/// `specularTint`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick3D",
@@ -852,6 +1020,59 @@ pub struct DefaultMaterial {
     /// 0 to 1: how far the highlight spreads.
     #[qml(notify)]
     pub specular_roughness: f64,
+    /// Multiplies `diffuseColor`'s alpha.
+    #[qml(notify)]
+    pub opacity: f64,
+    #[qml(notify, object = "Texture")]
+    pub opacity_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub opacity_channel: i32,
+    #[qml(notify)]
+    pub emissive_factor: Vector3d,
+    #[qml(notify, object = "Texture")]
+    pub emissive_map: Option<ObjectId>,
+    #[qml(notify, object = "Texture")]
+    pub normal_map: Option<ObjectId>,
+    #[qml(notify, object = "Texture")]
+    pub roughness_map: Option<ObjectId>,
+    #[qml(notify, object = "Texture")]
+    pub specular_map: Option<ObjectId>,
+    #[qml(notify)]
+    pub specular_tint: Color,
+    /// 0 has the highlight the same from every side.
+    #[qml(notify)]
+    pub fresnel_power: f64,
+    #[qml(notify, enumeration = "BlendMode")]
+    pub blend_mode: i32,
+    #[qml(notify)]
+    pub vertex_colors_enabled: bool,
+    /// Kept: this model's highlight has one shape.
+    #[qml(notify, enumeration = "SpecularModel")]
+    pub specular_model: i32,
+    /// Kept: `specularTint` and `fresnelPower` make the highlight here.
+    #[qml(notify)]
+    pub index_of_refraction: f64,
+    /// Kept: the environment's probe does not light a `DefaultMaterial`.
+    #[qml(notify, object = "Texture")]
+    pub specular_reflection_map: Option<ObjectId>,
+    /// Kept: normals come from `normalMap`.
+    #[qml(notify, object = "Texture")]
+    pub bump_map: Option<ObjectId>,
+    #[qml(notify)]
+    pub bump_amount: f64,
+    /// Kept: no light passes through a `DefaultMaterial`.
+    #[qml(notify, object = "Texture")]
+    pub translucency_map: Option<ObjectId>,
+    #[qml(notify)]
+    pub translucent_falloff: f64,
+    /// Kept: light stops at the edge of the lit side.
+    #[qml(notify)]
+    pub diffuse_light_wrap: f64,
+    /// Kept, as lines and points are not drawn wider than one pixel.
+    #[qml(notify)]
+    pub point_size: f64,
+    #[qml(notify)]
+    pub line_width: f64,
 }
 
 impl Default for DefaultMaterial {
@@ -863,6 +1084,28 @@ impl Default for DefaultMaterial {
             lighting: d::default_material::LIGHTING,
             specular_amount: d::default_material::SPECULAR_AMOUNT,
             specular_roughness: d::default_material::SPECULAR_ROUGHNESS,
+            opacity: d::default_material::OPACITY,
+            opacity_map: None,
+            opacity_channel: d::default_material::OPACITY_CHANNEL,
+            emissive_factor: vector(d::default_material::EMISSIVE_FACTOR),
+            emissive_map: None,
+            normal_map: None,
+            roughness_map: None,
+            specular_map: None,
+            specular_tint: rgba(d::default_material::SPECULAR_TINT),
+            fresnel_power: d::default_material::FRESNEL_POWER,
+            blend_mode: d::default_material::BLEND_MODE,
+            vertex_colors_enabled: d::default_material::VERTEX_COLORS_ENABLED,
+            specular_model: d::default_material::SPECULAR_MODEL,
+            index_of_refraction: d::default_material::INDEX_OF_REFRACTION,
+            specular_reflection_map: None,
+            bump_map: None,
+            bump_amount: d::default_material::BUMP_AMOUNT,
+            translucency_map: None,
+            translucent_falloff: d::default_material::TRANSLUCENT_FALLOFF,
+            diffuse_light_wrap: d::default_material::DIFFUSE_LIGHT_WRAP,
+            point_size: d::default_material::POINT_SIZE,
+            line_width: d::default_material::LINE_WIDTH,
         }
     }
 }
@@ -885,6 +1128,7 @@ fn principled_material_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> 
                 ("Mask", i64::from(alpha::MASK)),
             ],
         ),
+        blend_modes(),
     ]
 }
 
@@ -953,6 +1197,94 @@ pub struct PrincipledMaterial {
     pub opacity_map: Option<ObjectId>,
     #[qml(notify, enumeration = "TextureChannelMapping")]
     pub opacity_channel: i32,
+    #[qml(notify, enumeration = "BlendMode")]
+    pub blend_mode: i32,
+    #[qml(notify)]
+    pub vertex_colors_enabled: bool,
+    /// How much of a dielectric's reflection there is; metals keep theirs.
+    #[qml(notify)]
+    pub specular_amount: f64,
+    /// 0 reflects white, 1 the base colour.
+    #[qml(notify)]
+    pub specular_tint: f64,
+    /// What a dielectric reflects head on comes from it.
+    #[qml(notify)]
+    pub index_of_refraction: f64,
+    /// How fast the reflection grows towards the edges.
+    #[qml(notify)]
+    pub fresnel_power: f64,
+    #[qml(notify)]
+    pub fresnel_scale_bias_enabled: bool,
+    #[qml(notify)]
+    pub fresnel_scale: f64,
+    #[qml(notify)]
+    pub fresnel_bias: f64,
+    /// A second, dielectric layer over the surface.
+    #[qml(notify)]
+    pub clearcoat_amount: f64,
+    #[qml(notify)]
+    pub clearcoat_roughness_amount: f64,
+    #[qml(notify)]
+    pub clearcoat_fresnel_power: f64,
+    #[qml(notify)]
+    pub clearcoat_fresnel_scale_bias_enabled: bool,
+    #[qml(notify)]
+    pub clearcoat_fresnel_scale: f64,
+    #[qml(notify)]
+    pub clearcoat_fresnel_bias: f64,
+    /// How much of the background shows through the diffuse light; not bent.
+    #[qml(notify)]
+    pub transmission_factor: f64,
+    /// Multiplies `transmissionFactor`.
+    #[qml(notify, object = "Texture")]
+    pub transmission_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub transmission_channel: i32,
+    /// Moves what the other maps read, so that the surface looks carved.
+    #[qml(notify, object = "Texture")]
+    pub height_map: Option<ObjectId>,
+    #[qml(notify)]
+    pub height_amount: f64,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub height_channel: i32,
+    #[qml(notify)]
+    pub min_height_map_samples: i32,
+    #[qml(notify)]
+    pub max_height_map_samples: i32,
+    /// Lights this material in place of the environment's probe.
+    #[qml(notify, object = "Texture")]
+    pub light_probe: Option<ObjectId>,
+    /// Kept, as the rest of this block: a fragment shader has only so many samplers. See docs/quick3d.md.
+    #[qml(notify, object = "Texture")]
+    pub specular_map: Option<ObjectId>,
+    #[qml(notify, object = "Texture")]
+    pub specular_reflection_map: Option<ObjectId>,
+    #[qml(notify, object = "Texture")]
+    pub clearcoat_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub clearcoat_channel: i32,
+    #[qml(notify, object = "Texture")]
+    pub clearcoat_roughness_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub clearcoat_roughness_channel: i32,
+    #[qml(notify, object = "Texture")]
+    pub clearcoat_normal_map: Option<ObjectId>,
+    #[qml(notify)]
+    pub clearcoat_normal_strength: f64,
+    #[qml(notify, object = "Texture")]
+    pub thickness_map: Option<ObjectId>,
+    #[qml(notify, enumeration = "TextureChannelMapping")]
+    pub thickness_channel: i32,
+    #[qml(notify)]
+    pub thickness_factor: f64,
+    #[qml(notify)]
+    pub attenuation_distance: f64,
+    #[qml(notify)]
+    pub attenuation_color: Color,
+    #[qml(notify)]
+    pub point_size: f64,
+    #[qml(notify)]
+    pub line_width: f64,
 }
 
 impl Default for PrincipledMaterial {
@@ -980,6 +1312,45 @@ impl Default for PrincipledMaterial {
             occlusion_amount: d::principled_material::OCCLUSION_AMOUNT,
             opacity_map: None,
             opacity_channel: d::principled_material::OPACITY_CHANNEL,
+            blend_mode: d::principled_material::BLEND_MODE,
+            vertex_colors_enabled: d::principled_material::VERTEX_COLORS_ENABLED,
+            specular_amount: d::principled_material::SPECULAR_AMOUNT,
+            specular_tint: d::principled_material::SPECULAR_TINT,
+            index_of_refraction: d::principled_material::INDEX_OF_REFRACTION,
+            fresnel_power: d::principled_material::FRESNEL_POWER,
+            fresnel_scale_bias_enabled: d::principled_material::FRESNEL_SCALE_BIAS_ENABLED,
+            fresnel_scale: d::principled_material::FRESNEL_SCALE,
+            fresnel_bias: d::principled_material::FRESNEL_BIAS,
+            clearcoat_amount: d::principled_material::CLEARCOAT_AMOUNT,
+            clearcoat_roughness_amount: d::principled_material::CLEARCOAT_ROUGHNESS_AMOUNT,
+            clearcoat_fresnel_power: d::principled_material::CLEARCOAT_FRESNEL_POWER,
+            clearcoat_fresnel_scale_bias_enabled: false,
+            clearcoat_fresnel_scale: d::principled_material::CLEARCOAT_FRESNEL_SCALE,
+            clearcoat_fresnel_bias: d::principled_material::CLEARCOAT_FRESNEL_BIAS,
+            transmission_factor: d::principled_material::TRANSMISSION_FACTOR,
+            transmission_map: None,
+            transmission_channel: d::principled_material::TRANSMISSION_CHANNEL,
+            height_map: None,
+            height_amount: d::principled_material::HEIGHT_AMOUNT,
+            height_channel: d::principled_material::HEIGHT_CHANNEL,
+            min_height_map_samples: d::principled_material::MIN_HEIGHT_MAP_SAMPLES,
+            max_height_map_samples: d::principled_material::MAX_HEIGHT_MAP_SAMPLES,
+            light_probe: None,
+            specular_map: None,
+            specular_reflection_map: None,
+            clearcoat_map: None,
+            clearcoat_channel: d::principled_material::CLEARCOAT_CHANNEL,
+            clearcoat_roughness_map: None,
+            clearcoat_roughness_channel: d::principled_material::CLEARCOAT_ROUGHNESS_CHANNEL,
+            clearcoat_normal_map: None,
+            clearcoat_normal_strength: d::principled_material::CLEARCOAT_NORMAL_STRENGTH,
+            thickness_map: None,
+            thickness_channel: d::principled_material::THICKNESS_CHANNEL,
+            thickness_factor: d::principled_material::THICKNESS_FACTOR,
+            attenuation_distance: d::principled_material::ATTENUATION_DISTANCE,
+            attenuation_color: rgba(d::principled_material::ATTENUATION_COLOR),
+            point_size: d::principled_material::POINT_SIZE,
+            line_width: d::principled_material::LINE_WIDTH,
         }
     }
 }
@@ -1093,6 +1464,81 @@ pub struct SceneEnvironment {
     pub ao_bias: f64,
     #[qml(notify)]
     pub ao_dither: bool,
+    /// What lit surfaces fade into.
+    #[qml(notify, object = "Fog")]
+    pub fog: Option<ObjectId>,
+    /// Widens highlights where normals change fast across a pixel.
+    #[qml(notify, rename = "specularAAEnabled")]
+    pub specular_aa_enabled: bool,
+    /// Off, a surface hides nothing and nothing hides it.
+    #[qml(notify)]
+    pub depth_test_enabled: bool,
+    /// Kept: a depth pre-pass changes the time taken, not the picture.
+    #[qml(notify)]
+    pub depth_pre_pass_enabled: bool,
+    /// Kept: frames are not blended over time (docs/quick3d.md).
+    #[qml(notify, rename = "temporalAAEnabled")]
+    pub temporal_aa_enabled: bool,
+    #[qml(notify, rename = "temporalAAStrength")]
+    pub temporal_aa_strength: f64,
+}
+
+/// `Fog`: lit surfaces fade into a colour, with their distance from the
+/// camera and their height.
+#[derive(Debug, QmlObject)]
+#[qml(module = "QtQuick3D", name = "Fog", extends = Object3D)]
+pub struct Fog {
+    #[qml(base)]
+    pub object3d: Object3D,
+    #[qml(notify)]
+    pub enabled: bool,
+    #[qml(notify)]
+    pub color: Color,
+    /// 0 to 1.
+    #[qml(notify)]
+    pub density: f64,
+    #[qml(notify)]
+    pub depth_enabled: bool,
+    #[qml(notify)]
+    pub depth_near: f64,
+    #[qml(notify)]
+    pub depth_far: f64,
+    #[qml(notify)]
+    pub depth_curve: f64,
+    #[qml(notify)]
+    pub height_enabled: bool,
+    #[qml(notify)]
+    pub least_intense_y: f64,
+    #[qml(notify)]
+    pub most_intense_y: f64,
+    #[qml(notify)]
+    pub height_curve: f64,
+    #[qml(notify)]
+    pub transmit_enabled: bool,
+    #[qml(notify)]
+    pub transmit_curve: f64,
+}
+
+impl Default for Fog {
+    fn default() -> Self {
+        use d::fog as f;
+        Fog {
+            object3d: Object3D::default(),
+            enabled: f::ENABLED,
+            color: rgba(f::COLOR),
+            density: f::DENSITY,
+            depth_enabled: f::DEPTH_ENABLED,
+            depth_near: f::DEPTH_NEAR,
+            depth_far: f::DEPTH_FAR,
+            depth_curve: f::DEPTH_CURVE,
+            height_enabled: f::HEIGHT_ENABLED,
+            least_intense_y: f::LEAST_INTENSE_Y,
+            most_intense_y: f::MOST_INTENSE_Y,
+            height_curve: f::HEIGHT_CURVE,
+            transmit_enabled: f::TRANSMIT_ENABLED,
+            transmit_curve: f::TRANSMIT_CURVE,
+        }
+    }
 }
 
 /// The values the documentation's note promises: strong enough to see.
@@ -1135,6 +1581,12 @@ impl Default for SceneEnvironment {
             ao_sample_rate: d::scene_environment::AO_SAMPLE_RATE,
             ao_bias: d::scene_environment::AO_BIAS,
             ao_dither: d::scene_environment::AO_DITHER,
+            fog: None,
+            specular_aa_enabled: d::scene_environment::SPECULAR_AA_ENABLED,
+            depth_test_enabled: d::scene_environment::DEPTH_TEST_ENABLED,
+            depth_pre_pass_enabled: d::scene_environment::DEPTH_PRE_PASS_ENABLED,
+            temporal_aa_enabled: d::scene_environment::TEMPORAL_AA_ENABLED,
+            temporal_aa_strength: d::scene_environment::TEMPORAL_AA_STRENGTH,
         }
     }
 }

@@ -15,7 +15,7 @@ struct Model {
     emissive: vec4<f32>,
     params: vec4<f32>,
     params2: vec4<f32>,
-    uv: array<vec4<f32>, 14>,
+    uv: array<vec4<f32>, 18>,
     maps: vec4<u32>,
 };
 

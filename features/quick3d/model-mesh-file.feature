@@ -248,3 +248,90 @@ Feature: A Model draws the mesh file at its source
       When 100 milliseconds pass
       And the method "pickAt" of "root" is called with 100, 100
       Then the property "hit" of "root" is "nothing"
+
+  # morph.mesh, made by features/quick3d/models/gen.py: a square 100 units
+  # across with one target that moves every corner 100 units right.
+  Rule: A file's morph targets move its vertices by their weights
+
+    Scenario: A target's weight moves the square, and setting it moves it again
+      Given the model file "morph.mesh"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 300 }
+            Model {
+              source: "morph.mesh"
+              morphTargets: [ MorphTarget { objectName: "t"; weight: 0.5; attributes: MorphTarget.Position } ]
+              materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "red" }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 190, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 60, 100 of the window is "#202020"
+      When the property "weight" of "t" is set to 0
+      And 100 milliseconds pass
+      Then the pixel at 60, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 190, 100 of the window is "#202020"
+
+    Scenario: A target moves only the attributes it names
+      Given the model file "morph.mesh"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 300 }
+            Model {
+              source: "morph.mesh"
+              morphTargets: [ MorphTarget { weight: 1; attributes: MorphTarget.Normal } ]
+              materials: PrincipledMaterial { lighting: PrincipledMaterial.NoLighting; baseColor: "red" }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 60, 100 of the window is within 2 of "#ff0000"
+
+  # colored.mesh, made by the same: a square 100 units across, all its corners
+  # red.
+  Rule: A material can use the colours of a file's vertices
+
+    Scenario Outline: A white surface is drawn in its vertices' colour when enabled
+      Given the model file "colored.mesh"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 300 }
+            Model {
+              source: "colored.mesh"
+              materials: <type> { lighting: <type>.NoLighting; vertexColorsEnabled: <enabled> }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 100, 100 of the window is within 2 of "<seen>"
+
+      Examples:
+        | type               | enabled | seen    |
+        | PrincipledMaterial | true    | #ff0000 |
+        | PrincipledMaterial | false   | #ffffff |
+        | DefaultMaterial    | true    | #ff0000 |

@@ -17,6 +17,16 @@ pub mod node {
 pub mod model {
     pub const CASTS_SHADOWS: bool = true;
     pub const RECEIVES_SHADOWS: bool = true;
+    pub const CASTS_REFLECTIONS: bool = true;
+    pub const RECEIVES_REFLECTIONS: bool = false;
+    pub const DEPTH_BIAS: f64 = 0.0;
+    pub const LEVEL_OF_DETAIL_BIAS: f64 = 1.0;
+}
+
+pub mod morph_target {
+    use super::enums::morph;
+    pub const WEIGHT: f64 = 0.0;
+    pub const ATTRIBUTES: i32 = morph::POSITION;
 }
 
 pub mod camera {
@@ -85,6 +95,20 @@ pub mod default_material {
     pub const LIGHTING: i32 = lighting::FRAGMENT_LIGHTING;
     pub const SPECULAR_AMOUNT: f64 = 0.0;
     pub const SPECULAR_ROUGHNESS: f64 = 0.0;
+    pub const OPACITY: f64 = 1.0;
+    pub const OPACITY_CHANNEL: i32 = super::enums::channel::A;
+    pub const EMISSIVE_FACTOR: [f32; 3] = [0.0, 0.0, 0.0];
+    pub const SPECULAR_TINT: [u8; 4] = [255, 255, 255, 255];
+    pub const SPECULAR_MODEL: i32 = 0;
+    pub const INDEX_OF_REFRACTION: f64 = 1.45;
+    pub const FRESNEL_POWER: f64 = 0.0;
+    pub const BUMP_AMOUNT: f64 = 0.0;
+    pub const TRANSLUCENT_FALLOFF: f64 = 0.0;
+    pub const DIFFUSE_LIGHT_WRAP: f64 = 0.0;
+    pub const BLEND_MODE: i32 = super::enums::blend::SOURCE_OVER;
+    pub const VERTEX_COLORS_ENABLED: bool = false;
+    pub const POINT_SIZE: f64 = 1.0;
+    pub const LINE_WIDTH: f64 = 1.0;
 }
 
 pub mod principled_material {
@@ -103,6 +127,35 @@ pub mod principled_material {
     pub const OCCLUSION_CHANNEL: i32 = channel::R;
     pub const OCCLUSION_AMOUNT: f64 = 1.0;
     pub const OPACITY_CHANNEL: i32 = channel::A;
+    pub const BLEND_MODE: i32 = super::enums::blend::SOURCE_OVER;
+    pub const VERTEX_COLORS_ENABLED: bool = true;
+    pub const SPECULAR_AMOUNT: f64 = 1.0;
+    pub const SPECULAR_TINT: f64 = 0.0;
+    pub const INDEX_OF_REFRACTION: f64 = 1.5;
+    pub const FRESNEL_POWER: f64 = 5.0;
+    pub const FRESNEL_SCALE_BIAS_ENABLED: bool = false;
+    pub const FRESNEL_SCALE: f64 = 1.0;
+    pub const FRESNEL_BIAS: f64 = 0.0;
+    pub const CLEARCOAT_AMOUNT: f64 = 0.0;
+    pub const CLEARCOAT_ROUGHNESS_AMOUNT: f64 = 0.0;
+    pub const CLEARCOAT_CHANNEL: i32 = channel::R;
+    pub const CLEARCOAT_ROUGHNESS_CHANNEL: i32 = channel::G;
+    pub const CLEARCOAT_NORMAL_STRENGTH: f64 = 1.0;
+    pub const CLEARCOAT_FRESNEL_POWER: f64 = 5.0;
+    pub const CLEARCOAT_FRESNEL_SCALE: f64 = 1.0;
+    pub const CLEARCOAT_FRESNEL_BIAS: f64 = 0.0;
+    pub const TRANSMISSION_FACTOR: f64 = 0.0;
+    pub const TRANSMISSION_CHANNEL: i32 = channel::R;
+    pub const THICKNESS_FACTOR: f64 = 0.0;
+    pub const THICKNESS_CHANNEL: i32 = channel::G;
+    pub const ATTENUATION_DISTANCE: f64 = f64::INFINITY;
+    pub const ATTENUATION_COLOR: [u8; 4] = [255, 255, 255, 255];
+    pub const HEIGHT_AMOUNT: f64 = 0.0;
+    pub const HEIGHT_CHANNEL: i32 = channel::R;
+    pub const MIN_HEIGHT_MAP_SAMPLES: i32 = 8;
+    pub const MAX_HEIGHT_MAP_SAMPLES: i32 = 32;
+    pub const POINT_SIZE: f64 = 1.0;
+    pub const LINE_WIDTH: f64 = 1.0;
 }
 
 pub mod texture {
@@ -123,6 +176,34 @@ pub mod texture {
     pub const MIP_FILTER: i32 = filter::NONE;
     pub const GENERATE_MIPMAPS: bool = false;
     pub const AUTO_ORIENTATION: bool = true;
+}
+
+pub mod fog {
+    pub const ENABLED: bool = false;
+    pub const COLOR: [u8; 4] = [0x80, 0x99, 0xb3, 255];
+    pub const DENSITY: f64 = 1.0;
+    pub const DEPTH_ENABLED: bool = false;
+    pub const DEPTH_NEAR: f64 = 10.0;
+    pub const DEPTH_FAR: f64 = 1000.0;
+    pub const DEPTH_CURVE: f64 = 1.0;
+    pub const HEIGHT_ENABLED: bool = false;
+    pub const LEAST_INTENSE_Y: f64 = 10.0;
+    pub const MOST_INTENSE_Y: f64 = 0.0;
+    pub const HEIGHT_CURVE: f64 = 1.0;
+    pub const TRANSMIT_ENABLED: bool = false;
+    pub const TRANSMIT_CURVE: f64 = 1.0;
+}
+
+pub mod reflection_probe {
+    use super::enums::reflection_probe as r;
+    pub const QUALITY: i32 = r::LOW;
+    pub const CLEAR_COLOR: [u8; 4] = [0, 0, 0, 0];
+    pub const REFRESH_MODE: i32 = r::EVERY_FRAME;
+    pub const TIME_SLICING: i32 = r::NO_TIME_SLICING;
+    pub const PARALLAX_CORRECTION: bool = false;
+    pub const DEBUG_VIEW: bool = false;
+    pub const BOX_SIZE: [f32; 3] = [0.0, 0.0, 0.0];
+    pub const BOX_OFFSET: [f32; 3] = [0.0, 0.0, 0.0];
 }
 
 pub mod scene_environment {
@@ -147,6 +228,11 @@ pub mod scene_environment {
     /// 6.5's switch shows the effect at once. The host does this write
     /// itself, as the member's change handler; the mapping only reads.
     pub const AO_STRENGTH_ENABLED: f64 = 100.0;
+    pub const TEMPORAL_AA_ENABLED: bool = false;
+    pub const TEMPORAL_AA_STRENGTH: f64 = 0.3;
+    pub const SPECULAR_AA_ENABLED: bool = false;
+    pub const DEPTH_TEST_ENABLED: bool = true;
+    pub const DEPTH_PRE_PASS_ENABLED: bool = false;
 }
 
 pub mod extended_scene_environment {

@@ -64,9 +64,9 @@ pub use geometry::{
 };
 pub use instancing::{Instance, InstanceTable, Instancing, Skin};
 pub use scene::{
-    AlphaMode, Background, Camera, Cascades, Color, CullMode, DefaultMaterial, Environment, Fade,
-    Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive,
-    PrincipledMaps, PrincipledMaterial, Scene, Shadow, Tonemap, Transform,
+    AlphaMode, Background, Camera, Cascades, Color, CullMode, DefaultMaps, DefaultMaterial,
+    Environment, Fade, Light, LightProbe, Lighting, Material, MeshSource, Model, Node, NodeId,
+    NodeKind, Primitive, PrincipledMaps, PrincipledMaterial, Scene, Shadow, Tonemap, Transform,
 };
 pub use slot::SceneSlot;
 pub use texture::{
