@@ -290,6 +290,14 @@ pub fn register(engine: &Engine) {
             }
         }
     }
+    // The viewers of `QtQuick.Pdf`, which is there with `ljos_quick`'s feature.
+    #[cfg(feature = "pdf")]
+    for name in styles.get("QtQuick/Pdf").cloned().unwrap_or_default() {
+        let key = format!("QtQuick/Pdf/{name}");
+        if let Err(err) = engine.register_qml_type("QtQuick.Pdf", Version::new(5, 0), &key) {
+            util::warn(engine, format!("QtQuick.Pdf.{name}: {err}"));
+        }
+    }
     // Ljós's design module: its transitions are for these popups, so a
     // host that has the controls has it too.
     ljos_design_qml::register(engine);

@@ -47,6 +47,8 @@ mod off_thread;
 mod paint_item;
 pub mod palette;
 mod particles;
+#[cfg(feature = "pdf")]
+pub mod pdf;
 mod pinch_area;
 #[doc(hidden)]
 pub use particles::{emitters_looked_at, particle_reads, particles_painted};
@@ -298,6 +300,8 @@ pub fn register(engine: &Engine) {
     text::register(engine);
     // Module `Ljos`, and Loader and ErrorBoundary as UI boundaries.
     error_boundary::register(engine);
+    #[cfg(feature = "pdf")]
+    pdf::register(engine);
     loader::register(engine);
     // Module `Ljos.Blocks`, and ShellLoader as a UI boundary.
     blocks::register(engine);

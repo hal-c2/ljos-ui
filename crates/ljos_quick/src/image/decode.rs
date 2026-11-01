@@ -1250,13 +1250,40 @@ fn is_pdf(bytes: &[u8]) -> bool {
 /// has no such page, as a drawing: a page is as large as its crop box in
 /// points (Qt 6.11.2, measured on qml6), made at the size `request` asks
 /// for in device pixels, over nothing.
+/// The passwords documents opened with, by URL: an image of a page is drawn
+/// on any thread, from the file alone, and its request is a key in a cache
+/// that no password belongs in. A password is only ever right for its file.
+#[cfg(feature = "pdf")]
+static PDF_PASSWORDS: std::sync::Mutex<std::collections::BTreeMap<String, String>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Says what the document at `url` was opened with. An empty password is how
+/// any other document opens, and takes nothing to remember.
+#[cfg(feature = "pdf")]
+pub(crate) fn remember_pdf_password(url: &str, password: &str) {
+    let mut known = PDF_PASSWORDS.lock().unwrap_or_else(|e| e.into_inner());
+    if password.is_empty() {
+        known.remove(url);
+    } else {
+        known.insert(url.to_owned(), password.to_owned());
+    }
+}
+
+#[cfg(feature = "pdf")]
+fn pdf_password(url: &str) -> String {
+    let known = PDF_PASSWORDS.lock().unwrap_or_else(|e| e.into_inner());
+    known.get(url).cloned().unwrap_or_default()
+}
+
 #[cfg(feature = "pdf")]
 fn draw_pdf(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadError> {
     use hayro::hayro_interpret::util::TransformExt as _;
     use hayro::vello_cpu;
     // Qt's words for a document it cannot read, whatever the reason.
     let unreadable = || LoadError::decode(url, "Unable to read image data");
-    let pdf = hayro::hayro_syntax::Pdf::new(bytes.to_vec()).map_err(|_| unreadable())?;
+    let password = pdf_password(url);
+    let pdf = hayro::hayro_syntax::Pdf::new_with_password(bytes.to_vec(), &password)
+        .map_err(|_| unreadable())?;
     let pages = pdf.pages();
     let page = usize::try_from(request.page)
         .ok()

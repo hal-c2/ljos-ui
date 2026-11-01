@@ -37,7 +37,7 @@ ljos_shell = { path = "../ljos_shell", features = ["dev", "mcp", "quick3d"] }
 ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 # The engine-backed type oracle for `--example` compiles.
 ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "render"] }
-ljos_controls = { path = "../ljos_controls" }
+ljos_controls = { path = "../ljos_controls", features = ["pdf"] }
 # `ljos audit`: the design audit on the scene `ljos render` would draw.
 ljos_audit = { path = "../ljos_audit" }
 # The modules a shipped application registers only when it uses them;

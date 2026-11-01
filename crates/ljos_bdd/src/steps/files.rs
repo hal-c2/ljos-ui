@@ -137,6 +137,30 @@ fn parse_radiance(text: &str) -> Result<[f32; 3], String> {
     <[f32; 3]>::try_from(parts).map_err(|_| format!("{text:?} is not \"R, G, B\""))
 }
 
+// A file beside the QML whose bytes no text can hold, in hexadecimal digits
+// over as many lines as they take.
+#[given(regex = r#"^the file "([^"]+)" of hexadecimal bytes:$"#)]
+fn the_file_of_hex(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let digits: Vec<u8> = step
+        .docstring
+        .as_deref()
+        .ok_or("the digits go in a doc string")?
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
+    let bytes = digits
+        .chunks(2)
+        .map(|pair| {
+            std::str::from_utf8(pair)
+                .ok()
+                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
+                .filter(|_| pair.len() == 2)
+                .ok_or_else(|| format!("{:?} is not a byte", String::from_utf8_lossy(pair)))
+        })
+        .collect::<Result<Vec<u8>, String>>()?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 // A PDF document beside the QML, with a page of each size in points
 // ("300 by 200, 150 by 400"), each painted in its middle half.
 #[given(regex = r#"^a PDF file "([^"]+)" of pages "([^"]+)" painted "(#[0-9a-fA-F]+)"$"#)]

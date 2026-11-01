@@ -80,6 +80,10 @@ fn main() {
         );
         files.clear();
     }
+    // Without the feature the viewers of `QtQuick.Pdf` stay out of the pack.
+    if env::var_os("CARGO_FEATURE_PDF").is_none() {
+        files.retain(|(key, _)| !key.starts_with("QtQuick/Pdf/"));
+    }
     files.sort();
     fs::write(&out, pack(&files)).expect("OUT_DIR is writable");
 }

@@ -674,6 +674,9 @@ fn reload(e: &Engine, me: ObjectId) {
     );
 }
 
+#[cfg(feature = "pdf")]
+pub(crate) use decode::remember_pdf_password;
+
 /// Whether Qt reads `url` on the spot: only local files are; whatever
 /// else has a scheme, a `data:` URL or a network source, arrives later
 /// whatever `asynchronous` says.

@@ -42,5 +42,9 @@ ljos_test = { path = "../ljos_test" }
 # Tests settle, find and click through the scene driver.
 ljos_drive = { path = "../ljos_drive" }
 
+[features]
+# The viewers of `QtQuick.Pdf`, on the documents of `ljos_quick`.
+pdf = ["ljos_quick/pdf"]
+
 [lints]
 workspace = true
