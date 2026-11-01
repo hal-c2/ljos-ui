@@ -59,11 +59,23 @@ impl Rig {
     }
 }
 
+const REGEXP_SOURCE: &str = "(function (v) { return v instanceof RegExp ? v.source : undefined; })";
+// From the start each time: a `g` regular expression remembers where it was.
+const REGEXP_FINDS: &str = "(function (r, s) { r.lastIndex = 0; return r.test(s); })";
+
 /// What `expectFail` said about the next check.
 pub(crate) struct Expect {
     pub(crate) message: String,
     /// Whether the test function ends at the expected failure.
     pub(crate) abort: bool,
+}
+
+/// What `ignoreWarning` and `failOnWarning` were told to look for.
+pub(crate) enum WarningPattern {
+    /// The whole text of the warning.
+    Text(String),
+    /// A regular expression, and its source for the report.
+    RegExp(Value, String),
 }
 
 /// An exception that left a test function.
@@ -82,6 +94,10 @@ pub(crate) struct State {
     /// The tag of the row the running function was given.
     pub(crate) tag: Option<String>,
     pub(crate) expect: Option<Expect>,
+    /// What `ignoreWarning` said is coming and has not come yet.
+    pub(crate) ignored: Vec<WarningPattern>,
+    /// What `failOnWarning` said must not come.
+    pub(crate) refused_warnings: Vec<WarningPattern>,
     /// A check failed (or `skip` was called) in JS whose exception was not
     /// the caller's to see: a signal handler, a `tryVerify` function.
     pub(crate) marked: bool,
@@ -376,6 +392,9 @@ impl Host {
             });
             return;
         }
+        if entry.level == LogLevel::Warning && self.warning_handled(engine, entry, first) {
+            return;
+        }
         let kind = match entry.level {
             LogLevel::Debug => MessageKind::Debug,
             LogLevel::Info => MessageKind::Info,
@@ -392,6 +411,112 @@ impl Host {
             format!("qml: {}", entry.message)
         };
         self.say(engine, Message::new(kind, text));
+    }
+
+    /// What `message` is as something to look for in warnings.
+    pub(crate) fn warning_pattern(&self, engine: &Engine, message: &Value) -> WarningPattern {
+        match self.call(engine, REGEXP_SOURCE, std::slice::from_ref(message)) {
+            Some(Value::String(source)) => {
+                WarningPattern::RegExp(message.clone(), source.to_string())
+            }
+            // `ignoreWarning()` waits for an empty text.
+            _ => WarningPattern::Text(match message {
+                Value::Undefined => String::new(),
+                message => engine.to_js_string(message).to_string(),
+            }),
+        }
+    }
+
+    fn warning_matches(
+        &self,
+        engine: &Engine,
+        pattern: &WarningPattern,
+        message: &str,
+        first: &str,
+    ) -> bool {
+        match pattern {
+            // The engine's own warnings carry the stack below their first
+            // line, which Qt's do not have.
+            WarningPattern::Text(text) => {
+                text == message || (split_place(first).is_some() && text == first)
+            }
+            WarningPattern::RegExp(regexp, _) => {
+                let text = Value::from(message);
+                self.call(engine, REGEXP_FINDS, &[regexp.clone(), text])
+                    .is_some_and(|found| matches!(found, Value::Bool(true)))
+            }
+        }
+    }
+
+    /// Whether `ignoreWarning` or `failOnWarning` took this warning, which
+    /// is then not printed.
+    fn warning_handled(&self, engine: &Engine, entry: &LogEntry, first: &str) -> bool {
+        // Taken out while the patterns run: a regular expression is JS.
+        let mut ignored = std::mem::take(&mut self.state.borrow_mut().ignored);
+        let expected = ignored
+            .iter()
+            .position(|p| self.warning_matches(engine, p, &entry.message, first));
+        if let Some(at) = expected {
+            ignored.remove(at);
+        }
+        self.state.borrow_mut().ignored = ignored;
+        if expected.is_some() {
+            return true;
+        }
+        let refused = std::mem::take(&mut self.state.borrow_mut().refused_warnings);
+        let found = refused
+            .iter()
+            .any(|p| self.warning_matches(engine, p, &entry.message, first));
+        self.state.borrow_mut().refused_warnings = refused;
+        if found {
+            // Qt places this one by the warning's own URL.
+            let place = engine
+                .js_origin()
+                .map(|at| (format!("file://{}", path_of(&at.file)), at.line));
+            let said = format!(
+                "Received a warning that resulted in a failure:\n{}",
+                entry.message
+            );
+            self.say(engine, Message::new(MessageKind::Fail, said).at(place));
+        }
+        found
+    }
+
+    /// The running function is over. What it expected and never came is
+    /// said here; a function that failed already is not told.
+    pub(crate) fn finish_warnings(&self) {
+        let (ignored, reporter) = {
+            let mut state = self.state.borrow_mut();
+            state.refused_warnings.clear();
+            (std::mem::take(&mut state.ignored), state.reporter.clone())
+        };
+        let Some(reporter) = reporter else {
+            return;
+        };
+        let mut reporter = reporter.borrow_mut();
+        if ignored.is_empty() || reporter.has_failed() {
+            return;
+        }
+        for pattern in &ignored {
+            let said = match pattern {
+                WarningPattern::Text(text) => format!("Did not receive message: \"{text}\""),
+                WarningPattern::RegExp(_, source) => {
+                    format!("Did not receive any message matching: \"{source}\"")
+                }
+            };
+            reporter.say(Message::new(MessageKind::Note, said));
+        }
+        reporter.fail_unless_skipped(Message::new(
+            MessageKind::Fail,
+            "Not all expected messages were received",
+        ));
+    }
+
+    /// A new function starts: nothing is expected of it yet.
+    pub(crate) fn forget_warnings(&self) {
+        let mut state = self.state.borrow_mut();
+        state.ignored.clear();
+        state.refused_warnings.clear();
     }
 
     // --------------------------------------------------------------- JS

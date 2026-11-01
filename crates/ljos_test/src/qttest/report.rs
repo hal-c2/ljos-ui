@@ -43,6 +43,8 @@ pub enum MessageKind {
     Skip,
     /// `TestCase.warn`.
     Warning,
+    /// What the runner itself adds about a test function.
+    Note,
     /// `console.log` and `console.debug`.
     Debug,
     /// `console.info`.
@@ -62,6 +64,7 @@ impl MessageKind {
             MessageKind::UnexpectedPass => "XPASS  ",
             MessageKind::Skip => "SKIP   ",
             MessageKind::Warning => "WARNING",
+            MessageKind::Note => "INFO   ",
             MessageKind::Debug => "QDEBUG ",
             MessageKind::Info => "QINFO  ",
             MessageKind::Warn => "QWARN  ",
@@ -76,6 +79,7 @@ impl MessageKind {
             MessageKind::UnexpectedPass => "xpass",
             MessageKind::Skip => "skip",
             MessageKind::Warning => "warning",
+            MessageKind::Note => "note",
             MessageKind::Debug => "debug",
             MessageKind::Info => "info",
             MessageKind::Warn => "warn",
@@ -338,6 +342,19 @@ impl Reporter {
             _ => {}
         }
         open.messages.push(message);
+    }
+
+    /// Says a failure about the running function. One that was skipped is
+    /// still counted as skipped, as in Qt.
+    pub(crate) fn fail_unless_skipped(&mut self, message: Message) {
+        let skipped = self
+            .open
+            .as_ref()
+            .is_some_and(|t| t.outcome == Outcome::Skip);
+        self.say(message);
+        if skipped && let Some(open) = &mut self.open {
+            open.outcome = Outcome::Skip;
+        }
     }
 
     /// The running function is over: `PASS` unless something failed or

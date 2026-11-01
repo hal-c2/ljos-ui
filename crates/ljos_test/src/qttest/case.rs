@@ -11,7 +11,7 @@ use ljos_quick::{Item, MouseButtons, child_items};
 use ljos_runtime::Clock as _;
 
 use super::compare::{fuzzy_same, printed, same};
-use super::host::{Expect, Host, SKIP_MARKER};
+use super::host::{Expect, Host, SKIP_MARKER, WarningPattern};
 use super::image::GrabbedImage;
 use super::input::{self, Stroke, number};
 use super::report::{Message, MessageKind};
@@ -300,6 +300,27 @@ impl TestCase {
     #[qml(invokable, name = "expectFailContinue")]
     fn expect_fail_continue(cx: &Cx, tag: Value, message: Value) {
         Self::expect(cx, &tag, &message, false);
+    }
+
+    /// A warning is coming: it is not printed, and the test function fails
+    /// if it never came. `message` is its whole text, or a regular
+    /// expression that finds it.
+    #[qml(invokable, name = "ignoreWarning")]
+    fn ignore_warning(cx: &Cx, message: Value) {
+        let host = Host::of(cx.engine);
+        let pattern = host.warning_pattern(cx.engine, &message);
+        host.state.borrow_mut().ignored.push(pattern);
+    }
+
+    /// A warning `message` finds fails the test function, which goes on.
+    /// No text refuses nothing.
+    #[qml(invokable, name = "failOnWarning")]
+    fn fail_on_warning(cx: &Cx, message: Value) {
+        let host = Host::of(cx.engine);
+        let pattern = host.warning_pattern(cx.engine, &message);
+        if !matches!(&pattern, WarningPattern::Text(t) if t.is_empty()) {
+            host.state.borrow_mut().refused_warnings.push(pattern);
+        }
     }
 
     // ------------------------------------------------------------- waits

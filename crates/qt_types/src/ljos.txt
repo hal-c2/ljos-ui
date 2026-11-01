@@ -9954,6 +9954,8 @@ module QtTest
 		method warn
 		method expectFail
 		method expectFailContinue
+		method ignoreWarning
+		method failOnWarning
 		method tryCompare
 		method tryVerify
 		method wait

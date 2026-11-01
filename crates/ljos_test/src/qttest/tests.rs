@@ -53,6 +53,8 @@ fn the_module_describes_its_types_for_a_compiler() {
         "fail",
         "skip",
         "expectFail",
+        "ignoreWarning",
+        "failOnWarning",
         "tryCompare",
         "tryVerify",
         "wait",

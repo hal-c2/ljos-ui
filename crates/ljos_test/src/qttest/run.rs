@@ -401,6 +401,7 @@ impl Run<'_> {
         state.tag = tag.map(str::to_owned);
         state.expect = None;
         drop(state);
+        self.host.forget_warnings();
         self.session
             .reporter
             .borrow_mut()
@@ -409,6 +410,7 @@ impl Run<'_> {
 
     fn end(&self) -> Outcome {
         self.host.state.borrow_mut().expect = None;
+        self.host.finish_warnings();
         self.session.reporter.borrow_mut().end()
     }
 
