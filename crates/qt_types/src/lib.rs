@@ -159,8 +159,9 @@ pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: wit
 /// below them: what they draw (a web page, a map, a chart) is one part of
 /// a window, and the rest of an application that shows one still loads.
 /// Then the ones it has not built yet: the modules below `QtQuick3D`
-/// (which itself is built, `ljos_quick3d`), and a timeline (Qt Design
-/// Studio's), with which an application shows where it starts. Of a module
+/// (which itself is built, `ljos_quick3d`), and Qt Design Studio's modules
+/// (a timeline, design effects, its components), with which an application
+/// shows where it starts. Of a module
 /// Ljós has built part of (`QtQuick3D.Helpers`), a type Ljós's own table
 /// has is itself ([`Type::is_built`]) and the others stand in.
 const STANDING_IN: &[&str] = &[
@@ -175,6 +176,8 @@ const STANDING_IN: &[&str] = &[
     "QtLocation",
     "QtGraphs",
     "QtQuick.Timeline",
+    "QtQuick.Studio.DesignEffects",
+    "QtQuick.Studio.Components",
 ];
 
 /// Whether `uri` is one of Qt's modules Ljós does not build, or builds only
