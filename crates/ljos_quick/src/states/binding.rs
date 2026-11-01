@@ -4,7 +4,8 @@
 //! It is one layer on the property's override layer, as a change of a
 //! state is: what the property had before is underneath, a binding there
 //! goes on following what it reads, and `restoreMode` says what of it
-//! shows again when the `Binding` lets go.
+//! shows again when the `Binding` lets go. What was written or bound to the
+//! property after the `Binding` last gave it a value stays instead.
 //!
 //! `Binding { box.width: 10 }` gives properties of other objects, by
 //! their ids: each is a layer of its own, under the one `when`.
@@ -182,7 +183,7 @@ fn sync(engine: &Engine, me: ObjectId) {
     }
     engine.batch(|| {
         if let Some((t, p, id)) = has {
-            let _ = engine.remove_override(t, p, id, restore_mode(engine, me));
+            let _ = engine.let_go_override(t, p, id, restore_mode(engine, me));
         }
         let mut now = None;
         if let Some((t, p)) = want {
@@ -247,7 +248,7 @@ fn let_go_of_members(engine: &Engine, me: ObjectId, mode: RestoreMode) {
         .ok()
         .flatten();
     for (t, p, id) in holds.into_iter().flatten().rev() {
-        let _ = engine.remove_override(t, p, id, mode);
+        let _ = engine.let_go_override(t, p, id, mode);
     }
 }
 

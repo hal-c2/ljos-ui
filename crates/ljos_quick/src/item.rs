@@ -481,7 +481,7 @@ fn follow_implicit_size(
     engine.with_mut(obj, |i: &mut Item| {
         i.follows_implicit[axis] = Rc::downgrade(&token);
     })?;
-    engine.bind_computed(obj, size, move |e| {
+    engine.bind_following(obj, size, move |e| {
         // Held, not used: see `Item::follows_implicit`.
         let _alive = &token;
         if editor {

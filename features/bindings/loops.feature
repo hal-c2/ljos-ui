@@ -262,3 +262,45 @@ Feature: Binding loops
       }
       """
     Then the log has a warning matching "Binding loop detected for property .has."
+
+  # Found by ljos-fuzz (geometry), bucket warning:binding-loop(ljos-only):height: the size only
+  # follows the implicit size, it has no binding for the change to come back to.
+  Scenario: A handler of a size that writes the implicit size the size follows is no loop
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        height: 150
+        property real seen: box.height
+        property real kept: box.implicitHeight
+        Item {
+          id: box
+          implicitHeight: root.height
+          onHeightChanged: box.implicitHeight = 0
+        }
+      }
+      """
+    Then the property "seen" of "root" is 0
+    And the property "kept" of "root" is 0
+    And the log has no warning matching "Binding loop detected"
+
+  Scenario: A handler of a size may step the implicit size the size follows
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property alias wanted: box.implicitHeight
+        property real seen: box.height
+        Item {
+          id: box
+          implicitHeight: 100
+          onHeightChanged: if (height > 70) implicitHeight = height - 10
+        }
+      }
+      """
+    When the property "wanted" of "root" is set to 90
+    Then the property "seen" of "root" is 70
+    And the log has no warning matching "Binding loop detected"

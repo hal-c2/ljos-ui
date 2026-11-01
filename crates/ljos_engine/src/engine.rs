@@ -2655,6 +2655,22 @@ impl Engine {
         self.bind_free(obj, prop, move |e| Some(f(e)), false, Free::Always)
     }
 
+    /// [`Engine::bind_computed`] of what the property's type makes it
+    /// follow, for as long as nothing else is given it
+    /// ([`Graph::mark_following`](ljos_reactive::Graph::mark_following)).
+    pub fn bind_following(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        f: impl FnMut(&Engine) -> Value + 'static,
+    ) -> Result<(), EngineError> {
+        self.bind_computed(obj, prop, f)?;
+        let (obj, prop) = self.redirect(obj, prop);
+        let n = self.ensure_node(obj, prop)?;
+        self.inner.graph.mark_following(n)?;
+        Ok(())
+    }
+
     fn bind_impl(
         &self,
         obj: ObjectId,
@@ -3145,6 +3161,26 @@ impl Engine {
         let g = &self.inner.graph;
         g.batch(|| {
             g.remove_override(n, id, mode)?;
+            self.sync_field(obj, prop, n);
+            Ok(())
+        })
+    }
+
+    /// [`Engine::remove_override`] for what lets go of the property it gave
+    /// a value, as a `Binding` does
+    /// ([`Graph::let_go_override`](ljos_reactive::Graph::let_go_override)).
+    pub fn let_go_override(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        id: OverrideId,
+        mode: RestoreMode,
+    ) -> Result<(), EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let n = self.ensure_node(obj, prop)?;
+        let g = &self.inner.graph;
+        g.batch(|| {
+            g.let_go_override(n, id, mode)?;
             self.sync_field(obj, prop, n);
             Ok(())
         })

@@ -1,10 +1,9 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtqml-binding.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# Backlog: what is written to a property, or bound to it, after the Binding last gave it a value
-# is kept when the Binding lets go, and a binding given so goes on; moving the held layer's own
-# binding down when it is taken off is the graph's (bindings infrastructure). Found by ljos-fuzz
-# (connections), seed 303, bucket warning:assign(ljos-only):Unable_to_assign_QPointF_to_int.
+# What is written to a property after the Binding last gave it a value: found by ljos-fuzz
+# (connections), seed 303, bucket warning:assign(ljos-only):Unable_to_assign_QPointF_to_int, and
+# seed 101, bucket warning:binding-loop(ljos-only):step-set.
 
 @qt-parity
 Feature: The Binding element
@@ -268,7 +267,6 @@ Feature: The Binding element
       When the method "write" of "root" is called
       Then the property "seen" of "root" is "2/undefined/3/0;"
 
-  @backlog
   Rule: What is given a property after the Binding last gave it a value stays when it lets go
 
     Background:
@@ -304,6 +302,82 @@ Feature: The Binding element
     Scenario: Once its value changes after them, what it holds comes back as before
       When the method "run" of "root" is called with true
       Then the property "seen" of "root" is "1,1,1;30,7,30;40,7,40;"
+
+  Rule: A value written over a Binding's stays whatever its restore mode, and is no loop
+
+    Scenario Outline: With <mode> a written value stays, and comes back only as what it had
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int k: 3
+          property int a: k * 10
+          property string seen
+          Binding { id: b; target: root; property: "a"; value: 1; restoreMode: Binding.<mode> }
+          function run() {
+            a = 55; b.when = false; k = 4; seen += a + ";"
+            b.when = true; seen += a + ";"
+            b.when = false; k = 5; seen += a + ";"
+          }
+        }
+        """
+      When the method "run" of "root" is called
+      Then the property "seen" of "root" is "<seen>"
+
+      Examples:
+        | mode                  | seen      |
+        | RestoreNone           | 55;1;1;   |
+        | RestoreBinding        | 55;1;1;   |
+        | RestoreValue          | 55;1;55;  |
+        | RestoreBindingOrValue | 55;1;55;  |
+
+    Scenario: The value it already has, written, is not given
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int a: 7
+          Binding { id: b; target: root; property: "a"; value: 1 }
+          function run() { a = 1; b.when = false }
+        }
+        """
+      When the method "run" of "root" is called
+      Then the property "a" of "root" is 7
+
+    Scenario: What a Binding gives another object by its id stays written too
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property int k: 3
+          Rectangle { id: box; objectName: "box"; width: root.k * 10 }
+          Binding { id: b; box.width: root.k + 100 }
+          function run() { box.width = 55; k = 4; b.when = false; k = 5 }
+        }
+        """
+      When the method "run" of "root" is called
+      Then the property "width" of "box" is 55
+
+    Scenario: A handler that lets a Binding go, of a change a written value made, is no loop
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property real given
+          property real read: given
+          property bool on: true
+          Connections { target: root; function onReadChanged() { root.on = false } }
+          Binding { target: root; property: "given"; value: 0; when: root.on }
+        }
+        """
+      When the property "given" of "root" is set to 10
+      Then the property "read" of "root" is 10
+      And the property "given" of "root" is 10
+      And the log has no warning matching "Binding loop detected"
 
   # A property QML cannot write, a Binding does not take either. One that
   # never changes after creation is read without a dependency, so a layer on

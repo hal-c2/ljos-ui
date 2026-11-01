@@ -48,6 +48,12 @@ struct Layer<V> {
     /// A hold ([`Graph::push_hold`]): as a cover to a write, while what is
     /// pushed later still goes above it.
     hold: bool,
+    /// An override someone else wrote or bound over since its owner last
+    /// gave it a value ([`Graph::let_go_override`]).
+    given: bool,
+    /// What the property's type makes it follow, not an author's binding
+    /// ([`Graph::mark_following`]).
+    following: bool,
 }
 
 enum Content<V> {
@@ -1069,6 +1075,8 @@ impl<V: Clone + 'static> Graph<V> {
                     provenance,
                     cover: false,
                     hold: false,
+                    given: false,
+                    following: false,
                 },
                 overrides: Overrides::NONE,
                 animated: false,
@@ -1099,6 +1107,8 @@ impl<V: Clone + 'static> Graph<V> {
                         provenance: Provenance::Bound,
                         cover: false,
                         hold: false,
+                        given: false,
+                        following: false,
                     },
                     overrides: Overrides::NONE,
                     animated: false,
@@ -1236,12 +1246,14 @@ impl<V: Clone + 'static> Graph<V> {
     /// change coming back, a binding loop, and the binding keeps its value.
     /// The loop so ends at the binding, also when it goes through values
     /// the handler works out itself (a picture loaded at the size the
-    /// binding asks for, and the size that follows from it).
+    /// binding asks for, and the size that follows from it). What a type
+    /// only makes its property follow ([`Graph::mark_following`]) is no
+    /// such binding.
     fn hold_for_handler(&self, target: NodeId) -> Option<HandlerHold<'_, V>> {
         let mut i = self.inner.borrow_mut();
         let node = i.nodes.get_mut(target)?;
-        let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
-        if !bound || node.flags.has(Flags::SETTLING) {
+        let held = matches!(&node.kind, Kind::Property(p) if p.is_bound() && !p.top().following);
+        if !held || node.flags.has(Flags::SETTLING) {
             return None;
         }
         node.flags.set(Flags::SETTLING, true);
@@ -1853,7 +1865,11 @@ impl<V: Clone + 'static> Graph<V> {
                         top.provenance = Provenance::Assigned;
                         p.animated = false;
                         i.make_plain(n);
-                        i.set_value(n, v);
+                        if i.set_value(n, v)
+                            && let Kind::Property(p) = &mut i.nodes[n].kind
+                        {
+                            p.top_mut().given = true;
+                        }
                     }
                 },
                 WriteKind::Initial => {
@@ -1896,6 +1912,7 @@ impl<V: Clone + 'static> Graph<V> {
                     let is_top = idx + 1 == p.overrides.len();
                     let layer = &mut p.overrides[idx];
                     layer.provenance = Provenance::Assigned;
+                    layer.given = false;
                     if is_top {
                         dropped = std::mem::replace(&mut layer.content, Content::Value(None));
                         p.animated = false;
@@ -2120,6 +2137,8 @@ impl<V: Clone + 'static> Graph<V> {
             p.animated = false;
             let (layer, covered) = p.written_mut();
             layer.provenance = Provenance::Bound;
+            layer.given = true;
+            layer.following = false;
             let dropped =
                 std::mem::replace(&mut layer.content, Content::Binding(Some(Box::new(f))));
             if !covered {
@@ -2328,6 +2347,8 @@ impl<V: Clone + 'static> Graph<V> {
                             provenance: Provenance::Assigned,
                             cover,
                             hold,
+                            given: false,
+                            following: false,
                         },
                     );
                     if let Some(v) = active {
@@ -2343,6 +2364,8 @@ impl<V: Clone + 'static> Graph<V> {
                             provenance: Provenance::Bound,
                             cover,
                             hold,
+                            given: false,
+                            following: false,
                         },
                     );
                     if !covered {
@@ -2415,6 +2438,67 @@ impl<V: Clone + 'static> Graph<V> {
         drop(dropped);
         self.flush_if_idle();
         Ok(())
+    }
+
+    /// [`Graph::remove_override`] for an owner that gave the layer a value
+    /// and lets go of the property, as a `Binding` does: what was written or
+    /// bound over that value since stays, a binding going on from where it
+    /// is, whatever `mode` says. Only what is still the owner's goes by
+    /// `mode`. Under a cover or a hold, or under another override, the
+    /// property is not the layer's to leave anything on.
+    pub fn let_go_override(
+        &self,
+        n: NodeId,
+        id: OverrideId,
+        mode: RestoreMode,
+    ) -> Result<(), ReactiveError> {
+        let moved = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            let was_unset = i.unset(n);
+            let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            let Kind::Property(p) = &mut node.kind else {
+                return Err(ReactiveError::NotAProperty(n));
+            };
+            let idx = p
+                .overrides
+                .position(id)
+                .ok_or(ReactiveError::UnknownOverride(n, id))?;
+            let stays = idx + 1 == p.overrides.len() && p.overrides[idx].given && {
+                let below = if idx == 0 {
+                    &p.base
+                } else {
+                    &p.overrides[idx - 1]
+                };
+                !below.cover && !below.hold
+            };
+            if stays {
+                let removed = p.overrides.remove(idx);
+                let below = p.top_mut();
+                below.provenance = removed.provenance;
+                below.given = true;
+                below.following = false;
+                // While a value's layer is on top the value lives in the
+                // node, and it goes on living there.
+                let content = match removed.content {
+                    Content::Value(_) => Content::Value(None),
+                    binding => binding,
+                };
+                let old = std::mem::replace(&mut below.content, content);
+                i.tell_if_set(n, was_unset);
+                Some(old)
+            } else {
+                None
+            }
+        };
+        match moved {
+            Some(old) => {
+                drop(old);
+                self.flush_if_idle();
+                Ok(())
+            }
+            None => self.remove_override(n, id, mode),
+        }
     }
 
     /// Number of active overrides on a property.
@@ -2614,6 +2698,24 @@ impl<V: Clone + 'static> Graph<V> {
         match i.nodes.get_mut(n).map(|node| &mut node.kind) {
             Some(Kind::Property(p)) => {
                 p.placed = placed;
+                Ok(())
+            }
+            Some(_) => Err(ReactiveError::NotAProperty(n)),
+            None => Err(ReactiveError::DeadNode(n)),
+        }
+    }
+
+    /// Says that the binding the property `n` now has is only what its type
+    /// makes it follow (an item's size, its implicit size) and no author's.
+    /// Qt keeps such a value by writing it when what it follows changes, so
+    /// a handler of its change that changes that again runs inside that
+    /// write, without a binding for the change to come back to. An author's
+    /// binding in its place takes the mark away.
+    pub fn mark_following(&self, n: NodeId) -> Result<(), ReactiveError> {
+        let mut i = self.inner.borrow_mut();
+        match i.nodes.get_mut(n).map(|node| &mut node.kind) {
+            Some(Kind::Property(p)) => {
+                p.top_mut().following = true;
                 Ok(())
             }
             Some(_) => Err(ReactiveError::NotAProperty(n)),
