@@ -17,6 +17,7 @@ pub mod mesh;
 pub mod mesh_file;
 #[cfg(feature = "gltf")]
 pub mod obj;
+pub mod particles;
 pub mod pick;
 pub mod qml;
 pub mod scene;
