@@ -459,7 +459,28 @@ Feature: A value a binding gives a property of another type
       | bool   | 0            | boolean:false      |
       | var    | 0, "2"       | string:2           |
 
-  # Buckets value:string:pair and value:string:ref.
+  # Found by ljos-fuzz (rotating), bucket warning:Error(qt-only):fN.
+  Scenario Outline: A function with a parameter left bare, <signature>, leaves every argument as given
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        function show(v) { return typeof v + ":" + v }
+        function read(<signature>) { return show(first) + " " + show(second) }
+        property string seen: read(<given>)
+      }
+      """
+    Then the property "seen" of "root" is "<seen>"
+
+    Examples:
+      | signature                 | given     | seen                                |
+      | first, second: real       | "2", "3"  | string:2 string:3                   |
+      | first, second: real       | 1         | number:1 undefined:undefined        |
+      | first: int, second        | "2.5", 1  | string:2.5 number:1                 |
+      | first: int, second: string | "2.5", 1 | number:2 string:1                   |
+      | first: var, second: int   | "2", "3.5" | string:2 number:3                  |
+
   Scenario: A string given a list of numbers is made of those character codes
     Given the QML:
       """qml

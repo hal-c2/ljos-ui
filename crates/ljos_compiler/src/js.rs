@@ -263,7 +263,14 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
             .iter()
             .filter_map(|param| param.pattern.get_identifier_name().map(|n| n.to_string()))
             .collect();
-        if let Some(body) = &function.body {
+        // qml6 makes them so only of a function all of whose parameters are
+        // typed: one left bare leaves every argument as it was given.
+        let typed = function
+            .params
+            .items
+            .iter()
+            .all(|param| param.type_annotation.is_some());
+        if let Some(body) = function.body.as_ref().filter(|_| typed) {
             let coerced: String = function
                 .params
                 .items
