@@ -556,13 +556,90 @@ impl Engine {
             }
             Err(e) => format!("{e}\n"),
         };
+        self.failed_component(&full, &error, owner)
+    }
+
+    /// `Qt.createComponent(module, type)`: the component of a type by its
+    /// name. It is a file of one object with nothing set, which nothing has
+    /// to compile, so a program with no parser has it too. Its `url` is
+    /// empty and the errors are Qt 6.11.2's, by running qml6.
+    fn module_component(
+        &self,
+        uri: &str,
+        name: &str,
+        owner: Option<ObjectId>,
+    ) -> Result<ObjectId, EngineError> {
+        if !self.has_module(uri) {
+            let error = format!("<Unknown File>: No module named \"{uri}\" found\n");
+            return self.failed_component("", &error, owner);
+        }
+        if self.lookup_type(uri, name).is_none() {
+            let error =
+                format!("<Unknown File>: Module \"{uri}\" contains no type named \"{name}\"\n");
+            return self.failed_component("", &error, owner);
+        }
+        let key = format!("{uri}/{name}");
+        let ir = ljos_ir::CompiledFile {
+            version: ljos_ir::IR_VERSION,
+            file: key.clone(),
+            source_hash: [0; 32],
+            imports: vec![ljos_ir::Import {
+                source: ljos_ir::ImportSource::Module(uri.to_owned()),
+                version: None,
+                alias: None,
+                in_project: false,
+                stands_in: false,
+            }],
+            pragmas: Vec::new(),
+            components: vec![ljos_ir::ComponentDef {
+                name: name.to_owned(),
+                id: key.clone(),
+                kind: ljos_ir::ComponentKind::File,
+                objects: vec![ljos_ir::ObjectDef {
+                    ty: ljos_ir::TypeRef::Native {
+                        module: uri.to_owned(),
+                        name: name.to_owned(),
+                    },
+                    ..Default::default()
+                }],
+                signature: ljos_ir::ComponentSignature([0; 32]),
+                ids: Vec::new(),
+            }],
+            exprs: Vec::new(),
+            translations: Vec::new(),
+            js: ljos_ir::JsModule::default(),
+            invocable: Vec::new(),
+            scripts: Vec::new(),
+        };
+        let file = Rc::new(LoadedFile::new(&key, String::new(), Arc::new(ir), None));
+        let comp = file
+            .find_component(None)
+            .ok_or_else(|| EngineError::Load(format!("{key}: no component")))?;
+        self.make_component_object(
+            owner,
+            Template {
+                file,
+                comp,
+                outer: None,
+                context: None,
+            },
+        )
+    }
+
+    /// A `Component` in the error state, whose `errorString()` is `error`.
+    fn failed_component(
+        &self,
+        url: &str,
+        error: &str,
+        owner: Option<ObjectId>,
+    ) -> Result<ObjectId, EngineError> {
         let c = self.create(
             MetaRef::Static(<Component as QmlType>::static_meta()),
             owner,
         )?;
         self.with_mut::<Component, _>(c, |comp| {
-            comp.url = Url(Atom::new(&full));
-            comp.error = Atom::new(&error);
+            comp.url = Url(Atom::new(url));
+            comp.error = Atom::new(error);
         })?;
         self.write_internal(
             c,
@@ -733,7 +810,22 @@ impl Engine {
             })
         };
         // The prelude below has checked how many arguments there are.
-        let functions: [(&str, HostFn); 3] = [
+        let functions: [(&str, HostFn); 4] = [
+            (
+                "__ljos_createModuleComponent",
+                host(|e, a| {
+                    let (Some(JsValue::String(uri)), Some(JsValue::String(name))) =
+                        (a.first(), a.get(1))
+                    else {
+                        return Ok(JsValue::Null);
+                    };
+                    // (module, type, parent) and (module, type, mode, parent).
+                    let owner = object(e, a.get(2)).or_else(|| object(e, a.get(3)));
+                    e.native_for_script(|| e.module_component(uri, name, owner))
+                        .map(|c| JsValue::Object(obj_to_u64(c)))
+                        .map_err(|e| HostError::msg(e.to_string()))
+                }),
+            ),
             (
                 "__ljos_createComponent",
                 host(|e, a| {
@@ -853,10 +945,15 @@ pub(crate) const PRELUDE: &str = r##"
   const Qt = g.Qt;
   const component = g.__ljos_createComponent, resolved = g.__ljos_resolvedUrl;
   const fromText = g.__ljos_createQmlObject;
+  const ofModule = g.__ljos_createModuleComponent;
   // `base` is the address of the file whose script asks; none for a script
   // that belongs to no file.
   const makers = (base) => ({
-    createComponent(url, mode, parent) {
+    createComponent(url, mode, parent, moduleParent) {
+      if (typeof mode === "string") {
+        if (arguments.length > 4) throw new Error("Qt.createComponent(): Invalid arguments");
+        return ofModule(String(url), mode, parent, moduleParent);
+      }
       if (arguments.length < 1 || arguments.length > 3) {
         throw new Error("Qt.createComponent(): Invalid arguments");
       }

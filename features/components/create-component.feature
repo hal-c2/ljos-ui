@@ -103,6 +103,55 @@ Feature: Qt.createComponent
         """
       Then the property "none" of "root" is true
 
+  Rule: The component of a type of a module
+
+    Scenario: A type by its module and name is ready, and makes objects
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property var made: Qt.createComponent("QtQuick", "Rectangle")
+          property bool ready: made.status === Component.Ready
+          property string problem: made.errorString()
+          property string address: made.url
+          property var one: made.createObject(this, { width: 5 })
+          property real wide: one.width
+        }
+        """
+      Then the property "ready" of "root" is true
+      And the property "problem" of "root" is ""
+      And the property "address" of "root" is ""
+      And the property "wide" of "root" is 5
+
+    Scenario: A module without the type gives a component that says so
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property var made: Qt.createComponent("QtQuick", "Nope")
+          property bool failed: made.status === Component.Error
+          property string problem: made.errorString()
+        }
+        """
+      Then the property "failed" of "root" is true
+      And the property "problem" of "root" is "<Unknown File>: Module \"QtQuick\" contains no type named \"Nope\"\n"
+
+    Scenario: A module that is not there gives a component that says so
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property var made: Qt.createComponent("Nope.Mod", "Rectangle")
+          property bool failed: made.status === Component.Error
+          property string problem: made.errorString()
+        }
+        """
+      Then the property "failed" of "root" is true
+      And the property "problem" of "root" is "<Unknown File>: No module named \"Nope.Mod\" found\n"
+
   Rule: The address is read from the file that asks
 
     Background:
