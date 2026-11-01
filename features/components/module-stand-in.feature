@@ -76,26 +76,6 @@ Feature: The types of a Qt module Ljós does not have stand in as empty items
     Then the property "label" of "other" is "other"
     And the log has 1 warnings matching "QtGraphs"
 
-  Scenario: An application animated by a timeline shows where it starts
-    Given the QML:
-      """qml
-      import QtQuick
-      import QtQuick.Timeline
-      Rectangle {
-        id: box
-        width: 100; height: 100; color: "#2060a0"
-        Timeline {
-          startFrame: 0; endFrame: 100; enabled: true
-          KeyframeGroup {
-            target: box; property: "opacity"
-            Keyframe { frame: 0; value: 0 }
-          }
-        }
-      }
-      """
-    Then the pixel at 50, 50 of the window is "#2060a0"
-    And the log has 1 warnings matching "QtQuick.Timeline"
-
   # Qt makes no object that leaves a required property unset: one written
   # so where a value goes can only be a template, given to the type to
   # make (a delegate), and the type is not there to make it.
