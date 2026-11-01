@@ -125,7 +125,7 @@ pub struct RenderNode {
     /// Cached `(z, declaration index)` order of `children`; valid when `ORDER` is clear.
     pub(crate) paint_order: Box<[NodeId]>,
     /// How many leading entries of `paint_order` have `z < 0`.
-    pub(crate) neg_count: usize,
+    pub(crate) neg_count: u32,
     /// Own content comes before every child, whatever its `z`.
     pub(crate) backdrop: bool,
     pub(crate) local: Affine,
@@ -823,7 +823,7 @@ impl RenderTree {
             keyed.iter().take_while(|k| k.0 < 0.0).count()
         };
         n.paint_order = keyed.into_iter().map(|k| k.2).collect();
-        n.neg_count = neg;
+        n.neg_count = neg as u32;
         n.dirty.remove(Dirty::ORDER);
     }
 
@@ -841,7 +841,7 @@ impl RenderTree {
         }
         self.ensure_order(id);
         let order = std::mem::take(&mut self.nodes[id].paint_order);
-        let neg = self.nodes[id].neg_count;
+        let neg = self.nodes[id].neg_count as usize;
         for c in &order[..neg] {
             self.walk_from(*c, visit);
         }

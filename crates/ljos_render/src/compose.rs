@@ -445,7 +445,7 @@ impl RenderTree {
         // put back after, rather than copied for every node of the subtree.
         let order = std::mem::take(&mut self.nodes[id].paint_order);
         let n = &self.nodes[id];
-        let neg = n.neg_count;
+        let neg = n.neg_count as usize;
         let item = PaintItem {
             node: id,
             world,
@@ -663,7 +663,7 @@ impl RenderTree {
 
         self.ensure_order(id);
         let order = std::mem::take(&mut self.nodes[id].paint_order);
-        let neg = self.nodes[id].neg_count;
+        let neg = self.nodes[id].neg_count as usize;
         for c in &order[..neg] {
             self.compose_node(*c, &here, walk);
         }
