@@ -82,7 +82,7 @@ fn walk_paint_order_matches_snapshot_order() {
 }
 
 #[test]
-fn opacity_is_multiplied_down_and_zero_prunes() {
+fn opacity_is_multiplied_down_and_zero_draws_nothing_and_stays_hit() {
     let mut t = RenderTree::new();
     let r = t.root();
     let p = sized(&mut t, r, 0.0, 0.0, 50.0, 50.0);
@@ -98,13 +98,26 @@ fn opacity_is_multiplied_down_and_zero_prunes() {
     t.set_opacity(p, 0.0);
     let snap = t.compose(VP, 2);
     let ids: Vec<_> = snap.order().collect();
-    assert_eq!(ids, vec![r], "opacity 0 prunes the node and its subtree");
-    assert_eq!(snap.stats.pruned, 1);
+    assert_eq!(
+        ids,
+        vec![r, p, c],
+        "opacity 0 keeps the node and its subtree"
+    );
+    assert_eq!(snap.stats.pruned, 0);
+    assert!(
+        snap.items
+            .iter()
+            .filter(|i| i.node != r)
+            .all(|i| i.list.is_none()),
+        "nothing of it is drawn"
+    );
+    let hits: Vec<_> = hit_test(&snap, Point::new(5.0, 5.0)).collect();
+    assert_eq!(hits[..2], [c, p], "it still takes the pointer");
 
     t.set_opacity(p, 1.0);
     let snap = t.compose(VP, 3);
     let c_op = snap.items.iter().find(|i| i.node == c).unwrap().opacity;
-    assert_eq!(c_op, 0.5, "unpruned subtree gets fresh effective opacity");
+    assert_eq!(c_op, 0.5, "the subtree gets fresh effective opacity");
 }
 
 #[test]

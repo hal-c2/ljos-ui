@@ -261,9 +261,16 @@ impl RenderNode {
     pub fn last_visible_frame(&self) -> u64 {
         self.last_visible_frame
     }
-    /// Pruned from paint and hit testing by its own state (`visible: false` or opacity 0).
+    /// Pruned from paint and hit testing by its own state (`visible: false`).
+    /// Opacity 0 is not here: such a node is not painted and still takes
+    /// the pointer, as what is inside it does.
     pub fn is_pruned(&self) -> bool {
-        !self.visible || self.opacity <= 0.0
+        !self.visible
+    }
+    /// Whether nothing of it shows, because of its own state: pruned, or at
+    /// opacity 0.
+    pub fn is_unseen(&self) -> bool {
+        self.is_pruned() || self.opacity <= 0.0
     }
 }
 
@@ -594,20 +601,14 @@ impl RenderTree {
     /// Set the node's own opacity (clamped to `0..=1`).
     pub fn set_opacity(&mut self, id: NodeId, opacity: f32) {
         let opacity = opacity.clamp(0.0, 1.0);
-        let mut crossed_zero = false;
         self.with_node(id, |n| {
             if n.opacity == opacity {
                 return false;
             }
-            crossed_zero = (n.opacity <= 0.0) != (opacity <= 0.0);
             n.opacity = opacity;
             n.dirty.insert(Dirty::OPACITY);
             true
         });
-        // Bounds only care whether the child is pruned, not how transparent it is.
-        if crossed_zero {
-            self.mark_bounds_of_parent(id);
-        }
     }
 
     /// Whether `id` and what is below it paint; they stay in hit testing

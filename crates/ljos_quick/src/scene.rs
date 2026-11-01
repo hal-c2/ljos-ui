@@ -53,7 +53,9 @@ use ljos_engine::{
     Engine, EngineError, JournalKind, LogLevel, MetaObject, NodeId as GraphNode, ObjectId,
     OverrideContent, OverrideId, PropIndex, Provenance, QmlType, RestoreMode, Value,
 };
-use ljos_render::{ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, kurbo};
+use ljos_render::{
+    ClipSpec, FrameSnapshot, ImageHandle, NodeId, RenderTree, hit_test, hit_test_seen, kurbo,
+};
 use ljos_runtime::{FrameBudget, Scheduler, Time};
 use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::SecondaryMap;
@@ -3477,12 +3479,12 @@ impl QuickScene {
     }
 
     /// The items drawn under `pos`, topmost first, those a modal popup
-    /// shuts off included.
+    /// shuts off included, those at opacity 0 not.
     pub fn items_drawn_at(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
         let Some(snap) = &self.snapshot else {
             return Vec::new();
         };
-        hit_test(snap, pos)
+        hit_test_seen(snap, pos)
             .filter_map(|n| self.by_node.get(n).copied())
             .filter(|o| engine.is_alive(*o))
             .collect()
@@ -4803,7 +4805,7 @@ fn picture_area(tree: &RenderTree, node: NodeId, area: PictureArea) -> kurbo::Re
             .children()
             .iter()
             .filter_map(|c| tree.node(*c))
-            .filter(|c| !c.is_pruned())
+            .filter(|c| !c.is_unseen())
             .map(|c| {
                 c.local()
                     .transform_rect_bbox(kurbo::Rect::from_origin_size((0.0, 0.0), c.size()))
@@ -4828,7 +4830,7 @@ fn in_view(tree: &RenderTree, node: NodeId, sampled: &FxHashSet<NodeId>) -> bool
         if sampled.contains(&id) {
             return true;
         }
-        if n.is_pruned() {
+        if n.is_unseen() {
             return false;
         }
         at = n.parent();

@@ -117,7 +117,7 @@ pub struct PaintItem {
 pub struct ComposeStats {
     /// Nodes entered (not pruned, not culled before entering).
     pub visited: u32,
-    /// Subtrees skipped because `visible: false` or opacity 0.
+    /// Subtrees skipped because `visible: false`.
     pub pruned: u32,
     /// Subtrees skipped because they lie outside the viewport or a clip.
     pub culled: u32,
@@ -181,16 +181,29 @@ impl FrameSnapshot {
 /// Nodes under `point` (world coordinates), topmost first.
 ///
 /// Pruned and culled nodes are not in the snapshot, so they cannot be hit.
+/// A node at opacity 0 is there with nothing to draw.
 /// Clips are honoured exactly, rotated ones included.
 pub fn hit_test(snapshot: &FrameSnapshot, point: Point) -> impl Iterator<Item = NodeId> + '_ {
-    snapshot.items.iter().rev().filter_map(move |item| {
+    under(snapshot, point).map(|item| item.node)
+}
+
+/// [`hit_test`] without what opacity 0 leaves unseen, for a tool that asks
+/// what is shown at a point rather than what the pointer would find.
+pub fn hit_test_seen(snapshot: &FrameSnapshot, point: Point) -> impl Iterator<Item = NodeId> + '_ {
+    under(snapshot, point)
+        .filter(|item| item.opacity > 0.0)
+        .map(|item| item.node)
+}
+
+fn under(snapshot: &FrameSnapshot, point: Point) -> impl Iterator<Item = &PaintItem> + '_ {
+    snapshot.items.iter().rev().filter(move |item| {
         if !item.hit_testable {
-            return None;
+            return false;
         }
         let local = item.world.inverse() * point;
         let hit_rect = Rect::from_origin_size((0.0, 0.0), item.size);
         if !rect_contains(hit_rect, local) {
-            return None;
+            return false;
         }
         // The clip of the node's own drawing is not of where it is.
         let clip = item
@@ -198,9 +211,7 @@ pub fn hit_test(snapshot: &FrameSnapshot, point: Point) -> impl Iterator<Item = 
             .map(|c| snapshot.clip(c))
             .filter(|c| c.content)
             .map_or(item.clip, |c| c.parent);
-        snapshot
-            .clip_chain_contains(clip, point)
-            .then_some(item.node)
+        snapshot.clip_chain_contains(clip, point)
     })
 }
 
@@ -394,7 +405,7 @@ impl RenderTree {
         };
         let (world, opacity) = match root {
             true => (parent.world, parent.opacity),
-            false if n.is_pruned() => return,
+            false if n.is_unseen() => return,
             false => (parent.world * n.local, parent.opacity * n.opacity),
         };
         let mut here = Parent {
@@ -583,7 +594,10 @@ impl RenderTree {
                 world,
                 opacity,
                 size: n.size,
-                list: n.content.clone().filter(|_| parent.drawn && n.drawn),
+                list: n
+                    .content
+                    .clone()
+                    .filter(|_| parent.drawn && n.drawn && n.opacity > 0.0),
                 clip,
                 hit_testable: n.hit_testable,
             });
@@ -593,7 +607,7 @@ impl RenderTree {
         let mut here = Parent {
             world,
             stamp,
-            drawn: parent.drawn && n.drawn,
+            drawn: parent.drawn && n.drawn && n.opacity > 0.0,
             opacity,
             clip: parent.clip,
             clip_bbox: parent.clip_bbox,

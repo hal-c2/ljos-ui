@@ -36,7 +36,8 @@ pub use backend::{
 };
 pub use canvas::{CanvasPaint, CanvasPainter, CanvasShadow, DrawState};
 pub use compose::{
-    ClipEntry, ClipId, ComposeStats, FrameSnapshot, PaintItem, hit_test, is_axis_aligned,
+    ClipEntry, ClipId, ComposeStats, FrameSnapshot, PaintItem, hit_test, hit_test_seen,
+    is_axis_aligned,
 };
 pub use damage::{PixelRect, frame_damage, merge as merge_damage};
 pub use display_list::{
