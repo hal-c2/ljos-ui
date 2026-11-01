@@ -100,8 +100,6 @@ use ljos_engine::{Engine, MetaRef, ObjectId, Prop, QmlType, QmlValue};
 
 pub use ljos_engine::Font;
 pub use ljos_quick::LoadError as ImageLoadError;
-/// For a module crate whose objects hold states as items do.
-pub use ljos_quick::{attach_stateless, register_state_owner};
 pub use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 pub use ljos_quick::keys::{KeyItem, key};
 pub use ljos_quick::keys::{Surrounding, TextInputClient};
