@@ -132,12 +132,16 @@ pub(crate) fn host_complete(engine: &Engine, obj: ObjectId, host: Host) -> Resul
             return Ok(());
         };
         let into = holder(e, obj, ci);
-        for child in e.untrack(|| content_children(e, obj, host)) {
-            if child != ci {
-                set_parent_item(e, child, Some(into))?;
+        // All at once: a child anchored to a sibling reads both parents, and
+        // moved one by one they are for a moment not the same.
+        e.batch(|| {
+            for child in e.untrack(|| content_children(e, obj, host)) {
+                if child != ci {
+                    set_parent_item(e, child, Some(into))?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     };
     adopt(
         engine,

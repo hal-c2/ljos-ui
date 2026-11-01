@@ -384,7 +384,9 @@ impl Ctx<'_> {
         }
         let (bx, by) = if Some(target) == self.parent {
             (0.0, 0.0)
-        } else if self.parent.is_some() && e.visual_parent(target) == self.parent {
+        } else if e.visual_parent(target) == self.parent {
+            // Two items with no parent yet pass too (seen on qml6): what is
+            // declared in a popup has none until the popup completes.
             (num(e, target, Item::X.index), num(e, target, Item::Y.index))
         } else {
             self.warn("Cannot anchor to an item that isn't a parent or sibling.");
