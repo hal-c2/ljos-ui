@@ -92,16 +92,21 @@ if [ -z "${GALLERY_BUILT:-}" ]; then
   fi
 fi
 # An example's `file:content/…` is relative to the working directory, and a
-# Qt build runs where it unpacked its assets: `content` is what was downloaded.
-if [ -d "$root/corpus/standins/$id/downloaded" ]; then
+# Qt build runs where it unpacked its assets: those of a stand-in's download
+# are `content` of a directory of its own, the others are in the example's.
+if grep -q "^  \"$id\":" "$root/corpus/assets.json"; then
   # gallery:drive looks for the inspector's token where it started this.
   export LJOS_MCP_DIR="${LJOS_MCP_DIR:-$PWD}"
-  here="$target/gallery/cwd/$id"
-  mkdir -p "$here"
-  assets="$root/corpus/standins/$id/downloaded"
-  [ -d "$assets/content" ] && assets="$assets/content"
-  ln -sfn "$assets" "$here/content"
-  cd "$here"
+  if [ -d "$root/corpus/standins/$id/downloaded" ]; then
+    here="$target/gallery/cwd/$id"
+    mkdir -p "$here"
+    assets="$root/corpus/standins/$id/downloaded"
+    [ -d "$assets/content" ] && assets="$assets/content"
+    ln -sfn "$assets" "$here/content"
+    cd "$here"
+  else
+    cd "$root/corpus/qtdoc/$dir"
+  fi
 fi
 
 # The window is as large as the root says, as qml6 opens it; the manifest's
