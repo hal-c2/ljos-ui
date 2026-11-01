@@ -67,8 +67,22 @@ pub fn material(
     fragment: Option<&str>,
     shaded: bool,
     uniforms: &[(String, UniformKind)],
-    textures: &[String],
+    declared: &[String],
 ) -> Result<Program, SnippetError> {
+    // A material may declare a texture for every map it could use and name
+    // only those it has: the others take no place, and the limit is on what
+    // a shader samples. The program says which it kept.
+    let textures: Vec<String> = declared
+        .iter()
+        .filter(|t| {
+            [vertex, fragment]
+                .into_iter()
+                .flatten()
+                .any(|src| mentions(src, t))
+        })
+        .cloned()
+        .collect();
+    let textures = textures.as_slice();
     check_names(uniforms, textures)?;
     let vertex_src = vertex.map(strip_comments).unwrap_or_default();
     let fragment_src = fragment.map(strip_comments).unwrap_or_default();
@@ -437,7 +451,14 @@ fn header(
          #define FRAMEBUFFER_Y_UP (-1.0)\n\
          #define NDC_Y_UP 1.0\n\
          #define NEAR_CLIP_VALUE 0.0\n\
-         #define VARYING\n"
+         #define VARYING\n\
+         #define texture2D(ljoss, ljosuv) texture(ljoss, ljosuv)\n\
+         vec3 qt_sRGBToLinear(vec3 ljoss) {{\n\
+         \x20   vec3 ljosk = max(ljoss, vec3(0.0));\n\
+         \x20   return mix(pow((ljosk + vec3(0.055)) / 1.055, vec3(2.4)), ljosk / 12.92,\n\
+         \x20       lessThanEqual(ljosk, vec3(0.04045)));\n\
+         }}\n\
+         vec4 qt_sRGBToLinear(vec4 ljoss) {{ return vec4(qt_sRGBToLinear(ljoss.rgb), ljoss.a); }}\n"
     );
     for (i, name) in fixed
         .iter()
@@ -482,8 +503,14 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
     s.push_str(BONES);
     s.push_str(
         "vec3 VERTEX; vec3 NORMAL; vec2 UV0; vec2 UV1; vec3 TANGENT; vec3 BINORMAL;\n\
-         vec4 COLOR; vec4 POSITION; ivec4 JOINTS; vec4 WEIGHTS;\n\
+         vec4 COLOR; vec4 POSITION; ivec4 JOINTS; vec4 WEIGHTS; float POINT_SIZE;\n\
          vec4 INSTANCE_COLOR; vec4 INSTANCE_DATA; int INSTANCE_INDEX; mat4 ljosinstance;\n\
+         // There are no derivatives here to choose a level of detail by.
+         #define texture(ljoss, ljosuv) textureLod(ljoss, ljosuv, 0.0)\n\
+         vec3 MORPH_POSITION(int ljosi) { return VERTEX; }\n\
+         vec3 MORPH_NORMAL(int ljosi) { return NORMAL; }\n\
+         vec3 MORPH_TANGENT(int ljosi) { return TANGENT; }\n\
+         vec3 MORPH_BINORMAL(int ljosi) { return BINORMAL; }\n\
          #define INSTANCE_MODEL_MATRIX (ljosinstance * ljosmodel)\n\
          #define INSTANCE_MODELVIEWPROJECTION_MATRIX (ljosviewprojection * ljosinstance * ljosmodel)\n\
          mat3 ljoscofactor(mat4 ljosm) {\n\
@@ -652,6 +679,7 @@ fn material_fragment(
         "\nstruct LjosSurface {\n\
          \x20   vec4 ljosbase; vec3 ljosemissive; vec3 ljosnormal; vec3 ljosview;\n\
          \x20   float ljosmetalness; float ljosroughness; float ljosspecular; float ljosocclusion;\n\
+         \x20   vec3 ljosedge; vec4 ljoscoat; vec3 ljoscoatedge; vec3 ljoscoatnormal;\n\
          };\n\
          LjosSurface ljossurface(vec3 ljosnormalin, vec3 ljosworld, vec4 ljosuvs, vec3 ljostangent,\n\
          \x20   vec3 ljosbinormal, vec4 ljoscolor, vec4 ljosfragcoord, bool ljosfront",
@@ -689,6 +717,10 @@ fn material_fragment(
          \x20   ljosout.ljosnormal = normalize(NORMAL); ljosout.ljosview = VIEW_VECTOR;\n\
          \x20   ljosout.ljosmetalness = METALNESS; ljosout.ljosroughness = ROUGHNESS;\n\
          \x20   ljosout.ljosspecular = SPECULAR_AMOUNT; ljosout.ljosocclusion = OCCLUSION_AMOUNT;\n\
+         \x20   ljosout.ljosedge = vec3(FRESNEL_POWER, FRESNEL_SCALE, FRESNEL_BIAS);\n\
+         \x20   ljosout.ljoscoat = vec4(CLEARCOAT_AMOUNT, CLEARCOAT_ROUGHNESS, 0.0, 0.0);\n\
+         \x20   ljosout.ljoscoatedge = vec3(CLEARCOAT_FRESNEL_POWER, CLEARCOAT_FRESNEL_SCALE, CLEARCOAT_FRESNEL_BIAS);\n\
+         \x20   ljosout.ljoscoatnormal = normalize(CLEARCOAT_NORMAL);\n\
          \x20   return ljosout;\n\
          }\n\
          vec4 ljosfragcolor() { return FRAGCOLOR; }\n",
@@ -1046,7 +1078,12 @@ fn shaded_glue(f: &Functions) -> String {
         "if nl > 0.0 {\n\
          \x20           let spec = ggx(max(dot(n, h), 0.0), squared(roughness)) * smith(nl, nv, roughness)\n\
          \x20               / (4.0 * nl * nv);\n\
-         \x20           cmf_ljosadd(vec3<f32>(0.0), PI * spec * fresnel * radiance * nl);\n\
+         \x20           let coat_nl = max(dot(coat_n, l), 1e-4);\n\
+         \x20           let coat_f = schlick(vec3<f32>(0.04), max(dot(v, h), 0.0), coat_edge.x, coat_edge.y, coat_edge.z).x;\n\
+         \x20           let coat_spec = ggx(max(dot(coat_n, h), 0.0), squared(coat_rough))\n\
+         \x20               * smith(coat_nl, coat_nv, coat_rough) / (4.0 * coat_nl * coat_nv);\n\
+         \x20           cmf_ljosadd(vec3<f32>(0.0), (1.0 - coat * coat_f) * PI * spec * fresnel * radiance * nl\n\
+         \x20               + vec3<f32>(PI * coat_spec * coat_f * coat) * radiance * coat_nl);\n\
          \x20       }"
     };
     format!(
@@ -1059,6 +1096,12 @@ fn shaded_glue(f: &Functions) -> String {
          \x20   let metal = clamp(s.ljosmetalness, 0.0, 1.0);\n\
          \x20   let roughness = clamp(s.ljosroughness, 0.0, 1.0);\n\
          \x20   let f0 = mix(vec3<f32>(0.08 * s.ljosspecular), base, metal);\n\
+         \x20   let edge = s.ljosedge;\n\
+         \x20   let coat = clamp(s.ljoscoat.x, 0.0, 1.0);\n\
+         \x20   let coat_rough = clamp(s.ljoscoat.y, 0.0, 1.0);\n\
+         \x20   let coat_edge = s.ljoscoatedge;\n\
+         \x20   let coat_n = s.ljoscoatnormal;\n\
+         \x20   let coat_nv = max(dot(coat_n, v), 1e-4);\n\
          \x20   cmf_ljosbegin(frame.ambient.rgb);\n\
          \x20   {ambient}\n\
          \x20   for (var i = 0u; i < min(frame.counts.x, MAX_LIGHTS); i++) {{\n\
@@ -1081,7 +1124,7 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       let nl = dot(n, l);\n\
          \x20       let shadow = shadowed(light, in.world, l);\n\
          \x20       let h = normalize(l + v);\n\
-         \x20       let fresnel = f0 + (vec3<f32>(1.0) - f0) * pow(1.0 - max(dot(v, h), 0.0), 5.0);\n\
+         \x20       let fresnel = schlick(f0, max(dot(v, h), 0.0), edge.x, edge.y, edge.z);\n\
          \x20       let radiance = light.color.rgb * attenuation * spot * shadow;\n\
          \x20       if light.position.w < 0.5 {{\n\
          \x20           {directional}\n\
@@ -1100,10 +1143,14 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       let below = mix(select(0.0, 1.0, r.y < 0.0), (1.0 - r.y) * 0.5, roughness);\n\
          \x20       let prefiltered = textureSampleLevel(specular_cube, cube_sampler, probe_dir(r),\n\
          \x20           roughness * frame.env.z).rgb * (1.0 - horizon * below);\n\
-         \x20       let specular = env_brdf(f0, roughness, nv);\n\
+         \x20       let specular = env_edge(f0, roughness, nv, edge.x, edge.y, edge.z);\n\
          \x20       let kd = (vec3<f32>(1.0) - specular) * (1.0 - metal);\n\
          \x20       let k = s.ljosocclusion * frame.env.x;\n\
-         \x20       cmf_ljosadd(kd * base * irradiance * k, prefiltered * specular * k);\n\
+         \x20       let coat_light = textureSampleLevel(specular_cube, cube_sampler, probe_dir(reflect(-v, coat_n)),\n\
+         \x20           coat_rough * frame.env.z).rgb;\n\
+         \x20       let coat_f = env_edge(vec3<f32>(0.04), coat_rough, coat_nv, coat_edge.x, coat_edge.y, coat_edge.z);\n\
+         \x20       cmf_ljosadd(kd * base * irradiance * k,\n\
+         \x20           (1.0 - coat * coat_f.x) * prefiltered * specular * k + coat_light * coat_f * coat * k);\n\
          \x20   }}\n\
          \x20   return cmf_ljosfinish();\n\
          }}\n\

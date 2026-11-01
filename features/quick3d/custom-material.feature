@@ -183,3 +183,225 @@ Feature: CustomMaterial runs the author's shader snippets
       When the property "fragmentShader" of "custom" is set to "broken.frag"
       Then the log has a warning matching "broken.frag"
       And the pixel at 100, 100 of the window is within 2 of "#202020"
+
+  Rule: A shader's text can be written in QML
+
+    Scenario: The fragment text draws the model
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(0.0, 1.0, 0.0, 1.0); }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 6 of "#00ff00"
+
+    Scenario: The vertex text moves it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              __vertexShaderCode: "void MAIN() { VERTEX.x += 200.0; POINT_SIZE = 1.0; POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0); }"
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(0.0, 1.0, 0.0, 1.0); }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 6 of "#202020"
+
+    Scenario: The text can read a texture made later, held in a var
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              id: m
+              shadingMode: CustomMaterial.Unshaded
+              property var picture: null
+              Component.onCompleted: picture = Qt.createQmlObject("import QtQuick3D; TextureInput { }", m)
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = texture2D(picture, UV0) + vec4(qt_sRGBToLinear(vec3(1.0)), 1.0); }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 6 of "#ffffff"
+
+  Rule: A matrix property reaches a shader
+
+    Scenario: A matrix4x4 moves the colour
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              property matrix4x4 place: Qt.matrix4x4(1, 0, 0, 0, 0, 1, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1)
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(0.0, (place * vec4(0.0, 0.0, 0.0, 1.0)).y, 0.0, 1.0); }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 6 of "#00ff00"
+
+  Rule: A lit shader's Fresnel and clearcoat keywords are honoured
+
+    Scenario: A black metal with neither reflects nothing
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { eulerRotation.x: 0; brightness: 1 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              __fragmentShaderCode: "void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); METALNESS = 1.0; ROUGHNESS = 0.5; }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is "#000000"
+
+    Scenario: A black metal under FRESNEL_BIAS reflects the light
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { eulerRotation.x: 0; brightness: 1 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              __fragmentShaderCode: "void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); METALNESS = 1.0; ROUGHNESS = 0.5; FRESNEL_BIAS = 1.0; }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is not "#000000"
+
+    Scenario: A clearcoat shines on a black metal
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { eulerRotation.x: 0; brightness: 1 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              __fragmentShaderCode: "void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); METALNESS = 1.0; CLEARCOAT_AMOUNT = 1.0; CLEARCOAT_ROUGHNESS = 0.5; CLEARCOAT_FRESNEL_BIAS = 1.0; }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is not "#000000"
+
+  Rule: Only the textures a shader names count
+
+    Scenario: A material declares more textures than a shader may sample
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              property TextureInput a; property TextureInput b; property TextureInput c
+              property TextureInput d; property TextureInput e; property TextureInput f
+              property TextureInput g; property TextureInput h; property TextureInput i
+              property TextureInput used: TextureInput { texture: Texture { sourceItem: Rectangle { width: 4; height: 4; color: "#00ff00" } } }
+              __fragmentShaderCode: "void MAIN() { FRAGCOLOR = texture(used, UV0); }"
+            } }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 100, 100 of the window is "#00ff00"
+
+  Rule: A vertex shader's texture has no level to choose
+
+    Scenario: A vertex shader samples a texture
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              property TextureInput map: TextureInput { texture: Texture { sourceItem: Rectangle { width: 4; height: 4; color: "#00ff00" } } }
+              __vertexShaderCode: "VARYING vec4 seen; void MAIN() { seen = texture(map, UV0); POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0); }"
+              __fragmentShaderCode: "VARYING vec4 seen; void MAIN() { FRAGCOLOR = seen; }"
+            } }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 100, 100 of the window is "#00ff00"
+
+  Rule: A material of no opacity draws nothing
+
+    Scenario: Whatever its alpha mode
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Cube"; materials: PrincipledMaterial { opacity: 0; alphaMode: PrincipledMaterial.Opaque; lighting: PrincipledMaterial.NoLighting } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 6 of "#202020"

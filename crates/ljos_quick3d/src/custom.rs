@@ -97,6 +97,13 @@ pub struct CustomMaterial {
     /// Kept: lines are not drawn.
     #[qml(notify)]
     pub line_width: f64,
+    /// A snippet's text, for a material that writes it from its properties;
+    /// when there is any, it is the snippet in place of `vertexShader`'s file.
+    #[qml(notify, rename = "__vertexShaderCode")]
+    pub vertex_shader_code: String,
+    /// As `__vertexShaderCode`, in place of `fragmentShader`'s file.
+    #[qml(notify, rename = "__fragmentShaderCode")]
+    pub fragment_shader_code: String,
     #[qml(skip)]
     program: Cache,
 }
@@ -114,6 +121,8 @@ impl Default for CustomMaterial {
             destination_alpha_blend: 0,
             always_dirty: false,
             line_width: 1.0,
+            vertex_shader_code: String::new(),
+            fragment_shader_code: String::new(),
             program: Cache::default(),
         }
     }
@@ -306,6 +315,9 @@ pub struct SetUniformValue {
 struct Key {
     vertex: String,
     fragment: String,
+    /// Text written in QML, which takes the place of the file above it.
+    vertex_code: String,
+    fragment_code: String,
     shaded: bool,
     uniforms: Vec<(String, UniformKind)>,
     textures: Vec<String>,
@@ -328,6 +340,8 @@ impl Cache {
 /// One of an object's own properties, as a snippet reads it.
 pub(crate) enum Input {
     Uniform(String, UniformKind, PropIndex),
+    /// A `matrix4x4`, which the engine holds as a script's object.
+    Matrix(String, PropIndex),
     Texture(String, PropIndex),
 }
 
@@ -352,6 +366,20 @@ pub(crate) fn inputs(e: &Engine, obj: ObjectId, native: u32) -> Vec<Input> {
                 UniformKind::Vec4
             }
             TypeTag::Object(Some(t)) if t.as_str() == "TextureInput" => {
+                out.push(Input::Texture(name, index));
+                continue;
+            }
+            TypeTag::Object(Some(t)) if t.as_str() == "matrix4x4" => {
+                out.push(Input::Matrix(name, index));
+                continue;
+            }
+            // A material may make the input only once it has a map to
+            // sample, and hold it in a `var` until then.
+            TypeTag::Var
+                if e.read(obj, index)
+                    .as_object()
+                    .is_some_and(|i| e.is::<TextureInput>(i)) =>
+            {
                 out.push(Input::Texture(name, index));
                 continue;
             }
@@ -425,20 +453,28 @@ fn program<T: QmlType>(
     if let Some(had) = e.with(obj, |t: &T| cache(t).get(&key)).ok().flatten() {
         return had;
     }
-    let text = |url: &str| (!url.is_empty()).then(|| read_snippet(e, url)).transpose();
-    let made = match (text(&key.vertex), text(&key.fragment)) {
+    let text = |code: &str, url: &str| {
+        if code.is_empty() {
+            (!url.is_empty()).then(|| read_snippet(e, url)).transpose()
+        } else {
+            Ok(Some(code.to_owned()))
+        }
+    };
+    let made = match (
+        text(&key.vertex_code, &key.vertex),
+        text(&key.fragment_code, &key.fragment),
+    ) {
         (Err(err), _) => Err(format!("{}: {err}", key.vertex)),
         (_, Err(err)) => Err(format!("{}: {err}", key.fragment)),
         (Ok(v), Ok(f)) => make(v.as_deref(), f.as_deref()).map_err(|err| {
             let file = match &err {
                 snippet::SnippetError::Compile { stage, .. }
-                | snippet::SnippetError::Unsupported { stage, .. } => {
-                    if *stage == "vertex" {
-                        key.vertex.clone()
-                    } else {
-                        key.fragment.clone()
-                    }
-                }
+                | snippet::SnippetError::Unsupported { stage, .. } => match *stage {
+                    "vertex" if !key.vertex_code.is_empty() => "__vertexShaderCode".to_owned(),
+                    "vertex" => key.vertex.clone(),
+                    _ if !key.fragment_code.is_empty() => "__fragmentShaderCode".to_owned(),
+                    _ => key.fragment.clone(),
+                },
                 snippet::SnippetError::Program(_) => {
                     format!("{} and {}", key.vertex, key.fragment)
                 }
@@ -480,6 +516,8 @@ pub(crate) fn material(
     let key = Key {
         vertex: resolved(e, obj, &item::prop(e, obj, CustomMaterial::VERTEX_SHADER)),
         fragment: resolved(e, obj, &item::prop(e, obj, CustomMaterial::FRAGMENT_SHADER)),
+        vertex_code: item::prop(e, obj, CustomMaterial::VERTEX_SHADER_CODE),
+        fragment_code: item::prop(e, obj, CustomMaterial::FRAGMENT_SHADER_CODE),
         shaded,
         uniforms,
         textures,
@@ -495,11 +533,14 @@ pub(crate) fn material(
     )?;
     let mut m = ljos_3d::CustomMaterial::new(program);
     m.values = values(e, obj, &inputs);
+    // Those the shader names, which are what the program kept.
     m.textures = inputs
         .iter()
         .filter_map(|i| match i {
-            Input::Texture(_, p) => Some(texture_input(e, view, e.read(obj, *p).as_object())),
-            Input::Uniform(..) => None,
+            Input::Texture(n, p) if m.program.textures().contains(n) => {
+                Some(texture_input(e, view, e.read(obj, *p).as_object()))
+            }
+            _ => None,
         })
         .collect();
     let blend = |p| Blend::from_index(i64::from(item::prop(e, obj, p)));
@@ -521,6 +562,7 @@ fn layout(inputs: &[Input]) -> (Vec<(String, UniformKind)>, Vec<String>) {
     for i in inputs {
         match i {
             Input::Uniform(n, k, _) => uniforms.push((n.clone(), *k)),
+            Input::Matrix(n, _) => uniforms.push((n.clone(), UniformKind::Mat4)),
             Input::Texture(n, _) => textures.push(n.clone()),
         }
     }
@@ -533,6 +575,9 @@ fn values(e: &Engine, obj: ObjectId, inputs: &[Input]) -> Vec<UniformValue> {
         .iter()
         .filter_map(|i| match i {
             Input::Uniform(_, k, p) => Some(uniform(&e.read(obj, *p), *k)),
+            Input::Matrix(_, p) => Some(UniformValue::Mat4(
+                crate::skin::matrix(e, &e.read(obj, *p)).0,
+            )),
             Input::Texture(..) => None,
         })
         .collect()
@@ -554,7 +599,7 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
         .iter()
         .filter_map(|i| match i {
             Input::Texture(_, p) => Some(texture_input(e, view, e.read(obj, *p).as_object())),
-            Input::Uniform(..) => None,
+            Input::Uniform(..) | Input::Matrix(..) => None,
         })
         .collect();
     let mut buffers: Vec<ObjectId> = Vec::new();
@@ -618,6 +663,8 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
         let key = Key {
             vertex,
             fragment,
+            vertex_code: String::new(),
+            fragment_code: String::new(),
             shaded: false,
             uniforms: uniforms.clone(),
             textures: names,

@@ -664,7 +664,9 @@ View3D {
     let names: Vec<String> = custom::inputs(&e, m, CustomMaterial::PROPERTY_COUNT)
         .iter()
         .map(|i| match i {
-            custom::Input::Uniform(n, ..) | custom::Input::Texture(n, _) => n.clone(),
+            custom::Input::Uniform(n, ..)
+            | custom::Input::Matrix(n, _)
+            | custom::Input::Texture(n, _) => n.clone(),
         })
         .collect();
     assert_eq!(names, ["tint", "level", "picture"]);

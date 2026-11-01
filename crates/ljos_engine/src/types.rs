@@ -421,6 +421,13 @@ impl TypeTag {
                 _ if refused_as_value(v) => return fail(),
                 _ => Value::Font(Arc::default()),
             },
+            // A `matrix4x4` is no object of the program: `Qt.matrix4x4()` makes
+            // a script's value with the members `m11` to `m44`.
+            TypeTag::Object(Some(t))
+                if t.as_str() == "matrix4x4" && matches!(v, Value::Js(_) | Value::Map(_)) =>
+            {
+                v.clone()
+            }
             TypeTag::Object(_) => match v {
                 Value::Object(_) | Value::Null => v.clone(),
                 _ => return fail(),
