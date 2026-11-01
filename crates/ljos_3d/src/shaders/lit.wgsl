@@ -452,14 +452,15 @@ fn under_horizon(way: vec3<f32>, horizon: f32) -> f32 {
 }
 
 // What the probe gives along a way at a level.
-fn probe_read(way: vec3<f32>, level: f32, own: bool, horizon: f32, exposure: f32) -> vec3<f32> {
+fn probe_light(way: vec3<f32>, level: f32, own: bool, horizon: f32) -> vec3<f32> {
     let turned = select(probe_dir(way), way, own);
-    return probe_seen(
-        textureSampleLevel(specular_cube, cube_sampler, turned, level).rgb
-            * under_horizon(turned, horizon),
-        own,
-        exposure,
-    );
+    return textureSampleLevel(specular_cube, cube_sampler, turned, level).rgb
+        * under_horizon(turned, horizon);
+}
+
+// The same, as it is seen.
+fn probe_read(way: vec3<f32>, level: f32, own: bool, horizon: f32, exposure: f32) -> vec3<f32> {
+    return probe_seen(probe_light(way, level, own, horizon), own, exposure);
 }
 
 // What of a surface's light comes back from all round at an edge a material
@@ -766,13 +767,18 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
             );
             let r = normalize(reflect(-v, n));
             if principled {
-                let read = probe_read(r, roughness * last, own_probe, horizon, exposure);
+                // Qt exposes the light that leaves the surface, not what falls on it.
+                let read = probe_light(r, clamp(roughness * 5.0, 0.0, last), own_probe, horizon);
                 diffuse += base.rgb * (vec3<f32>(1.0) - amount) * round * ao;
-                glossy += tint * read * env_brdf(amount, roughness, nv) * ao;
+                glossy += tint * probe_seen(read * env_brdf(amount, roughness, nv), own_probe, exposure) * ao;
                 if coats {
                     let coat_r = normalize(reflect(-v, coat_n));
-                    coating += probe_read(coat_r, coat_rough * last, own_probe, horizon, exposure)
-                        * env_brdf(bent, coat_rough, max(dot(coat_n, v), 1e-4)) * ao;
+                    coating += probe_seen(
+                        probe_light(coat_r, clamp(coat_rough * 5.0, 0.0, last), own_probe, horizon)
+                            * env_brdf(bent, coat_rough, max(dot(coat_n, v), 1e-4)),
+                        own_probe,
+                        exposure,
+                    ) * ao;
                 }
             } else {
                 let sigma = smoothstep(0.0, 1.0, clamp(plain_rough, 1e-4, 1.0));

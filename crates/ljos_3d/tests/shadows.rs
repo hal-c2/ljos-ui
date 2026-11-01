@@ -220,27 +220,19 @@ fn acne(pic: &Rgba) -> usize {
 }
 
 #[test]
-fn the_bias_keeps_a_lit_surface_from_shadowing_itself() {
+fn a_lit_surface_does_not_shadow_itself_whatever_its_bias() {
     let Some(mut gpu) = offscreen() else { return };
-    // The wall is in its own map: with no bias, its depth there and its
-    // depth here differ by rounding alone, and it shadows itself in
-    // patches.
-    let s = sunlit(Some(Shadow {
-        bias: 0.0,
-        samples: 1,
-        ..Shadow::default()
-    }));
-    let bare = acne(&draw(&mut gpu, &s.scene));
-    let s = sunlit(Some(Shadow {
-        samples: 1,
-        ..Shadow::default()
-    }));
-    let biased = acne(&draw(&mut gpu, &s.scene));
-    assert!(
-        bare > 20,
-        "no bias, yet only {bare} pixels shadow themselves"
-    );
-    assert_eq!(biased, 0, "with the bias");
+    // The wall is in its own map, and its depth there and here differ by
+    // rounding alone; the depth pass leans on the slope to clear it, as a
+    // scene can ask for as little bias as it likes.
+    for bias in [0.0, Shadow::default().bias] {
+        let s = sunlit(Some(Shadow {
+            bias,
+            samples: 1,
+            ..Shadow::default()
+        }));
+        assert_eq!(acne(&draw(&mut gpu, &s.scene)), 0, "with a bias of {bias}");
+    }
 }
 
 #[test]

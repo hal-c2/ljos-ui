@@ -396,5 +396,5 @@ fn a_2k_probes_maps_and_what_they_cost() {
          a frame with the maps made {again:?}",
         gpu.adapter.name
     );
-    assert_eq!(bytes, 16_822_272);
+    assert_eq!(bytes, 16_785_408);
 }

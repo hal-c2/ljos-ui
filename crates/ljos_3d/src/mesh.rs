@@ -262,7 +262,7 @@ fn sphere() -> Mesh {
             let (c, d) = (at(ring + 1, step + 1), at(ring + 1, step));
             // A square is cut one way in every other eighth of the way
             // round, and the other way above the middle.
-            let even = ((step as f32 + 0.5) / (slices / 8.0)).floor() as u32 % 2 == 0;
+            let even = (((step as f32 + 0.5) / (slices / 8.0)).floor() as u32).is_multiple_of(2);
             if even == (ring < SLICES / 2) {
                 m.indices.extend([d, b, c, a, b, d]);
             } else {

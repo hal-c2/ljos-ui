@@ -49,7 +49,7 @@ impl Color {
         // The fit to sRGB Qt's shaders use, the inverse of what tone.wgsl
         // writes: a colour said in QML comes back out as it was.
         fn lin(c: f32) -> f32 {
-            c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878)
+            c * (c * (c * 0.305_306 + 0.682_171_1) + 0.012_522_878)
         }
         [lin(self.r), lin(self.g), lin(self.b), self.a]
     }
@@ -960,6 +960,10 @@ pub struct Environment {
     /// this rather than the background's colour.
     #[doc(hidden)]
     pub capture: Option<[f32; 4]>,
+    /// Drawn for what a material reads as the picture behind it: only what
+    /// is opaque and does not read it, into a capture, before the tone map.
+    #[doc(hidden)]
+    pub behind: bool,
     pub light_probe: Option<LightProbe>,
     pub tonemap: Tonemap,
     /// Multiplies the light before it is tone mapped; ignored by
@@ -997,6 +1001,7 @@ impl Default for Environment {
             msaa_samples: 1,
             light_probe: None,
             capture: None,
+            behind: false,
             tonemap: Tonemap::Linear,
             exposure: 1.0,
             white_point: 1.0,
@@ -1218,6 +1223,23 @@ impl Scene {
         environment.capture = Some(clear);
         environment.tonemap = Tonemap::None;
         environment.exposure = 1.0;
+        environment.msaa_samples = 1;
+        environment.effects.clear();
+        environment.post = PostProcess::default();
+        environment.ambient_occlusion = None;
+        scene
+    }
+
+    /// This scene as what reads the picture behind it sees it: the view's
+    /// colour as it is written, which Qt reads so; the sky box's light.
+    pub(crate) fn behind(&self) -> Scene {
+        let mut scene = self.clone();
+        let environment = &mut scene.environment;
+        environment.capture = Some(match environment.background {
+            Background::Color(c) => [c.r, c.g, c.b, c.a],
+            _ => [0.0; 4],
+        });
+        environment.behind = true;
         environment.msaa_samples = 1;
         environment.effects.clear();
         environment.post = PostProcess::default();

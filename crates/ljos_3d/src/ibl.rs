@@ -22,18 +22,17 @@ use std::sync::{Arc, Weak};
 use bytemuck::{Pod, Zeroable};
 
 use crate::scene::LightProbe;
-use crate::texture::{PixelEncoding, Texture, TexturePixels};
+use crate::texture::{BakedCube, PixelEncoding, Texture, TexturePixels};
 
 /// The format of the probe's maps: light beyond 1 needs more than a byte.
 /// The levels of a reflection probe's cube, the last the irradiance.
 const MIRROR_LEVELS: u32 = 6;
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const IRRADIANCE_SIDE: u32 = 32;
-const MOST_SIDE: u32 = 512;
-const LEAST_SIDE: u32 = 64;
+const LEAST_SIDE: u32 = 512;
 const SPECULAR_LEVELS: u32 = 6;
-const SPECULAR_SAMPLES: u32 = 64;
-const IRRADIANCE_SAMPLES: u32 = 128;
+// What Qt sums each level over, and a level's light depends on it.
+const SPECULAR_SAMPLES: u32 = 1024;
+const IRRADIANCE_SAMPLES: u32 = 1024;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -182,14 +181,16 @@ fn face_view(texture: &wgpu::Texture, level: u32, face: u32) -> wgpu::TextureVie
     })
 }
 
-/// The side of the cube a probe image `width` texels around is laid on:
-/// a quarter of the way around per face, a power of two within bounds.
-fn cube_side(width: u32, max_side: u32) -> u32 {
-    (width / 4)
-        .max(1)
-        .next_power_of_two()
-        .clamp(LEAST_SIDE, MOST_SIDE)
-        .min(max_side)
+/// The side of the cube a probe image `height` texels high is laid on, as Qt
+/// has it: half its height, and never under 512.
+fn cube_side(height: u32, max_side: u32) -> u32 {
+    (height / 2).max(LEAST_SIDE).min(max_side)
+}
+
+/// The side of the level a rough surface takes its light from: the smallest
+/// of the cube's six.
+fn irradiance_side(side: u32) -> u32 {
+    (side >> (SPECULAR_LEVELS - 1)).max(1)
 }
 
 fn levels_of(side: u32) -> u32 {
@@ -512,7 +513,7 @@ impl Ibl {
         let irr = cube_texture(
             device,
             "ljos_3d reflection probe irradiance",
-            IRRADIANCE_SIDE,
+            irradiance_side(across),
             1,
             FORMAT,
             usage,
@@ -677,6 +678,103 @@ impl Ibl {
         self.probes.values().map(|p| p.bytes).sum()
     }
 
+    /// A cube that needs no blurring: its last level is what a surface takes
+    /// from all round and those before it are read by roughness. That last
+    /// level is copied rather than viewed, as WebGL2 cannot bind one texture
+    /// at two ranges of levels.
+    fn make_baked(
+        &self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        cube: &BakedCube,
+    ) -> Option<(wgpu::BindGroup, f32, u64)> {
+        let levels = cube.levels.len() as u32;
+        if levels == 0 || cube.across == 0 {
+            return None;
+        }
+        let write = |texture: &wgpu::Texture, into: u32, level: u32| {
+            let across = (cube.across >> level).max(1);
+            let bytes = &cube.levels[level as usize];
+            let side = (across * across * 8) as usize;
+            if bytes.len() != side * 6 {
+                return;
+            }
+            for (face, data) in bytes.chunks_exact(side).enumerate() {
+                queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture,
+                        mip_level: into,
+                        origin: wgpu::Origin3d {
+                            x: 0,
+                            y: 0,
+                            z: face as u32,
+                        },
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    data,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(across * 8),
+                        rows_per_image: Some(across),
+                    },
+                    wgpu::Extent3d {
+                        width: across,
+                        height: across,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
+        };
+        let usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+        let spec = cube_texture(
+            device,
+            "ljos_3d baked radiance",
+            cube.across,
+            levels,
+            FORMAT,
+            usage,
+        );
+        for level in 0..levels {
+            write(&spec, level, level);
+        }
+        let last = levels - 1;
+        let round_side = (cube.across >> last).max(1);
+        let irr = cube_texture(
+            device,
+            "ljos_3d baked irradiance",
+            round_side,
+            1,
+            FORMAT,
+            usage,
+        );
+        write(&irr, 0, last);
+        let spec_view = cube_view(&spec, 0, None);
+        let irr_view = cube_view(&irr, 0, None);
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ljos_3d probe"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&spec_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&irr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        Some((
+            group,
+            levels.saturating_sub(2) as f32,
+            cube_bytes(cube.across, levels) + cube_bytes(round_side, 1),
+        ))
+    }
+
     fn make(
         &self,
         device: &wgpu::Device,
@@ -684,6 +782,9 @@ impl Ibl {
         encoder: &mut wgpu::CommandEncoder,
         image: &dyn TexturePixels,
     ) -> Option<(wgpu::BindGroup, f32, u64)> {
+        if let Some(cube) = image.baked() {
+            return self.make_baked(device, queue, cube);
+        }
         let (w, h, pixels) = self.source_pixels(image)?;
         let encoding = match image.encoding() {
             PixelEncoding::Srgb8Premultiplied => 0,
@@ -725,7 +826,7 @@ impl Ibl {
         );
         let source_view = source.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let side = cube_side(w, self.max_side);
+        let side = cube_side(h, self.max_side);
         let env_levels = levels_of(side);
         let spec_levels = SPECULAR_LEVELS.min(env_levels);
         let target = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
@@ -748,7 +849,7 @@ impl Ibl {
         let irr = cube_texture(
             device,
             "ljos_3d probe irradiance",
-            IRRADIANCE_SIDE,
+            irradiance_side(side),
             1,
             FORMAT,
             target,
@@ -777,8 +878,10 @@ impl Ibl {
             }
         }
         for level in 0..spec_levels {
-            let roughness = if spec_levels > 1 {
-                level as f32 / (spec_levels - 1) as f32
+            // Qt's levels reach full roughness one short of its last, which
+            // is the irradiance; here that one has a cube of its own.
+            let roughness = if spec_levels > 2 {
+                (level as f32 / (spec_levels - 2) as f32).min(1.0)
             } else {
                 0.0
             };
@@ -925,7 +1028,7 @@ impl Ibl {
         Some((
             group,
             (spec_levels - 1) as f32,
-            cube_bytes(side, spec_levels) + cube_bytes(IRRADIANCE_SIDE, 1),
+            cube_bytes(side, spec_levels) + cube_bytes(irradiance_side(side), 1),
         ))
     }
 
@@ -965,15 +1068,16 @@ mod tests {
 
     #[test]
     fn a_2k_probe_lies_on_a_cube_of_512() {
-        assert_eq!(cube_side(2048, 8192), 512);
-        assert_eq!(cube_side(64, 8192), 64);
-        assert_eq!(cube_side(8192, 8192), 512);
+        assert_eq!(cube_side(1024, 8192), 512);
+        assert_eq!(cube_side(32, 8192), 512);
+        assert_eq!(cube_side(4096, 8192), 2048);
+        assert_eq!(cube_side(4096, 1024), 1024);
         assert_eq!(levels_of(512), 10);
     }
 
     #[test]
     fn a_2k_probes_maps_take_under_17_megabytes() {
-        let bytes = cube_bytes(512, SPECULAR_LEVELS) + cube_bytes(IRRADIANCE_SIDE, 1);
-        assert_eq!(bytes, 16_822_272);
+        let bytes = cube_bytes(512, SPECULAR_LEVELS) + cube_bytes(irradiance_side(512), 1);
+        assert_eq!(bytes, 16_785_408);
     }
 }

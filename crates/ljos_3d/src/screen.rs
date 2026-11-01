@@ -1,11 +1,11 @@
 //! `SCREEN_TEXTURE` and `SCREEN_MIP_TEXTURE`: the scene a view has drawn
 //! before the materials that read it, as a texture those materials sample.
 //!
-//! The view draws its opaque models that do not read the screen, the
-//! picture is copied here, then the rest are drawn over it: so neither a
-//! transparent model nor one that reads the screen is in it, as the
-//! documentation says. A view whose materials do not read the screen
-//! keeps no texture and draws in one pass, as before.
+//! The view's opaque models that do not read the screen are drawn here on
+//! their own, ahead of the view: so neither a transparent model nor one that
+//! reads the screen is in it, as the documentation says, and it holds light
+//! as it is, ahead of the tone mapping, as Qt's does. A view whose materials
+//! do not read the screen keeps no texture and draws nothing twice.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -16,9 +16,14 @@ const WGSL: &str = concat!(
     include_str!("shaders/screen.wgsl")
 );
 
-/// The screen texture holds sRGB, light above 1 clipped, as an
-/// unprocessed view's picture does: a material reads the same from both.
-const FORMAT: wgpu::TextureFormat = crate::gpu::COLOR_FORMAT;
+/// What the scene is drawn into where the device can, or else the picture's.
+fn format(hdr: bool) -> wgpu::TextureFormat {
+    if hdr {
+        crate::post::HDR
+    } else {
+        crate::gpu::COLOR_FORMAT
+    }
+}
 
 /// So that a material's group, made for one texture, is made again for
 /// the next.
@@ -29,7 +34,7 @@ pub(crate) struct Pipes {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     copy: wgpu::RenderPipeline,
-    encode: wgpu::RenderPipeline,
+    format: wgpu::TextureFormat,
 }
 
 /// One target's screen texture.
@@ -46,7 +51,8 @@ pub(crate) struct ScreenTexture {
 }
 
 impl Pipes {
-    pub(crate) fn new(device: &wgpu::Device) -> Self {
+    pub(crate) fn new(device: &wgpu::Device, hdr: bool) -> Self {
+        let format = self::format(hdr);
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ljos_3d screen"),
             entries: &[
@@ -95,7 +101,7 @@ impl Pipes {
                     entry_point: Some(entry),
                     compilation_options: Default::default(),
                     targets: &[Some(wgpu::ColorTargetState {
-                        format: FORMAT,
+                        format,
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
@@ -112,7 +118,7 @@ impl Pipes {
                 ..Default::default()
             }),
             copy: pipeline("fs_copy"),
-            encode: pipeline("fs_encode"),
+            format,
             layout,
         }
     }
@@ -132,6 +138,11 @@ impl Pipes {
                 },
             ],
         })
+    }
+
+    /// Whether it draws half floats.
+    pub(crate) fn hdr(&self) -> bool {
+        self.format == crate::post::HDR
     }
 
     /// Makes `slot` a texture of `size` with mip levels where `screen`
@@ -167,7 +178,7 @@ impl Pipes {
             mip_level_count: levels,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: FORMAT,
+            format: self.format,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
@@ -194,20 +205,9 @@ impl Pipes {
         });
     }
 
-    /// Copies `picture` into `screen`, encoding it where it holds linear
-    /// light, then makes the levels below.
-    pub(crate) fn capture(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        picture: &wgpu::TextureView,
-        screen: &ScreenTexture,
-        linear: bool,
-    ) {
-        let first = self.group(device, picture);
-        let pipeline = if linear { &self.encode } else { &self.copy };
-        let sources = std::iter::once(&first).chain(&screen.mip_groups);
-        for (i, (group, out)) in sources.zip(&screen.level_views).enumerate() {
+    /// Makes the levels below the first from it.
+    pub(crate) fn make_levels(&self, encoder: &mut wgpu::CommandEncoder, screen: &ScreenTexture) {
+        for (group, out) in screen.mip_groups.iter().zip(&screen.level_views[1..]) {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ljos_3d screen"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -221,9 +221,16 @@ impl Pipes {
                 })],
                 ..Default::default()
             });
-            pass.set_pipeline(if i == 0 { pipeline } else { &self.copy });
+            pass.set_pipeline(&self.copy);
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
         }
+    }
+}
+
+impl ScreenTexture {
+    /// What the scene is drawn into for it.
+    pub(crate) fn first_level(&self) -> &wgpu::TextureView {
+        &self.level_views[0]
     }
 }

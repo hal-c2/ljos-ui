@@ -1,8 +1,6 @@
 // SCREEN_TEXTURE: the scene drawn so far, copied for the materials that
-// read it, and its mip levels, each from the one above. A picture drawn
-// for post-processing holds linear light, which is encoded on the way, so
-// that a material reads the screen as it reads a picture drawn without:
-// as the sRGB its own FRAGCOLOR is written in.
+// read it, and its mip levels, each from the one above. It holds light as
+// it was before tone mapping, which is what Qt hands a material.
 
 @group(0) @binding(0) var source: texture_2d<f32>;
 @group(0) @binding(1) var source_sampler: sampler;
@@ -26,15 +24,4 @@ fn vs_main(@builtin(vertex_index) i: u32) -> VsOut {
 @fragment
 fn fs_copy(in: VsOut) -> @location(0) vec4<f32> {
     return textureSampleLevel(source, source_sampler, in.uv, 0.0);
-}
-
-// Premultiplied, as the picture is: the colour is encoded, not its
-// product with the coverage.
-@fragment
-fn fs_encode(in: VsOut) -> @location(0) vec4<f32> {
-    let c = textureSampleLevel(source, source_sampler, in.uv, 0.0);
-    if c.a <= 0.0 {
-        return vec4<f32>(0.0);
-    }
-    return vec4<f32>(srgb3(c.rgb / c.a) * c.a, c.a);
 }

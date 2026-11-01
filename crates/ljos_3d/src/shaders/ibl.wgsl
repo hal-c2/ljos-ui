@@ -64,6 +64,8 @@ fn srgb_to_linear(c: f32) -> f32 {
     return c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878);
 }
 
+// A shared exponent is read as the light it is; a colour stays as a screen
+// shows it, for `light` to bring to light after it is read between pixels.
 fn texel(x: i32, y: i32) -> vec3<f32> {
     let t = textureLoad(source, vec2<i32>(x, y), 0);
     if params.encoding == 1u {
@@ -77,12 +79,19 @@ fn texel(x: i32, y: i32) -> vec3<f32> {
     if params.encoding == 0u && t.a > 0.0 && t.a < 1.0 {
         c = c / t.a;
     }
+    return c;
+}
+
+fn light(c: vec3<f32>) -> vec3<f32> {
+    if params.encoding == 1u {
+        return c;
+    }
     return vec3<f32>(srgb_to_linear(c.r), srgb_to_linear(c.g), srgb_to_linear(c.b));
 }
 
 // The first level from the image: longitude across it, the image's middle
 // looking along +x, as Qt folds it, the zenith at its top. Filtered by hand, as a shared
-// exponent cannot be filtered before it is decoded.
+// exponent cannot be filtered before it is decoded; a colour is, as Qt has it.
 @fragment
 fn fs_equirect(in: VsOut) -> @location(0) vec4<f32> {
     let d = face_dir(params.face, in.uv);
@@ -98,7 +107,7 @@ fn fs_equirect(in: VsOut) -> @location(0) vec4<f32> {
     let y1 = clamp(i.y + 1, 0, size.y - 1);
     let top = mix(texel(x0, y0), texel(x1, y0), f.x);
     let bottom = mix(texel(x0, y1), texel(x1, y1), f.x);
-    return vec4<f32>(mix(top, bottom, f.y), 1.0);
+    return vec4<f32>(light(mix(top, bottom, f.y)), 1.0);
 }
 
 // The next level of the cube from the one above it, which is all `cube`
@@ -137,38 +146,35 @@ fn basis(n: vec3<f32>, t: vec3<f32>) -> vec3<f32> {
     return x * t.x + y * t.y + n * t.z;
 }
 
-// The level a sample of probability `pdf` among `params.samples` reads.
+// The level a way that a share `pdf` of the samples take reads, as Qt works
+// it out: over the number of texels on the cube, which is 4 pi over `texel`.
 fn lod_for(pdf: f32) -> f32 {
-    let solid_angle = 1.0 / (f32(params.samples) * max(pdf, 1e-6));
-    return clamp(0.5 * log2(solid_angle / params.texel) + 1.0, 0.0, params.last_level);
+    return clamp(0.5 * log2(4.0 * PI / (params.texel * f32(params.samples) * max(pdf, 1e-6))), 0.0, params.last_level);
 }
 
 @fragment
 fn fs_specular(in: VsOut) -> @location(0) vec4<f32> {
-    let n = face_dir(params.face, in.uv);
+    let n = normalize(face_dir(params.face, in.uv));
     if params.roughness <= 0.0 {
         return vec4<f32>(textureSampleLevel(cube, cube_sampler, n, 0.0).rgb, 1.0);
     }
-    // As the materials' highlights square it.
-    let r = max(params.roughness, 0.045);
-    let a = r * r;
+    let a = params.roughness * params.roughness;
     var sum = vec3<f32>(0.0);
     var weight = 0.0;
     for (var i = 0u; i < params.samples; i++) {
-        let xi = vec2<f32>((f32(i) + 0.5) / f32(params.samples), radical_inverse(i));
+        let xi = vec2<f32>(f32(i) / f32(params.samples), radical_inverse(i));
         let phi = 2.0 * PI * xi.x;
-        let cos_t = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
+        let cos_t = clamp(sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y)), 0.0, 1.0);
         let sin_t = sqrt(1.0 - cos_t * cos_t);
-        let h = basis(n, vec3<f32>(cos(phi) * sin_t, sin(phi) * sin_t, cos_t));
+        let h = normalize(basis(n, vec3<f32>(cos(phi) * sin_t, sin(phi) * sin_t, cos_t)));
         // The view along the normal, as the split sum takes it.
-        let l = 2.0 * dot(n, h) * h - n;
+        let l = normalize(2.0 * dot(n, h) * h - n);
         let nl = dot(n, l);
         if nl > 0.0 {
-            let d = (cos_t * cos_t * (a * a - 1.0) + 1.0);
+            let d = cos_t * cos_t * (a * a - 1.0) + 1.0;
             let ggx = a * a / (PI * d * d);
             // With the view along the normal, n·h over 4 v·h is a quarter.
-            let lod = lod_for(ggx * 0.25);
-            sum += textureSampleLevel(cube, cube_sampler, l, lod).rgb * nl;
+            sum += textureSampleLevel(cube, cube_sampler, l, lod_for(ggx * 0.25)).rgb * nl;
             weight += nl;
         }
     }
@@ -180,14 +186,14 @@ fn fs_specular(in: VsOut) -> @location(0) vec4<f32> {
 // surface shows.
 @fragment
 fn fs_irradiance(in: VsOut) -> @location(0) vec4<f32> {
-    let n = face_dir(params.face, in.uv);
+    let n = normalize(face_dir(params.face, in.uv));
     var sum = vec3<f32>(0.0);
     for (var i = 0u; i < params.samples; i++) {
-        let xi = vec2<f32>((f32(i) + 0.5) / f32(params.samples), radical_inverse(i));
+        let xi = vec2<f32>(f32(i) / f32(params.samples), radical_inverse(i));
         let phi = 2.0 * PI * xi.x;
         let cos_t = sqrt(1.0 - xi.y);
         let sin_t = sqrt(xi.y);
-        let l = basis(n, vec3<f32>(cos(phi) * sin_t, sin(phi) * sin_t, cos_t));
+        let l = normalize(basis(n, vec3<f32>(cos(phi) * sin_t, sin(phi) * sin_t, cos_t)));
         sum += textureSampleLevel(cube, cube_sampler, l, lod_for(cos_t / PI)).rgb;
     }
     return vec4<f32>(sum / f32(params.samples), 1.0);

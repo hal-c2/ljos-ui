@@ -35,6 +35,20 @@ pub trait TexturePixels: Send + Sync + fmt::Debug {
     fn with_pixels(&self, f: &mut dyn FnMut(&[u8]));
     /// The renderer has its own copy; the pixels may be let go.
     fn uploaded(&self) {}
+    /// What a light probe reads when the picture already is its cube, every
+    /// level baked: then nothing is blurred.
+    fn baked(&self) -> Option<&BakedCube> {
+        None
+    }
+}
+
+/// Surroundings already laid on a cube, in half floats.
+#[derive(Debug)]
+pub struct BakedCube {
+    /// Across one side of the first level.
+    pub across: u32,
+    /// Each level's six sides, one after another, first row first.
+    pub levels: Vec<Vec<u8>>,
 }
 
 /// An id for pixels no cache names, such as a model file's own pictures.

@@ -144,6 +144,6 @@ fn the_screen_texture_copy_runs_on_webgl2() {
         "screen",
         &format!("{TONE}{source}"),
         &["vs_main"],
-        &["fs_copy", "fs_encode"],
+        &["fs_copy"],
     );
 }

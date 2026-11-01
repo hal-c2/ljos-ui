@@ -61,7 +61,12 @@ pub(crate) fn slots(material: &Material) -> [Option<(&Texture, bool)>; MAPS] {
         }
         Material::Principled(m) => {
             let maps = &m.maps;
-            out[BASE] = maps.base_color.as_ref().map(|t| (t, true));
+            // Fractions are light already, to Qt only as a PrincipledMaterial's
+            // colour: everywhere else they are read as a screen shows them.
+            out[BASE] = maps
+                .base_color
+                .as_ref()
+                .map(|t| (t, t.image.encoding() != PixelEncoding::Rgbe));
             out[METALNESS] = maps.metalness.as_ref().map(|t| (t, false));
             out[ROUGHNESS] = maps.roughness.as_ref().map(|t| (t, false));
             out[NORMAL] = maps.normal.as_ref().map(|t| (t, false));
@@ -266,7 +271,7 @@ impl Maps {
         key: TextureKey,
     ) -> Option<Uploaded> {
         let image = &texture.image;
-        let mut level = straight_rgba8(&**image, key.srgb)?;
+        let mut level = straight_rgba8(&**image)?;
         // Larger than the device takes (WebGL2 promises 2048): halved
         // until it fits, as a mipmap would be.
         while level.0.max(level.1) > self.max_side {
@@ -371,9 +376,8 @@ fn sampler(device: &wgpu::Device, s: Sampling) -> wgpu::Sampler {
     })
 }
 
-/// The pixels of `image` as straight RGBA8: sRGB for a colour map, linear
-/// values for the others. `None` when it holds none.
-fn straight_rgba8(image: &dyn TexturePixels, srgb: bool) -> Option<Level> {
+/// The pixels of `image` as straight RGBA8. `None` when it holds none.
+fn straight_rgba8(image: &dyn TexturePixels) -> Option<Level> {
     let [w, h] = image.size();
     let len = w as usize * h as usize * 4;
     let mut data = Vec::new();
@@ -397,13 +401,14 @@ fn straight_rgba8(image: &dyn TexturePixels, srgb: bool) -> Option<Level> {
                 }
             }
         }
-        // Light beyond 1 is clamped: a material's map holds a colour.
+        // Light beyond 1 is clamped: a material's map holds a colour. The
+        // numbers go as they are; which materials read them as a screen
+        // shows them is `slots`' to say.
         PixelEncoding::Rgbe => {
             for p in data.as_chunks_mut::<4>().0 {
                 let rgb = rgbe_to_linear(*p);
                 for (c, v) in p[..3].iter_mut().zip(rgb) {
-                    let v = v.clamp(0.0, 1.0);
-                    *c = (if srgb { linear_to_srgb(v) } else { v } * 255.0).round() as u8;
+                    *c = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
                 }
                 p[3] = 255;
             }

@@ -328,6 +328,8 @@ pub struct Target {
     material_depth: Buffers,
     /// The scene behind the materials that read it, while one does.
     screen: Option<ScreenTexture>,
+    /// Draws the picture `screen` holds, while a material reads it.
+    behind: Option<Box<Target>>,
     /// How many times the picture was drawn: the programs' FRAME.
     frames: u64,
 }
@@ -503,6 +505,7 @@ impl Target {
             post: Buffers::default(),
             material_depth: Buffers::default(),
             screen: None,
+            behind: None,
             frames: 0,
         }
     }
@@ -1173,7 +1176,8 @@ fn environment_uniforms(
         Quat::from_euler_degrees(probe.orientation),
         Vec3::ONE,
     );
-    frame.probe_rot = turn.inverse().unwrap_or(Mat4::IDENTITY).0;
+    // The way looked along is turned by it, not back: as Qt reads a probe.
+    frame.probe_rot = turn.0;
 }
 
 impl Renderer {
@@ -1266,7 +1270,8 @@ impl Renderer {
             skies: HashMap::new(),
             programs: Programs::new(device),
             post: Pipes::new(device),
-            screen: crate::screen::Pipes::new(device),
+            // Half floats, where they turn out to be there, on the first frame.
+            screen: crate::screen::Pipes::new(device, false),
             // WebGPU has half floats to draw into and filter; a host on
             // another backend says whether it has with
             // `use_adapter_formats`.
@@ -1402,7 +1407,7 @@ impl Renderer {
 
     /// The depth pass of casters culled `cull`: the faces the picture
     /// shows are the ones the maps hold, so a surface's own depth is in
-    /// them and the bias is what keeps it from shadowing itself.
+    /// them, and its slope and the bias are what keep it from shadowing itself.
     fn shadow_pipeline(&mut self, device: &wgpu::Device, cull: CullMode, extra: bool) {
         let (shader, layout) = (&self.shadow_shader, &self.shadow_layout);
         self.shadow_pipelines
@@ -1439,7 +1444,13 @@ impl Renderer {
                         depth_write_enabled: Some(true),
                         depth_compare: Some(wgpu::CompareFunction::Less),
                         stencil: Default::default(),
-                        bias: Default::default(),
+                        // A surface turned from the light covers more depth per texel of
+                        // the map than any fixed bias clears, the flatter the more.
+                        bias: wgpu::DepthBiasState {
+                            constant: 0,
+                            slope_scale: 1.5,
+                            clamp: 0.0,
+                        },
                     }),
                     multisample: Default::default(),
                     fragment: Some(wgpu::FragmentState {
@@ -1578,6 +1589,13 @@ impl Topology {
 
 /// Whether a draw is in the depth the post-processing passes read: the
 /// depth pass draws triangles, and segments and points have no surface.
+fn material_screen(material: &Material) -> Screen {
+    match material {
+        Material::Custom(m) => m.program.screen(),
+        _ => Screen::None,
+    }
+}
+
 fn screen_of(draw: &Draw<'_>) -> Screen {
     draw.custom
         .map_or(Screen::None, |(m, _)| m.program.screen())
@@ -1888,6 +1906,37 @@ impl Renderer {
             self.reflections(device, queue, encoder, scene, &walked)
         };
 
+        // What reads the picture of what is behind it reads light as it is,
+        // as Qt has it: what is opaque is drawn for it apart from what the
+        // view shows, with the view's own tone mapping left out.
+        let screen = if environment.behind {
+            Screen::None
+        } else {
+            walked
+                .iter()
+                .filter_map(|(_, node, _)| match &node.kind {
+                    NodeKind::Model(model) => Some(material_screen(&model.material)),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(Screen::None)
+        };
+        if screen != Screen::None && self.screen.hdr() != self.probes {
+            self.screen = crate::screen::Pipes::new(device, self.probes);
+        }
+        self.screen.fit(device, &mut target.screen, [w, h], screen);
+        if let Some(texture) = &target.screen {
+            let mut held = target.behind.take().filter(|b| b.size == [w, h]);
+            let behind = held.get_or_insert_with(|| Box::new(Target::new(device, self, [w, h])));
+            behind.capture = Some(texture.first_level().clone());
+            behind.drawn = None;
+            self.render(device, queue, encoder, &scene.behind(), behind);
+            self.screen.make_levels(encoder, texture);
+            target.behind = held;
+        } else {
+            target.behind = None;
+        }
+
         let camera = scene.active_camera();
         let (view, proj, view_proj, sky) = match camera {
             Some((camera, world)) => {
@@ -1912,7 +1961,7 @@ impl Renderer {
         environment_uniforms(&mut frame, environment, probe, bound, last_level);
         let clip_far = camera.map_or(1.0, |(c, _)| clip_planes(&c).1);
         fog_uniforms(&mut frame, environment, clip_far);
-        if processed && !captured {
+        if processed && (!captured || environment.behind) {
             // Tone mapping is the last pass's.
             frame.tone[0] = 5.0;
         }
@@ -2115,13 +2164,18 @@ impl Renderer {
                     continue;
                 }
                 let blends = model.material.blends() || transparent;
+                let reads = material_screen(&model.material) != Screen::None;
+                if environment.behind && (blends || reads) {
+                    continue;
+                }
                 let custom = match &model.material {
                     Material::Custom(m) => Some((
                         m,
                         MaterialKey {
                             program: m.program.id(),
                             cull: m.cull_mode,
-                            depth_write: m.depth_draw.writes(blends),
+                            // What reads hides as what is opaque does, blended or not.
+                            depth_write: m.depth_draw.writes(blends && !reads),
                             samples,
                             format,
                             blend: blends.then_some((m.source_blend, m.destination_blend)),
@@ -2203,27 +2257,19 @@ impl Renderer {
 
         // Over what is opaque, from the farthest in: each blends over what
         // is behind it. A stable sort keeps the tree's order where two are
-        // as far.
-        blended.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        // What reads the screen is drawn after it is taken, so it is not
-        // in it; the screen is taken after the first `cut`.
+        // as far. What reads the picture goes before all that is seen
+        // through, however far each is, as Qt has it.
         let (mut draws, mut reading): (Vec<_>, Vec<_>) = opaque
             .into_iter()
             .partition(|d| screen_of(d) == Screen::None);
-        let screen = reading
-            .iter()
-            .chain(&blended)
-            .map(screen_of)
-            .max()
-            .unwrap_or(Screen::None);
-        let cut = if screen == Screen::None {
-            usize::MAX
-        } else {
-            draws.len()
-        };
+        let (mut read_blended, mut blended): (Vec<_>, Vec<_>) = blended
+            .into_iter()
+            .partition(|d| screen_of(d) != Screen::None);
+        reading.append(&mut read_blended);
+        reading.sort_by(|a, b| b.depth.total_cmp(&a.depth));
+        blended.sort_by(|a, b| b.depth.total_cmp(&a.depth));
         draws.append(&mut reading);
         draws.append(&mut blended);
-        self.screen.fit(device, &mut target.screen, [w, h], screen);
 
         for (i, draw) in draws.iter().enumerate() {
             if let Some(c) = draw.caster {
@@ -2418,33 +2464,16 @@ impl Renderer {
         // Multisampled, the picture is drawn into the samples and resolved
         // into the target's texture, which is all the blit and a read back
         // ever see. Post-processed, it is drawn into half floats the
-        // passes read. Where a material reads the screen the pass is cut
-        // in two, the first keeping what it drew for the second.
+        // passes read.
         let picture = scene_view.as_ref().unwrap_or(&target.color_view);
-        let cut = cut.min(draws.len());
-        let parts = [0..cut, cut..draws.len()];
-        let parts = &parts[..if cut < draws.len() { 2 } else { 1 }];
         if let Some(depth) = &material_depth {
             self.draw_depth(device, encoder, target, &draws, view_proj, depth, false);
         }
         let mut slot = 0;
-        for (part, range) in parts.iter().enumerate() {
-            let first = part == 0;
-            let last = part + 1 == parts.len();
-            if !first && let Some(screen) = &target.screen {
-                self.screen
-                    .capture(device, encoder, picture, screen, processed);
-            }
+        {
             let (view, resolve, depth) = match &target.multisample {
                 Some(m) => (&m.color, Some(picture), &m.depth),
                 None => (picture, None, &target.depth_view),
-            };
-            let keep = |kept: bool| {
-                if kept {
-                    wgpu::StoreOp::Store
-                } else {
-                    wgpu::StoreOp::Discard
-                }
             };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("ljos_3d scene"),
@@ -2453,35 +2482,28 @@ impl Renderer {
                     resolve_target: resolve,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: if first {
-                            wgpu::LoadOp::Clear(clear)
+                        load: wgpu::LoadOp::Clear(clear),
+                        store: if resolve.is_none() {
+                            wgpu::StoreOp::Store
                         } else {
-                            wgpu::LoadOp::Load
+                            wgpu::StoreOp::Discard
                         },
-                        store: keep(resolve.is_none() || !last),
                     },
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: if first {
-                            wgpu::LoadOp::Clear(1.0)
-                        } else {
-                            wgpu::LoadOp::Load
-                        },
-                        store: keep(!last),
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Discard,
                     }),
                     stencil_ops: None,
                 }),
-                timestamp_writes: target
-                    .timer
-                    .as_ref()
-                    .and_then(|t| t.scene_part(first, last)),
+                timestamp_writes: target.timer.as_ref().and_then(|t| t.scene_part(true, true)),
                 ..Default::default()
             });
             pass.set_bind_group(0, &target.frame_group, &[]);
             pass.set_bind_group(3, self.ibl.group(bound), &[]);
-            if sky && first {
+            if sky {
                 // Its layout is the materials', so every group is bound
                 // for it, though it reads only the frame and the probe.
                 pass.set_pipeline(&self.skies[&(samples, format)]);
@@ -2493,7 +2515,7 @@ impl Renderer {
             let mut bound_probe = scene_probe;
             let mut bound = None;
             let mut bound_maps = None;
-            for (i, draw) in draws.iter().enumerate().take(range.end).skip(range.start) {
+            for (i, draw) in draws.iter().enumerate() {
                 let probe = draw.probe.unwrap_or(scene_probe);
                 if probe != bound_probe {
                     pass.set_bind_group(3, self.ibl.group(probe), &[]);
@@ -2525,7 +2547,7 @@ impl Renderer {
                 pass.draw_indexed(0..mesh.count, 0, 0..draw.copies.count);
             }
         }
-        if processed {
+        if processed && !environment.behind {
             if depth_pass {
                 let depth = target
                     .post
