@@ -40,5 +40,5 @@ Feature: A loaded mesh drawn with its morph targets' weights
       When 100 milliseconds pass
       Then the property "status" of "loader" is 1
       And the pixel at 190, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 60, 100 of the window is "#202020"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
       And the property "bounds.maximum.x" of "loader" is within 0.001 of 100

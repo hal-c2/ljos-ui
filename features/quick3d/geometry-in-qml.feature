@@ -51,8 +51,8 @@ Feature: A geometry written in QML
 
     Scenario: The triangle is where its vertices say
       Then the pixel at 110, 90 of the window is "#ff0000"
-      And the pixel at 90, 110 of the window is "#202020"
-      And the pixel at 170, 90 of the window is "#202020"
+      And the pixel at 90, 110 of the window is "#1e1e1e"
+      And the pixel at 170, 90 of the window is "#1e1e1e"
 
     Scenario: Calling the fill again draws the new data
       When the method "fill" of "mesh" is called with 80
@@ -63,4 +63,4 @@ Feature: A geometry written in QML
     Scenario: Vertices with no position draw nothing, with a warning
       When the method "bad" of "mesh" is called
       Then the log has a warning matching "no position attribute"
-      And the pixel at 110, 90 of the window is "#202020"
+      And the pixel at 110, 90 of the window is "#1e1e1e"

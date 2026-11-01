@@ -366,7 +366,6 @@ pub struct Model {
     /// What a file's mesh morphs by; each target's `weight` says how far.
     #[qml(notify, list)]
     pub morph_targets: QmlList,
-    /// Kept: `ReflectionProbe`s do not capture yet (see docs/quick3d.md).
     #[qml(notify)]
     pub casts_reflections: bool,
     #[qml(notify)]
@@ -482,8 +481,9 @@ fn reflection_probe_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
     ]
 }
 
-/// `ReflectionProbe`: every member is kept, nothing is captured yet: models
-/// keep lighting by the environment's light probe (docs/quick3d.md).
+/// `ReflectionProbe`: what is round it, drawn through each side of a cube, is
+/// what a model that receives reflections inside its box mirrors in place of
+/// the environment's light probe.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick3D",

@@ -66,13 +66,13 @@ Feature: A mesh bent by the joints of its skin
     Scenario: Turning a joint bends what follows it
       When the property "eulerRotation.z" of "knee" is set to 90
       Then the pixel at 100, 75 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 15 of the window is "#202020"
+      And the pixel at 100, 15 of the window is "#1e1e1e"
       And the pixel at 60, 50 of the window is within 2 of "#ff0000"
 
     Scenario: A skinned model's own transform is ignored
       When the property "x" of "strip" is set to 60
       Then the pixel at 100, 75 of the window is within 2 of "#ff0000"
-      And the pixel at 160, 75 of the window is "#202020"
+      And the pixel at 160, 75 of the window is "#1e1e1e"
 
   @ljos-only
   Rule: A skeleton of joints does the same by their indices
@@ -106,7 +106,7 @@ Feature: A mesh bent by the joints of its skin
         }
         """
       Then the pixel at 100, 75 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 15 of the window is "#202020"
+      And the pixel at 100, 15 of the window is "#1e1e1e"
       And the pixel at 60, 50 of the window is within 2 of "#ff0000"
 
   Rule: A glTF file's skin is drawn in the pose its nodes give
@@ -132,6 +132,6 @@ Feature: A mesh bent by the joints of its skin
       When 100 milliseconds pass
       Then the property "status" of "loader" is 1
       And the pixel at 100, 75 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 15 of the window is "#202020"
+      And the pixel at 100, 15 of the window is "#1e1e1e"
       And the pixel at 60, 50 of the window is within 2 of "#ff0000"
       And the log has no warning matching "skin"

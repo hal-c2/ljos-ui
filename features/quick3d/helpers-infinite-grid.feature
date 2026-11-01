@@ -39,15 +39,15 @@ Feature: A grid on the floor of a scene
     And the pixel at 100, 150 of the window is "#0000ff"
 
   Scenario: The lines are an interval apart
-    Then the pixel at 120, 130 of the window is not "#202020"
-    And the pixel at 130, 130 of the window is "#202020"
+    Then the pixel at 120, 130 of the window is not "#1e1e1e"
+    And the pixel at 130, 130 of the window is "#1e1e1e"
 
   Scenario: The axes are drawn unless switched off
     When the property "gridAxes" of "grid" is set to false
     Then the pixel at 150, 100 of the window is not "#ff0000"
-    And the pixel at 150, 100 of the window is not "#202020"
+    And the pixel at 150, 100 of the window is not "#1e1e1e"
 
   Scenario: A grid that is not visible draws nothing
     When the property "visible" of "grid" is set to false
-    Then the pixel at 120, 130 of the window is "#202020"
-    And the pixel at 150, 100 of the window is "#202020"
+    Then the pixel at 120, 130 of the window is "#1e1e1e"
+    And the pixel at 150, 100 of the window is "#1e1e1e"

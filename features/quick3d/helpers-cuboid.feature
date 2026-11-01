@@ -42,8 +42,8 @@ Feature: A cuboid geometry
     Then the pixel at 70, 100 of the window is "#ff0000"
     And the pixel at 130, 100 of the window is "#ff0000"
     And the pixel at 100, 85 of the window is "#ff0000"
-    And the pixel at 100, 70 of the window is "#202020"
-    And the pixel at 150, 100 of the window is "#202020"
+    And the pixel at 100, 70 of the window is "#1e1e1e"
+    And the pixel at 150, 100 of the window is "#1e1e1e"
 
   Scenario: A longer box covers more
     When the property "yExtent" of "shape" is set to 100

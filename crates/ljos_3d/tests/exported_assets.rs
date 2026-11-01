@@ -14,7 +14,7 @@ use ljos_3d::offscreen::{Offscreen, Rgba};
 use ljos_3d::{Background, Camera, Color, Environment, Light, Node, NodeKind, Scene, Transform};
 
 const SIDE: u32 = 200;
-const CLEAR: [u8; 3] = [32, 32, 32];
+const CLEAR: [u8; 3] = [30, 30, 30];
 
 fn asset_path(name: &str) -> Option<PathBuf> {
     let Some(dir) = std::env::var_os("LJOS_3D_ASSETS") else {

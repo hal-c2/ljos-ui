@@ -106,7 +106,7 @@ impl Sky {
             self.sun_latitude.to_radians(),
             self.sun_longitude.to_radians(),
         );
-        [lat.cos() * lon.sin(), lat.sin(), -lat.cos() * lon.cos()]
+        [-lat.cos() * lon.sin(), lat.sin(), -lat.cos() * lon.cos()]
     }
 
     /// The sky as a light probe, under an id of its own.
@@ -116,12 +116,13 @@ impl Sky {
         let mut pixels = Vec::with_capacity(w as usize * h as usize * 4);
         let pi = std::f32::consts::PI;
         for y in 0..h {
-            let theta = (y as f32 + 0.5) / h as f32 * pi;
+            let theta = y as f32 / (h - 1).max(1) as f32 * pi;
             let (st, ct) = theta.sin_cos();
             for x in 0..w {
-                let phi = ((x as f32 + 0.5) / w as f32 - 0.5) * 2.0 * pi;
+                // Laid out as Qt lays it: the first column is longitude 0.
+                let phi = x as f32 / (w - 1) as f32 * 2.0 * pi;
                 let (sp, cp) = phi.sin_cos();
-                let [r, g, b] = self.radiance([st * sp, ct, -st * cp]);
+                let [r, g, b] = self.radiance([-st * sp, ct, -st * cp]);
                 pixels.extend_from_slice(&rgbe(r, g, b));
             }
         }

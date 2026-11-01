@@ -76,7 +76,7 @@ Feature: A glTF model loaded while the application runs
       And the property "errorString" of "loader" is ""
       And the pixel at 100, 100 of the window is within 2 of "#ff0000"
       And the pixel at 60, 60 of the window is within 2 of "#ff0000"
-      And the pixel at 40, 100 of the window is "#202020"
+      And the pixel at 40, 100 of the window is "#1e1e1e"
 
     Scenario: Nodes keep their parent, their matrix and their scale
       Given the QML:
@@ -100,8 +100,8 @@ Feature: A glTF model loaded while the application runs
       And the pixel at 50, 100 of the window is within 2 of "#00ff00"
       And the pixel at 35, 100 of the window is within 2 of "#00ff00"
       And the pixel at 150, 100 of the window is within 2 of "#0000ff"
-      And the pixel at 165, 100 of the window is "#202020"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 165, 100 of the window is "#1e1e1e"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
     Scenario: A binary glTF file is lit by the scene's lights
       Given the QML:
@@ -123,9 +123,9 @@ Feature: A glTF model loaded while the application runs
         """
       When 100 milliseconds pass
       Then the property "status" of "loader" is 1
-      And the pixel at 100, 100 of the window is not "#202020"
-      And the pixel at 100, 135 of the window is not "#202020"
-      And the pixel at 140, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is not "#1e1e1e"
+      And the pixel at 100, 135 of the window is not "#1e1e1e"
+      And the pixel at 140, 100 of the window is "#1e1e1e"
 
   Rule: The loader is a node
 
@@ -148,7 +148,7 @@ Feature: A glTF model loaded while the application runs
         """
       When 100 milliseconds pass
       Then the pixel at 140, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 60, 100 of the window is "#202020"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
 
     Scenario: A hidden loader hides the model
       Given the QML:
@@ -169,7 +169,7 @@ Feature: A glTF model loaded while the application runs
         """
       When 100 milliseconds pass
       Then the property "status" of "loader" is 1
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
   Rule: Bounds are the box the model fills, in the loader's own space
 
@@ -226,7 +226,7 @@ Feature: A glTF model loaded while the application runs
       And the property "source" of "loader" is set to "pair.gltf"
       And 100 milliseconds pass
       Then the property "status" of "loader" is 1
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
       And the pixel at 50, 100 of the window is within 2 of "#00ff00"
 
     Scenario: Taking the source away leaves nothing loaded
@@ -249,7 +249,7 @@ Feature: A glTF model loaded while the application runs
       When 100 milliseconds pass
       And the property "source" of "loader" is set to ""
       Then the property "status" of "loader" is 0
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
       And the property "bounds.maximum.x" of "loader" is 0
 
   Rule: A file that cannot be loaded is an error that says why
@@ -328,7 +328,7 @@ Feature: A glTF model loaded while the application runs
       And the pixel at 125, 75 of the window is within 2 of "#00ff00"
       And the pixel at 75, 125 of the window is within 2 of "#0000ff"
       And the pixel at 125, 125 of the window is within 2 of "#ffffff"
-      And the pixel at 40, 100 of the window is "#202020"
+      And the pixel at 40, 100 of the window is "#1e1e1e"
 
   @ljos-only
   Rule: A loaded model costs nothing while it is still

@@ -42,7 +42,6 @@ pub(crate) const SCENE: u32 = 0;
 const PING: u32 = 1;
 const PONG: u32 = 2;
 const OCCLUSION: u32 = 3;
-const FINISHED: u32 = 4;
 pub(crate) const DEPTH_KEY: u32 = 5;
 pub(crate) const NORMAL_KEY: u32 = 6;
 pub(crate) const MATERIAL_KEY: u32 = 7;
@@ -406,8 +405,11 @@ impl<'a> Chain<'a> {
         }
         if let Some(v) = post.vignette {
             u.vignette = [v.color[0], v.color[1], v.color[2], 1.0];
-            u.vignette2 = [v.radius, v.strength, 0.0, 0.0];
+            u.vignette2[0] = v.radius;
+            u.vignette2[1] = v.strength;
         }
+        u.vignette2[2] = f32::from(u8::from(post.on));
+        u.vignette2[3] = f32::from(u8::from(post.on && post.fxaa));
         if let Some(l) = &post.lut {
             u.lut = [
                 l.size.max(2.0),
@@ -979,44 +981,22 @@ impl<'a> Chain<'a> {
             .and_then(|l| l.texture.as_ref())
             .and_then(|t| self.maps.single(self.device, self.queue, t))
             .map(|(view, _)| view);
-        let fxaa = post.on && post.fxaa;
-        let format = self.output_format;
-        let finished = fxaa.then(|| self.buffers.view(self.device, FINISHED, size, format));
-        let output = self.output;
         self.pass(
             Pass {
                 entry: "fs_final",
                 a: &a,
                 b: lut.as_ref(),
-                out: finished.as_ref().unwrap_or(output),
-                format,
+                out: self.output,
+                format: self.output_format,
                 add: false,
                 clear: true,
-                last: !fxaa,
+                last: true,
             },
             base,
             size,
             [0.0; 2],
             None,
         );
-        if let Some(finished) = finished {
-            self.pass(
-                Pass {
-                    entry: "fs_fxaa",
-                    a: &finished,
-                    b: None,
-                    out: output,
-                    format,
-                    add: false,
-                    clear: true,
-                    last: true,
-                },
-                base,
-                size,
-                [0.0; 2],
-                None,
-            );
-        }
     }
 
     /// Runs `effect`'s passes from `input`; returns where its output is,

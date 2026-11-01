@@ -46,19 +46,19 @@ Feature: A terrain from a grey-scale picture
   Scenario: White is as tall as extents.y
     Then the pixel at 100, 85 of the window is "#ff0000"
     And the pixel at 55, 85 of the window is "#ff0000"
-    And the pixel at 100, 55 of the window is "#202020"
-    And the pixel at 160, 85 of the window is "#202020"
+    And the pixel at 100, 55 of the window is "#1e1e1e"
+    And the pixel at 160, 85 of the window is "#1e1e1e"
     And the property "status" of "field" is 2
 
   Scenario: A black picture is flat, and edge on it draws nothing
     When the property "source" of "field" is set to "black.png"
-    Then the pixel at 100, 85 of the window is "#202020"
+    Then the pixel at 100, 85 of the window is "#1e1e1e"
     And the property "status" of "field" is 2
 
   Scenario: A taller extent reaches higher
     When the property "extents.y" of "field" is set to 80
     Then the pixel at 100, 55 of the window is "#ff0000"
-    And the pixel at 100, 15 of the window is "#202020"
+    And the pixel at 100, 15 of the window is "#1e1e1e"
 
   Scenario: A picture that is not there is an error
     When the property "source" of "field" is set to "missing.png"

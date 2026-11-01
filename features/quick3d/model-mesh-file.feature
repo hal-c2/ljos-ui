@@ -48,7 +48,7 @@ Feature: A Model draws the mesh file at its source
       When 100 milliseconds pass
       Then the pixel at 60, 100 of the window is "#ff0000"
       And the pixel at 140, 100 of the window is "#00ff00"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
     Scenario: The last material draws the sub-meshes past the end of the list
       Given the QML:
@@ -83,8 +83,8 @@ Feature: A Model draws the mesh file at its source
         }
         """
       When 100 milliseconds pass
-      Then the pixel at 60, 100 of the window is not "#202020"
-      And the pixel at 140, 100 of the window is not "#202020"
+      Then the pixel at 60, 100 of the window is not "#1e1e1e"
+      And the pixel at 140, 100 of the window is not "#1e1e1e"
 
   Rule: The model places what the file holds
 
@@ -106,7 +106,7 @@ Feature: A Model draws the mesh file at its source
         """
       When 100 milliseconds pass
       Then the pixel at 60, 40 of the window is "#ff0000"
-      And the pixel at 60, 100 of the window is "#202020"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
 
     Scenario: A new source replaces the mesh
       Given the QML:
@@ -128,7 +128,7 @@ Feature: A Model draws the mesh file at its source
       And the property "source" of "model" is set to "jointed.mesh"
       And 100 milliseconds pass
       Then the pixel at 100, 100 of the window is "#ff0000"
-      And the pixel at 60, 100 of the window is "#202020"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
 
     Scenario: A hidden model's mesh does not draw
       Given the QML:
@@ -147,7 +147,7 @@ Feature: A Model draws the mesh file at its source
         }
         """
       When 100 milliseconds pass
-      Then the pixel at 60, 100 of the window is "#202020"
+      Then the pixel at 60, 100 of the window is "#1e1e1e"
 
     Scenario: A file's joints follow the model's skin
       Given the QML:
@@ -168,7 +168,7 @@ Feature: A Model draws the mesh file at its source
         """
       When 100 milliseconds pass
       Then the pixel at 160, 100 of the window is "#ff0000"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
   Rule: A material's picture is the right way up on what a file holds
 
@@ -223,7 +223,7 @@ Feature: A Model draws the mesh file at its source
       When 100 milliseconds pass
       Then the log has 1 warning matching "Model: .*missing\.mesh: "
       And the pixel at 100, 100 of the window is "#ff0000"
-      And the pixel at 60, 100 of the window is "#202020"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
 
     Scenario: A file that is no mesh warns what is wrong with it
       Given the text file "broken.mesh":
@@ -306,11 +306,11 @@ Feature: A Model draws the mesh file at its source
         """
       When 100 milliseconds pass
       Then the pixel at 190, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 60, 100 of the window is "#202020"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
       When the property "weight" of "t" is set to 0
       And 100 milliseconds pass
       Then the pixel at 60, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 190, 100 of the window is "#202020"
+      And the pixel at 190, 100 of the window is "#1e1e1e"
 
     Scenario: A target moves only the attributes it names
       Given the model file "morph.mesh"

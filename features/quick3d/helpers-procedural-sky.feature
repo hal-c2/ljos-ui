@@ -49,23 +49,25 @@ Feature: A sky made from colours
 
   Scenario: Straight up is the top of the sky
     When the property "eulerRotation.x" of "camera" is set to 90
-    Then the pixel at 100, 100 of the window is within 4 of "#4080c0"
+    Then the pixel at 100, 100 of the window is within 4 of "#3f7aab"
 
   Scenario: Straight down is the bottom of the ground
     When the property "eulerRotation.x" of "camera" is set to -90
     Then the pixel at 100, 100 of the window is within 4 of "#302010"
 
   Scenario: The sun is where its latitude and longitude say
-    Then the pixel at 100, 100 of the window is within 4 of "#ffffff"
+    # A sky's longitude 0 is at the edge of its picture, which is along -x when
+    # it is laid round the scene; longitude 90 is straight ahead.
+    Then the pixel at 100, 100 of the window is within 4 of "#898f96"
     When the property "sunLongitude" of "sky" is set to 90
-    Then the pixel at 100, 100 of the window is not "#ffffff"
+    Then the pixel at 100, 100 of the window is within 3 of "#d0d0d0"
 
   Scenario: The sun's glow is gone long before its widest angle
     When the property "sunAngleMin" of "sky" is set to 1
     And the property "sunAngleMax" of "sky" is set to 100
     And the property "sunCurve" of "sky" is set to 0.05
     And the property "eulerRotation.x" of "camera" is set to 90
-    Then the pixel at 100, 100 of the window is within 4 of "#4080c0"
+    Then the pixel at 100, 100 of the window is within 4 of "#3f7aab"
 
   Scenario: The sky lights a model
     When the property "backgroundMode" of "env" is set to 0

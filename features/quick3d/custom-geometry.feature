@@ -49,23 +49,23 @@ Feature: A geometry an application provides
       Then the pixel at 100, 100 of the window is "#ff0000"
       And the pixel at 60, 100 of the window is "#ff0000"
       And the pixel at 100, 60 of the window is "#ff0000"
-      And the pixel at 100, 30 of the window is "#202020"
-      And the pixel at 160, 100 of the window is "#202020"
+      And the pixel at 100, 30 of the window is "#1e1e1e"
+      And the pixel at 160, 100 of the window is "#1e1e1e"
 
   Rule: A geometry that is updated is drawn again
 
     Scenario: A corner fewer takes a side away
       When the property "corners" of "fan" is set to 3
-      Then the pixel at 60, 100 of the window is "#202020"
+      Then the pixel at 60, 100 of the window is "#1e1e1e"
       And the pixel at 110, 100 of the window is "#ff0000"
 
     Scenario: A smaller radius draws a smaller disc
       When the property "radius" of "fan" is set to 20
-      Then the pixel at 60, 100 of the window is "#202020"
+      Then the pixel at 60, 100 of the window is "#1e1e1e"
       And the pixel at 100, 100 of the window is "#ff0000"
 
   Rule: Without a geometry a Model with no source draws nothing
 
     Scenario: The geometry is taken away
       When the property "geometry" of "model" is set to null
-      Then the pixel at 100, 100 of the window is "#202020"
+      Then the pixel at 100, 100 of the window is "#1e1e1e"

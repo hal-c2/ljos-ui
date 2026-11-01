@@ -53,7 +53,7 @@ Feature: Where instanced copies begin and the order they are drawn in
         """
       Then the pixel at 70, 100 of the window is within 2 of "#00ff00"
       And the pixel at 170, 100 of the window is within 2 of "#00ff00"
-      And the pixel at 120, 100 of the window is "#202020"
+      And the pixel at 120, 100 of the window is "#1e1e1e"
 
   Rule: Depth sorting draws the copies from the farthest
 

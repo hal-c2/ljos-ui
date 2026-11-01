@@ -66,7 +66,7 @@ Feature: Instance tables read from a file or made at random
       Then the property "instanceCount" of "file" is 2
       And the pixel at 50, 100 of the window is within 2 of "#ff0000"
       And the pixel at 150, 100 of the window is within 2 of "#0000ff"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
     Scenario: Missing numbers are zeros and a missing scale is one
       When the method "read" of "root" is called
@@ -149,8 +149,8 @@ Feature: Instance tables read from a file or made at random
         }
         """
       Then the pixel at 100, 100 of the window is within 2 of "#00ff00"
-      And the pixel at 20, 20 of the window is "#202020"
-      And the pixel at 180, 180 of the window is "#202020"
+      And the pixel at 20, 20 of the window is "#1e1e1e"
+      And the pixel at 180, 180 of the window is "#1e1e1e"
 
   @ljos-only
   Rule: The helpers Ljós does not build stand in beside the ones it does

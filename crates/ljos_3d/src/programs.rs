@@ -265,7 +265,15 @@ impl Programs {
             });
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("ljos_3d program"),
-                source: wgpu::ShaderSource::Wgsl(program.wgsl().into()),
+                // What a snippet samples inside its own branches is Qt's to allow and
+                // WebGPU's to refuse; off, it reads as it does everywhere else.
+                source: wgpu::ShaderSource::Wgsl(
+                    format!(
+                        "diagnostic(off, derivative_uniformity);\n{}",
+                        program.wgsl()
+                    )
+                    .into(),
+                ),
             });
             Compiled {
                 program: Arc::downgrade(program),

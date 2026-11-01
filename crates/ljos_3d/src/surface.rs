@@ -205,9 +205,12 @@ impl<'w> SurfaceView<'w> {
         let view_format = format.remove_srgb_suffix();
         // Premultiplied where the compositor takes it, so a transparent
         // background shows the page or desktop under the view.
-        let alpha_mode = if caps
-            .alpha_modes
-            .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
+        // wgpu lists only opaque for a WebGPU canvas, whose configuration
+        // takes premultiplied all the same.
+        let alpha_mode = if backend == wgpu::Backend::BrowserWebGpu
+            || caps
+                .alpha_modes
+                .contains(&wgpu::CompositeAlphaMode::PreMultiplied)
         {
             wgpu::CompositeAlphaMode::PreMultiplied
         } else {

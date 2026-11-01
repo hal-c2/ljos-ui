@@ -18,8 +18,8 @@ use crate::helpers::ExtendedSceneEnvironment as X;
 use crate::{
     Camera, CustomMaterial, DefaultMaterial, DirectionalLight, Effect, Fog, Geometry, Instancing,
     Joint, Light, Material, Model, MorphTarget, Node, Object3D, OrthographicCamera,
-    PerspectiveCamera, PointLight, PrincipledMaterial, RuntimeLoader, SceneEnvironment, Skeleton,
-    Skin, SpotLight, Texture, View3D,
+    PerspectiveCamera, PointLight, PrincipledMaterial, ReflectionProbe, RuntimeLoader,
+    SceneEnvironment, Skeleton, Skin, SpotLight, Texture, View3D,
 };
 
 /// The engine `e`'s objects, read by the mapping. Reads are tracked: a
@@ -130,6 +130,7 @@ impl SceneSource for EngineSource<'_> {
             Type3d::InfiniteGrid => e.is::<crate::helpers::InfiniteGrid>(o),
             Type3d::Fog => e.is::<Fog>(o),
             Type3d::MorphTarget => e.is::<MorphTarget>(o),
+            Type3d::ReflectionProbe => e.is::<ReflectionProbe>(o),
         }
     }
 
@@ -384,6 +385,8 @@ fn numbers(p: Prop3d) -> &'static [Prop<f64>] {
 fn ints(p: Prop3d) -> &'static [Prop<i32>] {
     use Prop3d as P;
     match p {
+        P::Quality => &[ReflectionProbe::QUALITY],
+        P::RefreshMode => &[ReflectionProbe::REFRESH_MODE],
         P::FieldOfViewOrientation => &[PerspectiveCamera::FIELD_OF_VIEW_ORIENTATION],
         P::ShadowMapQuality => &[Light::SHADOW_MAP_QUALITY],
         P::SoftShadowQuality => &[Light::SOFT_SHADOW_QUALITY],
@@ -444,6 +447,9 @@ fn bools(p: Prop3d) -> &'static [Prop<bool>] {
         P::DepthEnabled => &[Fog::DEPTH_ENABLED],
         P::HeightEnabled => &[Fog::HEIGHT_ENABLED],
         P::TransmitEnabled => &[Fog::TRANSMIT_ENABLED],
+        P::CastsReflections => &[Model::CASTS_REFLECTIONS],
+        P::ReceivesReflections => &[Model::RECEIVES_REFLECTIONS],
+        P::ParallaxCorrection => &[ReflectionProbe::PARALLAX_CORRECTION],
         P::CastsShadows => &[Model::CASTS_SHADOWS],
         P::ReceivesShadows => &[Model::RECEIVES_SHADOWS],
         P::FrustumCullingEnabled => &[Camera::FRUSTUM_CULLING_ENABLED],
@@ -481,7 +487,7 @@ fn colors(p: Prop3d) -> &'static [Prop<Color>] {
         P::AmbientColor => &[Light::AMBIENT_COLOR],
         P::DiffuseColor => &[DefaultMaterial::DIFFUSE_COLOR],
         P::BaseColor => &[PrincipledMaterial::BASE_COLOR],
-        P::ClearColor => &[SceneEnvironment::CLEAR_COLOR],
+        P::ClearColor => &[SceneEnvironment::CLEAR_COLOR, ReflectionProbe::CLEAR_COLOR],
         P::VignetteColor => &[X::VIGNETTE_COLOR],
         _ => &[],
     }
@@ -492,6 +498,8 @@ fn vectors(p: Prop3d) -> &'static [Prop<Vector3d>] {
     match p {
         P::Position => &[Node::POSITION],
         P::EulerRotation => &[Node::EULER_ROTATION],
+        P::BoxSize => &[ReflectionProbe::BOX_SIZE],
+        P::BoxOffset => &[ReflectionProbe::BOX_OFFSET],
         P::Scale => &[Node::SCALE],
         P::Pivot => &[Node::PIVOT],
         P::EmissiveFactor => &[

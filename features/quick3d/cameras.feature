@@ -49,13 +49,13 @@ Feature: Cameras
       Then the property "fieldOfViewOrientation" of "camera" is 0
       And the property "frustumCullingEnabled" of "camera" is false
       And the pixel at 100, 50 of the window is within 2 of "#ff0000"
-      And the pixel at 60, 50 of the window is "#202020"
+      And the pixel at 60, 50 of the window is "#1e1e1e"
 
     Scenario: A horizontal field of view spans the view's width
       When the property "fieldOfViewOrientation" of "camera" is set to 1
       Then the pixel at 60, 50 of the window is within 2 of "#ff0000"
       And the pixel at 140, 50 of the window is within 2 of "#ff0000"
-      And the pixel at 40, 50 of the window is "#202020"
+      And the pixel at 40, 50 of the window is "#1e1e1e"
 
   Rule: Frustum culling changes nothing that can be seen
 
@@ -66,4 +66,4 @@ Feature: Cameras
     Scenario: A model out of view is not drawn with culling on
       When the property "frustumCullingEnabled" of "camera" is set to true
       And the property "x" of "square" is set to 2000
-      Then the pixel at 100, 50 of the window is "#202020"
+      Then the pixel at 100, 50 of the window is "#1e1e1e"

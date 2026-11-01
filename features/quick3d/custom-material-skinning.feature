@@ -109,21 +109,21 @@ Feature: A CustomMaterial on a skinned model is bent by its skin
     Scenario: A snippet that writes no POSITION is bent by the skin
       When the property "eulerRotation.z" of "knee" is set to 90
       Then the pixel at 100, 75 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 15 of the window is "#202020"
+      And the pixel at 100, 15 of the window is "#1e1e1e"
       And the pixel at 60, 50 of the window is within 2 of "#ff0000"
 
     Scenario: A snippet that writes POSITION bends with BONE_TRANSFORMS, JOINTS and WEIGHTS
       When the property "vertexShader" of "custom" is set to "bones.vert"
       And the property "eulerRotation.z" of "knee" is set to 90
       Then the pixel at 100, 75 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 15 of the window is "#202020"
+      And the pixel at 100, 15 of the window is "#1e1e1e"
       And the pixel at 60, 50 of the window is within 2 of "#ff0000"
 
     Scenario: A snippet that writes POSITION without the bones is not bent
       When the property "vertexShader" of "custom" is set to "unbent.vert"
       And the property "eulerRotation.z" of "knee" is set to 90
       Then the pixel at 100, 15 of the window is within 2 of "#ff0000"
-      And the pixel at 60, 50 of the window is "#202020"
+      And the pixel at 60, 50 of the window is "#1e1e1e"
 
     # The lower half follows the hip, which is not turned, so its up
     # stays up; the top edge follows the knee, which turns up to the left.

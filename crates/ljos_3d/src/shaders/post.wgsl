@@ -270,14 +270,100 @@ fn fs_glow(in: VsOut) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb, alpha);
 }
 
-fn grade(rgb_in: vec3<f32>, uv: vec2<f32>, px: vec2<f32>) -> vec3<f32> {
+// The curves of an ExtendedSceneEnvironment, which are not a
+// SceneEnvironment's: its white point scales them, and what they give is
+// brought to the screen by the true sRGB curve rather than the fit.
+fn to_screen(c: vec3<f32>) -> vec3<f32> {
+    return select(
+        1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055),
+        12.92 * c,
+        c < vec3<f32>(0.0031308));
+}
+
+fn filmic_curve(c: vec3<f32>) -> vec3<f32> {
+    let e = 0.01;
+    let f = 0.30;
+    return (c * (0.88 * c + 0.06) + vec3<f32>(0.20 * e)) / (c * (0.88 * c + 0.6) + vec3<f32>(0.20 * f))
+        - vec3<f32>(e / f);
+}
+
+fn aces_curve(c: vec3<f32>) -> vec3<f32> {
+    let k = 0.85;
+    return (c * (2.51 * k * k * c + vec3<f32>(0.03 * k))) / (c * (2.43 * k * k * c + vec3<f32>(0.59 * k)) + vec3<f32>(0.14));
+}
+
+fn extended_tone(c_in: vec3<f32>, mode: u32, white: f32) -> vec3<f32> {
+    if mode == 0u {
+        return c_in;
+    }
+    if mode == 1u {
+        return to_screen(clamp(c_in, vec3<f32>(0.0), vec3<f32>(1.0)));
+    }
+    let c = max(c_in, vec3<f32>(0.0));
+    let w = vec3<f32>(white);
+    if mode == 2u {
+        return to_screen(clamp(aces_curve(c) / aces_curve(w), vec3<f32>(0.0), vec3<f32>(1.0)));
+    }
+    if mode == 3u {
+        return to_screen(clamp((white * c + c) / (c * white + w), vec3<f32>(0.0), vec3<f32>(1.0)));
+    }
+    return to_screen(clamp(filmic_curve(c) / filmic_curve(w), vec3<f32>(0.0), vec3<f32>(1.0)));
+}
+
+fn exposed_at(uv: vec2<f32>, exposure: f32) -> vec3<f32> {
+    return textureSampleLevel(a, smooth_sampler, uv, 0.0).rgb * exposure;
+}
+
+// Edges smoothed by the light's own contrast, before it is tone mapped.
+fn smoothed(color: vec3<f32>, uv: vec2<f32>, exposure: f32) -> vec3<f32> {
+    let t = post.texel.xy;
+    let w = vec3<f32>(0.299, 0.587, 0.114);
+    let nw = dot(exposed_at(uv + vec2<f32>(-t.x, -t.y), exposure), w);
+    let ne = dot(exposed_at(uv + vec2<f32>(t.x, -t.y), exposure), w);
+    let sw = dot(exposed_at(uv + vec2<f32>(-t.x, t.y), exposure), w);
+    let se = dot(exposed_at(uv + vec2<f32>(t.x, t.y), exposure), w);
+    let m = dot(color, w);
+    let least = min(m, min(min(nw, ne), min(sw, se)));
+    let most = max(m, max(max(nw, ne), max(sw, se)));
+    var way = vec2<f32>(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
+    let less = max((nw + ne + sw + se) * (0.25 / 8.0), 1.0 / 128.0);
+    way = clamp(way / (min(abs(way.x), abs(way.y)) + less), vec2<f32>(-8.0), vec2<f32>(8.0)) * t;
+    let near = 0.5 * (exposed_at(uv + way * (1.0 / 3.0 - 0.5), exposure) + exposed_at(uv + way * (2.0 / 3.0 - 0.5), exposure));
+    let far = near * 0.5 + 0.25 * (exposed_at(uv - way * 0.5, exposure) + exposed_at(uv + way * 0.5, exposure));
+    let l = dot(far, w);
+    if l < least || l > most {
+        return near;
+    }
+    return far;
+}
+
+// Contrast-adaptive: how far a pixel is pushed from its neighbours depends
+// on how much room its neighbourhood leaves.
+fn sharpened(e: vec3<f32>, uv: vec2<f32>, exposure: f32, amount: f32) -> vec3<f32> {
+    let t = post.texel.xy;
+    let a0 = exposed_at(uv + vec2<f32>(-t.x, -t.y), exposure);
+    let b0 = exposed_at(uv + vec2<f32>(0.0, -t.y), exposure);
+    let c0 = exposed_at(uv + vec2<f32>(t.x, -t.y), exposure);
+    let d0 = exposed_at(uv + vec2<f32>(-t.x, 0.0), exposure);
+    let f0 = exposed_at(uv + vec2<f32>(t.x, 0.0), exposure);
+    let g0 = exposed_at(uv + vec2<f32>(-t.x, t.y), exposure);
+    let h0 = exposed_at(uv + vec2<f32>(0.0, t.y), exposure);
+    let i0 = exposed_at(uv + vec2<f32>(t.x, t.y), exposure);
+    var least = min(min(min(d0, e), min(f0, b0)), h0);
+    least += min(min(min(least, a0), min(g0, c0)), i0);
+    var most = max(max(max(d0, e), max(f0, b0)), h0);
+    most += max(max(max(most, a0), max(g0, c0)), i0);
+    let room = vec3<f32>(1.0) / sqrt(clamp(min(least, vec3<f32>(2.0) - most) / most, vec3<f32>(0.0), vec3<f32>(1.0)));
+    let weight = -vec3<f32>(1.0) / (room * (8.0 - 3.0 * amount));
+    return max(vec3<f32>(0.0), ((b0 + d0 + f0 + h0) * weight + e) / (vec3<f32>(1.0) + 4.0 * weight));
+}
+
+fn grade(rgb_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
     var rgb = rgb_in;
     if post.adjust.w > 0.5 {
-        rgb = rgb * post.adjust.x;
-        rgb = (rgb - vec3<f32>(0.5)) * post.adjust.y + vec3<f32>(0.5);
-        let grey = dot(rgb, vec3<f32>(0.299, 0.587, 0.114));
-        rgb = mix(vec3<f32>(grey), rgb, post.adjust.z);
-        rgb = clamp(rgb, vec3<f32>(0.0), vec3<f32>(1.0));
+        rgb = mix(vec3<f32>(0.0), rgb, post.adjust.x);
+        rgb = mix(vec3<f32>(0.5), rgb, post.adjust.y);
+        rgb = mix(vec3<f32>(dot(vec3<f32>(1.0), rgb) * 0.33333), rgb, post.adjust.z);
     }
     if post.lut.z > 0.5 {
         // `size` cells a side, each blue a cell of the row.
@@ -293,74 +379,43 @@ fn grade(rgb_in: vec3<f32>, uv: vec2<f32>, px: vec2<f32>) -> vec3<f32> {
         rgb = mix(rgb, mix(one, two, cell - first), clamp(post.lut.y, 0.0, 1.0));
     }
     if post.vignette.w > 0.5 {
-        // 1 in the middle, 0 in the corners; the strength brings it in
-        // and the radius bends it.
-        let e = uv * (vec2<f32>(1.0) - uv);
-        let v = clamp(16.0 * e.x * e.y * post.vignette2.y / 15.0, 0.0, 1.0);
-        let keep = pow(v, max(post.vignette2.x, 1e-3));
-        rgb = mix(srgb3(post.vignette.rgb), rgb, keep);
-    }
-    if post.tone.w > 0.5 {
-        rgb = rgb + vec3<f32>((hash(px) - 0.5) / 255.0);
+        let e = uv * (vec2<f32>(1.0) - uv.yx);
+        let edge = pow(e.x * e.y * post.vignette2.y, post.vignette2.x);
+        rgb = mix(post.vignette.rgb * edge, rgb, edge);
     }
     return rgb;
 }
 
-// The last pass: sharpened, exposed and tonemapped, then graded, into a
-// picture of the target's format.
+// The last pass, into a picture of the target's format. An
+// ExtendedSceneEnvironment exposes, smooths, sharpens and dithers its light
+// before the tone mapping, and grades what comes of it; effects on a plain
+// SceneEnvironment only tonemap what they leave, as a material would.
 @fragment
 fn fs_final(in: VsOut) -> @location(0) vec4<f32> {
-    var c = textureSampleLevel(a, smooth_sampler, in.uv, 0.0);
-    let sharpness = post.lut.w;
-    if sharpness > 0.0 {
-        let t = post.texel.xy;
-        let around = 0.25 * (
-            textureSampleLevel(a, smooth_sampler, in.uv + vec2<f32>(t.x, 0.0), 0.0)
-            + textureSampleLevel(a, smooth_sampler, in.uv - vec2<f32>(t.x, 0.0), 0.0)
-            + textureSampleLevel(a, smooth_sampler, in.uv + vec2<f32>(0.0, t.y), 0.0)
-            + textureSampleLevel(a, smooth_sampler, in.uv - vec2<f32>(0.0, t.y), 0.0));
-        c = max(c + (c - around) * sharpness * 2.0, vec4<f32>(0.0));
-    }
+    let c = textureSampleLevel(a, smooth_sampler, in.uv, 0.0);
     let alpha = clamp(c.a, 0.0, 1.0);
     if alpha <= 0.0 {
         return vec4<f32>(0.0);
     }
-    let rgb = tonemap(c.rgb / alpha, post.tone);
-    return vec4<f32>(clamp(grade(rgb, in.uv, in.clip.xy), vec3<f32>(0.0), vec3<f32>(1.0)) * alpha, alpha);
-}
-
-fn luma(c: vec3<f32>) -> f32 {
-    return dot(c, vec3<f32>(0.299, 0.587, 0.114));
-}
-
-// FXAA over the finished picture: along an edge the pixel is the average
-// of the colours on it, and a flat area keeps its own.
-@fragment
-fn fs_fxaa(in: VsOut) -> @location(0) vec4<f32> {
-    let t = post.texel.xy;
-    let nw = luma(textureSampleLevel(a, smooth_sampler, in.uv + vec2<f32>(-t.x, -t.y), 0.0).rgb);
-    let ne = luma(textureSampleLevel(a, smooth_sampler, in.uv + vec2<f32>(t.x, -t.y), 0.0).rgb);
-    let sw = luma(textureSampleLevel(a, smooth_sampler, in.uv + vec2<f32>(-t.x, t.y), 0.0).rgb);
-    let se = luma(textureSampleLevel(a, smooth_sampler, in.uv + vec2<f32>(t.x, t.y), 0.0).rgb);
-    let m = textureSampleLevel(a, smooth_sampler, in.uv, 0.0);
-    let lm = luma(m.rgb);
-    let lo = min(lm, min(min(nw, ne), min(sw, se)));
-    let hi = max(lm, max(max(nw, ne), max(sw, se)));
-    var dir = vec2<f32>(-((nw + ne) - (sw + se)), (nw + sw) - (ne + se));
-    let reduce = max((nw + ne + sw + se) * 0.03125, 1.0 / 128.0);
-    let scale = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
-    dir = clamp(dir * scale, vec2<f32>(-8.0), vec2<f32>(8.0)) * t;
-    let two = 0.5 * (
-        textureSampleLevel(a, smooth_sampler, in.uv + dir * (1.0 / 3.0 - 0.5), 0.0)
-        + textureSampleLevel(a, smooth_sampler, in.uv + dir * (2.0 / 3.0 - 0.5), 0.0));
-    let four = two * 0.5 + 0.25 * (
-        textureSampleLevel(a, smooth_sampler, in.uv - dir * 0.5, 0.0)
-        + textureSampleLevel(a, smooth_sampler, in.uv + dir * 0.5, 0.0));
-    let l4 = luma(four.rgb);
-    if l4 < lo || l4 > hi {
-        return two;
+    if post.vignette2.z < 0.5 {
+        return vec4<f32>(clamp(tonemap(c.rgb / alpha, post.tone), vec3<f32>(0.0), vec3<f32>(1.0)) * alpha, alpha);
     }
-    return four;
+    let exposure = post.tone.y;
+    var color = c.rgb / alpha * exposure;
+    if post.vignette2.w > 0.5 {
+        color = smoothed(color, in.uv, exposure);
+    }
+    if post.lut.w >= 0.001 {
+        color = sharpened(color, in.uv, exposure, post.lut.w);
+    }
+    if post.tone.w > 0.5 {
+        // Counted from the bottom of the picture, as a fragment's place is on GL.
+        let from_bottom = vec2<f32>(in.clip.x, 1.0 / post.texel.y - in.clip.y);
+        let dither = fract(vec3<f32>(dot(vec2<f32>(171.0, 231.0), from_bottom)) / vec3<f32>(103.0, 71.0, 97.0));
+        color += (dither - vec3<f32>(0.5)) / 255.0;
+    }
+    color = extended_tone(color, u32(post.tone.x + 0.5), post.tone.z);
+    return vec4<f32>(clamp(grade(color, in.uv), vec3<f32>(0.0), vec3<f32>(1.0)) * alpha, alpha);
 }
 
 fn orthographic() -> bool {

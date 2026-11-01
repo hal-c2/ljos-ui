@@ -71,7 +71,6 @@ fn the_post_processing_passes_run_on_webgl2() {
             "fs_add",
             "fs_glow",
             "fs_final",
-            "fs_fxaa",
             "fs_ssr",
             "fs_ssr_apply",
             "fs_gi",

@@ -46,12 +46,10 @@ impl Color {
 
     /// The channels in linear light, where the lighting is summed.
     pub fn to_linear(self) -> [f32; 4] {
+        // The fit to sRGB Qt's shaders use, the inverse of what tone.wgsl
+        // writes: a colour said in QML comes back out as it was.
         fn lin(c: f32) -> f32 {
-            if c <= 0.04045 {
-                c / 12.92
-            } else {
-                ((c + 0.055) / 1.055).powf(2.4)
-            }
+            c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878)
         }
         [lin(self.r), lin(self.g), lin(self.b), self.a]
     }
@@ -218,6 +216,7 @@ pub struct DefaultMaterial {
     /// 0 has the highlight the same seen from any side; above it, the
     /// highlight grows towards the edges.
     pub fresnel_power: f32,
+    pub index_of_refraction: f32,
     pub blend_mode: BlendMode,
     pub vertex_colors: bool,
 }
@@ -249,6 +248,7 @@ impl Default for DefaultMaterial {
             maps: Box::default(),
             specular_tint: Color::WHITE,
             fresnel_power: 0.0,
+            index_of_refraction: 1.45,
             blend_mode: BlendMode::SourceOver,
             vertex_colors: false,
         }
@@ -759,6 +759,28 @@ pub enum NodeKind {
     Model(Model),
     Camera(Camera),
     Light(Light),
+    ReflectionProbe(ReflectionProbe),
+}
+
+/// `ReflectionProbe`: a place the scene is looked at from all round, for the
+/// models near it that take reflections to mirror in place of the light
+/// probe.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ReflectionProbe {
+    /// How far across each side of its cube is.
+    pub across: u32,
+    /// What nothing is seen of shows, as it is: not a colour of the screen's.
+    pub clear: [f32; 4],
+    /// Looked through once, and again when `turn` changes, rather than for
+    /// every picture.
+    pub once: bool,
+    pub turn: u64,
+    /// `parallaxCorrection`: what is read is put right for where the surface
+    /// is in the box.
+    pub parallax: bool,
+    /// `boxSize`, about where the probe is, moved by `boxOffset`.
+    pub box_size: Vec3,
+    pub box_offset: Vec3,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -773,6 +795,11 @@ pub struct Node {
     pub casts_shadows: bool,
     /// A model's `receivesShadows`: whether shadows darken it.
     pub receives_shadows: bool,
+    /// A model's `castsReflections`: whether a reflection probe sees it.
+    pub casts_reflections: bool,
+    /// A model's `receivesReflections`: whether it mirrors a reflection
+    /// probe whose box it is in.
+    pub receives_reflections: bool,
     /// A light's shadow, where its `castsShadow` is true.
     ///
     /// These three are the node's rather than in [`Model`] and [`Light`]:
@@ -801,6 +828,8 @@ impl Node {
             opacity: 1.0,
             casts_shadows: true,
             receives_shadows: true,
+            casts_reflections: true,
+            receives_reflections: false,
             shadow: None,
             instancing: None,
             skin: None,
@@ -850,6 +879,30 @@ pub enum Tonemap {
     HejlDawson,
     /// Hable's filmic curve.
     Filmic,
+}
+
+impl Tonemap {
+    /// A colour in linear light as this mode shows it, by the sums of
+    /// `tone.wgsl`, for what is not drawn by a shader: the clear colour.
+    pub(crate) fn shown(self, c: [f32; 3]) -> [f32; 3] {
+        let screen = |c: f32| {
+            let s1 = c.max(0.0).sqrt();
+            let s2 = s1.sqrt();
+            0.585_122_4 * s1 + 0.783_140_36 * s2 - 0.368_262_74 * s2.sqrt()
+        };
+        let hable =
+            |x: f32| (x * (0.15 * x + 0.05) + 0.004) / (x * (0.15 * x + 0.5) + 0.06) - 0.02 / 0.3;
+        c.map(|c| match self {
+            Tonemap::None => c,
+            Tonemap::Linear => screen(c),
+            Tonemap::Aces => screen((c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14)),
+            Tonemap::HejlDawson => {
+                let h = (c - 0.004).max(0.0);
+                (h * (6.2 * h + 0.5)) / (h * (6.2 * h + 1.7) + 0.06)
+            }
+            Tonemap::Filmic => screen(hable(2.0 * c) / hable(11.2)),
+        })
+    }
 }
 
 /// `SceneEnvironment.lightProbe` and how it is laid around the scene.
@@ -903,6 +956,10 @@ pub struct Environment {
     /// MSAA): 1 for none, else 2, 4 or 8, which a renderer may bring to a
     /// count its device has.
     pub msaa_samples: u32,
+    /// Drawn for the cube of a reflection probe: the light as it is, over
+    /// this rather than the background's colour.
+    #[doc(hidden)]
+    pub capture: Option<[f32; 4]>,
     pub light_probe: Option<LightProbe>,
     pub tonemap: Tonemap,
     /// Multiplies the light before it is tone mapped; ignored by
@@ -939,6 +996,7 @@ impl Default for Environment {
             background: Background::Transparent,
             msaa_samples: 1,
             light_probe: None,
+            capture: None,
             tonemap: Tonemap::Linear,
             exposure: 1.0,
             white_point: 1.0,
@@ -958,6 +1016,9 @@ pub struct Scene {
     roots: Vec<NodeId>,
     environment: Environment,
     camera: Option<NodeId>,
+    /// In place of any camera: where a reflection probe looks through a
+    /// side of its cube.
+    looking: Option<(Camera, Mat4)>,
     revision: u64,
 }
 
@@ -1123,6 +1184,9 @@ impl Scene {
 
     /// The camera the view is drawn through, with its world transform.
     pub fn active_camera(&self) -> Option<(Camera, Mat4)> {
+        if self.looking.is_some() {
+            return self.looking;
+        }
         let walked = self.walk();
         let pick = |want: Option<NodeId>| {
             walked
@@ -1136,6 +1200,34 @@ impl Scene {
             Some(c) => pick(Some(c)),
             None => pick(None),
         }
+    }
+}
+
+impl Scene {
+    /// This scene as a reflection probe sees it: what is for mirroring,
+    /// with no tone mapping or passes after, over `clear` or over the sky
+    /// box where that is what is behind the scene.
+    pub(crate) fn mirrored(&self, clear: [f32; 4]) -> Scene {
+        let mut scene = self.clone();
+        for node in scene.nodes.values_mut() {
+            if !node.casts_reflections && matches!(node.kind, NodeKind::Model(_)) {
+                node.kind = NodeKind::Group;
+            }
+        }
+        let environment = &mut scene.environment;
+        environment.capture = Some(clear);
+        environment.tonemap = Tonemap::None;
+        environment.exposure = 1.0;
+        environment.msaa_samples = 1;
+        environment.effects.clear();
+        environment.post = PostProcess::default();
+        environment.ambient_occlusion = None;
+        scene
+    }
+
+    /// Looks through `camera` placed at `world`, whatever the scene's is.
+    pub(crate) fn look(&mut self, camera: Camera, world: Mat4) {
+        self.looking = Some((camera, world));
     }
 }
 

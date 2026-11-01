@@ -124,7 +124,7 @@ pub mod enums {
         pub const MULTIPLY: i32 = 2;
     }
 
-    /// `ReflectionProbe`'s, kept for code that names them.
+    /// `ReflectionProbe.quality`, `.refreshMode` and `.timeSlicing`.
     pub mod reflection_probe {
         pub const VERY_LOW: i32 = 0;
         pub const LOW: i32 = 1;

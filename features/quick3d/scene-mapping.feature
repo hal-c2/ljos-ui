@@ -56,7 +56,7 @@ Feature: What a scene's objects say, read the same however they say it
     Scenario Outline: The material's culling given by number
       When the property "cullMode" of "paint" is set to <value>
       Then the pixel at 50, 50 of the window is within 2 of "#ff0000"
-      And the pixel at 2, 2 of the window is "#202020"
+      And the pixel at 2, 2 of the window is "#1e1e1e"
 
       Examples:
         | value |
@@ -69,12 +69,12 @@ Feature: What a scene's objects say, read the same however they say it
     # window's 100 pixels: the middle is clear, the right of it is red.
     Scenario: x moves the cube
       When the property "x" of "cube" is set to 60
-      Then the pixel at 45, 50 of the window is "#202020"
+      Then the pixel at 45, 50 of the window is "#1e1e1e"
       And the pixel at 75, 50 of the window is within 2 of "#ff0000"
 
     Scenario: position moves the cube as x does
       When the method "placeAt" of "cube" is called with 60
-      Then the pixel at 45, 50 of the window is "#202020"
+      Then the pixel at 45, 50 of the window is "#1e1e1e"
       And the pixel at 75, 50 of the window is within 2 of "#ff0000"
       And the property "x" of "cube" is 60
 
@@ -95,7 +95,7 @@ Feature: What a scene's objects say, read the same however they say it
     # x puts the node's origin 100 to the right of its position.
     Scenario: A pivot moves the node the other way
       When the property "pivot.x" of "cube" is set to -100
-      Then the pixel at 50, 50 of the window is "#202020"
+      Then the pixel at 50, 50 of the window is "#1e1e1e"
 
     # Turned half way round y, the node's +x points to scene -x, so the same
     # pivot now puts its origin on the other side.
@@ -114,8 +114,8 @@ Feature: What a scene's objects say, read the same however they say it
     Scenario Outline: Writing <member> as its default changes nothing drawn
       When the property "<member>" of "<object>" is set to <value>
       Then the pixel at 50, 50 of the window is within 2 of "#ff0000"
-      And the pixel at 2, 2 of the window is "#202020"
-      And the pixel at 20, 50 of the window is "#202020"
+      And the pixel at 2, 2 of the window is "#1e1e1e"
+      And the pixel at 20, 50 of the window is "#1e1e1e"
 
       Examples:
         | object | member        | value     |

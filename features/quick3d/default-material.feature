@@ -51,6 +51,9 @@ Feature: A DefaultMaterial's opacity, reflection and glow
 
   Rule: The specular reflection has an amount, a tint and a map
 
+    # What a DefaultMaterial gives back is in its own colour, so a black one
+    # gives back nothing of a light.
+
     Scenario: Its amount
       Given the QML:
         """qml
@@ -67,7 +70,7 @@ Feature: A DefaultMaterial's opacity, reflection and glow
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 8 of "#ffffff"
+      Then the pixel at 100, 100 of the window is within 8 of "#000000"
 
     Scenario: Its tint
       Given the QML:
@@ -85,7 +88,7 @@ Feature: A DefaultMaterial's opacity, reflection and glow
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 8 of "#ff0000"
+      Then the pixel at 100, 100 of the window is within 8 of "#000000"
 
     Scenario: Its map
       Given a 64 by 64 image file "quadrants.png" of quadrants "#ff0000, #00ff00, #0000ff, #ffffff"
@@ -104,8 +107,8 @@ Feature: A DefaultMaterial's opacity, reflection and glow
           }
         }
         """
-      Then the pixel at 75, 75 of the window is within 8 of "#ff0000"
-      And the pixel at 125, 75 of the window is within 8 of "#00ff00"
+      Then the pixel at 75, 75 of the window is within 8 of "#000000"
+      And the pixel at 125, 75 of the window is within 8 of "#000000"
 
   Rule: It glows by its emissive colour and map
 

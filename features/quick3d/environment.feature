@@ -65,7 +65,7 @@ Feature: A light probe, the sky box and tone mapping
   Rule: A sky box shows the light probe behind the models
 
     Scenario: The sky box shows the probe's radiance
-      Then the pixel at 10, 10 of the window is within 3 of "#bcbcbc"
+      Then the pixel at 10, 10 of the window is within 3 of "#a8a8a8"
 
     Scenario: A transparent background shows no sky box
       When the property "backgroundMode" of "env" is set to 0
@@ -73,16 +73,16 @@ Feature: A light probe, the sky box and tone mapping
 
     Scenario: An ordinary picture is a light probe too
       When the property "source" of "probe" is set to "grey.png"
-      Then the pixel at 10, 10 of the window is within 3 of "#808080"
+      Then the pixel at 10, 10 of the window is within 3 of "#7a7a7a"
 
     Scenario: Up in the probe is up in the scene
       When the property "source" of "probe" is set to "halves.hdr"
-      Then the pixel at 100, 20 of the window is within 3 of "#bcbcbc"
+      Then the pixel at 100, 20 of the window is within 3 of "#a8a8a8"
       And the pixel at 100, 180 of the window is within 3 of "#000000"
 
     Scenario: A baked KTX cube is a light probe too
       When the property "source" of "probe" is set to "halves.ktx"
-      Then the pixel at 100, 20 of the window is within 3 of "#bcbcbc"
+      Then the pixel at 100, 20 of the window is within 3 of "#a8a8a8"
       And the pixel at 100, 180 of the window is within 3 of "#000000"
 
     Scenario: A KTX file cut short says so and lights nothing
@@ -93,7 +93,7 @@ Feature: A light probe, the sky box and tone mapping
       When the property "source" of "probe" is set to "halves.hdr"
       And the property "probeOrientation.x" of "env" is set to 180
       Then the pixel at 100, 20 of the window is within 3 of "#000000"
-      And the pixel at 100, 180 of the window is within 3 of "#bcbcbc"
+      And the pixel at 100, 180 of the window is within 3 of "#a8a8a8"
 
     # Linear light of 0.25, half way between the halves, is #898989.
     Scenario: A blurred sky box mixes the colours across the horizon
@@ -103,7 +103,7 @@ Feature: A light probe, the sky box and tone mapping
 
     Scenario: probeExposure scales the probe's light
       When the property "probeExposure" of "env" is set to 0.5
-      Then the pixel at 10, 10 of the window is within 3 of "#898989"
+      Then the pixel at 10, 10 of the window is within 3 of "#818181"
 
   # Linear, ACES, Hejl-Dawson and filmic are the published curves of those
   # names (Narkowicz's fit of ACES, Hable's filmic curve). The documentation
@@ -117,10 +117,10 @@ Feature: A light probe, the sky box and tone mapping
       Examples:
         | mode | tonemapping | colour  |
         | 0    | None        | #808080 |
-        | 1    | Linear      | #bcbcbc |
-        | 2    | Aces        | #cecece |
-        | 3    | HejlDawson  | #bababa |
-        | 4    | Filmic      | #969696 |
+        | 1    | Linear      | #a8a8a8 |
+        | 2    | Aces        | #c1c1c1 |
+        | 3    | HejlDawson  | #aeaeae |
+        | 4    | Filmic      | #898989 |
 
     Scenario: Without tone mapping probeExposure does nothing
       When the property "tonemapMode" of "env" is set to 0
@@ -133,18 +133,18 @@ Feature: A light probe, the sky box and tone mapping
 
     Scenario: A rough white square shows the probe's radiance
       When the property "visible" of "square" is set to true
-      Then the pixel at 100, 100 of the window is within 12 of "#bcbcbc"
+      Then the pixel at 100, 100 of the window is within 12 of "#a6a6a6"
 
     Scenario: probeHorizon darkens the light from below
       When the property "visible" of "square" is set to true
       And the property "probeHorizon" of "env" is set to 1
-      Then the pixel at 100, 100 of the window is within 12 of "#898989"
+      Then the pixel at 100, 100 of the window is within 12 of "#000000"
 
     Scenario: A smooth metal mirrors the probe
       When the property "visible" of "square" is set to true
       And the property "metalness" of "pbr" is set to 1
       And the property "roughness" of "pbr" is set to 0
-      Then the pixel at 100, 100 of the window is within 12 of "#bcbcbc"
+      Then the pixel at 100, 100 of the window is within 12 of "#a8a8a8"
 
     Scenario: An occlusion map's red channel shades the probe's light
       When the property "visible" of "square" is set to true

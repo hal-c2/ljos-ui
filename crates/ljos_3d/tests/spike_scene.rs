@@ -22,7 +22,7 @@ use ljos_3d::{
 
 pub const WIDTH: u32 = 320;
 pub const HEIGHT: u32 = 240;
-pub const CLEAR: [u8; 4] = [0x20, 0x20, 0x20, 0xff];
+pub const CLEAR: [u8; 4] = [30, 30, 30, 0xff];
 
 pub fn lit_cube(background: Background) -> Scene {
     let mut scene = Scene::new();

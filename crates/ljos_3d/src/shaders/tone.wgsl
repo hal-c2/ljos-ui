@@ -5,16 +5,14 @@
 // a scene drawn for post-processing keeps its light as it is, and the last
 // pass tonemaps it.
 
-fn to_srgb(c: f32) -> f32 {
-    if c <= 0.0031308 {
-        return c * 12.92;
-    }
-    return 1.055 * pow(c, 1.0 / 2.4) - 0.055;
-}
-
+// The fit to sRGB Qt's shaders use, which at the dark end is several levels
+// from the true curve.
 fn srgb3(c: vec3<f32>) -> vec3<f32> {
     let k = clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
-    return vec3<f32>(to_srgb(k.r), to_srgb(k.g), to_srgb(k.b));
+    let s1 = sqrt(k);
+    let s2 = sqrt(s1);
+    let s3 = sqrt(s2);
+    return 0.585122381 * s1 + 0.783140355 * s2 - 0.368262736 * s3;
 }
 
 // Hable's curve, with the constants he published.
@@ -34,7 +32,8 @@ fn tonemap(light: vec3<f32>, tone: vec4<f32>) -> vec3<f32> {
         return light;
     }
     if mode == 0u {
-        return clamp(light, vec3<f32>(0.0), vec3<f32>(1.0));
+        // A picture of bytes clamps it; a reflection probe's cube keeps it.
+        return light;
     }
     let exposed = max(light * tone.y, vec3<f32>(0.0));
     if mode == 1u {

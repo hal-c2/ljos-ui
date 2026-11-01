@@ -46,8 +46,8 @@ Feature: Axes and grids to read a scene against
     Scenario: enableAxisLines switches them off
       When the property "enableXZGrid" of "axes" is set to false
       And the property "enableAxisLines" of "axes" is set to false
-      Then the pixel at 150, 100 of the window is "#202020"
-      And the pixel at 100, 150 of the window is "#202020"
+      Then the pixel at 150, 100 of the window is "#1e1e1e"
+      And the pixel at 100, 150 of the window is "#1e1e1e"
 
   Rule: The grids are in the planes
 
@@ -55,13 +55,13 @@ Feature: Axes and grids to read a scene against
     # grid is what faces the camera.
     Scenario: The XY grid is off at first
       When the property "enableAxisLines" of "axes" is set to false
-      Then the pixel at 140, 120 of the window is "#202020"
+      Then the pixel at 140, 120 of the window is "#1e1e1e"
 
     Scenario: Switching on the XY grid draws its lines
       When the property "enableAxisLines" of "axes" is set to false
       And the property "enableXYGrid" of "axes" is set to true
-      Then the pixel at 140, 120 of the window is not "#202020"
-      And the pixel at 120, 120 of the window is "#202020"
+      Then the pixel at 140, 120 of the window is not "#1e1e1e"
+      And the pixel at 120, 120 of the window is "#1e1e1e"
 
     Scenario: The grid takes the colour it is given
       When the property "enableAxisLines" of "axes" is set to false

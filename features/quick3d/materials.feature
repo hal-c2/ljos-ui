@@ -152,7 +152,7 @@ Feature: PrincipledMaterial and what every material has
       When the property "eulerRotation.y" of "sun" is set to 60
       And the property "metalness" of "pbr" is set to 1
       And the property "roughness" of "pbr" is set to 1
-      Then the pixel at 100, 100 of the window is within 40 of "#727272"
+      Then the pixel at 100, 100 of the window is within 40 of "#414141"
 
     Scenario: A smooth metal lit head on reflects the light to the camera
       When the property "metalness" of "pbr" is set to 1

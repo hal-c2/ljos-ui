@@ -29,7 +29,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 4 of "#707070"
+      Then the pixel at 100, 100 of the window is within 4 of "#404040"
 
     Scenario: Half of it
       Given the QML:
@@ -47,7 +47,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 4 of "#505050"
+      Then the pixel at 100, 100 of the window is within 4 of "#404040"
 
     Scenario: None of it
       Given the QML:
@@ -83,7 +83,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#7d7d7d"
+      Then the pixel at 100, 100 of the window is within 6 of "#484848"
 
   Rule: The specular tint takes the reflection towards the base colour
 
@@ -103,7 +103,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#ff7070"
+      Then the pixel at 100, 100 of the window is within 6 of "#ff4040"
 
     Scenario: Tinted, it reflects red
       Given the QML:
@@ -141,7 +141,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#b2b2b2"
+      Then the pixel at 100, 100 of the window is within 6 of "#696969"
 
   Rule: Fresnel settings change the reflection when they are enabled
 
@@ -161,7 +161,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#a0a0a0"
+      Then the pixel at 100, 100 of the window is within 6 of "#404040"
 
     Scenario: Not enabled, the bias does nothing
       Given the QML:
@@ -179,7 +179,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 4 of "#707070"
+      Then the pixel at 100, 100 of the window is within 4 of "#404040"
 
     Scenario: A lower power brightens what is seen at an angle
       Given the QML:
@@ -197,7 +197,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 8 of "#c4c4c4"
+      Then the pixel at 100, 100 of the window is within 8 of "#4a4a4a"
 
     Scenario: At the usual power it is dimmer
       Given the QML:
@@ -215,7 +215,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 8 of "#787878"
+      Then the pixel at 100, 100 of the window is within 8 of "#4a4a4a"
 
   Rule: A surface's height map moves what its other maps show
 
@@ -316,7 +316,7 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#b2b2b2"
+      Then the pixel at 100, 100 of the window is within 6 of "#686868"
 
     Scenario: Without it the highlight falls between the pixels
       Given the QML:
@@ -334,4 +334,4 @@ Feature: A PrincipledMaterial's reflection of the lights
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#373737"
+      Then the pixel at 100, 100 of the window is within 6 of "#1b1b1b"

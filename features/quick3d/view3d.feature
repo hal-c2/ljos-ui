@@ -44,7 +44,7 @@ Feature: A 3D scene in a View3D
   Rule: The view draws its scene
 
     Scenario: The clear colour fills where no model is
-      Then the pixel at 2, 2 of the window is "#202020"
+      Then the pixel at 2, 2 of the window is "#1e1e1e"
 
     # Unlit, a DefaultMaterial shows its diffuse colour as it is.
     Scenario: A model in front of the camera is drawn where it is
@@ -52,11 +52,11 @@ Feature: A 3D scene in a View3D
 
     Scenario: A model that is not visible is not drawn
       When the property "visible" of "cube" is set to false
-      Then the pixel at 50, 50 of the window is "#202020"
+      Then the pixel at 50, 50 of the window is "#1e1e1e"
 
     Scenario: A model moved out of the camera's view is no longer drawn
       When the property "x" of "cube" is set to 1000
-      Then the pixel at 50, 50 of the window is "#202020"
+      Then the pixel at 50, 50 of the window is "#1e1e1e"
 
     Scenario: A transparent background shows the items under the view
       When the property "backgroundMode" of "env" is set to 0

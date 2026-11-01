@@ -86,13 +86,13 @@ Feature: A model of an instance table, and a repeater over it
       Then the property "count" of "repeater" is 2
       And the pixel at 50, 100 of the window is "#ff0000"
       And the pixel at 150, 100 of the window is "#ff0000"
-      And the pixel at 100, 100 of the window is "#202020"
-      And the pixel at 70, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
+      And the pixel at 70, 100 of the window is "#1e1e1e"
 
     Scenario: A copy that moves takes its delegate along
       When the property "lift" of "scene" is set to 50
       Then the pixel at 150, 50 of the window is "#ff0000"
-      And the pixel at 150, 100 of the window is "#202020"
+      And the pixel at 150, 100 of the window is "#1e1e1e"
 
     Scenario: A copy added to the table gets a row and a delegate
       When the property "three" of "scene" is set to true

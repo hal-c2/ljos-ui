@@ -99,12 +99,12 @@ Feature: ExtendedSceneEnvironment's built-in effects and ambient occlusion
 
   Rule: A vignette darkens the edges of the view toward its colour
 
-    Scenario: The corners take the vignette's colour and the middle does not
+    Scenario: The corners go towards the vignette's colour and the middle does not
       When the property "diffuseColor" of "grey" is set to "white"
       And the property "vignetteEnabled" of "env" is set to true
       And the property "vignetteColor" of "env" is set to "red"
-      Then the pixel at 100, 100 of the window is within 3 of "#ffffff"
-      And the pixel at 1, 1 of the window is within 40 of "#ff0000"
+      Then the pixel at 100, 100 of the window is within 3 of "#fff9f9"
+      And the pixel at 1, 1 of the window is within 40 of "#140000"
 
   Rule: Glow spreads bright light past the edges it came from
 

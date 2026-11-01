@@ -127,7 +127,13 @@ pub fn material(
     let fs = stage_module(
         "fragment",
         ShaderStage::Fragment,
-        material_fragment(&header, fragment.unwrap_or(""), &fragment_src, &ins, shaded),
+        material_fragment(
+            &header,
+            &with_final_diffuse(fragment.unwrap_or("")),
+            &fragment_src,
+            &ins,
+            shaded,
+        ),
         "cmf_",
     )?;
     let functions = Functions::of(&fragment_src);
@@ -288,6 +294,41 @@ fn tokens(src: &str) -> Vec<&str> {
         out.push(&src[s..]);
     }
     out
+}
+
+/// What is in DIFFUSE to `POST_PROCESS` has the alpha as well, where to the
+/// light functions it has none. Each of these lines goes in for one function.
+fn with_final_diffuse(src: &str) -> String {
+    let Some(at) = src.find("POST_PROCESS") else {
+        return src.to_string();
+    };
+    let Some(start) = src[..at].rfind("void") else {
+        return src.to_string();
+    };
+    let Some(open) = src[at..].find('{').map(|i| at + i) else {
+        return src.to_string();
+    };
+    let mut deep = 0;
+    let mut end = src.len();
+    for (i, c) in src[open..].char_indices() {
+        match c {
+            '{' => deep += 1,
+            '}' => {
+                deep -= 1;
+                if deep == 0 {
+                    end = open + i + 1;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    format!(
+        "{}\n#define DIFFUSE ljosfinaldiffuse\n{}\n#undef DIFFUSE\n{}",
+        &src[..start],
+        &src[start..end],
+        &src[end..]
+    )
 }
 
 /// Whether `src` defines `void name(`.
@@ -826,7 +867,7 @@ float CLEARCOAT_FRESNEL_SCALE; float CLEARCOAT_FRESNEL_BIAS;\n\
 vec3 NORMAL; vec3 TANGENT; vec3 BINORMAL; vec2 UV0; vec2 UV1;\n\
 vec3 VAR_WORLD_NORMAL; vec3 VAR_WORLD_TANGENT; vec3 VAR_WORLD_BINORMAL; vec3 VAR_WORLD_POSITION;\n\
 vec4 VAR_COLOR; vec3 VIEW_VECTOR; vec4 FRAGCOORD;\n\
-vec3 DIFFUSE; vec3 SPECULAR; vec3 EMISSIVE; vec3 LIGHT_COLOR; float LIGHT_ATTENUATION;\n\
+vec3 DIFFUSE; vec4 ljosfinaldiffuse; vec3 SPECULAR; vec3 EMISSIVE; vec3 LIGHT_COLOR; float LIGHT_ATTENUATION;\n\
 float SPOT_FACTOR; float SHADOW_CONTRIB; vec3 TO_LIGHT_DIR; vec3 TOTAL_AMBIENT_COLOR;\n\
 vec3 FRESNEL_CONTRIB; float AO_FACTOR; vec4 COLOR_SUM; vec4 FRAGCOLOR;\n\
 mat3 IBL_ORIENTATION; float IBL_EXPOSE; float IBL_HORIZON; float IBL_MAXMIPMAP;\n\
@@ -890,7 +931,7 @@ fn material_fragment(
          \x20   ljosout.ljosmetalness = METALNESS; ljosout.ljosroughness = ROUGHNESS;\n\
          \x20   ljosout.ljosspecular = SPECULAR_AMOUNT; ljosout.ljosocclusion = OCCLUSION_AMOUNT;\n\
          \x20   ljosout.ljosedge = vec3(FRESNEL_POWER, FRESNEL_SCALE, FRESNEL_BIAS);\n\
-         \x20   ljosout.ljoscoat = vec4(CLEARCOAT_AMOUNT, CLEARCOAT_ROUGHNESS, 0.0, 0.0);\n\
+         \x20   ljosout.ljoscoat = vec4(CLEARCOAT_AMOUNT, CLEARCOAT_ROUGHNESS, IOR, 0.0);\n\
          \x20   ljosout.ljoscoatedge = vec3(CLEARCOAT_FRESNEL_POWER, CLEARCOAT_FRESNEL_SCALE, CLEARCOAT_FRESNEL_BIAS);\n\
          \x20   ljosout.ljoscoatnormal = normalize(CLEARCOAT_NORMAL);\n\
          \x20   return ljosout;\n\
@@ -939,9 +980,14 @@ fn material_fragment(
             );
         }
         s.push_str(
-            "vec4 ljosfinish() {\n\
+            "void ljosdim(float ljosby) { DIFFUSE *= ljosby; }\n\
+             vec3 ljossum() {\n\
              \x20   EMISSIVE = EMISSIVE_COLOR;\n\
-             \x20   COLOR_SUM = vec4(DIFFUSE + SPECULAR + EMISSIVE, BASE_COLOR.a);\n",
+             \x20   return DIFFUSE + SPECULAR + EMISSIVE;\n\
+             }\n\
+             vec4 ljosfinish(vec3 ljosall) {\n\
+             \x20   COLOR_SUM = vec4(ljosall, BASE_COLOR.a);\n\
+             \x20   ljosfinaldiffuse = vec4(DIFFUSE, BASE_COLOR.a);\n",
         );
         if f.post {
             s.push_str("    POST_PROCESS();\n");
@@ -1249,34 +1295,49 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
 /// place of the built-in terms they replace. Nothing the snippet runs is
 /// inside a branch on the pixel, so that it may sample textures.
 fn shaded_glue(f: &Functions) -> String {
-    let builtin_diffuse = "cmf_ljosadd((vec3<f32>(1.0) - fresnel) * (1.0 - metal) * base * radiance * max(nl, 0.0), vec3<f32>(0.0));";
-    let pick = |there: bool, call: &str| -> String {
+    // The sums of a PrincipledMaterial, in the same order: what a piece says
+    // for itself takes the place of one term and the rest stay, so a piece
+    // that gives back half of what it is given looks like the material beside it.
+    let builtin = |gives: &str| {
+        format!("cmf_ljosadd(base * {gives} * burley(n, l, v, roughness), vec3<f32>(0.0));")
+    };
+    let pick = |there: bool, call: &str, gives: &str| -> String {
         if there {
             format!(
-                "cmf_ljoslight(light.color.rgb, l, attenuation, spot, shadow, fresnel);\n            {call}();"
+                "cmf_ljoslight(less, l, attenuation, spot, shadow, amount);\n            {call}();"
             )
         } else {
-            builtin_diffuse.to_owned()
+            builtin(gives)
         }
     };
     let ambient = if f.ambient {
         "cmf_ljosambientlight();"
     } else {
-        "cmf_ljosadd(base * frame.ambient.rgb * s.ljosocclusion, vec3<f32>(0.0));"
+        "cmf_ljosadd(dim, vec3<f32>(0.0));"
     };
     let specular = if f.specular {
-        "cmf_ljoslight(light.color.rgb, l, attenuation * spot, spot, shadow, fresnel);\n        cmf_ljosspecularlight();"
+        "cmf_ljoslight(light.color.rgb, l, attenuation * spot, spot, shadow, amount);\n        cmf_ljosspecularlight();"
     } else {
-        "if nl > 0.0 {\n\
-         \x20           let spec = ggx(max(dot(n, h), 0.0), squared(roughness)) * smith(nl, nv, roughness)\n\
-         \x20               / (4.0 * nl * nv);\n\
-         \x20           let coat_nl = max(dot(coat_n, l), 1e-4);\n\
-         \x20           let coat_f = schlick(vec3<f32>(0.04), max(dot(v, h), 0.0), coat_edge.x, coat_edge.y, coat_edge.z).x;\n\
-         \x20           let coat_spec = ggx(max(dot(coat_n, h), 0.0), squared(coat_rough))\n\
-         \x20               * smith(coat_nl, coat_nv, coat_rough) / (4.0 * coat_nl * coat_nv);\n\
-         \x20           cmf_ljosadd(vec3<f32>(0.0), (1.0 - coat * coat_f) * PI * spec * fresnel * radiance * nl\n\
-         \x20               + vec3<f32>(PI * coat_spec * coat_f * coat) * radiance * coat_nl);\n\
-         \x20       }"
+        "cmf_ljosadd(vec3<f32>(0.0), radiance * microfacets(n, l, v, f0, roughness));"
+    };
+    // A material that says for itself what comes from round about takes the
+    // place of all of it.
+    let around = if f.probe {
+        "cmf_ljosprobe(mat3x3<f32>(frame.probe_rot[0].xyz, frame.probe_rot[1].xyz, frame.probe_rot[2].xyz), exposure, horizon, last);"
+    } else {
+        "let round = probe_seen(\n\
+         \x20           textureSampleLevel(irradiance_cube, cube_sampler, select(probe_dir(n), n, own_probe), 0.0).rgb\n\
+         \x20               * under_horizon(probe_dir(n), horizon),\n\
+         \x20           own_probe,\n\
+         \x20           exposure,\n\
+         \x20       );\n\
+         \x20       let r = normalize(reflect(-v, n));\n\
+         \x20       let read = probe_read(r, roughness * last, own_probe, horizon, exposure);\n\
+         \x20       cmf_ljosadd(base * (vec3<f32>(1.0) - amount) * round * ao, read * env_brdf(amount, roughness, nv) * ao);\n\
+         \x20       if coat > 0.0 {\n\
+         \x20           coating += probe_read(normalize(reflect(-v, coat_n)), coat_rough * last, own_probe, horizon, exposure)\n\
+         \x20               * env_brdf(bent, coat_rough, coat_nv) * ao;\n\
+         \x20       }\n"
     };
     format!(
         "fn cm_shade(in: CmVsOut, front: bool) -> vec4<f32> {{\n\
@@ -1287,16 +1348,27 @@ fn shaded_glue(f: &Functions) -> String {
          \x20   let nv = max(dot(n, v), 1e-4);\n\
          \x20   let metal = clamp(s.ljosmetalness, 0.0, 1.0);\n\
          \x20   let roughness = clamp(s.ljosroughness, 0.0, 1.0);\n\
-         \x20   let f0 = mix(vec3<f32>(0.08 * s.ljosspecular), base, metal);\n\
+         \x20   let ior = s.ljoscoat.z;\n\
+         \x20   let bent = vec3<f32>(((ior - 1.0) * (ior - 1.0)) / ((ior + 1.0) * (ior + 1.0)));\n\
+         \x20   let f0 = mix(bent, base, metal);\n\
          \x20   let edge = s.ljosedge;\n\
+         \x20   let rim = select(pow(max(1.0 - nv, 1e-4), edge.x), 1.0, edge.x == 0.0);\n\
+         \x20   let turning = f0 + (max(vec3<f32>(1.0 - roughness), f0) - f0) * rim;\n\
+         \x20   let amount = vec3<f32>(metal + s.ljosspecular * (1.0 - metal))\n\
+         \x20       * clamp(vec3<f32>(edge.z) + edge.y * turning, vec3<f32>(0.0), vec3<f32>(1.0));\n\
          \x20   let coat = clamp(s.ljoscoat.x, 0.0, 1.0);\n\
          \x20   let coat_rough = clamp(s.ljoscoat.y, 0.0, 1.0);\n\
          \x20   let coat_edge = s.ljoscoatedge;\n\
          \x20   let coat_n = s.ljoscoatnormal;\n\
          \x20   let coat_nv = max(dot(coat_n, v), 1e-4);\n\
-         \x20   cmf_ljosbegin(frame.ambient.rgb);\n\
+         \x20   var coating = vec3<f32>(0.0);\n\
+         \x20   let dim = (frame.ambient.rgb + model.ambient.rgb) * (1.0 - metal) * base;\n\
+         \x20   cmf_ljosbegin(dim);\n\
          \x20   {ambient}\n\
          \x20   for (var i = 0u; i < min(frame.counts.x, MAX_LIGHTS); i++) {{\n\
+         \x20       if (model.flags.x & (1u << i)) == 0u {{\n\
+         \x20           continue;\n\
+         \x20       }}\n\
          \x20       let light = frame.lights[i];\n\
          \x20       var l = -light.direction.xyz;\n\
          \x20       var attenuation = 1.0;\n\
@@ -1313,55 +1385,61 @@ fn shaded_glue(f: &Functions) -> String {
          \x20               spot = select(select(1.0, 0.0, c < outer), smoothstep(outer, inner, c), inner > outer);\n\
          \x20           }}\n\
          \x20       }}\n\
-         \x20       let nl = dot(n, l);\n\
          \x20       let shadow = shadowed(light, in.world, l);\n\
-         \x20       let h = normalize(l + v);\n\
-         \x20       let fresnel = schlick(f0, max(dot(v, h), 0.0), edge.x, edge.y, edge.z);\n\
          \x20       let radiance = light.color.rgb * attenuation * spot * shadow;\n\
+         \x20       // Qt takes what is metal out of the light a piece is given, and\n\
+         \x20       // out of the sum of them once more below.\n\
+         \x20       let less = light.color.rgb * (1.0 - metal);\n\
          \x20       if light.position.w < 0.5 {{\n\
          \x20           {directional}\n\
          \x20       }} else if light.position.w < 1.5 {{\n\
          \x20           {point}\n\
-         \x20       }} else {{\n\
+         \x20       }} else if spot > 0.0 {{\n\
          \x20           {spot_light}\n\
          \x20       }}\n\
          \x20       {specular}\n\
+         \x20       if coat > 0.0 {{\n\
+         \x20           coating += radiance * microfacets(coat_n, l, v, bent, coat_rough);\n\
+         \x20       }}\n\
          \x20   }}\n\
-         \x20   if frame.env.w > 0.5 {{\n\
-         \x20       {own_probe}\n\
+         \x20   let ao = s.ljosocclusion;\n\
+         \x20   cmf_ljosdim(ao);\n\
+         \x20   let own_probe = model.probe.y > 0.5;\n\
+         \x20   if model.probe.y > 1.5 {{\n\
+         \x20       let last = model.probe.x - 1.0;\n\
+         \x20       let r = normalize(reflect(-v, n));\n\
+         \x20       let round = textureSampleLevel(irradiance_cube, cube_sampler, righted(n, in.world), 0.0).rgb;\n\
+         \x20       let read = textureSampleLevel(specular_cube, cube_sampler, righted(r, in.world), clamp(roughness * 5.0, 0.0, last)).rgb;\n\
+         \x20       cmf_ljosadd(base * (vec3<f32>(1.0) - amount) * round, read * env_brdf(amount, roughness, nv));\n\
+         \x20       if coat > 0.0 {{\n\
+         \x20           coating += env_brdf(bent, coat_rough, coat_nv)\n\
+         \x20               * textureSampleLevel(specular_cube, cube_sampler, righted(normalize(reflect(-v, coat_n)), in.world), clamp(coat_rough * 5.0, 0.0, last)).rgb;\n\
+         \x20       }}\n\
+         \x20   }} else if frame.env.w > 0.5 || own_probe {{\n\
+         \x20       let exposure = select(frame.env.x, model.probe.z, own_probe);\n\
+         \x20       let last = select(frame.env.z, model.probe.x, own_probe);\n\
+         \x20       let horizon = select(frame.env.y, 0.0, own_probe);\n\
+         \x20       {around}\n\
          \x20   }}\n\
-         \x20   if frame.env.w > 0.5 && {builtin_probe} {{\n\
-         \x20       let horizon = frame.env.y;\n\
-         \x20       let irradiance = textureSampleLevel(irradiance_cube, cube_sampler, probe_dir(n), 0.0).rgb\n\
-         \x20           * (1.0 - horizon * (1.0 - n.y) * 0.5);\n\
-         \x20       let r = reflect(-v, n);\n\
-         \x20       let below = mix(select(0.0, 1.0, r.y < 0.0), (1.0 - r.y) * 0.5, roughness);\n\
-         \x20       let prefiltered = textureSampleLevel(specular_cube, cube_sampler, probe_dir(r),\n\
-         \x20           roughness * frame.env.z).rgb * (1.0 - horizon * below);\n\
-         \x20       let specular = env_edge(f0, roughness, nv, edge.x, edge.y, edge.z);\n\
-         \x20       let kd = (vec3<f32>(1.0) - specular) * (1.0 - metal);\n\
-         \x20       let k = s.ljosocclusion * frame.env.x;\n\
-         \x20       let coat_light = textureSampleLevel(specular_cube, cube_sampler, probe_dir(reflect(-v, coat_n)),\n\
-         \x20           coat_rough * frame.env.z).rgb;\n\
-         \x20       let coat_f = env_edge(vec3<f32>(0.04), coat_rough, coat_nv, coat_edge.x, coat_edge.y, coat_edge.z);\n\
-         \x20       cmf_ljosadd(kd * base * irradiance * k,\n\
-         \x20           (1.0 - coat * coat_f.x) * prefiltered * specular * k + coat_light * coat_f * coat * k);\n\
+         \x20   cmf_ljosdim(1.0 - metal);\n\
+         \x20   var sum = fogged(cmf_ljossum(), in.world);\n\
+         \x20   if coat > 0.0 {{\n\
+         \x20       let turn = clamp(pow(clamp(dot(coat_n, v), 0.0, 1.0), coat_edge.x), 0.0, 1.0);\n\
+         \x20       let over = clamp(\n\
+         \x20           vec3<f32>(coat_edge.z) + coat_edge.y * (bent + (vec3<f32>(1.0) - bent) * (1.0 - turn)),\n\
+         \x20           vec3<f32>(0.0),\n\
+         \x20           vec3<f32>(1.0),\n\
+         \x20       );\n\
+         \x20       sum = sum * (vec3<f32>(1.0) - coat * over) + coating * coat;\n\
          \x20   }}\n\
-         \x20   let lit = cmf_ljosfinish();\n\
-         \x20   return vec4<f32>(fogged(lit.rgb, in.world), lit.a);\n\
+         \x20   return cmf_ljosfinish(sum);\n\
          }}\n\
          fn cm_out(c: vec4<f32>) -> vec3<f32> {{\n\
          \x20   return tonemap(c.rgb, frame.tone);\n\
          }}\n",
-        directional = pick(f.directional, "cmf_ljosdirectional"),
-        point = pick(f.point, "cmf_ljospoint"),
-        spot_light = pick(f.spot, "cmf_ljosspot"),
-        own_probe = if f.probe {
-            "cmf_ljosprobe(mat3x3<f32>(frame.probe_rot[0].xyz, frame.probe_rot[1].xyz, frame.probe_rot[2].xyz), frame.env.x, frame.env.y, frame.env.z);"
-        } else {
-            ""
-        },
-        builtin_probe = !f.probe,
+        directional = pick(f.directional, "cmf_ljosdirectional", "less"),
+        point = pick(f.point, "cmf_ljospoint", "less * attenuation"),
+        spot_light = pick(f.spot, "cmf_ljosspot", "less * attenuation * spot"),
     )
 }
 
@@ -1452,7 +1530,7 @@ mod tests {
                 "void MAIN() { BASE_COLOR = vec4(0.5); }\n\
                  void DIRECTIONAL_LIGHT() { DIFFUSE += LIGHT_COLOR * 0.25; }\n\
                  void SPECULAR_LIGHT() { }\n\
-                 void POST_PROCESS() { COLOR_SUM = vec4(DIFFUSE, 1.0); }",
+                 void POST_PROCESS() { COLOR_SUM = vec4(DIFFUSE.rgb, 1.0); }",
             ),
             true,
             &[],

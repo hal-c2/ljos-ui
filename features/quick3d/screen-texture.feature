@@ -72,7 +72,7 @@ Feature: A CustomMaterial reads the scene behind it
       Then the pixel at 80, 100 of the window is within 2 of "#00ffff"
       And the pixel at 120, 100 of the window is within 2 of "#dfdfdf"
       And the pixel at 50, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 20, 20 of the window is "#202020"
+      And the pixel at 20, 20 of the window is "#1e1e1e"
 
     Scenario: A transparent model is drawn after the screen is taken
       When the property "opacity" of "red" is set to 0.5
@@ -91,7 +91,7 @@ Feature: A CustomMaterial reads the scene behind it
     Scenario: SCREEN_MIP_TEXTURE at its first level is the screen
       When the property "fragmentShader" of "custom" is set to "mip.frag"
       Then the pixel at 80, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 120, 100 of the window is within 2 of "#202020"
+      And the pixel at 120, 100 of the window is within 2 of "#1e1e1e"
 
   Rule: The screen texture holds what the view shows when it is post-processed
 

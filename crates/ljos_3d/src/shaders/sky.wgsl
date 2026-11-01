@@ -43,6 +43,11 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     let d = far.xyz / far.w - near.xyz / near.w;
     let p = (frame.probe_rot * vec4<f32>(d, 0.0)).xyz;
     let lod = frame.tone.w * frame.env.z;
-    let light = textureSampleLevel(specular_cube, cube_sampler, p, lod).rgb * frame.env.x;
+    var light = textureSampleLevel(specular_cube, cube_sampler, p, lod).rgb;
+    // Qt's exposure saturates the picture ahead of the tone map: its white
+    // shows less bright than it is.
+    if frame.tone.x > 0.5 {
+        light = vec3<f32>(1.0) - exp(-light * frame.env.x);
+    }
     return vec4<f32>(tonemap(light, frame.tone), 1.0);
 }

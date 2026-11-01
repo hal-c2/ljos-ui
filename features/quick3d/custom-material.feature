@@ -112,7 +112,7 @@ Feature: CustomMaterial runs the author's shader snippets
 
     Scenario: The square shows the colour its fragment snippet writes
       Then the pixel at 100, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 20, 20 of the window is within 2 of "#202020"
+      And the pixel at 20, 20 of the window is within 2 of "#1e1e1e"
 
     Scenario: A real property is a uniform the snippet reads
       When the property "level" of "custom" is set to 0.5
@@ -126,7 +126,7 @@ Feature: CustomMaterial runs the author's shader snippets
 
     Scenario: A vertex snippet moves the vertices
       When the property "offset" of "custom" is set to 60
-      Then the pixel at 80, 100 of the window is within 2 of "#202020"
+      Then the pixel at 80, 100 of the window is within 2 of "#1e1e1e"
       And the pixel at 180, 100 of the window is within 2 of "#ff0000"
 
   Rule: A TextureInput property is a sampler
@@ -182,7 +182,7 @@ Feature: CustomMaterial runs the author's shader snippets
     Scenario: A broken snippet is reported and its model is left out
       When the property "fragmentShader" of "custom" is set to "broken.frag"
       Then the log has a warning matching "broken.frag"
-      And the pixel at 100, 100 of the window is within 2 of "#202020"
+      And the pixel at 100, 100 of the window is within 2 of "#1e1e1e"
 
   Rule: A shader's text can be written in QML
 
@@ -225,7 +225,7 @@ Feature: CustomMaterial runs the author's shader snippets
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#202020"
+      Then the pixel at 100, 100 of the window is within 6 of "#1e1e1e"
 
     Scenario: The text can read a texture made later, held in a var
       Given the QML:
@@ -295,7 +295,7 @@ Feature: CustomMaterial runs the author's shader snippets
         """
       Then the pixel at 100, 100 of the window is "#000000"
 
-    Scenario: A black metal under FRESNEL_BIAS reflects the light
+    Scenario: A black metal under FRESNEL_BIAS gives nothing back head on, as a light is not bent by it
       Given the QML:
         """qml
         import QtQuick
@@ -313,7 +313,7 @@ Feature: CustomMaterial runs the author's shader snippets
           }
         }
         """
-      Then the pixel at 100, 100 of the window is not "#000000"
+      Then the pixel at 100, 100 of the window is "#000000"
 
     Scenario: A clearcoat shines on a black metal
       Given the QML:
@@ -426,4 +426,4 @@ Feature: CustomMaterial runs the author's shader snippets
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#202020"
+      Then the pixel at 100, 100 of the window is within 6 of "#1e1e1e"

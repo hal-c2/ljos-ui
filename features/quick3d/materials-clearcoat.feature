@@ -28,7 +28,7 @@ Feature: A clear coat over a PrincipledMaterial
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#707070"
+      Then the pixel at 100, 100 of the window is within 6 of "#404040"
 
     Scenario: Half of it
       Given the QML:
@@ -46,7 +46,7 @@ Feature: A clear coat over a PrincipledMaterial
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#505050"
+      Then the pixel at 100, 100 of the window is within 6 of "#2c2c2c"
 
     Scenario: None of it
       Given the QML:
@@ -84,7 +84,7 @@ Feature: A clear coat over a PrincipledMaterial
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 8 of "#191919"
+      Then the pixel at 100, 100 of the window is within 8 of "#0a0a0a"
 
     Scenario: Its bias adds to it
       Given the QML:
@@ -102,4 +102,4 @@ Feature: A clear coat over a PrincipledMaterial
           }
         }
         """
-      Then the pixel at 100, 100 of the window is within 6 of "#a0a0a0"
+      Then the pixel at 100, 100 of the window is within 6 of "#404040"

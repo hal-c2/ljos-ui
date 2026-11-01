@@ -184,12 +184,14 @@ fn a_diffuse_map_lies_upright_on_a_rectangle() {
 
 /// The built-in rectangle again, as an application's geometry with its
 /// UVs: an application's texture coordinates reach the material as the
-/// built-in mesh's do.
+/// built-in mesh's do. An application's run up the picture, as Qt's do, and
+/// a mesh's down it.
 fn rectangle_as_geometry() -> CustomGeometry {
     let mesh = Mesh::primitive(Primitive::Rectangle);
     let mut vertices = Vec::new();
     for (p, uv) in mesh.positions.iter().zip(&mesh.uvs) {
-        vertices.extend(p.iter().chain(uv).flat_map(|f| f.to_le_bytes()));
+        let up = [uv[0], 1.0 - uv[1]];
+        vertices.extend(p.iter().chain(&up).flat_map(|f| f.to_le_bytes()));
     }
     let mut g = CustomGeometry::new();
     g.set_vertex_data(vertices);
@@ -300,10 +302,10 @@ fn the_sky_box_shows_the_probe_under_each_tone_mapping() {
     let image = probe(64, 32, true);
     for (tonemap, want) in [
         (Tonemap::None, 0x80),
-        (Tonemap::Linear, 0xbc),
-        (Tonemap::Aces, 0xce),
-        (Tonemap::HejlDawson, 0xba),
-        (Tonemap::Filmic, 0x96),
+        (Tonemap::Linear, 168),
+        (Tonemap::Aces, 193),
+        (Tonemap::HejlDawson, 174),
+        (Tonemap::Filmic, 137),
     ] {
         let p = gpu
             .render(&probed(image.clone(), tonemap, |_| {}), SIDE, SIDE)
@@ -324,7 +326,7 @@ fn up_in_the_probe_is_up_in_the_scene_until_it_is_turned() {
         .render(&probed(image.clone(), Tonemap::Linear, |_| {}), SIDE, SIDE)
         .unwrap();
     assert!(
-        near(p.pixel(100, 20), [0xbc; 3], 3),
+        near(p.pixel(100, 20), [168; 3], 3),
         "{:?}",
         p.pixel(100, 20)
     );
@@ -339,7 +341,7 @@ fn up_in_the_probe_is_up_in_the_scene_until_it_is_turned() {
     let p = gpu.render(&turned, SIDE, SIDE).unwrap();
     assert!(near(p.pixel(100, 20), [0; 3], 3), "{:?}", p.pixel(100, 20));
     assert!(
-        near(p.pixel(100, 180), [0xbc; 3], 3),
+        near(p.pixel(100, 180), [168; 3], 3),
         "{:?}",
         p.pixel(100, 180)
     );
@@ -357,7 +359,7 @@ fn the_probe_lights_a_rough_white_surface_with_its_radiance() {
     square(&mut s, Material::Principled(rough.clone()));
     let p = gpu.render(&s, SIDE, SIDE).unwrap();
     assert!(
-        near(p.pixel(100, 100), [0xbc; 3], 12),
+        near(p.pixel(100, 100), [168; 3], 12),
         "{:?}",
         p.pixel(100, 100)
     );
@@ -366,7 +368,7 @@ fn the_probe_lights_a_rough_white_surface_with_its_radiance() {
     square(&mut s, Material::Principled(rough));
     let p = gpu.render(&s, SIDE, SIDE).unwrap();
     assert!(
-        near(p.pixel(100, 100), [0x89; 3], 12),
+        near(p.pixel(100, 100), [0; 3], 12),
         "{:?}",
         p.pixel(100, 100)
     );

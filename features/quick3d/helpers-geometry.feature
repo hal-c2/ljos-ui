@@ -46,18 +46,18 @@ Feature: The shape geometries of QtQuick3D.Helpers
       Then the pixel at 100, 100 of the window is "#ff0000"
       And the pixel at 65, 100 of the window is "#ff0000"
       And the pixel at 100, 65 of the window is "#ff0000"
-      And the pixel at 100, 30 of the window is "#202020"
-      And the pixel at 160, 100 of the window is "#202020"
+      And the pixel at 100, 30 of the window is "#1e1e1e"
+      And the pixel at 160, 100 of the window is "#1e1e1e"
 
     Scenario: A sphere is ready once it is made
       Then the property "status" of "shape" is 2
 
     Scenario: A smaller radius draws a smaller sphere
       When the property "radius" of "shape" is set to 20
-      Then the pixel at 65, 100 of the window is "#202020"
+      Then the pixel at 65, 100 of the window is "#1e1e1e"
       And the pixel at 100, 100 of the window is "#ff0000"
 
     Scenario: Nothing to draw is an error
       When the property "radius" of "shape" is set to 0
       Then the property "status" of "shape" is 3
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"

@@ -41,15 +41,15 @@ Feature: A mesh made from lists
   Scenario: Three positions are a triangle
     Then the pixel at 100, 110 of the window is "#ff0000"
     And the pixel at 100, 65 of the window is "#ff0000"
-    And the pixel at 50, 60 of the window is "#202020"
-    And the pixel at 100, 145 of the window is "#202020"
+    And the pixel at 50, 60 of the window is "#1e1e1e"
+    And the pixel at 100, 145 of the window is "#1e1e1e"
 
   Scenario: The primitive mode makes them lines
     When the property "lines" of "scene" is set to true
     And the property "pair" of "scene" is set to true
     Then the pixel at 100, 140 of the window is "#ff0000"
-    And the pixel at 100, 110 of the window is "#202020"
+    And the pixel at 100, 110 of the window is "#1e1e1e"
 
   Scenario: Fewer positions draw less
     When the property "pair" of "scene" is set to true
-    Then the pixel at 100, 110 of the window is "#202020"
+    Then the pixel at 100, 110 of the window is "#1e1e1e"

@@ -117,12 +117,12 @@ Feature: A CustomMaterial on an instanced model reads its copy
     Scenario: Two entries draw two copies and not the model itself
       Then the pixel at 50, 100 of the window is within 2 of "#ff0000"
       And the pixel at 150, 100 of the window is within 2 of "#0000ff"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
     Scenario: Without a table the model is drawn once where it is
       When the property "instancing" of "square" is set to null
       Then the pixel at 100, 100 of the window is within 2 of "#ffffff"
-      And the pixel at 50, 100 of the window is "#202020"
+      And the pixel at 50, 100 of the window is "#1e1e1e"
 
   Rule: The vertex snippet reads its copy's built-ins
 
@@ -136,7 +136,7 @@ Feature: A CustomMaterial on an instanced model reads its copy
       When the property "vertexShader" of "custom" is set to "lift.vert"
       Then the pixel at 50, 50 of the window is within 2 of "#ffffff"
       And the pixel at 150, 50 of the window is within 2 of "#ffffff"
-      And the pixel at 50, 100 of the window is "#202020"
+      And the pixel at 50, 100 of the window is "#1e1e1e"
 
     Scenario: INSTANCE_MODEL_MATRIX takes a vertex into the scene through its copy
       When the property "vertexShader" of "custom" is set to "world.vert"
@@ -153,8 +153,8 @@ Feature: A CustomMaterial on an instanced model reads its copy
     Scenario: A snippet that places with MODELVIEWPROJECTION_MATRIX stacks every copy on the model
       When the property "vertexShader" of "custom" is set to "stacked.vert"
       Then the pixel at 100, 100 of the window is within 2 of "#ffffff"
-      And the pixel at 50, 100 of the window is "#202020"
-      And the pixel at 150, 100 of the window is "#202020"
+      And the pixel at 50, 100 of the window is "#1e1e1e"
+      And the pixel at 150, 100 of the window is "#1e1e1e"
 
   Rule: Every kind of table hands its custom data to INSTANCE_DATA
 
@@ -186,7 +186,7 @@ Feature: A CustomMaterial on an instanced model reads its copy
         }
         """
       Then the pixel at 50, 100 of the window is within 2 of "#ff00ff"
-      And the pixel at 150, 100 of the window is "#202020"
+      And the pixel at 150, 100 of the window is "#1e1e1e"
 
     Scenario: A FileInstancing's custom attribute reaches the snippet
       Given the text file "table.xml":
@@ -217,4 +217,4 @@ Feature: A CustomMaterial on an instanced model reads its copy
         }
         """
       Then the pixel at 150, 100 of the window is within 2 of "#ffff00"
-      And the pixel at 50, 100 of the window is "#202020"
+      And the pixel at 50, 100 of the window is "#1e1e1e"

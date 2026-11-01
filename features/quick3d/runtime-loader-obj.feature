@@ -67,7 +67,7 @@ Feature: A Wavefront OBJ model loaded while the application runs
       And the pixel at 100, 100 of the window is within 2 of "#ff0000"
       And the pixel at 60, 60 of the window is within 2 of "#ff0000"
       And the pixel at 140, 140 of the window is within 2 of "#ff0000"
-      And the pixel at 40, 100 of the window is "#202020"
+      And the pixel at 40, 100 of the window is "#1e1e1e"
 
     Scenario: Corners counted from the end of the list and two materials
       Given the QML:
@@ -78,7 +78,7 @@ Feature: A Wavefront OBJ model loaded while the application runs
       Then the property "status" of "loader" is 1
       And the pixel at 50, 100 of the window is within 2 of "#00ff00"
       And the pixel at 150, 100 of the window is within 2 of "#0000ff"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
 
     Scenario: A material's picture is drawn the right way up
       Given the QML:
@@ -184,7 +184,7 @@ Feature: A Wavefront OBJ model loaded while the application runs
       When 100 milliseconds pass
       Then the property "status" of "loader" is 1
       And the log has a warning matching "<named>"
-      And the pixel at 100, 110 of the window is not "#202020"
+      And the pixel at 100, 110 of the window is not "#1e1e1e"
 
       Examples:
         | what                   | file           | named    |
@@ -298,7 +298,7 @@ Feature: A Wavefront OBJ model loaded while the application runs
       And the property "source" of "loader" is set to "groups.obj"
       And 100 milliseconds pass
       Then the property "status" of "loader" is 1
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
       And the pixel at 50, 100 of the window is within 2 of "#00ff00"
 
   @ljos-only

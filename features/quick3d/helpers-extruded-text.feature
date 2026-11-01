@@ -57,8 +57,8 @@ Feature: Text extruded into a mesh
     Scenario: The text's outline is filled
       Then the property "status" of "text" is 2
       And the pixel at 100, 100 of the window is "#ff0000"
-      And the pixel at 130, 100 of the window is "#202020"
-      And the pixel at 100, 40 of the window is "#202020"
+      And the pixel at 130, 100 of the window is "#1e1e1e"
+      And the pixel at 100, 40 of the window is "#1e1e1e"
 
     Scenario: The scale makes the text larger
       When the property "scale" of "text" is set to 200
@@ -66,21 +66,21 @@ Feature: Text extruded into a mesh
 
     Scenario: No text is no mesh
       When the property "text" of "text" is set to ""
-      Then the pixel at 100, 100 of the window is "#202020"
+      Then the pixel at 100, 100 of the window is "#1e1e1e"
 
     Scenario: The text is extruded from the baseline's rear towards the front
       When the property "side" of "scene" is set to true
       Then the pixel at 75, 100 of the window is "#ff0000"
       And the pixel at 55, 100 of the window is "#ff0000"
-      And the pixel at 125, 100 of the window is "#202020"
-      And the pixel at 45, 100 of the window is "#202020"
+      And the pixel at 125, 100 of the window is "#1e1e1e"
+      And the pixel at 45, 100 of the window is "#1e1e1e"
 
     Scenario: The depth is not scaled
       When the property "scale" of "text" is set to 200
       And the property "depth" of "text" is set to 20
       And the property "side" of "scene" is set to true
       Then the pixel at 90, 100 of the window is "#ff0000"
-      And the pixel at 70, 100 of the window is "#202020"
+      And the pixel at 70, 100 of the window is "#1e1e1e"
 
   Rule: Lit, the front faces the camera
 

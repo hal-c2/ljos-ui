@@ -32,7 +32,7 @@ use crate::post::{self, Buffers, Chain, Pipes};
 use crate::programs::{Header, MaterialKey, Programs, Slot};
 use crate::scene::{
     AlphaMode, Background, BlendMode, Camera, CullMode, Environment, Light, LightProbe, Lighting,
-    Material, MeshSource, Node, NodeId, NodeKind, Primitive, Scene, Tonemap,
+    Material, MeshSource, Node, NodeId, NodeKind, Primitive, ReflectionProbe, Scene, Tonemap,
 };
 use crate::screen::ScreenTexture;
 use crate::shadow::{self, Layer as ShadowLayer, Plan};
@@ -134,6 +134,31 @@ struct ModelUniform {
     ambient: [f32; 4],
     /// Its own probe's last level, 1 where it has one, and its exposure.
     probe: [f32; 4],
+    /// Where a reflection probe looked from, 1 where what is read of it is
+    /// put right; and the corners of its box.
+    mirror_at: [f32; 4],
+    mirror_min: [f32; 4],
+    mirror_max: [f32; 4],
+}
+
+/// A reflection probe of this frame, as the models near it read it.
+#[derive(Clone, Copy)]
+struct Mirror {
+    key: u64,
+    at: Vec3,
+    min: Vec3,
+    max: Vec3,
+    parallax: bool,
+}
+
+/// What is kept of a reflection probe between frames.
+struct HeldMirror {
+    across: u32,
+    /// A side each, each with its own uniforms: those are written ahead of
+    /// the commands, so one target could not be drawn through six times.
+    targets: Vec<Target>,
+    /// What it last saw, for one that looks once.
+    there: Option<(u64, bool, usize)>,
 }
 
 #[repr(C)]
@@ -212,6 +237,7 @@ pub struct Renderer {
     /// Whether the device renders into and filters half floats, which the
     /// probe's maps are; without, the scene draws with no probe.
     probes: bool,
+    mirrors: HashMap<u64, HeldMirror>,
     /// Sample counts both the picture's and the depth's format take,
     /// ascending; 1 always among them.
     sample_counts: Vec<u32>,
@@ -283,6 +309,9 @@ pub struct Target {
     staging: Vec<u8>,
     /// The scene revision the picture shows; `None` until drawn.
     drawn: Option<u64>,
+    /// Drawn into in place of the half floats of a post-processed scene:
+    /// a side of a reflection probe's cube.
+    capture: Option<wgpu::TextureView>,
     /// How many models the last drawing drew.
     drawn_models: usize,
     /// The shadow maps, while a light casts shadows.
@@ -448,6 +477,7 @@ impl Target {
             &joints.buffer,
         );
         Target {
+            capture: None,
             size,
             color,
             color_view,
@@ -830,6 +860,9 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
         flags: [u32::MAX, 0, 0, 0],
         ambient: [0.0; 4],
         probe: [0.0; 4],
+        mirror_at: [0.0; 4],
+        mirror_min: [0.0; 4],
+        mirror_max: [0.0; 4],
     };
     for (i, slot) in maps::slots(material).iter().enumerate() {
         let Some((texture, _)) = slot else {
@@ -854,6 +887,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.emissive = [m.emissive[0], m.emissive[1], m.emissive[2], 0.0];
             let tint = m.specular_tint.to_linear();
             u.tint = [tint[0], tint[1], tint[2], 0.0];
+            u.shine[2] = ((m.index_of_refraction - 1.0) / (m.index_of_refraction + 1.0)).powi(2);
             u.shine[3] = m.fresnel_power;
             u.flags[1] = u32::from(m.vertex_colors);
             u.base[3] = material.alpha().clamp(0.0, 1.0);
@@ -1237,6 +1271,7 @@ impl Renderer {
             // another backend says whether it has with
             // `use_adapter_formats`.
             probes: true,
+            mirrors: HashMap::new(),
             // What WebGPU promises every device for these formats.
             sample_counts: vec![1, 4],
             shadow_shader,
@@ -1649,7 +1684,164 @@ fn copy_rows(
     );
 }
 
+/// The way each side of a cube is looked through, and which way is up on
+/// it, in the order of the cube's layers.
+const CUBE_LOOKS: [([f32; 3], [f32; 3]); 6] = [
+    ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+    ([-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]),
+    ([0.0, 1.0, 0.0], [0.0, 0.0, -1.0]),
+    ([0.0, -1.0, 0.0], [0.0, 0.0, 1.0]),
+    ([0.0, 0.0, 1.0], [0.0, 1.0, 0.0]),
+    ([0.0, 0.0, -1.0], [0.0, 1.0, 0.0]),
+];
+
 impl Renderer {
+    /// Draws what is round each reflection probe that something mirrors by,
+    /// and says which that is of each model: of those whose box its own
+    /// meets, the one whose middle is nearest.
+    fn reflections(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        encoder: &mut wgpu::CommandEncoder,
+        scene: &Scene,
+        walked: &[(NodeId, &Node, Mat4)],
+    ) -> HashMap<NodeId, Mirror> {
+        let mut found: Vec<(Mirror, ReflectionProbe)> = Vec::new();
+        for (id, node, world) in walked {
+            let NodeKind::ReflectionProbe(probe) = &node.kind else {
+                continue;
+            };
+            let at = world.translation();
+            let middle = at + probe.box_offset;
+            let half = probe.box_size * 0.5;
+            found.push((
+                Mirror {
+                    key: slotmap::Key::data(id).as_ffi(),
+                    at,
+                    min: middle - half,
+                    max: middle + half,
+                    parallax: probe.parallax,
+                },
+                *probe,
+            ));
+        }
+        let mut chosen = HashMap::new();
+        if found.is_empty() {
+            self.forget_mirrors(&[]);
+            return chosen;
+        }
+        for (id, node, world) in walked {
+            let NodeKind::Model(model) = &node.kind else {
+                continue;
+            };
+            if !node.receives_reflections {
+                continue;
+            }
+            let (centre, radius) = model.mesh.bounds();
+            let centre = transform_point(world, centre);
+            let radius = radius * largest_scale(world);
+            let reach = Vec3::new(radius, radius, radius);
+            let least = centre - reach;
+            let most = centre + reach;
+            let mut nearest = f32::INFINITY;
+            for (mirror, _) in &found {
+                let apart = mirror.min.x > most.x
+                    || least.x > mirror.max.x
+                    || mirror.min.y > most.y
+                    || least.y > mirror.max.y
+                    || mirror.min.z > most.z
+                    || least.z > mirror.max.z;
+                if apart {
+                    continue;
+                }
+                let middle = (mirror.min + mirror.max) * 0.5;
+                let d = (centre - middle).length();
+                if d < nearest {
+                    nearest = d;
+                    chosen.insert(*id, *mirror);
+                }
+            }
+        }
+        let used: Vec<u64> = chosen.values().map(|m| m.key).collect();
+        self.forget_mirrors(&used);
+        let mut drawing: Vec<u64> = used;
+        drawing.sort_unstable();
+        drawing.dedup();
+        let mut held = std::mem::take(&mut self.mirrors);
+        for key in drawing {
+            let Some((mirror, probe)) = found.iter().find(|(m, _)| m.key == key) else {
+                continue;
+            };
+            if held.get(&key).is_some_and(|h| h.across != probe.across) {
+                held.remove(&key);
+                self.ibl.forget_mirror(key);
+            }
+            let across = probe.across;
+            let renderer = &*self;
+            let entry = held.entry(key).or_insert_with(|| HeldMirror {
+                across,
+                targets: (0..6)
+                    .map(|_| Target::new(device, renderer, [across, across]))
+                    .collect(),
+                there: None,
+            });
+            let models = walked
+                .iter()
+                .filter(|(_, n, _)| n.casts_reflections && matches!(n.kind, NodeKind::Model(_)))
+                .count();
+            let sky = scene.environment().background == Background::SkyBox;
+            let there = (probe.turn, sky, models);
+            if probe.once && entry.there == Some(there) {
+                continue;
+            }
+            entry.there = Some(there);
+            let sides = self.ibl.mirror(device, queue, key, across).sides.clone();
+            let mut seen = scene.mirrored(probe.clear);
+            for (side, (target, (way, up))) in entry.targets.iter_mut().zip(CUBE_LOOKS).enumerate()
+            {
+                let way = Vec3::new(way[0], way[1], way[2]);
+                let up = Vec3::new(up[0], up[1], up[2]);
+                let right = way.cross(up);
+                let at = mirror.at;
+                seen.look(
+                    Camera::Perspective {
+                        fov_degrees: 90.0,
+                        fov_horizontal: false,
+                        clip_near: 1.0,
+                        clip_far: 10000.0,
+                        frustum_culling: false,
+                    },
+                    Mat4([
+                        [right.x, right.y, right.z, 0.0],
+                        [up.x, up.y, up.z, 0.0],
+                        [-way.x, -way.y, -way.z, 0.0],
+                        [at.x, at.y, at.z, 1.0],
+                    ]),
+                );
+                target.capture = Some(sides[side].clone());
+                target.drawn = None;
+                self.render(device, queue, encoder, &seen, target);
+            }
+            self.ibl.finish_mirror(encoder, key);
+        }
+        self.mirrors = held;
+        chosen
+    }
+
+    fn forget_mirrors(&mut self, used: &[u64]) {
+        let gone: Vec<u64> = self
+            .mirrors
+            .keys()
+            .filter(|k| !used.contains(k))
+            .copied()
+            .collect();
+        for key in gone {
+            self.mirrors.remove(&key);
+            self.ibl.forget_mirror(key);
+        }
+    }
+
     /// Records the 3D pass of `scene` into `encoder`, unless `target`
     /// already shows this revision. Returns whether it drew.
     pub fn render(
@@ -1672,7 +1864,8 @@ impl Renderer {
         let samples = self.samples_for(environment.msaa_samples);
         // Post-processing works on the light as it is, kept in half
         // floats; a device without them draws the scene plain.
-        let processed = environment.post_processed() && self.probes;
+        let captured = environment.capture.is_some();
+        let processed = (environment.post_processed() || captured) && self.probes;
         let format = if processed { post::HDR } else { COLOR_FORMAT };
         target.multisample(device, samples, format);
         target.frames += 1;
@@ -1687,6 +1880,12 @@ impl Renderer {
         let bound = match probe {
             Some(p) if self.probes => self.ibl.prepare(device, queue, encoder, p),
             _ => Bound::None,
+        };
+
+        let mirrored = if captured || !self.probes {
+            HashMap::new()
+        } else {
+            self.reflections(device, queue, encoder, scene, &walked)
         };
 
         let camera = scene.active_camera();
@@ -1713,7 +1912,7 @@ impl Renderer {
         environment_uniforms(&mut frame, environment, probe, bound, last_level);
         let clip_far = camera.map_or(1.0, |(c, _)| clip_planes(&c).1);
         fog_uniforms(&mut frame, environment, clip_far);
-        if processed {
+        if processed && !captured {
             // Tone mapping is the last pass's.
             frame.tone[0] = 5.0;
         }
@@ -1866,6 +2065,24 @@ impl Renderer {
                 if let Some(own) = own_probe {
                     uniform.probe = [self.ibl.last_level(own), 1.0, frame.tone[1].signum(), 0.0];
                 }
+                let mirror = mirrored.get(id);
+                if let Some(mirror) = mirror {
+                    uniform.probe = [
+                        self.ibl.last_level(Bound::Mirror(mirror.key)),
+                        2.0,
+                        0.0,
+                        0.0,
+                    ];
+                    uniform.mirror_at = [
+                        mirror.at.x,
+                        mirror.at.y,
+                        mirror.at.z,
+                        f32::from(u8::from(mirror.parallax)),
+                    ];
+                    uniform.mirror_min = [mirror.min.x, mirror.min.y, mirror.min.z, 0.0];
+                    uniform.mirror_max = [mirror.max.x, mirror.max.y, mirror.max.z, 0.0];
+                }
+                let own_probe = mirror.map(|m| Bound::Mirror(m.key)).or(own_probe);
                 if let Some(palette) = &palette {
                     copies.joints = joint_slots.len() as u32;
                     joint_slots.push(gpu_extra::joint_slot(palette));
@@ -2160,6 +2377,15 @@ impl Renderer {
             self.sky(device, samples, format);
         }
         let clear = match environment.background {
+            _ if captured => {
+                let c = environment.capture.unwrap_or_default();
+                wgpu::Color {
+                    r: f64::from(c[0] * c[3]),
+                    g: f64::from(c[1] * c[3]),
+                    b: f64::from(c[2] * c[3]),
+                    a: f64::from(c[3]),
+                }
+            }
             Background::Transparent | Background::SkyBox => wgpu::Color::TRANSPARENT,
             // Drawn for the tonemapper, the colour is light, as the
             // models' are.
@@ -2172,15 +2398,23 @@ impl Renderer {
                     a: f64::from(c.a),
                 }
             }
-            Background::Color(c) => wgpu::Color {
-                r: f64::from(c.r * c.a),
-                g: f64::from(c.g * c.a),
-                b: f64::from(c.b * c.a),
-                a: f64::from(c.a),
-            },
+            // A colour of the screen's, brought to linear light and back as
+            // everything drawn is, which is not where it started: a
+            // SceneEnvironment shows #101010 as 11.
+            Background::Color(c) => {
+                let [r, g, b, _] = c.to_linear();
+                let l = environment.tonemap.shown([r, g, b]);
+                wgpu::Color {
+                    r: f64::from(l[0] * c.a),
+                    g: f64::from(l[1] * c.a),
+                    b: f64::from(l[2] * c.a),
+                    a: f64::from(c.a),
+                }
+            }
         };
-        let scene_view =
-            processed.then(|| target.post.view(device, post::SCENE, [w, h], post::HDR));
+        let scene_view = target.capture.clone().or_else(|| {
+            processed.then(|| target.post.view(device, post::SCENE, [w, h], post::HDR))
+        });
         // Multisampled, the picture is drawn into the samples and resolved
         // into the target's texture, which is all the blit and a read back
         // ever see. Post-processed, it is drawn into half floats the

@@ -22,6 +22,7 @@ pub enum Type3d {
     Geometry,
     SceneEnvironment,
     ExtendedSceneEnvironment,
+    ReflectionProbe,
     Effect,
     Instancing,
     Skin,
@@ -55,6 +56,7 @@ impl Type3d {
             Type3d::Geometry => "Geometry",
             Type3d::SceneEnvironment => "SceneEnvironment",
             Type3d::ExtendedSceneEnvironment => "ExtendedSceneEnvironment",
+            Type3d::ReflectionProbe => "ReflectionProbe",
             Type3d::Effect => "Effect",
             Type3d::Instancing => "Instancing",
             Type3d::Skin => "Skin",
@@ -84,9 +86,13 @@ impl Type3d {
             | T::InfiniteGrid
             | T::Fog
             | T::MorphTarget => Some(T::Object3D),
-            T::Model | T::Camera | T::Light | T::Skeleton | T::Joint | T::RuntimeLoader => {
-                Some(T::Node)
-            }
+            T::Model
+            | T::Camera
+            | T::Light
+            | T::Skeleton
+            | T::Joint
+            | T::RuntimeLoader
+            | T::ReflectionProbe => Some(T::Node),
             T::PerspectiveCamera | T::OrthographicCamera => Some(T::Camera),
             T::DirectionalLight | T::PointLight | T::SpotLight => Some(T::Light),
             T::DefaultMaterial | T::PrincipledMaterial | T::CustomMaterial => Some(T::Material),
@@ -178,6 +184,16 @@ props! {
     Materials = "materials",
     Geometry = "geometry",
     CastsShadows = "castsShadows",
+    CastsReflections = "castsReflections",
+    ReceivesReflections = "receivesReflections",
+    // ReflectionProbe
+    Quality = "quality",
+    RefreshMode = "refreshMode",
+    ParallaxCorrection = "parallaxCorrection",
+    BoxSize = "boxSize",
+    BoxOffset = "boxOffset",
+    /// How many times `scheduleUpdate()` has been called.
+    RefreshTurn = "refreshTurn",
     ReceivesShadows = "receivesShadows",
     /// `Model.instancing` and `RuntimeLoader.instancing`.
     Instancing = "instancing",

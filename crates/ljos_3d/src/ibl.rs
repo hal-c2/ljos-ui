@@ -25,6 +25,8 @@ use crate::scene::LightProbe;
 use crate::texture::{PixelEncoding, Texture, TexturePixels};
 
 /// The format of the probe's maps: light beyond 1 needs more than a byte.
+/// The levels of a reflection probe's cube, the last the irradiance.
+const MIRROR_LEVELS: u32 = 6;
 pub(crate) const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const IRRADIANCE_SIDE: u32 = 32;
 const MOST_SIDE: u32 = 512;
@@ -58,6 +60,24 @@ struct Probe {
 pub(crate) enum Bound {
     None,
     Probe(u64),
+    /// The cube of a reflection probe, by its key.
+    Mirror(u64),
+}
+
+/// The cube a reflection probe is drawn into and read from.
+pub(crate) struct MirrorCube {
+    /// What each side is drawn into, before it is turned to lie on the cube.
+    pub(crate) sides: Vec<wgpu::TextureView>,
+    steps: Vec<(MirrorStep, wgpu::TextureView, wgpu::BindGroup)>,
+    group: wgpu::BindGroup,
+}
+
+#[derive(Clone, Copy)]
+enum MirrorStep {
+    Side,
+    Down,
+    Gloss,
+    Round,
 }
 
 pub(crate) struct Ibl {
@@ -73,6 +93,9 @@ pub(crate) struct Ibl {
     downsample: wgpu::RenderPipeline,
     specular: wgpu::RenderPipeline,
     irradiance: wgpu::RenderPipeline,
+    side: wgpu::RenderPipeline,
+    gloss: wgpu::RenderPipeline,
+    mirrors: HashMap<u64, MirrorCube>,
     probes: HashMap<u64, Probe>,
     params_stride: u64,
     max_side: u32,
@@ -256,6 +279,8 @@ impl Ibl {
         let downsample = pipeline(&cube_layout, "fs_downsample");
         let specular = pipeline(&cube_layout, "fs_specular");
         let irradiance = pipeline(&cube_layout, "fs_irradiance");
+        let side = pipeline(&source_layout, "fs_side");
+        let gloss = pipeline(&cube_layout, "fs_gloss");
         let align = u64::from(device.limits().min_uniform_buffer_offset_alignment);
         let size = std::mem::size_of::<Params>() as u64;
         Ibl {
@@ -268,6 +293,9 @@ impl Ibl {
             downsample,
             specular,
             irradiance,
+            side,
+            gloss,
+            mirrors: HashMap::new(),
             probes: HashMap::new(),
             params_stride: size.div_ceil(align) * align,
             max_side: device.limits().max_texture_dimension_2d,
@@ -333,6 +361,7 @@ impl Ibl {
         let none = self.none.as_ref().expect("ready before any frame");
         match bound {
             Bound::Probe(id) => self.probes.get(&id).map_or(none, |p| &p.group),
+            Bound::Mirror(key) => self.mirrors.get(&key).map_or(none, |m| &m.group),
             Bound::None => none,
         }
     }
@@ -342,6 +371,7 @@ impl Ibl {
     pub(crate) fn last_level(&self, bound: Bound) -> f32 {
         match bound {
             Bound::Probe(id) => self.probes.get(&id).map_or(0.0, |p| p.last_level),
+            Bound::Mirror(_) => (MIRROR_LEVELS - 1) as f32,
             Bound::None => 0.0,
         }
     }
@@ -386,6 +416,255 @@ impl Ibl {
         );
         image.uploaded();
         Bound::Probe(id)
+    }
+
+    /// The cube of the reflection probe `key`, `across` wide, made if it
+    /// is not. What each side is drawn into comes with it.
+    pub(crate) fn mirror(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        key: u64,
+        across: u32,
+    ) -> &MirrorCube {
+        if !self.mirrors.contains_key(&key) {
+            let cube = self.make_mirror(device, queue, across);
+            self.mirrors.insert(key, cube);
+        }
+        &self.mirrors[&key]
+    }
+
+    pub(crate) fn forget_mirror(&mut self, key: u64) {
+        self.mirrors.remove(&key);
+    }
+
+    /// Lays what was drawn of the probe's sides on its cube and blurs that
+    /// level by level, as Qt does: few ways, the same for each place of a
+    /// level, since it is made over while the scene moves.
+    pub(crate) fn finish_mirror(&self, encoder: &mut wgpu::CommandEncoder, key: u64) {
+        let Some(cube) = self.mirrors.get(&key) else {
+            return;
+        };
+        for (step, target, group) in &cube.steps {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("ljos_3d reflection probe"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: target,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            pass.set_pipeline(match step {
+                MirrorStep::Side => &self.side,
+                MirrorStep::Down => &self.downsample,
+                MirrorStep::Gloss => &self.gloss,
+                MirrorStep::Round => &self.irradiance,
+            });
+            pass.set_bind_group(0, group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+    }
+
+    fn make_mirror(&self, device: &wgpu::Device, queue: &wgpu::Queue, across: u32) -> MirrorCube {
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let sides: Vec<wgpu::TextureView> = (0..6)
+            .map(|_| {
+                device
+                    .create_texture(&wgpu::TextureDescriptor {
+                        label: Some("ljos_3d reflection probe side"),
+                        size: wgpu::Extent3d {
+                            width: across,
+                            height: across,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: FORMAT,
+                        usage,
+                        view_formats: &[],
+                    })
+                    .create_view(&wgpu::TextureViewDescriptor::default())
+            })
+            .collect();
+        let levels = levels_of(across);
+        let raw = cube_texture(
+            device,
+            "ljos_3d reflection probe",
+            across,
+            levels,
+            FORMAT,
+            usage,
+        );
+        let spec = cube_texture(
+            device,
+            "ljos_3d reflection probe radiance",
+            across,
+            MIRROR_LEVELS - 1,
+            FORMAT,
+            usage,
+        );
+        let irr = cube_texture(
+            device,
+            "ljos_3d reflection probe irradiance",
+            IRRADIANCE_SIDE,
+            1,
+            FORMAT,
+            usage,
+        );
+        let texel = 4.0 * std::f32::consts::PI / (6.0 * (across * across) as f32);
+        let base = Params {
+            face: 0,
+            encoding: 0,
+            samples: 1,
+            _pad: 0,
+            roughness: 0.0,
+            texel,
+            last_level: (levels - 1) as f32,
+            _pad2: 0.0,
+        };
+        let mut params = Vec::new();
+        for _ in 0..levels {
+            for face in 0..6 {
+                params.push(Params { face, ..base });
+            }
+        }
+        for level in 0..MIRROR_LEVELS - 1 {
+            for face in 0..6 {
+                params.push(Params {
+                    face,
+                    roughness: level as f32 / (MIRROR_LEVELS - 2) as f32,
+                    ..base
+                });
+            }
+        }
+        for face in 0..6 {
+            params.push(Params {
+                face,
+                samples: IRRADIANCE_SAMPLES,
+                ..base
+            });
+        }
+        let stride = self.params_stride as usize;
+        let mut bytes = vec![0u8; params.len() * stride];
+        for (i, p) in params.iter().enumerate() {
+            bytes[i * stride..i * stride + std::mem::size_of::<Params>()]
+                .copy_from_slice(bytemuck::bytes_of(p));
+        }
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("ljos_3d reflection probe passes"),
+            size: bytes.len() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        queue.write_buffer(&buffer, 0, &bytes);
+        let slot = |i: usize| {
+            wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                buffer: &buffer,
+                offset: (i * stride) as u64,
+                size: wgpu::BufferSize::new(std::mem::size_of::<Params>() as u64),
+            })
+        };
+        let of_cube = |i: usize, view: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d reflection probe pass"),
+                layout: &self.cube_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: slot(i),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            })
+        };
+        let mut steps = Vec::new();
+        let mut i = 0;
+        for (face, side) in sides.iter().enumerate() {
+            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d reflection probe pass"),
+                layout: &self.source_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: slot(i),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(side),
+                    },
+                ],
+            });
+            steps.push((MirrorStep::Side, face_view(&raw, 0, face as u32), group));
+            i += 1;
+        }
+        for level in 1..levels {
+            let above = cube_view(&raw, level - 1, Some(1));
+            for face in 0..6 {
+                steps.push((
+                    MirrorStep::Down,
+                    face_view(&raw, level, face),
+                    of_cube(i, &above),
+                ));
+                i += 1;
+            }
+        }
+        let whole = cube_view(&raw, 0, None);
+        for level in 0..MIRROR_LEVELS - 1 {
+            for face in 0..6 {
+                steps.push((
+                    MirrorStep::Gloss,
+                    face_view(&spec, level, face),
+                    of_cube(i, &whole),
+                ));
+                i += 1;
+            }
+        }
+        for face in 0..6 {
+            steps.push((
+                MirrorStep::Round,
+                face_view(&irr, 0, face),
+                of_cube(i, &whole),
+            ));
+            i += 1;
+        }
+        let spec_view = cube_view(&spec, 0, None);
+        let irr_view = cube_view(&irr, 0, None);
+        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ljos_3d reflection probe"),
+            layout: &self.layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&spec_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&irr_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+            ],
+        });
+        MirrorCube {
+            sides,
+            steps,
+            group,
+        }
     }
 
     /// Lets go of the maps of probes no scene holds any more.

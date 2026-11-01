@@ -55,23 +55,23 @@ Feature: Many copies of a model from an instance table
     Scenario: Two entries draw two copies and not the model itself
       Then the pixel at 50, 100 of the window is within 2 of "#ff0000"
       And the pixel at 150, 100 of the window is within 2 of "#0000ff"
-      And the pixel at 100, 100 of the window is "#202020"
+      And the pixel at 100, 100 of the window is "#1e1e1e"
       And the property "instanceCount" of "table" is 2
 
     Scenario: Moving an entry moves its copy
       When the property "position.y" of "left" is set to 50
       Then the pixel at 50, 50 of the window is within 2 of "#ff0000"
-      And the pixel at 50, 100 of the window is "#202020"
+      And the pixel at 50, 100 of the window is "#1e1e1e"
 
     Scenario: An entry's scale and rotation shape its copy
       When the property "scale.x" of "left" is set to 2
       Then the pixel at 33, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 50, 85 of the window is "#202020"
+      And the pixel at 50, 85 of the window is "#1e1e1e"
 
     Scenario: Without a table the model is drawn by itself again
       When the property "instancing" of "square" is set to null
       Then the pixel at 100, 100 of the window is within 2 of "#ffffff"
-      And the pixel at 50, 100 of the window is "#202020"
+      And the pixel at 50, 100 of the window is "#1e1e1e"
 
   Rule: The model's own transform carries the group and shapes each copy
 
@@ -91,7 +91,7 @@ Feature: Many copies of a model from an instance table
     Scenario: Only the first copies are drawn
       When the property "instanceCountOverride" of "table" is set to 1
       Then the pixel at 50, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 150, 100 of the window is "#202020"
+      And the pixel at 150, 100 of the window is "#1e1e1e"
 
   Rule: A colour's alpha counts only where the table says it has transparency
 

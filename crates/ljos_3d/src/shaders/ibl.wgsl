@@ -59,11 +59,9 @@ fn face_dir(face: u32, uv: vec2<f32>) -> vec3<f32> {
     return normalize(d);
 }
 
+// The fit to sRGB Qt's shaders use, as scene.rs and tone.wgsl have it.
 fn srgb_to_linear(c: f32) -> f32 {
-    if c <= 0.04045 {
-        return c / 12.92;
-    }
-    return pow((c + 0.055) / 1.055, 2.4);
+    return c * (c * (c * 0.305306011 + 0.682171111) + 0.012522878);
 }
 
 fn texel(x: i32, y: i32) -> vec3<f32> {
@@ -83,13 +81,13 @@ fn texel(x: i32, y: i32) -> vec3<f32> {
 }
 
 // The first level from the image: longitude across it, the image's middle
-// looking along -z, the zenith at its top. Filtered by hand, as a shared
+// looking along +x, as Qt folds it, the zenith at its top. Filtered by hand, as a shared
 // exponent cannot be filtered before it is decoded.
 @fragment
 fn fs_equirect(in: VsOut) -> @location(0) vec4<f32> {
     let d = face_dir(params.face, in.uv);
     let size = vec2<i32>(textureDimensions(source));
-    let u = atan2(d.x, -d.z) / (2.0 * PI) + 0.5;
+    let u = atan2(d.z, d.x) / (2.0 * PI) + 0.5;
     let v = acos(clamp(d.y, -1.0, 1.0)) / PI;
     let p = vec2<f32>(u, v) * vec2<f32>(size) - vec2<f32>(0.5);
     let f = fract(p);
@@ -193,4 +191,50 @@ fn fs_irradiance(in: VsOut) -> @location(0) vec4<f32> {
         sum += textureSampleLevel(cube, cube_sampler, l, lod_for(cos_t / PI)).rgb;
     }
     return vec4<f32>(sum / f32(params.samples), 1.0);
+}
+
+// A side of a reflection probe, as a camera saw it: the cube's faces are seen
+// from inside, so left and right are the other way round on it.
+@fragment
+fn fs_side(in: VsOut) -> @location(0) vec4<f32> {
+    let size = vec2<i32>(textureDimensions(source));
+    let at = vec2<i32>(in.clip.xy);
+    return textureLoad(source, vec2<i32>(size.x - 1 - at.x, at.y), 0);
+}
+
+// A level of a reflection probe's cube: the first sixteen of the ways tried
+// that come back from in front of the surface, each read from the level
+// that the share of the cube it stands for says, weighted by how it faces.
+@fragment
+fn fs_gloss(in: VsOut) -> @location(0) vec4<f32> {
+    let n = face_dir(params.face, in.uv);
+    let helper = select(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), abs(n.z) < 0.999);
+    let tangent = normalize(cross(helper, n));
+    let bitangent = cross(n, tangent);
+    let alpha = pow(params.roughness, 4.0);
+    var color = vec3<f32>(0.0);
+    var weight = 0.0;
+    var found = 0u;
+    for (var i = 0u; i < 128u && found < 16u; i++) {
+        let turned = radical_inverse(i);
+        let phi = 2.0 * PI * f32(i) / 16.0;
+        let c = sqrt((1.0 - turned) / (1.0 + (alpha - 1.0) * turned));
+        let s = sqrt(1.0 - c * c);
+        let back = 2.0 * c * c - 1.0;
+        if back <= 1e-6 {
+            continue;
+        }
+        found += 1u;
+        let d = c * c * (alpha - 1.0) + 1.0;
+        let spread = alpha / (PI * d * d);
+        let stood = 1.0 / (16.0 * (spread / 4.0 + 0.0001) + 0.0001);
+        var level = 0.0;
+        if params.roughness > 0.0 {
+            level = 0.5 * log2(stood / params.texel);
+        }
+        let way = tangent * (2.0 * c * s * cos(phi)) + bitangent * (2.0 * c * s * sin(phi)) + n * back;
+        color += textureSampleLevel(cube, cube_sampler, way, max(level, 0.0)).rgb * back;
+        weight += back;
+    }
+    return vec4<f32>(color / weight, 1.0);
 }

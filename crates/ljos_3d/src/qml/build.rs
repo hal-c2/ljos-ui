@@ -20,7 +20,7 @@ use crate::scene::{
     AlphaMode, Background, BlendMode, Camera, Cascades, Color, CullMode, DefaultMaps,
     DefaultMaterial, Environment, Fade, Fog, Fresnel, Light, LightProbe, Lighting, Material,
     MeshSource, Model, Node, NodeId, NodeKind, Primitive, PrincipledMaps, PrincipledMaterial,
-    Scene, Shadow, Surface, Tonemap, Transform,
+    ReflectionProbe, Scene, Shadow, Surface, Tonemap, Transform,
 };
 use crate::texture::{Channel, Filter, Sampling, Texture, Tiling, UvTransform};
 
@@ -225,6 +225,8 @@ impl<S: SceneSource> Walk<'_, S> {
             n.receives_shadows = on(s, obj, P::ReceivesShadows, d::model::RECEIVES_SHADOWS);
             n.instancing = s.object(obj, P::Instancing).and_then(|t| s.instancing(t));
             n.depth_bias = num(s, obj, P::DepthBias, d::model::DEPTH_BIAS);
+            n.casts_reflections = on(s, obj, P::CastsReflections, true);
+            n.receives_reflections = on(s, obj, P::ReceivesReflections, false);
         }
         n.shadow = shadow(s, obj);
         let id = self.scene.add(parent, n);
@@ -427,6 +429,32 @@ fn kind<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> NodeKind {
     if let Some(camera) = camera(s, obj) {
         return NodeKind::Camera(camera);
     }
+    if s.is(obj, T::ReflectionProbe) {
+        use super::enums::reflection_probe as rp;
+        // Taken as it is in the cube, and not as a colour of the screen's is.
+        let clear = color(s, obj, P::ClearColor, d::reflection_probe::CLEAR_COLOR);
+        let across = match int(s, obj, P::Quality, d::reflection_probe::QUALITY) {
+            rp::VERY_LOW => 128,
+            rp::MEDIUM => 512,
+            rp::HIGH => 1024,
+            rp::VERY_HIGH => 2048,
+            _ => 256,
+        };
+        return NodeKind::ReflectionProbe(ReflectionProbe {
+            across,
+            clear: [clear.r, clear.g, clear.b, clear.a],
+            once: int(s, obj, P::RefreshMode, d::reflection_probe::REFRESH_MODE) == rp::FIRST_FRAME,
+            turn: num(s, obj, P::RefreshTurn, 0.0) as u64,
+            parallax: on(
+                s,
+                obj,
+                P::ParallaxCorrection,
+                d::reflection_probe::PARALLAX_CORRECTION,
+            ),
+            box_size: vec3(s, obj, P::BoxSize, d::reflection_probe::BOX_SIZE),
+            box_offset: vec3(s, obj, P::BoxOffset, d::reflection_probe::BOX_OFFSET),
+        });
+    }
     if !s.is(obj, T::Light) {
         return NodeKind::Group;
     }
@@ -558,6 +586,7 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
             }),
             specular_tint: color(s, obj, P::SpecularTint, dm::SPECULAR_TINT),
             fresnel_power: num(s, obj, P::FresnelPower, dm::FRESNEL_POWER),
+            index_of_refraction: num(s, obj, P::IndexOfRefraction, 1.45),
             blend_mode: blend_mode(dm::BLEND_MODE),
             vertex_colors: on(s, obj, P::VertexColorsEnabled, dm::VERTEX_COLORS_ENABLED),
         }));
