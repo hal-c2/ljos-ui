@@ -91,8 +91,11 @@ impl Sky {
         if angle <= min {
             sun
         } else if angle < max {
-            let t = ease_out(1.0 - (angle - min) / (max - min), self.sun_curve);
-            mix(c, sun, t)
+            // A small curve is a tight sun: the sky takes over soon after
+            // the disk, not only at the widest angle, where it would show
+            // as a hard edge across the sky.
+            let t = ease_out((angle - min) / (max - min), self.sun_curve);
+            mix(sun, c, t)
         } else {
             c
         }

@@ -60,6 +60,13 @@ Feature: A sky made from colours
     When the property "sunLongitude" of "sky" is set to 90
     Then the pixel at 100, 100 of the window is not "#ffffff"
 
+  Scenario: The sun's glow is gone long before its widest angle
+    When the property "sunAngleMin" of "sky" is set to 1
+    And the property "sunAngleMax" of "sky" is set to 100
+    And the property "sunCurve" of "sky" is set to 0.05
+    And the property "eulerRotation.x" of "camera" is set to 90
+    Then the pixel at 100, 100 of the window is within 4 of "#4080c0"
+
   Scenario: The sky lights a model
     When the property "backgroundMode" of "env" is set to 0
     And the property "visible" of "ball" is set to true
