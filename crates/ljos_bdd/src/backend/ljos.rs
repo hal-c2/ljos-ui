@@ -147,6 +147,9 @@ pub struct LjosBackend {
     resources: Vec<(String, Vec<u8>)>,
     /// Text files given before anything was loaded, for the picture store.
     image_texts: Vec<(String, Vec<u8>)>,
+    /// The modules the scenario's `qmldir` files describe: the address of
+    /// each one's files and its directory on the platform.
+    module_dirs: Vec<(String, String)>,
     /// Whether the scenario changes files while it runs.
     watching: bool,
     /// The theme file given before anything was loaded: its name, and
@@ -541,6 +544,9 @@ impl LjosBackend {
         }
         for (url, bytes) in self.image_texts.drain(..) {
             images.register_resource(url, bytes);
+        }
+        for (address, dir) in self.module_dirs.drain(..) {
+            mount_module(&live.engine, &address, &dir);
         }
         live.controls_style = self.controls_style.take();
         Ok(())
@@ -1475,9 +1481,29 @@ impl Assistive for LjosBackend {
     }
 }
 
+/// As `ljos run` does for a module it finds: its files answer to the
+/// address a build gives them, for pictures and for what else loads them.
+fn mount_module(engine: &ljos_engine::Engine, address: &str, dir: &str) {
+    let platform = ljos_platform::Platform::of(engine);
+    if let Ok(dir) = platform.env().real(std::path::Path::new(dir)) {
+        platform.mount_resources(address, dir.clone());
+        ljos_quick::ImageStore::of(engine).mount_resources(address, dir);
+    }
+}
+
 impl Files for LjosBackend {
     fn text_file(&mut self, name: &str, text: &str) -> Result<()> {
         self.platform.write(name, text)?;
+        if let Some(dir) = name.strip_suffix("qmldir")
+            && (dir.is_empty() || dir.ends_with('/'))
+            && let Some(module) = qml_front::discover::qmldir(text)
+        {
+            let dir = (module.address(""), format!("/{dir}"));
+            match self.live.as_ref() {
+                Some(live) => mount_module(&live.engine, &dir.0, &dir.1),
+                None => self.module_dirs.push(dir),
+            }
+        }
         // A text file may be a picture too (an SVG). Only the picture store
         // sees this copy: the platform's files stay writable.
         let url = format!("file:///{name}");

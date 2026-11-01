@@ -9,6 +9,7 @@
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::ThreadId;
@@ -248,6 +249,10 @@ pub struct Platform {
     requests: RefCell<HashMap<u64, RequestDone>>,
     next_fetch: Cell<u64>,
     resources: RefCell<HashMap<String, Rc<[u8]>>>,
+    /// Files a program keeps inside itself, where they are until it is
+    /// built: one by its address, and a prefix naming a directory's.
+    resource_files: RefCell<HashMap<String, PathBuf>>,
+    resource_dirs: RefCell<Vec<(String, PathBuf)>>,
     window_hooks: RefCell<Vec<WindowHook>>,
     application_icon: RefCell<Option<Icon>>,
     window_icons: RefCell<HashMap<ObjectId, Icon>>,
@@ -306,6 +311,8 @@ impl Default for Platform {
             requests: RefCell::new(HashMap::new()),
             next_fetch: Cell::new(0),
             resources: RefCell::new(HashMap::new()),
+            resource_files: RefCell::new(HashMap::new()),
+            resource_dirs: RefCell::new(Vec::new()),
             window_hooks: RefCell::new(Vec::new()),
             application_icon: RefCell::new(None),
             window_icons: RefCell::new(HashMap::new()),
@@ -801,6 +808,42 @@ impl Platform {
         self.resources.borrow().get(url).cloned()
     }
 
+    /// Makes `url` name the file at `path`: a file the program keeps
+    /// inside itself once built, run from where the build would take it.
+    pub fn register_resource_file(&self, url: &str, path: impl Into<PathBuf>) {
+        self.resource_files
+            .borrow_mut()
+            .insert(url.to_owned(), path.into());
+    }
+
+    /// Makes every URL under `prefix` (`qrc:/qt/qml/Shapes/`) name the file
+    /// at the same place under `dir`.
+    pub fn mount_resources(&self, prefix: &str, dir: impl Into<PathBuf>) {
+        let mut prefix = prefix.to_owned();
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        self.resource_dirs.borrow_mut().push((prefix, dir.into()));
+    }
+
+    /// The file [`Platform::register_resource_file`] or
+    /// [`Platform::mount_resources`] gives `url`. These are the program's own
+    /// files, so no sandbox applies; a URL that climbs out of its directory
+    /// names nothing.
+    pub fn mounted_file(&self, url: &str) -> Option<PathBuf> {
+        if let Some(path) = self.resource_files.borrow().get(url) {
+            return Some(path.clone());
+        }
+        mounted(&self.resource_dirs.borrow(), url)
+    }
+
+    /// The local file `url` names: a program's own file, a `file:` URL or a
+    /// plain path, as this run's sandbox sees it. `None` for any other URL.
+    pub fn file_of(&self, url: &str) -> Option<PathBuf> {
+        self.mounted_file(url)
+            .or_else(|| ljos_engine::url_path(url).and_then(|p| self.env().real(&p).ok()))
+    }
+
     /// Fetches `url` on a thread of its own; `done` runs on the Engine
     /// thread with the bytes or why there are none.
     pub fn fetch(
@@ -939,6 +982,18 @@ pub(crate) fn item_of(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
         at = engine.owner(o);
     }
     None
+}
+
+/// The file under the longest of `dirs`' prefixes that `url` starts with,
+/// if the rest of `url` stays inside that directory.
+pub fn mounted(dirs: &[(String, PathBuf)], url: &str) -> Option<PathBuf> {
+    let url = url.split(['?', '#']).next().unwrap_or(url);
+    let (prefix, dir) = dirs
+        .iter()
+        .filter(|(prefix, _)| url.starts_with(prefix.as_str()))
+        .max_by_key(|(prefix, _)| prefix.len())?;
+    let rest = &url[prefix.len()..];
+    (!rest.is_empty() && !rest.split('/').any(|part| part == "..")).then(|| dir.join(rest))
 }
 
 #[cfg(test)]

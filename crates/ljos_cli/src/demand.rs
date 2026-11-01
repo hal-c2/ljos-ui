@@ -180,6 +180,12 @@ impl<O: TypeOracle> OnDemand<O> {
     pub(crate) fn resources(&self) -> Vec<(String, std::path::PathBuf)> {
         self.project.borrow().resources().to_vec()
     }
+
+    /// Where each module's address names files
+    /// ([`Project::resource_dirs`]).
+    pub(crate) fn resource_dirs(&self) -> Vec<(String, std::path::PathBuf)> {
+        self.project.borrow().resource_dirs().to_vec()
+    }
 }
 
 #[cfg(test)]

@@ -537,7 +537,7 @@ fn read(e: &Engine, me: ObjectId, show: Show) {
             Err(err) => answered(e, me, generation, Err(format!("{name}: {err}"))),
         });
     } else {
-        let real = url_path(&url).and_then(|p| platform.env().real(&p).ok());
+        let real = platform.file_of(&url);
         if let Some(path) = &real {
             follow(e, me, path);
         }

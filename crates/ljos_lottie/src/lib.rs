@@ -544,7 +544,7 @@ fn load(e: &Engine, me: ObjectId) {
         });
         return;
     }
-    let Some(path) = url_path(&url).and_then(|p| platform.env().real(&p).ok()) else {
+    let Some(path) = platform.file_of(&url) else {
         arrived(e, me, generation, Outcome::Missing);
         return;
     };

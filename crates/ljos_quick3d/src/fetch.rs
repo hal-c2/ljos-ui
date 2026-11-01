@@ -58,10 +58,13 @@ impl Fetch for EngineFetch {
             });
             return;
         }
-        let path = match url_path(url).map(|p| platform.env().real(&p)) {
-            Some(Ok(path)) => path,
-            Some(Err(err)) => return reply(e, Err(err.to_string())),
-            None => return reply(e, Err("no such file".to_owned())),
+        let path = match platform.mounted_file(url) {
+            Some(path) => path,
+            None => match url_path(url).map(|p| platform.env().real(&p)) {
+                Some(Ok(path)) => path,
+                Some(Err(err)) => return reply(e, Err(err.to_string())),
+                None => return reply(e, Err("no such file".to_owned())),
+            },
         };
         if !self.pooled {
             return reply(e, std::fs::read(path).map_err(|err| err.to_string()));

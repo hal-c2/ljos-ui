@@ -431,9 +431,7 @@ fn load(e: &Engine, group: ObjectId, source: &str) {
     }
     // A timeline starts showing as soon as it is made: its files are small,
     // and read here they are there for the first frame shown.
-    let bytes = url_path(&url)
-        .and_then(|p| platform.env().real(&p).ok())
-        .and_then(|p| std::fs::read(p).ok());
+    let bytes = platform.file_of(&url).and_then(|p| std::fs::read(p).ok());
     arrived(e, group, &url, this, bytes);
 }
 

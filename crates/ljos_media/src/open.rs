@@ -6,7 +6,7 @@
 use std::io::Read;
 
 use ljos_engine::{Engine, LogLevel, ObjectId};
-use ljos_platform::{Platform, is_remote, url_path};
+use ljos_platform::{Platform, is_remote};
 
 #[cfg(feature = "decode")]
 use std::sync::Arc;
@@ -165,7 +165,7 @@ pub(crate) fn start(
         }
         return;
     }
-    let real = url_path(&url).and_then(|p| platform.env().real(&p).ok());
+    let real = platform.file_of(&url);
     spawn(e, me, generation, done, move || match real {
         Some(path) => from_path(&path, samples.and_then(|s| s.wait())),
         None => Err(OpenError::Resource),

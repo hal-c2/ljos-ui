@@ -320,6 +320,9 @@ impl Signal {
 
 struct State {
     resources: HashMap<String, Origin>,
+    /// [`ImageStore::mount_resources`]: a URL prefix and the directory it
+    /// names.
+    resource_dirs: Vec<(String, PathBuf)>,
     cache: ByteLru<ImageKey, Picture>,
     /// Decodes asked for and not delivered yet, with who waits for each.
     jobs: HashMap<ImageKey, Vec<Waiter>>,
@@ -415,6 +418,7 @@ impl Default for ImageStore {
         Self {
             state: RefCell::new(State {
                 resources: HashMap::new(),
+                resource_dirs: Vec::new(),
                 cache: ByteLru::new(image_cache_budget(DeviceClass::current(), usable_memory())),
                 jobs: HashMap::new(),
                 queue: VecDeque::new(),
@@ -483,6 +487,20 @@ impl ImageStore {
             .borrow_mut()
             .resources
             .insert(url.into(), Origin::File(path.into()));
+    }
+
+    /// Makes every URL under `prefix` (`qrc:/qt/qml/Shapes/`) name the file
+    /// at the same place under `dir`: a module's directory, whose files the
+    /// program keeps inside itself once built. A registered URL wins.
+    pub fn mount_resources(&self, prefix: &str, dir: impl Into<PathBuf>) {
+        let mut prefix = prefix.to_owned();
+        if !prefix.ends_with('/') {
+            prefix.push('/');
+        }
+        self.state
+            .borrow_mut()
+            .resource_dirs
+            .push((prefix, dir.into()));
     }
 
     /// Whether `url` is registered: what it loads is in memory already, or
@@ -1358,6 +1376,9 @@ impl ImageStore {
                             .find_map(|x| s.resources.get(&format!("{}.{x}", key.url)).cloned())
                     })
                     .flatten()
+                    .or_else(|| {
+                        ljos_platform::mounted(&s.resource_dirs, &key.url).map(Origin::File)
+                    })
             })
         };
         match registered {

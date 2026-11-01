@@ -314,14 +314,16 @@ fn prepare(e: &Engine, me: ObjectId) {
             continue;
         }
         let resolved = e.resolve_url(me, url.as_str());
-        let located = match url_path(&resolved) {
+        let platform = Platform::of(e);
+        let located = match (platform.mounted_file(&resolved), url_path(&resolved)) {
+            (Some(path), _) => ljos_shader::locate(&path),
             // A sandboxed application's `/` is a directory of its own.
-            Some(path) => Platform::of(e)
+            (None, Some(path)) => platform
                 .env()
                 .real(&path)
                 .map_err(|err| ljos_shader::Error::Missing(format!("{resolved}: {err}")))
                 .and_then(|path| ljos_shader::locate(&path)),
-            None => Err(ljos_shader::Error::Missing(resolved.clone())),
+            (None, None) => Err(ljos_shader::Error::Missing(resolved.clone())),
         };
         let want = match located {
             Ok(Located::Artifact(p)) => {

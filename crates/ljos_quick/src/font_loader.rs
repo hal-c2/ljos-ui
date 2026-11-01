@@ -11,7 +11,7 @@ use ljos_engine::{
     Atom, Cx, Engine, EngineError, Font, LogLevel, ObjectId, PropIndex, QmlObject, QtObject, Url,
     Value, qml_impl,
 };
-use ljos_platform::{FetchError, Platform, is_remote, url_path};
+use ljos_platform::{FetchError, Platform, is_remote};
 
 use crate::enums::{EnumTable, loader_status as status};
 use crate::item::write_computed;
@@ -138,13 +138,7 @@ fn load(e: &Engine, me: ObjectId) {
         return;
     }
     // A sandboxed run (a test) keeps every file under its root.
-    let bytes = url_path(&url).and_then(|p| {
-        platform
-            .env()
-            .real(&p)
-            .ok()
-            .and_then(|p| std::fs::read(p).ok())
-    });
+    let bytes = platform.file_of(&url).and_then(|p| std::fs::read(p).ok());
     loaded(e, me, &url, bytes);
 }
 

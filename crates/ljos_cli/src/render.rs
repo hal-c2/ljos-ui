@@ -253,14 +253,30 @@ pub(crate) fn stage_resources(engine: &Engine, dir: &Path) {
     if let Ok(files) = ljos_compiler::resources(dir) {
         stage(engine, &files);
     }
+    if let Ok(dirs) = ljos_compiler::resource_dirs(dir) {
+        mount(engine, &dirs);
+    }
 }
 
-/// Stages the pictures of `files` (address, path), each read when it is
-/// first shown.
+/// Makes each directory of `dirs` (address, path) what the addresses under
+/// it name: a module's files are found where `qrc:/qt/qml/<uri as a path>/`
+/// says, listed in the build or not, for whatever loads them.
+pub(crate) fn mount(engine: &Engine, dirs: &[(String, std::path::PathBuf)]) {
+    let platform = ljos::prelude::Platform::of(engine);
+    let images = ljos_quick::ImageStore::of(engine);
+    for (address, dir) in dirs {
+        platform.mount_resources(address, dir.clone());
+        images.mount_resources(address, dir.clone());
+    }
+}
+
+/// Stages `files` (address, path), each read when it is first asked for.
 pub(crate) fn stage(engine: &Engine, files: &[(String, std::path::PathBuf)]) {
     const PICTURES: [&str; 7] = ["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"];
     let images = ljos_quick::ImageStore::of(engine);
+    let platform = ljos::prelude::Platform::of(engine);
     for (address, path) in files {
+        platform.register_resource_file(address, path.clone());
         let picture = path
             .extension()
             .and_then(|e| e.to_str())
@@ -322,7 +338,7 @@ pub(crate) fn launch_example(engine: &Engine, root: ljos_engine::ObjectId, examp
     let calls = example.map_or(&[][..], ljos_gallery_backends::launcher_calls);
     for call in calls {
         if let Err(e) = engine.invoke_by_name(root, call, &[]) {
-            engine.log(LogLevel::Warning, "gallery", &format!("{call}: {e}"));
+            engine.log(LogLevel::Warning, "gallery", format!("{call}: {e}"));
         }
     }
 }

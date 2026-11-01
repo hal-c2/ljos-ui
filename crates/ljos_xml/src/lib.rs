@@ -380,7 +380,7 @@ fn load(e: &Engine, me: ObjectId) {
     }
     // A local file, read and parsed off the Engine thread like a fetch,
     // so a load never blocks it and `Loading` is what a reader sees first.
-    let real = url_path(&url).and_then(|p| platform.env().real(&p).ok());
+    let real = platform.file_of(&url);
     start_worker(e, me, generation, path, roles, Input::Local { real, url });
 }
 

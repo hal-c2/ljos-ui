@@ -432,6 +432,8 @@ fn read_snippet(e: &Engine, url: &str) -> Result<String, String> {
         bytes.to_vec()
     } else if is_remote(url) {
         return Err("a snippet on the network is not read".to_owned());
+    } else if let Some(path) = platform.mounted_file(url) {
+        std::fs::read(path).map_err(|err| err.to_string())?
     } else {
         let path = url_path(url).ok_or_else(|| "no such file".to_owned())?;
         let path = platform.env().real(&path).map_err(|err| err.to_string())?;

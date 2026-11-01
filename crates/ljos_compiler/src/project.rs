@@ -113,6 +113,8 @@ struct Tree {
     told: HashSet<usize>,
     /// What [`resources`] finds, from the same reading.
     resources: Vec<(String, PathBuf)>,
+    /// What [`resource_dirs`] finds, from the same reading.
+    resource_dirs: Vec<(String, PathBuf)>,
 }
 
 impl<O: TypeOracle> Project<O> {
@@ -490,6 +492,7 @@ impl<O: TypeOracle> Project<O> {
         let mut project = Self::new(oracle);
         let mut found = Vec::new();
         let mut resources = Vec::new();
+        let mut resource_dirs = Vec::new();
         let places = std::iter::once((root, ""))
             .chain(mounts.iter().map(|m| (m.dir.as_path(), m.prefix.as_str())));
         for (base, prefix) in places {
@@ -513,6 +516,7 @@ impl<O: TypeOracle> Project<O> {
                 }
                 let (described, kept) = described(dir, names);
                 resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
+                resource_dirs.extend(described.iter().map(|m| (m.address(""), dir.clone())));
                 found.extend(
                     described
                         .into_iter()
@@ -545,6 +549,7 @@ impl<O: TypeOracle> Project<O> {
             read: HashSet::new(),
             told: HashSet::new(),
             resources,
+            resource_dirs,
         });
         project.front.set_controls_style(controls_style(
             |name| std::env::var(name).ok(),
@@ -632,6 +637,13 @@ impl<O: TypeOracle> Project<O> {
     /// none for another project.
     pub fn resources(&self) -> &[(String, PathBuf)] {
         self.tree.as_ref().map_or(&[], |tree| &tree.resources)
+    }
+
+    /// Each module of an [`open`](Self::open)ed project by the address its
+    /// files are under, with the directory they are in, as
+    /// [`resource_dirs`] finds them.
+    pub fn resource_dirs(&self) -> &[(String, PathBuf)] {
+        self.tree.as_ref().map_or(&[], |tree| &tree.resource_dirs)
     }
 
     /// Whether the directory `dir` (a key) of an [`open`](Self::open)ed
@@ -745,6 +757,23 @@ pub fn resources(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
         out.extend(described(&dir, &names).1);
     }
     out.retain(|(_, path)| path.is_file());
+    Ok(out)
+}
+
+/// Each module under `root` by the address a program names its files under
+/// (`qrc:/qt/qml/<uri as a path>`, or the build's `RESOURCE_PREFIX`), with
+/// the directory that describes it: a file there is at that address whether
+/// or not the build lists it.
+pub fn resource_dirs(root: &Path) -> std::io::Result<Vec<(String, PathBuf)>> {
+    let mut out = Vec::new();
+    for (dir, names) in scan(root)? {
+        out.extend(
+            described(&dir, &names)
+                .0
+                .iter()
+                .map(|m| (m.address(""), dir.clone())),
+        );
+    }
     Ok(out)
 }
 

@@ -763,6 +763,7 @@ impl Run {
                 }
                 ljos_controls::set_application_arguments(engine, arguments);
                 crate::render::stage(engine, &source.resources());
+                crate::render::mount(engine, &source.resource_dirs());
                 engine.set_component_source(source);
                 let root = engine
                     .create_from_url(
