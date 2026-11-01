@@ -384,9 +384,22 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         if self.sources.get(key) == Some(&source) {
             return;
         }
-        if !self.project.has_read(qml_front::project::directory(key)) {
+        // A file in a selector's directory is compiled only as the file it
+        // may be in the place of.
+        let plain = crate::project::plain_of(key);
+        if !self.project.has_read(qml_front::project::directory(
+            plain.as_deref().unwrap_or(key),
+        )) {
             // Nothing reaches it: it is read from the disk when something
             // does.
+            return;
+        }
+        if let Some(plain) = plain {
+            self.project.add(key, source);
+            if let Some(text) = self.project.source(&plain).map(str::to_owned) {
+                self.sources.insert(plain.clone(), text);
+                self.dirty.insert(plain);
+            }
             return;
         }
         if !self.sources.contains_key(key) {
@@ -477,6 +490,14 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
             }
             return;
         }
+        if let Some(plain) = crate::project::plain_of(key) {
+            self.project.remove(key);
+            if let Some(text) = self.project.source(&plain).map(str::to_owned) {
+                self.sources.insert(plain.clone(), text);
+                self.dirty.insert(plain);
+            }
+            return;
+        }
         if self.sources.remove(key).is_none() {
             return;
         }
@@ -490,6 +511,10 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         // A module's types come from the directory, which a session over
         // files in memory does not have.
         let mut project = Project::new(self.oracle.clone());
+        project.set_controls_style(self.project.front().controls_style().cloned());
+        for (key, source) in self.project.variants() {
+            project.add(key, source);
+        }
         for (key, source) in &self.sources {
             project.add(key, source.as_str());
         }

@@ -545,3 +545,27 @@ fn a_session_from_an_entry_has_what_it_reaches_and_reads_more_as_it_is_asked() {
         ["Main", "pages/Page", "parts/Knob", "stray/Stray"]
     );
 }
+
+#[test]
+fn a_saved_file_of_a_selectors_directory_compiles_as_the_file_it_replaces() {
+    let (one, two) = (
+        "import QtQuick\nItem { property int n: 1 }\n",
+        "import QtQuick\nItem { property int n: 2 }\n",
+    );
+    let mut s = ReloadSession::in_memory(QtTypeOracle);
+    s.set_controls_style(Some(qml_front::project::ControlsStyle {
+        name: "Material".to_owned(),
+        fallback: None,
+    }));
+    s.set_file("Badge", one);
+    s.set_file("Main", "import QtQuick\nItem { Badge { } }\n");
+    s.start();
+    s.set_file("+Material/Badge", two);
+    assert_eq!(s.source("Badge"), Some(two));
+    assert!(s.files().all(|file| file != "+Material/Badge"));
+    s.build().expect("compiles").expect("a change");
+    let failed: Vec<&str> = s.failures().map(|(key, _)| key).collect();
+    assert!(failed.is_empty(), "{failed:?} do not compile");
+    s.remove_file("+Material/Badge");
+    assert_eq!(s.source("Badge"), Some(one));
+}

@@ -16,7 +16,40 @@ use qml_front::{
 
 use crate::Error;
 use crate::alias::{Aliases, Mount};
-use crate::style::controls_style;
+use crate::style::{controls_style, selectors};
+
+/// The key of the file `key` is a variant of: `dir/+Material/App` of
+/// `dir/App`. None for a file in no selector's directory. A selector's
+/// directory counts just above the file, as only there is it one.
+pub fn plain_of(key: &str) -> Option<String> {
+    let (dirs, name) = key.rsplit_once('/')?;
+    let mut parts: Vec<&str> = dirs.split('/').collect();
+    let before = parts.len();
+    while parts.last().is_some_and(|part| part.starts_with('+')) {
+        parts.pop();
+    }
+    (parts.len() < before).then(|| {
+        parts.push(name);
+        parts.join("/")
+    })
+}
+
+/// The variant of `dir/name` the selectors choose, the earliest first; a
+/// directory of a later one may be inside it.
+fn select(
+    variants: &BTreeMap<String, String>,
+    dir: &str,
+    name: &str,
+    selectors: &[&str],
+) -> Option<String> {
+    selectors.iter().enumerate().find_map(|(i, selector)| {
+        let sub = join(dir, &format!("+{selector}"));
+        select(variants, &sub, name, &selectors[i + 1..]).or_else(|| {
+            let key = join(&sub, name);
+            variants.contains_key(&key).then_some(key)
+        })
+    })
+}
 
 /// A project walk stops after this many directories, so a root that is not a
 /// project (a home directory) cannot stall a build.
@@ -31,6 +64,13 @@ const MAX_DIRS: usize = 20_000;
 pub struct Project<O> {
     pub(crate) front: project::Project,
     sources: BTreeMap<String, String>,
+    /// The files in `+selector` directories, by key ([`plain_of`]). None is
+    /// a file of the project: one is only ever the text of its plain file.
+    variants: BTreeMap<String, String>,
+    /// Per plain file with a variant in its place, that variant's key.
+    chosen: BTreeMap<String, String>,
+    /// The text of each plain file a variant is in the place of.
+    displaced: BTreeMap<String, String>,
     /// Where each file read from disk is ([`Self::load_roots`]).
     paths: BTreeMap<String, PathBuf>,
     /// The JavaScript files, by their path from the root (`content/calc.js`).
@@ -80,6 +120,9 @@ impl<O: TypeOracle> Project<O> {
         Self {
             front: project::Project::new(),
             sources: BTreeMap::new(),
+            variants: BTreeMap::new(),
+            chosen: BTreeMap::new(),
+            displaced: BTreeMap::new(),
             paths: BTreeMap::new(),
             scripts: BTreeMap::new(),
             oracle,
@@ -140,11 +183,48 @@ impl<O: TypeOracle> Project<O> {
     /// [`front`](Self::front)`().diagnostics(key)`.
     pub fn add(&mut self, key: &str, source: impl Into<String>) {
         let source = source.into();
+        if let Some(plain) = plain_of(key) {
+            self.variants.insert(key.to_string(), source);
+            self.settle(&plain);
+        } else if self.chosen.contains_key(key) {
+            self.displaced.insert(key.to_string(), source);
+        } else {
+            self.put(key, source);
+        }
+    }
+
+    fn put(&mut self, key: &str, source: String) {
         // The front end keeps what it can; the errors are its to record.
         let _ = self.front.add(key, &source);
         self.sources.insert(key.to_string(), source);
         self.dynamic = OnceCell::new();
         self.callable.get_mut().clear();
+    }
+
+    /// Puts in the place of the file `plain` what the running selectors
+    /// choose: the file itself where they choose no variant.
+    fn settle(&mut self, plain: &str) {
+        let selectors = selectors(self.front.controls_style());
+        let selectors: Vec<&str> = selectors.iter().map(String::as_str).collect();
+        let (dir, name) = plain.rsplit_once('/').unwrap_or(("", plain));
+        let variant = select(&self.variants, dir, name, &selectors);
+        match variant {
+            Some(variant) => {
+                if !self.chosen.contains_key(plain)
+                    && let Some(text) = self.sources.remove(plain)
+                {
+                    self.displaced.insert(plain.to_string(), text);
+                }
+                let text = self.variants[&variant].clone();
+                self.chosen.insert(plain.to_string(), variant);
+                self.put(plain, text);
+            }
+            None if self.chosen.remove(plain).is_some() => match self.displaced.remove(plain) {
+                Some(text) => self.put(plain, text),
+                None => self.forget(plain),
+            },
+            None => {}
+        }
     }
 
     /// Adds the JavaScript file at `path` (from the root, with its suffix).
@@ -173,6 +253,21 @@ impl<O: TypeOracle> Project<O> {
 
     /// Forgets the file `key`. What a module was said to have stays said.
     pub fn remove(&mut self, key: &str) {
+        if let Some(plain) = plain_of(key) {
+            self.variants.remove(key);
+            self.paths.remove(key);
+            self.settle(&plain);
+            return;
+        }
+        if self.chosen.contains_key(key) {
+            self.displaced.remove(key);
+            self.paths.remove(key);
+            return;
+        }
+        self.forget(key);
+    }
+
+    fn forget(&mut self, key: &str) {
         self.front.remove(key);
         self.sources.remove(key);
         self.paths.remove(key);
@@ -274,6 +369,7 @@ impl<O: TypeOracle> Project<O> {
             |name| std::env::var(name).ok(),
             |path| std::fs::read_to_string(path).ok(),
         ));
+        project.settle_all();
         Ok(project)
     }
 
@@ -281,6 +377,14 @@ impl<O: TypeOracle> Project<O> {
     /// compiled from now on.
     pub fn set_controls_style(&mut self, style: Option<ControlsStyle>) {
         self.front.set_controls_style(style);
+        self.settle_all();
+    }
+
+    fn settle_all(&mut self) {
+        let plain: BTreeSet<String> = self.variants.keys().filter_map(|k| plain_of(k)).collect();
+        for plain in plain {
+            self.settle(&plain);
+        }
     }
 
     /// Says the files of the directory `dir` on disk are added under the
@@ -323,7 +427,12 @@ impl<O: TypeOracle> Project<O> {
         self.add_place(root, prefix);
         let key = |path: &Path| key_under(root, prefix, path);
         // What earlier roots gave; those keys are not replaced.
-        let earlier: HashSet<String> = self.sources.keys().cloned().collect();
+        let earlier: HashSet<String> = self
+            .sources
+            .keys()
+            .chain(self.variants.keys())
+            .cloned()
+            .collect();
         let earlier_scripts: HashSet<String> = self.scripts.keys().cloned().collect();
         for (dir, names) in &dirs {
             for name in names.iter().filter(|name| name.ends_with(".qml")) {
@@ -441,6 +550,7 @@ impl<O: TypeOracle> Project<O> {
             |name| std::env::var(name).ok(),
             |path| std::fs::read_to_string(path).ok(),
         ));
+        project.settle_all();
         Ok(project)
     }
 
@@ -557,7 +667,7 @@ impl<O: TypeOracle> Project<O> {
             let Some(key) = key_under(base, prefix, &path) else {
                 continue;
             };
-            if self.sources.contains_key(&key) {
+            if self.sources.contains_key(&key) || self.variants.contains_key(&key) {
                 continue;
             }
             let Ok(text) = std::fs::read_to_string(&path) else {
@@ -567,7 +677,31 @@ impl<O: TypeOracle> Project<O> {
             self.paths.insert(key.clone(), path);
             added.push(key);
         }
+        // What is in a selector's directory is the place of a file here, so
+        // it comes with them; `added` names the plain file, which is what
+        // anything follows.
+        let mut selected: Vec<PathBuf> = std::fs::read_dir(&at)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter(|e| e.file_name().to_string_lossy().starts_with('+'))
+            .map(|e| e.path())
+            .collect();
+        selected.sort();
+        for sub in selected {
+            let Some(sub_key) = key_under(base, prefix, &sub) else {
+                continue;
+            };
+            let new = self.read_dir(root, mounts, &sub_key);
+            added.extend(new.iter().filter_map(|key| plain_of(key)));
+        }
         added
+    }
+
+    /// The files in `+selector` directories: their keys and their text.
+    pub fn variants(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.variants.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// The files, by key, in order.
@@ -578,6 +712,7 @@ impl<O: TypeOracle> Project<O> {
     /// The path the file `key` was read from: none for a file
     /// [`add`](Self::add)ed as text.
     pub fn path(&self, key: &str) -> Option<&Path> {
+        let key = self.chosen.get(key).map_or(key, String::as_str);
         self.paths.get(key).map(PathBuf::as_path)
     }
 

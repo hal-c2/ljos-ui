@@ -51,6 +51,28 @@ pub fn controls_style_on(
     Some(ControlsStyle { name, fallback })
 }
 
+/// The names a `+name` directory is chosen by, the first before the others:
+/// the running style, then the platform's names as `QFileSelector` documents
+/// them.
+// DECISION: the platform is that of the machine that compiles, as for
+// `platform_style`. Locale selectors are not among them: the language can
+// change while a program runs, and the file is chosen once, as it compiles.
+pub fn selectors(style: Option<&ControlsStyle>) -> Vec<String> {
+    let platform: &[&str] = match std::env::consts::OS {
+        "linux" => &["linux", "unix"],
+        "android" => &["android", "linux", "unix"],
+        "macos" => &["macos", "osx", "darwin", "unix"],
+        "ios" => &["ios", "darwin", "unix"],
+        "windows" => &["windows"],
+        _ => &[],
+    };
+    style
+        .map(|style| style.name.clone())
+        .into_iter()
+        .chain(platform.iter().map(|name| (*name).to_owned()))
+        .collect()
+}
+
 /// The value of `key` in the `[Controls]` group of an INI text.
 fn ini_value(text: &str, key: &str) -> Option<String> {
     let mut in_controls = false;
