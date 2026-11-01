@@ -74,6 +74,8 @@ if [ -d "$root/corpus/standins/$id" ]; then
     module="$(sed -n 's/^module[[:space:]]\+//p' "$qmldir" | head -1)"
     standins+=(--alias "$module=$(dirname "$qmldir")")
   done < <(find "$root/corpus/standins/$id" -name qmldir -not -path '*/downloaded/*')
+  # The C++ they stand in for reads the example's files; QML may only with this said.
+  export QML_XHR_ALLOW_FILE_READ=1
 fi
 
 # gallery:drive builds once before its examples (GALLERY_BUILT=1): a build here, after a source

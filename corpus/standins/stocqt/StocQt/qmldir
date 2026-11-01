@@ -1,0 +1,7 @@
+module StocQt
+singleton StockEngine 1.0 StockEngine.qml
+TimeFormatter 1.0 TimeFormatter.qml
+internal StockModel StockModel.qml
+internal StockListModel StockListModel.qml
+internal FavoritesModel FavoritesModel.qml
+internal FilterModel FilterModel.qml

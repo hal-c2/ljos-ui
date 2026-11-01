@@ -15,6 +15,9 @@ C++ of an app's own: a mock the app ships is found (`backend_mock/Backend`). Oth
 `corpus/standins/<id>/` holds QML for it and `gallery:run` aliases each module there; what the app's
 `main` does to its root is in `ljos_gallery_backends::launcher_calls`.
 
+Not every app in this answer is 3D: stocqt below is here because its `StockEngine` is the same case
+as robotarm's `Backend` and car-configurator's `AssetDownloader`.
+
 | App | Starts | Picture opened | What's wrong | Cause |
 |---|---|---|---|---|
 | dice | yes | yes: settings panel over an empty grey room, no table, no dice | nothing can be thrown; the table is not in view | `QtQuick3D.Physics` is not built, its types stand in as empty Items |
@@ -23,6 +26,13 @@ C++ of an app's own: a mock the app ships is found (`backend_mock/Backend`). Oth
 | robotarm | yes (mock found) | yes, on the GPU: controls and circles at the right joints, no arm | the arm is not drawn; `+Material/` files are not chosen | `Model.source` takes only built-in meshes, `.mesh` files are left out without a word; file selectors not built |
 | car-configurator | yes (stand-in) | yes: "Built with Qt", "Initializing..." | stays at the splash | not yet known; material and environment properties missing (`clearcoatAmount`, `indexOfRefraction`, `specularAmount`, `blendMode`, `receivesReflections`, `fog`, ...), `MorphTarget`, `QtQuick.Timeline`, `Particles3D`, `Effects` |
 | fx-material-showroom | yes | yes: "Downloading Assets..." for ever | never reaches its screen | stand-in for `StudioApplication` and assets are there; the launcher's `downloadComplete()` not yet confirmed; `.mesh` as for robotarm |
+
+| App | Native type | Route | State |
+|---|---|---|---|
+| robotarm | `Backend` | mock the app ships | works |
+| car-configurator | `AssetDownloader` | `corpus/standins/car-configurator` | loads; see the table |
+| fx-material-showroom | `StudioApplication` | `corpus/standins/fx-material-showroom`, `launcher_calls` | loads; see the table |
+| stocqt | `StockEngine`, `TimeFormatter` (QML singleton of module `StocQt`) | `corpus/standins/stocqt` | stand-in in; reads `data/*.json` by `XMLHttpRequest`, which needs `QML_XHR_ALLOW_FILE_READ`, not implemented yet |
 
 Not in the example list:
 
