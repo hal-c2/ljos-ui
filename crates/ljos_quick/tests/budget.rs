@@ -397,7 +397,7 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1208,
-            bytes: 151496,
+            bytes: 151656,
         }
     );
 }
@@ -450,7 +450,7 @@ fn ten_wrapped_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1230,
-            bytes: 203793,
+            bytes: 203953,
         }
     );
 }
@@ -500,7 +500,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 671,
-            bytes: 120136,
+            bytes: 120040,
         }
     );
 }
@@ -530,7 +530,7 @@ fn ten_plain_items_torn_down() {
             scopes: 20,
             nodes: 30,
             allocations: 53,
-            freed: 68734,
+            freed: 68894,
         }
     );
 }
@@ -570,13 +570,15 @@ fn bytes_a_thousand_instances_keep() {
     // before). An item without the accessible record nothing read keeps
     // 48 bytes less (20.9, 23.2 and 11.2 kB before). Anchors held from
     // completion, not from the first frame, leave the anchored rows 90
-    // bytes less each (20.9 kB before). The rest is mostly
+    // bytes less each (20.9 kB before). `Text.renderTypeQuality` is 16 bytes
+    // a text, and a render node's count of children below it held in 32
+    // bits gives them back. The rest is mostly
     // the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20783,
-            wrapped: 23147,
+            one_line: 20784,
+            wrapped: 23148,
             plain: 11110,
         }
     );
