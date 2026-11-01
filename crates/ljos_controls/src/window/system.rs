@@ -244,6 +244,13 @@ impl WindowSystem {
             .collect()
     }
 
+    /// The `Window` that QML sees for a plain `root`, once it asked for
+    /// it (`Window.window`): what it wants is for the host's window of the
+    /// root.
+    pub fn stand_in(&self, engine: &Engine, root: ObjectId) -> Option<ObjectId> {
+        super::stand_in_made(engine, root)
+    }
+
     /// What `win` wants to be. `None` when it is no window.
     pub fn spec(&self, engine: &Engine, win: ObjectId) -> Option<WindowSpec> {
         engine.untrack(|| self.spec_tracked(engine, win))

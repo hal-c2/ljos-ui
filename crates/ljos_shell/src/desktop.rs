@@ -306,7 +306,7 @@ fn note_state(slot: &mut Slot, engine: &Engine, sys: &WindowSystem) {
     let state = surface.shown_as(slot.told_state);
     if slot.told_state != Some(state) {
         slot.told_state = Some(state);
-        if let Some(win) = slot.window {
+        if let Some(win) = slot.window.or(slot.plain_root_window) {
             sys.shown_as(engine, win, window_spec::show(state));
         }
     }
@@ -581,10 +581,31 @@ impl<M: Send + 'static> Desktop<M> {
         }
     }
 
+    /// The `Window` QML sees for slot `i`, when that shows a plain root
+    /// and QML asked for it.
+    fn plain_root_window(&self, engine: &Engine, sys: &WindowSystem, i: usize) -> Option<ObjectId> {
+        if i != 0 || self.slots[i].window.is_some() {
+            return None;
+        }
+        sys.stand_in(engine, self.app.view().scene().root()?)
+    }
+
     /// What window `i` is to be now; `None` when its QML window is gone.
     fn spec_of(&self, i: usize, engine: &Engine, sys: &WindowSystem) -> Option<WindowSpec> {
         let Some(win) = self.slots[i].window else {
-            return Some(self.root_spec());
+            let mut spec = self.root_spec();
+            // What the application asked of `Window.window`.
+            if let Some(asked) = self
+                .plain_root_window(engine, sys, i)
+                .and_then(|w| sys.spec(engine, w))
+            {
+                if !asked.title.is_empty() {
+                    spec.title = asked.title;
+                }
+                spec.show = asked.show;
+                spec.visible &= asked.visible;
+            }
+            return Some(spec);
         };
         let mut spec = sys.spec(engine, win)?;
         if i == 0 {
@@ -688,6 +709,7 @@ impl<M: Send + 'static> Desktop<M> {
             }
         }
 
+        self.slots[0].plain_root_window = self.plain_root_window(engine, sys, 0);
         for i in 0..self.slots.len() {
             if let Some(spec) = self.spec_of(i, engine, sys) {
                 self.apply(host, i, spec, engine, sys);
@@ -1802,8 +1824,15 @@ impl<M: Send + 'static> Desktop<M> {
 
     /// What the windows asked for that is no property.
     fn serve_requests(&mut self, host: &mut Control<'_>, sys: &WindowSystem) {
+        let engine = Rc::clone(self.app.engine());
+        let plain = self.plain_root_window(&engine, sys, 0);
         for (win, request) in sys.take_requests() {
-            let Some(slot) = self.slots.iter_mut().find(|s| s.window == Some(win)) else {
+            let slot = if plain == Some(win) {
+                Some(&mut self.slots[0])
+            } else {
+                self.slots.iter_mut().find(|s| s.window == Some(win))
+            };
+            let Some(slot) = slot else {
                 continue;
             };
             let Some(surface) = slot.surface.as_ref() else {
@@ -1852,7 +1881,12 @@ impl<M: Send + 'static> Desktop<M> {
             return false;
         }
         self.closes_seen = closed;
-        let root_shown = self.slots[0].window.is_none() && !self.root_closed;
+        let root_shown = self.slots[0].window.is_none()
+            && !self.root_closed
+            && self
+                .plain_root_window(engine, sys, 0)
+                .and_then(|w| sys.spec(engine, w))
+                .is_none_or(|s| s.visible);
         let any_shown = sys
             .windows(engine)
             .iter()

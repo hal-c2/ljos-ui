@@ -16,6 +16,8 @@ use crate::surface::{Painter, Surface};
 /// context, the view, the painter with its pictures) and what it has
 /// while it is open (the surface).
 pub(super) struct Slot {
+    /// The `Window` QML sees for a plain root shown here, once it asked.
+    pub(super) plain_root_window: Option<ObjectId>,
     pub(super) key: u64,
     /// The QML `Window` shown. `None` for a root that is a plain item,
     /// which the shell gives a window of its own.
@@ -142,6 +144,7 @@ impl Slot {
             told_size: None,
             told_pos: None,
             told_state: None,
+            plain_root_window: None,
             told_icons: 0,
             blocked: false,
             broken: false,

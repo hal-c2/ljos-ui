@@ -643,6 +643,132 @@ pub(crate) fn close(engine: &Engine, win: ObjectId) -> bool {
     true
 }
 
+/// `visible` and `visibility` say the same thing two ways.
+fn watch_showing(e: &Engine, win: ObjectId, st: &Rc<WinState>) -> Result<(), EngineError> {
+    {
+        let st = st.clone();
+        e.watch(win, Window::VISIBLE.index, move |e, v| {
+            if !st.is_own() {
+                present(e, win, v.to_boolean().then(|| st.wanted.get()));
+            }
+        })?;
+    }
+    let st = st.clone();
+    e.watch(win, Window::VISIBILITY.index, move |e, v| {
+        if !st.is_own() {
+            present(
+                e,
+                win,
+                match v.to_number() as i32 {
+                    HIDDEN => None,
+                    AUTOMATIC => Some(WINDOWED),
+                    v => Some(v.clamp(WINDOWED, FULL_SCREEN)),
+                },
+            );
+        }
+    })?;
+    Ok(())
+}
+
+/// The windows made for roots that are no `Window`, by root.
+#[derive(Default)]
+struct StandIns {
+    made: std::cell::RefCell<Vec<(ObjectId, ObjectId)>>,
+    /// Counts them, for those who said what a root's window would.
+    count: Cell<Option<ljos_engine::NodeId>>,
+}
+
+fn stand_ins_count(e: &Engine) -> Option<ljos_engine::NodeId> {
+    let made = e.extension::<StandIns>();
+    if made.count.get().is_none() {
+        let g = e.graph();
+        made.count.set(g.property(g.root(), Value::Int(0)).ok());
+    }
+    made.count.get()
+}
+
+fn read_stand_ins_made(e: &Engine) {
+    if let Some(n) = stand_ins_count(e) {
+        e.graph().get(n);
+    }
+}
+
+/// The `Window` made for the plain `root`, if `Window.window` was read.
+pub(crate) fn stand_in_made(engine: &Engine, root: ObjectId) -> Option<ObjectId> {
+    let made = engine.extension::<StandIns>();
+    let mut made = made.made.borrow_mut();
+    made.retain(|(r, w)| engine.is_alive(*r) && engine.is_alive(*w));
+    made.iter().find(|(r, _)| *r == root).map(|(_, w)| *w)
+}
+
+/// What `Window.window` is for a tree whose top is no `Window`: a real one
+/// to QML, whose host is the shell's window for the root. It is in no tree
+/// and no list of windows, so nothing shows it and no host opens a second
+/// window for it. Its contents are the root.
+fn stand_in(engine: &Engine, root: ObjectId) -> Option<ObjectId> {
+    if let Some(found) = stand_in_made(engine, root) {
+        return Some(found);
+    }
+    let e = engine;
+    let win = e
+        .create_native_incomplete(Window::default(), Some(root))
+        .ok()?;
+    let count = {
+        let made = e.extension::<StandIns>();
+        let mut made = made.made.borrow_mut();
+        made.push((root, win));
+        made.len()
+    };
+    let st = state_of(e, win)?;
+    st.wanted.set(WINDOWED);
+    st.surfaced.set(true);
+    st.root.set(true);
+    st.own(|| {
+        put(e, win, Window::VISIBLE.index, Value::Bool(true));
+        put(e, win, Window::VISIBILITY.index, Value::Int(WINDOWED));
+    });
+    put(e, win, Window::CONTENT_ITEM.index, Value::Object(root));
+    write_screen(e, win, WindowSystem::of(e).screen(e, 0));
+    let bound = watch_showing(e, win, &st)
+        .and_then(|()| {
+            // The window is as large as the root until asked to be
+            // otherwise, and again when the root changes: an effect, as
+            // going full screen writes the size and a binding would end.
+            e.effect_in(win, move |e| {
+                let (w, h) = (
+                    num(e, root, Item::WIDTH.index),
+                    num(e, root, Item::HEIGHT.index),
+                );
+                e.untrack(|| {
+                    put(e, win, Item::WIDTH.index, Value::Real(w));
+                    put(e, win, Item::HEIGHT.index, Value::Real(h));
+                });
+            })
+        })
+        .and_then(|_| {
+            let att = e.attached_object(root, &MetaRef::Static(Window::static_meta()))?;
+            e.bind_initial(win, Window::ACTIVE.index, move |e| {
+                e.read(att, WindowAttached::ACTIVE.index)
+            })?;
+            e.bind_initial(win, Window::ACTIVE_FOCUS_ITEM.index, move |e| {
+                e.read(att, WindowAttached::ACTIVE_FOCUS_ITEM.index)
+            })
+        })
+        .and_then(|()| {
+            e.effect_in(win, move |e| {
+                let sys = WindowSystem::of(e);
+                let _ = sys.spec_tracked(e, win);
+                sys.notify();
+            })
+            .map(|_| ())
+        });
+    check(e, "Window", bound);
+    if let Some(n) = stand_ins_count(e) {
+        e.graph().set(n, Value::Int(count as i32));
+    }
+    Some(win)
+}
+
 fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
     let e = engine;
     let Some(st) = state_of(e, win) else {
@@ -688,31 +814,7 @@ fn init_window(engine: &Engine, win: ObjectId) -> Result<(), EngineError> {
         e.call_at(e.now(), move |e| adopt_loose(e, win, &st));
     }
 
-    // `visible` and `visibility` say the same thing two ways.
-    {
-        let st = st.clone();
-        e.watch(win, Window::VISIBLE.index, move |e, v| {
-            if !st.is_own() {
-                present(e, win, v.to_boolean().then(|| st.wanted.get()));
-            }
-        })?;
-    }
-    {
-        let st = st.clone();
-        e.watch(win, Window::VISIBILITY.index, move |e, v| {
-            if !st.is_own() {
-                present(
-                    e,
-                    win,
-                    match v.to_number() as i32 {
-                        HIDDEN => None,
-                        AUTOMATIC => Some(WINDOWED),
-                        v => Some(v.clamp(WINDOWED, FULL_SCREEN)),
-                    },
-                );
-            }
-        })?;
-    }
+    watch_showing(e, win, &st)?;
     let (visible, visibility) = e.untrack(|| {
         (
             flag(e, win, Window::VISIBLE.index),
@@ -914,8 +1016,7 @@ fn window_for(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
 }
 
 /// Binds what `Window.` tells an item of its window beyond focus, which
-/// `ljos_quick` binds. A window that is no `Window` (the top of what a
-/// scene shows) reads as shown while it is.
+/// `ljos_quick` binds.
 ///
 /// The content item is the item every other item of the window hangs
 /// from, which the overlay names as its parent: the window itself. For an
@@ -924,23 +1025,43 @@ fn window_for(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
 fn bind_attached(engine: &Engine, item: ObjectId, att: ObjectId) -> Result<(), EngineError> {
     let e = engine;
     e.bind_initial(att, WindowAttached::WINDOW.index, move |e| {
-        window_for(e, item).map_or(Value::Null, Value::Object)
+        // A top that is no `Window` is what the items hang from, but what
+        // shows it is the window made for it, when something asks.
+        window_for(e, item).map_or(Value::Null, |w| {
+            let shown = if is_a::<Window>(e, w) {
+                w
+            } else {
+                e.untrack(|| stand_in(e, w)).unwrap_or(w)
+            };
+            Value::Object(shown)
+        })
     })?;
     e.bind_initial(att, WindowAttached::CONTENT_ITEM.index, move |e| {
         window_for(e, item).map_or(Value::Null, Value::Object)
     })?;
+    // These say the same of a plain root as its window would, so that an
+    // item asking only them makes none. Once there is one, it says.
+    let told = move |e: &Engine| {
+        let w = window_for(e, item)?;
+        Some(if is_a::<Window>(e, w) {
+            (w, true)
+        } else {
+            read_stand_ins_made(e);
+            stand_in_made(e, w).map_or((w, false), |s| (s, true))
+        })
+    };
     for (prop, size) in [
         (WindowAttached::WIDTH.index, Item::WIDTH.index),
         (WindowAttached::HEIGHT.index, Item::HEIGHT.index),
     ] {
         e.bind_initial(att, prop, move |e| {
-            Value::Int(window_for(e, item).map_or(0, |w| num(e, w, size) as i32))
+            Value::Int(told(e).map_or(0, |(w, _)| num(e, w, size) as i32))
         })?;
     }
     e.bind_initial(att, WindowAttached::VISIBILITY.index, move |e| {
-        Value::Int(match window_for(e, item) {
-            Some(w) if is_a::<Window>(e, w) => num(e, w, Window::VISIBILITY.index) as i32,
-            Some(_) => WINDOWED,
+        Value::Int(match told(e) {
+            Some((w, true)) => num(e, w, Window::VISIBILITY.index) as i32,
+            Some((_, false)) => WINDOWED,
             None => HIDDEN,
         })
     })?;
