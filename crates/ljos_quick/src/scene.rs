@@ -713,13 +713,13 @@ pub(crate) fn reshaped(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
 pub(crate) fn visible_changed(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
     let _hold = cx.engine.hold_change_observers(cx.this, p);
     reshaped(cx, p);
-    inherited(cx.engine, cx.this, true, false);
+    told_inherited(cx.engine, cx.this, p);
 }
 
 /// The change hook of an item's `enabled`: passed on at once, as
 /// [`visible_changed`] is.
-pub(crate) fn enabled_changed(cx: &ljos_engine::Cx<'_>, _: PropIndex) {
-    inherited(cx.engine, cx.this, true, false);
+pub(crate) fn enabled_changed(cx: &ljos_engine::Cx<'_>, p: PropIndex) {
+    told_inherited(cx.engine, cx.this, p);
 }
 
 /// A completed item takes what its parent passes on before its QML
@@ -742,6 +742,11 @@ pub(crate) fn completed(e: &Engine, obj: ObjectId) {
     }
 }
 
+/// [`inherited`] from `p`'s change hook.
+fn told_inherited(e: &Engine, obj: ObjectId, p: PropIndex) {
+    inherited_as(e, obj, true, false, Some(p));
+}
+
 /// `obj` was given another visual parent: it takes what the new one
 /// passes on, before whoever moved it reads it.
 pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
@@ -755,13 +760,22 @@ pub(crate) fn reparented(e: &Engine, obj: ObjectId) {
 
 /// In each scene that shows `obj`, it takes again what its parent passes
 /// on: its own value may have changed under a hidden parent, or the parent
-/// may be another. With `down`, so do its children. A child whose value
-/// changes tells its own children through its hook, so this goes no
-/// deeper, but for a `MouseArea`, whose `enabled` its children skip.
+/// may be another. With `down`, so do its children, and what is under them
+/// as far as a value changes ([`pass_down`]).
 fn inherited(e: &Engine, obj: ObjectId, down: bool, prepare: bool) {
+    inherited_as(e, obj, down, prepare, None);
+}
+
+/// [`inherited`]; `told` is the property whose change hook asks. A change
+/// [`pass_down`] made it passes on itself, so that hook only asks for the
+/// item's stack to be looked at again, as any hook does of a busy item.
+fn inherited_as(e: &Engine, obj: ObjectId, down: bool, prepare: bool, told: Option<PropIndex>) {
     let _phase = e.enter_phase(ljos_engine::Phase::Inherit);
     let scenes = e.extension::<Scenes>();
     let run = |shared: &RefCell<Shared>, pending: bool| {
+        if told.is_some_and(|p| took_passing_on(obj, p, shared)) {
+            return;
+        }
         inherit(e, obj, shared);
         if down {
             pass_down(e, obj, shared, prepare, pending);
@@ -817,20 +831,206 @@ fn prepare_inherited(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, pendin
     true
 }
 
-fn pass_down(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, prepare: bool, pending: bool) {
-    for c in e.visual_children(obj) {
-        let present = if prepare {
-            prepare_inherited(e, c, shared, pending)
+/// Whether [`pass_down`] is passing on the change of `p` of `obj`.
+fn took_passing_on(obj: ObjectId, p: PropIndex, shared: &RefCell<Shared>) -> bool {
+    let mut s = shared.borrow_mut();
+    let Some(i) = s.marks.get_mut(obj).map(|m| &mut m.inherit) else {
+        return false;
+    };
+    let passing = if p == Item::VISIBLE.index {
+        &mut i.passing_visible
+    } else {
+        &mut i.passing_enabled
+    };
+    if !std::mem::take(passing) {
+        return false;
+    }
+    i.again = true;
+    true
+}
+
+/// Where [`pass_down`] is with one item.
+#[derive(Clone, Copy, PartialEq)]
+enum PassStep {
+    /// What it was called for: its change is its caller's to tell.
+    Top,
+    Visible,
+    Enabled,
+    /// Its children, whether or not it changed: new ones are being
+    /// prepared, or it is a `MouseArea`, whose `enabled` they skip.
+    Below,
+    Settle,
+}
+
+/// One level of [`pass_down`], in place of a call: going down through each
+/// change hook, inside the flush of the level above, left a binding or a
+/// handler far down no stack to run on.
+struct Pass<'e> {
+    obj: ObjectId,
+    step: PassStep,
+    /// [`inherit_begin`] gave it to this pass; if not, whoever is busy with
+    /// it goes round again.
+    begun: Option<InheritBegun>,
+    /// New items below it are being prepared.
+    prepare: bool,
+    children: Vec<ObjectId>,
+    next: usize,
+    /// Whether those children prepare what is new below them.
+    children_prepare: bool,
+    /// Its children are being given what it changed to. What its change
+    /// reached waits on the queue below until they have been told theirs,
+    /// as Qt tells the deepest first.
+    below: Option<ljos_reactive::LevelGuard<'e, Value>>,
+    /// What it changed, while its hook has not asked for it.
+    passing: Option<PropIndex>,
+    last: PropIndex,
+}
+
+impl<'e> Pass<'e> {
+    fn new(obj: ObjectId, step: PassStep, begun: Option<InheritBegun>, prepare: bool) -> Self {
+        Self {
+            obj,
+            step,
+            begun,
+            prepare,
+            children: Vec::new(),
+            next: 0,
+            children_prepare: false,
+            below: None,
+            passing: None,
+            last: Item::VISIBLE.index,
+        }
+    }
+
+    fn of(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, prepare: bool) -> Self {
+        let begun = inherit_begin(e, obj, shared);
+        let step = if begun.is_some() {
+            PassStep::Visible
         } else {
-            shared.borrow().marks.contains(c)
+            PassStep::Below
         };
-        if !present {
+        Self::new(obj, step, begun, prepare)
+    }
+
+    /// Whether it has children to go on to.
+    fn go_below(&mut self, e: &'e Engine, prepare: bool, since: u8) -> bool {
+        self.children = e.visual_children(self.obj);
+        self.next = 0;
+        self.children_prepare = prepare;
+        if self.children.is_empty() {
+            return false;
+        }
+        self.below = Some(e.own_queue(since));
+        true
+    }
+
+    /// Goes on with the item, whose children have been told what it last
+    /// passed on. False when what it did has to be told first.
+    fn step(&mut self, e: &'e Engine, shared: &RefCell<Shared>) -> bool {
+        match self.step {
+            PassStep::Visible | PassStep::Enabled => {
+                let (p, next) = if self.step == PassStep::Visible {
+                    (Item::VISIBLE.index, PassStep::Enabled)
+                } else {
+                    (Item::ENABLED.index, PassStep::Below)
+                };
+                self.step = next;
+                let mouse_area = self.begun.is_some_and(|b| b.mouse_area);
+                let before = e.read(self.obj, p).to_boolean();
+                let since = e.changes_so_far();
+                inherit_prop(e, self.obj, p, shared, mouse_area, &mut self.last);
+                if e.read(self.obj, p).to_boolean() == before {
+                    return true;
+                }
+                self.passing = Some(p);
+                set_passing(self.obj, p, shared, true);
+                self.go_below(e, false, since)
+            }
+            PassStep::Below => {
+                self.step = PassStep::Settle;
+                let mouse_area = shared
+                    .borrow()
+                    .marks
+                    .get(self.obj)
+                    .is_some_and(|m| m.inherit.mouse_area);
+                if self.prepare || mouse_area {
+                    self.go_below(e, self.prepare, e.changes_so_far());
+                }
+                true
+            }
+            PassStep::Settle | PassStep::Top => false,
+        }
+    }
+}
+
+fn set_passing(obj: ObjectId, p: PropIndex, shared: &RefCell<Shared>, on: bool) {
+    if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
+        if p == Item::VISIBLE.index {
+            m.inherit.passing_visible = on;
+        } else {
+            m.inherit.passing_enabled = on;
+        }
+    }
+}
+
+/// The children of `obj`, and theirs as far as anything changes, take what
+/// they inherit. An item's value changes before its children's and what it
+/// reached runs after theirs, one subtree after the other, as on Qt: in one
+/// batch from an item down to the first that has nothing further down, so
+/// nothing is told on the way, and each with a queue of its own to wait on.
+/// What runs does so from here, however deep the item it is about.
+fn pass_down(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>, prepare: bool, pending: bool) {
+    let children = e.visual_children(obj);
+    if children.is_empty() {
+        return;
+    }
+    let mut top = Pass::new(obj, PassStep::Top, None, prepare);
+    top.children = children;
+    top.children_prepare = prepare;
+    // What the hook is told of is the last change counted; one that prepares
+    // new items comes of none.
+    let now = e.changes_so_far();
+    top.below = Some(e.own_queue(if prepare { now } else { now.wrapping_sub(1) }));
+    let mut passes = vec![top];
+    while !passes.is_empty() {
+        e.batch(|| {
+            while let Some(at) = passes.last_mut() {
+                if let Some(&c) = at.children.get(at.next) {
+                    at.next += 1;
+                    let prepare = at.children_prepare;
+                    let present = if prepare {
+                        prepare_inherited(e, c, shared, pending)
+                    } else {
+                        shared.borrow().marks.contains(c)
+                    };
+                    if present {
+                        passes.push(Pass::of(e, c, shared, prepare));
+                    }
+                } else if at.below.is_some() || !at.step(e, shared) {
+                    return;
+                }
+            }
+        });
+        let at = passes.last_mut().expect("the batch leaves one to finish");
+        at.below = None;
+        at.children = Vec::new();
+        at.next = 0;
+        if at.step == PassStep::Top {
+            // What the top's change reached is run by the flush its hook
+            // is told in, or waits for the batch it came in.
+            passes.pop();
             continue;
         }
-        let st = shared.borrow().marks.get(c).map(|m| m.inherit).unwrap();
-        inherit(e, c, shared);
-        if prepare || st.mouse_area {
-            pass_down(e, c, shared, prepare, pending);
+        // Tells what the item changed, now that all below it know.
+        e.batch(|| ());
+        if let Some(p) = at.passing.take() {
+            set_passing(at.obj, p, shared, false);
+        }
+        if at.step == PassStep::Settle {
+            if let Some(begun) = at.begun {
+                inherit_settle(e, at.obj, shared, begun, 1, at.last);
+            }
+            passes.pop();
         }
     }
 }
@@ -914,6 +1114,10 @@ struct Inherit {
     /// graph, and what ran in it (an ancestor shown) may have changed
     /// what the item inherits.
     again: bool,
+    /// [`pass_down`] made this change of `visible` and passes it on.
+    passing_visible: bool,
+    /// [`pass_down`] made this change of `enabled` and passes it on.
+    passing_enabled: bool,
 }
 
 impl Inherit {
@@ -4084,45 +4288,93 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
 /// at adoption and by [`inherited`], not as an effect: an effect an item
 /// cost a node and a run for what changes seldom.
 fn inherit(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) {
-    if !e.is_alive(obj) {
+    let Some(begun) = inherit_begin(e, obj, shared) else {
         return;
+    };
+    let mut last = Item::VISIBLE.index;
+    inherit_round(e, obj, shared, begun, &mut last);
+    inherit_settle(e, obj, shared, begun, 1, last);
+}
+
+/// What [`inherit`] found of the item as it took it up.
+#[derive(Clone, Copy)]
+struct InheritBegun {
+    covered: bool,
+    mouse_area: bool,
+}
+
+/// Takes the item up for [`inherit`], unless it is busy. Each change to the
+/// stack tells the item's own hook, which asks for this again, and flushes
+/// the graph, where an ancestor's hook may ask too. Asked while busy, it
+/// goes round once more when done, with the stack as it is then.
+fn inherit_begin(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) -> Option<InheritBegun> {
+    if !e.is_alive(obj) {
+        return None;
     }
-    // Each change to the stack tells the item's own hook, which asks for
-    // this again, and flushes the graph, where an ancestor's hook may ask
-    // too. Asked while busy, it goes round once more when done, with the
-    // stack as it is then.
-    let Some((covered, mouse_area)) = shared.borrow_mut().marks.get_mut(obj).and_then(|m| {
+    shared.borrow_mut().marks.get_mut(obj).and_then(|m| {
         let i = &mut m.inherit;
         if std::mem::replace(&mut i.busy, true) {
             i.again = true;
             return None;
         }
-        Some((i.visible.is_some(), i.mouse_area))
-    }) else {
-        return;
+        Some(InheritBegun {
+            covered: i.visible.is_some(),
+            mouse_area: i.mouse_area,
+        })
+    })
+}
+
+fn inherit_round(
+    e: &Engine,
+    obj: ObjectId,
+    shared: &RefCell<Shared>,
+    begun: InheritBegun,
+    last: &mut PropIndex,
+) {
+    for p in [Item::VISIBLE.index, Item::ENABLED.index] {
+        inherit_prop(e, obj, p, shared, begun.mouse_area, last);
+    }
+}
+
+fn inherit_prop(
+    e: &Engine,
+    obj: ObjectId,
+    p: PropIndex,
+    shared: &RefCell<Shared>,
+    mouse_area: bool,
+    last: &mut PropIndex,
+) {
+    let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
+    let parent_on = if p == Item::ENABLED.index {
+        // `MouseArea.enabled` is the area's own switch: it neither
+        // follows a disabled ancestor nor disables what is inside.
+        mouse_area || parent.is_none_or(|q| item_enabled(e, q))
+    } else {
+        parent.is_none_or(|q| e.read(q, p).to_boolean())
     };
-    let (mut rounds, mut bound, mut last) = (0, MAX_INHERIT_ROUNDS, Item::VISIBLE.index);
+    match inherit_one(e, obj, p, shared, parent_on) {
+        Ok(true) => *last = p,
+        Ok(false) => {}
+        Err(err) => e.log(
+            LogLevel::Warning,
+            SCENE_CATEGORY,
+            format!("inherit failed: {err}"),
+        ),
+    }
+}
+
+/// Goes round for as long as the item is asked again, its first `rounds`
+/// done, and leaves it no longer busy.
+fn inherit_settle(
+    e: &Engine,
+    obj: ObjectId,
+    shared: &RefCell<Shared>,
+    begun: InheritBegun,
+    mut rounds: usize,
+    mut last: PropIndex,
+) {
+    let mut bound = MAX_INHERIT_ROUNDS;
     let uncovered = loop {
-        let parent = e.visual_parent(obj).filter(|p| shows(e, *p));
-        for p in [Item::VISIBLE.index, Item::ENABLED.index] {
-            let parent_on = if p == Item::ENABLED.index {
-                // `MouseArea.enabled` is the area's own switch: it neither
-                // follows a disabled ancestor nor disables what is inside.
-                mouse_area || parent.is_none_or(|q| item_enabled(e, q))
-            } else {
-                parent.is_none_or(|q| e.read(q, p).to_boolean())
-            };
-            match inherit_one(e, obj, p, shared, parent_on) {
-                Ok(true) => last = p,
-                Ok(false) => {}
-                Err(err) => e.log(
-                    LogLevel::Warning,
-                    SCENE_CATEGORY,
-                    format!("inherit failed: {err}"),
-                ),
-            }
-        }
-        rounds += 1;
         if rounds == MAX_INHERIT_ROUNDS {
             // Only a pass that has gone this far pays for the walk up.
             bound += 4 * depth(e, obj);
@@ -4141,12 +4393,15 @@ fn inherit(e: &Engine, obj: ObjectId, shared: &RefCell<Shared>) {
             }
             break uncovered;
         }
+        drop(s);
+        inherit_round(e, obj, shared, begun, &mut last);
+        rounds += 1;
     };
     // A covered item is kept shown in the tree (see `apply_geometry`).
     // Uncovered, its own `visible` may be the false it read under the
     // cover, which is no change, so the geometry is not read again by
     // itself.
-    if covered && uncovered {
+    if begun.covered && uncovered {
         mark(shared, |s| s.set(obj, Dirty::GEOM, |_| ()));
     }
 }

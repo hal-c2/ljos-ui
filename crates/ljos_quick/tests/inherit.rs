@@ -1,7 +1,7 @@
 //! What an item inherits (`visible`, `enabled`) is passed down by its
 //! parent's change hooks and by a reparent; the stack each item keeps for
 //! it stays whole however the tree is made and moved.
-//! `features/items/inherited-at-once.feature` holds the behaviour checked
+//! `features/items/inherited-*.feature` hold the behaviour checked
 //! against Qt.
 
 mod common;

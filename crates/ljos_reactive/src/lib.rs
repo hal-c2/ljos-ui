@@ -122,7 +122,7 @@ mod graph;
 mod slots;
 mod types;
 
-pub use graph::{Changed, Graph, MAX_JOURNAL, ObserverHold, ScopeHandle};
+pub use graph::{Changed, Graph, LevelGuard, MAX_JOURNAL, ObserverHold, ScopeHandle};
 pub use types::{
     BindingFn, Census, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
     OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,

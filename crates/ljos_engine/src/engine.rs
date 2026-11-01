@@ -2509,6 +2509,18 @@ impl Engine {
         self.inner.graph.hold_observers(n)
     }
 
+    /// What changes while the guard lives is run ahead of what is queued
+    /// already, and the changes since `since` wait with that
+    /// ([`ljos_reactive::Graph::own_queue`]).
+    pub fn own_queue(&self, since: u8) -> ljos_reactive::LevelGuard<'_, Value> {
+        self.inner.graph.own_queue(since)
+    }
+
+    /// How far the changes have counted, for [`Engine::own_queue`].
+    pub fn changes_so_far(&self) -> u8 {
+        self.inner.graph.changes_so_far()
+    }
+
     /// The node `prop` of `obj` has, without making one. `prop` is
     /// already redirected.
     #[inline]

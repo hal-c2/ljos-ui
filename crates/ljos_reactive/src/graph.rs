@@ -425,6 +425,8 @@ struct Inner<V> {
     /// While a [`Graph::watch_ahead`] handler runs: the change it is told
     /// of. A binding that change reached reads as it was.
     ahead: Option<u8>,
+    /// The changes waiting for a [`LevelGuard`] to be told.
+    waiting_changes: Vec<u8>,
     /// What was read so, to be brought up to date when the flush has run
     /// what it had to, as Qt's bindings are once their change has spread:
     /// the next change reads them as they were then. Kept for the next.
@@ -566,12 +568,17 @@ impl<V: Clone + 'static> Graph<V> {
 
 /// Closes the flush level an effect's run opened, on every exit. What is
 /// still queued on it waits on the level below.
-struct LevelGuard<'g, V: Clone + 'static>(&'g Graph<V>);
+/// What is queued while this lives waits for no one and is run by the
+/// flushes under it; what was queued before waits until it drops. Anything
+/// left when it drops, in a batch still open, goes to the level below.
+#[derive(Debug)]
+pub struct LevelGuard<'g, V: Clone + 'static>(&'g Graph<V>, usize);
 
 impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
     fn drop(&mut self) {
         let mut g = self.0.inner.borrow_mut();
         let i = &mut *g;
+        i.waiting_changes.truncate(self.1);
         let Some(left) = i.queues.pop() else {
             return;
         };
@@ -766,6 +773,7 @@ impl<V: Clone + 'static> Graph<V> {
                 marking: 0,
                 ahead: None,
                 read_ahead: Vec::new(),
+                waiting_changes: Vec::new(),
                 flush_epoch: 0,
                 tick: 0,
                 seq: 0,
@@ -1618,14 +1626,15 @@ impl<V: Clone + 'static> Graph<V> {
     }
 
     /// In a [`Graph::watch_ahead`] handler, a binding the change it is
-    /// told of reached gives the value it had, and is brought up to date
-    /// at the end of the flush.
+    /// told of, or one still waiting to be told, reached gives the value it
+    /// had, and is brought up to date at the end of the flush.
     fn read_as_it_was(&self, n: NodeId) -> Option<V> {
         let mut g = self.inner.borrow_mut();
         let change = g.ahead?;
         let node = g.nodes.get(n)?;
         let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
-        if !bound || node.marked_by != change || node.state == NodeState::Computing {
+        let as_it_was = node.marked_by == change || g.waiting_changes.contains(&node.marked_by);
+        if !bound || !as_it_was || node.state == NodeState::Computing {
             return None;
         }
         g.read_ahead.push(n);
@@ -2927,7 +2936,7 @@ impl<V: Clone + 'static> Graph<V> {
                 let mut i = self.inner.borrow_mut();
                 (i.flush_depth >= SHARED_FLUSH_DEPTH).then(|| {
                     i.queues.push(Queue::new());
-                    LevelGuard(self)
+                    LevelGuard(self, i.waiting_changes.len())
                 })
             };
             self.update(n);
@@ -2982,6 +2991,29 @@ impl<V: Clone + 'static> Graph<V> {
             };
             handler(n);
         }
+    }
+
+    /// How far the changes have counted, for [`Graph::own_queue`]. Wraps.
+    pub fn changes_so_far(&self) -> u8 {
+        self.inner.borrow().change
+    }
+
+    /// A queue of its own for what changes from here on ([`LevelGuard`]):
+    /// who changes many properties one after the other, and wants what each
+    /// reaches run after the ones below it, opens one for each. The changes
+    /// made since `since` wait with what they queued: until the guard drops,
+    /// a handler reads a binding they reached as it was, as Qt's bindings
+    /// are until their change is told.
+    pub fn own_queue(&self, since: u8) -> LevelGuard<'_, V> {
+        let mut i = self.inner.borrow_mut();
+        i.queues.push(Queue::new());
+        let open = i.waiting_changes.len();
+        let mut change = since;
+        while change != i.change {
+            change = change.wrapping_add(1);
+            i.waiting_changes.push(change);
+        }
+        LevelGuard(self, open)
     }
 
     /// Holds back `n`'s queued direct observers until the guard drops.
