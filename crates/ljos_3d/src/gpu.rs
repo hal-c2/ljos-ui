@@ -950,6 +950,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
                 s.transmission_factor.clamp(0.0, 1.0),
             ];
             u.tint[3] = s.height_amount;
+            u.tint[0] = maps.clearcoat_normal_strength;
             u.flags[1] = u32::from(s.vertex_colors);
             u.flags[2] = s.height_samples[0].min(0xffff) | s.height_samples[1].min(0xffff) << 16;
             u.flags[3] = maps.transmission_channel.index()

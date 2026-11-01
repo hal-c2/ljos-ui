@@ -331,6 +331,9 @@ pub struct PrincipledMaps {
     pub clearcoat_channel: Channel,
     pub clearcoat_roughness: Option<Texture>,
     pub clearcoat_roughness_channel: Channel,
+    /// Bends the clearcoat alone, as much as its strength says.
+    pub clearcoat_normal: Option<Texture>,
+    pub clearcoat_normal_strength: f32,
     pub surface: Surface,
 }
 
@@ -424,6 +427,8 @@ impl Default for PrincipledMaps {
             clearcoat_channel: Channel::R,
             clearcoat_roughness: None,
             clearcoat_roughness_channel: Channel::G,
+            clearcoat_normal: None,
+            clearcoat_normal_strength: 1.0,
             surface: Surface::default(),
         }
     }

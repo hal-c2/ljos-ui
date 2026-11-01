@@ -289,6 +289,7 @@ fn numbers(p: Prop3d) -> &'static [Prop<f64>] {
         P::FresnelScale => &[PrincipledMaterial::FRESNEL_SCALE],
         P::FresnelBias => &[PrincipledMaterial::FRESNEL_BIAS],
         P::ClearcoatAmount => &[PrincipledMaterial::CLEARCOAT_AMOUNT],
+        P::ClearcoatNormalStrength => &[PrincipledMaterial::CLEARCOAT_NORMAL_STRENGTH],
         P::ClearcoatRoughnessAmount => &[PrincipledMaterial::CLEARCOAT_ROUGHNESS_AMOUNT],
         P::ClearcoatFresnelPower => &[PrincipledMaterial::CLEARCOAT_FRESNEL_POWER],
         P::ClearcoatFresnelScale => &[PrincipledMaterial::CLEARCOAT_FRESNEL_SCALE],
@@ -554,6 +555,7 @@ fn objects(p: Prop3d) -> &'static [Prop<Option<ObjectId>>] {
         ],
         P::ClearcoatMap => &[PrincipledMaterial::CLEARCOAT_MAP],
         P::ClearcoatRoughnessMap => &[PrincipledMaterial::CLEARCOAT_ROUGHNESS_MAP],
+        P::ClearcoatNormalMap => &[PrincipledMaterial::CLEARCOAT_NORMAL_MAP],
         P::LightProbe => &[
             SceneEnvironment::LIGHT_PROBE,
             PrincipledMaterial::LIGHT_PROBE,

@@ -274,6 +274,8 @@ props! {
     ClearcoatChannel = "clearcoatChannel",
     ClearcoatRoughnessMap = "clearcoatRoughnessMap",
     ClearcoatRoughnessChannel = "clearcoatRoughnessChannel",
+    ClearcoatNormalMap = "clearcoatNormalMap",
+    ClearcoatNormalStrength = "clearcoatNormalStrength",
     AlphaMode = "alphaMode",
     AlphaCutoff = "alphaCutoff",
     BlendMode = "blendMode",

@@ -675,6 +675,13 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
                     P::ClearcoatRoughnessChannel,
                     pm::CLEARCOAT_ROUGHNESS_CHANNEL,
                 ),
+                clearcoat_normal: map(P::ClearcoatNormalMap),
+                clearcoat_normal_strength: num(
+                    s,
+                    obj,
+                    P::ClearcoatNormalStrength,
+                    pm::CLEARCOAT_NORMAL_STRENGTH,
+                ),
                 transmission: map(P::TransmissionMap),
                 transmission_channel: channel(P::TransmissionChannel, pm::TRANSMISSION_CHANNEL),
                 height: map(P::HeightMap),

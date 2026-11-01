@@ -130,3 +130,31 @@ Feature: A clear coat over a PrincipledMaterial
         | #000000 | Material.R          | #000000 |
         | #ffffff | Material.R          | #404040 |
         | #00ff00 | Material.G          | #404040 |
+
+  # The map's colour #ff8080 is a normal along the surface, so the coat faces
+  # away from the camera and the light and shows nothing head on.
+  Rule: The clearcoat's normal map bends the coat alone
+
+    Scenario Outline: As much as its strength says
+      Given a 4 by 4 image file "tilted.png" filled with "#ff8080"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { }
+            Model { source: "#Rectangle"; materials: PrincipledMaterial { baseColor: "black"; roughness: 0.5; specularAmount: 0; clearcoatAmount: 1; clearcoatRoughnessAmount: 0.5; clearcoatNormalStrength: <strength>; clearcoatNormalMap: Texture { source: "tilted.png" } } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 6 of "<pixel>"
+
+      Examples:
+        | strength | pixel   |
+        | 0        | #404040 |
+        | 1        | #000000 |

@@ -17,9 +17,9 @@ use crate::texture::{Filter, PixelEncoding, Sampling, Texture, TexturePixels, Ti
 
 /// The maps a material binds, in the order of their bindings: base colour
 /// (or diffuse), metalness (or a `DefaultMaterial`'s specular), roughness,
-/// normal, emissive, occlusion, opacity, transmission, height, clearcoat and clearcoat roughness. Each
+/// normal, emissive, occlusion, opacity, transmission, height, clearcoat, its roughness and its normals. Each
 /// sampler's binding is its texture's plus [`MAPS`].
-pub(crate) const MAPS: usize = 11;
+pub(crate) const MAPS: usize = 12;
 pub(crate) const BASE: usize = 0;
 pub(crate) const METALNESS: usize = 1;
 pub(crate) const ROUGHNESS: usize = 2;
@@ -31,6 +31,7 @@ pub(crate) const TRANSMISSION: usize = 7;
 pub(crate) const HEIGHT: usize = 8;
 pub(crate) const CLEARCOAT: usize = 9;
 pub(crate) const CLEARCOAT_ROUGHNESS: usize = 10;
+pub(crate) const CLEARCOAT_NORMAL: usize = 11;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct TextureKey {
@@ -79,6 +80,7 @@ pub(crate) fn slots(material: &Material) -> [Option<(&Texture, bool)>; MAPS] {
             out[HEIGHT] = maps.height.as_ref().map(|t| (t, false));
             out[CLEARCOAT] = maps.clearcoat.as_ref().map(|t| (t, false));
             out[CLEARCOAT_ROUGHNESS] = maps.clearcoat_roughness.as_ref().map(|t| (t, false));
+            out[CLEARCOAT_NORMAL] = maps.clearcoat_normal.as_ref().map(|t| (t, false));
         }
         // A custom material's textures are its own samplers, bound apart.
         Material::Custom(_) => {}

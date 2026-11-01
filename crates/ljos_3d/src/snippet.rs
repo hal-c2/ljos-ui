@@ -85,6 +85,10 @@ pub fn material(
         .collect();
     let textures = textures.as_slice();
     check_names(uniforms, textures)?;
+    let vertex = vertex.map(by_definition);
+    let vertex = vertex.as_deref();
+    let fragment = fragment.map(by_definition);
+    let fragment = fragment.as_deref();
     let vertex_src = vertex.map(strip_comments).unwrap_or_default();
     let fragment_src = fragment.map(strip_comments).unwrap_or_default();
     let out = varyings(&vertex_src, "vertex")?;
@@ -168,6 +172,10 @@ pub fn effect(
     textures: &[String],
 ) -> Result<Program, SnippetError> {
     check_names(uniforms, textures)?;
+    let vertex = vertex.map(by_definition);
+    let vertex = vertex.as_deref();
+    let fragment = by_definition(fragment);
+    let fragment = fragment.as_str();
     let vertex_src = vertex.map(strip_comments).unwrap_or_default();
     let fragment_src = strip_comments(fragment);
     let out = varyings(&vertex_src, "vertex")?;
@@ -704,6 +712,7 @@ fn the_scenes_probe(mut wgsl: String) -> String {
 /// paints black on one and is right on another. Written out, it is the same
 /// on all of them. Only for the names a snippet uses, and only the integer
 /// vectors if it has any, since every function here is compiled for it.
+/// A call comes here by [`by_definition`].
 fn min_and_max(sources: &[&str]) -> String {
     let says = |word: &str| sources.iter().any(|s| mentions(s, word));
     let mut families = vec![("float", "vec"), ("int", "ivec"), ("uint", "uvec")];
@@ -711,10 +720,9 @@ fn min_and_max(sources: &[&str]) -> String {
         .retain(|(_, vector)| *vector == "vec" || (2..=4).any(|n| says(&format!("{vector}{n}"))));
     let mut out = String::new();
     for (name, chosen) in [("max", "a < b"), ("min", "b < a")] {
-        if !says(name) {
+        if !says(&format!("ljos{name}")) {
             continue;
         }
-        let _ = writeln!(out, "#define {name} ljos{name}");
         for scalar in ["float", "int", "uint"] {
             let _ = writeln!(
                 out,
@@ -740,6 +748,65 @@ fn min_and_max(sources: &[&str]) -> String {
             }
         }
     }
+    out
+}
+
+/// A snippet's calls of max and min, sent to [`min_and_max`]'s functions.
+/// Not where GLSL wants a constant, which no function call gives: the
+/// initializer of a `const` or of a global, and an array's size. There the
+/// compiler works out the real one, and with numbers no NaN can come of it.
+/// A macro's body is sent there as well, as most are used in a function; one
+/// used for a constant is the limit of this.
+fn by_definition(src: &str) -> String {
+    let b = src.as_bytes();
+    let is_word = |c: u8| c.is_ascii_alphanumeric() || c == b'_';
+    let mut out = String::with_capacity(src.len());
+    let (mut i, mut from) = (0, 0);
+    let (mut braces, mut brackets) = (0usize, 0usize);
+    // Reading a `const`, and past its `=`: a parameter's ends at `,` or `)`.
+    let (mut constant, mut assigned, mut directive) = (false, false, false);
+    while i < b.len() {
+        let rest = &src[i..];
+        if rest.starts_with("//") {
+            i += rest.find('\n').unwrap_or(rest.len());
+        } else if rest.starts_with("/*") {
+            i += rest.find("*/").map_or(rest.len(), |end| end + 2);
+        } else if is_word(b[i]) {
+            let start = i;
+            while i < b.len() && is_word(b[i]) {
+                i += 1;
+            }
+            let word = &src[start..i];
+            constant |= word == "const" && !directive;
+            let called = src[i..].trim_start().starts_with('(');
+            let member = start > 0 && b[start - 1] == b'.';
+            let fixed = !directive && (braces == 0 || constant || brackets > 0);
+            if (word == "max" || word == "min") && called && !member && !fixed {
+                out.push_str(&src[from..start]);
+                out.push_str("ljos");
+                from = start;
+            }
+        } else {
+            match b[i] {
+                b'\n' => directive = false,
+                b'#' => directive = true,
+                _ if directive => {}
+                b'{' => {
+                    braces += 1;
+                    (constant, assigned) = (false, false);
+                }
+                b'}' => braces = braces.saturating_sub(1),
+                b'[' => brackets += 1,
+                b']' => brackets = brackets.saturating_sub(1),
+                b'=' => assigned = constant,
+                b';' => (constant, assigned) = (false, false),
+                b',' | b')' if !assigned => constant = false,
+                _ => {}
+            }
+            i += 1;
+        }
+    }
+    out.push_str(&src[from..]);
     out
 }
 

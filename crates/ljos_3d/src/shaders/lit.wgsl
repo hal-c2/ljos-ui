@@ -85,9 +85,9 @@ struct Model {
     // shadows fall on it.
     params2: vec4<f32>,
     // Per map (base, metalness, roughness, normal, emissive, occlusion,
-    // opacity, transmission, height, clearcoat, its roughness), two rows taking the mesh's UV to the
+    // opacity, transmission, height, clearcoat, its roughness, its normals), two rows taking the mesh's UV to the
     // image's.
-    uv: array<vec4<f32>, 22>,
+    uv: array<vec4<f32>, 24>,
     // x a bit per map that is there; y the channels of metalness (bits
     // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7); z a bit per
     // map read through the second UV set; w 1 where the joints of
@@ -106,7 +106,8 @@ struct Model {
     // x the clearcoat's Fresnel power, y its scale, z its bias; w how much of
     // the diffuse light gives way to what is behind.
     coat_edge: vec4<f32>,
-    // rgb a plain material's linear specular tint; w the height amount.
+    // rgb a plain material's linear specular tint, x a principled one's
+    // clearcoat normal strength; w the height amount.
     tint: vec4<f32>,
     // x a bit per light that lights it; y 1 to use the vertices' colours; z
     // the fewest and most height samples, low and high half; w the channels
@@ -145,17 +146,19 @@ struct Model {
 @group(2) @binding(8) var height_map: texture_2d<f32>;
 @group(2) @binding(9) var clearcoat_map: texture_2d<f32>;
 @group(2) @binding(10) var clearcoat_roughness_map: texture_2d<f32>;
-@group(2) @binding(11) var base_sampler: sampler;
-@group(2) @binding(12) var metalness_sampler: sampler;
-@group(2) @binding(13) var roughness_sampler: sampler;
-@group(2) @binding(14) var normal_sampler: sampler;
-@group(2) @binding(15) var emissive_sampler: sampler;
-@group(2) @binding(16) var occlusion_sampler: sampler;
-@group(2) @binding(17) var opacity_sampler: sampler;
-@group(2) @binding(18) var transmission_sampler: sampler;
-@group(2) @binding(19) var height_sampler: sampler;
-@group(2) @binding(20) var clearcoat_sampler: sampler;
-@group(2) @binding(21) var clearcoat_roughness_sampler: sampler;
+@group(2) @binding(11) var clearcoat_normal_map: texture_2d<f32>;
+@group(2) @binding(12) var base_sampler: sampler;
+@group(2) @binding(13) var metalness_sampler: sampler;
+@group(2) @binding(14) var roughness_sampler: sampler;
+@group(2) @binding(15) var normal_sampler: sampler;
+@group(2) @binding(16) var emissive_sampler: sampler;
+@group(2) @binding(17) var occlusion_sampler: sampler;
+@group(2) @binding(18) var opacity_sampler: sampler;
+@group(2) @binding(19) var transmission_sampler: sampler;
+@group(2) @binding(20) var height_sampler: sampler;
+@group(2) @binding(21) var clearcoat_sampler: sampler;
+@group(2) @binding(22) var clearcoat_roughness_sampler: sampler;
+@group(2) @binding(23) var clearcoat_normal_sampler: sampler;
 @group(3) @binding(0) var specular_cube: texture_cube<f32>;
 @group(3) @binding(1) var irradiance_cube: texture_cube<f32>;
 @group(3) @binding(2) var cube_sampler: sampler;
@@ -616,6 +619,7 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     let transmission_t = textureSample(transmission_map, transmission_sampler, map_uv(7u, in));
     let coat_t = textureSample(clearcoat_map, clearcoat_sampler, map_uv(9u, in));
     let coat_rough_t = textureSample(clearcoat_roughness_map, clearcoat_roughness_sampler, map_uv(10u, in));
+    let coat_normal_t = textureSample(clearcoat_normal_map, clearcoat_normal_sampler, map_uv(11u, in));
     // Normalized first: a scaled node's normals come here longer or shorter.
     let unit_normal = normalize(in.normal);
     let normal_dx = dpdx(unit_normal);
@@ -640,8 +644,16 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
         if !front {
             n = -n;
         }
-        // The clearcoat lies over the mesh's own shape, under no normal map.
-        let coat_n = n;
+        // The clearcoat lies over the mesh's own shape, under the material's
+        // normal map and over its own.
+        var coat_n = n;
+        if has_map(11u) {
+            let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
+            let b = in.tangent.w * cross(n, t);
+            var m = coat_normal_t.xyz * 2.0 - vec3<f32>(1.0);
+            m = vec3<f32>(m.xy * model.tint.x, m.z);
+            coat_n = normalize(t * m.x + b * m.y + n * m.z);
+        }
         if has_map(3u) {
             let t = normalize(in.tangent.xyz - n * dot(n, in.tangent.xyz));
             let b = in.tangent.w * cross(n, t);

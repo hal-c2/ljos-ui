@@ -218,6 +218,44 @@ Feature: CustomMaterial runs the author's shader snippets
         | CustomMaterial.NoBlend | CustomMaterial.NoBlend | #ffbfbf |
         | CustomMaterial.One   | CustomMaterial.Zero  | #bf8080 |
 
+  Rule: Max and min are functions where a function may be called, and constants where one must be
+
+    Scenario: Constants, an array's size, a macro and a NaN all come out as GLSL says
+      Given the text file "bounds.frag":
+        """
+        const float TWO = max(1.0, 2.0);
+        float ONE = min(1.0, 2.0);
+        // Of a NaN: min gives its first, 1.0, and max the larger of that and 0.0.
+        #define SAT(x) max(0.0, min(1.0, x))
+        void MAIN()
+        {
+            const float three = max(1.0, 3.0);
+            float room[max(2, 3)];
+            room[2] = 1.0;
+            float none = zero / zero;
+            float seen = SAT(none) + max(0.0, none) + (TWO - 2.0) + (three - 3.0) + (ONE - 1.0);
+            FRAGCOLOR = seen == 1.0 ? vec4(0.0, room[2], 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              fragmentShader: "bounds.frag"
+              property real zero: 0
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 2 of "#00ff00"
+
   Rule: A snippet that does not compile draws nothing
 
     Scenario: A broken snippet is reported and its model is left out
