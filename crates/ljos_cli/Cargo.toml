@@ -78,6 +78,17 @@ tracing-subscriber.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 ljos_bench = { path = "../ljos_bench" }
 
+# `ljos run --headless`: what the system says of the process that started it.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+    "Win32_Foundation",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+] }
+
 [features]
 # Every heap allocation of Rust code recorded with its call stack, for a
 # memory profile by subsystem; see docs/BENCHMARKS.md. Slow: never shipped.

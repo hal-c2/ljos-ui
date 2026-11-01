@@ -206,3 +206,43 @@ fn a_run_ends_when_the_input_it_was_told_to_follow_closes() {
     drop(run.stdin.take());
     assert!(run.wait().unwrap().success());
 }
+
+// A parent that is killed tells nobody, and has given its child no pipe.
+#[cfg(unix)]
+#[test]
+fn a_headless_run_ends_with_the_parent_that_was_killed() {
+    use std::io::{BufRead, BufReader};
+
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("Main.qml");
+    std::fs::write(
+        &main,
+        "import QtQuick\nItem { width: 10; height: 10; Timer { running: true; repeat: true; interval: 50 } }\n",
+    )
+    .unwrap();
+    let mut parent = Command::new("sh")
+        .args(["-c", r#""$0" "$@" >/dev/null & wait"#])
+        .arg(env!("CARGO_BIN_EXE_ljos"))
+        .args(["run", "--headless", "--mcp"])
+        .arg(&main)
+        .current_dir(dir.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sh runs");
+    let mut errors = BufReader::new(parent.stderr.take().unwrap()).lines();
+    // The inspector comes up after the run has started to follow its parent.
+    assert!(
+        errors.any(|line| line.unwrap().starts_with("ljos: inspector (")),
+        "the run ended by itself"
+    );
+    parent.kill().unwrap();
+    parent.wait().unwrap();
+    // The child holds the other end of the pipe until it ends.
+    let last: Vec<String> = errors.map(Result::unwrap).collect();
+    assert!(
+        !last.iter().any(|line| line.contains("did not quit")),
+        "{last:?}"
+    );
+}

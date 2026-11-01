@@ -387,6 +387,29 @@ struct Rig {
     settings: desktop::Settings,
     /// The application the author started and left running.
     app: Option<App>,
+    /// A program of the scenario's and the application it started.
+    family: Option<Family>,
+}
+
+/// A real parent, a shell, with `ljos` as its child: killing the shell
+/// leaves the child to find out by itself.
+struct Family {
+    program: Reaped,
+    child: String,
+    /// The child's errors. The pipe closes when the last holder is gone, and
+    /// the shell's copy goes with the shell, so its end is the child's end.
+    errors: Receiver<String>,
+}
+
+impl Drop for Family {
+    // It is not this process's child, so nothing else would end it.
+    fn drop(&mut self) {
+        let _ = Command::new("sh")
+            .args(["-c", r#"kill -9 "$0""#])
+            .arg(&self.child)
+            .stderr(Stdio::null())
+            .status();
+    }
 }
 
 /// An application started in the background (`When the author starts`),
@@ -431,6 +454,7 @@ impl Rig {
             ran: None,
             settings: desktop::Settings::new(),
             app: None,
+            family: None,
         })
     }
 
@@ -718,6 +742,67 @@ impl Rig {
         self.greeted(server, &hello)
     }
 
+    fn start_under_program(&mut self, line: &str) -> Result<(), String> {
+        let (command, _desktop) = self.command(line)?;
+        // In the background a shell gives its child `/dev/null` for input,
+        // so there is no pipe here to close when the shell dies.
+        let mut sh = Command::new("sh");
+        sh.args(["-c", r#""$0" "$@" >/dev/null & echo "child $!" >&2; wait"#])
+            .arg(command.get_program())
+            .args(command.get_args())
+            .current_dir(self.dir.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped());
+        for (key, value) in command.get_envs() {
+            match value {
+                Some(value) => sh.env(key, value),
+                None => sh.env_remove(key),
+            };
+        }
+        let mut program =
+            Reaped::spawn(&mut sh).map_err(|e| format!("cannot start `{line}`: {e}"))?;
+        let stderr = program
+            .stderr
+            .take()
+            .ok_or_else(|| format!("`{line}` has no errors to read"))?;
+        let (send, errors) = channel();
+        std::thread::spawn(move || {
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                if send.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut child = None;
+        // The inspector's line comes after the run has started to follow
+        // its parent, so that the kill cannot come before that.
+        loop {
+            let said = errors
+                .recv_timeout(ANSWER)
+                .map_err(|e| format!("`{line}` named no inspector under its program: {e}"))?;
+            if let Some(pid) = said.strip_prefix("child ") {
+                child = Some(pid.to_owned());
+            } else if inspector_token_file(&said).is_some() {
+                break;
+            }
+        }
+        let child = child.ok_or_else(|| format!("the program of `{line}` named no child"))?;
+        self.family = Some(Family {
+            program,
+            child,
+            errors,
+        });
+        Ok(())
+    }
+
+    fn family(&mut self) -> Result<&mut Family, String> {
+        self.family
+            .as_mut()
+            .ok_or_else(|| "no program has started a child".to_owned())
+    }
+
     fn app(&mut self) -> Result<&mut App, String> {
         self.app.as_mut().ok_or_else(|| {
             "the author has started no application; use `When the author starts`".to_owned()
@@ -923,6 +1008,74 @@ impl Slot {
     /// names no inspector, or its inspector does not speak MCP.
     pub fn start(&mut self, files: &Files, line: &str) -> Result<(), String> {
         self.rig(files)?.start(line)
+    }
+
+    /// Starts `line` as the child of a program of the scenario's, and comes
+    /// back once the child runs.
+    ///
+    /// # Errors
+    /// The line is not an `ljos` command, or it names no inspector.
+    pub fn start_under_program(&mut self, files: &Files, line: &str) -> Result<(), String> {
+        self.rig(files)?.start_under_program(line)
+    }
+
+    /// Kills the program without warning, as the system does.
+    ///
+    /// # Errors
+    /// No program runs.
+    pub fn kill_program(&mut self) -> Result<(), String> {
+        let family = self.rig_started()?.family()?;
+        family
+            .program
+            .kill()
+            .and_then(|()| family.program.wait().map(drop))
+            .map_err(|e| format!("cannot kill the program: {e}"))
+    }
+
+    /// Waits for the program's child to end.
+    ///
+    /// # Errors
+    /// It is still running after [`ANSWER`].
+    pub fn child_ends(&mut self) -> Result<(), String> {
+        let family = self.rig_started()?.family()?;
+        loop {
+            match family.errors.recv_timeout(ANSWER) {
+                Ok(_) => {}
+                Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                Err(RecvTimeoutError::Timeout) => {
+                    return Err(format!(
+                        "process {} still runs {} s on",
+                        family.child,
+                        ANSWER.as_secs()
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Watches the program's child for long enough to have seen it go.
+    ///
+    /// # Errors
+    /// It ended.
+    pub fn child_goes_on(&mut self) -> Result<(), String> {
+        let family = self.rig_started()?.family()?;
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            let left = until.saturating_duration_since(std::time::Instant::now());
+            match family.errors.recv_timeout(left) {
+                Ok(_) => {}
+                Err(RecvTimeoutError::Timeout) => return Ok(()),
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err(format!("process {} ended", family.child));
+                }
+            }
+        }
+    }
+
+    fn rig_started(&mut self) -> Result<&mut Rig, String> {
+        self.0
+            .as_mut()
+            .ok_or_else(|| "no program has started a child".to_owned())
     }
 
     /// Whether an application the author started runs, so that what the

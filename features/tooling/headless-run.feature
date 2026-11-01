@@ -338,3 +338,31 @@ Feature: An application run with no window
         """
       When the author runs "ljos run Main.qml --headless --quit-with-stdin"
       Then the command exits with status 0
+
+  # Nobody sees a run without a window, so nobody closes one that was left
+  # behind. Most programs give their child no pipe to follow.
+  Rule: A headless run ends with the program that started it
+
+    Background:
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            width: 120; height: 90
+            Timer { interval: 50; running: true; repeat: true }
+        }
+        """
+
+    Scenario: Killing the program ends the run
+      When a program starts "ljos run Main.qml --headless --mcp" as its child
+      And that program is killed
+      Then its child ends
+
+    Scenario: The run goes on while the program lives, with nothing on its input
+      When a program starts "ljos run Main.qml --headless --mcp" as its child
+      Then its child goes on running
+
+    Scenario: A run that was told to outlive the program does
+      When a program starts "ljos run Main.qml --headless --mcp --outlive-parent" as its child
+      And that program is killed
+      Then its child goes on running

@@ -118,6 +118,29 @@ fn author_starts(w: &mut LjosWorld, line: String) -> StepResult {
     author.start(files, &line)
 }
 
+// A parent of the scenario's own: a program that dies says nothing, and
+// what is under test is that its child notices.
+#[when(regex = r#"^a program starts "([^"]+)" as its child$"#)]
+fn program_starts_child(w: &mut LjosWorld, line: String) -> StepResult {
+    let (author, files) = w.author();
+    author.start_under_program(files, &line)
+}
+
+#[when("that program is killed")]
+fn program_is_killed(w: &mut LjosWorld) -> StepResult {
+    w.author().0.kill_program()
+}
+
+#[then("its child ends")]
+fn child_ends(w: &mut LjosWorld) -> StepResult {
+    w.author().0.child_ends()
+}
+
+#[then("its child goes on running")]
+fn child_goes_on(w: &mut LjosWorld) -> StepResult {
+    w.author().0.child_goes_on()
+}
+
 // The inspector's rate (ARCHITECTURE.md §19.7), counted by a client that
 // speaks plain HTTP so that a refusal is not asked again.
 #[rustfmt::skip]

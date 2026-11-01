@@ -3771,6 +3771,7 @@ dependencies = [
  "anyhow",
  "clap",
  "dhat",
+ "libc",
  "ljos",
  "ljos_aot",
  "ljos_audit",
@@ -3808,6 +3809,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

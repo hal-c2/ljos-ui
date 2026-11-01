@@ -26,6 +26,7 @@ mod heap;
 static ALLOC: ljos_shell::CountingAlloc = ljos_shell::CountingAlloc;
 mod i18n;
 mod observe;
+mod parent;
 mod render;
 mod run;
 mod shaders;
