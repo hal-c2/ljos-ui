@@ -146,6 +146,9 @@ fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[(f32, i32)]) -> Cus
                     continue;
                 };
                 for (n, d) in delta.iter().enumerate().take(numbers) {
+                    // A change of v, in a file measured from the bottom.
+                    let uv = matches!(semantic, Semantic::TexCoord0 | Semantic::TexCoord1);
+                    let d = if uv && n == 1 { -d } else { *d };
                     let i = vertex * stride + at + n * 4;
                     let Some(bytes) = data.get_mut(i..i + 4) else {
                         continue;
@@ -182,6 +185,11 @@ fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[(f32, i32)]) -> Cus
     geometry.set_index_data(source.index_data().to_vec());
     geometry.update();
     geometry
+}
+
+/// A file measures `v` from the bottom of the image; here it is from the top.
+fn from_the_top([u, v]: [f32; 2]) -> [f32; 2] {
+    [u, 1.0 - v]
 }
 
 /// A layer's `MorphTarget.attributes` flag, what it changes in the vertices
@@ -350,10 +358,10 @@ impl Columns {
             floats(&c.read::<3>(corner));
         }
         if let Some(c) = self.uv0 {
-            floats(&c.read::<2>(corner));
+            floats(&from_the_top(c.read::<2>(corner)));
         }
         if let Some(c) = self.uv1 {
-            floats(&c.read::<2>(corner));
+            floats(&from_the_top(c.read::<2>(corner)));
         }
         if let Some(c) = self.color {
             let mut rgba = c.weights(corner);

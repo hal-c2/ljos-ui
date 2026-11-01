@@ -648,6 +648,15 @@ def two_squares_mesh():
     )
 
 
+def pictured_mesh():
+    """A square 100 across whose UVs start at its bottom left corner, as a
+    mesh file's do: quadrants.png, read from them, is the right way up."""
+    corners = [(-50, -50, 0, 0), (50, -50, 1, 0), (50, 50, 1, 1), (-50, 50, 0, 1)]
+    rows = [struct.pack("<8f", x, y, 0, 0, 0, 1, u, v) for x, y, u, v in corners]
+    attributes = [("attr_pos", 10, 3, 0), ("attr_norm", 10, 3, 12), ("attr_uv0", 10, 2, 24)]
+    mesh_file(HERE / "pictured.mesh", rows, [0, 1, 2, 0, 2, 3], [(0, 6)], attributes, 32)
+
+
 def cube_mesh():
     """A cube 100 long a side, centred, as `#Cube` is."""
     faces = [
@@ -694,6 +703,7 @@ if __name__ == "__main__":
     morph_gltf()
     obj_files()
     two_squares_mesh()
+    pictured_mesh()
     cube_mesh()
     morph_mesh()
     colored_mesh()

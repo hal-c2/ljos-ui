@@ -170,6 +170,37 @@ Feature: A Model draws the mesh file at its source
       Then the pixel at 160, 100 of the window is "#ff0000"
       And the pixel at 100, 100 of the window is "#202020"
 
+  Rule: A material's picture is the right way up on what a file holds
+
+    # pictured.mesh, from gen.py: a square 100 across with its UVs from the
+    # bottom left corner. quadrants.png has red top left, green top right,
+    # blue bottom left and white bottom right.
+    Scenario: The top of the image is at the top of the mesh
+      Given the model file "pictured.mesh"
+      And the model file "quadrants.png"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        View3D {
+          width: 200; height: 200
+          environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+          OrthographicCamera { z: 300 }
+          Model {
+            source: "pictured.mesh"
+            materials: PrincipledMaterial {
+              lighting: PrincipledMaterial.NoLighting
+              baseColorMap: Texture { source: "quadrants.png" }
+            }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the pixel at 75, 75 of the window is within 2 of "#ff0000"
+      And the pixel at 125, 75 of the window is within 2 of "#00ff00"
+      And the pixel at 75, 125 of the window is within 2 of "#0000ff"
+      And the pixel at 125, 125 of the window is within 2 of "#ffffff"
+
   Rule: A file that cannot be drawn says so and the rest of the scene draws
 
     Scenario: A missing file warns once and the rest draws
