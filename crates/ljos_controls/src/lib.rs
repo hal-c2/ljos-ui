@@ -293,4 +293,7 @@ pub fn register(engine: &Engine) {
     // Ljós's design module: its transitions are for these popups, so a
     // host that has the controls has it too.
     ljos_design_qml::register(engine);
+    // Design Studio's output is built on the controls' modules as often as
+    // not, and a host with those can run it.
+    ljos_studio::register(engine);
 }

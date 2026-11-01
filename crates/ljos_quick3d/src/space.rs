@@ -244,6 +244,11 @@ const SCENE_PARTS: [fn(&Place) -> Value; 6] = [
 /// Binds the scene-space properties of the node `obj` when each is first
 /// read: most nodes are never asked where they are.
 fn bind_scene_properties(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
+    // First, as a handler of the others may read it: one that observes them
+    // is run from here as soon as it is told their values.
+    e.bind_on_read(obj, Node::SCENE_TRANSFORM.index, |e, obj, prop| {
+        e.bind_initial(obj, prop, move |e| scene_transform(e, &place(e, obj)))
+    })?;
     for prop in SCENE_PROPS {
         e.bind_on_read(obj, prop, |e, obj, prop| {
             let i = SCENE_PROPS.iter().position(|p| *p == prop).unwrap_or(0);
@@ -251,9 +256,7 @@ fn bind_scene_properties(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             e.bind_initial(obj, prop, move |e| make(&place(e, obj)))
         })?;
     }
-    e.bind_on_read(obj, Node::SCENE_TRANSFORM.index, |e, obj, prop| {
-        e.bind_initial(obj, prop, move |e| scene_transform(e, &place(e, obj)))
-    })
+    Ok(())
 }
 
 /// `place` as a `matrix4x4`, row by row; [`Mat4`] is by columns.

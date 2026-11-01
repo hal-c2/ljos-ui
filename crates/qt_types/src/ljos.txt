@@ -6120,6 +6120,53 @@ module QtQuick.Shapes
 		signal dashPatternChanged
 		signal fillGradientChanged
 
+module QtQuick.Studio.Components
+	SvgPathItem QtQuick/Studio/Components/SvgPathItem.qml
+	type QtQuick/Studio/Components/SvgPathItem.qml SvgPathItem
+		prototype QtQuick.Shapes.Shape named
+		prop path QtQml.string named
+		prop fillColor QtQml.var named
+		prop strokeColor QtQml.var named
+		prop strokeWidth QtQml.var named
+		prop strokeStyle QtQml.var named
+		prop joinStyle QtQml.var named
+		prop capStyle QtQml.var named
+		prop dashPattern QtQml.var named
+		prop dashOffset QtQml.var named
+		prop fillGradient QtQml.var named
+		signal pathChanged
+		signal fillColorChanged
+		signal strokeColorChanged
+		signal strokeWidthChanged
+		signal strokeStyleChanged
+		signal joinStyleChanged
+		signal capStyleChanged
+		signal dashPatternChanged
+		signal dashOffsetChanged
+		signal fillGradientChanged
+
+module QtQuick.Studio.DesignEffects
+	DesignEffect QtQuick/Studio/DesignEffects/DesignEffect.qml
+	type QtQuick/Studio/DesignEffects/DesignEffect.qml DesignEffect
+		prototype QtQuick.Item named
+		prop backgroundLayer QtQuick.Item named pointer
+		prop backgroundBlurRadius QtQml.real named
+		prop backgroundBlurVisible QtQml.bool named
+		prop layerBlurRadius QtQml.real named
+		prop layerBlurVisible QtQml.bool named
+		prop effects QtQml.QtObject named list pointer
+		prop blurs QtQml.bool named readonly
+		prop backgroundRect QtQml.rect named
+		signal backgroundLayerChanged
+		signal backgroundBlurRadiusChanged
+		signal backgroundBlurVisibleChanged
+		signal layerBlurRadiusChanged
+		signal layerBlurVisibleChanged
+		signal effectsChanged
+		signal blursChanged
+		signal backgroundRectChanged
+		method place
+
 module QtQuick.Templates
 	AbstractButton QtQuick.Templates.AbstractButton
 	AbstractDayOfWeekRow QtQuick.Templates.AbstractDayOfWeekRow

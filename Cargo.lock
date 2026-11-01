@@ -3938,6 +3938,7 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "ljos_runtime",
+ "ljos_studio",
  "ljos_test",
  "qml_front",
  "qt_types",
@@ -4625,6 +4626,16 @@ dependencies = [
  "windows-sys 0.52.0",
  "x11rb",
  "zbus",
+]
+
+[[package]]
+name = "ljos_studio"
+version = "0.0.0"
+dependencies = [
+ "ljos_compiler",
+ "ljos_engine",
+ "ljos_ir",
+ "qt_types",
 ]
 
 [[package]]

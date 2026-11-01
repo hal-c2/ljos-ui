@@ -42,6 +42,11 @@ Feature: Mapping between the view, the scene and a node
         function look(x, y, z) { cam.lookAt(Qt.vector3d(x, y, z)) }
         PerspectiveCamera { id: cam; objectName: "cam"; z: 300 }
         Node {
+          objectName: "early"; x: 5
+          property real seen
+          onScenePositionChanged: seen = sceneTransform.m14
+        }
+        Node {
           objectName: "arm"; x: 100; eulerRotation.y: 90
           Node { id: hand; objectName: "hand"; z: 50; scale: Qt.vector3d(2, 2, 2) }
         }
@@ -107,6 +112,9 @@ Feature: Mapping between the view, the scene and a node
       And the property "sceneTransform.m13" of "hand" is within 0.001 of 2
       And the property "sceneTransform.m31" of "hand" is within 0.001 of -2
       And the property "sceneTransform.m22" of "hand" is within 0.001 of 2
+
+    Scenario: A handler of scenePositionChanged can read sceneTransform
+      Then the property "seen" of "early" is within 0.01 of 5
 
     Scenario: A scene transform maps a point into the scene and its inverse back
       When the method "through" of "view" is called with 1, 2, 3

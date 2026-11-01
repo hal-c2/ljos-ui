@@ -467,7 +467,10 @@ mod tests {
         let mut bytes = file(2, &[0.0; 6]);
         let start = bytes.len() - 6 * 2 * 2 * 8;
         // +Z is the fifth face; its first row is up.
-        for c in bytes[start + 4 * 32..start + 4 * 32 + 16].chunks_exact_mut(2) {
+        for c in bytes[start + 4 * 32..start + 4 * 32 + 16]
+            .as_chunks_mut::<2>()
+            .0
+        {
             c.copy_from_slice(&0x3c00u16.to_le_bytes());
         }
         let picture = decode(&bytes, 1 << 20).unwrap();
@@ -486,7 +489,7 @@ mod tests {
         bytes[start..start + 2].copy_from_slice(&0x3c00u16.to_le_bytes());
         let picture = decode(&bytes, 256 << 20).unwrap();
         assert_eq!(picture.width as usize, side / 2 * 4);
-        assert!(picture.data.chunks_exact(4).any(|p| p[3] != 0));
+        assert!(picture.data.as_chunks::<4>().0.iter().any(|p| p[3] != 0));
     }
 
     #[test]
