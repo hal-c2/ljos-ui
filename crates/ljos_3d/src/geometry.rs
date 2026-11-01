@@ -6,8 +6,8 @@
 //! and the renderer decodes and uploads it once per revision.
 
 use std::fmt;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use crate::math::Vec3;
 use crate::mesh::{Mesh, Topology};
@@ -91,6 +91,17 @@ pub enum GeometryError {
     IndexOutOfRange { index: u32, vertices: usize },
 }
 
+/// A part of a geometry that a material of its own draws: `count` indices,
+/// or vertices when it has no indices, from `offset`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Subset {
+    pub offset: usize,
+    pub count: usize,
+    /// Its box, which says how far away it is and whether it is seen. `None`
+    /// keeps the whole geometry's.
+    pub bounds: Option<(Vec3, Vec3)>,
+}
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A geometry as the application last committed it. One object keeps its
@@ -106,8 +117,11 @@ pub struct CustomGeometry {
     attributes: Vec<Attribute>,
     primitive: PrimitiveType,
     bounds: Option<(Vec3, Vec3)>,
+    subsets: Vec<Subset>,
     // What culling asks for every frame, found once.
     sphere: OnceLock<(Vec3, f32)>,
+    // One upload each for as long as this revision lasts.
+    parts: OnceLock<Vec<Arc<CustomGeometry>>>,
 }
 
 impl Default for CustomGeometry {
@@ -121,7 +135,9 @@ impl Default for CustomGeometry {
             attributes: Vec::new(),
             primitive: PrimitiveType::default(),
             bounds: None,
+            subsets: Vec::new(),
             sphere: OnceLock::new(),
+            parts: OnceLock::new(),
         }
     }
 }
@@ -164,6 +180,7 @@ impl CustomGeometry {
     /// Commits what was set: a renderer uploads the geometry again.
     pub fn update(&mut self) {
         self.revision += 1;
+        self.parts = OnceLock::new();
     }
 
     pub fn set_vertex_data(&mut self, data: Vec<u8>) {
@@ -198,6 +215,50 @@ impl CustomGeometry {
     pub fn set_bounds(&mut self, min: Vec3, max: Vec3) {
         self.bounds = Some((min, max));
         self.sphere = OnceLock::new();
+    }
+
+    pub fn add_subset(&mut self, subset: Subset) {
+        self.subsets.push(subset);
+    }
+
+    /// What each subset draws, in their order: the same vertices with its
+    /// range of the indices, or its range of the vertices without any. Empty
+    /// without subsets, when the geometry is all one.
+    pub fn parts(&self) -> &[Arc<CustomGeometry>] {
+        self.parts.get_or_init(|| {
+            self.subsets
+                .iter()
+                .map(|s| Arc::new(self.part(s)))
+                .collect()
+        })
+    }
+
+    fn part(&self, s: &Subset) -> CustomGeometry {
+        let range = |data: &[u8], size: usize| -> Vec<u8> {
+            let start = s.offset.saturating_mul(size).min(data.len());
+            let end = s
+                .offset
+                .saturating_add(s.count)
+                .saturating_mul(size)
+                .min(data.len());
+            data[start..end].to_vec()
+        };
+        let mut part = CustomGeometry {
+            stride: self.stride,
+            attributes: self.attributes.clone(),
+            primitive: self.primitive,
+            bounds: s.bounds.or(self.bounds),
+            revision: 1,
+            ..CustomGeometry::default()
+        };
+        match self.attribute(Semantic::Index) {
+            Some(index) => {
+                part.vertex_data.clone_from(&self.vertex_data);
+                part.index_data = range(&self.index_data, index.component.size());
+            }
+            None => part.vertex_data = range(&self.vertex_data, self.stride),
+        }
+        part
     }
 
     /// Back to nothing: no data, no attributes, no bounds. The `id` stays.
@@ -491,6 +552,63 @@ impl CustomGeometry {
             mesh.weights = from.iter().map(|v| weights[*v as usize]).collect();
         }
         Ok(mesh)
+    }
+}
+
+#[cfg(test)]
+mod subset_tests {
+    use super::*;
+
+    fn triangles(indexed: bool) -> CustomGeometry {
+        let mut g = CustomGeometry::new();
+        g.set_vertex_data((0..18u8).flat_map(|i| f32::from(i).to_le_bytes()).collect());
+        g.set_stride(12);
+        g.add_attribute(Semantic::Position, 0, ComponentType::F32);
+        if indexed {
+            g.set_index_data(
+                [5u16, 4, 3, 2, 1, 0]
+                    .iter()
+                    .flat_map(|i| i.to_le_bytes())
+                    .collect(),
+            );
+            g.add_attribute(Semantic::Index, 0, ComponentType::U16);
+        }
+        g.add_subset(Subset {
+            offset: 3,
+            count: 3,
+            bounds: None,
+        });
+        g.update();
+        g
+    }
+
+    #[test]
+    fn a_subset_is_its_range_of_the_indices() {
+        let g = triangles(true);
+        assert_eq!(g.parts()[0].to_mesh().unwrap().indices.len(), 3);
+        assert_eq!(g.parts()[0].to_mesh().unwrap().positions.len(), 3);
+        assert_eq!(
+            g.parts()[0].to_mesh().unwrap().positions[0],
+            [6.0, 7.0, 8.0]
+        );
+    }
+
+    #[test]
+    fn without_indices_a_subset_is_its_range_of_the_vertices() {
+        let g = triangles(false);
+        assert_eq!(
+            g.parts()[0].to_mesh().unwrap().positions[0],
+            [9.0, 10.0, 11.0]
+        );
+    }
+
+    #[test]
+    fn an_update_makes_its_parts_again() {
+        let mut g = triangles(true);
+        let before = g.parts()[0].id();
+        assert_eq!(g.parts()[0].id(), before);
+        g.update();
+        assert_ne!(g.parts()[0].id(), before);
     }
 }
 

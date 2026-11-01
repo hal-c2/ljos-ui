@@ -56,6 +56,8 @@ const GLOW: u32 = 10;
 const GLOW_BLUR: u32 = 20;
 const GLOW_SUM: u32 = 30;
 const EFFECT_BUFFERS: u32 = 1000;
+/// What an effect leaves, where that is not of the chain's kind.
+const EFFECT_LEFT: u32 = 999;
 
 /// The levels glow has, each half the size of the one before.
 const GLOW_LEVELS: u32 = 7;
@@ -581,6 +583,7 @@ impl<'a> Chain<'a> {
         let depth =
             needs_depth(env).then(|| self.buffers.view(self.device, DEPTH_KEY, size, DEPTH));
         let mut current = SCENE;
+        let mut kind = None;
         let next = |current: u32| if current == PING { PONG } else { PING };
 
         if env.ambient_occlusion.is_some_and(|ao| ao.shows()) {
@@ -630,8 +633,14 @@ impl<'a> Chain<'a> {
         }
 
         for (e, effect) in env.effects.iter().enumerate() {
-            if let Some(out) = self.effect(e as u32, effect, current, next(current), depth.as_ref())
-            {
+            if let Some(out) = self.effect(
+                e as u32,
+                effect,
+                current,
+                next(current),
+                &mut kind,
+                depth.as_ref(),
+            ) {
                 current = out;
             }
         }
@@ -1007,11 +1016,24 @@ impl<'a> Chain<'a> {
         effect: &Effect,
         input: u32,
         out: u32,
+        kind: &mut Option<BufferFormat>,
         depth: Option<&wgpu::TextureView>,
     ) -> Option<u32> {
         let (device, queue) = (self.device, self.queue);
         let size = self.size;
-        let buffer_key = |b: usize| EFFECT_BUFFERS + e * 64 + b as u32;
+        let env = self.environment;
+        let buffer_key = |b: usize| {
+            let name = &effect.buffers[b].name;
+            let first = (!name.is_empty())
+                .then(|| {
+                    env.effects.iter().enumerate().find_map(|(e, them)| {
+                        let at = them.buffers.iter().position(|o| o.name == *name)?;
+                        Some(EFFECT_BUFFERS + e as u32 * 64 + at as u32)
+                    })
+                })
+                .flatten();
+            first.unwrap_or(EFFECT_BUFFERS + e * 64 + b as u32)
+        };
         let mut buffers = Vec::with_capacity(effect.buffers.len());
         for (b, buffer) in effect.buffers.iter().enumerate() {
             let m = if buffer.size_multiplier > 0.0 {
@@ -1023,35 +1045,68 @@ impl<'a> Chain<'a> {
                 ((size[0] as f32 * m).round() as u32).max(1),
                 ((size[1] as f32 * m).round() as u32).max(1),
             ];
+            let sampler = self
+                .maps
+                .effect_sampler(device, buffer.filter, buffer.tiling);
             buffers.push((
                 self.buffers
                     .view(device, buffer_key(b), s, buffer_format(buffer.format)),
                 s,
                 buffer_format(buffer.format),
+                sampler,
             ));
         }
         let input_view = self.buffers.view(device, input, size, HDR);
         let output_view = self.buffers.view(device, out, size, HDR);
+        // What the effect leaves is of the kind the last pass to draw into it
+        // says, and once an effect says one, of that to the effects after. The
+        // chain goes on in HDR, so a picture of another kind is kept in its
+        // own and copied over: what it could not hold stays lost.
+        let says = effect
+            .passes
+            .iter()
+            .rev()
+            .find(|p| p.output.is_none())
+            .and_then(|p| p.leaves)
+            .or(*kind);
+        let leaves = says
+            .map(buffer_format)
+            .filter(|format| *format != HDR)
+            .map(|format| (self.buffers.view(device, EFFECT_LEFT, size, format), format));
         let mut wrote = false;
         for pass in &effect.passes {
-            let (in_view, in_size) = match pass.input.and_then(|b| buffers.get(b)) {
-                Some((v, s, _)) => (v.clone(), *s),
-                None => (input_view.clone(), size),
+            // A picture can't be read while it is drawn into: what says so
+            // reads what it would have without saying.
+            let written = pass.output.map(buffer_key);
+            let (in_view, in_size, in_sampler) = match pass
+                .input
+                .filter(|b| Some(buffer_key(*b)) != written)
+                .and_then(|b| buffers.get(b))
+            {
+                Some((v, s, _, sampler)) => (v.clone(), *s, sampler.clone()),
+                None => (input_view.clone(), size, self.programs.sampler().clone()),
             };
             let (out_view, out_size, format) = match pass.output.and_then(|b| buffers.get(b)) {
-                Some((v, s, f)) => (v.clone(), *s, *f),
+                Some((v, s, f, _)) => (v.clone(), *s, *f),
                 None => {
                     wrote = true;
-                    (output_view.clone(), size, HDR)
+                    match &leaves {
+                        Some((view, format)) => (view.clone(), size, *format),
+                        None => (output_view.clone(), size, HDR),
+                    }
                 }
             };
             let program = &pass.program;
-            let mut textures = vec![(in_view, self.programs.sampler().clone())];
+            let mut textures = vec![(in_view, in_sampler)];
             for t in &pass.textures {
                 let bound = match t {
+                    PassTexture::Given => {
+                        Some((input_view.clone(), self.programs.sampler().clone()))
+                    }
+                    PassTexture::Buffer(b) if Some(buffer_key(*b)) == written => None,
                     PassTexture::Buffer(b) => buffers
                         .get(*b)
-                        .map(|(v, _, _)| (v.clone(), self.programs.sampler().clone())),
+                        .map(|(v, _, _, sampler)| (v.clone(), sampler.clone())),
                     PassTexture::Texture(Some(t)) => self.maps.single(device, queue, t),
                     PassTexture::Texture(None) => None,
                 };
@@ -1100,7 +1155,7 @@ impl<'a> Chain<'a> {
                     resolve_target: None,
                     depth_slice: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -1109,9 +1164,32 @@ impl<'a> Chain<'a> {
             });
             rp.set_pipeline(pipeline);
             rp.set_bind_group(0, &group, &[]);
-            rp.draw(0..3, 0..1);
+            rp.draw(0..4, 0..1);
         }
-        wrote.then_some(out)
+        if !wrote {
+            return None;
+        }
+        *kind = says;
+        if let Some((left, _)) = &leaves {
+            let base = self.uniform();
+            self.pass(
+                Pass {
+                    entry: "fs_copy",
+                    a: left,
+                    b: None,
+                    out: &output_view,
+                    format: HDR,
+                    add: false,
+                    clear: true,
+                    last: false,
+                },
+                &base,
+                size,
+                [0.0; 2],
+                None,
+            );
+        }
+        Some(out)
     }
 }
 

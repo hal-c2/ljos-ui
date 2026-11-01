@@ -61,7 +61,7 @@ pub use custom::{
 };
 pub use fetch::Fetch;
 pub use geometry::{
-    Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic,
+    Attribute, ComponentType, CustomGeometry, GeometryError, PrimitiveType, Semantic, Subset,
 };
 pub use instancing::{Instance, InstanceTable, Instancing, Skin};
 pub use scene::{

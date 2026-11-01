@@ -203,6 +203,7 @@ props! {
     /// `Model.inverseBindPoses` and `Skin.inverseBindPoses`.
     InverseBindPoses = "inverseBindPoses",
     DepthBias = "depthBias",
+    DepthDrawMode = "depthDrawMode",
     MorphTargets = "morphTargets",
     // MorphTarget
     Weight = "weight",

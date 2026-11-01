@@ -2191,7 +2191,10 @@ impl Renderer {
                     maps: self.maps.prepare(device, queue, &model.material),
                     key: PipelineKey {
                         cull: model.material.cull_mode(),
-                        depth_write: custom.map_or(!blends, |(_, k)| k.depth_write),
+                        depth_write: custom
+                            .map_or(model.material.depth_draw().writes(blends), |(_, k)| {
+                                k.depth_write
+                            }),
                         samples,
                         extra,
                         format,
@@ -2201,7 +2204,9 @@ impl Renderer {
                     },
                     uniform,
                     copies,
-                    depth: -transform_point(&view, centre).z + node.depth_bias,
+                    // Qt counts a bias times itself, and below nothing as nearer.
+                    depth: -transform_point(&view, centre).z
+                        + node.depth_bias.signum() * node.depth_bias * node.depth_bias,
                     caster,
                     probe: own_probe,
                 };
@@ -2266,6 +2271,9 @@ impl Renderer {
             .into_iter()
             .partition(|d| screen_of(d) != Screen::None);
         reading.append(&mut read_blended);
+        // What nothing is seen through goes nearest first, as Qt has it: where
+        // one does not hide, the farther is drawn over it.
+        draws.sort_by(|a, b| a.depth.total_cmp(&b.depth));
         reading.sort_by(|a, b| b.depth.total_cmp(&a.depth));
         blended.sort_by(|a, b| b.depth.total_cmp(&a.depth));
         draws.append(&mut reading);

@@ -237,6 +237,12 @@ fn fs_blur(in: VsOut) -> @location(0) vec4<f32> {
     return sum;
 }
 
+// What an effect left in a picture of another kind, as it is.
+@fragment
+fn fs_copy(in: VsOut) -> @location(0) vec4<f32> {
+    return textureSampleLevel(a, smooth_sampler, in.uv, 0.0);
+}
+
 // A level added into the glow, by the strength.
 @fragment
 fn fs_add(in: VsOut) -> @location(0) vec4<f32> {
@@ -394,11 +400,13 @@ fn grade(rgb_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
 fn fs_final(in: VsOut) -> @location(0) vec4<f32> {
     let c = textureSampleLevel(a, smooth_sampler, in.uv, 0.0);
     let alpha = clamp(c.a, 0.0, 1.0);
+    // What an effect left is tone mapped as it stands, and what it left seen
+    // through is left as far seen through.
+    if post.vignette2.z < 0.5 {
+        return vec4<f32>(clamp(tonemap(max(c.rgb, vec3<f32>(0.0)), post.tone), vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
+    }
     if alpha <= 0.0 {
         return vec4<f32>(0.0);
-    }
-    if post.vignette2.z < 0.5 {
-        return vec4<f32>(clamp(tonemap(c.rgb / alpha, post.tone), vec3<f32>(0.0), vec3<f32>(1.0)) * alpha, alpha);
     }
     let exposure = post.tone.y;
     var color = c.rgb / alpha * exposure;

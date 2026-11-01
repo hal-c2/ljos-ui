@@ -423,8 +423,11 @@ impl BufferFormat {
 }
 
 /// A `Buffer` an effect's passes write and read.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct EffectBuffer {
+    /// Those of one name in a view's effects are one picture, kept from
+    /// frame to frame.
+    pub name: String,
     pub format: BufferFormat,
     /// Of the effect's input's size.
     pub size_multiplier: f32,
@@ -435,6 +438,7 @@ pub struct EffectBuffer {
 impl Default for EffectBuffer {
     fn default() -> Self {
         EffectBuffer {
+            name: String::new(),
             format: BufferFormat::Rgba8,
             size_multiplier: 1.0,
             filter: Filter::Linear,
@@ -450,6 +454,8 @@ pub enum PassTexture {
     Texture(Option<Texture>),
     /// One of the effect's buffers, as a BufferInput names it.
     Buffer(usize),
+    /// The picture the effect was given, by a BufferInput without a name.
+    Given,
 }
 
 /// One `Pass` of an effect.
@@ -465,6 +471,9 @@ pub struct Pass {
     pub input: Option<usize>,
     /// The buffer it writes; `None` for the effect's output.
     pub output: Option<usize>,
+    /// The kind of picture the effect leaves, where this pass draws into
+    /// that and says; `None` for the kind it was given.
+    pub leaves: Option<BufferFormat>,
 }
 
 /// `Effect`: passes run over the picture in their order.

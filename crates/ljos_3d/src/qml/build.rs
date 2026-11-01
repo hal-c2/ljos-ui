@@ -9,8 +9,8 @@ use super::enums::{
 };
 use super::{GridLines, Prop3d as P, SceneSource, Type3d as T, defaults as d};
 use crate::custom::{
-    Adjustments, AmbientOcclusion, DepthOfField, Glow, GlowBlend, Illumination, LensFlare, Lut,
-    PostProcess, Reflections, Vignette,
+    Adjustments, AmbientOcclusion, DepthDraw, DepthOfField, Glow, GlowBlend, Illumination,
+    LensFlare, Lut, PostProcess, Reflections, Vignette,
 };
 use crate::geometry::CustomGeometry;
 use crate::instancing::{MAX_JOINTS, Skin};
@@ -240,6 +240,9 @@ impl<S: SceneSource> Walk<'_, S> {
         if is_model && let Some(file) = mesh_file(s, self.view, obj) {
             self.mesh_file(obj, id, &file);
         }
+        if is_model && let Some(g) = given(s, obj) {
+            self.parts(obj, id, g.parts().iter().cloned().enumerate());
+        }
         // A loaded model's nodes are the loader's first children. Each
         // mesh is named by the Model the loader made for it.
         #[cfg(feature = "gltf")]
@@ -288,11 +291,6 @@ impl<S: SceneSource> Walk<'_, S> {
     /// settings hold for all of them. The shared geometries are one upload.
     fn mesh_file(&mut self, obj: S::Object, id: NodeId, file: &MeshFile) {
         let s = self.s;
-        let materials = s.objects(obj, P::Materials);
-        let (casts, receives, instancing) = match self.scene.node_mut(id) {
-            Some(n) => (n.casts_shadows, n.receives_shadows, n.instancing.clone()),
-            None => return,
-        };
         let targets: Vec<(f32, i32)> = s
             .objects(obj, P::MorphTargets)
             .into_iter()
@@ -303,10 +301,26 @@ impl<S: SceneSource> Walk<'_, S> {
                 )
             })
             .collect();
-        for (i, part) in file.parts.iter().enumerate() {
-            if part.empty {
-                continue;
-            }
+        let parts = file.parts.iter().enumerate();
+        let parts = parts.filter(|(_, part)| !part.empty);
+        self.parts(obj, id, parts.map(|(i, _)| (i, file.morphed(i, &targets))));
+    }
+
+    /// Adds what a model's mesh is made of under its node `id`, each with
+    /// the material of its place.
+    fn parts(
+        &mut self,
+        obj: S::Object,
+        id: NodeId,
+        parts: impl Iterator<Item = (usize, Arc<CustomGeometry>)>,
+    ) {
+        let s = self.s;
+        let materials = s.objects(obj, P::Materials);
+        let (casts, receives, instancing) = match self.scene.node_mut(id) {
+            Some(n) => (n.casts_shadows, n.receives_shadows, n.instancing.clone()),
+            None => return,
+        };
+        for (i, mesh) in parts {
             // "If the number of materials is less than the sub-meshes, the
             // last material in the list is used for subsequent sub-meshes."
             let m = materials.get(i).or(materials.last()).copied();
@@ -314,7 +328,7 @@ impl<S: SceneSource> Walk<'_, S> {
                 continue;
             };
             let mut n = Node::new(NodeKind::Model(Model {
-                mesh: MeshSource::Custom(file.morphed(i, &targets)),
+                mesh: MeshSource::Custom(mesh),
                 material,
             }));
             n.casts_shadows = casts;
@@ -500,7 +514,14 @@ fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Model
     let mesh = match s.object(obj, P::Geometry) {
         // The geometry wins over a source, as it is the application's
         // own mesh. One never updated has nothing to draw yet.
-        Some(g) if s.is(g, T::Geometry) => MeshSource::Custom(s.geometry(g)?),
+        // One made of subsets is drawn by its parts.
+        Some(g) if s.is(g, T::Geometry) => {
+            let g = s.geometry(g)?;
+            if !g.parts().is_empty() {
+                return None;
+            }
+            MeshSource::Custom(g)
+        }
         _ => {
             let source = s.url(obj, P::Source)?;
             // A relative `#Cube` comes resolved against the file's URL;
@@ -525,6 +546,13 @@ fn material_of<S: SceneSource>(s: &S, view: S::Object, m: Option<S::Object>) -> 
     }
 }
 
+/// The geometry the model `obj` was given.
+fn given<S: SceneSource>(s: &S, obj: S::Object) -> Option<Arc<CustomGeometry>> {
+    s.object(obj, P::Geometry)
+        .filter(|g| s.is(*g, T::Geometry))
+        .and_then(|g| s.geometry(g))
+}
+
 /// The file the model `obj` draws: not one whose `geometry` wins, nor a
 /// built-in mesh, which is named by its fragment.
 fn mesh_file<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Arc<MeshFile>> {
@@ -539,6 +567,7 @@ fn mesh_file<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<A
 
 fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Material> {
     let map = |p| s.object(obj, p).and_then(|t| texture(s, view, t));
+    let depth_draw = || DepthDraw::from_index(i64::from(int(s, obj, P::DepthDrawMode, 0)));
     let blend_mode = |default| match int(s, obj, P::BlendMode, default) {
         blend::SCREEN => BlendMode::Screen,
         blend::MULTIPLY => BlendMode::Multiply,
@@ -587,6 +616,7 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
             specular_tint: color(s, obj, P::SpecularTint, dm::SPECULAR_TINT),
             fresnel_power: num(s, obj, P::FresnelPower, dm::FRESNEL_POWER),
             index_of_refraction: num(s, obj, P::IndexOfRefraction, 1.45),
+            depth_draw: depth_draw(),
             blend_mode: blend_mode(dm::BLEND_MODE),
             vertex_colors: on(s, obj, P::VertexColorsEnabled, dm::VERTEX_COLORS_ENABLED),
         }));
@@ -680,6 +710,7 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
                         int(s, obj, P::MaxHeightMapSamples, pm::MAX_HEIGHT_MAP_SAMPLES).max(1)
                             as u32,
                     ],
+                    depth_draw: depth_draw(),
                     blend_mode: blend_mode(pm::BLEND_MODE),
                     vertex_colors: on(s, obj, P::VertexColorsEnabled, pm::VERTEX_COLORS_ENABLED),
                     light_probe: map(P::LightProbe),

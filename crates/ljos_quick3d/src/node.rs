@@ -599,6 +599,11 @@ impl Geometry {
         self.data.set_primitive_type(primitive);
     }
 
+    /// A part that a material of its own draws.
+    pub fn add_subset(&mut self, subset: ljos::item::ljos_3d::Subset) {
+        self.data.add_subset(subset);
+    }
+
     /// The box the geometry lies in; culling uses it. Without it the
     /// positions are searched.
     pub fn set_bounds(&mut self, min: Vec3, max: Vec3) {
@@ -1061,9 +1066,7 @@ pub struct Material {
     /// counter-clockwise on the screen.
     #[qml(notify, enumeration = "CullMode")]
     pub cull_mode: i32,
-    /// Whether the material writes depth. A CustomMaterial follows it;
-    /// the built-in materials keep their own rule (an opaque one writes,
-    /// a blended one does not).
+    /// Whether the material writes depth.
     #[qml(notify, enumeration = "DepthDrawMode")]
     pub depth_draw_mode: i32,
 }

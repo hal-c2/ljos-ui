@@ -53,3 +53,39 @@ Feature: A mesh made from lists
   Scenario: Fewer positions draw less
     When the property "pair" of "scene" is set to true
     Then the pixel at 100, 110 of the window is "#1e1e1e"
+
+  Rule: A subset is drawn with the material of its place
+
+    Scenario: Two subsets, two materials
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Helpers
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 300 }
+            Model {
+              geometry: ProceduralMesh {
+                positions: [
+                  Qt.vector3d(-80, -40, 0), Qt.vector3d(-10, -40, 0), Qt.vector3d(-45, 40, 0),
+                  Qt.vector3d(10, -40, 0), Qt.vector3d(80, -40, 0), Qt.vector3d(45, 40, 0)
+                ]
+                subsets: [
+                  ProceduralMeshSubset { offset: 0; length: 3 },
+                  ProceduralMeshSubset { offset: 3; length: 3 }
+                ]
+              }
+              materials: [
+                DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "red"; cullMode: DefaultMaterial.NoCulling },
+                DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "blue"; cullMode: DefaultMaterial.NoCulling }
+              ]
+            }
+          }
+        }
+        """
+      Then the pixel at 55, 110 of the window is "#ff0000"
+      And the pixel at 145, 110 of the window is "#0000ff"

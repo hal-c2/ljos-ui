@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use slotmap::{SecondaryMap, SlotMap, new_key_type};
 
-use crate::custom::{AmbientOcclusion, CustomMaterial, Effect, PostProcess};
+use crate::custom::{AmbientOcclusion, CustomMaterial, DepthDraw, Effect, PostProcess};
 use crate::geometry::CustomGeometry;
 use crate::instancing::{Instancing, Skin};
 use crate::math::{Mat4, Quat, Vec3};
@@ -205,6 +205,7 @@ pub struct DefaultMaterial {
     /// 0 to 1: how far the highlight spreads.
     pub specular_roughness: f32,
     pub cull_mode: CullMode,
+    pub depth_draw: DepthDraw,
     /// Multiplies `diffuse_color`'s alpha.
     pub opacity: f32,
     pub opacity_channel: Channel,
@@ -242,6 +243,7 @@ impl Default for DefaultMaterial {
             specular_amount: 0.0,
             specular_roughness: 0.0,
             cull_mode: CullMode::Back,
+            depth_draw: DepthDraw::OpaqueOnly,
             opacity: 1.0,
             opacity_channel: Channel::A,
             emissive: [0.0; 3],
@@ -323,6 +325,7 @@ pub struct PrincipledMaps {
 /// In its box as most materials leave all of it as it is.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Surface {
+    pub depth_draw: DepthDraw,
     /// How much of a dielectric's reflection there is; metals keep theirs.
     pub specular_amount: f32,
     /// 0 reflects white, 1 the base colour; metals always the base colour.
@@ -365,6 +368,7 @@ impl Default for Fresnel {
 impl Default for Surface {
     fn default() -> Self {
         Surface {
+            depth_draw: DepthDraw::OpaqueOnly,
             specular_amount: 1.0,
             specular_tint: 0.0,
             index_of_refraction: 1.5,
@@ -452,6 +456,15 @@ impl Material {
     }
 
     /// The opacity a pixel of the material has before its alpha mode.
+    /// What it says of hiding what is drawn behind it afterwards.
+    pub fn depth_draw(&self) -> DepthDraw {
+        match self {
+            Material::Default(m) => m.depth_draw,
+            Material::Principled(m) => m.maps.surface.depth_draw,
+            Material::Custom(m) => m.depth_draw,
+        }
+    }
+
     pub fn blend_mode(&self) -> BlendMode {
         match self {
             Material::Default(m) => m.blend_mode,

@@ -134,11 +134,12 @@ fn a_smoothing_group_shares_its_normals() {
 }
 
 #[test]
-fn the_files_normals_and_uvs_are_kept_with_v_turned_over() {
+fn the_files_normals_and_uvs_are_kept_for_the_geometry_to_turn_v_over() {
     let obj = format!("{QUAD}vt 0.25 0.25\nvn 0 2 0\nf 1/1/1 2/1/1 3//1\n");
     let v = vertices(&built(&obj, "").meshes[0].primitives[0]);
     assert_eq!(v[0][3..6], [0.0, 1.0, 0.0], "made unit");
-    assert_eq!(v[0][6..8], [0.25, 0.75]);
+    // A geometry holds v running up the picture, as a file does.
+    assert_eq!(v[0][6..8], [0.25, 0.25]);
     assert_eq!(v[2][6..8], [0.0, 0.0], "a corner with none");
 }
 

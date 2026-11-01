@@ -15,6 +15,8 @@ pub(crate) struct Built {
     pub uvs: Vec<[f32; 2]>,
     pub indices: Vec<u32>,
     pub primitive: Option<PrimitiveType>,
+    /// Offset and count of each part a material of its own draws.
+    pub subsets: Vec<(usize, usize)>,
 }
 
 /// Bytes a vertex takes: three floats each of position and normal, two of
@@ -79,6 +81,13 @@ impl Built {
             g.add_attribute(Semantic::Index, 0, ComponentType::U32);
         }
         g.set_primitive_type(self.primitive.unwrap_or(PrimitiveType::Triangles));
+        for &(offset, count) in &self.subsets {
+            g.add_subset(ljos::item::ljos_3d::Subset {
+                offset,
+                count,
+                bounds: None,
+            });
+        }
         let (mut lo, mut hi) = (self.positions[0], self.positions[0]);
         for p in &self.positions {
             for k in 0..3 {

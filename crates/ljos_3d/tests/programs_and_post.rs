@@ -130,6 +130,7 @@ fn effect_pass(
     let program: Program =
         snippet::effect(None, fragment, &uniforms, &[]).unwrap_or_else(|e| panic!("{e}"));
     Pass {
+        leaves: None,
         program: Arc::new(program),
         values,
         textures: Vec::new(),
@@ -380,7 +381,8 @@ fn the_extended_environment_tonemaps_and_grades_the_picture() {
         ),
         "ese-vignette",
     );
-    expect(&pic, 100, 100, [255; 3], 3);
+    // The little of the red that reaches the middle shows through Qt's fit.
+    expect(&pic, 100, 100, [255; 3], 6);
     expect(&pic, 1, 1, [255, 0, 0], 40);
 
     let glow = PostProcess {

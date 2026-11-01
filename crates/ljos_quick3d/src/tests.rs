@@ -217,7 +217,7 @@ fn a_view_is_drawn_in_the_picture() {
         return;
     };
     let rgba = picture(&e, root, 100, 100);
-    assert_eq!(pixel(&rgba, 100, 2, 2), [0x20, 0x20, 0x20, 255]);
+    assert_eq!(pixel(&rgba, 100, 2, 2), [0x1e, 0x1e, 0x1e, 255]);
     assert_eq!(pixel(&rgba, 100, 50, 50), [255, 0, 0, 255]);
 }
 
@@ -573,7 +573,7 @@ fn a_view_is_drawn_again_when_its_geometry_is_updated() {
         [255, 0, 0, 255],
         "the larger one"
     );
-    assert_eq!(pixel(&rgba, 100, 5, 50), [0x20, 0x20, 0x20, 255]);
+    assert_eq!(pixel(&rgba, 100, 5, 50), [0x1e, 0x1e, 0x1e, 255]);
 }
 
 const SHADOWS: &str = r##"

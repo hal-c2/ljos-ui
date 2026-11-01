@@ -200,6 +200,27 @@ impl Maps {
         Some((self.textures[&k].view.clone(), sampler.clone()))
     }
 
+    /// How a Buffer of an effect is read.
+    pub(crate) fn effect_sampler(
+        &mut self,
+        device: &wgpu::Device,
+        filter: Filter,
+        tiling: Tiling,
+    ) -> wgpu::Sampler {
+        let sampling = Sampling {
+            min: filter,
+            mag: filter,
+            mip: Filter::None,
+            tiling_u: tiling,
+            tiling_v: tiling,
+            generate_mipmaps: false,
+        };
+        self.samplers
+            .entry(sampling)
+            .or_insert_with(|| sampler(device, sampling))
+            .clone()
+    }
+
     pub(crate) fn group(&self, key: &GroupKey) -> &wgpu::BindGroup {
         &self.groups[key]
     }

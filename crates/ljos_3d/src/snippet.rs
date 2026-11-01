@@ -1002,8 +1002,15 @@ fn material_fragment(
     (s, before)
 }
 
+/// An effect's places count up from the picture's bottom row, as Qt has them,
+/// and every picture here starts from its top one: each read turns the place
+/// over. What is drawn into a picture ends up the right way for it.
+const EFFECT_READS: &str = "#define texture(ljospicture, ljosplace) texture(ljospicture, vec2((ljosplace).x, 1.0 - (ljosplace).y))\n\
+     #define textureLod(ljospicture, ljosplace, ljoslevel) textureLod(ljospicture, vec2((ljosplace).x, 1.0 - (ljosplace).y), ljoslevel)\n";
+
 fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (String, u32) {
     let mut s = String::from(header);
+    s.push_str(EFFECT_READS);
     s.push_str("vec3 VERTEX; vec4 POSITION; vec2 INPUT_UV; vec2 TEXTURE_UV;\n");
     let before = lines(&s);
     push_user(&mut s, user);
@@ -1015,7 +1022,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
         "};\n\
          LjosVertex ljosvertex(vec2 ljosuv) {\n\
          \x20   VERTEX = vec3(ljosuv.x * 2.0 - 1.0, 1.0 - ljosuv.y * 2.0, 0.0);\n\
-         \x20   INPUT_UV = ljosuv; TEXTURE_UV = ljosuv; POSITION = vec4(0.0);\n",
+         \x20   INPUT_UV = vec2(ljosuv.x, 1.0 - ljosuv.y); TEXTURE_UV = INPUT_UV; POSITION = vec4(0.0);\n",
     );
     for v in out {
         let _ = writeln!(s, "    {} = {}(0.0);", v.name, glsl_type(v.width));
@@ -1038,6 +1045,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
 
 fn effect_fragment(header: &str, user: &str, src: &str, ins: &[Varying]) -> (String, u32) {
     let mut s = String::from(header);
+    s.push_str(EFFECT_READS);
     s.push_str("vec2 INPUT_UV; vec2 TEXTURE_UV; vec4 FRAGCOLOR; vec4 FRAGCOORD;\n");
     let before = lines(&s);
     push_user(&mut s, user);
@@ -1458,13 +1466,14 @@ fn effect_glue(out: &[Varying], ins: &[Varying]) -> String {
     for i in 0..locations(out) {
         let _ = writeln!(s, "    @location({}) vary{}: vec4<f32>,", 1 + i, letters(i));
     }
-    // One triangle over the output, as blit.wgsl draws.
+    // A rectangle over the output, so that a vertex snippet moving its corners
+    // leaves a rectangle.
     let _ = write!(
         s,
         "}};\n\
          @vertex\n\
          fn {EFFECT_VERTEX}(@builtin(vertex_index) i: u32) -> CmEffectOut {{\n\
-         \x20   let uv = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));\n\
+         \x20   let uv = vec2<f32>(f32(i & 1u), f32((i >> 1u) & 1u));\n\
          \x20   let v = cmv_ljosvertex(uv);\n\
          \x20   var out: CmEffectOut;\n\
          \x20   out.clip = v.ljosclip;\n\

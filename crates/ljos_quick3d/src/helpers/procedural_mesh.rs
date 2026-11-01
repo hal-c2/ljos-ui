@@ -102,7 +102,24 @@ impl Generated for ProceduralMesh {
         let uvs: Vec<Vector2d> = cx.get(ProceduralMesh::UV0).ok()?;
         let indexes: Vec<i32> = cx.get(ProceduralMesh::INDEXES).ok()?;
         let mode: i32 = cx.get(ProceduralMesh::PRIMITIVE_MODE).ok()?;
-        Some(assemble(&positions, &normals, &uvs, &indexes, mode))
+        let mut built = assemble(&positions, &normals, &uvs, &indexes, mode);
+        let subsets = cx.with::<ProceduralMesh, _>(|m| m.subsets.objects()).ok()?;
+        built.subsets = subsets
+            .into_iter()
+            .filter_map(|o| {
+                let at = |p| {
+                    cx.engine
+                        .get(o, p)
+                        .ok()
+                        .and_then(|n: i32| usize::try_from(n).ok())
+                };
+                Some((
+                    at(ProceduralMeshSubset::OFFSET)?,
+                    at(ProceduralMeshSubset::LENGTH)?,
+                ))
+            })
+            .collect();
+        Some(built)
     }
 }
 
@@ -199,8 +216,8 @@ fn face_normals(positions: &[Vector3d], indices: &[u32]) -> Vec<[f32; 3]> {
         .collect()
 }
 
-/// `ProceduralMeshSubset`: a part of a mesh, `length` indexes from `offset`.
-/// Kept: the mesh is drawn whole, with the model's first material.
+/// `ProceduralMeshSubset`: a part of a mesh, `length` indexes from `offset`,
+/// that the material of its place in the model's list draws.
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "QtQuick3D.Helpers", name = "ProceduralMeshSubset", extends = QtObject)]
 pub struct ProceduralMeshSubset {

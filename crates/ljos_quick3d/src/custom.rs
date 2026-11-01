@@ -605,11 +605,16 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
         })
         .collect();
     let mut buffers: Vec<ObjectId> = Vec::new();
+    // Two of one name are one.
     let mut index_of = |b: ObjectId| {
-        buffers.iter().position(|x| *x == b).unwrap_or_else(|| {
-            buffers.push(b);
-            buffers.len() - 1
-        })
+        let name = item::prop(e, b, Buffer::NAME);
+        buffers
+            .iter()
+            .position(|x| item::prop(e, *x, Buffer::NAME) == name)
+            .unwrap_or_else(|| {
+                buffers.push(b);
+                buffers.len() - 1
+            })
     };
     let mut passes = Vec::new();
     for pass in list(e, obj, Effect::PASSES.index) {
@@ -641,15 +646,18 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
                 else {
                     continue;
                 };
-                let i = index_of(b);
+                // One without a name is the picture the effect was given.
+                let named = !item::prop(e, b, Buffer::NAME).is_empty();
+                let i = named.then(|| index_of(b));
                 let sampler = item::prop(e, c, BufferInput::SAMPLER);
+                let reads = i.map_or(PassTexture::Given, PassTexture::Buffer);
                 if sampler.is_empty() {
-                    input = Some(i);
+                    input = i;
                 } else if let Some(at) = names.iter().position(|n| *n == sampler) {
-                    read[at] = PassTexture::Buffer(i);
+                    read[at] = reads;
                 } else {
                     names.push(sampler);
-                    read.push(PassTexture::Buffer(i));
+                    read.push(reads);
                 }
             } else if e.is::<SetUniformValue>(c) {
                 let target = item::prop(e, c, SetUniformValue::TARGET);
@@ -659,9 +667,15 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
                 }
             }
         }
-        let output = item::prop(e, pass, Pass::OUTPUT)
-            .filter(|b| e.is::<Buffer>(*b))
-            .map(&mut index_of);
+        // One without a name is the picture the effect leaves, and says its kind.
+        let drawn = item::prop(e, pass, Pass::OUTPUT).filter(|b| e.is::<Buffer>(*b));
+        let (named, unnamed) = match drawn {
+            Some(b) if item::prop(e, b, Buffer::NAME).is_empty() => (None, Some(b)),
+            other => (other, None),
+        };
+        let output = named.map(&mut index_of);
+        let leaves =
+            unnamed.map(|b| BufferFormat::from_index(i64::from(item::prop(e, b, Buffer::FORMAT))));
         let key = Key {
             vertex,
             fragment,
@@ -686,6 +700,7 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
             textures: read,
             input,
             output,
+            leaves,
         });
     }
     let buffers = buffers.iter().map(|b| buffer(e, *b)).collect();
@@ -694,6 +709,7 @@ pub(crate) fn effect(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<ljos_3
 
 fn buffer(e: &Engine, b: ObjectId) -> EffectBuffer {
     EffectBuffer {
+        name: item::prop(e, b, Buffer::NAME),
         format: BufferFormat::from_index(i64::from(item::prop(e, b, Buffer::FORMAT))),
         size_multiplier: item::prop(e, b, Buffer::SIZE_MULTIPLIER) as f32,
         filter: match item::prop(e, b, Buffer::TEXTURE_FILTER_OPERATION) {
