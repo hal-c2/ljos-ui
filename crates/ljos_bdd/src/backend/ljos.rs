@@ -228,6 +228,8 @@ enum HostSetting {
     /// The application palette's link colour, as a host sets it.
     LinkColour(ljos_engine::Color),
     NoExternalDrops,
+    /// `QML_XHR_ALLOW_FILE_READ` is 1.
+    XhrLocalRead,
 }
 
 fn apply(engine: &Engine, said: HostSetting) {
@@ -252,6 +254,7 @@ fn apply(engine: &Engine, said: HostSetting) {
             let palette = ljos_quick::application_palette(engine).with_link(link);
             ljos_quick::set_application_palette(engine, palette)
         }
+        HostSetting::XhrLocalRead => ljos_platform::Platform::of(engine).set_local_file_read(true),
         HostSetting::NoExternalDrops => ljos_platform::Platform::of(engine)
             .set_external_drops_unavailable(engine, "the window system has no drag-and-drop"),
     }

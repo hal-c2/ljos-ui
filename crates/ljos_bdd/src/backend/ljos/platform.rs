@@ -281,6 +281,10 @@ impl Platform for LjosBackend {
         Ok(Some(crate::backend::BackdropAsked { kind, look }))
     }
 
+    fn xhr_local_read(&mut self) -> Result<()> {
+        self.apply_or_queue(HostSetting::XhrLocalRead)
+    }
+
     fn no_external_drops(&mut self) -> Result<()> {
         self.apply_or_queue(HostSetting::NoExternalDrops)
     }

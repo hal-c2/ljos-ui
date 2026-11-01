@@ -293,6 +293,118 @@ Feature: XMLHttpRequest
     Then the property "text" of "root" is "POST\ncontent-type: text/plain;charset=UTF-8\n\nhi"
     And the property "bytes" of "root" is "POST\ncontent-type: text/plain;charset=UTF-8\n\nAB"
 
+  # QML_XHR_ALLOW_FILE_READ, in the application's environment.
+  Scenario Outline: A script allowed to reads a local file <how>
+    Given the application may read local files through XMLHttpRequest
+    And the data file "words.txt" holds "hi there"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string states: ""
+        property string called: ""
+        property string got: ""
+        property int after: -1
+        Component.onCompleted: {
+          let http = new XMLHttpRequest()
+          http.onload = function () { root.called += "load" }
+          http.onerror = function () { root.called += "error" }
+          http.onloadend = function () { root.called += "end" }
+          http.onreadystatechange = function () {
+            root.states += http.readyState
+            if (http.readyState === XMLHttpRequest.DONE)
+              root.got = http.status + " " + http.statusText + " "
+                + http.responseText.trim() + " " + http.getResponseHeader("Content-Length")
+          }
+          http.open("GET", Qt.resolvedUrl("words.txt"), <asynchronous>)
+          http.send()
+          root.after = http.readyState
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "states" of "root" is "1234"
+    And the property "got" of "root" is "200 OK hi there 8"
+    And the property "called" of "root" is "loadend"
+    And the property "after" of "root" is <after>
+
+    Examples:
+      | how               | asynchronous | after |
+      | in the background | true         | 1     |
+      | and waits         | false        | 4     |
+
+  Scenario: A local file that is not there is status 0 and not an error
+    Given the application may read local files through XMLHttpRequest
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property string states: ""
+        property string called: ""
+        property string got: "unread"
+        Component.onCompleted: {
+          let http = new XMLHttpRequest()
+          http.onload = function () { root.called += "load" }
+          http.onerror = function () { root.called += "error" }
+          http.onloadend = function () { root.called += "end" }
+          http.onreadystatechange = function () {
+            root.states += http.readyState
+            if (http.readyState === XMLHttpRequest.DONE)
+              root.got = http.status + " [" + http.responseText + "]"
+          }
+          http.open("GET", Qt.resolvedUrl("not-there.txt"))
+          http.send()
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "states" of "root" is "134"
+    And the property "got" of "root" is "0 []"
+    And the property "called" of "root" is "loadend"
+
+  Scenario: Without being allowed a script reads no local file, and is told so
+    Given the data file "words.txt" holds "hi there"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"
+        property int after: -1
+        Component.onCompleted: {
+          let http = new XMLHttpRequest()
+          http.open("GET", Qt.resolvedUrl("words.txt"))
+          http.send()
+          root.after = http.readyState
+        }
+      }
+      """
+    When 1 second passes
+    Then the property "after" of "root" is 1
+    And the log has a warning matching "Set QML_XHR_ALLOW_FILE_READ to 1"
+
+  Scenario: Being allowed to read a local file does not allow a script to write one
+    Given the application may read local files through XMLHttpRequest
+    And the data file "words.txt" holds "hi there"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        Component.onCompleted: {
+          let put = new XMLHttpRequest()
+          put.open("PUT", Qt.resolvedUrl("words.txt"))
+          put.send("x")
+          let head = new XMLHttpRequest()
+          head.open("HEAD", Qt.resolvedUrl("words.txt"))
+          head.send()
+        }
+      }
+      """
+    When 1 second passes
+    Then the log has a warning matching "Set QML_XHR_ALLOW_FILE_WRITE to 1"
+    And the log has a warning matching "Unsupported method used on a local file"
+
   # The fetcher's HTTP client keeps the status and not the phrase the
   # server sent with it, so Ljós has the standard phrase.
   @backlog @api-QtQml.XMLHttpRequest.statusText

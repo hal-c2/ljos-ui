@@ -11,8 +11,10 @@
 //! A request says what Qt's says of itself (`User-Agent`,
 //! `Accept-Language`). Qt's reply has the server's own reason phrase; this
 //! one has the standard phrase of its status, as the fetcher's HTTP client
-//! does not keep the server's. A local file is not read, as Qt reads
-//! none unless `QML_XHR_ALLOW_FILE_READ` is set. `responseXML` is the
+//! does not keep the server's. A local file is read only by a `GET`, and
+//! only when `QML_XHR_ALLOW_FILE_READ` is 1, as in Qt; a relative URL is
+//! not resolved against the calling file, so a script says
+//! `Qt.resolvedUrl`. `responseXML` is the
 //! read-only DOM Qt has, read out of a reply of an XML type when a script
 //! first asks for it (`crate::xml_dom`).
 
@@ -105,16 +107,64 @@ impl XhrHelper {
         }
     }
 
-    /// Says, as Qt does, that a local file is not read.
+    /// Whether a request by `method` for a file reads it.
+    #[qml(invokable)]
+    fn reads_local(cx: &Cx, method: Value) -> bool {
+        method.to_js_string() == "GET" && Platform::of(cx.engine).local_file_read()
+    }
+
+    /// Reads the file at `url` and gives the request's number. With `wait`
+    /// it has been read when this returns.
+    #[qml(invokable)]
+    fn read_local(cx: &Cx, url: Value, wait: Value) -> i32 {
+        let url = url.to_js_string();
+        let replies = cx.engine.extension::<Replies>();
+        let id = replies.next.get() + 1;
+        replies.next.set(id);
+        let platform = Platform::of(cx.engine);
+        let registered = platform
+            .resource(&url)
+            .map(|bytes| file_reply(bytes.to_vec()));
+        if wait.to_boolean() {
+            let reply = registered.map_or_else(|| read_file(&url), Ok);
+            replies.kept.borrow_mut().insert(id, reply);
+            return id;
+        }
+        let me = cx.this;
+        let label = format!("GET {url}");
+        platform.on_thread(
+            label,
+            move || registered.map_or_else(|| read_file(&url), Ok),
+            move |e, reply| {
+                e.extension::<Replies>().kept.borrow_mut().insert(id, reply);
+                tell(e, me, id);
+            },
+        );
+        id
+    }
+
+    /// Says, in Qt's words, why a local file is not read.
     #[qml(invokable)]
     fn refuse_local(cx: &Cx, method: Value) {
+        let method = method.to_js_string();
+        let variable = match method.as_str() {
+            "GET" => "QML_XHR_ALLOW_FILE_READ",
+            "PUT" => "QML_XHR_ALLOW_FILE_WRITE",
+            _ => {
+                cx.engine.log(
+                    LogLevel::Warning,
+                    CATEGORY,
+                    "XMLHttpRequest: Unsupported method used on a local file".to_owned(),
+                );
+                return;
+            }
+        };
         cx.engine.log(
             LogLevel::Warning,
             CATEGORY,
             format!(
-                "XMLHttpRequest: Using {} on a local file is disabled by default.\n\
-                 Set QML_XHR_ALLOW_FILE_READ to 1 to enable this feature.",
-                method.to_js_string()
+                "XMLHttpRequest: Using {method} on a local file is disabled by default.\n\
+                 Set {variable} to 1 to enable this feature."
             ),
         );
     }
@@ -195,6 +245,24 @@ fn accept_language(locale: &str) -> String {
     }
     accepted.push('*');
     accepted
+}
+
+/// What a read of the file at `url` answers.
+fn read_file(url: &str) -> Result<Response, FetchError> {
+    let path = ljos_engine::url_path(url)
+        .ok_or_else(|| FetchError::Failed(format!("{url} is not a local file")))?;
+    let body = std::fs::read(&path).map_err(|e| FetchError::Failed(e.to_string()))?;
+    Ok(file_reply(body))
+}
+
+/// A file as a reply: the status of a good HTTP reply, as Qt gives it. Qt's
+/// headers also have `last-modified`.
+fn file_reply(body: Vec<u8>) -> Response {
+    Response {
+        status: 200,
+        headers: vec![("content-length".to_owned(), body.len().to_string())],
+        body,
+    }
 }
 
 fn reply_value(response: &Response, bytes: bool) -> Value {
@@ -422,8 +490,16 @@ const INSTALL: &str = r#"(function (helper) {
       const s = state.get(this);
       if (s.ready !== OPENED || s.sent) throw invalid();
       if (!remote(s.url)) {
-        helper.refuseLocal(s.method);
         s.sent = true;
+        if (!helper.readsLocal(s.method)) {
+          helper.refuseLocal(s.method);
+          return;
+        }
+        s.local = true;
+        const id = helper.readLocal(s.url, s.wait);
+        s.id = id;
+        if (s.wait) this.#arrive(id);
+        else waiting.set(id, () => this.#arrive(id));
         return;
       }
       let bytes = false;
@@ -495,6 +571,24 @@ const INSTALL: &str = r#"(function (helper) {
       const wantBytes = s.type === "arraybuffer";
       const reply = helper.take(id, wantBytes);
       s.id = undefined;
+      // A file that is not there is no error to Qt: it loads, status 0.
+      if (s.local) {
+        if (!reply.failed) {
+          reply.list = reply.headers.split("\r\n").map((line) => {
+            const at = line.indexOf(": ");
+            return [line.slice(0, at), line.slice(at + 2)];
+          });
+          s.reply = reply;
+        }
+        for (const ready of reply.failed ? [LOADING, DONE] : [HEADERS_RECEIVED, LOADING, DONE]) {
+          s.ready = ready;
+          this.#changed();
+          if (state.get(this) !== s) return;
+        }
+        this.#call("onload");
+        this.#call("onloadend");
+        return;
+      }
       if (reply.failed) {
         s.ready = DONE;
         this.#changed();

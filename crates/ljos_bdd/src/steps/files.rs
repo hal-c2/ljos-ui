@@ -169,6 +169,11 @@ fn a_served_animated_image_file(
 }
 
 // A file with an image's name and something else inside.
+#[given(regex = r#"^the data file "([^"]+)" holds "([^"]*)"$"#)]
+fn data_file(w: &mut LjosWorld, name: String, text: String) -> StepResult {
+    w.each(|b| b.files()?.resource(&name, text.as_bytes()))
+}
+
 #[given(regex = r#"^a file "([^"]+)" that is not an image$"#)]
 fn not_an_image(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.files()?.resource(&name, &fixture::not_an_image()))

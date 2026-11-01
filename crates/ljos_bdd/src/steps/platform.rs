@@ -337,6 +337,11 @@ fn user_answers_permission(w: &mut LjosWorld, how: String, name: String) -> Step
     w.each(|b| b.platform()?.answer_permission(&name, how == "grants"))
 }
 
+#[given("the application may read local files through XMLHttpRequest")]
+fn xhr_local_read_given(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.xhr_local_read())
+}
+
 #[given("the window system brings no files dragged in from other applications")]
 fn no_external_drops_given(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.platform()?.no_external_drops())

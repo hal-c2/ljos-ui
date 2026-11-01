@@ -228,6 +228,8 @@ pub struct Platform {
     dialogs: RefCell<Rc<dyn DialogService>>,
     permissions: RefCell<Rc<dyn PermissionService>>,
     fetcher: RefCell<Arc<dyn Fetcher>>,
+    /// Whether `XMLHttpRequest` reads local files: `QML_XHR_ALLOW_FILE_READ`.
+    local_file_read: Cell<bool>,
     open_url: RefCell<Rc<dyn OpenUrlService>>,
     badge: RefCell<Rc<dyn BadgeService>>,
     sensors: RefCell<Rc<dyn SensorService>>,
@@ -285,6 +287,9 @@ impl Default for Platform {
             dialogs: RefCell::new(Rc::new(NoSystemDialogs)),
             permissions: RefCell::new(Rc::new(UngatedPermissions)),
             fetcher: RefCell::new(Arc::new(NoNetwork)),
+            local_file_read: Cell::new(
+                std::env::var_os("QML_XHR_ALLOW_FILE_READ").is_some_and(|v| v == "1"),
+            ),
             open_url: RefCell::new(Rc::new(RecordedUrls::default())),
             badge: RefCell::new(Rc::new(RecordedBadge::default())),
             sensors: RefCell::new(Rc::new(NoSensors)),
@@ -539,6 +544,17 @@ impl Platform {
 
     /// The installed fetcher, for work that fetches on a thread of its
     /// own rather than through [`Platform::fetch`].
+    /// Whether `XMLHttpRequest` reads local files.
+    pub fn local_file_read(&self) -> bool {
+        self.local_file_read.get()
+    }
+
+    /// Says whether `XMLHttpRequest` reads local files, as
+    /// `QML_XHR_ALLOW_FILE_READ` said when the engine started.
+    pub fn set_local_file_read(&self, on: bool) {
+        self.local_file_read.set(on);
+    }
+
     pub fn fetcher(&self) -> Arc<dyn Fetcher> {
         Arc::clone(&self.fetcher.borrow())
     }
@@ -836,14 +852,26 @@ impl Platform {
         request: Request,
         done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
     ) {
+        let label = format!("{} {}", request.method, request.url);
+        let fetcher = Arc::clone(&self.fetcher.borrow());
+        self.on_thread(label, move || fetcher.request(&request), done);
+    }
+
+    /// Runs `work` on a thread of its own and gives `done` its answer on
+    /// the Engine thread; `label` is what [`Platform::promises`] says.
+    pub(crate) fn on_thread(
+        &self,
+        label: String,
+        work: impl FnOnce() -> Result<Response, FetchError> + Send + 'static,
+        done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
+    ) {
         let id = self.next_fetch_id();
         self.requests.borrow_mut().insert(id, Box::new(done));
-        let reply = self.expect_for(format!("{} {}", request.method, request.url), None);
-        let fetcher = Arc::clone(&self.fetcher.borrow());
+        let reply = self.expect_for(label, None);
         let spawned = std::thread::Builder::new()
             .name("ljos-request".to_owned())
             .spawn(move || {
-                let result = fetcher.request(&request);
+                let result = work();
                 reply.send(move |e| {
                     let done = Platform::of(e).requests.borrow_mut().remove(&id);
                     if let Some(done) = done {

@@ -703,6 +703,12 @@ pub trait Platform: Backend {
 
     /// The window system brings no files dragged in from other
     /// applications, as winit has none on Wayland.
+    fn xhr_local_read(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "XMLHttpRequest reading local files",
+        ))
+    }
+
     fn no_external_drops(&mut self) -> Result<()> {
         Err(BackendError::NotImplemented(
             "a window system without drops from outside",

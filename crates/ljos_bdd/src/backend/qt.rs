@@ -971,6 +971,13 @@ impl Environment for QtBackend {
 }
 
 impl Platform for QtBackend {
+    fn xhr_local_read(&mut self) -> Result<()> {
+        self.controls_vars
+            .push(("QML_XHR_ALLOW_FILE_READ".to_owned(), "1".to_owned()));
+        self.cache = None;
+        Ok(())
+    }
+
     fn set_clipboard(&mut self, text: &str) -> Result<()> {
         self.ask(json!({"op": "copy", "value": text})).map(drop)
     }
