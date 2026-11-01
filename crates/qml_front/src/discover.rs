@@ -18,6 +18,9 @@ pub struct Module {
     /// Where in the program it keeps them: under `qrc:/qt/qml`, unless the
     /// build says otherwise (`RESOURCE_PREFIX`).
     pub prefix: String,
+    /// The C++ the build compiles into the module (`SOURCES`), which does
+    /// not run here: what it provides has to come from elsewhere.
+    pub native: Vec<String>,
 }
 
 impl Module {
@@ -119,6 +122,7 @@ pub fn qmldir(text: &str) -> Option<Module> {
         types,
         resources: Vec::new(),
         prefix: PREFIX.to_string(),
+        native: Vec::new(),
     })
 }
 
@@ -235,6 +239,7 @@ fn module(arguments: &[String]) -> Option<Module> {
     let mut types = Vec::new();
     let mut resources = Vec::new();
     let mut prefix = PREFIX.to_string();
+    let mut native = Vec::new();
     let mut keyword = "";
     for argument in arguments.iter().skip(1) {
         if is_keyword(argument) {
@@ -255,6 +260,7 @@ fn module(arguments: &[String]) -> Option<Module> {
             }
             "RESOURCES" => resources.push(argument.clone()),
             "RESOURCE_PREFIX" => prefix = argument.clone(),
+            "SOURCES" => native.push(argument.clone()),
             _ => {}
         }
     }
@@ -263,6 +269,7 @@ fn module(arguments: &[String]) -> Option<Module> {
         types,
         resources,
         prefix,
+        native,
     })
 }
 

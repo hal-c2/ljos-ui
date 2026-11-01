@@ -36,6 +36,9 @@ pub struct Project<O> {
     /// The JavaScript files, by their path from the root (`content/calc.js`).
     scripts: BTreeMap<String, String>,
     pub(crate) oracle: O,
+    /// The modules told to the front end that are built with C++, with its
+    /// files: where a name nothing here has may have been meant to come from.
+    native: BTreeMap<String, Vec<String>>,
     /// Names only the context an instance is made in has at run time. Known
     /// once every file is in.
     dynamic: OnceCell<HashSet<String>>,
@@ -80,6 +83,7 @@ impl<O: TypeOracle> Project<O> {
             paths: BTreeMap::new(),
             scripts: BTreeMap::new(),
             oracle,
+            native: BTreeMap::new(),
             dynamic: OnceCell::new(),
             callable: RefCell::new(HashMap::new()),
             summarising: Cell::new(false),
@@ -192,7 +196,28 @@ impl<O: TypeOracle> Project<O> {
         }
     }
 
+    /// What to add to the report of a name nothing here has, in a project
+    /// with modules whose C++ does not run here.
+    pub(crate) fn native_note(&self) -> Option<String> {
+        let notes: Vec<String> = self
+            .native
+            .iter()
+            .map(|(uri, files)| {
+                format!(
+                    "module {uri} is built with C++ that does not run here ({}): \
+                     give it a stand-in with --alias {uri}=DIR, or a Rust module",
+                    files.join(", ")
+                )
+            })
+            .collect();
+        (!notes.is_empty()).then(|| notes.join("; "))
+    }
+
     fn add_module(&mut self, dir: &str, module: &Module) {
+        if !module.native.is_empty() {
+            self.native
+                .insert(module.uri.clone(), module.native.clone());
+        }
         for ty in &module.types {
             let file = join(dir, &ty.path);
             let file = file.strip_suffix(".qml").unwrap_or(&file);

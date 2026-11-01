@@ -42,6 +42,25 @@ pub fn compile_file<O: TypeOracle>(
     project: &Project<O>,
     key: &str,
 ) -> Result<Compiled, Vec<Diagnostic>> {
+    let mut compiled = compile_alone(project, key);
+    if let Some(note) = project.native_note() {
+        let diagnostics = match &mut compiled {
+            Ok(compiled) => &mut compiled.diagnostics,
+            Err(diagnostics) => diagnostics,
+        };
+        for d in diagnostics {
+            if matches!(d.code, Code::UnknownType | Code::UnresolvedName) {
+                d.message = format!("{}; {note}", d.message);
+            }
+        }
+    }
+    compiled
+}
+
+fn compile_alone<O: TypeOracle>(
+    project: &Project<O>,
+    key: &str,
+) -> Result<Compiled, Vec<Diagnostic>> {
     let Some(source) = project.source(key) else {
         return Err(vec![Diagnostic::error(
             Code::NotInProject,

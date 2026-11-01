@@ -61,3 +61,33 @@ Feature: Each thing `ljos check` finds names its kind
       1 files, 1 errors, 0 warnings
       ljos: 1 errors
       """
+
+  # A module's C++ does not run on Ljós. What it would have provided is an
+  # unknown name like any other, so the report says where it was to come from.
+  Scenario: A name a module's C++ may have provided says so
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      import Stocks
+      Item {
+        property real r: Engine.price
+      }
+      """
+    And the file "Chart2.qml":
+      """qml
+      import QtQuick
+      Item { }
+      """
+    And the file "CMakeLists.txt":
+      """
+      qt_add_qml_module(app
+          URI Stocks
+          QML_FILES Chart2.qml
+          SOURCES engine.cpp engine.h
+      )
+      """
+    When the files are checked
+    Then the check reports the lines:
+      """
+      Main.qml:4:26: warning: `Engine` is not a name in sight: it is looked up when the program runs; module Stocks is built with C++ that does not run here (engine.cpp, engine.h): give it a stand-in with --alias Stocks=DIR, or a Rust module [unresolved-name]
+      """
