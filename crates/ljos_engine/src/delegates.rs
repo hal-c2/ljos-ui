@@ -104,6 +104,8 @@ struct State {
     near: Cell<usize>,
     /// What [`State::object_from`] last found.
     later: Cell<Option<Later>>,
+    /// The model said rows are about to go, and what was due ran.
+    announced: bool,
 }
 
 /// No row in `from..at` has a delegate and the row at `at` has one, or
@@ -333,6 +335,20 @@ impl Shared {
     /// Takes the `count` rows from `first` out as their model did: each
     /// reads index -1 before the rest are renumbered, and each leaves
     /// from `first`, which is where it is by the time it goes.
+    /// What is due in the delegates of rows that are about to go runs.
+    fn settle_rows(&self, engine: &Engine, first: usize, count: usize) {
+        let going: Vec<_> = {
+            let st = self.state.borrow();
+            let rows = st.rows.iter().skip(first).take(count);
+            rows.map(|r| (r.data.clone(), r.object)).collect()
+        };
+        for (data, object) in going {
+            if let Some(d) = data {
+                d.settle(engine, object);
+            }
+        }
+    }
+
     fn remove_rows(&self, engine: &Engine, first: usize, count: usize) {
         let (gone, n) = {
             let mut st = self.state.borrow_mut();
@@ -347,7 +363,7 @@ impl Shared {
         }
         for row in &gone {
             if let Some(d) = &row.data {
-                d.leave(engine, row.object);
+                d.leave(engine);
             }
         }
         self.reindex(engine, first, n);
@@ -495,9 +511,11 @@ impl Shared {
             return;
         }
         match change {
-            // Nothing is kept by what is about to change.
-            ModelChange::RowsAboutToBeInserted { .. }
-            | ModelChange::RowsAboutToBeRemoved { .. } => {}
+            ModelChange::RowsAboutToBeInserted { .. } => {}
+            ModelChange::RowsAboutToBeRemoved { first, count } => {
+                s.state.borrow_mut().announced = true;
+                s.settle_rows(engine, *first, *count);
+            }
             ModelChange::RowsInserted { first, count } => {
                 let (ids, n) = {
                     let mut st = s.state.borrow_mut();
@@ -514,7 +532,13 @@ impl Shared {
                     }
                 });
             }
-            ModelChange::RowsRemoved { first, count } => s.remove_rows(engine, *first, *count),
+            ModelChange::RowsRemoved { first, count } => {
+                // A model need not announce a removal.
+                if !std::mem::take(&mut s.state.borrow_mut().announced) {
+                    s.settle_rows(engine, *first, *count);
+                }
+                s.remove_rows(engine, *first, *count);
+            }
             ModelChange::RowsMoved { from, to, count } => {
                 {
                     let mut st = s.state.borrow_mut();
@@ -814,12 +838,20 @@ impl Given {
         }
     }
 
+    /// The row is about to leave the model: what is due runs while it is
+    /// there.
+    fn settle(&self, engine: &Engine, delegate: Option<ObjectId>) {
+        if let Given::Row(d) = self {
+            engine.settle_row(d, delegate);
+        }
+    }
+
     /// The row left the model: its roles read `undefined` from here on and
     /// its index is -1. Before the index: what runs because the index
     /// changed already finds the roles gone, as in Qt.
-    fn leave(&self, engine: &Engine, delegate: Option<ObjectId>) {
+    fn leave(&self, engine: &Engine) {
         if let Given::Row(d) = self {
-            engine.empty_row(d, delegate);
+            engine.empty_row(d);
         }
         // A required property already holds what it was given, as one bound
         // to a row object that is emptied without telling anyone does.
@@ -1130,6 +1162,8 @@ struct ViewState {
     subscription: u64,
     component: Option<ObjectId>,
     live: Vec<Held>,
+    /// The model said rows are about to go, and what was due ran.
+    announced: bool,
     /// Delegates with no row, kept to show another (`reuseItems`).
     pool: Vec<Held>,
     next_id: u64,
@@ -1727,6 +1761,24 @@ impl ViewShared {
     }
 
     /// Moves every delegate to the row `to` says its row now is.
+    /// What is due in the delegates of rows that are about to go runs.
+    fn settle_rows(&self, engine: &Engine, first: usize, count: usize) {
+        let end = first.saturating_add(count);
+        let going: Vec<_> = {
+            let st = self.state.borrow();
+            let inside = st
+                .live
+                .iter()
+                .filter(|h| h.index.is_some_and(|i| i >= first && i < end));
+            inside.map(|h| (h.data.clone(), h.object)).collect()
+        };
+        for (data, object) in going {
+            if let (Some(d), Some(o)) = (data, object) {
+                d.settle(engine, Some(o));
+            }
+        }
+    }
+
     fn remap(&self, engine: &Engine, to: impl Fn(usize) -> usize) {
         let writes: Vec<(Given, usize)> = {
             let mut st = self.state.borrow_mut();
@@ -1758,12 +1810,19 @@ impl ViewShared {
         let mut gone: Vec<(usize, ObjectId)> = Vec::new();
         let mut chooser_remade = false;
         engine.batch(|| match change {
-            ModelChange::RowsAboutToBeInserted { .. }
-            | ModelChange::RowsAboutToBeRemoved { .. } => {}
+            ModelChange::RowsAboutToBeInserted { .. } => {}
+            ModelChange::RowsAboutToBeRemoved { first, count } => {
+                s.state.borrow_mut().announced = true;
+                s.settle_rows(engine, *first, *count);
+            }
             ModelChange::RowsInserted { first, count } => {
                 s.remap(engine, |i| if i >= *first { i + count } else { i });
             }
             ModelChange::RowsRemoved { first, count } => {
+                // A model need not announce a removal.
+                if !std::mem::take(&mut s.state.borrow_mut().announced) {
+                    s.settle_rows(engine, *first, *count);
+                }
                 let end = first.saturating_add(*count);
                 let inside = |h: &Held| h.index.is_some_and(|i| i >= *first && i < end);
                 let (unmade, leaving) = {
@@ -1789,9 +1848,9 @@ impl ViewShared {
                 for h in unmade {
                     s.destroy(engine, h);
                 }
-                for (_, object, data) in &leaving {
+                for (_, _, data) in &leaving {
                     if let Some(d) = data {
-                        d.leave(engine, Some(*object));
+                        d.leave(engine);
                     }
                 }
                 s.remap(engine, |i| if i >= end { i - count } else { i });

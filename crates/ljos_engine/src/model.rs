@@ -541,6 +541,18 @@ impl ObjectRows {
 
     /// Takes `count` rows from `first` out; the result is what they were.
     pub fn remove(&self, engine: &Engine, first: usize, count: usize) -> Vec<ObjectId> {
+        let len = self.rows.borrow().len();
+        let start = first.min(len);
+        let going = first.saturating_add(count).min(len) - start;
+        if going > 0 {
+            self.listeners.emit(
+                engine,
+                &ModelChange::RowsAboutToBeRemoved {
+                    first: start,
+                    count: going,
+                },
+            );
+        }
         let gone: Vec<ObjectId> = {
             let mut rows = self.rows.borrow_mut();
             let first = first.min(rows.len());
@@ -1333,17 +1345,15 @@ impl Engine {
 }
 
 impl Engine {
-    /// The row a row object showed left its model: its roles and its
-    /// `modelData` read `undefined` from here on.
-    ///
-    /// Nothing is told that they changed. Measured on Qt 6.11: a binding
-    /// in the delegate that read a role keeps what it read, and no change
-    /// handler runs; only a new read finds the role gone.
+    /// The row a row object shows is about to leave its model. What an
+    /// earlier change left to run runs now, with the row and the model as
+    /// that change left them: in Qt it ran when that change came, and holds
+    /// that result. Waiting for the removal would run it against a model
+    /// without the row and with the row's old index.
     ///
     /// `delegate` is what was made for the row. Its bindings that have not
-    /// run yet run first, while the roles are there: in Qt they ran when
-    /// the delegate was made, and what they read then is what they hold.
-    pub(crate) fn empty_row(&self, row: &RowObject, delegate: Option<ObjectId>) {
+    /// run yet run too: in Qt they ran when the delegate was made.
+    pub(crate) fn settle_row(&self, row: &RowObject, delegate: Option<ObjectId>) {
         // The roles of a row that is an object are the properties of an
         // object that is still there. A model of plain values (a number,
         // an array) has no roles, and its delegates keep `modelData`.
@@ -1377,23 +1387,43 @@ impl Engine {
             if !self.is_alive(row.id) {
                 return;
             }
+            let Some(n) = self.observed_node(row.id, prop) else {
+                continue;
+            };
+            for reader in g.observers(n) {
+                if g.kind(reader) == Some(NodeKind::Property)
+                    && g.state(reader) != Some(NodeState::Clean)
+                {
+                    let _ = self.untrack(|| g.try_get(reader));
+                }
+            }
+        }
+    }
+
+    /// The row a row object showed left its model: its roles and its
+    /// `modelData` read `undefined` from here on.
+    ///
+    /// Nothing is told that they changed. Measured on Qt 6.11: a binding
+    /// in the delegate that read a role keeps what it read, and no change
+    /// handler runs; only a new read finds the role gone.
+    ///
+    /// Whatever was due in it ran in [`Self::settle_row`], before the row
+    /// went.
+    pub(crate) fn empty_row(&self, row: &RowObject) {
+        if row.aliased || row.shape.roles.is_empty() {
+            return;
+        }
+        let g = &self.inner.graph;
+        let roles = row.shape.roles.iter().map(|(_, p)| *p);
+        for prop in roles.chain(row.shape.model_data) {
+            if !self.is_alive(row.id) {
+                return;
+            }
             let node = self.observed_node(row.id, prop);
             let quiet = match node {
                 // Nobody has read it: the object's copy is the only one.
                 None => true,
-                Some(n) => {
-                    // A binding that an earlier change left to run again
-                    // runs now, while the role is there: in Qt it ran
-                    // when that change came, and holds that result.
-                    for reader in g.observers(n) {
-                        if g.kind(reader) == Some(NodeKind::Property)
-                            && g.state(reader) != Some(NodeState::Clean)
-                        {
-                            let _ = self.untrack(|| g.try_get(reader));
-                        }
-                    }
-                    g.replace_quietly(n, Value::Undefined).unwrap_or(false)
-                }
+                Some(n) => g.replace_quietly(n, Value::Undefined).unwrap_or(false),
             };
             if quiet {
                 self.store_value(row.id, prop, &Value::Undefined);
