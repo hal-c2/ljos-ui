@@ -150,3 +150,35 @@ Feature: A light probe, the sky box and tone mapping
       When the property "visible" of "square" is set to true
       And the property "source" of "ao" is set to "black.png"
       Then the pixel at 100, 100 of the window is within 4 of "#000000"
+
+  Rule: A CustomMaterial can say for itself what the probe gives it
+
+    Background:
+      Given the text file "probed.frag":
+        """
+        void MAIN() { BASE_COLOR = vec4(0.0, 0.0, 0.0, 1.0); }
+        void IBL_PROBE()
+        {
+            DIFFUSE += textureLod(IBL_TEXTURE, IBL_ORIENTATION * NORMAL, IBL_MAXMIPMAP / 2).rgb;
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment {
+              backgroundMode: SceneEnvironment.Color; clearColor: "black"; tonemapMode: SceneEnvironment.TonemapModeLinear
+              lightProbe: Texture { source: "grey.hdr" }
+            }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Cube"; materials: CustomMaterial { fragmentShader: "probed.frag" } }
+          }
+        }
+        """
+
+    Scenario: IBL_PROBE reads the cube, unexposed
+      Then the pixel at 100, 100 of the window is within 3 of "#bcbcbc"

@@ -427,3 +427,60 @@ Feature: CustomMaterial runs the author's shader snippets
         }
         """
       Then the pixel at 100, 100 of the window is within 6 of "#1e1e1e"
+
+  Rule: What goes between a material's two shaders
+
+    # The matrix is three of the places a material has: ten in all.
+    Scenario: A matrix goes from one to the other
+      Given the text file "turned.vert":
+        """
+        VARYING mat3 turn;
+        void MAIN() { turn = mat3(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, 1.0)); }
+        """
+      And the text file "turned.frag":
+        """
+        VARYING mat3 turn;
+        void MAIN() { FRAGCOLOR = vec4(turn * vec3(0.0, 1.0, 0.0), 1.0); }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model { source: "#Cube"; materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; vertexShader: "turned.vert"; fragmentShader: "turned.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is "#00ff00"
+
+    Scenario: As many as ten, with a side to it
+      Given the text file "many.vert":
+        """
+        VARYING vec4 a; VARYING vec4 b; VARYING vec4 c; VARYING vec4 d; VARYING vec4 e;
+        VARYING vec4 f; VARYING vec4 g; VARYING vec4 h; VARYING vec4 i; VARYING vec4 j;
+        void MAIN() { j = vec4(0.0, 1.0, 0.0, 1.0); }
+        """
+      And the text file "many.frag":
+        """
+        VARYING vec4 a; VARYING vec4 b; VARYING vec4 c; VARYING vec4 d; VARYING vec4 e;
+        VARYING vec4 f; VARYING vec4 g; VARYING vec4 h; VARYING vec4 i; VARYING vec4 j;
+        void MAIN() { FRAGCOLOR = j; }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model { source: "#Cube"; materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; vertexShader: "many.vert"; fragmentShader: "many.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is "#00ff00"

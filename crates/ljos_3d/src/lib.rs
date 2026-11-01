@@ -80,4 +80,4 @@ pub use gpu::{Renderer, Target, TextureBytes};
 #[cfg(feature = "gpu")]
 pub use surface::{Gpu, SurfaceView, SurfaceViewError};
 #[cfg(feature = "gpu")]
-pub use timing::timing_features;
+pub use timing::{device_limits, timing_features, varying_limit};

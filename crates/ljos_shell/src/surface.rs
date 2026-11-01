@@ -593,6 +593,7 @@ fn create_new(display: OwnedDisplayHandle) -> WgpuSetupCreateNew {
         new.device_descriptor = std::sync::Arc::new(move |adapter| {
             let mut d = asked(adapter);
             d.required_features |= ljos_3d::timing_features(adapter);
+            d.required_limits.max_inter_stage_shader_variables = ljos_3d::varying_limit(adapter);
             d
         });
     }

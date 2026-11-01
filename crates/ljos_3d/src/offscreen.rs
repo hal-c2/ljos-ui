@@ -76,8 +76,7 @@ impl Offscreen {
                 .request_device(&wgpu::DeviceDescriptor {
                     label: Some("ljos_3d offscreen"),
                     required_features,
-                    required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                        .using_resolution(adapter.limits()),
+                    required_limits: crate::device_limits(&adapter),
                     ..Default::default()
                 })
                 .await?;

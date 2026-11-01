@@ -19,6 +19,22 @@ use std::time::Duration;
 /// The features GPU timing needs, where the adapter has them: ask for
 /// these with the device and the renderer times its targets.
 ///
+/// What a device asks for: WebGL2's least, with its largest textures and all
+/// the locations a material's VARYINGs may need. WebGL2's least is 15, one
+/// short of the 16 WebGPU promises and `MAX_VARYINGS` counts on, and most GL
+/// drivers have more.
+pub fn device_limits(adapter: &wgpu::Adapter) -> wgpu::Limits {
+    let mut limits = wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits());
+    limits.max_inter_stage_shader_variables = varying_limit(adapter);
+    limits
+}
+
+/// The locations between a material's stages this adapter gives, up to the
+/// 16 `MAX_VARYINGS` counts on.
+pub fn varying_limit(adapter: &wgpu::Adapter) -> u32 {
+    adapter.limits().max_inter_stage_shader_variables.min(16)
+}
+
 /// None where reading the queries back would wait for the GPU: wgpu's GL
 /// backend without query buffer objects copies each result through the
 /// processor, which stalls until the frame is done. None on WebGL2,

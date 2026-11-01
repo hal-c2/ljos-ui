@@ -24,9 +24,9 @@ use crate::custom::{
 };
 
 /// At most this many locations of VARYINGs, packed four numbers to each:
-/// WebGL2 guarantees few more inter-stage components than the material's
-/// own and these take.
-pub const MAX_VARYINGS: usize = 8;
+/// WebGPU has 16 for what goes between its stages, of which a surface takes 5
+/// and which side it faces 1.
+pub const MAX_VARYINGS: usize = 10;
 /// At most this many TextureInputs, WebGL2's sixteen samplers less the
 /// renderer's own.
 pub const MAX_TEXTURES: usize = 8;
@@ -972,10 +972,14 @@ fn material_fragment(
         call(&mut s, "ljosspecularlight", f.specular, "SPECULAR_LIGHT");
         if f.probe {
             s.push_str(
-                "void ljosprobe(mat3 ljosorientation, float ljosexpose, float ljoshorizon, float ljoslevels) {\n\
+                "void ljosprobe(mat3 ljosorientation, float ljosexpose, float ljoshorizon, float ljoslevels, float ljosao) {\n\
+                 \x20   vec3 ljoswasdiffuse = DIFFUSE; vec3 ljoswasspecular = SPECULAR;\n\
+                 \x20   DIFFUSE = vec3(0.0); SPECULAR = vec3(0.0);\n\
                  \x20   IBL_ORIENTATION = ljosorientation; IBL_EXPOSE = ljosexpose;\n\
-                 \x20   IBL_HORIZON = ljoshorizon; IBL_MAXMIPMAP = ljoslevels;\n\
+                 \x20   IBL_HORIZON = ljoshorizon; IBL_MAXMIPMAP = ljoslevels; AO_FACTOR = ljosao;\n\
                  \x20   IBL_PROBE();\n\
+                 \x20   DIFFUSE = ljoswasdiffuse + DIFFUSE * ljosao;\n\
+                 \x20   SPECULAR = ljoswasspecular + SPECULAR * ljosao;\n\
                  }\n",
             );
         }
@@ -1142,20 +1146,21 @@ fn validate(wgsl: &str) -> Result<(), SnippetError> {
     Ok(())
 }
 
-/// The vertex output both material entry points share.
+/// The vertex output both material entry points share. The binormal is in
+/// the last place of the three that have one to spare, which leaves a
+/// location for a material's own.
 fn material_io(out: &[Varying]) -> String {
     let mut s = String::from(
         "\nstruct CmVsOut {\n\
          \x20   @builtin(position) clip: vec4<f32>,\n\
-         \x20   @location(0) normal: vec3<f32>,\n\
-         \x20   @location(1) world: vec3<f32>,\n\
+         \x20   @location(0) normal: vec4<f32>,\n\
+         \x20   @location(1) world: vec4<f32>,\n\
          \x20   @location(2) uvs: vec4<f32>,\n\
-         \x20   @location(3) tangent: vec3<f32>,\n\
-         \x20   @location(4) binormal: vec3<f32>,\n\
-         \x20   @location(5) color: vec4<f32>,\n",
+         \x20   @location(3) tangent: vec4<f32>,\n\
+         \x20   @location(4) color: vec4<f32>,\n",
     );
     for i in 0..locations(out) {
-        let _ = writeln!(s, "    @location({}) vary{}: vec4<f32>,", 6 + i, letters(i));
+        let _ = writeln!(s, "    @location({}) vary{}: vec4<f32>,", 5 + i, letters(i));
     }
     s.push_str("};\n");
     s
@@ -1228,11 +1233,10 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, color, model.maps.w != 0u);\n\
          \x20   var out: CmVsOut;\n\
          \x20   out.clip = v.ljosclip;\n\
-         \x20   out.normal = v.ljosnormal;\n\
-         \x20   out.world = v.ljosworld;\n\
+         \x20   out.normal = vec4<f32>(v.ljosnormal, v.ljosbinormal.x);\n\
+         \x20   out.world = vec4<f32>(v.ljosworld, v.ljosbinormal.y);\n\
          \x20   out.uvs = v.ljosuvs;\n\
-         \x20   out.tangent = v.ljostangent;\n\
-         \x20   out.binormal = v.ljosbinormal;\n\
+         \x20   out.tangent = vec4<f32>(v.ljostangent, v.ljosbinormal.z);\n\
          \x20   out.color = v.ljoscolor;\n"
     );
     for i in 0..locations(out) {
@@ -1244,7 +1248,8 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
         "    return out;\n\
          }}\n\
          fn cm_surface(in: CmVsOut, front: bool) -> cmf_LjosSurface {{\n\
-         \x20   return cmf_ljossurface(in.normal, in.world, in.uvs, in.tangent, in.binormal, in.color,\n\
+         \x20   return cmf_ljossurface(in.normal.xyz, in.world.xyz, in.uvs, in.tangent.xyz,\n\
+         \x20       vec3<f32>(in.normal.w, in.world.w, in.tangent.w), in.color,\n\
          \x20       in.clip, front{});\n\
          }}\n",
         varying_args(out, ins)
@@ -1320,10 +1325,11 @@ fn shaded_glue(f: &Functions) -> String {
     } else {
         "cmf_ljosadd(vec3<f32>(0.0), radiance * microfacets(n, l, v, f0, roughness));"
     };
-    // A material that says for itself what comes from round about takes the
-    // place of all of it.
+    // A piece that says for itself what comes from round about takes the
+    // place of all of it, the clear coat's as well. It reads the cube as it
+    // is, and is told IBL_EXPOSE to expose it itself.
     let around = if f.probe {
-        "cmf_ljosprobe(mat3x3<f32>(frame.probe_rot[0].xyz, frame.probe_rot[1].xyz, frame.probe_rot[2].xyz), exposure, horizon, last);"
+        "cmf_ljosprobe(mat3x3<f32>(frame.probe_rot[0].xyz, frame.probe_rot[1].xyz, frame.probe_rot[2].xyz), exposure, horizon, last, ao);"
     } else {
         "let round = probe_seen(\n\
          \x20           textureSampleLevel(irradiance_cube, cube_sampler, select(probe_dir(n), n, own_probe), 0.0).rgb\n\
@@ -1332,11 +1338,11 @@ fn shaded_glue(f: &Functions) -> String {
          \x20           exposure,\n\
          \x20       );\n\
          \x20       let r = normalize(reflect(-v, n));\n\
-         \x20       let read = probe_read(r, roughness * last, own_probe, horizon, exposure);\n\
-         \x20       cmf_ljosadd(base * (vec3<f32>(1.0) - amount) * round * ao, read * env_brdf(amount, roughness, nv) * ao);\n\
+         \x20       let read = probe_light(r, clamp(roughness * 5.0, 0.0, last), own_probe, horizon);\n\
+         \x20       cmf_ljosadd(base * (vec3<f32>(1.0) - amount) * round * ao, probe_seen(read * env_brdf(amount, roughness, nv), own_probe, exposure) * ao);\n\
          \x20       if coat > 0.0 {\n\
-         \x20           coating += probe_read(normalize(reflect(-v, coat_n)), coat_rough * last, own_probe, horizon, exposure)\n\
-         \x20               * env_brdf(bent, coat_rough, coat_nv) * ao;\n\
+         \x20           coating += probe_seen(probe_light(normalize(reflect(-v, coat_n)), clamp(coat_rough * 5.0, 0.0, last), own_probe, horizon)\n\
+         \x20               * env_brdf(bent, coat_rough, coat_nv), own_probe, exposure) * ao;\n\
          \x20       }\n"
     };
     format!(
@@ -1374,7 +1380,7 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       var attenuation = 1.0;\n\
          \x20       var spot = 1.0;\n\
          \x20       if light.position.w > 0.5 {{\n\
-         \x20           let to_light = light.position.xyz - in.world;\n\
+         \x20           let to_light = light.position.xyz - in.world.xyz;\n\
          \x20           let d = length(to_light);\n\
          \x20           l = to_light / max(d, 1e-6);\n\
          \x20           attenuation = 1.0 / max(light.fade.x + light.fade.y * d + light.fade.z * d * d, 1e-6);\n\
@@ -1385,7 +1391,7 @@ fn shaded_glue(f: &Functions) -> String {
          \x20               spot = select(select(1.0, 0.0, c < outer), smoothstep(outer, inner, c), inner > outer);\n\
          \x20           }}\n\
          \x20       }}\n\
-         \x20       let shadow = shadowed(light, in.world, l);\n\
+         \x20       let shadow = shadowed(light, in.world.xyz, l);\n\
          \x20       let radiance = light.color.rgb * attenuation * spot * shadow;\n\
          \x20       // Qt takes what is metal out of the light a piece is given, and\n\
          \x20       // out of the sum of them once more below.\n\
@@ -1408,12 +1414,12 @@ fn shaded_glue(f: &Functions) -> String {
          \x20   if model.probe.y > 1.5 {{\n\
          \x20       let last = model.probe.x - 1.0;\n\
          \x20       let r = normalize(reflect(-v, n));\n\
-         \x20       let round = textureSampleLevel(irradiance_cube, cube_sampler, righted(n, in.world), 0.0).rgb;\n\
-         \x20       let read = textureSampleLevel(specular_cube, cube_sampler, righted(r, in.world), clamp(roughness * 5.0, 0.0, last)).rgb;\n\
+         \x20       let round = textureSampleLevel(irradiance_cube, cube_sampler, righted(n, in.world.xyz), 0.0).rgb;\n\
+         \x20       let read = textureSampleLevel(specular_cube, cube_sampler, righted(r, in.world.xyz), clamp(roughness * 5.0, 0.0, last)).rgb;\n\
          \x20       cmf_ljosadd(base * (vec3<f32>(1.0) - amount) * round, read * env_brdf(amount, roughness, nv));\n\
          \x20       if coat > 0.0 {{\n\
          \x20           coating += env_brdf(bent, coat_rough, coat_nv)\n\
-         \x20               * textureSampleLevel(specular_cube, cube_sampler, righted(normalize(reflect(-v, coat_n)), in.world), clamp(coat_rough * 5.0, 0.0, last)).rgb;\n\
+         \x20               * textureSampleLevel(specular_cube, cube_sampler, righted(normalize(reflect(-v, coat_n)), in.world.xyz), clamp(coat_rough * 5.0, 0.0, last)).rgb;\n\
          \x20       }}\n\
          \x20   }} else if frame.env.w > 0.5 || own_probe {{\n\
          \x20       let exposure = select(frame.env.x, model.probe.z, own_probe);\n\
@@ -1422,7 +1428,7 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       {around}\n\
          \x20   }}\n\
          \x20   cmf_ljosdim(1.0 - metal);\n\
-         \x20   var sum = fogged(cmf_ljossum(), in.world);\n\
+         \x20   var sum = fogged(cmf_ljossum(), in.world.xyz);\n\
          \x20   if coat > 0.0 {{\n\
          \x20       let turn = clamp(pow(clamp(dot(coat_n, v), 0.0, 1.0), coat_edge.x), 0.0, 1.0);\n\
          \x20       let over = clamp(\n\

@@ -80,8 +80,7 @@ impl Device3d {
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("ljos_shell 3D on GL"),
             required_features: ljos_3d::timing_features(&adapter),
-            required_limits:
-                wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
+            required_limits: ljos_3d::device_limits(&adapter),
             ..Default::default()
         }))
         .map_err(|e| e.to_string())?;

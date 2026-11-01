@@ -90,8 +90,7 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("ljos_3d surface"),
-                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
-                    .using_resolution(adapter.limits()),
+                required_limits: crate::device_limits(&adapter),
                 ..Default::default()
             })
             .await?;
