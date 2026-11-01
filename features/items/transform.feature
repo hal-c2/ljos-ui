@@ -224,6 +224,36 @@ Feature: Item transforms
 
   Rule: The pointer finds a transformed item where it is painted
 
+    Scenario: A click lands on an item a loaded item's transform scales down
+      Given the QML:
+        """qml
+        import QtQuick
+        Rectangle {
+          id: bg; width: 100; height: 100
+          Loader {
+            anchors.centerIn: parent
+            sourceComponent: Component {
+              Item {
+                id: screen; width: 200; height: 200
+                transform: Scale {
+                  origin.x: screen.width / 2; origin.y: screen.height / 2
+                  xScale: bg.width / screen.width; yScale: bg.height / screen.height
+                }
+                MouseArea { objectName: "under"; anchors.fill: parent
+                  property int clicks: 0; onClicked: clicks++ }
+                Item { x: 20; y: 160; width: 60; height: 30
+                  MouseArea { objectName: "corner"; anchors.fill: parent
+                    property int clicks: 0; onClicked: clicks++ } }
+              }
+            }
+          }
+        }
+        """
+      When the user presses the pointer at 25, 87
+      And the user releases the pointer at 25, 87
+      Then the property "clicks" of "corner" is 1
+      And the property "clicks" of "under" is 0
+
     Scenario: A click lands on a moved item
       Given the QML:
         """qml

@@ -30,7 +30,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::{Key, KeyData};
 
 use crate::input::PointerEvent;
-use crate::item::{Item, compose_transform, is_a, num};
+use crate::item::{Item, is_a, num};
 use crate::loader::shown_children;
 use crate::repeater::Repeater;
 use crate::scene::{QuickScene, SCENE_CATEGORY};
@@ -1512,10 +1512,11 @@ fn transform_to_space(e: &Engine, obj: ObjectId) -> (Option<ObjectId>, kurbo::Af
         let y = num(e, o, Item::Y.index);
         let rotation = num(e, o, Item::ROTATION.index);
         let scale = num(e, o, Item::SCALE.index);
-        let local = if rotation == 0.0 && scale == 1.0 {
+        let list = crate::transform::list_map(e, o);
+        let local = if rotation == 0.0 && scale == 1.0 && list.is_identity() {
             kurbo::Affine::translate((x, y))
         } else {
-            compose_transform(
+            crate::transform::compose(
                 x,
                 y,
                 num(e, o, Item::WIDTH.index),
@@ -1523,6 +1524,7 @@ fn transform_to_space(e: &Engine, obj: ObjectId) -> (Option<ObjectId>, kurbo::Af
                 rotation,
                 scale,
                 num(e, o, Item::TRANSFORM_ORIGIN.index) as i32,
+                &list,
             )
         };
         t = local * t;
