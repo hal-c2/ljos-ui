@@ -1378,7 +1378,7 @@ impl Renderer {
                     format: DEPTH_FORMAT,
                     depth_write_enabled: Some(key.depth_write && key.depth_test),
                     depth_compare: Some(if key.depth_test {
-                        wgpu::CompareFunction::Less
+                        wgpu::CompareFunction::LessEqual
                     } else {
                         wgpu::CompareFunction::Always
                     }),
@@ -1442,7 +1442,7 @@ impl Renderer {
                     depth_stencil: Some(wgpu::DepthStencilState {
                         format: shadow::FORMAT,
                         depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
                         stencil: Default::default(),
                         // A surface turned from the light covers more depth per texel of
                         // the map than any fixed bias clears, the flatter the more.

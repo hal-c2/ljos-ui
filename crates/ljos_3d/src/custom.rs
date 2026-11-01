@@ -256,10 +256,9 @@ pub const HEADER_ROWS: usize = 28;
 pub const MATERIAL_VERTEX: &str = "cm_vs";
 /// For a mesh with a second vertex buffer: a second UV set or joints.
 pub const MATERIAL_VERTEX_EXTRA: &str = "cm_vs_extra";
-/// Premultiplied, as the built-in materials blend.
+/// As the shader says it, straight: nothing is blended unless the material
+/// names how.
 pub const MATERIAL_FRAGMENT: &str = "cm_fs";
-/// Straight, for the blend factors a CustomMaterial names.
-pub const MATERIAL_FRAGMENT_STRAIGHT: &str = "cm_fs_straight";
 pub const EFFECT_VERTEX: &str = "cm_effect_vs";
 pub const EFFECT_FRAGMENT: &str = "cm_effect_fs";
 

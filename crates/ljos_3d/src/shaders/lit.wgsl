@@ -333,8 +333,9 @@ fn fogged(lit: vec3<f32>, p: vec3<f32>) -> vec3<f32> {
         }
     }
     if frame.fog_height.w > 0.5 {
-        let high = eased(frame.fog_height.x, frame.fog_height.y, p.y);
-        amount = max(amount, pow(high, frame.fog_height.z) * frame.fog.w);
+        // By its height a fog is as thick as it is, whatever its density
+        // and its curve say.
+        amount = max(amount, eased(frame.fog_height.x, frame.fog_height.y, p.y));
     }
     return mix(lit, color, clamp(amount, 0.0, 1.0));
 }

@@ -484,3 +484,66 @@ Feature: CustomMaterial runs the author's shader snippets
         }
         """
       Then the pixel at 100, 100 of the window is "#00ff00"
+
+  Rule: A shader's places count up from the bottom, as Qt has them
+    UV0 and FRAGCOORD have their y growing upwards, however a picture is held.
+
+    Scenario Outline: The upper half of a rectangle is the half of the high y
+      Given the text file "up.frag":
+        """
+        void MAIN() { FRAGCOLOR = <test> ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 0.0, 1.0, 1.0); }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; scale: Qt.vector3d(2, 2, 1); materials: CustomMaterial { shadingMode: CustomMaterial.Unshaded; fragmentShader: "up.frag" } }
+          }
+        }
+        """
+      Then the pixel at 100, 50 of the window is "#ff0000"
+      And the pixel at 100, 150 of the window is "#0000ff"
+
+      Examples:
+        | test             |
+        | UV0.y > 0.5      |
+        | FRAGCOORD.y > 100.0 |
+
+    Scenario: A picture is still the right way up through UV0
+      Given the text file "picture.frag":
+        """
+        void MAIN() { FRAGCOLOR = texture(picture, UV0); }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          Rectangle {
+            id: drawn
+            width: 64; height: 64; layer.enabled: true; visible: false
+            Rectangle { width: 64; height: 32; color: "#ff0000" }
+            Rectangle { y: 32; width: 64; height: 32; color: "#0000ff" }
+          }
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(2, 2, 1)
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                fragmentShader: "picture.frag"
+                property TextureInput picture: TextureInput { texture: Texture { sourceItem: drawn } }
+              }
+            }
+          }
+        }
+        """
+      Then the pixel at 100, 50 of the window is "#ff0000"
+      And the pixel at 100, 150 of the window is "#0000ff"

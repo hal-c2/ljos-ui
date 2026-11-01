@@ -405,11 +405,8 @@ fn fs_final(in: VsOut) -> @location(0) vec4<f32> {
     if post.vignette2.z < 0.5 {
         return vec4<f32>(clamp(tonemap(max(c.rgb, vec3<f32>(0.0)), post.tone), vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
     }
-    if alpha <= 0.0 {
-        return vec4<f32>(0.0);
-    }
     let exposure = post.tone.y;
-    var color = c.rgb / alpha * exposure;
+    var color = max(c.rgb, vec3<f32>(0.0)) * exposure;
     if post.vignette2.w > 0.5 {
         color = smoothed(color, in.uv, exposure);
     }
@@ -423,7 +420,7 @@ fn fs_final(in: VsOut) -> @location(0) vec4<f32> {
         color += (dither - vec3<f32>(0.5)) / 255.0;
     }
     color = extended_tone(color, u32(post.tone.x + 0.5), post.tone.z);
-    return vec4<f32>(clamp(grade(color, in.uv), vec3<f32>(0.0), vec3<f32>(1.0)) * alpha, alpha);
+    return vec4<f32>(clamp(grade(color, in.uv), vec3<f32>(0.0), vec3<f32>(1.0)), alpha);
 }
 
 fn orthographic() -> bool {

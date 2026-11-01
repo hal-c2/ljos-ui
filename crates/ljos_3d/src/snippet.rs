@@ -19,8 +19,8 @@ use std::fmt::Write as _;
 use naga::{Module, ShaderStage};
 
 use crate::custom::{
-    EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT, MATERIAL_FRAGMENT_STRAIGHT,
-    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen, UniformKind,
+    EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT, MATERIAL_VERTEX,
+    MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen, UniformKind,
 };
 
 /// At most this many locations of VARYINGs, packed four numbers to each:
@@ -710,6 +710,7 @@ layout(std140, set = 1, binding = 1) uniform LjosBones { mat4 ljosbones[256]; };
 fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (String, u32) {
     let mut s = String::from(header);
     s.push_str(BONES);
+    s.push_str(MATERIAL_READS);
     s.push_str(
         "vec3 VERTEX; vec3 NORMAL; vec2 UV0; vec2 UV1; vec3 TANGENT; vec3 BINORMAL;\n\
          vec4 COLOR; vec4 POSITION; ivec4 JOINTS; vec4 WEIGHTS; float POINT_SIZE;\n\
@@ -746,7 +747,8 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          LjosVertex ljosvertex(vec3 ljosposition, vec3 ljosnormalin, vec2 ljosuv, vec2 ljosuv1,\n\
          \x20   vec4 ljostangentin, mat4 ljoscopy, vec4 ljoscopycolor, vec4 ljoscopydata, int ljoscopyindex,\n\
          \x20   ivec4 ljosjoints, vec4 ljosweights, vec4 ljoscolorin, bool ljosskinned) {\n\
-         \x20   VERTEX = ljosposition; NORMAL = ljosnormalin; UV0 = ljosuv; UV1 = ljosuv1;\n\
+         \x20   VERTEX = ljosposition; NORMAL = ljosnormalin;\n\
+         \x20   UV0 = vec2(ljosuv.x, 1.0 - ljosuv.y); UV1 = vec2(ljosuv1.x, 1.0 - ljosuv1.y);\n\
          \x20   TANGENT = ljostangentin.xyz;\n\
          \x20   BINORMAL = cross(ljosnormalin, ljostangentin.xyz) * ljostangentin.w;\n\
          \x20   COLOR = ljoscolorin; POSITION = vec4(0.0);\n\
@@ -885,6 +887,8 @@ fn material_fragment(
     let f = Functions::of(src);
     let mut s = String::from(header);
     s.push_str(FRAGMENT_KEYWORDS);
+    s.push_str(MATERIAL_READS);
+    s.push_str(MATERIAL_TEXTURE);
     let before = lines(&s);
     push_user(&mut s, user);
     s.push_str(
@@ -906,9 +910,9 @@ fn material_fragment(
          \x20   VAR_WORLD_BINORMAL = ljosbinormal; VAR_WORLD_POSITION = ljosworld; VAR_COLOR = ljoscolor;\n\
          \x20   NORMAL = normalize(ljosnormalin) * ljosside; CLEARCOAT_NORMAL = NORMAL;\n\
          \x20   TANGENT = ljostangent * ljosside; BINORMAL = ljosbinormal * ljosside;\n\
-         \x20   UV0 = ljosuvs.xy; UV1 = ljosuvs.zw; FRAGCOORD = ljosfragcoord;\n\
-         \x20   VIEW_VECTOR = ljoscamera.w > 0.5 ? -ljosdirection.xyz\n\
-         \x20       : normalize(ljoscamera.xyz - ljosworld);\n\
+         \x20   UV0 = ljosuvs.xy; UV1 = ljosuvs.zw;\n\
+         \x20   FRAGCOORD = vec4(ljosfragcoord.x, ljossizes.w - ljosfragcoord.y, ljosfragcoord.zw);\n\
+         \x20   VIEW_VECTOR = normalize(ljoscamera.xyz - ljosworld);\n\
          \x20   BASE_COLOR = vec4(1.0); EMISSIVE_COLOR = vec3(0.0); METALNESS = 0.0; ROUGHNESS = 0.0;\n\
          \x20   SPECULAR_AMOUNT = 0.5; OCCLUSION_AMOUNT = 1.0; IOR = 1.5;\n\
          \x20   FRESNEL_POWER = 5.0; FRESNEL_SCALE = 1.0; FRESNEL_BIAS = 0.0;\n\
@@ -1001,6 +1005,16 @@ fn material_fragment(
     s.push_str("void main() {}\n");
     (s, before)
 }
+
+/// A place in a picture as Qt's numbers have it, v up, for the renderer's
+/// pictures whose first row is the top; a way into a cube stays as it is.
+const MATERIAL_READS: &str = "vec2 ljosup(vec2 ljosplace) { return vec2(ljosplace.x, 1.0 - ljosplace.y); }\n\
+     vec3 ljosup(vec3 ljosway) { return ljosway; }\n\
+     #define textureLod(ljospicture, ljosplace, ljoslevel) textureLod(ljospicture, ljosup(ljosplace), ljoslevel)\n";
+
+/// A fragment shader's reads, which choose a level by their derivatives.
+const MATERIAL_TEXTURE: &str =
+    "#define texture(ljospicture, ljosplace) texture(ljospicture, ljosup(ljosplace))\n";
 
 /// An effect's places count up from the picture's bottom row, as Qt has them,
 /// and every picture here starts from its top one: each read turns the place
@@ -1291,12 +1305,6 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
         s,
         "@fragment\n\
          fn {MATERIAL_FRAGMENT}(in: CmVsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {{\n\
-         \x20   let c = cm_shade(in, front);\n\
-         \x20   let a = clamp(c.a, 0.0, 1.0);\n\
-         \x20   return vec4<f32>(cm_out(c) * a, a);\n\
-         }}\n\
-         @fragment\n\
-         fn {MATERIAL_FRAGMENT_STRAIGHT}(in: CmVsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {{\n\
          \x20   let c = cm_shade(in, front);\n\
          \x20   return vec4<f32>(cm_out(c), clamp(c.a, 0.0, 1.0));\n\
          }}\n"

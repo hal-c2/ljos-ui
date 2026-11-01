@@ -15,8 +15,7 @@ use bytemuck::{Pod, Zeroable};
 
 use crate::custom::{
     Blend, CustomMaterial, EFFECT_FRAGMENT, EFFECT_VERTEX, HEADER_ROWS, MATERIAL_FRAGMENT,
-    MATERIAL_FRAGMENT_STRAIGHT, MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind,
-    Screen,
+    MATERIAL_VERTEX, MATERIAL_VERTEX_EXTRA, Program, ProgramKind, Screen,
 };
 use crate::maps::{self, Maps};
 use crate::mesh::Topology;
@@ -300,24 +299,18 @@ impl Programs {
         }
         self.compile(device, program, &shared);
         let c = &self.compiled[&key.program];
-        let (entry, blend) = match key.blend {
-            None => (
-                MATERIAL_FRAGMENT,
-                wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
-            ),
+        let blend = match key.blend {
+            None => wgpu::BlendState::REPLACE,
             Some((src, dst)) => {
                 let component = wgpu::BlendComponent {
                     src_factor: factor(src),
                     dst_factor: factor(dst),
                     operation: wgpu::BlendOperation::Add,
                 };
-                (
-                    MATERIAL_FRAGMENT_STRAIGHT,
-                    wgpu::BlendState {
-                        color: component,
-                        alpha: component,
-                    },
-                )
+                wgpu::BlendState {
+                    color: component,
+                    alpha: component,
+                }
             }
         };
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -350,7 +343,7 @@ impl Programs {
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: depth_format,
                 depth_write_enabled: Some(key.depth_write),
-                depth_compare: Some(wgpu::CompareFunction::Less),
+                depth_compare: Some(wgpu::CompareFunction::LessEqual),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -360,7 +353,7 @@ impl Programs {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &c.module,
-                entry_point: Some(entry),
+                entry_point: Some(MATERIAL_FRAGMENT),
                 compilation_options: Default::default(),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: key.format,

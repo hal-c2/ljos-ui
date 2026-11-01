@@ -383,7 +383,7 @@ fn the_extended_environment_tonemaps_and_grades_the_picture() {
     );
     // The little of the red that reaches the middle shows through Qt's fit.
     expect(&pic, 100, 100, [255; 3], 6);
-    expect(&pic, 1, 1, [255, 0, 0], 40);
+    expect(&pic, 1, 1, [20, 0, 0], 40);
 
     let glow = PostProcess {
         glow: Some(Glow {
