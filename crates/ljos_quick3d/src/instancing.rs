@@ -44,7 +44,7 @@ impl Default for Entry {
 }
 
 impl Entry {
-    fn instance(&self) -> Instance {
+    pub(crate) fn instance(&self) -> Instance {
         let [r, g, b, a] = self.color.to_rgba_f();
         let color = ljos_3d::Color {
             r: r as f32,
@@ -68,6 +68,13 @@ pub(crate) struct Kept {
 }
 
 impl Kept {
+    /// Puts rows that are not worked out from `entries`: `entries` are only
+    /// what `instancePosition` and the others answer from.
+    fn replace(&mut self, entries: Vec<Entry>, instances: Vec<Instance>) {
+        self.table = Some(Arc::new(InstanceTable::new(instances)));
+        self.entries = entries;
+    }
+
     /// The table of `entries`: the one kept when they are the same.
     fn table(&mut self, entries: Vec<Entry>) -> Arc<InstanceTable> {
         if let Some(t) = &self.table
@@ -169,11 +176,23 @@ fn entry(e: &Engine, obj: ObjectId, index: i32) -> Entry {
         .unwrap_or_default()
 }
 
+/// Puts rows in a table that its owner fills itself.
+pub(crate) fn put(e: &Engine, obj: ObjectId, entries: Vec<Entry>, instances: Vec<Instance>) {
+    let _ = e.with_mut(obj, |i: &mut Instancing| i.kept.replace(entries, instances));
+}
+
 /// The table `obj` holds now, as a scene draws it; `None` when `obj` is
 /// not one. Tracked.
 pub(crate) fn table(e: &Engine, obj: ObjectId) -> Option<Arc<InstanceTable>> {
     let entries = if e.is::<InstanceList>(obj) {
         list_entries(e, obj)
+    } else if e.is::<crate::ParticleTable>(obj) {
+        item::prop(e, obj, crate::ParticleTable::INSTANCE_COUNT);
+        return e
+            .with(obj, |t: &Instancing| t.kept.table.clone())
+            .ok()
+            .flatten()
+            .or_else(|| Some(Arc::new(InstanceTable::new(Vec::new()))));
     } else if e.is::<FileInstancing>(obj) {
         // Notified when a file arrives; the entries are already kept.
         item::prop(e, obj, FileInstancing::INSTANCE_COUNT);

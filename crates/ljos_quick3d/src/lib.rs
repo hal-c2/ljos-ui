@@ -95,6 +95,7 @@ mod instancing;
 mod items;
 pub mod mesh_source;
 mod node;
+mod particles;
 mod pick;
 mod quaternion;
 mod random_instancing;
@@ -122,6 +123,14 @@ pub use node::{
     Camera, DefaultMaterial, DirectionalLight, Fog, Geometry, Light, Material, Model, MorphTarget,
     Node, Object3D, OrthographicCamera, PerspectiveCamera, PointLight, PrincipledMaterial,
     ReflectionProbe, SceneEnvironment, SpotLight, host_write,
+};
+pub use particles::{
+    Affector3D, Attractor3D, Direction3D, DynamicBurst3D, EmitBurst3D, Gravity3D, LineParticle3D,
+    ModelBlendParticle3D, ModelParticle3D, Particle3D, ParticleAbstractShape3D,
+    ParticleCustomShape3D, ParticleEmitter3D, ParticleModelShape3D, ParticleSceneShape3D,
+    ParticleShape3D, ParticleSystem3D, ParticleSystem3DLogging, ParticleTable, PointRotator3D,
+    Repeller3D, ScaleAffector3D, SpriteParticle3D, SpriteSequence3D, TargetDirection3D,
+    TrailEmitter3D, VectorDirection3D, Wander3D,
 };
 pub use pick::PickResult;
 pub use random_instancing::{InstanceRange, RandomInstancing};
@@ -193,6 +202,7 @@ pub fn register(engine: &Engine) {
         item::QuaternionAnimation,
     ]));
     helpers::register(engine);
+    particles::register(engine);
     item::register_paint_item::<View3D>(engine, view::read);
     item::register_pointer_portal::<View3D>(engine, pick::item_under);
 }

@@ -27,7 +27,7 @@ Sources: [Qt Quick 3D](https://doc.qt.io/qt-6/qtquick3d-index.html), [View3D](ht
 
 - **2D items in 3D beyond clicks.** Items in 3D take presses and what follows them, not hover or the wheel; their pictures are CPU pixels, not a texture shared on the GPU.
 - **What custom shaders cannot have yet.** `DEPTH_TEXTURE`, `AO_TEXTURE` and `NORMAL_ROUGHNESS_TEXTURE` in a material (an effect has `DEPTH_TEXTURE`): the camera's depth is drawn after the scene pass, for the post passes, and a material would need it before. `MORPH_*` built-ins, as morph targets are applied when a file is built. A snippet on the network is not read.
-- **Particles3D and XR.**
+- **XR.**
 - **`QuadTextureProvider`, `RenderOutputProvider` and `SimpleQuadRenderer` from `QtQuick3D.Helpers`.** They are not registered: each works on the textures of render passes, and Ljós has no `RenderPass` API for them to read or draw into. The rest of the module is built (M10, M11, M12).
 - **`TextureData` with depth or a block-compressed format.** Both are reported in the log and not drawn.
 - **Animations in a glTF file**, so a skin's joints and a mesh's morph weights stay as the file leaves them. Joints move when QML moves them.
@@ -341,6 +341,30 @@ The riskiest seam was rendering 3D with egui's own wgpu device and queue and com
 **Cost.** 100 box dice with continuous collision detection on a plane, stepping 1/60 s, in release, rapier's step only: dropped from a spaced grid, 0.114 ms a step on average and 0.213 ms at most, all asleep at step 143; a pile of 5×5×4, 0.116 ms over the first 20 steps and 0.085 ms over the next 20, asleep at step 48. Writing the poses back to properties is not in those numbers.
 
 **`.mesh` files.** `Model.source` reads the binary `.mesh` format (`ljos_3d::mesh_file`), each subset becoming a part with its own material, and a physics mesh shape reads the triangles from the same file. Positions, normals, both texture coordinates and indices are read; joints, tangents, colours and morph targets are not.
+
+## Particles
+
+`QtQuick3D.Particles3D` is built natively: `ParticleSystem3D`, `SpriteParticle3D`, `ModelParticle3D`, `LineParticle3D`, `ParticleEmitter3D`, `TrailEmitter3D`, `EmitBurst3D`, `DynamicBurst3D`, `VectorDirection3D`, `TargetDirection3D`, `ParticleShape3D`, `Gravity3D`, `Wander3D`, `Attractor3D`, `Repeller3D`, `PointRotator3D`, `ScaleAffector3D`, `SpriteSequence3D`.
+
+**Simulation (decision).** `ljos_3d::particles` holds it and knows nothing of QML or the engine, and has no dependency a web embedding could not build. Given a time, a particle's place is worked out from when and where it was emitted, not stepped, so a time set by hand or read twice gives one answer, as `ParticleSystem3D.time` promises. The types are in `ljos_quick3d`, which registers the module: nothing heavy comes with it, so it needs no crate of its own as `QtQuick3D.Physics` does.
+
+**Drawing.** All particles of one kind are one model with instancing, one rectangle for sprites, one rectangle per piece of a line, or the delegate for models. Their rows are in an `Instancing` the system fills, `ParticleTable`, which an application does not make; `ModelParticle3D.instanceTable` reads it.
+
+**Time.** A system runs on a hidden `FrameAnimation`, which stops when the system is not running or is paused: a system not running costs no processor time (`features/quick3d/particles.feature`). A running system with nothing left alive still has its clock, as it may emit again.
+
+**An application's affector.** `Affector3D::set_custom` takes a function that changes a particle's current look, which is what an application's own affector type registers with instead of Qt's C++ `affectParticle`. The car configurator's `ShapeAffector3D` is such a type, and it comes from that application.
+
+**Where it differs from Qt.**
+
+- `ModelBlendParticle3D` is registered and draws nothing. `ParticleCustomShape3D` and `ParticleSceneShape3D` are registered and emit from the emitter's place.
+- `emitMode`, `depthBias`, `lights`, `castsReflections` and `useCachedPositions` are kept without effect, and `ScaleAffector3D.easingCurve` as well.
+- `loggingData` is minimal.
+- A `LineParticle3D` has neither sprite sequences nor colour tables, and takes its picture as square when stretching it along the line.
+- An `EmitBurst3D` is emitted once: restarting a system does not bring it again.
+
+## Effects and Timeline
+
+`QtQuick3D.Effects` has what the corpus uses, `HDRBloomTonemap` and `ColorMaster`, each QML over `Effect` with Ljós's own shaders; Qt deprecated the module in 6.5. `QtQuick.Timeline` is native and reads `.qad` files, locally at once and from the network when fetched; a keyframe's value overrides the property and is restored when a timeline is switched off.
 
 ## Decisions
 

@@ -17,9 +17,10 @@ const URL_PREFIX: &str = "ljos-quick3d-helpers:/";
 const CATEGORY: &str = "ljos.quick3d";
 const URI: &str = "QtQuick3D.Helpers";
 /// The modules in the pack, each with the directory of its files.
-const MODULES: [(&str, &str); 2] = [
+const MODULES: [(&str, &str); 3] = [
     (URI, "QtQuick3D/Helpers"),
     ("QtQuick3D.Effects", "QtQuick3D/Effects"),
+    ("QtQuick3D.Particles3D.impl", "QtQuick3D/Particles3D/impl"),
 ];
 
 #[derive(Debug)]

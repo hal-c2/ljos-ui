@@ -9075,6 +9075,418 @@ module QtQuick3D.Helpers
 		method hold
 		method step
 
+module QtQuick3D.Particles3D
+	Affector3D QtQuick3D.Particles3D.Affector3D
+	Attractor3D QtQuick3D.Particles3D.Attractor3D
+	Direction3D QtQuick3D.Particles3D.Direction3D
+	DynamicBurst3D QtQuick3D.Particles3D.DynamicBurst3D
+	EmitBurst3D QtQuick3D.Particles3D.EmitBurst3D
+	Gravity3D QtQuick3D.Particles3D.Gravity3D
+	LineParticle3D QtQuick3D.Particles3D.LineParticle3D
+	ModelBlendParticle3D QtQuick3D.Particles3D.ModelBlendParticle3D
+	ModelParticle3D QtQuick3D.Particles3D.ModelParticle3D
+	Particle3D QtQuick3D.Particles3D.Particle3D
+	ParticleAbstractShape3D QtQuick3D.Particles3D.ParticleAbstractShape3D
+	ParticleCustomShape3D QtQuick3D.Particles3D.ParticleCustomShape3D
+	ParticleEmitter3D QtQuick3D.Particles3D.ParticleEmitter3D
+	ParticleModelShape3D QtQuick3D.Particles3D.ParticleModelShape3D
+	ParticleSceneShape3D QtQuick3D.Particles3D.ParticleSceneShape3D
+	ParticleShape3D QtQuick3D.Particles3D.ParticleShape3D
+	ParticleSystem3D QtQuick3D.Particles3D.ParticleSystem3D
+	ParticleSystem3DLogging QtQuick3D.Particles3D.ParticleSystem3DLogging
+	ParticleTable QtQuick3D.Particles3D.ParticleTable
+	PointRotator3D QtQuick3D.Particles3D.PointRotator3D
+	Repeller3D QtQuick3D.Particles3D.Repeller3D
+	ScaleAffector3D QtQuick3D.Particles3D.ScaleAffector3D
+	SpriteParticle3D QtQuick3D.Particles3D.SpriteParticle3D
+	SpriteSequence3D QtQuick3D.Particles3D.SpriteSequence3D
+	TargetDirection3D QtQuick3D.Particles3D.TargetDirection3D
+	TrailEmitter3D QtQuick3D.Particles3D.TrailEmitter3D
+	VectorDirection3D QtQuick3D.Particles3D.VectorDirection3D
+	Wander3D QtQuick3D.Particles3D.Wander3D
+	type QtQuick3D.Particles3D.Affector3D Affector3D
+		prototype QtQuick3D.Node named
+		prop system QtQuick3D.Particles3D.ParticleSystem3D named pointer
+		prop particles QtQml.var named list
+		prop enabled QtQml.bool named
+		signal systemChanged
+		signal particlesChanged
+		signal enabledChanged
+	type QtQuick3D.Particles3D.Attractor3D Attractor3D
+		prototype QtQuick3D.Particles3D.Affector3D named
+		prop positionVariation QtQuick.vector3d named
+		prop shape QtQuick3D.Particles3D.ParticleAbstractShape3D named pointer
+		prop duration QtQml.int named
+		prop durationVariation QtQml.int named
+		prop hideAtEnd QtQml.bool named
+		prop useCachedPositions QtQml.bool named
+		prop positionsAmount QtQml.int named
+		signal positionVariationChanged
+		signal shapeChanged
+		signal durationChanged
+		signal durationVariationChanged
+		signal hideAtEndChanged
+		signal useCachedPositionsChanged
+		signal positionsAmountChanged
+	type QtQuick3D.Particles3D.Direction3D Direction3D
+		prototype QtQml.QtObject named
+		is uncreatable
+	type QtQuick3D.Particles3D.DynamicBurst3D DynamicBurst3D
+		prototype QtQuick3D.Particles3D.EmitBurst3D named
+		enum TriggerMode TriggerTime=0 TriggerStart=1 TriggerEnd=2
+		prop enabled QtQml.bool named
+		prop amountVariation QtQml.int named
+		prop triggerMode TriggerMode
+		signal enabledChanged
+		signal amountVariationChanged
+		signal triggerModeChanged
+	type QtQuick3D.Particles3D.EmitBurst3D EmitBurst3D
+		prototype QtQml.QtObject named
+		prop time QtQml.int named
+		prop amount QtQml.int named
+		prop duration QtQml.int named
+		signal timeChanged
+		signal amountChanged
+		signal durationChanged
+	type QtQuick3D.Particles3D.Gravity3D Gravity3D
+		prototype QtQuick3D.Particles3D.Affector3D named
+		prop magnitude QtQml.real named
+		prop direction QtQuick.vector3d named
+		signal magnitudeChanged
+		signal directionChanged
+	type QtQuick3D.Particles3D.LineParticle3D LineParticle3D
+		prototype QtQuick3D.Particles3D.SpriteParticle3D named
+		enum TexcoordMode Absolute=0 Relative=1 Fill=2
+		prop segmentCount QtQml.int named
+		prop alphaFade QtQml.real named
+		prop scaleMultiplier QtQml.real named
+		prop texcoordMultiplier QtQml.real named
+		prop length QtQml.real named
+		prop lengthVariation QtQml.real named
+		prop lengthDeltaMin QtQml.real named
+		prop eolFadeOutDuration QtQml.int named
+		prop texcoordMode TexcoordMode
+		signal segmentCountChanged
+		signal alphaFadeChanged
+		signal scaleMultiplierChanged
+		signal texcoordMultiplierChanged
+		signal lengthChanged
+		signal lengthVariationChanged
+		signal lengthDeltaMinChanged
+		signal eolFadeOutDurationChanged
+		signal texcoordModeChanged
+	type QtQuick3D.Particles3D.ModelBlendParticle3D ModelBlendParticle3D
+		prototype QtQuick3D.Particles3D.Particle3D named
+		enum ModelBlendMode Explode=0 Construct=1 Transfer=2
+		enum ModelBlendEmitMode Sequential=0 Random=1 Activation=2
+		prop delegate QtQml.Component named pointer
+		prop endNode QtQuick3D.Node named pointer
+		prop modelBlendMode ModelBlendMode
+		prop endTime QtQml.int named
+		prop activationNode QtQuick3D.Node named pointer
+		prop emitMode ModelBlendEmitMode
+		signal delegateChanged
+		signal endNodeChanged
+		signal modelBlendModeChanged
+		signal endTimeChanged
+		signal activationNodeChanged
+		signal emitModeChanged
+	type QtQuick3D.Particles3D.ModelParticle3D ModelParticle3D
+		prototype QtQuick3D.Particles3D.Particle3D named
+		prop delegate QtQml.Component named pointer
+		prop instanceTable QtQuick3D.Particles3D.ParticleTable named pointer readonly
+		signal delegateChanged
+		signal instanceTableChanged
+	type QtQuick3D.Particles3D.Particle3D Particle3D
+		prototype QtQuick3D.Object3D named
+		is uncreatable
+		enum FadeType FadeNone=0 FadeOpacity=1 FadeScale=2
+		enum AlignMode AlignNone=0 AlignTowardsTarget=1 AlignTowardsStartVelocity=2
+		enum SortMode SortNone=0 SortNewest=1 SortOldest=2 SortDistance=3
+		prop maxAmount QtQml.int named
+		prop color QtQuick.color named
+		prop colorVariation QtQuick.vector4d named
+		prop unifiedColorVariation QtQml.bool named
+		prop fadeInEffect FadeType
+		prop fadeOutEffect FadeType
+		prop fadeInDuration QtQml.int named
+		prop fadeOutDuration QtQml.int named
+		prop alignMode AlignMode
+		prop alignTargetPosition QtQuick.vector3d named
+		prop hasTransparency QtQml.bool named
+		prop sortMode SortMode
+		signal maxAmountChanged
+		signal colorChanged
+		signal colorVariationChanged
+		signal unifiedColorVariationChanged
+		signal fadeInEffectChanged
+		signal fadeOutEffectChanged
+		signal fadeInDurationChanged
+		signal fadeOutDurationChanged
+		signal alignModeChanged
+		signal alignTargetPositionChanged
+		signal hasTransparencyChanged
+		signal sortModeChanged
+	type QtQuick3D.Particles3D.ParticleAbstractShape3D ParticleAbstractShape3D
+		prototype QtQml.QtObject named
+		is uncreatable
+	type QtQuick3D.Particles3D.ParticleCustomShape3D ParticleCustomShape3D
+		prototype QtQuick3D.Particles3D.ParticleAbstractShape3D named
+		prop source QtQml.url named
+		prop randomizeData QtQml.bool named
+		signal sourceChanged
+		signal randomizeDataChanged
+	type QtQuick3D.Particles3D.ParticleEmitter3D ParticleEmitter3D
+		prototype QtQuick3D.Node named
+		enum EmitMode Default=0 SurfaceNormal=1 SurfaceReflected=2
+		prop system QtQuick3D.Particles3D.ParticleSystem3D named pointer
+		prop emitBursts QtQml.var named list
+		prop velocity QtQuick3D.Particles3D.Direction3D named pointer
+		prop particle QtQuick3D.Particles3D.Particle3D named pointer
+		prop enabled QtQml.bool named
+		prop shape QtQuick3D.Particles3D.ParticleAbstractShape3D named pointer
+		prop emitRate QtQml.real named
+		prop lifeSpan QtQml.int named
+		prop lifeSpanVariation QtQml.int named
+		prop particleScale QtQml.real named
+		prop particleEndScale QtQml.real named
+		prop particleScaleVariation QtQml.real named
+		prop particleEndScaleVariation QtQml.real named
+		prop particleRotation QtQuick.vector3d named
+		prop particleRotationVariation QtQuick.vector3d named
+		prop particleRotationVelocity QtQuick.vector3d named
+		prop particleRotationVelocityVariation QtQuick.vector3d named
+		prop depthBias QtQml.real named
+		prop reversed QtQml.bool named
+		prop emitMode EmitMode
+		signal systemChanged
+		signal emitBurstsChanged
+		signal velocityChanged
+		signal particleChanged
+		signal enabledChanged
+		signal shapeChanged
+		signal emitRateChanged
+		signal lifeSpanChanged
+		signal lifeSpanVariationChanged
+		signal particleScaleChanged
+		signal particleEndScaleChanged
+		signal particleScaleVariationChanged
+		signal particleEndScaleVariationChanged
+		signal particleRotationChanged
+		signal particleRotationVariationChanged
+		signal particleRotationVelocityChanged
+		signal particleRotationVelocityVariationChanged
+		signal depthBiasChanged
+		signal reversedChanged
+		signal emitModeChanged
+		method burst
+	type QtQuick3D.Particles3D.ParticleModelShape3D ParticleModelShape3D
+		prototype QtQuick3D.Particles3D.ParticleAbstractShape3D named
+		prop fill QtQml.bool named
+		prop delegate QtQml.Component named pointer
+		signal fillChanged
+		signal delegateChanged
+	type QtQuick3D.Particles3D.ParticleSceneShape3D ParticleSceneShape3D
+		prototype QtQuick3D.Particles3D.ParticleAbstractShape3D named
+		prop scene QtQuick3D.Node named pointer
+		prop sceneCenter QtQuick.vector3d named
+		prop sceneExtents QtQuick.vector3d named
+		prop shapeResolution QtQml.real named
+		prop excludedNodes QtQml.var named list
+		prop geometry QtQuick3D.Geometry named pointer
+		signal sceneChanged
+		signal sceneCenterChanged
+		signal sceneExtentsChanged
+		signal shapeResolutionChanged
+		signal excludedNodesChanged
+		signal geometryChanged
+	type QtQuick3D.Particles3D.ParticleShape3D ParticleShape3D
+		prototype QtQuick3D.Particles3D.ParticleAbstractShape3D named
+		enum ShapeType Cube=0 Sphere=1 Cylinder=2
+		prop fill QtQml.bool named
+		prop type ShapeType
+		prop extents QtQuick.vector3d named
+		signal fillChanged
+		signal typeChanged
+		signal extentsChanged
+	type QtQuick3D.Particles3D.ParticleSystem3D ParticleSystem3D
+		prototype QtQuick3D.Node named
+		prop running QtQml.bool named
+		prop paused QtQml.bool named
+		prop startTime QtQml.int named
+		prop time QtQml.int named
+		prop useRandomSeed QtQml.bool named
+		prop seed QtQml.int named
+		prop logging QtQml.bool named
+		prop loggingData QtQuick3D.Particles3D.ParticleSystem3DLogging named pointer readonly
+		signal runningChanged
+		signal pausedChanged
+		signal startTimeChanged
+		signal timeChanged
+		signal useRandomSeedChanged
+		signal seedChanged
+		signal loggingChanged
+		signal loggingDataChanged
+		method reset
+	type QtQuick3D.Particles3D.ParticleSystem3DLogging ParticleSystem3DLogging
+		is uncreatable
+		prop loggingInterval QtQml.int named
+		prop updates QtQml.int named readonly
+		prop particlesMax QtQml.int named readonly
+		prop particlesUsed QtQml.int named readonly
+		prop time QtQml.real named readonly
+		prop timeAverage QtQml.real named readonly
+		prop timeDeviation QtQml.real named readonly
+		signal loggingIntervalChanged
+		signal updatesChanged
+		signal particlesMaxChanged
+		signal particlesUsedChanged
+		signal timeChanged
+		signal timeAverageChanged
+		signal timeDeviationChanged
+	type QtQuick3D.Particles3D.ParticleTable ParticleTable
+		prototype QtQuick3D.Instancing named
+		is uncreatable
+		prop instanceCount QtQml.int named readonly
+		signal instanceCountChanged
+	type QtQuick3D.Particles3D.PointRotator3D PointRotator3D
+		prototype QtQuick3D.Particles3D.Affector3D named
+		prop magnitude QtQml.real named
+		prop direction QtQuick.vector3d named
+		prop pivotPoint QtQuick.vector3d named
+		signal magnitudeChanged
+		signal directionChanged
+		signal pivotPointChanged
+	type QtQuick3D.Particles3D.Repeller3D Repeller3D
+		prototype QtQuick3D.Particles3D.Affector3D named
+		prop radius QtQml.real named
+		prop outerRadius QtQml.real named
+		prop strength QtQml.real named
+		signal radiusChanged
+		signal outerRadiusChanged
+		signal strengthChanged
+	type QtQuick3D.Particles3D.ScaleAffector3D ScaleAffector3D
+		prototype QtQuick3D.Particles3D.Affector3D named
+		enum ScalingType Linear=0 SewSaw=1 SineWave=2 AbsSineWave=3 Step=4 SmoothStep=5
+		prop minSize QtQml.real named
+		prop maxSize QtQml.real named
+		prop duration QtQml.int named
+		prop type ScalingType
+		prop easingCurve QtQml.var named
+		signal minSizeChanged
+		signal maxSizeChanged
+		signal durationChanged
+		signal typeChanged
+		signal easingCurveChanged
+	type QtQuick3D.Particles3D.SpriteParticle3D SpriteParticle3D
+		prototype QtQuick3D.Particles3D.Particle3D named
+		enum BlendMode SourceOver=0 Screen=1 Multiply=2
+		prop blendMode BlendMode
+		prop sprite QtQuick3D.Texture named pointer
+		prop spriteSequence QtQuick3D.Particles3D.SpriteSequence3D named pointer
+		prop billboard QtQml.bool named
+		prop particleScale QtQml.real named
+		prop colorTable QtQuick3D.Texture named pointer
+		prop lights QtQml.var named list
+		prop offsetX QtQml.real named
+		prop offsetY QtQml.real named
+		prop castsReflections QtQml.bool named
+		signal blendModeChanged
+		signal spriteChanged
+		signal spriteSequenceChanged
+		signal billboardChanged
+		signal particleScaleChanged
+		signal colorTableChanged
+		signal lightsChanged
+		signal offsetXChanged
+		signal offsetYChanged
+		signal castsReflectionsChanged
+	type QtQuick3D.Particles3D.SpriteSequence3D SpriteSequence3D
+		prototype QtQml.QtObject named
+		enum AnimationDirection Normal=0 Reverse=1 Alternate=2 AlternateReverse=3 SingleFrame=4
+		prop frameCount QtQml.int named
+		prop frameIndex QtQml.int named
+		prop interpolate QtQml.bool named
+		prop duration QtQml.int named
+		prop durationVariation QtQml.int named
+		prop randomStart QtQml.bool named
+		prop animationDirection AnimationDirection
+		signal frameCountChanged
+		signal frameIndexChanged
+		signal interpolateChanged
+		signal durationChanged
+		signal durationVariationChanged
+		signal randomStartChanged
+		signal animationDirectionChanged
+	type QtQuick3D.Particles3D.TargetDirection3D TargetDirection3D
+		prototype QtQuick3D.Particles3D.Direction3D named
+		prop position QtQuick.vector3d named
+		prop positionVariation QtQuick.vector3d named
+		prop normalized QtQml.bool named
+		prop magnitude QtQml.real named
+		prop magnitudeVariation QtQml.real named
+		signal positionChanged
+		signal positionVariationChanged
+		signal normalizedChanged
+		signal magnitudeChanged
+		signal magnitudeVariationChanged
+	type QtQuick3D.Particles3D.TrailEmitter3D TrailEmitter3D
+		prototype QtQuick3D.Particles3D.ParticleEmitter3D named
+		prop follow QtQuick3D.Particles3D.Particle3D named pointer
+		signal followChanged
+		method burst
+	type QtQuick3D.Particles3D.VectorDirection3D VectorDirection3D
+		prototype QtQuick3D.Particles3D.Direction3D named
+		prop direction QtQuick.vector3d named
+		prop directionVariation QtQuick.vector3d named
+		prop normalized QtQml.bool named
+		signal directionChanged
+		signal directionVariationChanged
+		signal normalizedChanged
+	type QtQuick3D.Particles3D.Wander3D Wander3D
+		prototype QtQuick3D.Particles3D.Affector3D named
+		prop globalAmount QtQuick.vector3d named
+		prop globalPace QtQuick.vector3d named
+		prop globalPaceStart QtQuick.vector3d named
+		prop uniqueAmount QtQuick.vector3d named
+		prop uniquePace QtQuick.vector3d named
+		prop uniqueAmountVariation QtQml.real named
+		prop uniquePaceVariation QtQml.real named
+		prop fadeInDuration QtQml.int named
+		prop fadeOutDuration QtQml.int named
+		signal globalAmountChanged
+		signal globalPaceChanged
+		signal globalPaceStartChanged
+		signal uniqueAmountChanged
+		signal uniquePaceChanged
+		signal uniqueAmountVariationChanged
+		signal uniquePaceVariationChanged
+		signal fadeInDurationChanged
+		signal fadeOutDurationChanged
+
+module QtQuick3D.Particles3D.impl
+	SpriteDraw QtQuick3D/Particles3D/impl/SpriteDraw.qml
+	type QtQuick3D/Particles3D/impl/SpriteDraw.qml SpriteDraw
+		prototype QtQuick3D.Model named
+		prop line QtQml.bool named
+		prop blendMode QtQml.int named
+		prop sprite QtQml.var named
+		prop colorTable QtQml.var named
+		prop pictured QtQml.bool named
+		prop tabled QtQml.bool named
+		prop frames QtQml.real named
+		prop interpolate QtQml.real named
+		prop billboard QtQml.bool named
+		signal lineChanged
+		signal blendModeChanged
+		signal spriteChanged
+		signal colorTableChanged
+		signal picturedChanged
+		signal tabledChanged
+		signal framesChanged
+		signal interpolateChanged
+		signal billboardChanged
+
 module QtQuick3D.Physics
 	BoxShape QtQuick3D.Physics.BoxShape
 	CapsuleShape QtQuick3D.Physics.CapsuleShape
