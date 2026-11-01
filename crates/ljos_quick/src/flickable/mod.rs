@@ -637,7 +637,12 @@ fn ensure_content_item(e: &Engine, f: ObjectId) -> Result<ObjectId, EngineError>
     let ci = e.create_native_incomplete(Item::default(), Some(f))?;
     e.complete(ci)?;
     st.content_item.set(Some(ci));
-    tree::set_parent_item(e, ci, Some(f))?;
+    // A view leaves what is declared in it on itself, and that was all
+    // there before anything asked for this item: it still goes under it.
+    match e.untrack(|| e.list_at(f, Item::DATA.index, 0)) {
+        Some(first) => tree::set_parent_item_before(e, ci, f, first).map(|_| ())?,
+        None => tree::set_parent_item(e, ci, Some(f)).map(|_| ())?,
+    }
     // The content item is the Flickable's to place and to size, so these
     // are values it computes, not assignments.
     e.bind_computed(ci, Item::X.index, move |e| {

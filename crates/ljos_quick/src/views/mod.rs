@@ -189,6 +189,7 @@ fn section_enums() -> EnumTable {
     module = "QtQuick",
     name = "ItemView",
     extends = Flickable,
+    default = "data",
     enums = item_view_enums,
     uncreatable
 )]

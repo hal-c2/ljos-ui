@@ -4124,6 +4124,7 @@ module QtQuick
 		signal heightRatioChanged
 	type QtQuick.ItemView ItemView
 		prototype QtQuick.Flickable named
+		default data
 		is uncreatable
 		enum PositionMode Beginning=0 Center=1 End=2 Visible=3 Contain=4 SnapPosition=5
 		enum VerticalLayoutDirection TopToBottom=2 BottomToTop=3
