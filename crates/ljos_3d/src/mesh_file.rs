@@ -1332,23 +1332,34 @@ mod tests {
         }
     }
 
-    fn corpus(path: &str) -> Vec<u8> {
-        let root = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../corpus/qtdoc/examples/demos/"
+    /// The corpus is a submodule that CI's `check` job doesn't fetch, so these
+    /// tests say they were skipped rather than fail on its absence. A checkout
+    /// that has it gets the whole check: a missing file there is still a panic.
+    fn demos(test: &str) -> Option<std::path::PathBuf> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../corpus/qtdoc/examples/demos");
+        if root.is_dir() {
+            return Some(root);
+        }
+        use std::io::Write as _;
+        // To the stream itself: the harness swallows what a passing test
+        // prints.
+        let _ = writeln!(
+            std::io::stderr(),
+            "SKIPPED {test}: no corpus at {} (`git submodule update --init corpus/qtdoc`)",
+            root.display()
         );
-        std::fs::read(format!("{root}{path}")).unwrap_or_else(|e| panic!("{path}: {e}"))
+        None
     }
 
     // The corpus is real output of Qt's tool, at versions 3, 5 and 7, each
     // read back and built for the renderer.
     #[test]
     fn the_corpus_files_read() {
-        let root = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../corpus/qtdoc/examples/demos"
-        );
-        let mut stack = vec![std::path::PathBuf::from(root)];
+        let Some(root) = demos("the_corpus_files_read") else {
+            return;
+        };
+        let mut stack = vec![root];
         let mut read = 0;
         let mut versions = std::collections::BTreeSet::new();
         while let Some(dir) = stack.pop() {
@@ -1380,7 +1391,10 @@ mod tests {
 
     #[test]
     fn the_robot_arm_has_its_subsets_and_real_bounds() {
-        let bytes = corpus("robotarm/content/meshes/base.mesh");
+        let Some(root) = demos("the_robot_arm_has_its_subsets_and_real_bounds") else {
+            return;
+        };
+        let bytes = std::fs::read(root.join("robotarm/content/meshes/base.mesh")).unwrap();
         let file = MeshFile::read(&bytes).unwrap();
         assert_eq!(file.version, 5);
         assert!(file.parts.len() > 1);
