@@ -44,7 +44,7 @@ pub(crate) struct PathGeometry {
 pub struct Path {
     #[qml(base)]
     pub object: QtObject,
-    #[qml(list, append = element_append)]
+    #[qml(notify, list, append = element_append)]
     pub path_elements: QmlList,
     #[qml(notify)]
     pub start_x: f64,

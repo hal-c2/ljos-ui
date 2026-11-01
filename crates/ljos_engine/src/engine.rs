@@ -2984,6 +2984,12 @@ impl Engine {
         }
         // A node is what a reader can depend on.
         let n = self.ensure_node(obj, prop).ok()?;
+        // A binding not yet run comes up to date now: run later, by the
+        // reader reading its value too, its first value would look like a
+        // change to what this reader already read, a binding loop.
+        if self.inner.graph.is_bound(n) {
+            let _ = self.read(obj, prop);
+        }
         self.inner.graph.provenance_tracked(n)
     }
 

@@ -127,6 +127,34 @@ Feature: Curves through points, polylines and rectangles in a path
       And the property "boundingRect.width" of "shape" is 110
       And the property "boundingRect.height" of "shape" is 50
 
+    Scenario: An element made from text follows a relative position bound to it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Shapes
+        Item {
+          Shape {
+            id: shape
+            objectName: "shape"
+            property real step: 30
+            ShapePath {
+              id: path
+              strokeWidth: 0; startX: 10; startY: 10
+            }
+            Component.onCompleted: {
+              let line = Qt.createQmlObject("import QtQuick; PathLine { relativeY: 20 }", path)
+              line.relativeX = Qt.binding(function() { return shape.step * 2 })
+              path.pathElements.push(line)
+            }
+          }
+        }
+        """
+      Then the property "boundingRect.width" of "shape" is 60
+      And the log has no warnings
+      When the property "step" of "shape" is set to 40
+      Then the property "boundingRect.width" of "shape" is 80
+      And the log has no warnings
+
     Scenario Outline: A polyline of fewer than two points draws nothing
       Given the QML:
         """qml
