@@ -380,6 +380,9 @@ fn ten_listview_delegates() {
     // Anchors hold from an item's completion, as Qt's do, not from the
     // first frame: an item completed before its parent waits for it in a
     // table the delegates share (96 bytes, no allocation more).
+    // `Qt.inputMethod` is one object an engine, made when JavaScript starts:
+    // nothing a delegate pays, but the object table's next growth now falls
+    // inside the count (one allocation, 3.6 kB, once).
     assert_eq!(
         b,
         Budget {
@@ -396,8 +399,8 @@ fn ten_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1208,
-            bytes: 151656,
+            allocations: 1209,
+            bytes: 155304,
         }
     );
 }
@@ -449,8 +452,8 @@ fn ten_wrapped_listview_delegates() {
                 names: 0,
                 atoms: 0,
             },
-            allocations: 1230,
-            bytes: 203953,
+            allocations: 1231,
+            bytes: 207601,
         }
     );
 }
@@ -500,7 +503,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 671,
-            bytes: 120040,
+            bytes: 120232,
         }
     );
 }
@@ -572,14 +575,15 @@ fn bytes_a_thousand_instances_keep() {
     // completion, not from the first frame, leave the anchored rows 90
     // bytes less each (20.9 kB before). `Text.renderTypeQuality` is 16 bytes
     // a text, and a render node's count of children below it held in 32
-    // bits gives them back. The rest is mostly
+    // bits gives them back. `Qt.inputMethod`'s one object moves when the
+    // object table grows, which is the 12 bytes `plain` shows. The rest is mostly
     // the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
             one_line: 20784,
             wrapped: 23148,
-            plain: 11110,
+            plain: 11122,
         }
     );
 }

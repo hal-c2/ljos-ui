@@ -743,6 +743,7 @@ pub(crate) fn apply_all(engine: &Engine) {
     if stale {
         bump(engine, &t.epoch);
     }
+    crate::input_method::refresh(engine);
 }
 
 /// The next `activeFocus` write, already noted in the window's path.

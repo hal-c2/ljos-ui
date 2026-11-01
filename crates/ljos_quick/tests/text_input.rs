@@ -224,12 +224,76 @@ impl PlatformTextInput for Told {
         self.0
             .push(format!("text {:?} {}", around.text, around.cursor));
     }
+    fn interrupt(&mut self) {
+        self.0.push("interrupt".to_owned());
+    }
+    fn set_keyboard_wanted(&mut self, wanted: bool) {
+        self.0.push(format!("keyboard {wanted}"));
+    }
 }
 
 impl Told {
     fn take(&mut self) -> Vec<String> {
         std::mem::take(&mut self.0)
     }
+}
+
+#[test]
+fn what_qt_input_method_is_asked_reaches_the_platform_once() {
+    let e = engine();
+    let (root, mut s) = ready(&e, EDITORS);
+    let input = find(&e, root, "input");
+    let mut ime = ImeState::new();
+    let mut told = Told::default();
+    focus(&e, &mut s, input);
+    ime.sync(&s, &e, &mut told);
+    told.take();
+
+    let call = |code: &str| e.eval_js(code).expect("runs");
+    call("Qt.inputMethod.show()");
+    ime.sync(&s, &e, &mut told);
+    assert_eq!(told.take(), ["keyboard true"]);
+    call("Qt.inputMethod.hide()");
+    ime.sync(&s, &e, &mut told);
+    assert_eq!(told.take(), ["keyboard false"]);
+
+    // With nothing composed there is nothing for the platform to drop.
+    call("Qt.inputMethod.commit()");
+    ime.sync(&s, &e, &mut told);
+    assert_eq!(told.take(), Vec::<String>::new());
+
+    assert!(s.ime_preedit(&e, "ni", None));
+    call("Qt.inputMethod.commit()");
+    frame(&mut s, &e);
+    ime.sync(&s, &e, &mut told);
+    assert!(told.take().contains(&"interrupt".to_owned()));
+    ime.sync(&s, &e, &mut told);
+    assert_eq!(told.take(), Vec::<String>::new());
+}
+
+#[test]
+fn a_host_says_what_the_on_screen_keyboard_covers() {
+    let e = engine();
+    let (_root, _s) = ready(&e, EDITORS);
+    let read = |code: &str| e.eval_js(code).expect("runs");
+    ljos_quick::set_on_screen_keyboard(&e, Some(kurbo::Rect::new(0.0, 500.0, 400.0, 800.0)));
+    assert_eq!(
+        read("Qt.inputMethod.visible"),
+        ljos_engine::Value::Bool(true)
+    );
+    assert_eq!(
+        read("Qt.inputMethod.keyboardRectangle.height").to_number(),
+        300.0
+    );
+    ljos_quick::set_on_screen_keyboard(&e, None);
+    assert_eq!(
+        read("Qt.inputMethod.visible"),
+        ljos_engine::Value::Bool(false)
+    );
+    assert_eq!(
+        read("Qt.inputMethod.keyboardRectangle.height").to_number(),
+        0.0
+    );
 }
 
 #[test]

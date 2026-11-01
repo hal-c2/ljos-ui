@@ -32,6 +32,7 @@ mod handlers;
 mod image;
 mod incubation;
 mod input;
+mod input_method;
 mod item;
 mod item_picture;
 pub mod keys;
@@ -126,6 +127,7 @@ pub use input::{
     PointerSource, TapHandler, tap_handler_target,
 };
 pub use input::{ScrollPhase, WheelEvent};
+pub use input_method::{InputMethod, set_on_screen_keyboard};
 pub use item::{
     AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
     init_item, is_item, local_transform, map_to_scene, register_backdrop, register_window_position,
@@ -237,6 +239,7 @@ pub fn register(engine: &Engine) {
     layouts::register(engine);
     accessible::register(engine);
     system_prefs::register(engine);
+    input_method::register(engine);
     animation::register(engine);
     states::register(engine);
     font_enums::register(engine);

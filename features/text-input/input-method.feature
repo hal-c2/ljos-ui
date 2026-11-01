@@ -16,7 +16,10 @@ Feature: Composing text with an input method
       """qml
       import QtQuick
       Item {
+        objectName: "root"
         width: 300; height: 200
+        function commitComposition() { Qt.inputMethod.commit() }
+        function resetComposition() { Qt.inputMethod.reset() }
         TextInput {
           objectName: "input"; focus: true
           font.family: "Liberation Sans"; font.pixelSize: 14
@@ -31,6 +34,28 @@ Feature: Composing text with an input method
         TextEdit { objectName: "edit"; y: 50; width: 200; text: "one\ntwo" }
       }
       """
+
+  Rule: The application can end a composition through Qt.inputMethod
+
+    Scenario: commit types what is being composed
+      When the input method composes "ni"
+      And the method "commitComposition" of "root" is called
+      Then the property "text" of "input" is "abni"
+      And the property "preeditText" of "input" is ""
+      And the property "inputMethodComposing" of "input" is false
+      And the property "edits" of "input" is 1
+
+    Scenario: reset drops what is being composed
+      When the input method composes "ni"
+      And the method "resetComposition" of "root" is called
+      Then the property "text" of "input" is "ab"
+      And the property "preeditText" of "input" is ""
+      And the property "inputMethodComposing" of "input" is false
+
+    Scenario: commit with nothing composed changes nothing
+      When the method "commitComposition" of "root" is called
+      Then the property "text" of "input" is "ab"
+      And the property "edits" of "input" is 0
 
   Rule: What is being composed is shown but is not yet text
 

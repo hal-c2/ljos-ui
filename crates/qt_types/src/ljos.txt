@@ -1229,6 +1229,7 @@ module QtQml
 		method formatTime
 		method hsla
 		method hsva
+		prop inputMethod QtQml.QtObject named readonly
 		method isQtObject
 		method lighter
 		method locale

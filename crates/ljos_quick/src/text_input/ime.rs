@@ -20,6 +20,7 @@ use ljos_render::kurbo;
 use super::base::{EditKind, TextEditor, check, publish, state_of};
 use super::echo_mode;
 use super::input_method_hint as hint;
+use super::layout::position_rect;
 use super::ops::{self, How};
 use crate::item::scene_transform;
 use crate::keys::{Surrounding, TextInputClient};
@@ -77,6 +78,22 @@ impl TextInputClient for Client {
         kurbo::Rect::new(r.x, r.y, r.x + r.width, r.y + r.height)
     }
 
+    fn anchor_rect(&self, engine: &Engine, item: ObjectId) -> kurbo::Rect {
+        let cursor = self.cursor_rect(engine, item);
+        let Some(st) = ops::ready(engine, item) else {
+            return cursor;
+        };
+        let (at_anchor, at_cursor) = {
+            let s = st.borrow();
+            (s.model.anchor() as i32, s.model.cursor() as i32)
+        };
+        // `position_rect` measures from elsewhere than the cursor rectangle
+        // does for some editors; the way from one position to the other is
+        // the same.
+        let (a, c) = (position_rect(&st, at_anchor), position_rect(&st, at_cursor));
+        cursor + kurbo::Vec2::new(a.x - c.x, a.y - c.y)
+    }
+
     fn hints(&self, engine: &Engine, item: ObjectId) -> i32 {
         let mut hints = int(engine, item, TextEditor::INPUT_METHOD_HINTS.index);
         let Some(st) = state_of(engine, item) else {
@@ -128,6 +145,10 @@ impl TextInputClient for Client {
         }
         check(engine, "preedit", publish(engine, item, &st));
         true
+    }
+
+    fn preedit(&self, engine: &Engine, item: ObjectId) -> String {
+        ops::ready(engine, item).map_or_else(String::new, |st| st.borrow().preedit.clone())
     }
 
     fn commit(&self, engine: &Engine, item: ObjectId, text: &str) -> bool {
@@ -187,6 +208,13 @@ pub trait PlatformTextInput {
     /// The text around the cursor changed. A platform without use for it
     /// ignores it.
     fn update(&mut self, _surrounding: &Surrounding) {}
+    /// The application ended the composition (`Qt.inputMethod.commit()`,
+    /// `reset()`): what the platform's method holds of it is dropped.
+    fn interrupt(&mut self) {}
+    /// The application asks for the on-screen keyboard
+    /// (`Qt.inputMethod.show()`, `hide()`). A platform without one
+    /// ignores it.
+    fn set_keyboard_wanted(&mut self, _wanted: bool) {}
 }
 
 /// What the platform was last told, so that it is told only what changed.
@@ -216,6 +244,16 @@ impl ImeState {
         engine: &Engine,
         platform: &mut dyn PlatformTextInput,
     ) {
+        // Things move without telling the object: this is the one place
+        // every host passes through after a frame.
+        crate::input_method::refresh(engine);
+        let asked = crate::input_method::take_requests(engine);
+        if asked.interrupt {
+            platform.interrupt();
+        }
+        if let Some(wanted) = asked.keyboard {
+            platform.set_keyboard_wanted(wanted);
+        }
         let target = scene
             .text_input_target(engine)
             .filter(|(item, client)| client.enabled(engine, *item));

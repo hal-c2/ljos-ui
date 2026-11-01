@@ -152,6 +152,10 @@ impl PlatformTextInput for Desktop {
     fn set_cursor_area(&mut self, rect: kurbo::Rect) {
         self.area = rect;
     }
+
+    fn interrupt(&mut self) {
+        self.interrupt = self.hints.is_some();
+    }
 }
 
 /// The view's side of the input method.

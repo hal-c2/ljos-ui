@@ -35,6 +35,11 @@ pub trait TextInputClient {
     /// The cursor in the item's coordinates, for the input method to
     /// place its window by.
     fn cursor_rect(&self, engine: &Engine, item: ObjectId) -> kurbo::Rect;
+    /// Where the selection starts, in the item's coordinates. Without a
+    /// selection, the cursor.
+    fn anchor_rect(&self, engine: &Engine, item: ObjectId) -> kurbo::Rect {
+        self.cursor_rect(engine, item)
+    }
     /// `inputMethodHints`, as `Qt.InputMethodHint` flags.
     fn hints(&self, engine: &Engine, item: ObjectId) -> i32;
     /// Whether the item takes text now; a read-only editor does not, and
@@ -55,6 +60,11 @@ pub trait TextInputClient {
         _cursor: Option<usize>,
     ) -> bool {
         false
+    }
+    /// What the input method is composing here, as last shown with
+    /// [`set_preedit`](Self::set_preedit).
+    fn preedit(&self, _engine: &Engine, _item: ObjectId) -> String {
+        String::new()
     }
     /// Ends the composition and types `text` over the selection. Returns
     /// whether the item took it.

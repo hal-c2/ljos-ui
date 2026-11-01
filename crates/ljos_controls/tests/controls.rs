@@ -541,6 +541,9 @@ fn objects_of(style: &str, control: &str) -> usize {
         );
         e.object_count() - before
     };
+    // What starting JavaScript makes (`Qt.styleHints`, `Qt.inputMethod`) is
+    // the engine's, not the control's.
+    made(1);
     let one = made(1);
     made(2) - one
 }
@@ -558,22 +561,22 @@ fn fusion_makes_no_more_objects_than_it_draws() {
         ("CheckBox", 13),
         ("RadioButton", 6),
         ("Switch", 17),
-        ("Slider", 14),
+        ("Slider", 15),
         ("ComboBox", 34),
-        ("SpinBox", 21),
-        ("TextField", 4),
-        ("ProgressBar", 12),
-        ("BusyIndicator", 12),
-        ("GroupBox", 3),
-        ("PageIndicator", 2),
-        ("RangeSlider", 22),
+        ("SpinBox", 22),
+        ("TextField", 5),
+        ("ProgressBar", 13),
+        ("BusyIndicator", 13),
+        ("GroupBox", 4),
+        ("PageIndicator", 3),
+        ("RangeSlider", 24),
         ("DelayButton", 15),
-        ("Dial", 17),
+        ("Dial", 18),
         ("Tumbler", 10),
         ("ItemDelegate", 3),
-        ("CheckDelegate", 13),
-        ("RadioDelegate", 6),
-        ("SwitchDelegate", 17),
+        ("CheckDelegate", 14),
+        ("RadioDelegate", 7),
+        ("SwitchDelegate", 18),
     ] {
         let made = objects_of("Fusion", control);
         assert!(

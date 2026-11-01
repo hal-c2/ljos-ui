@@ -730,6 +730,7 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
 pub(crate) fn publish(engine: &Engine, obj: ObjectId, st: &SharedState) -> Result<(), EngineError> {
     let r = publish_unshown(engine, obj, st);
     show_cursor(engine, st);
+    crate::input_method::cursor_moved(engine, obj);
     r
 }
 
