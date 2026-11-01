@@ -93,6 +93,7 @@ pub(crate) struct Slot {
     textures: Vec<Option<(u64, Sampling)>>,
     /// The generation of the screen texture it binds.
     screen: Option<u64>,
+    depth: Option<u64>,
     buffer: wgpu::Buffer,
     pub(crate) group: wgpu::BindGroup,
     written: Vec<u8>,
@@ -468,7 +469,8 @@ impl Programs {
 
     /// Makes `slots[i]` bind `material` with `header`, uploading what
     /// changed since it last did. `screen` is the target's screen texture
-    /// and its generation, for a material that reads it.
+    /// and its generation, for a material that reads it; `depth` the same
+    /// of the scene's depth.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn bind_material(
         &mut self,
@@ -480,6 +482,7 @@ impl Programs {
         material: &CustomMaterial,
         header: &Header,
         screen: Option<(&wgpu::TextureView, u64)>,
+        depth: Option<(&wgpu::TextureView, u64)>,
     ) {
         let program = &material.program;
         let mut textures = Vec::with_capacity(material.textures.len());
@@ -501,7 +504,10 @@ impl Programs {
         }
         let bytes = block(program, header, &material.values);
         let fresh = slots.get(i).is_none_or(|s| {
-            s.program != program.id() || s.textures != keys || s.screen != screen.map(|s| s.1)
+            s.program != program.id()
+                || s.textures != keys
+                || s.screen != screen.map(|s| s.1)
+                || s.depth != depth.map(|d| d.1)
         });
         if fresh {
             let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -515,13 +521,14 @@ impl Programs {
                 program,
                 &buffer,
                 &textures,
-                None,
+                depth.map(|d| d.0),
                 screen.map(|s| s.0),
             );
             let slot = Slot {
                 program: program.id(),
                 textures: keys,
                 screen: screen.map(|s| s.1),
+                depth: depth.map(|d| d.1),
                 buffer,
                 group,
                 written: Vec::new(),

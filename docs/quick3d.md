@@ -26,7 +26,7 @@ Sources: [Qt Quick 3D](https://doc.qt.io/qt-6/qtquick3d-index.html), [View3D](ht
 ## Non-goals (for now)
 
 - **2D items in 3D beyond clicks.** Items in 3D take presses and what follows them, not hover or the wheel; their pictures are CPU pixels, not a texture shared on the GPU.
-- **What custom shaders cannot have yet.** `DEPTH_TEXTURE`, `AO_TEXTURE` and `NORMAL_ROUGHNESS_TEXTURE` in a material (an effect has `DEPTH_TEXTURE`): the camera's depth is drawn after the scene pass, for the post passes, and a material would need it before. `MORPH_*` built-ins, as morph targets are applied when a file is built. A snippet on the network is not read.
+- **What custom shaders cannot have yet.** `AO_TEXTURE` and `NORMAL_ROUGHNESS_TEXTURE` in a material: those are drawn after the scene pass, for the post passes, and a material would need them before. `DEPTH_TEXTURE` is there: a scene with a material that names it draws the depth of what writes depth first, not moved by a custom vertex shader, as the post passes' depth is not. `MORPH_*` built-ins, as morph targets are applied when a file is built. A snippet on the network is not read.
 - **XR.**
 - **`QuadTextureProvider`, `RenderOutputProvider` and `SimpleQuadRenderer` from `QtQuick3D.Helpers`.** They are not registered: each works on the textures of render passes, and Ljós has no `RenderPass` API for them to read or draw into. The rest of the module is built (M10, M11, M12).
 - **`TextureData` with depth or a block-compressed format.** Both are reported in the log and not drawn.

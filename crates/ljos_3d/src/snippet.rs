@@ -103,8 +103,10 @@ pub fn material(
         Screen::None
     };
 
+    let reads_depth = names("DEPTH_TEXTURE");
+
     let set = 2;
-    let mut header = header(set, uniforms, textures, &[], false);
+    let mut header = header(set, uniforms, textures, &[], reads_depth);
     if screen != Screen::None {
         // One picture serves both names; only the mip levels differ, and
         // those are made when either asks for them.
@@ -139,10 +141,14 @@ pub fn material(
     } else {
         ProgramKind::Unshaded
     };
-    Ok(
-        Program::new(kind, wgsl, uniforms.to_vec(), textures.to_vec(), false)
-            .reading_screen(screen),
+    Ok(Program::new(
+        kind,
+        wgsl,
+        uniforms.to_vec(),
+        textures.to_vec(),
+        reads_depth,
     )
+    .reading_screen(screen))
 }
 
 /// A pass of an Effect: its fragment snippet runs over the whole output,
@@ -165,7 +171,13 @@ pub fn effect(
         .any(|w| w == "DEPTH_TEXTURE");
 
     let set = 0;
-    let header = header(set, uniforms, textures, &["INPUT"], depth);
+    let mut header = header(set, uniforms, textures, &["INPUT"], depth);
+    if [fragment_src.as_str(), vertex_src.as_str()]
+        .iter()
+        .any(|src| mentions(src, "max") || mentions(src, "min"))
+    {
+        header.push_str(&exact_min_max());
+    }
     let vs = stage_module(
         "vertex",
         ShaderStage::Vertex,

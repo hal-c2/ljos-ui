@@ -295,6 +295,8 @@ pub struct Target {
     custom_slots: Vec<Slot>,
     /// The pictures between the post-processing passes.
     post: Buffers,
+    /// What a material's DEPTH_TEXTURE reads, also when nothing is post-processed.
+    material_depth: Buffers,
     /// The scene behind the materials that read it, while one does.
     screen: Option<ScreenTexture>,
     /// How many times the picture was drawn: the programs' FRAME.
@@ -469,6 +471,7 @@ impl Target {
             timer: crate::timing::Timer::new(device),
             custom_slots: Vec::new(),
             post: Buffers::default(),
+            material_depth: Buffers::default(),
             screen: None,
             frames: 0,
         }
@@ -2039,6 +2042,26 @@ impl Renderer {
         write_slots(queue, target, &uniforms, self.model_stride);
         let (near, far) = camera.map_or((0.0, 1.0), |(c, _)| clip_planes(&c));
         let inverse_projection = proj.inverse().unwrap_or(Mat4::IDENTITY);
+        // Materials read it while they draw, so it is drawn before the scene;
+        // the post passes' own is drawn after, and only when they ask.
+        let material_depth = draws
+            .iter()
+            .any(|d| d.custom.is_some_and(|(m, _)| m.program.reads_depth()))
+            .then(|| {
+                target
+                    .material_depth
+                    .view(device, post::DEPTH_KEY, [w, h], post::DEPTH)
+            });
+        if material_depth.is_none() {
+            target.material_depth.clear();
+        }
+        // A view changes only with its size, as it is kept otherwise.
+        let depth_generation = (u64::from(w) << 32) | u64::from(h);
+        if material_depth.is_some() {
+            for draw in draws.iter().filter(|d| writes_camera_depth(d)) {
+                self.shadow_pipeline(device, draw.key.cull, draw.key.extra);
+            }
+        }
         let mut slot = 0;
         for draw in &draws {
             if let MeshKey::Primitive(p) = draw.mesh {
@@ -2078,6 +2101,10 @@ impl Renderer {
                             .then_some(target.screen.as_ref())
                             .flatten()
                             .map(|s| (&s.view, s.generation)),
+                        material_depth
+                            .as_ref()
+                            .filter(|_| material.program.reads_depth())
+                            .map(|d| (d, depth_generation)),
                     );
                     slot += 1;
                 }
@@ -2163,6 +2190,9 @@ impl Renderer {
         let cut = cut.min(draws.len());
         let parts = [0..cut, cut..draws.len()];
         let parts = &parts[..if cut < draws.len() { 2 } else { 1 }];
+        if let Some(depth) = &material_depth {
+            self.draw_depth(device, encoder, target, &draws, view_proj, depth, false);
+        }
         let mut slot = 0;
         for (part, range) in parts.iter().enumerate() {
             let first = part == 0;
@@ -2263,7 +2293,10 @@ impl Renderer {
         }
         if processed {
             if depth_pass {
-                self.draw_depth(device, encoder, target, &draws, view_proj);
+                let depth = target
+                    .post
+                    .view(device, post::DEPTH_KEY, [w, h], post::DEPTH);
+                self.draw_depth(device, encoder, target, &draws, view_proj, &depth, true);
             }
             if surface_pass {
                 self.draw_surfaces(device, encoder, target, &draws, bound, &plain_maps);
@@ -2315,14 +2348,12 @@ impl Renderer {
         &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
-        target: &mut Target,
+        target: &Target,
         draws: &[Draw<'_>],
         view_proj: Mat4,
+        depth: &wgpu::TextureView,
+        timed: bool,
     ) {
-        let [w, h] = target.size;
-        let depth = target
-            .post
-            .view(device, post::DEPTH_KEY, [w, h], post::DEPTH);
         let layer = ShadowLayer {
             view_proj: view_proj.0,
             params: [0.0; 4],
@@ -2348,7 +2379,7 @@ impl Renderer {
             label: Some("ljos_3d camera depth"),
             color_attachments: &[],
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth,
+                view: depth,
                 depth_ops: Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(1.0),
                     store: wgpu::StoreOp::Store,
@@ -2356,7 +2387,11 @@ impl Renderer {
                 stencil_ops: None,
             }),
             // The post passes' time starts here, as they read this depth.
-            timestamp_writes: target.timer.as_ref().and_then(|t| t.post_pass(true, false)),
+            timestamp_writes: target
+                .timer
+                .as_ref()
+                .filter(|_| timed)
+                .and_then(|t| t.post_pass(true, false)),
             ..Default::default()
         });
         pass.set_bind_group(0, &group, &[0]);
