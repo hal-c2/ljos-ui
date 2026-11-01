@@ -4,7 +4,7 @@
 use std::io::Cursor;
 
 /// An image file of one colour, encoded as its extension says (`.png`,
-/// `.jpg`/`.jpeg`). The colour is `#rrggbb`, or `#aarrggbb` for a PNG
+/// `.jpg`/`.jpeg`, `.tif`). The colour is `#rrggbb`, or `#aarrggbb` for a PNG
 /// whose alpha matters (a mask, say). A JPEG has no alpha.
 ///
 /// # Errors
@@ -19,8 +19,51 @@ pub fn image_file(name: &str, width: u32, height: u32, colour: &str) -> Result<V
     match ext.as_deref() {
         Some("png") => png(width, height, rgba),
         Some("jpg" | "jpeg") => jpeg(width, height, [rgba[1], rgba[2], rgba[3]]),
-        _ => Err(format!("{name}: image files made here are .png or .jpg")),
+        Some("tif") => Ok(tiff(width, height, [rgba[1], rgba[2], rgba[3]])),
+        _ => Err(format!(
+            "{name}: image files made here are .png, .jpg or .tif"
+        )),
     }
+}
+
+/// An uncompressed little-endian RGB TIFF, one strip, written out by hand
+/// from the TIFF 6.0 tags so the toolkit's reader is what is tested.
+fn tiff(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let pixels = width as usize * height as usize * 3;
+    let pixel_at = 8u32;
+    let entries = 9u16;
+    let ifd_at = pixel_at + pixels as u32;
+    let bits_at = ifd_at + 2 + u32::from(entries) * 12 + 4;
+    let mut out = Vec::with_capacity(bits_at as usize + 6);
+    out.extend(b"II*\0");
+    out.extend(ifd_at.to_le_bytes());
+    for _ in 0..width as usize * height as usize {
+        out.extend(rgb);
+    }
+    out.extend(entries.to_le_bytes());
+    // (tag, field type: 3 short or 4 long, count, value or offset)
+    let tags: [(u16, u16, u32, u32); 9] = [
+        (256, 4, 1, width),
+        (257, 4, 1, height),
+        (258, 3, 3, bits_at),
+        (259, 3, 1, 1),
+        (262, 3, 1, 2),
+        (273, 4, 1, pixel_at),
+        (277, 3, 1, 3),
+        (278, 4, 1, height),
+        (279, 4, 1, pixels as u32),
+    ];
+    for (tag, kind, count, value) in tags {
+        out.extend(tag.to_le_bytes());
+        out.extend(kind.to_le_bytes());
+        out.extend(count.to_le_bytes());
+        out.extend(value.to_le_bytes());
+    }
+    out.extend(0u32.to_le_bytes());
+    for _ in 0..3 {
+        out.extend(8u16.to_le_bytes());
+    }
+    out
 }
 
 /// A PNG split into four quadrants of one colour each, given top left,
@@ -103,7 +146,7 @@ pub fn radiance(
 /// horizon and `lower` below it, as a baked probe of [`radiance`]'s halves
 /// would be. Values are 0, 0.25, 0.5 or 1, which half floats hold exactly.
 pub fn ktx_cube(side: u32, upper: f32, lower: f32) -> Result<Vec<u8>, String> {
-    if side == 0 || side % 2 != 0 {
+    if side == 0 || !side.is_multiple_of(2) {
         return Err("a cube's side is even and at least 2".to_owned());
     }
     let half = |v: f32| -> Result<u16, String> {

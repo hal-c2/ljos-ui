@@ -410,6 +410,12 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
     if let Some(size) = super::ktx::dimensions(bytes) {
         return Some(size);
     }
+    if is_tiff(bytes) {
+        return tiff::decoder::Decoder::new(std::io::Cursor::new(bytes))
+            .ok()?
+            .dimensions()
+            .ok();
+    }
     jpeg_frame(bytes).map(|f| (f.width, f.height))
 }
 
@@ -1307,7 +1313,12 @@ fn draw_pdf(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadErr
 /// The first bytes of a GIF, either version.
 const GIF: &[u8] = b"GIF8";
 
-/// Decodes a PNG, JPEG or GIF (its first frame), told apart by their first
+/// Whether these are the bytes of a TIFF, in either byte order.
+fn is_tiff(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*")
+}
+
+/// Decodes a PNG, JPEG, TIFF or GIF (its first frame), told apart by their first
 /// bytes as Qt does (the file name's ending plays no part), with the
 /// pixels as the decoder gave them.
 fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
@@ -1316,6 +1327,8 @@ fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
         decode_png(bytes).map_err(|reason| LoadError::decode(url, reason))?
     } else if bytes.starts_with(JPEG) {
         decode_jpeg(bytes).map_err(|reason| LoadError::decode(url, reason))?
+    } else if is_tiff(bytes) {
+        decode_tiff(bytes).map_err(|reason| LoadError::decode(url, reason))?
     } else if bytes.starts_with(GIF) {
         let (width, height, mut frames) =
             decode_gif(bytes, false).map_err(|reason| LoadError::decode(url, reason))?;
@@ -1418,6 +1431,53 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 /// cannot be made smaller one row at a time.
 fn png_interlaced(bytes: &[u8]) -> bool {
     bytes.get(28).is_some_and(|&i| i != 0)
+}
+
+/// The first page of a TIFF, as 8 bit RGB or straight RGBA. Palette, CMYK
+/// and sub-byte layouts are refused by name, in the error the Image reports.
+fn decode_tiff(bytes: &[u8]) -> Result<Decoded, String> {
+    use tiff::decoder::{Decoder, DecodingResult};
+    use tiff::tags::Tag;
+    let mut dec = Decoder::new(std::io::Cursor::new(bytes)).map_err(|e| e.to_string())?;
+    let (width, height) = dec.dimensions().map_err(|e| e.to_string())?;
+    if !fits((width, height)) {
+        return Err("Image is too large".to_owned());
+    }
+    let colour = dec.colortype().map_err(|e| e.to_string())?;
+    let samples = match colour {
+        tiff::ColorType::Gray(8 | 16) => 1,
+        tiff::ColorType::GrayA(8 | 16) => 2,
+        tiff::ColorType::RGB(8 | 16) => 3,
+        tiff::ColorType::RGBA(8 | 16) => 4,
+        other => return Err(format!("Unsupported TIFF layout {other:?}")),
+    };
+    // Extra sample 1 is alpha already multiplied in (TIFF 6.0, ExtraSamples).
+    let associated = dec.find_tag_unsigned::<u16>(Tag::ExtraSamples).ok().flatten() == Some(1);
+    let wide = match dec.read_image().map_err(|e| e.to_string())? {
+        DecodingResult::U8(data) => data,
+        DecodingResult::U16(data) => data.into_iter().map(|v| (v >> 8) as u8).collect(),
+        _ => return Err("Unsupported TIFF sample format".to_owned()),
+    };
+    let channels = if samples % 2 == 0 { 4 } else { 3 };
+    let mut out = Vec::with_capacity(wide.len() / samples * channels);
+    for px in wide.chunks_exact(samples) {
+        let (rgb, alpha) = match *px {
+            [v] => ([v, v, v], None),
+            [v, a] => ([v, v, v], Some(a)),
+            [r, g, b] => ([r, g, b], None),
+            [r, g, b, a, ..] => ([r, g, b], Some(a)),
+            _ => unreachable!("chunks of one to four samples"),
+        };
+        match alpha {
+            Some(a) if associated && a > 0 => {
+                let straight = |v: u8| (u32::from(v) * 255 / u32::from(a)).min(255) as u8;
+                out.extend([straight(rgb[0]), straight(rgb[1]), straight(rgb[2]), a]);
+            }
+            Some(a) => out.extend([rgb[0], rgb[1], rgb[2], a]),
+            None => out.extend(rgb),
+        }
+    }
+    Ok((width, height, channels, out))
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Decoded, String> {

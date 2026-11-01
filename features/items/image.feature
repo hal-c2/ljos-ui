@@ -75,6 +75,13 @@ Feature: Image
     And the property "implicitWidth" of "empty" is 60
     And the property "implicitHeight" of "empty" is 40
 
+  Scenario: A TIFF file loads as a PNG file does
+    Given a 30 by 10 image file "green.tif" filled with "#00ff00"
+    When the property "source" of "empty" is set to "green.tif"
+    Then the property "status" of "empty" is 1
+    And the property "implicitWidth" of "empty" is 30
+    And the property "implicitHeight" of "empty" is 10
+
   Scenario: Another source replaces the picture
     When the property "source" of "picture" is set to "blue.jpg"
     Then the property "status" of "picture" is 1

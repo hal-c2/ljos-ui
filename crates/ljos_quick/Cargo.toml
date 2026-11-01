@@ -36,6 +36,7 @@ bitflags.workspace = true
 # Image decoding: PNG and JPEG are the formats Image reads.
 png.workspace = true
 gif.workspace = true
+tiff.workspace = true
 # ObjectId is a slotmap key; an accessibility node is named by its number.
 slotmap.workspace = true
 # The scene's maps of items, looked up many times a frame: no SipHash.
