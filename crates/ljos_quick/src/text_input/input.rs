@@ -11,7 +11,7 @@ use super::validator::{Validation, validate};
 use crate::item::write_computed;
 
 /// What `maximumLength` is until it is assigned, as in Qt.
-const MAXIMUM_LENGTH: i32 = 32767;
+pub(super) const MAXIMUM_LENGTH: i32 = 32767;
 
 /// `TextInput` (QtQuick).
 #[derive(Debug, QmlObject)]
@@ -30,8 +30,9 @@ pub struct TextInput {
     /// Kept; a typed character is masked at once.
     #[qml(notify, reset)]
     pub password_mask_delay: i32,
-    /// In UTF-16 units. A longer text is cut.
-    #[qml(notify)]
+    /// In UTF-16 units. A longer text is cut. With a mask it is the mask's
+    /// length, and a write is not taken.
+    #[qml(notify, write = max_written)]
     pub maximum_length: i32,
     /// An `IntValidator`, `DoubleValidator` or
     /// `RegularExpressionValidator`.
@@ -41,8 +42,9 @@ pub struct TextInput {
     pub acceptable_input: bool,
     #[qml(notify)]
     pub auto_scroll: bool,
-    /// Kept and not applied (backlog).
-    #[qml(notify)]
+    /// What each place of the field may hold ([`super::mask`]). It reads
+    /// back as the mask, a `;` and its blank.
+    #[qml(notify, write = Self::normalize_mask)]
     pub input_mask: Atom,
 }
 
@@ -61,6 +63,16 @@ impl Default for TextInput {
             input_mask: Atom::EMPTY,
         }
     }
+}
+
+fn max_written(cx: &Cx, v: i32) -> Option<i32> {
+    state_of(cx.engine, cx.this)
+        .is_none_or(|st| {
+            let s = st.borrow();
+            // `syncing`: the mask itself is giving the length.
+            s.mask.is_none() || s.syncing
+        })
+        .then_some(v)
 }
 
 fn max_units(v: &Value) -> usize {
@@ -120,7 +132,37 @@ impl TextInput {
     }
 }
 
+/// Gives `acceptableInput` what the mask and the validator say of `text`.
+fn write_acceptable(e: &Engine, obj: ObjectId, text: &str, validator: &Value) {
+    let filled = state_of(e, obj).is_none_or(|st| {
+        let s = st.borrow();
+        s.mask.as_ref().is_none_or(|m| m.acceptable(s.model.text()))
+    });
+    let ok = filled
+        && match validator {
+            Value::Object(v) => validate(e, *v, text) == Validation::Acceptable,
+            _ => true,
+        };
+    check(
+        e,
+        "acceptableInput",
+        e.untrack(|| write_computed(e, obj, TextInput::ACCEPTABLE_INPUT.index, Value::Bool(ok))),
+    );
+}
+
+/// `acceptableInput` again: what a mask shows can change while `text` stays.
+pub(super) fn refresh_acceptable(e: &Engine, obj: ObjectId, text: &str) {
+    let validator = e.untrack(|| e.read(obj, TextInput::VALIDATOR.index));
+    write_acceptable(e, obj, text, &validator);
+}
+
 impl TextInput {
+    fn normalize_mask(&self, source: Atom) -> Option<Atom> {
+        Some(Atom::from(
+            super::mask::normalized(source.as_str()).as_str(),
+        ))
+    }
+
     /// What a `TextInput` adds when an editor completes, before the model
     /// takes the declared text.
     pub(crate) fn init(
@@ -132,8 +174,23 @@ impl TextInput {
         st.borrow_mut().model.set_max_length(max_units(&max));
         engine.watch(obj, TextInput::MAXIMUM_LENGTH.index, move |e, v| {
             if let Some(st) = state_of(e, obj) {
+                // The mask gave it, and has told the model.
+                if st.borrow().syncing {
+                    return;
+                }
                 st.borrow_mut().model.set_max_length(max_units(v));
                 check(e, "maximumLength", publish(e, obj, &st));
+            }
+        })?;
+        let source = engine
+            .with(obj, |t: &TextInput| t.input_mask.clone())
+            .unwrap_or(Atom::EMPTY);
+        if super::mask::Mask::parse(source.as_str()).is_some() {
+            super::mask::apply(engine, obj, st, &source, "");
+        }
+        engine.watch(obj, TextInput::INPUT_MASK.index, move |e, _| {
+            if let Some(st) = state_of(e, obj) {
+                super::base::reconcile(e, obj, &st);
             }
         })?;
         // A text that stops following its cursor goes back to where it
@@ -151,17 +208,8 @@ impl TextInput {
         // allows; a text the program assigned may be one it refuses.
         engine.effect_in(obj, move |e| {
             let text = e.read(obj, TextEditor::TEXT.index).to_js_string();
-            let ok = match e.read(obj, TextInput::VALIDATOR.index) {
-                Value::Object(v) => validate(e, v, text.as_str()) == Validation::Acceptable,
-                _ => true,
-            };
-            check(
-                e,
-                "acceptableInput",
-                e.untrack(|| {
-                    write_computed(e, obj, TextInput::ACCEPTABLE_INPUT.index, Value::Bool(ok))
-                }),
-            );
+            let validator = e.read(obj, TextInput::VALIDATOR.index);
+            write_acceptable(e, obj, text.as_str(), &validator);
         })?;
         Ok(())
     }

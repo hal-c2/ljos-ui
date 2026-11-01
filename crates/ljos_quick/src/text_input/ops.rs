@@ -45,23 +45,56 @@ pub(crate) fn echo(engine: &Engine, obj: ObjectId, st: &SharedState) -> i32 {
 /// Moves the cursor or changes the selection: `f` does it to the model.
 /// That ends a run of typing, so the next edit is an undo step of its own.
 pub(crate) fn act(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) {
-    if let Some(st) = acted(engine, obj, f) {
+    if let Some(st) = acted(engine, obj, true, f) {
         check(engine, "selection", publish(engine, obj, &st));
     }
 }
 
+/// `act` for what names its positions: with a mask they are taken as they
+/// are, separators too.
+pub(crate) fn select(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) {
+    if let Some(st) = acted(engine, obj, false, f) {
+        check(engine, "selection", publish(engine, obj, &st));
+    }
+}
+
+/// Selects the whole text; with a mask, up to where its text would end.
+pub(crate) fn select_all(engine: &Engine, obj: ObjectId) {
+    select(engine, obj, |st| {
+        let mut s = st.borrow_mut();
+        match s.mask.clone() {
+            Some(mask) => mask.select_all(&mut s.model),
+            None => s.model.select_all(),
+        }
+    });
+}
+
 /// `act` for the pointer, which leaves the blink of the cursor as it is.
 pub(crate) fn act_by_pointer(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) {
-    if let Some(st) = acted(engine, obj, f) {
+    if let Some(st) = acted(engine, obj, true, f) {
         check(engine, "selection", publish_unshown(engine, obj, &st));
     }
 }
 
-fn acted(engine: &Engine, obj: ObjectId, f: impl FnOnce(&SharedState)) -> Option<SharedState> {
+fn acted(
+    engine: &Engine,
+    obj: ObjectId,
+    snaps: bool,
+    f: impl FnOnce(&SharedState),
+) -> Option<SharedState> {
     let st = ready(engine, obj)?;
+    let from = st.borrow().model.cursor();
     f(&st);
     {
         let mut s = st.borrow_mut();
+        if let Some(mask) = s.mask.clone().filter(|_| snaps) {
+            let to = s.model.cursor();
+            let pos = mask.snap(from, to);
+            if pos != to {
+                let extends = s.model.has_selection();
+                s.model.move_to(pos, extends);
+            }
+        }
         super::cells::snap(&mut s);
         s.run = None;
         s.sticky = None;
@@ -139,7 +172,13 @@ pub(crate) fn edit(
     };
     let changed = match (validator, undo_point) {
         (Some(v), Some(point)) if changed => {
-            let text = st.borrow().model.text().to_owned();
+            let text = {
+                let s = st.borrow();
+                match &s.mask {
+                    Some(mask) => mask.strip(s.model.text()),
+                    None => s.model.text().to_owned(),
+                }
+            };
             if validate(engine, v, &text) == Validation::Invalid {
                 st.borrow_mut().model.rollback(point);
                 false
@@ -185,9 +224,13 @@ pub(crate) fn begin_editing(engine: &Engine, obj: ObjectId) {
     {
         return;
     }
-    edit(engine, obj, How::user(EditKind::Other), |m| {
-        m.select_all();
-        m.delete_selection()
+    let mask = super::mask::of(&st);
+    edit(engine, obj, How::user(EditKind::Other), |m| match mask {
+        Some(mask) => mask.clear(m),
+        None => {
+            m.select_all();
+            m.delete_selection()
+        }
     });
     // What comes next is typed into the empty field and is a step of its
     // own.
@@ -229,6 +272,11 @@ pub(crate) fn outdent(engine: &Engine, obj: ObjectId) -> bool {
 /// Types `text` at the cursor as the user would: over the selection, or
 /// over what follows the cursor in `overwriteMode`.
 pub(crate) fn type_text(engine: &Engine, obj: ObjectId, text: &str) -> bool {
+    if let Some(mask) = ready(engine, obj).and_then(|st| super::mask::of(&st)) {
+        return edit(engine, obj, How::user(EditKind::Typed), |m| {
+            mask.type_in(m, text)
+        });
+    }
     let emptied = empty_cells(engine, obj, EditKind::Typed);
     let overwrite = flag(engine, obj, TextEditor::OVERWRITE_MODE.index);
     let typed = edit(engine, obj, How::user(EditKind::Typed), |m| {
@@ -272,6 +320,18 @@ pub(crate) fn program_insert(engine: &Engine, obj: ObjectId, pos: i32, text: &st
     let Some(pos) = super::base::position(&st, pos) else {
         return;
     };
+    if let Some(mask) = super::mask::of(&st) {
+        let how = How {
+            kind: EditKind::Program,
+            user: false,
+            emits: true,
+            start: Some(pos),
+            end: Some(pos),
+            anywhere: true,
+        };
+        edit(engine, obj, how, |m| mask.insert(m, pos, text));
+        return;
+    }
     let single = !st.borrow().multi;
     // Rich text is inserted as the editor reads its text: `insert(0,
     // "<b>x</b>")` inserts a bold "x".
@@ -317,7 +377,11 @@ pub(crate) fn program_remove(engine: &Engine, obj: ObjectId, start: i32, end: i3
         end: Some(a),
         anywhere: single,
     };
-    edit(engine, obj, how, |m| m.remove(a, b));
+    let mask = super::mask::of(&st);
+    edit(engine, obj, how, |m| match mask {
+        Some(mask) => mask.remove(m, a..b),
+        None => m.remove(a, b),
+    });
 }
 
 /// `clear()`: unlike assigning an empty text it can be undone, and unlike
@@ -331,9 +395,13 @@ pub(crate) fn clear(engine: &Engine, obj: ObjectId) {
         end: None,
         anywhere: false,
     };
-    edit(engine, obj, how, |m| {
-        m.select_all();
-        m.delete_selection()
+    let mask = state_of(engine, obj).and_then(|st| super::mask::of(&st));
+    edit(engine, obj, how, |m| match mask {
+        Some(mask) => mask.clear(m),
+        None => {
+            m.select_all();
+            m.delete_selection()
+        }
     });
 }
 
@@ -370,6 +438,11 @@ pub(crate) fn cut(engine: &Engine, obj: ObjectId) -> bool {
     if read_only(engine, obj) || !copy(engine, obj) {
         return false;
     }
+    if let Some(mask) = state_of(engine, obj).and_then(|st| super::mask::of(&st)) {
+        return edit(engine, obj, How::user(EditKind::Other), |m| {
+            mask.delete_selection(m)
+        });
+    }
     if let Some(removed) = empty_cells(engine, obj, EditKind::Other) {
         return removed;
     }
@@ -400,6 +473,11 @@ pub(crate) fn paste(engine: &Engine, obj: ObjectId) -> bool {
         return false;
     }
     begin_editing(engine, obj);
+    if let Some(mask) = super::mask::of(&st) {
+        return edit(engine, obj, How::user(EditKind::Other), |m| {
+            mask.paste(m, &text)
+        });
+    }
     // DECISION: a paste over a selection of cells empties them and goes
     // in the cursor's cell, as typing does; not measured.
     empty_cells(engine, obj, EditKind::Other);

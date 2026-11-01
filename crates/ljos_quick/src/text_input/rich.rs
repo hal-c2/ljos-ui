@@ -179,7 +179,10 @@ pub(crate) fn inputs(
 pub(crate) fn differs(s: &State, text: &str) -> bool {
     match &s.rich {
         Some(r) => r.published != text,
-        None => s.model.text() != text,
+        None => match &s.mask {
+            Some(mask) => mask.strip(s.model.text()) != text,
+            None => s.model.text() != text,
+        },
     }
 }
 
@@ -193,6 +196,13 @@ pub(crate) fn assign(
 ) {
     let Some(format) = format else {
         s.rich = None;
+        if let Some(mask) = s.mask.clone() {
+            // The same thing shown is a new text all the same.
+            s.model.set_text(&mask.assigned(source));
+            s.model.clear_undo();
+            s.model.move_to(s.model.len(), false);
+            return;
+        }
         s.model.set_text(source);
         return;
     };

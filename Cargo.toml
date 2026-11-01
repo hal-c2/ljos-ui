@@ -115,6 +115,7 @@ cpal = "0.18.2"
 
 # Text editing
 # Grapheme clusters for cursor movement.
+unicode-general-category = "1.1.0"
 unicode-segmentation = "1.13"
 # Validators need a partial match (Intermediate), which a backtracking matcher cannot give.
 regex-automata = "0.4.18"

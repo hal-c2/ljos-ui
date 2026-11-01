@@ -73,6 +73,8 @@ pub(crate) struct State {
     pub preedit: String,
     /// The input method's own cursor in the composition (UTF-16 units).
     pub preedit_cursor: Option<usize>,
+    /// A `TextInput`'s `inputMask`: the model holds what is shown.
+    pub mask: Option<Rc<super::mask::Mask>>,
     /// `PasswordEchoOnEdit`: the user edited the text since the field got
     /// focus, so it is shown.
     pub editing: bool,
@@ -353,7 +355,7 @@ impl TextEditor {
     /// does not have are ignored.
     #[qml(invokable)]
     fn select(cx: &Cx, start: i32, end: i32) {
-        ops::act(cx.engine, cx.this, |st| {
+        ops::select(cx.engine, cx.this, |st| {
             if let (Some(a), Some(b)) = (position(st, start), position(st, end)) {
                 st.borrow_mut().model.select(a, b);
             }
@@ -362,7 +364,7 @@ impl TextEditor {
 
     #[qml(invokable, name = "selectAll")]
     fn select_all(cx: &Cx) {
-        ops::act(cx.engine, cx.this, |st| st.borrow_mut().model.select_all());
+        ops::select_all(cx.engine, cx.this);
     }
 
     #[qml(invokable, name = "selectWord")]
@@ -576,6 +578,12 @@ pub(crate) fn init_editor(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
         if multi {
             s.model.move_to(0, false);
         }
+        // DECISION: a mask with a declared text has the cursor at the end, as
+        // when the mask is assigned first; Qt depends on the order of the
+        // assignments, which a completed object no longer has.
+        if let Some(mask) = s.mask.clone().filter(|_| text.is_empty()) {
+            s.model.move_to(mask.first_slot(), false);
+        }
     }
     if let Some(pos) = declared_cursor.and_then(|p| position(&st, p)) {
         st.borrow_mut().model.move_to(pos, false);
@@ -655,6 +663,16 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
             return;
         }
     }
+    if !st.borrow().multi && super::mask::sync(engine, obj, st) {
+        check(engine, "inputMask", publish(engine, obj, st));
+        let text = engine
+            .with(obj, |t: &TextEditor| {
+                Value::String(t.text.clone()).to_js_string()
+            })
+            .map(|t| t.as_str().to_owned())
+            .unwrap_or_default();
+        super::input::refresh_acceptable(engine, obj, &text);
+    }
     // A rich text whose `text` is still to be made was not written by a
     // program since (a write takes the making away): there is nothing to
     // take in, and reading it would write it out.
@@ -709,7 +727,14 @@ pub(crate) fn reconcile(engine: &Engine, obj: ObjectId, st: &SharedState) {
             changed = true;
         }
         if cursor_written {
-            if let Some(pos) = usize::try_from(cursor).ok().filter(|p| *p <= s.model.len()) {
+            // With a mask the cursor can be put as far as the text goes, and
+            // not on a separator.
+            let (end, from) = match &s.mask {
+                Some(mask) => (mask.text_end(s.model.text()), s.model.cursor()),
+                None => (s.model.len(), 0),
+            };
+            if let Some(pos) = usize::try_from(cursor).ok().filter(|p| *p <= end) {
+                let pos = s.mask.as_ref().map_or(pos, |mask| mask.snap(from, pos));
                 s.model.move_to(pos, false);
                 s.run = None;
                 s.sticky = None;
@@ -802,6 +827,13 @@ pub(crate) fn publish_unshown(
         relayout(engine, obj, st, &inputs)
     });
     st.borrow_mut().syncing = false;
+    let masked = {
+        let s = st.borrow();
+        s.mask.as_ref().map(|mask| mask.strip(s.model.text()))
+    };
+    if let Some(text) = masked {
+        super::input::refresh_acceptable(engine, obj, &text);
+    }
     super::highlight::sync_modified(engine, st);
     super::selection::sync(engine, obj, st);
     r
@@ -819,7 +851,10 @@ fn text_to_publish(
     let (changed, epoch, own) = {
         let s = st.borrow();
         let Some(r) = s.rich.as_ref() else {
-            return Ok(Some(s.model.text().to_owned()));
+            return Ok(Some(match &s.mask {
+                Some(mask) => mask.strip(s.model.text()),
+                None => s.model.text().to_owned(),
+            }));
         };
         (r.dirty, s.rich_epoch, s.text_watch)
     };

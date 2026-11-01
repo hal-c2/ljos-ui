@@ -158,15 +158,21 @@ fn act(engine: &Engine, obj: ObjectId, value: &TextValue, action: AccessibleText
         // be undone, and a `TextInput` says `textEdited`.
         AccessibleTextAction::ReplaceSelection(text) => {
             ops::begin_editing(engine, obj);
-            ops::edit(engine, obj, How::user(EditKind::Other), |m| {
-                m.replace_selection(&text)
+            let mask = ops::ready(engine, obj).and_then(|st| super::mask::of(&st));
+            ops::edit(engine, obj, How::user(EditKind::Other), |m| match mask {
+                Some(mask) => mask.paste(m, &text),
+                None => m.replace_selection(&text),
             });
             true
         }
         AccessibleTextAction::SetValue(text) => {
-            ops::edit(engine, obj, How::user(EditKind::Other), |m| {
-                m.select_all();
-                m.replace_selection(&text)
+            let mask = ops::ready(engine, obj).and_then(|st| super::mask::of(&st));
+            ops::edit(engine, obj, How::user(EditKind::Other), |m| match mask {
+                Some(mask) => mask.set_value(m, &text),
+                None => {
+                    m.select_all();
+                    m.replace_selection(&text)
+                }
             });
             true
         }

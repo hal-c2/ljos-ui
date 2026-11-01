@@ -249,6 +249,11 @@ fn paragraph_rtl(s: &State) -> bool {
 fn motion(s: &State, motion: Motion, select: bool, echo: i32) -> Plan {
     let model = &s.model;
     let (cursor, len) = (model.cursor(), model.len());
+    // With a mask the end is where the text would end without its blanks.
+    let end = s
+        .mask
+        .as_ref()
+        .map_or(len, |mask| mask.text_end(model.text()));
     // A TextEdit walks the text in the order it is written, the way its
     // paragraph reads; a TextInput walks it the way it shows, character
     // by character (see features/text-input/bidi-edit.feature).
@@ -298,11 +303,11 @@ fn motion(s: &State, motion: Motion, select: bool, echo: i32) -> Plan {
             }
         }
         Motion::DocStart => to(0),
-        Motion::DocEnd => to(len),
+        Motion::DocEnd => to(end),
         Motion::LineStart | Motion::LineEnd => {
             let start = motion == Motion::LineStart;
             let Some(layout) = s.layout.as_ref().filter(|_| s.multi) else {
-                return to(if start { 0 } else { len });
+                return to(if start { 0 } else { end });
             };
             // The line as it is laid out: a wrapped paragraph is several.
             let byte = s.shown.byte_of(cursor);
@@ -421,6 +426,10 @@ pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
         } => {
             {
                 let mut s = st.borrow_mut();
+                let pos = match &s.mask {
+                    Some(mask) => mask.snap(s.model.cursor(), pos),
+                    None => pos,
+                };
                 s.model.move_to(pos, select);
                 super::cells::snap(&mut s);
                 s.run = None;
@@ -458,13 +467,59 @@ pub(super) fn acceptable(engine: &Engine, obj: ObjectId, st: &SharedState) -> bo
     if st.borrow().multi {
         return true;
     }
+    let shown = {
+        let s = st.borrow();
+        match &s.mask {
+            Some(mask) if !mask.acceptable(s.model.text()) => return false,
+            Some(mask) => mask.strip(s.model.text()),
+            None => s.model.text().to_owned(),
+        }
+    };
     match engine.untrack(|| engine.read(obj, TextInput::VALIDATOR.index)) {
         Value::Object(v) if engine.is_alive(v) => {
-            let text = st.borrow().model.text().to_owned();
+            let text = shown;
             engine.untrack(|| validate(engine, v, &text)) == Validation::Acceptable
         }
         _ => true,
     }
+}
+
+/// What deleting does with a mask: places are emptied, and separators stay.
+/// Whether `action` was one of those.
+fn act_masked(
+    engine: &Engine,
+    obj: ObjectId,
+    mask: &super::mask::Mask,
+    action: Action,
+    shows: bool,
+) -> bool {
+    let other = How::user(EditKind::Other);
+    match action {
+        Action::Backspace => ops::edit(engine, obj, How::user(EditKind::Backspace), |m| {
+            mask.backspace(m)
+        }),
+        Action::Delete => ops::edit(engine, obj, How::user(EditKind::Delete), |m| mask.delete(m)),
+        Action::DeleteStartOfWord => ops::edit(engine, obj, other, |m| {
+            let target = if shows { m.prev_word(m.cursor()) } else { 0 };
+            mask.delete_back_to(m, target)
+        }),
+        Action::DeleteEndOfWord => ops::edit(engine, obj, other, |m| {
+            let to = if shows {
+                m.next_word(m.cursor())
+            } else {
+                m.len()
+            };
+            let to = mask.snap(m.cursor(), to);
+            mask.delete_forward_to(m, to)
+        }),
+        Action::DeleteEndOfLine => ops::edit(engine, obj, other, |m| {
+            let to = m.len();
+            mask.delete_forward_to(m, to)
+        }),
+        Action::DeleteCompleteLine => ops::edit(engine, obj, other, |m| mask.clear(m)),
+        _ => return false,
+    };
+    true
 }
 
 fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
@@ -472,6 +527,11 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
         let s = st.borrow();
         (s.multi, ops::echo(engine, obj, st) == echo_mode::NORMAL)
     };
+    if let Some(mask) = super::mask::of(st)
+        && act_masked(engine, obj, &mask, action, shows)
+    {
+        return;
+    }
     // A word or a line, from the cursor; a selection goes instead.
     let delete_to = |target: fn(&ljos_text::TextModel, usize, bool) -> usize| {
         ops::edit(engine, obj, How::user(EditKind::Other), |m| {
@@ -485,7 +545,7 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
     };
     match action {
         Action::Move(..) => {}
-        Action::SelectAll => ops::act(engine, obj, |st| st.borrow_mut().model.select_all()),
+        Action::SelectAll => ops::select_all(engine, obj),
         Action::Copy => {
             ops::copy(engine, obj);
         }

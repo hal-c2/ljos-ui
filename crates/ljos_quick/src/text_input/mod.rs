@@ -23,8 +23,7 @@
 //! undo takes formats back, `cursorSelection` ([`TextSelection`]) formats
 //! the selection, and its `textDocument` reads and saves files ([`files`]).
 //!
-//! Not implemented: `inputMask`, rich text in a `TextInput`, wrapping in a
-//! `TextInput`, and the `Qt.inputMethod` object.
+//! Not implemented: rich text in a `TextInput` and wrapping in a `TextInput`.
 
 mod a11y;
 mod base;
@@ -37,6 +36,7 @@ mod ime;
 mod input;
 mod keys;
 mod layout;
+mod mask;
 mod ops;
 mod paint;
 mod pointer;

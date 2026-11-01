@@ -56,9 +56,14 @@ impl TextInputClient for Client {
             return;
         }
         ops::begin_editing(engine, item);
+        let mask = ops::ready(engine, item).and_then(|st| super::mask::of(&st));
         ops::edit(engine, item, How::user(EditKind::Other), |m| {
             let len = m.len();
-            m.replace(range.start.min(len)..range.end.min(len), text)
+            let range = range.start.min(len)..range.end.min(len);
+            match mask {
+                Some(mask) => mask.replace(m, range, text),
+                None => m.replace(range, text),
+            }
         });
     }
 

@@ -53,6 +53,7 @@ jpeg-decoder.workspace = true
 resvg.workspace = true
 # PDF documents in an Image (`pdf`).
 hayro = { workspace = true, optional = true }
+unicode-general-category = { workspace = true }
 
 [dev-dependencies]
 # Budget tests count the lookups by name an instance makes.
