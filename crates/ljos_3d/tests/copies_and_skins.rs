@@ -17,7 +17,7 @@ use ljos_3d::{
 };
 
 const SIDE: u32 = 200;
-const CLEAR: [u8; 3] = [32, 32, 32];
+const CLEAR: [u8; 3] = [30, 30, 30];
 
 fn offscreen() -> Option<Offscreen> {
     match Offscreen::new() {
@@ -363,12 +363,14 @@ fn quadrants() -> TextureImage {
 }
 
 /// The built-in rectangle, its first UV set all in the red quadrant, its
-/// second the rectangle's own.
+/// second the rectangle's own. An application's run up the picture, as Qt's
+/// do, and a mesh's down it.
 fn two_uv_square() -> CustomGeometry {
     let mesh = Mesh::primitive(Primitive::Rectangle);
     let mut vertices = Vec::new();
     for (p, uv) in mesh.positions.iter().zip(&mesh.uvs) {
-        let floats = p.iter().chain(&[0.25, 0.25]).chain(uv);
+        let up = [uv[0], 1.0 - uv[1]];
+        let floats = p.iter().chain(&[0.25, 0.75]).chain(&up);
         vertices.extend(floats.flat_map(|f| f.to_le_bytes()));
     }
     let mut g = CustomGeometry::new();

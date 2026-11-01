@@ -979,8 +979,11 @@ impl Builder<'_> {
         let stride_floats: usize = columns.iter().map(|c| c.1).sum();
         let mut vertices = Vec::with_capacity(count * stride_floats * 4);
         for v in 0..count {
-            for (_, width, data) in &columns {
-                for f in &data[v * width..(v + 1) * width] {
+            for (semantic, width, data) in &columns {
+                for (n, f) in data[v * width..(v + 1) * width].iter().enumerate() {
+                    // A geometry's v runs up the picture and glTF's down it.
+                    let uv = matches!(semantic, Semantic::TexCoord0 | Semantic::TexCoord1);
+                    let f = if uv && n == 1 { 1.0 - f } else { *f };
                     vertices.extend_from_slice(&f.to_le_bytes());
                 }
             }

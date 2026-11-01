@@ -45,8 +45,8 @@ Feature: The built-in meshes
       Then the pixel at 100, 100 of the window is within 2 of "#ff0000"
       And the pixel at 100, 140 of the window is within 2 of "#ff0000"
       And the pixel at 140, 100 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 160 of the window is "#202020"
-      And the pixel at 140, 140 of the window is "#202020"
+      And the pixel at 100, 160 of the window is "#1e1e1e"
+      And the pixel at 140, 140 of the window is "#1e1e1e"
 
   Rule: A cylinder is 100 units tall and across, standing about its origin
 
@@ -55,8 +55,8 @@ Feature: The built-in meshes
       Then the pixel at 100, 100 of the window is within 2 of "#ff0000"
       And the pixel at 55, 55 of the window is within 2 of "#ff0000"
       And the pixel at 145, 145 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 40 of the window is "#202020"
-      And the pixel at 160, 100 of the window is "#202020"
+      And the pixel at 100, 40 of the window is "#1e1e1e"
+      And the pixel at 160, 100 of the window is "#1e1e1e"
 
   Rule: A cone stands on its base at the origin and points up
 
@@ -65,11 +65,11 @@ Feature: The built-in meshes
       Then the pixel at 100, 95 of the window is within 2 of "#ff0000"
       And the pixel at 100, 10 of the window is within 2 of "#ff0000"
       And the pixel at 60, 95 of the window is within 2 of "#ff0000"
-      And the pixel at 100, 110 of the window is "#202020"
-      And the pixel at 60, 20 of the window is "#202020"
+      And the pixel at 100, 110 of the window is "#1e1e1e"
+      And the pixel at 60, 20 of the window is "#1e1e1e"
 
   Rule: A model with a source that is no mesh draws nothing
 
     Scenario: An unknown built-in mesh leaves the background
       When the property "source" of "shape" is set to "#Teapot"
-      Then the pixel at 100, 100 of the window is "#202020"
+      Then the pixel at 100, 100 of the window is "#1e1e1e"

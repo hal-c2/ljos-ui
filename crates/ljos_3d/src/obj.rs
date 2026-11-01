@@ -246,7 +246,7 @@ pub fn parse(bytes: &[u8]) -> Result<Document, LoadError> {
                 let v = parts.next().unwrap_or("0");
                 let [u, v] = numbers::<2>([u.unwrap_or(""), v].into_iter())
                     .ok_or_else(|| not_obj(number, "a broken texture coordinate"))?;
-                doc.uvs.push([u, 1.0 - v]);
+                doc.uvs.push([u, v]);
             }
             "f" => {
                 let corners: Option<Vec<Corner>> = parts.map(|token| corner(token, &doc)).collect();

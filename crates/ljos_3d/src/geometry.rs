@@ -423,7 +423,9 @@ impl CustomGeometry {
             .attribute(Semantic::TexCoord0)
             .map(|_| self.read_vec::<2>(Semantic::TexCoord0))
             .transpose()?;
-        let uv_of = |v: usize| uvs.as_ref().map_or([0.0; 2], |u| u[v]);
+        // Up a picture is v's way in Qt's numbers; it runs down one in a mesh.
+        let up = |[u, v]: [f32; 2]| [u, 1.0 - v];
+        let uv_of = |v: usize| uvs.as_ref().map_or([0.0; 2], |u| up(u[v]));
         let uv1 = self
             .attribute(Semantic::TexCoord1)
             .map(|_| self.read_vec::<2>(Semantic::TexCoord1))
@@ -482,7 +484,7 @@ impl CustomGeometry {
             mesh.colors = from.iter().map(|v| colors[*v as usize]).collect();
         }
         if let Some(uv1) = uv1 {
-            mesh.uv1 = from.iter().map(|v| uv1[*v as usize]).collect();
+            mesh.uv1 = from.iter().map(|v| up(uv1[*v as usize])).collect();
         }
         if let Some((joints, weights)) = skin {
             mesh.joints = from.iter().map(|v| joints[*v as usize]).collect();

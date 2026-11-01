@@ -129,25 +129,20 @@ impl Mesh {
         self.positions.len() as u32 - 1
     }
 
-    /// A flat disc of `sides` corners at height `y`, facing up or down,
-    /// as a fan: `sides - 2` triangles.
-    fn cap(&mut self, sides: u32, radius: f32, y: f32, up: bool) {
+    /// A round end of [`SIDES`] corners at height `y`, facing up or down,
+    /// each corner where `pictured` says it is in the picture.
+    fn disc(&mut self, y: f32, radius: f32, up: bool, pictured: impl Fn(f32, f32) -> [f32; 2]) {
         let normal = [0.0, if up { 1.0 } else { -1.0 }, 0.0];
-        let base = self.positions.len() as u32;
-        for k in 0..sides {
-            let (s, c) = around(k, sides);
-            self.vertex(
-                [radius * s, y, radius * c],
-                normal,
-                [0.5 + 0.5 * s, 0.5 - 0.5 * c],
-            );
+        let first = self.positions.len() as u32;
+        for step in 0..SIDES {
+            let [x, z] = round(step, SIDES);
+            self.vertex([x * radius, y, z * radius], normal, pictured(x, z));
         }
-        for k in 1..sides - 1 {
-            // Seen from above, the angle turns counter-clockwise.
+        for step in 1..SIDES - 1 {
             if up {
-                self.indices.extend([base, base + k, base + k + 1]);
+                self.indices.extend([first, first + step, first + step + 1]);
             } else {
-                self.indices.extend([base, base + k + 1, base + k]);
+                self.indices.extend([first, first + step + 1, first + step]);
             }
         }
     }
@@ -183,7 +178,7 @@ fn cube() -> Mesh {
     m.face([0.0, 0.0, -50.0], [0.0, 0.0, -1.0], [-1.0, 0.0, 0.0]);
     m.face([50.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, -1.0]);
     m.face([-50.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]);
-    m.face([0.0, 50.0, 0.0], [0.0, 1.0, 0.0], [1.0, 0.0, 0.0]);
+    m.face([0.0, 50.0, 0.0], [0.0, 1.0, 0.0], [-1.0, 0.0, 0.0]);
     m.face([0.0, -50.0, 0.0], [0.0, -1.0, 0.0], [1.0, 0.0, 0.0]);
     m
 }
@@ -195,98 +190,158 @@ fn rectangle() -> Mesh {
     m
 }
 
-/// The sine and cosine of the `k`th of `n` steps around Y. Angle 0 is +Z
-/// and a quarter turn is +X, so a point is `(r sin, y, r cos)`; turning
-/// that way is counter-clockwise from outside a side wall.
-fn around(k: u32, n: u32) -> (f32, f32) {
-    let a = std::f32::consts::TAU * k as f32 / n as f32;
-    a.sin_cos()
+// The sizes, the number of sides and the places in a picture below are those
+// of the mesh files Qt has for these shapes, measured from what it draws; a
+// round one is a little under a hundred across. A picture's up is Qt's here
+// and goes in as `1 - v`, as v runs down from the image's top row in a mesh.
+
+/// A place in a picture, with up as Qt has it.
+fn up_the_picture(u: f32, v: f32) -> [f32; 2] {
+    [u, 1.0 - v]
 }
 
-/// Qt documents the face counts of its built-in meshes; these meet them.
-const SPHERE_RINGS: u32 = 50;
-const SPHERE_SEGMENTS: u32 = 50;
-const CYLINDER_SIDES: u32 = 80;
-const CONE_SIDES: u32 = 40;
+/// Where a step of `steps` round the upright is, as x and z: Qt goes from
+/// the back by the left to the front and the right.
+fn round(step: u32, steps: u32) -> [f32; 2] {
+    let (s, c) = (std::f32::consts::TAU * step as f32 / steps as f32).sin_cos();
+    [-s, -c]
+}
 
-/// `#Sphere`: diameter 100, centred on the origin, smooth.
+const BALL: f32 = 49.475_61;
+const SLICES: u32 = 50;
+const SIDES: u32 = 40;
+const TUBE: f32 = 49.979_98;
+const HEIGHTS: [f32; 4] = [-TUBE, -16.659_912, 16.659_912, TUBE];
+/// How far up the picture each of [`HEIGHTS`] is: the side of a cylinder
+/// takes a strip of it.
+const STRIP: [f32; 4] = [0.066_25, 0.188_75, 0.311_25, 0.433_75];
+const FOOT: f32 = 49.974_61;
+const GROUND: f32 = 0.025_390_625;
+const POINT: f32 = 99.943_36;
+
+/// `#Sphere`: fifty slices of fifty rings, a picture going once round it
+/// from the back and from its foot to its top. Each pole is a corner to a
+/// slice, at the middle of the slice in the picture.
 fn sphere() -> Mesh {
     let mut m = Mesh::default();
-    let (rings, segments) = (SPHERE_RINGS, SPHERE_SEGMENTS);
-    for i in 0..=rings {
-        let (sp, cp) = (std::f32::consts::PI * i as f32 / rings as f32).sin_cos();
-        for j in 0..=segments {
-            let (s, c) = around(j, segments);
-            let n = [sp * s, cp, sp * c];
+    let slices = SLICES as f32;
+    for step in 0..SLICES {
+        m.vertex(
+            [0.0, -BALL, 0.0],
+            [0.0, -1.0, 0.0],
+            up_the_picture((step as f32 + 0.5) / slices, 0.0),
+        );
+    }
+    for ring in 1..SLICES {
+        let (out, down) = (std::f32::consts::PI * ring as f32 / slices).sin_cos();
+        let y = -down;
+        for step in 0..=SLICES {
+            let [x, z] = round(step, SLICES);
             m.vertex(
-                [50.0 * n[0], 50.0 * n[1], 50.0 * n[2]],
-                n,
-                [j as f32 / segments as f32, i as f32 / rings as f32],
+                [x * out * BALL, y * BALL, z * out * BALL],
+                [x * out, y, z * out],
+                up_the_picture(step as f32 / slices, ring as f32 / slices),
             );
         }
     }
-    let at = |i: u32, j: u32| i * (segments + 1) + j;
-    for i in 0..rings {
-        for j in 0..segments {
-            let (tl, tr) = (at(i, j), at(i, j + 1));
-            let (bl, br) = (at(i + 1, j), at(i + 1, j + 1));
-            // At the poles one edge of the quad is a point.
-            if i != rings - 1 {
-                m.indices.extend([bl, br, tr]);
-            }
-            if i != 0 {
-                m.indices.extend([bl, tr, tl]);
+    let top = m.positions.len() as u32;
+    for step in 0..SLICES {
+        m.vertex(
+            [0.0, BALL, 0.0],
+            [0.0, 1.0, 0.0],
+            up_the_picture((step as f32 + 0.5) / slices, 1.0),
+        );
+    }
+    let at = |ring: u32, step: u32| SLICES + (ring - 1) * (SLICES + 1) + step;
+    for step in 0..SLICES {
+        m.indices.extend([at(1, step), step, at(1, step + 1)]);
+    }
+    for ring in 1..SLICES - 1 {
+        for step in 0..SLICES {
+            let (a, b) = (at(ring, step), at(ring, step + 1));
+            let (c, d) = (at(ring + 1, step + 1), at(ring + 1, step));
+            // A square is cut one way in every other eighth of the way
+            // round, and the other way above the middle.
+            let even = ((step as f32 + 0.5) / (slices / 8.0)).floor() as u32 % 2 == 0;
+            if even == (ring < SLICES / 2) {
+                m.indices.extend([d, b, c, a, b, d]);
+            } else {
+                m.indices.extend([a, b, c, a, c, d]);
             }
         }
     }
+    for step in 0..SLICES {
+        m.indices
+            .extend([at(SLICES - 1, step), at(SLICES - 1, step + 1), top + step]);
+    }
     m
 }
 
-/// `#Cylinder`: 100 tall along Y and 100 across, centred on the origin;
-/// smooth sides and flat caps.
+/// `#Cylinder`: a side taking a strip of a picture, from the left of the
+/// shape round by its front, and each end a round piece of the picture's
+/// upper left quarter, turned by half a side; the top's is the other way
+/// across.
 fn cylinder() -> Mesh {
     let mut m = Mesh::default();
-    let n = CYLINDER_SIDES;
-    let base = m.positions.len() as u32;
-    for k in 0..=n {
-        let (s, c) = around(k, n);
-        let u = k as f32 / n as f32;
-        m.vertex([50.0 * s, -50.0, 50.0 * c], [s, 0.0, c], [u, 1.0]);
-        m.vertex([50.0 * s, 50.0, 50.0 * c], [s, 0.0, c], [u, 0.0]);
+    for (height, strip) in HEIGHTS.into_iter().zip(STRIP) {
+        for step in 0..=SIDES {
+            let [x, z] = round(step + SIDES / 4, SIDES);
+            m.vertex(
+                [x * TUBE, height, z * TUBE],
+                [x, 0.0, z],
+                up_the_picture(step as f32 / SIDES as f32, strip),
+            );
+        }
     }
-    for k in 0..n {
-        let (bl, tl) = (base + 2 * k, base + 2 * k + 1);
-        let (br, tr) = (bl + 2, tl + 2);
-        m.indices.extend([bl, br, tr, bl, tr, tl]);
+    for ring in 0..HEIGHTS.len() as u32 - 1 {
+        for step in 0..SIDES {
+            let at = ring * (SIDES + 1) + step;
+            m.indices.extend([
+                at + 1,
+                at + SIDES + 2,
+                at + SIDES + 1,
+                at + 1,
+                at + SIDES + 1,
+                at,
+            ]);
+        }
     }
-    m.cap(n, 50.0, 50.0, true);
-    m.cap(n, 50.0, -50.0, false);
+    let (half_s, half_c) = (std::f32::consts::PI / SIDES as f32).sin_cos();
+    let end = move |across: f32| {
+        move |x: f32, z: f32| {
+            up_the_picture(
+                0.25 + 0.25 * across * (x * half_c + z * half_s),
+                0.75 + 0.25 * (z * half_c - x * half_s),
+            )
+        }
+    };
+    m.disc(TUBE, TUBE, true, end(-1.0));
+    m.disc(-TUBE, TUBE, false, end(1.0));
     m
 }
 
-/// `#Cone`: base 100 across on the origin, apex 100 up Y.
+/// `#Cone`: stands on the origin, with a picture laid on it from above, on
+/// its side as on its foot, and one corner at its point, which faces up.
 fn cone() -> Mesh {
     let mut m = Mesh::default();
-    let n = CONE_SIDES;
-    // The slope's normal leans up by the ratio of radius to height.
-    let normal = |s: f32, c: f32| {
-        let v = [100.0 * s, 50.0, 100.0 * c];
-        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
-        [v[0] / l, v[1] / l, v[2] / l]
-    };
-    for k in 0..n {
-        let (s0, c0) = around(k, n);
-        let (s1, c1) = around(k + 1, n);
-        let (sm, cm) = (std::f32::consts::TAU * (k as f32 + 0.5) / n as f32).sin_cos();
-        let (u0, u1) = (k as f32 / n as f32, (k + 1) as f32 / n as f32);
-        let a = m.vertex([50.0 * s0, 0.0, 50.0 * c0], normal(s0, c0), [u0, 1.0]);
-        let b = m.vertex([50.0 * s1, 0.0, 50.0 * c1], normal(s1, c1), [u1, 1.0]);
-        // The apex gets the normal of the middle of its face, one copy
-        // per face, so the point does not shade as a single direction.
-        let t = m.vertex([0.0, 100.0, 0.0], normal(sm, cm), [(u0 + u1) * 0.5, 0.0]);
-        m.indices.extend([a, b, t]);
+    let pictured = |x: f32, z: f32| up_the_picture(0.5 + x / 2.0, 0.5 - z / 2.0);
+    m.disc(GROUND, FOOT, false, pictured);
+    let first = m.positions.len() as u32;
+    let lean = FOOT / (POINT - GROUND);
+    let length = (1.0 + lean * lean).sqrt();
+    for step in 0..SIDES {
+        let [x, z] = round(step, SIDES);
+        m.vertex(
+            [x * FOOT, GROUND, z * FOOT],
+            [x / length, lean / length, z / length],
+            pictured(x, z),
+        );
     }
-    m.cap(n, 50.0, 0.0, false);
+    let point = m.vertex([0.0, POINT, 0.0], [0.0, 1.0, 0.0], [0.5, 0.5]);
+    for step in 0..SIDES {
+        m.indices
+            .extend([first + step, first + (step + 1) % SIDES, point]);
+    }
     m
 }
 
@@ -362,16 +417,16 @@ mod tests {
     }
 
     #[test]
-    fn the_sphere_has_qts_face_count_and_a_diameter_of_100() {
+    fn the_sphere_has_qts_face_count_and_is_about_100_across() {
         let m = sphere();
         assert_eq!(m.indices.len() / 3, 4900);
         winds_outwards(&m, [0.0; 3]);
-        // The poles are on Y; across, the rings' corners fall a little
-        // inside the true circle.
+        // The poles are on Y; a round one of Qt's is a little under a
+        // hundred across.
         for axis in 0..3 {
             let (lo, hi) = extent(&m, axis);
-            assert!((-50.001..-49.8).contains(&lo), "{axis}: {lo}");
-            assert!(hi > 49.8 && hi <= 50.001, "{axis}: {hi}");
+            assert!((-50.0..-49.3).contains(&lo), "{axis}: {lo}");
+            assert!(hi > 49.3 && hi <= 50.0, "{axis}: {hi}");
         }
     }
 
@@ -380,7 +435,7 @@ mod tests {
         let m = cylinder();
         assert_eq!(m.indices.len() / 3, 316);
         winds_outwards(&m, [0.0; 3]);
-        assert_eq!(extent(&m, 1), (-50.0, 50.0));
+        assert_eq!(extent(&m, 1), (-TUBE, TUBE));
     }
 
     #[test]
@@ -388,7 +443,7 @@ mod tests {
         let m = cone();
         assert_eq!(m.indices.len() / 3, 78);
         winds_outwards(&m, [0.0, 25.0, 0.0]);
-        assert_eq!(extent(&m, 1), (0.0, 100.0));
+        assert_eq!(extent(&m, 1), (GROUND, POINT));
     }
 
     #[test]
