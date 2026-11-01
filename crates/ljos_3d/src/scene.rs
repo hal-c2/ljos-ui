@@ -920,6 +920,7 @@ pub enum Tonemap {
 impl Tonemap {
     /// A colour in linear light as this mode shows it, by the sums of
     /// `tone.wgsl`, for what is not drawn by a shader: the clear colour.
+    #[cfg(feature = "gpu")]
     pub(crate) fn shown(self, c: [f32; 3]) -> [f32; 3] {
         let screen = |c: f32| {
             let s1 = c.max(0.0).sqrt();
@@ -1248,6 +1249,7 @@ impl Scene {
     /// This scene as a reflection probe sees it: what is for mirroring,
     /// with no tone mapping or passes after, over `clear` or over the sky
     /// box where that is what is behind the scene.
+    #[cfg(feature = "gpu")]
     pub(crate) fn mirrored(&self, clear: [f32; 4]) -> Scene {
         let mut scene = self.clone();
         for node in scene.nodes.values_mut() {
@@ -1268,6 +1270,7 @@ impl Scene {
 
     /// This scene as what reads the picture behind it sees it: the view's
     /// colour as it is written, which Qt reads so; the sky box's light.
+    #[cfg(feature = "gpu")]
     pub(crate) fn behind(&self) -> Scene {
         let mut scene = self.clone();
         let environment = &mut scene.environment;
@@ -1284,6 +1287,7 @@ impl Scene {
     }
 
     /// Looks through `camera` placed at `world`, whatever the scene's is.
+    #[cfg(feature = "gpu")]
     pub(crate) fn look(&mut self, camera: Camera, world: Mat4) {
         self.looking = Some((camera, world));
     }
