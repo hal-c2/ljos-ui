@@ -35,6 +35,8 @@ fn backends(id: &str) -> Option<fn(&Engine)> {
         // The ColorPalette client's own types (RestService and its
         // resources), in the module its QML files are types of.
         "colorpaletteclient" => ljos_example_colorpalette::register,
+        // `ShapeAffector3D`, which keeps the snow out of the car.
+        "car-configurator" => ljos_example_carconfigurator::register,
         // No types of its own: the generic `QtQml.XmlListModel` module
         // its feed is read with.
         "rssnews" => ljos_xml::register,

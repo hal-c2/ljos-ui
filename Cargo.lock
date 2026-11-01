@@ -4080,6 +4080,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_example_carconfigurator"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_quick3d",
+]
+
+[[package]]
 name = "ljos_example_colorpalette"
 version = "0.0.0"
 dependencies = [
@@ -4175,6 +4183,7 @@ name = "ljos_gallery_backends"
 version = "0.0.0"
 dependencies = [
  "ljos",
+ "ljos_example_carconfigurator",
  "ljos_example_colorpalette",
  "ljos_example_focusscopewidget",
  "ljos_example_mediaplayer",

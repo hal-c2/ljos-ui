@@ -1,0 +1,13 @@
+[package]
+name = "ljos_example_carconfigurator"
+description = "Rust backend of the qtdoc car-configurator example (ShapeAffector3D), written against the ljos facade from the interface its QML uses"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+ljos = { path = "../../crates/ljos" }
+ljos_quick3d = { path = "../../crates/ljos_quick3d" }

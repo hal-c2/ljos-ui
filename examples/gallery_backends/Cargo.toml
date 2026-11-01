@@ -9,6 +9,7 @@ repository.workspace = true
 publish.workspace = true
 
 [dependencies]
+ljos_example_carconfigurator = { path = "../carconfigurator" }
 ljos = { path = "../../crates/ljos" }
 # The ColorPalette client example's own backend.
 ljos_example_colorpalette = { path = "../colorpalette" }
