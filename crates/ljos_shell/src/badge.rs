@@ -41,7 +41,7 @@ pub(crate) mod launcher {
     use std::sync::{Arc, Condvar, Mutex};
 
     use ljos_platform::{BadgeService, Platform};
-    use zbus::blocking::Connection;
+    use zbus::blocking::{Connection, connection};
     use zbus::zvariant::Value;
 
     use crate::lock;
@@ -50,7 +50,7 @@ pub(crate) mod launcher {
 
     const INTERFACE: &str = "com.canonical.Unity.LauncherEntry";
 
-    type Connect = Box<dyn FnOnce() -> zbus::Result<Connection> + Send>;
+    type Connect = Box<dyn FnOnce() -> zbus::Result<connection::Builder<'static>> + Send>;
 
     /// Sends the count to the session bus from a thread of its own, which
     /// is started with the first count: connecting may wait on the bus,
@@ -77,7 +77,7 @@ pub(crate) mod launcher {
     impl LauncherEntry {
         /// On the session bus; without one, the counts go nowhere.
         pub(crate) fn session(platform: &Rc<Platform>) -> Self {
-            Self::new(platform, Box::new(Connection::session))
+            Self::new(platform, Box::new(connection::Builder::session))
         }
 
         pub(crate) fn new(platform: &Rc<Platform>, connect: Connect) -> Self {
@@ -140,39 +140,66 @@ pub(crate) mod launcher {
     }
 
     fn send_all(connect: Connect, latest: &Latest) {
-        // No session bus: nothing to show the badge on.
-        let Ok(bus) = connect() else {
+        let Some((name, count)) = next_count(latest) else {
             return;
         };
+        let (uri, path) = entry_of(&name);
+        // zbus starts a connection's object server as a task of its own, and
+        // a `Query` that comes before that task listens is never answered:
+        // a dock that asks on hearing the first `Update` could be that fast.
+        // Only a connection built with an object to serve waits for the task.
+        let shown = Shown {
+            uri: uri.clone(),
+            count,
+        };
+        // No session bus: nothing to show the badge on.
+        let Ok(bus) = connect()
+            .and_then(|builder| builder.serve_at(path.as_str(), shown))
+            .and_then(connection::Builder::build)
+        else {
+            return;
+        };
+        send(&bus, &path, uri, count);
         // Where `Query` is answered. The connection's own thread, which
         // sleeps until a message comes, answers it.
-        let mut served: Option<String> = None;
-        loop {
-            let next = {
-                let mut state = lock(&latest.state);
-                loop {
-                    if let Some(next) = state.next.take() {
-                        break next;
-                    }
-                    if state.closed {
-                        return;
-                    }
-                    state = latest.ready.wait(state).unwrap_or_else(|e| e.into_inner());
-                }
-            };
-            let (name, count) = next;
-            let uri = format!("application://{name}.desktop");
-            let path = format!("/com/canonical/unity/launcherentry/{}", fnv1a(&uri));
+        let mut served = Some(path);
+        while let Some((name, count)) = next_count(latest) {
+            let (uri, path) = entry_of(&name);
             // Failures (the bus went away) lose this count only.
             let _ = serve(&bus, &mut served, &path, uri.clone(), count);
-            let _ = bus.emit_signal(
-                None::<&str>,
-                path.as_str(),
-                INTERFACE,
-                "Update",
-                &(uri, properties(count)),
-            );
+            send(&bus, &path, uri, count);
         }
+    }
+
+    /// Sleeps until there is a count to send; `None` once closed.
+    fn next_count(latest: &Latest) -> Option<(String, u32)> {
+        let mut state = lock(&latest.state);
+        loop {
+            if let Some(next) = state.next.take() {
+                return Some(next);
+            }
+            if state.closed {
+                return None;
+            }
+            state = latest.ready.wait(state).unwrap_or_else(|e| e.into_inner());
+        }
+    }
+
+    /// The uri of the desktop entry `name` and the path of its object.
+    fn entry_of(name: &str) -> (String, String) {
+        let uri = format!("application://{name}.desktop");
+        let path = format!("/com/canonical/unity/launcherentry/{}", fnv1a(&uri));
+        (uri, path)
+    }
+
+    fn send(bus: &Connection, path: &str, uri: String, count: u32) {
+        let _ = bus.emit_signal(
+            None::<&str>,
+            path,
+            INTERFACE,
+            "Update",
+            &(uri, properties(count)),
+        );
     }
 
     /// Keeps the object at `path` answering `Query` with `count`.
@@ -275,9 +302,7 @@ pub(crate) mod launcher {
             let entry = LauncherEntry::new(
                 &platform,
                 Box::new(move || {
-                    connection::Builder::address(address.as_str())?
-                        .method_timeout(REPLY_WAIT)
-                        .build()
+                    Ok(connection::Builder::address(address.as_str())?.method_timeout(REPLY_WAIT))
                 }),
             );
             step.at("waiting for the first Update");
