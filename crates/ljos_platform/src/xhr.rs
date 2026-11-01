@@ -90,8 +90,8 @@ impl XhrHelper {
     }
 
     /// The reply of request `id`, which is let go: `{ failed, status,
-    /// statusText, headers, text }`, and `bytes`, one to a character, when
-    /// asked for.
+    /// statusText, headers, text }`, or for one asked for as `bytes` those
+    /// bytes as an ArrayBuffer in place of `text`.
     #[qml(invokable)]
     fn take(cx: &Cx, id: Value, bytes: Value) -> Value {
         let id = id.to_number() as i32;
@@ -102,9 +102,15 @@ impl XhrHelper {
             .borrow_mut()
             .remove(&id);
         match reply {
-            Some(Ok(response)) => reply_value(&response, bytes.to_boolean()),
+            Some(Ok(response)) => reply_value(cx.engine, response, bytes.to_boolean()),
             _ => Value::map([("failed", Value::Bool(true))]),
         }
+    }
+
+    /// The text of an ArrayBuffer of a reply.
+    #[qml(invokable)]
+    fn text_of(cx: &Cx, buffer: Value) -> String {
+        String::from_utf8_lossy(&cx.engine.js_bytes(&buffer).unwrap_or_default()).into_owned()
     }
 
     /// Whether a request by `method` for a file reads it.
@@ -265,7 +271,7 @@ fn file_reply(body: Vec<u8>) -> Response {
     }
 }
 
-fn reply_value(response: &Response, bytes: bool) -> Value {
+fn reply_value(engine: &Engine, response: Response, bytes: bool) -> Value {
     let headers: String = response
         .headers
         .iter()
@@ -277,11 +283,17 @@ fn reply_value(response: &Response, bytes: bool) -> Value {
         ("status", Value::Int(i32::from(response.status))),
         ("statusText", Value::from(reason_phrase(response.status))),
         ("headers", Value::from(headers.as_str())),
-        ("text", Value::from(response.text().as_str())),
     ];
+    // Neither read through a string nor copied: an application that keeps
+    // what it was sent keeps it out of the JS heap's limit.
     if bytes {
-        let latin1: String = response.body.iter().map(|&b| char::from(b)).collect();
-        fields.push(("bytes", Value::from(latin1.as_str())));
+        fields.extend(
+            engine
+                .js_array_buffer(response.body)
+                .map(|buffer| ("bytes", buffer)),
+        );
+    } else {
+        fields.push(("text", Value::from(response.text().as_str())));
     }
     Value::map(fields)
 }
@@ -455,13 +467,7 @@ const INSTALL: &str = r#"(function (helper) {
       if (s.type === "json") {
         try { return JSON.parse(s.reply.text); } catch (e) { return null; }
       }
-      if (s.type === "arraybuffer") {
-        const raw = s.reply.bytes || "";
-        const buffer = new ArrayBuffer(raw.length);
-        const view = new Uint8Array(buffer);
-        for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
-        return buffer;
-      }
+      if (s.type === "arraybuffer") return s.reply.bytes || new ArrayBuffer(0);
       return null;
     }
     open(method, url, async) {
@@ -571,6 +577,8 @@ const INSTALL: &str = r#"(function (helper) {
       const wantBytes = s.type === "arraybuffer";
       const reply = helper.take(id, wantBytes);
       s.id = undefined;
+      // Most replies of bytes are never read as text.
+      if (reply.bytes) Object.defineProperty(reply, "text", { get: () => helper.textOf(reply.bytes) });
       // A file that is not there is no error to Qt: it loads, status 0.
       if (s.local) {
         if (!reply.failed) {
