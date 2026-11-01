@@ -592,6 +592,7 @@ Feature: CustomMaterial runs the author's shader snippets
         | test             |
         | UV0.y > 0.5      |
         | FRAGCOORD.y > 100.0 |
+        | gl_FragCoord.y > 100.0 |
 
     Scenario: A picture is still the right way up through UV0
       Given the text file "picture.frag":

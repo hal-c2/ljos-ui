@@ -977,7 +977,11 @@ fn mentions(src: &str, word: &str) -> bool {
     src.split(is_break).any(|w| w == word)
 }
 
+// A snippet runs in a function the WGSL entry point calls, where naga's
+// gl_FragCoord is never written and reads as zero: it is the same place as
+// FRAGCOORD, which the entry point hands over.
 const FRAGMENT_KEYWORDS: &str = "\
+#define gl_FragCoord FRAGCOORD
 vec4 BASE_COLOR; vec3 EMISSIVE_COLOR; float METALNESS; float ROUGHNESS; float SPECULAR_AMOUNT;\n\
 float OCCLUSION_AMOUNT; float IOR; float FRESNEL_POWER; float FRESNEL_SCALE; float FRESNEL_BIAS;\n\
 float TRANSMISSION_FACTOR; float THICKNESS_FACTOR; vec3 ATTENUATION_COLOR; float ATTENUATION_DISTANCE;\n\
@@ -1177,7 +1181,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
 fn effect_fragment(header: &str, user: &str, src: &str, ins: &[Varying]) -> (String, u32) {
     let mut s = String::from(header);
     s.push_str(EFFECT_READS);
-    s.push_str("vec2 INPUT_UV; vec2 TEXTURE_UV; vec4 FRAGCOLOR; vec4 FRAGCOORD;\n");
+    s.push_str("#define gl_FragCoord FRAGCOORD\nvec2 INPUT_UV; vec2 TEXTURE_UV; vec4 FRAGCOLOR; vec4 FRAGCOORD;\n");
     let before = lines(&s);
     push_user(&mut s, user);
     s.push_str("\nvec4 ljoseffect(vec4 ljosuvs, vec4 ljosfragcoord");
