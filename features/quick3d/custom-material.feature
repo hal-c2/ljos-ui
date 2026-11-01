@@ -177,6 +177,47 @@ Feature: CustomMaterial runs the author's shader snippets
       And the property "sourceBlend" of "custom" is set to 2
       Then the pixel at 100, 100 of the window is within 2 of "#800000"
 
+  # A half-strength red, half there, over a white window, in a view that clears to nothing. Alpha
+  # takes the colour's factors unless the material gives it its own: the half
+  # of the colour's factor then counts twice and more of the window shows.
+  Rule: Alpha blends with its own factors where the material gives them
+
+    Scenario Outline: The alpha left in the view decides how much of the window shows
+      Given the text file "half.frag":
+        """
+        void MAIN()
+        {
+            FRAGCOLOR = vec4(0.5, 0.0, 0.0, 0.5);
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "white"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { backgroundMode: SceneEnvironment.Transparent }
+            OrthographicCamera { z: 600 }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Unshaded
+              fragmentShader: "half.frag"
+              sourceBlend: CustomMaterial.SrcAlpha
+              destinationBlend: CustomMaterial.OneMinusSrcAlpha
+              sourceAlphaBlend: <source>
+              destinationAlphaBlend: <destination>
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 3 of "<pixel>"
+
+      Examples:
+        | source               | destination          | pixel   |
+        | CustomMaterial.NoBlend | CustomMaterial.NoBlend | #ffbfbf |
+        | CustomMaterial.One   | CustomMaterial.Zero  | #bf8080 |
+
   Rule: A snippet that does not compile draws nothing
 
     Scenario: A broken snippet is reported and its model is left out

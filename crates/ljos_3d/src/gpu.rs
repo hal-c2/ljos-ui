@@ -29,7 +29,7 @@ use crate::maps::{self, GroupKey, Maps};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh::{Mesh, Topology};
 use crate::post::{self, Buffers, Chain, Pipes};
-use crate::programs::{Header, MaterialKey, Programs, Slot};
+use crate::programs::{self, Header, MaterialKey, Programs, Slot};
 use crate::scene::{
     AlphaMode, Background, BlendMode, Camera, CullMode, Environment, Light, LightProbe, Lighting,
     Material, MeshSource, Node, NodeId, NodeKind, Primitive, ReflectionProbe, Scene, Tonemap,
@@ -886,7 +886,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.params[0] = lit(m.lighting);
             u.params2[1] = m.specular_amount.clamp(0.0, 1.0);
             u.params2[2] = m.specular_roughness.clamp(0.0, 1.0);
-            u.maps[1] = m.opacity_channel.index() << 6;
+            u.maps[1] = m.opacity_channel.index() << 6 | u32::from(m.invert_opacity_map_value) << 8;
             u.map_params[0] = m.bump_amount;
             u.emissive = [m.emissive[0], m.emissive[1], m.emissive[2], 0.0];
             let tint = m.specular_tint.to_linear();
@@ -917,7 +917,8 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.maps[1] = maps.metalness_channel.index()
                 | maps.roughness_channel.index() << 2
                 | maps.occlusion_channel.index() << 4
-                | maps.opacity_channel.index() << 6;
+                | maps.opacity_channel.index() << 6
+                | u32::from(maps.invert_opacity_map_value) << 8;
             u.map_params = [
                 maps.normal_strength,
                 // With no picture nothing is taken away, whatever the amount.
@@ -951,7 +952,10 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.tint[3] = s.height_amount;
             u.flags[1] = u32::from(s.vertex_colors);
             u.flags[2] = s.height_samples[0].min(0xffff) | s.height_samples[1].min(0xffff) << 16;
-            u.flags[3] = maps.transmission_channel.index() | maps.height_channel.index() << 2;
+            u.flags[3] = maps.transmission_channel.index()
+                | maps.height_channel.index() << 2
+                | maps.clearcoat_channel.index() << 4
+                | maps.clearcoat_roughness_channel.index() << 6;
         }
         // Its snippets read only the matrices and whether it takes shadows.
         Material::Custom(_) => u.base = [1.0; 4],
@@ -2186,7 +2190,12 @@ impl Renderer {
                             depth_write: m.depth_draw.writes(blends && !reads),
                             samples,
                             format,
-                            blend: blends.then_some((m.source_blend, m.destination_blend)),
+                            blend: blends.then_some(programs::Blending {
+                                source: m.source_blend,
+                                destination: m.destination_blend,
+                                source_alpha: m.source_alpha_blend,
+                                destination_alpha: m.destination_alpha_blend,
+                            }),
                             topology: self.topology_of(key),
                             extra,
                         },

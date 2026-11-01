@@ -7860,6 +7860,7 @@ module QtQuick3D
 		prop opacity QtQml.real named
 		prop opacityMap QtQuick3D.Texture named pointer
 		prop opacityChannel TextureChannelMapping
+		prop invertOpacityMapValue QtQml.bool named
 		prop emissiveFactor QtQuick.vector3d named
 		prop emissiveMap QtQuick3D.Texture named pointer
 		prop normalMap QtQuick3D.Texture named pointer
@@ -7887,6 +7888,7 @@ module QtQuick3D
 		signal opacityChanged
 		signal opacityMapChanged
 		signal opacityChannelChanged
+		signal invertOpacityMapValueChanged
 		signal emissiveFactorChanged
 		signal emissiveMapChanged
 		signal normalMapChanged
@@ -8225,6 +8227,7 @@ module QtQuick3D
 		prop occlusionAmount QtQml.real named
 		prop opacityMap QtQuick3D.Texture named pointer
 		prop opacityChannel TextureChannelMapping
+		prop invertOpacityMapValue QtQml.bool named
 		prop blendMode BlendMode
 		prop vertexColorsEnabled QtQml.bool named
 		prop specularAmount QtQml.real named
@@ -8285,6 +8288,7 @@ module QtQuick3D
 		signal occlusionAmountChanged
 		signal opacityMapChanged
 		signal opacityChannelChanged
+		signal invertOpacityMapValueChanged
 		signal blendModeChanged
 		signal vertexColorsEnabledChanged
 		signal specularAmountChanged

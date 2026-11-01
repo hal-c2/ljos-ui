@@ -211,6 +211,8 @@ pub struct DefaultMaterial {
     /// Multiplies `diffuse_color`'s alpha.
     pub opacity: f32,
     pub opacity_channel: Channel,
+    /// The map says how clear the surface is, not how opaque.
+    pub invert_opacity_map_value: bool,
     /// Linear light the surface gives by itself.
     pub emissive: [f32; 3],
     /// Boxed for the reason [`PrincipledMaterial::maps`] is.
@@ -249,6 +251,7 @@ impl Default for DefaultMaterial {
             depth_draw: DepthDraw::OpaqueOnly,
             opacity: 1.0,
             opacity_channel: Channel::A,
+            invert_opacity_map_value: false,
             emissive: [0.0; 3],
             maps: Box::default(),
             specular_tint: Color::WHITE,
@@ -315,12 +318,19 @@ pub struct PrincipledMaps {
     pub occlusion_amount: f32,
     pub opacity: Option<Texture>,
     pub opacity_channel: Channel,
+    /// The map says how clear the surface is, not how opaque.
+    pub invert_opacity_map_value: bool,
     /// How much of the background shows through the diffuse light.
     pub transmission: Option<Texture>,
     pub transmission_channel: Channel,
     /// Moves what the other maps read, so that the surface looks carved.
     pub height: Option<Texture>,
     pub height_channel: Channel,
+    /// Multiply the clearcoat's amount and its roughness.
+    pub clearcoat: Option<Texture>,
+    pub clearcoat_channel: Channel,
+    pub clearcoat_roughness: Option<Texture>,
+    pub clearcoat_roughness_channel: Channel,
     pub surface: Surface,
 }
 
@@ -405,10 +415,15 @@ impl Default for PrincipledMaps {
             occlusion_amount: 1.0,
             opacity: None,
             opacity_channel: Channel::A,
+            invert_opacity_map_value: false,
             transmission: None,
             transmission_channel: Channel::R,
             height: None,
             height_channel: Channel::R,
+            clearcoat: None,
+            clearcoat_channel: Channel::R,
+            clearcoat_roughness: None,
+            clearcoat_roughness_channel: Channel::G,
             surface: Surface::default(),
         }
     }

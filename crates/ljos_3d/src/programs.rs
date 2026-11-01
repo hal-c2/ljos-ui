@@ -69,6 +69,15 @@ struct Compiled {
     module: wgpu::ShaderModule,
 }
 
+/// A blending material's factors.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct Blending {
+    pub(crate) source: Blend,
+    pub(crate) destination: Blend,
+    pub(crate) source_alpha: Blend,
+    pub(crate) destination_alpha: Blend,
+}
+
 /// What a custom material's pipeline differs by.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct MaterialKey {
@@ -79,7 +88,7 @@ pub(crate) struct MaterialKey {
     pub format: wgpu::TextureFormat,
     /// The author's factors, where both are given; the picture's own
     /// premultiplied blending otherwise.
-    pub blend: Option<(Blend, Blend)>,
+    pub blend: Option<Blending>,
     pub topology: Topology,
     /// The mesh has a second vertex buffer.
     pub extra: bool,
@@ -301,15 +310,25 @@ impl Programs {
         let c = &self.compiled[&key.program];
         let blend = match key.blend {
             None => wgpu::BlendState::REPLACE,
-            Some((src, dst)) => {
-                let component = wgpu::BlendComponent {
+            Some(b) => {
+                let component = |src, dst| wgpu::BlendComponent {
                     src_factor: factor(src),
                     dst_factor: factor(dst),
                     operation: wgpu::BlendOperation::Add,
                 };
+                let or = |alpha, colour| {
+                    if alpha == Blend::NoBlend {
+                        colour
+                    } else {
+                        alpha
+                    }
+                };
                 wgpu::BlendState {
-                    color: component,
-                    alpha: component,
+                    color: component(b.source, b.destination),
+                    alpha: component(
+                        or(b.source_alpha, b.source),
+                        or(b.destination_alpha, b.destination),
+                    ),
                 }
             }
         };

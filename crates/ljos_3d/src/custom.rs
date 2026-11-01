@@ -364,6 +364,9 @@ pub struct CustomMaterial {
     pub textures: Vec<Option<Texture>>,
     pub source_blend: Blend,
     pub destination_blend: Blend,
+    /// The factors of alpha; `NoBlend` takes the colour's.
+    pub source_alpha_blend: Blend,
+    pub destination_alpha_blend: Blend,
     pub depth_draw: DepthDraw,
     pub cull_mode: CullMode,
 }
@@ -383,6 +386,8 @@ impl CustomMaterial {
             textures,
             source_blend: Blend::NoBlend,
             destination_blend: Blend::NoBlend,
+            source_alpha_blend: Blend::NoBlend,
+            destination_alpha_blend: Blend::NoBlend,
             depth_draw: DepthDraw::OpaqueOnly,
             cull_mode: CullMode::Back,
         }

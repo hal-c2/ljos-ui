@@ -400,6 +400,8 @@ fn ints(p: Prop3d) -> &'static [Prop<i32>] {
             PrincipledMaterial::OPACITY_CHANNEL,
             DefaultMaterial::OPACITY_CHANNEL,
         ],
+        P::ClearcoatChannel => &[PrincipledMaterial::CLEARCOAT_CHANNEL],
+        P::ClearcoatRoughnessChannel => &[PrincipledMaterial::CLEARCOAT_ROUGHNESS_CHANNEL],
         P::BlendMode => &[PrincipledMaterial::BLEND_MODE, DefaultMaterial::BLEND_MODE],
         P::TransmissionChannel => &[PrincipledMaterial::TRANSMISSION_CHANNEL],
         P::HeightChannel => &[PrincipledMaterial::HEIGHT_CHANNEL],
@@ -438,6 +440,10 @@ fn bools(p: Prop3d) -> &'static [Prop<bool>] {
             DefaultMaterial::VERTEX_COLORS_ENABLED,
         ],
         P::FresnelScaleBiasEnabled => &[PrincipledMaterial::FRESNEL_SCALE_BIAS_ENABLED],
+        P::InvertOpacityMapValue => &[
+            PrincipledMaterial::INVERT_OPACITY_MAP_VALUE,
+            DefaultMaterial::INVERT_OPACITY_MAP_VALUE,
+        ],
         P::ClearcoatFresnelScaleBiasEnabled => {
             &[PrincipledMaterial::CLEARCOAT_FRESNEL_SCALE_BIAS_ENABLED]
         }
@@ -546,6 +552,8 @@ fn objects(p: Prop3d) -> &'static [Prop<Option<ObjectId>>] {
             PrincipledMaterial::OPACITY_MAP,
             DefaultMaterial::OPACITY_MAP,
         ],
+        P::ClearcoatMap => &[PrincipledMaterial::CLEARCOAT_MAP],
+        P::ClearcoatRoughnessMap => &[PrincipledMaterial::CLEARCOAT_ROUGHNESS_MAP],
         P::LightProbe => &[
             SceneEnvironment::LIGHT_PROBE,
             PrincipledMaterial::LIGHT_PROBE,

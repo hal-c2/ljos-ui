@@ -598,6 +598,7 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
             cull_mode: cull_mode(),
             opacity: num(s, obj, P::Opacity, dm::OPACITY),
             opacity_channel: channel(P::OpacityChannel, dm::OPACITY_CHANNEL),
+            invert_opacity_map_value: on(s, obj, P::InvertOpacityMapValue, false),
             emissive: {
                 let e = vec3(s, obj, P::EmissiveFactor, dm::EMISSIVE_FACTOR);
                 [e.x, e.y, e.z]
@@ -666,6 +667,14 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
                 occlusion_amount: num(s, obj, P::OcclusionAmount, pm::OCCLUSION_AMOUNT),
                 opacity: map(P::OpacityMap),
                 opacity_channel: channel(P::OpacityChannel, pm::OPACITY_CHANNEL),
+                invert_opacity_map_value: on(s, obj, P::InvertOpacityMapValue, false),
+                clearcoat: map(P::ClearcoatMap),
+                clearcoat_channel: channel(P::ClearcoatChannel, pm::CLEARCOAT_CHANNEL),
+                clearcoat_roughness: map(P::ClearcoatRoughnessMap),
+                clearcoat_roughness_channel: channel(
+                    P::ClearcoatRoughnessChannel,
+                    pm::CLEARCOAT_ROUGHNESS_CHANNEL,
+                ),
                 transmission: map(P::TransmissionMap),
                 transmission_channel: channel(P::TransmissionChannel, pm::TRANSMISSION_CHANNEL),
                 height: map(P::HeightMap),

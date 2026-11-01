@@ -97,6 +97,15 @@ Feature: The maps of a PrincipledMaterial
       And the property "opacityChannel" of "pbr" is set to 0
       Then the pixel at 150, 150 of the window is within 2 of "#ffffff"
 
+    Scenario: An inverted map draws the material where the map is clear
+      When the property "source" of "opacity" is set to "clear.png"
+      And the property "invertOpacityMapValue" of "pbr" is set to true
+      Then the pixel at 150, 150 of the window is within 2 of "#ffffff"
+
+    Scenario: An inverted map leaves out the material where the map is opaque
+      When the property "invertOpacityMapValue" of "pbr" is set to true
+      Then the pixel at 150, 150 of the window is within 2 of "#000000"
+
   # The tilted map's colour #ff8080 is a normal along the surface, at right
   # angles to the sun's light.
   Rule: A normal map bends the light the surface takes

@@ -1192,6 +1192,8 @@ pub struct DefaultMaterial {
     #[qml(notify, enumeration = "TextureChannelMapping")]
     pub opacity_channel: i32,
     #[qml(notify)]
+    pub invert_opacity_map_value: bool,
+    #[qml(notify)]
     pub emissive_factor: Vector3d,
     #[qml(notify, object = "Texture")]
     pub emissive_map: Option<ObjectId>,
@@ -1251,6 +1253,7 @@ impl Default for DefaultMaterial {
             opacity: d::default_material::OPACITY,
             opacity_map: None,
             opacity_channel: d::default_material::OPACITY_CHANNEL,
+            invert_opacity_map_value: false,
             emissive_factor: vector(d::default_material::EMISSIVE_FACTOR),
             emissive_map: None,
             normal_map: None,
@@ -1361,6 +1364,8 @@ pub struct PrincipledMaterial {
     pub opacity_map: Option<ObjectId>,
     #[qml(notify, enumeration = "TextureChannelMapping")]
     pub opacity_channel: i32,
+    #[qml(notify)]
+    pub invert_opacity_map_value: bool,
     #[qml(notify, enumeration = "BlendMode")]
     pub blend_mode: i32,
     #[qml(notify)]
@@ -1476,6 +1481,7 @@ impl Default for PrincipledMaterial {
             occlusion_amount: d::principled_material::OCCLUSION_AMOUNT,
             opacity_map: None,
             opacity_channel: d::principled_material::OPACITY_CHANNEL,
+            invert_opacity_map_value: false,
             blend_mode: d::principled_material::BLEND_MODE,
             vertex_colors_enabled: d::principled_material::VERTEX_COLORS_ENABLED,
             specular_amount: d::principled_material::SPECULAR_AMOUNT,

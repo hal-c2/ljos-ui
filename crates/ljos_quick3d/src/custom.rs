@@ -84,10 +84,8 @@ pub struct CustomMaterial {
     pub source_blend: i32,
     #[qml(notify, enumeration = "BlendMode")]
     pub destination_blend: i32,
-    /// Kept: alpha blends with the colour's factors.
     #[qml(notify, enumeration = "BlendMode")]
     pub source_alpha_blend: i32,
-    /// Kept: alpha blends with the colour's factors.
     #[qml(notify, enumeration = "BlendMode")]
     pub destination_alpha_blend: i32,
     /// Kept: a view draws again when a value it read changes, and a
@@ -548,6 +546,8 @@ pub(crate) fn material(
     let blend = |p| Blend::from_index(i64::from(item::prop(e, obj, p)));
     m.source_blend = blend(CustomMaterial::SOURCE_BLEND);
     m.destination_blend = blend(CustomMaterial::DESTINATION_BLEND);
+    m.source_alpha_blend = blend(CustomMaterial::SOURCE_ALPHA_BLEND);
+    m.destination_alpha_blend = blend(CustomMaterial::DESTINATION_ALPHA_BLEND);
     m.depth_draw = DepthDraw::from_index(i64::from(item::prop(e, obj, Material::DEPTH_DRAW_MODE)));
     m.cull_mode = match item::prop(e, obj, Material::CULL_MODE) {
         cull::FRONT => CullMode::Front,

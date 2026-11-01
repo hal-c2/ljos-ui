@@ -85,9 +85,9 @@ struct Model {
     // shadows fall on it.
     params2: vec4<f32>,
     // Per map (base, metalness, roughness, normal, emissive, occlusion,
-    // opacity, transmission, height), two rows taking the mesh's UV to the
+    // opacity, transmission, height, clearcoat, its roughness), two rows taking the mesh's UV to the
     // image's.
-    uv: array<vec4<f32>, 18>,
+    uv: array<vec4<f32>, 22>,
     // x a bit per map that is there; y the channels of metalness (bits
     // 0-1), roughness (2-3), occlusion (4-5) and opacity (6-7); z a bit per
     // map read through the second UV set; w 1 where the joints of
@@ -143,15 +143,19 @@ struct Model {
 @group(2) @binding(6) var opacity_map: texture_2d<f32>;
 @group(2) @binding(7) var transmission_map: texture_2d<f32>;
 @group(2) @binding(8) var height_map: texture_2d<f32>;
-@group(2) @binding(9) var base_sampler: sampler;
-@group(2) @binding(10) var metalness_sampler: sampler;
-@group(2) @binding(11) var roughness_sampler: sampler;
-@group(2) @binding(12) var normal_sampler: sampler;
-@group(2) @binding(13) var emissive_sampler: sampler;
-@group(2) @binding(14) var occlusion_sampler: sampler;
-@group(2) @binding(15) var opacity_sampler: sampler;
-@group(2) @binding(16) var transmission_sampler: sampler;
-@group(2) @binding(17) var height_sampler: sampler;
+@group(2) @binding(9) var clearcoat_map: texture_2d<f32>;
+@group(2) @binding(10) var clearcoat_roughness_map: texture_2d<f32>;
+@group(2) @binding(11) var base_sampler: sampler;
+@group(2) @binding(12) var metalness_sampler: sampler;
+@group(2) @binding(13) var roughness_sampler: sampler;
+@group(2) @binding(14) var normal_sampler: sampler;
+@group(2) @binding(15) var emissive_sampler: sampler;
+@group(2) @binding(16) var occlusion_sampler: sampler;
+@group(2) @binding(17) var opacity_sampler: sampler;
+@group(2) @binding(18) var transmission_sampler: sampler;
+@group(2) @binding(19) var height_sampler: sampler;
+@group(2) @binding(20) var clearcoat_sampler: sampler;
+@group(2) @binding(21) var clearcoat_roughness_sampler: sampler;
 @group(3) @binding(0) var specular_cube: texture_cube<f32>;
 @group(3) @binding(1) var irradiance_cube: texture_cube<f32>;
 @group(3) @binding(2) var cube_sampler: sampler;
@@ -292,6 +296,12 @@ fn channel(t: vec4<f32>, shift: u32) -> f32 {
 }
 
 // One of four channels, numbered as a `TextureChannelMapping`.
+// The opacity map's value, as much as the surface is opaque where it says.
+fn opacity_of(t: vec4<f32>) -> f32 {
+    let value = channel(t, 6u);
+    return select(value, 1.0 - value, (model.maps.y & 256u) != 0u);
+}
+
 fn channel_of(t: vec4<f32>, c: u32) -> f32 {
     return t[c & 3u];
 }
@@ -604,13 +614,15 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
     let occlusion_t = textureSample(occlusion_map, occlusion_sampler, map_uv(5u, in));
     let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in));
     let transmission_t = textureSample(transmission_map, transmission_sampler, map_uv(7u, in));
+    let coat_t = textureSample(clearcoat_map, clearcoat_sampler, map_uv(9u, in));
+    let coat_rough_t = textureSample(clearcoat_roughness_map, clearcoat_roughness_sampler, map_uv(10u, in));
     // Normalized first: a scaled node's normals come here longer or shorter.
     let unit_normal = normalize(in.normal);
     let normal_dx = dpdx(unit_normal);
     let normal_dy = dpdy(unit_normal);
 
     let base = model.base * base_t * in.color;
-    var a = base.a * channel(opacity_t, 6u);
+    var a = base.a * opacity_of(opacity_t);
     let cutoff = model.params2.x;
     if cutoff >= 0.0 {
         if a < cutoff {
@@ -673,8 +685,8 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
                 * clamp(vec3<f32>(model.edge.y) + model.edge.x * turning, vec3<f32>(0.0), vec3<f32>(1.0));
         }
         let plain_shine = 2.56 / (plain_rough + 0.01);
-        let coat = model.edge.z;
-        let coat_rough = model.edge.w;
+        let coat = model.edge.z * channel_of(coat_t, model.flags.w >> 4u);
+        let coat_rough = model.edge.w * channel_of(coat_rough_t, model.flags.w >> 6u);
         let coats = principled && coat > 0.0;
         var coating = vec3<f32>(0.0);
         var diffuse = base.rgb * (frame.ambient.rgb + model.ambient.rgb);
@@ -835,7 +847,7 @@ fn fs_surface(in: VsOut, @builtin(front_facing) front: bool) -> SurfaceOut {
     let normal_t = textureSample(normal_map, normal_sampler, map_uv(3u, in));
     let opacity_t = textureSample(opacity_map, opacity_sampler, map_uv(6u, in));
     let base = model.base * base_t * in.color;
-    if model.params2.x >= 0.0 && base.a * channel(opacity_t, 6u) < model.params2.x {
+    if model.params2.x >= 0.0 && base.a * opacity_of(opacity_t) < model.params2.x {
         discard;
     }
     var n = normalize(in.normal);
