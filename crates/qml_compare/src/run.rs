@@ -292,6 +292,7 @@ fn run_one(manifest: &Manifest, example: &Example, options: &Options) -> Result<
         stack: notes.stack,
         reference: reference.is_some(),
         qt: example.qt_reason().map(str::to_owned),
+        volatile: example.volatile.clone(),
         pixels,
         content,
         mismatch,

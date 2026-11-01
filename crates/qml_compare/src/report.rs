@@ -32,6 +32,9 @@ pub struct Row {
     pub stack: Option<String>,
     pub reference: bool,
     pub qt: Option<String>,
+    /// Why two pictures of it can differ, as the manifest says.
+    #[serde(default)]
+    pub volatile: Option<String>,
     pub pixels: Option<f64>,
     pub content: Option<f64>,
     pub mismatch: Option<String>,
@@ -288,10 +291,17 @@ impl Ratchet {
                 match got {
                     Some(got) if got >= floor => {}
                     Some(got) => failures.push(format!(
-                        "{} must stay as like its reference picture: {name} {} is under {}",
+                        "{} must stay as like its reference picture: {name} {} is under {}{}",
                         row.id,
                         percent(got),
-                        percent(floor)
+                        percent(floor),
+                        // A run's only clue that the example, and not Ljós,
+                        // may have moved: the pictures are not kept.
+                        row.volatile
+                            .as_deref()
+                            .map_or_else(String::new, |why| format!(
+                                " (two pictures of it can differ: {why})"
+                            ))
                     )),
                     None => failures.push(format!(
                         "{} has no {name} score to hold to {}",
@@ -484,6 +494,7 @@ mod tests {
             stack: None,
             reference: true,
             qt: None,
+            volatile: None,
             pixels,
             content: pixels,
             mismatch: None,
@@ -532,6 +543,25 @@ mod tests {
                 .iter()
                 .any(|f| f.starts_with("b must"))
         );
+    }
+
+    #[test]
+    fn falling_under_a_floor_says_why_two_pictures_can_differ() {
+        let ratchet = Ratchet {
+            examples: [(
+                "feed".to_owned(),
+                Floor {
+                    pixels: Some(0.8),
+                    ..Floor::default()
+                },
+            )]
+            .into(),
+            ..Ratchet::default()
+        };
+        let mut feed = row("feed", true, Some(0.5), None);
+        assert!(!ratchet.check(std::slice::from_ref(&feed))[0].contains("can differ"));
+        feed.volatile = Some("network".into());
+        assert!(ratchet.check(&[feed])[0].ends_with("(two pictures of it can differ: network)"));
     }
 
     #[test]
