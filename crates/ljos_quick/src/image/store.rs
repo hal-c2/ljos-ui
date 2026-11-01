@@ -44,6 +44,9 @@ const MAX_IN_FLIGHT: usize = 8;
 /// How long [`ImageStore::finish`] waits for a single result before it
 /// gives up, so a broken decoder fails a test instead of hanging it.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long it waits at most: results that keep coming do not keep it for
+/// good when one of them is never going to.
+const FINISH_LIMIT: Duration = Duration::from_secs(120);
 
 /// How long [`ImageStore::finish_with`] waits between calls of its
 /// `between`, short enough that a fake answered there feels prompt.
@@ -913,7 +916,7 @@ impl ImageStore {
     /// them, held or not. For tests and harnesses: a UI thread that must
     /// stay responsive never calls it.
     pub fn finish(&self, engine: &Engine) {
-        self.finish_waiting(engine, FINISH_TIMEOUT, &mut || {});
+        self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
 
     /// [`ImageStore::finish`] that calls `between` on this thread every
@@ -921,11 +924,18 @@ impl ImageStore {
     /// picture's fetch waits on (a fake server it runs on this thread),
     /// which it could not while blocked.
     pub fn finish_with(&self, engine: &Engine, between: &mut dyn FnMut()) {
-        self.finish_waiting(engine, SERVE_SLICE, between);
+        self.finish_waiting(engine, SERVE_SLICE, FINISH_LIMIT, between);
     }
 
-    fn finish_waiting(&self, engine: &Engine, slice: Duration, between: &mut dyn FnMut()) {
+    fn finish_waiting(
+        &self,
+        engine: &Engine,
+        slice: Duration,
+        limit: Duration,
+        between: &mut dyn FnMut(),
+    ) {
         self.request_deferred(engine);
+        let started = Instant::now();
         let mut quiet = Duration::ZERO;
         loop {
             let seen = self.signal.count();
@@ -950,7 +960,7 @@ impl ImageStore {
             } else {
                 Duration::ZERO
             };
-            if quiet >= FINISH_TIMEOUT {
+            if quiet >= FINISH_TIMEOUT || started.elapsed() >= limit {
                 engine.log(
                     ljos_engine::LogLevel::Warning,
                     super::CATEGORY,
@@ -1694,6 +1704,33 @@ mod tests {
             let _ = tx.send(());
         });
         rx.recv_timeout(Duration::from_secs(30)).is_ok()
+    }
+
+    #[test]
+    fn a_steady_stream_of_signals_does_not_hold_finish_up() {
+        let engine = Engine::new();
+        let store = ImageStore::default();
+        let key = ImageKey {
+            url: "file:///never.png".to_owned(),
+            request: Request::default(),
+        };
+        store.state.borrow_mut().jobs.insert(key, Vec::new());
+        let started = Instant::now();
+        let signal = Arc::clone(&store.signal);
+        store.finish_waiting(&engine, SERVE_SLICE, Duration::from_millis(50), &mut || {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "the stream is still holding finish up"
+            );
+            signal.sent_one();
+        });
+        assert_eq!(store.pending(), 1);
+        assert!(
+            engine
+                .take_log()
+                .iter()
+                .any(|e| e.message.contains("gave up waiting for 1 picture"))
+        );
     }
 
     #[test]

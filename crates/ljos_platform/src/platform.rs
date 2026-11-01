@@ -44,6 +44,9 @@ const INBOX: usize = 256;
 
 /// How long [`Platform::finish`] waits for an answer before it gives up.
 const FINISH_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long it waits at most: answers that keep coming do not keep it for
+/// good when one of them is never going to.
+const FINISH_LIMIT: Duration = Duration::from_secs(60);
 /// How long [`Platform::finish_with`] waits between calls of its hook.
 const SERVE_SLICE: Duration = Duration::from_millis(2);
 
@@ -475,9 +478,9 @@ impl Platform {
     /// Waits until every promised answer has come back and runs them,
     /// held or not. For tests and harnesses: a UI thread that must stay
     /// responsive never calls it. Gives up, with a warning, after 10 s
-    /// without an answer.
+    /// without an answer or 60 s in all.
     pub fn finish(&self, engine: &Engine) {
-        self.finish_waiting(engine, FINISH_TIMEOUT, &mut || {});
+        self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
 
     /// [`Platform::finish`] that calls `between` on this thread every few
@@ -485,10 +488,17 @@ impl Platform {
     /// outstanding answers wait on (a fake server it runs on this thread),
     /// which it could not while blocked.
     pub fn finish_with(&self, engine: &Engine, between: &mut dyn FnMut()) {
-        self.finish_waiting(engine, SERVE_SLICE, between);
+        self.finish_waiting(engine, SERVE_SLICE, FINISH_LIMIT, between);
     }
 
-    fn finish_waiting(&self, engine: &Engine, slice: Duration, between: &mut dyn FnMut()) {
+    fn finish_waiting(
+        &self,
+        engine: &Engine,
+        slice: Duration,
+        limit: Duration,
+        between: &mut dyn FnMut(),
+    ) {
+        let started = Instant::now();
         let mut quiet = Duration::ZERO;
         loop {
             let seen = self.signal.count();
@@ -512,7 +522,7 @@ impl Platform {
             } else {
                 Duration::ZERO
             };
-            if quiet >= FINISH_TIMEOUT {
+            if quiet >= FINISH_TIMEOUT || started.elapsed() >= limit {
                 engine.log(
                     LogLevel::Warning,
                     CATEGORY,
@@ -1002,6 +1012,29 @@ mod tests {
 
     use super::*;
     use crate::fetch::Method;
+
+    #[test]
+    fn a_steady_stream_of_signals_does_not_hold_finish_up() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let _never = platform.promise("never answered".into(), None, false);
+        let started = Instant::now();
+        let signal = Arc::clone(&platform.signal);
+        platform.finish_waiting(&engine, SERVE_SLICE, Duration::from_millis(50), &mut || {
+            assert!(
+                started.elapsed() < Duration::from_secs(30),
+                "the stream is still holding finish up"
+            );
+            signal.sent_one();
+        });
+        assert_eq!(platform.pending(), 1);
+        assert!(
+            engine
+                .take_log()
+                .iter()
+                .any(|e| e.message.contains("gave up waiting for 1 platform answer"))
+        );
+    }
 
     /// Echoes what it was asked, as a 201, without a network.
     struct Echo;
