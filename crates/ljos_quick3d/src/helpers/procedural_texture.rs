@@ -43,34 +43,6 @@ impl Default for ProceduralTextureData {
     }
 }
 
-/// Reads the bytes of an ArrayBuffer (or of a typed array's view of one)
-/// as a string of characters below 256, the one form of bytes a JS value
-/// becomes here; in pieces, so a large buffer is not one call's
-/// arguments.
-const BYTES: &str = r"(function (b) {
-  if (b === null || b === undefined) return '';
-  var u = ArrayBuffer.isView(b) ? new Uint8Array(b.buffer, b.byteOffset, b.byteLength)
-        : b instanceof ArrayBuffer ? new Uint8Array(b) : null;
-  if (u === null) return '';
-  var s = '';
-  for (var i = 0; i < u.length; i += 8192)
-    s += String.fromCharCode.apply(null, u.subarray(i, i + 8192));
-  return s;
-})";
-
-fn bytes(e: &Engine, v: &Value) -> Vec<u8> {
-    if !matches!(v, Value::Js(_)) {
-        return Vec::new();
-    }
-    let Ok(read) = e.eval_js(BYTES) else {
-        return Vec::new();
-    };
-    match e.call_js(&read, std::slice::from_ref(v)) {
-        Some(Value::String(s)) => s.chars().map(|c| c as u32 as u8).collect(),
-        _ => Vec::new(),
-    }
-}
-
 #[qml_impl]
 impl ProceduralTextureData {
     /// Committed again whenever a property changes.
@@ -85,7 +57,7 @@ impl ProceduralTextureData {
             let transparent: bool = item::prop(e, me, ProceduralTextureData::HAS_TRANSPARENCY);
             let data = e.read(me, ProceduralTextureData::TEXTURE_DATA.index);
             e.untrack(|| {
-                let bytes = bytes(e, &data);
+                let bytes = e.js_bytes(&data).unwrap_or_default();
                 let _ = e.with_mut(me, |t: &mut TextureData| {
                     t.set_size(width.max(0) as u32, height.max(0) as u32);
                     t.set_depth(depth.max(0) as u32);

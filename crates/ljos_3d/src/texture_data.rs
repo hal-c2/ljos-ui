@@ -160,9 +160,12 @@ impl TextureData {
                 got: self.bytes.len(),
             });
         }
+        // The data's first row is the picture's bottom, the last one uploaded
+        // here: a built-in mesh has the picture's top at v = 0.
         let pixels: Vec<u8> = self.bytes[..expected]
-            .chunks_exact(stride)
-            .flat_map(read)
+            .chunks_exact(self.width as usize * stride)
+            .rev()
+            .flat_map(|row| row.chunks_exact(stride).flat_map(read))
             .collect();
         Ok(Some(TextureImage::new(DataPixels {
             id: fresh_pixels_id(),

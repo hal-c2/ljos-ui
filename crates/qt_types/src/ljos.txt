@@ -7907,9 +7907,19 @@ module QtQuick3D
 		signal transmitCurveChanged
 	type QtQuick3D.Geometry Geometry
 		prototype QtQuick3D.Object3D named
-		is uncreatable
+		enum PrimitiveType Points=0 LineStrip=1 Lines=2 TriangleStrip=3 TriangleFan=4 Triangles=5
+		enum Semantic IndexSemantic=0 PositionSemantic=1 NormalSemantic=2 TexCoord0Semantic=3 TexCoordSemantic=3 TexCoord1Semantic=4 TangentSemantic=5 BinormalSemantic=6 ColorSemantic=7 JointSemantic=8 WeightSemantic=9
+		enum ComponentType U16Type=0 U32Type=1 F32Type=2
 		prop revision QtQml.int named readonly
 		signal revisionChanged
+		method clear
+		method setVertexData
+		method setIndexData
+		method setStride
+		method setBounds
+		method setPrimitiveType
+		method addAttribute
+		method update
 	type QtQuick3D.InstanceList InstanceList
 		prototype QtQuick3D.Instancing named
 		default instances
@@ -8467,10 +8477,16 @@ module QtQuick3D
 		signal autoOrientationChanged
 	type QtQuick3D.TextureData TextureData
 		prototype QtQuick3D.Object3D named
-		is uncreatable
 		enum Format None=0 RGBA8=1 RGBA16F=2 RGBA32F=3 RGBE8=4 R8=5 R16=6 R16F=7 R32F=8 BC1=9 BC2=10 BC3=11 BC4=12 BC5=13 BC6H=14 BC7=15 DXT1_RGBA=16 DXT1_RGB=17 DXT3_RGBA=18 DXT5_RGBA=19 ETC2_RGB8=20 ETC2_RGB8A1=21 ETC2_RGBA8=22 ASTC_4x4=23 ASTC_5x4=24 ASTC_5x5=25 ASTC_6x5=26 ASTC_6x6=27 ASTC_8x5=28 ASTC_8x6=29 ASTC_8x8=30 ASTC_10x5=31 ASTC_10x6=32 ASTC_10x8=33 ASTC_10x10=34 ASTC_12x10=35 ASTC_12x12=36
 		prop revision QtQml.int named readonly
 		signal revisionChanged
+		method setSize
+		method setDepth
+		method setFormat
+		method setHasTransparency
+		method setTextureData
+		method update
+		method setImageFileData
 	type QtQuick3D.TextureInput TextureInput
 		prototype QtQuick3D.Object3D named
 		prop texture QtQuick3D.Texture named pointer

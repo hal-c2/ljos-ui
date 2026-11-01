@@ -229,6 +229,30 @@ pub fn load_texture(
     ljos_quick::ImageStore::of(engine).load_texture(engine, url, reply);
 }
 
+/// As [`load_texture`], for the bytes of an image file an application
+/// holds: decoded on the compute pool, with `reply` on the UI thread, never
+/// inside this call. The bytes are kept to make the pixels again, and the
+/// pixels let go after their upload, when the bytes are fewer.
+pub fn decode_texture(
+    engine: &Engine,
+    bytes: std::sync::Arc<[u8]>,
+    reply: impl FnOnce(&Engine, Result<ImageHandle, ImageLoadError>) + 'static,
+) {
+    let spawned = crate::task::spawn_for(
+        engine,
+        "bytes given to a texture",
+        None,
+        move || ljos_quick::decode_texture_bytes(&bytes),
+        move |e, got| match got {
+            Ok(got) => reply(e, got),
+            Err(panic) => e.warn(format!("bytes given to a texture: {panic}")),
+        },
+    );
+    if let Err(full) = spawned {
+        engine.warn(format!("bytes given to a texture: {full}"));
+    }
+}
+
 /// The texture at `url` ([`load_texture`]) at once, as an `Image` has a
 /// picture at once: when it is cached, or a local file small enough to
 /// decode in less than a frame. None for one to [`load_texture`].

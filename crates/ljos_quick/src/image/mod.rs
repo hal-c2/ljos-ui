@@ -28,7 +28,7 @@ mod vector;
 
 pub use animated::AnimatedImage;
 pub use border::{BorderImage, BorderImageBorder};
-pub use decode::{LoadError, Request, requested_size};
+pub use decode::{LoadError, Request, decode_texture_bytes, requested_size};
 use store::Picture;
 pub use store::{ImageKey, ImageLoad, ImageReply, ImageStore};
 pub use tint::{ImageTint, register_image_tint};

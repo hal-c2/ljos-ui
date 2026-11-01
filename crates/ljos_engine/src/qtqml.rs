@@ -1386,6 +1386,48 @@ impl Engine {
         e.to_string()
     }
 
+    /// A copy of the bytes of an ArrayBuffer, or of the part of one a typed
+    /// array or `DataView` looks at; `None` for any other value. Directly,
+    /// as a large buffer would be slow and twice as large as a JS string.
+    pub fn js_bytes(&self, v: &Value) -> Option<Vec<u8>> {
+        let Value::Js(h) = v else {
+            return None;
+        };
+        let r = h.0.clone();
+        self.run_js("bytes", |s| {
+            let v = s.restore(&r)?;
+            let whole = |buffer: &ljos_js::rquickjs::ArrayBuffer| {
+                // Copied before JS runs again, which is what keeps it valid.
+                buffer.as_raw().map(|raw| unsafe { raw.as_ref().to_vec() })
+            };
+            if let Some(buffer) = ljos_js::rquickjs::ArrayBuffer::from_value(v.clone()) {
+                return Ok(whole(&buffer));
+            }
+            let array_buffer: ljos_js::rquickjs::Object = s.ctx().globals().get("ArrayBuffer")?;
+            let is_view: ljos_js::rquickjs::Function = array_buffer.get("isView")?;
+            if !is_view.call::<_, bool>((v.clone(),))? {
+                return Ok(None);
+            }
+            let Some(view) = v.as_object() else {
+                return Ok(None);
+            };
+            let offset: usize = view.get("byteOffset")?;
+            let length: usize = view.get("byteLength")?;
+            let buffer: ljos_js::rquickjs::ArrayBuffer = view.get("buffer")?;
+            Ok(whole(&buffer).and_then(|all| all.get(offset..offset + length).map(<[u8]>::to_vec)))
+        })
+        .flatten()
+    }
+
+    /// An ArrayBuffer of `bytes`, which it owns from here on: they are not
+    /// copied and do not count towards the JS heap's limit.
+    pub fn js_array_buffer(&self, bytes: Vec<u8>) -> Option<Value> {
+        self.run_js("bytes", |s| {
+            let buffer = ljos_js::rquickjs::ArrayBuffer::new(s.ctx().clone(), bytes)?;
+            Ok(Value::Js(crate::JsHandle(s.keep(buffer.into_value()))))
+        })
+    }
+
     /// Calls a JS function a property holds (`SpinBox.textFromValue`).
     /// `None` when `f` is not a function or it threw; the exception is
     /// logged as Qt logs it. [`Engine::try_call_js`] gives the error back

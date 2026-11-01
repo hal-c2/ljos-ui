@@ -30,7 +30,8 @@ pub enum Semantic {
     Tangent,
     /// Kept; nothing is drawn with it yet.
     Binormal,
-    /// Kept; nothing is drawn with it yet.
+    /// A CustomMaterial's vertex snippet reads it as `COLOR`; the built-in
+    /// materials do not.
     Color,
     /// Four joint indices the vertex follows, as `U16`, `U32` or whole
     /// `F32`; drawn when the model has a skin.

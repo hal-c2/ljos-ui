@@ -34,6 +34,27 @@ Feature: Fog in a scene
 
   Rule: Distance brings the fog on between its near and its far
 
+    Scenario: A shaded CustomMaterial is fogged too
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color; fog: Fog { enabled: true; color: "red"; density: 1; depthEnabled: true; depthNear: 0; depthFar: 100 } }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { }
+            Model { source: "#Rectangle"; materials: CustomMaterial {
+              shadingMode: CustomMaterial.Shaded
+              __fragmentShaderCode: "void MAIN() { BASE_COLOR = vec4(0.0, 1.0, 0.0, 1.0); SPECULAR_AMOUNT = 0.0; ROUGHNESS = 1.0; }"
+            } }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 4 of "#ff0000"
+
     Scenario: Past its far, as dense as it gets
       Given the QML:
         """qml

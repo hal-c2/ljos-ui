@@ -536,11 +536,11 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
         "};\n\
          LjosVertex ljosvertex(vec3 ljosposition, vec3 ljosnormalin, vec2 ljosuv, vec2 ljosuv1,\n\
          \x20   vec4 ljostangentin, mat4 ljoscopy, vec4 ljoscopycolor, vec4 ljoscopydata, int ljoscopyindex,\n\
-         \x20   ivec4 ljosjoints, vec4 ljosweights, bool ljosskinned) {\n\
+         \x20   ivec4 ljosjoints, vec4 ljosweights, vec4 ljoscolorin, bool ljosskinned) {\n\
          \x20   VERTEX = ljosposition; NORMAL = ljosnormalin; UV0 = ljosuv; UV1 = ljosuv1;\n\
          \x20   TANGENT = ljostangentin.xyz;\n\
          \x20   BINORMAL = cross(ljosnormalin, ljostangentin.xyz) * ljostangentin.w;\n\
-         \x20   COLOR = vec4(1.0); POSITION = vec4(0.0);\n\
+         \x20   COLOR = ljoscolorin; POSITION = vec4(0.0);\n\
          \x20   JOINTS = ljosjoints; WEIGHTS = ljosweights;\n\
          \x20   ljosinstance = ljoscopy; INSTANCE_COLOR = ljoscopycolor; INSTANCE_DATA = ljoscopydata;\n\
          \x20   INSTANCE_INDEX = ljoscopyindex;\n\
@@ -966,7 +966,7 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   @builtin(instance_index) index: u32,\n\
          ) -> CmVsOut {{\n\
          \x20   return cm_vertex(position, normal, uv, uv, tangent, copy, data, index,\n\
-         \x20       vec4<u32>(0u), vec4<f32>(0.0));\n\
+         \x20       vec4<u32>(0u), vec4<f32>(0.0), vec4<f32>(1.0));\n\
          }}\n\
          @vertex\n\
          fn {MATERIAL_VERTEX_EXTRA}(\n\
@@ -980,14 +980,15 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   @location(8) uv1: vec2<f32>,\n\
          \x20   @location(9) joints: vec4<u32>,\n\
          \x20   @location(10) weights: vec4<f32>,\n\
+         \x20   @location(12) color: vec4<f32>,\n\
          ) -> CmVsOut {{\n\
-         \x20   return cm_vertex(position, normal, uv, uv1, tangent, copy, data, index, joints, weights);\n\
+         \x20   return cm_vertex(position, normal, uv, uv1, tangent, copy, data, index, joints, weights, color);\n\
          }}\n\
          fn cm_vertex(position: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, uv1: vec2<f32>,\n\
          \x20   tangent: vec4<f32>, copy: Instance, data: vec4<f32>, index: u32, joints: vec4<u32>,\n\
-         \x20   weights: vec4<f32>) -> CmVsOut {{\n\
+         \x20   weights: vec4<f32>, color: vec4<f32>) -> CmVsOut {{\n\
          \x20   let v = cmv_ljosvertex(position, normal, uv, uv1, tangent, instance_matrix(copy),\n\
-         \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, model.maps.w != 0u);\n\
+         \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, color, model.maps.w != 0u);\n\
          \x20   var out: CmVsOut;\n\
          \x20   out.clip = v.ljosclip;\n\
          \x20   out.normal = v.ljosnormal;\n\
@@ -1152,7 +1153,8 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       cmf_ljosadd(kd * base * irradiance * k,\n\
          \x20           (1.0 - coat * coat_f.x) * prefiltered * specular * k + coat_light * coat_f * coat * k);\n\
          \x20   }}\n\
-         \x20   return cmf_ljosfinish();\n\
+         \x20   let lit = cmf_ljosfinish();\n\
+         \x20   return vec4<f32>(fogged(lit.rgb, in.world), lit.a);\n\
          }}\n\
          fn cm_out(c: vec4<f32>) -> vec3<f32> {{\n\
          \x20   return tonemap(c.rgb, frame.tone);\n\

@@ -225,6 +225,16 @@ pub(crate) fn made_again_from_bytes(
     });
 }
 
+/// The image file `bytes` as a texture reads it. Slow: not for the UI thread.
+/// The bytes are kept to make the pixels again, so the pixels can be let go
+/// after their upload, when the bytes are fewer.
+pub fn decode_texture_bytes(bytes: &Arc<[u8]>) -> Result<ImageHandle, LoadError> {
+    const WHAT: &str = "bytes given to a texture";
+    let loaded = load_bytes(WHAT, bytes, super::store::TEXTURE)?;
+    made_again_from_bytes(&loaded, WHAT, bytes, super::store::TEXTURE);
+    Ok(loaded.image)
+}
+
 /// The bytes `origin` holds or names.
 pub(crate) fn read<'a>(
     url: &str,

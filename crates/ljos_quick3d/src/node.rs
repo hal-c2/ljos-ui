@@ -550,8 +550,11 @@ impl Default for ReflectionProbe {
 /// Vertex data is little endian. Without a normal attribute the faces
 /// are flat. Triangles, strips and fans are drawn; lines and points are
 /// not yet.
+///
+/// QML can declare one and call the same functions, which Qt's QML cannot:
+/// what stands in for an application's C++ subclass has its data to give.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "QtQuick3D", name = "Geometry", extends = Object3D, uncreatable)]
+#[qml(module = "QtQuick3D", name = "Geometry", extends = Object3D, enums = geometry_enums)]
 pub struct Geometry {
     #[qml(base)]
     pub object3d: Object3D,
@@ -633,6 +636,156 @@ impl Geometry {
     /// The data as last committed; `None` before the first update.
     pub fn committed(&self) -> Option<Arc<CustomGeometry>> {
         self.snapshot.clone()
+    }
+}
+
+/// The enums of `QQuick3DGeometry` Qt documents, as many as are drawn here;
+/// `QQuick3DGeometry::Attribute`'s are named on `Geometry` too, as QML has no
+/// nested class to name them on.
+fn geometry_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "PrimitiveType",
+            vec![
+                ("Points", 0),
+                ("LineStrip", 1),
+                ("Lines", 2),
+                ("TriangleStrip", 3),
+                ("TriangleFan", 4),
+                ("Triangles", 5),
+            ],
+        ),
+        (
+            "Semantic",
+            vec![
+                ("IndexSemantic", 0),
+                ("PositionSemantic", 1),
+                ("NormalSemantic", 2),
+                ("TexCoord0Semantic", 3),
+                ("TexCoordSemantic", 3),
+                ("TexCoord1Semantic", 4),
+                ("TangentSemantic", 5),
+                ("BinormalSemantic", 6),
+                ("ColorSemantic", 7),
+                ("JointSemantic", 8),
+                ("WeightSemantic", 9),
+            ],
+        ),
+        (
+            "ComponentType",
+            vec![("U16Type", 0), ("U32Type", 1), ("F32Type", 2)],
+        ),
+    ]
+}
+
+fn primitive_of(value: i32) -> Option<PrimitiveType> {
+    Some(match value {
+        0 => PrimitiveType::Points,
+        1 => PrimitiveType::LineStrip,
+        2 => PrimitiveType::Lines,
+        3 => PrimitiveType::TriangleStrip,
+        4 => PrimitiveType::TriangleFan,
+        5 => PrimitiveType::Triangles,
+        _ => return None,
+    })
+}
+
+fn semantic_of(value: i32) -> Option<Semantic> {
+    Some(match value {
+        0 => Semantic::Index,
+        1 => Semantic::Position,
+        2 => Semantic::Normal,
+        3 => Semantic::TexCoord0,
+        4 => Semantic::TexCoord1,
+        5 => Semantic::Tangent,
+        6 => Semantic::Binormal,
+        7 => Semantic::Color,
+        8 => Semantic::Joint,
+        9 => Semantic::Weight,
+        _ => return None,
+    })
+}
+
+fn component_of(value: i32) -> Option<ComponentType> {
+    Some(match value {
+        0 => ComponentType::U16,
+        1 => ComponentType::U32,
+        2 => ComponentType::F32,
+        _ => return None,
+    })
+}
+
+#[qml_impl]
+impl Geometry {
+    #[qml(invokable, name = "clear")]
+    fn clear_in_qml(cx: &Cx) {
+        let _ = cx.engine.with_mut(cx.this, Geometry::clear);
+    }
+
+    #[qml(invokable, name = "setVertexData")]
+    fn set_vertex_data_in_qml(cx: &Cx, data: Value) {
+        let bytes = cx.engine.js_bytes(&data).unwrap_or_default();
+        let _ = cx
+            .engine
+            .with_mut(cx.this, |g: &mut Geometry| g.set_vertex_data(bytes));
+    }
+
+    #[qml(invokable, name = "setIndexData")]
+    fn set_index_data_in_qml(cx: &Cx, data: Value) {
+        let bytes = cx.engine.js_bytes(&data).unwrap_or_default();
+        let _ = cx
+            .engine
+            .with_mut(cx.this, |g: &mut Geometry| g.set_index_data(bytes));
+    }
+
+    #[qml(invokable, name = "setStride")]
+    fn set_stride_in_qml(cx: &Cx, stride: i32) {
+        let stride = usize::try_from(stride).unwrap_or(0);
+        let _ = cx
+            .engine
+            .with_mut(cx.this, |g: &mut Geometry| g.set_stride(stride));
+    }
+
+    #[qml(invokable, name = "setBounds")]
+    fn set_bounds_in_qml(cx: &Cx, min: Value, max: Value) {
+        let (min, max) = (
+            crate::space::from_value(&min),
+            crate::space::from_value(&max),
+        );
+        let _ = cx
+            .engine
+            .with_mut(cx.this, |g: &mut Geometry| g.set_bounds(min, max));
+    }
+
+    #[qml(invokable, name = "setPrimitiveType")]
+    fn set_primitive_type_in_qml(cx: &Cx, primitive: i32) {
+        let Some(primitive) = primitive_of(primitive) else {
+            return cx.engine.warn(format!(
+                "QtQuick3D Geometry: {primitive} is not a primitive type"
+            ));
+        };
+        let _ = cx
+            .engine
+            .with_mut(cx.this, |g: &mut Geometry| g.set_primitive_type(primitive));
+    }
+
+    #[qml(invokable, name = "addAttribute")]
+    fn add_attribute_in_qml(cx: &Cx, semantic: i32, offset: i32, component: i32) {
+        let (Some(semantic), Some(component)) = (semantic_of(semantic), component_of(component))
+        else {
+            return cx.engine.warn(format!(
+                "QtQuick3D Geometry: no attribute of semantic {semantic} and component type {component}"
+            ));
+        };
+        let offset = usize::try_from(offset).unwrap_or(0);
+        let _ = cx.engine.with_mut(cx.this, |g: &mut Geometry| {
+            g.add_attribute(semantic, offset, component)
+        });
+    }
+
+    #[qml(invokable, name = "update")]
+    fn update_in_qml(cx: &Cx) {
+        Geometry::update(cx.engine, cx.this);
     }
 }
 

@@ -446,7 +446,7 @@ impl Default for ImageStore {
 }
 
 /// What a 3D texture asks for: the whole picture, as the renderer reads it.
-const TEXTURE: Request = Request {
+pub(crate) const TEXTURE: Request = Request {
     width: 0,
     height: 0,
     cover: false,

@@ -163,7 +163,7 @@ enum State {
 
 /// A decoded picture as the 3D renderer reads it.
 #[derive(Debug)]
-struct ImagePixels(ImageHandle);
+pub(crate) struct ImagePixels(pub(crate) ImageHandle);
 
 impl ImagePixels {
     fn encoding_of(image: &ImageHandle) -> PixelEncoding {
