@@ -91,6 +91,19 @@ if [ -z "${GALLERY_BUILT:-}" ]; then
     cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos --profile "$profile"
   fi
 fi
+# An example's `file:content/…` is relative to the working directory, and a
+# Qt build runs where it unpacked its assets: `content` is what was downloaded.
+if [ -d "$root/corpus/standins/$id/downloaded" ]; then
+  # gallery:drive looks for the inspector's token where it started this.
+  export LJOS_MCP_DIR="${LJOS_MCP_DIR:-$PWD}"
+  here="$target/gallery/cwd/$id"
+  mkdir -p "$here"
+  assets="$root/corpus/standins/$id/downloaded"
+  [ -d "$assets/content" ] && assets="$assets/content"
+  ln -sfn "$assets" "$here/content"
+  cd "$here"
+fi
+
 # The window is as large as the root says, as qml6 opens it; the manifest's
 # size is the gallery's picture. A `--size` among the arguments sets one.
 exec "$target/$profile/ljos" run "$root/corpus/qtdoc/$dir/$entry" \

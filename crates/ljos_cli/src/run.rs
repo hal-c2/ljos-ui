@@ -617,13 +617,15 @@ impl Run {
             top: self.top,
             inspector: match self.mcp {
                 // Below the directory `ljos` was started in, where a
-                // client started in the same place looks.
+                // client started in the same place looks, or `LJOS_MCP_DIR`
+                // for one that knows where to.
                 Some(caps) => Some((
                     InspectorOptions {
                         redact_all: self.mcp_redact,
-                        ..InspectorOptions::below(
-                            std::env::current_dir().context("the working directory")?,
-                        )
+                        ..InspectorOptions::below(match std::env::var_os("LJOS_MCP_DIR") {
+                            Some(dir) => PathBuf::from(dir),
+                            None => std::env::current_dir().context("the working directory")?,
+                        })
                     },
                     InspectorAccess {
                         caps,
@@ -765,6 +767,8 @@ impl Run {
                 crate::render::stage(engine, &source.resources());
                 crate::render::mount(engine, &source.resource_dirs());
                 engine.set_component_source(source);
+                // Read when the first text is made; most programs make none.
+                ljos::dev::install_text_compiler(engine, &[dir.as_path()]);
                 let root = engine
                     .create_from_url(
                         &key,

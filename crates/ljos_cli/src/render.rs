@@ -226,6 +226,8 @@ impl Render {
             }
         });
         engine.set_component_source(source);
+        // Read when the first text is made; most programs make none.
+        ljos::dev::install_text_compiler(&engine, &[dir.as_path()]);
         stage_resources(&engine, &dir);
         let root = engine
             .create_from_url(&key, None, example_properties(self.example.as_deref()))

@@ -118,12 +118,12 @@ pub fn encoded_url(url: &str) -> String {
 }
 
 /// The path of a `file:` URL, or of a plain absolute path; `None` for any
-/// other URL.
+/// other URL. `file:a/b` is relative: to the working directory, as in Qt.
 pub fn url_path(url: &str) -> Option<std::path::PathBuf> {
     let rest = match url.strip_prefix("file://") {
         Some(rest) => rest.strip_prefix("localhost").unwrap_or(rest),
         None if url.starts_with('/') => url,
-        None => url.strip_prefix("file:").filter(|r| r.starts_with('/'))?,
+        None => url.strip_prefix("file:")?,
     };
     // `file:///C:/x` names `C:/x`.
     let rest = match rest.as_bytes() {

@@ -33,3 +33,38 @@ Feature: The modules the ljos command has
     When the author runs "ljos render . --out shot.png --settle 0"
     Then the command's output mentions "made true true 1.0"
     And the command's output does not mention "is not installed"
+
+  Scenario: A rendered project makes an object from text
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      Item {
+        Component.onCompleted: {
+          let made = Qt.createQmlObject("import QtQuick; Rectangle { width: 7 }", this)
+          console.warn("made " + made.width)
+        }
+      }
+      """
+    When the author runs "ljos render . --out shot.png --settle 0"
+    Then the command's output mentions "made 7"
+    And the command's output does not mention "has no compiler"
+
+  Scenario: A file URL with no slash is relative to the working directory
+    Given the file "Main.qml":
+      """qml
+      import QtQuick
+      ShaderEffect {
+        width: 40; height: 40
+        fragmentShader: "file:shaders/plain.frag"
+        Component.onCompleted: console.warn("shader status " + status)
+      }
+      """
+    And the file "shaders/plain.frag":
+      """
+      #version 440
+      layout(location = 0) out vec4 fragColor;
+      void main() { fragColor = vec4(1.0); }
+      """
+    When the author runs "ljos render . --out shot.png --settle 0"
+    Then the command's output does not mention "Failed to find shader"
+    And the command's output does not mention "preparation failed"
