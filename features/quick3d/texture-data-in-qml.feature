@@ -43,10 +43,8 @@ Feature: Texture data written in QML
                 function file() { setImageFileData(new Uint8Array(greenPng).buffer) }
                 function notAFile() { setImageFileData(new Uint8Array([1, 2, 3, 4])) }
               } }
-            }
-          }
-        }
-      }
+            } }
+        } }
       """
 
   Rule: Pixels QML commits are shown
@@ -94,26 +92,19 @@ Feature: Texture data written in QML
               objectName: "rows"
               function red_then_blue() {
                 setSize(Qt.size(1, 2)); setFormat(TextureData.RGBA8); setHasTransparency(false)
-                setTextureData(new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255])); update()
-              }
+                setTextureData(new Uint8Array([255, 0, 0, 255, 0, 0, 255, 255])); update() }
               // One pixel wide, a red row and then a blue one.
               readonly property var redThenBluePng: [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 2, 8, 6, 0, 0, 0, 153, 129, 182, 39, 0, 0, 0, 18, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 159, 129, 129, 225, 255, 127, 0, 17, 248, 3, 253, 223, 215, 157, 159, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130]
               function red_then_blue_file() { setImageFileData(new Uint8Array(redThenBluePng).buffer) }
             } }
-            Model {
-              x: -50; scale: Qt.vector3d(1, 2, 1); source: "#Rectangle"
-              materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseMap: rows }
-            }
-            Model {
-              x: 50; scale: Qt.vector3d(1, 2, 1); source: "#Rectangle"
+            Model { x: -50; scale: Qt.vector3d(1, 2, 1); source: "#Rectangle"
+              materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseMap: rows } }
+            Model { x: 50; scale: Qt.vector3d(1, 2, 1); source: "#Rectangle"
               materials: CustomMaterial {
-                property TextureInput shown: TextureInput { texture: rows }
-                shadingMode: CustomMaterial.Unshaded
+                property TextureInput shown: TextureInput { texture: rows }; shadingMode: CustomMaterial.Unshaded
                 __fragmentShaderCode: "void MAIN() { FRAGCOLOR = vec4(texture(shown, vec2(UV0.x, 1.0 - UV0.y)).rgb, 1.0); }"
-              }
-            }
-          }
-        }
+              } }
+          } }
         """
 
     Scenario: A material shows the first row at the bottom

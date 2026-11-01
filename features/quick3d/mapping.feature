@@ -25,13 +25,10 @@ Feature: Mapping between the view, the scene and a node
       import QtQuick3D
       View3D {
         id: view; objectName: "view"; width: 200; height: 100
-        property vector3d out
-        property vector3d mapped
-        property int turns
+        property vector3d out; property vector3d mapped; property int turns
         function through(x, y, z) {
           mapped = hand.sceneTransform.times(Qt.vector3d(x, y, z))
-          out = hand.sceneTransform.inverted().times(mapped)
-        }
+          out = hand.sceneTransform.inverted().times(mapped) }
         Connections { target: cam; function onSceneTransformChanged() { view.turns++ } }
         function from3D(x, y, z) { out = view.mapFrom3DScene(Qt.vector3d(x, y, z)) }
         function to3D(x, y, z) { out = view.mapTo3DScene(Qt.vector3d(x, y, z)) }
@@ -44,13 +41,11 @@ Feature: Mapping between the view, the scene and a node
         Node {
           objectName: "early"; x: 5
           property real seen
-          onScenePositionChanged: seen = sceneTransform.m14
-        }
+          onScenePositionChanged: seen = sceneTransform.m14 }
         Node {
           objectName: "arm"; x: 100; eulerRotation.y: 90
           Node { id: hand; objectName: "hand"; z: 50; scale: Qt.vector3d(2, 2, 2) }
-        }
-      }
+        } }
       """
 
   Rule: A View3D maps between the scene and the view

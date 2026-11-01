@@ -31,32 +31,20 @@ Feature: A custom material reads a vertex's colour
           environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color; tonemapMode: SceneEnvironment.TonemapModeNone }
           OrthographicCamera { z: 300 }
           CustomMaterial { id: paint; shadingMode: CustomMaterial.Unshaded; vertexShader: "paint.vert"; fragmentShader: "paint.frag" }
-          Model {
-            materials: paint
+          Model { materials: paint
             geometry: Geometry {
               // Position, then a colour of blue.
               Component.onCompleted: {
                 setVertexData(new Float32Array([-50, 0, 0, 0, 0, 1, 1, -10, 0, 0, 0, 0, 1, 1, -30, 50, 0, 0, 0, 1, 1]))
-                setStride(28)
-                addAttribute(Geometry.PositionSemantic, 0, Geometry.F32Type)
-                addAttribute(Geometry.ColorSemantic, 12, Geometry.F32Type)
-                update()
-              }
-            }
-          }
-          Model {
-            materials: paint
+                setStride(28); addAttribute(Geometry.PositionSemantic, 0, Geometry.F32Type); addAttribute(Geometry.ColorSemantic, 12, Geometry.F32Type); update() }
+            } }
+          Model { materials: paint
             geometry: Geometry {
               Component.onCompleted: {
                 setVertexData(new Float32Array([10, 0, 0, 50, 0, 0, 30, 50, 0]))
-                setStride(12)
-                addAttribute(Geometry.PositionSemantic, 0, Geometry.F32Type)
-                update()
-              }
-            }
-          }
-        }
-      }
+                setStride(12); addAttribute(Geometry.PositionSemantic, 0, Geometry.F32Type); update() }
+            } }
+        } }
       """
 
   Scenario: A vertex's colour reaches the snippet

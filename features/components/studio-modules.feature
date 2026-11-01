@@ -1,3 +1,6 @@
+# Sources:
+#   https://doc.qt.io/qtdesignstudio/quick-components.html
+
 @ljos-only
 Feature: The modules Design Studio's output imports
   A file Design Studio exported imports QtQuick.Studio.Components for its

@@ -36,20 +36,15 @@ Feature: A geometry written in QML
                 clear()
                 setVertexData(new Float32Array([0, 0, 0, reach, 0, 0, 0, reach, 0]))
                 setIndexData(new Uint16Array([0, 1, 2]).buffer)
-                setStride(12)
-                setBounds(Qt.vector3d(0, 0, 0), Qt.vector3d(reach, reach, 0))
+                setStride(12); setBounds(Qt.vector3d(0, 0, 0), Qt.vector3d(reach, reach, 0))
                 setPrimitiveType(Geometry.Triangles)
                 addAttribute(Geometry.PositionSemantic, 0, Geometry.F32Type)
                 addAttribute(Geometry.IndexSemantic, 0, Geometry.U16Type)
-                update()
-              }
+                update() }
               function bad() { clear(); setVertexData(new Float32Array(3)); setStride(12); update() }
-              Component.onCompleted: fill(50)
-            }
-            materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "red" }
-          }
-        }
-      }
+              Component.onCompleted: fill(50) }
+            materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "red" } }
+        } }
       """
 
   Rule: What QML commits is drawn

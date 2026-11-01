@@ -51,8 +51,7 @@ Feature: A CustomMaterial reads the depth of the scene
               fragmentShader: "depth.frag"
             }
           }
-        }
-      }
+        } }
       """
     Then the pixel at 80, 100 of the window is within 2 of "#00ff00"
     And the pixel at 120, 100 of the window is within 2 of "#0000ff"

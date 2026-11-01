@@ -1077,7 +1077,7 @@ fn a_module_ljos_builds_part_of_still_stands_in_for_the_rest() {
     // (`Type::is_built`); the module stands in for the others, as the
     // add-on modules beside it do.
     assert!(stands_in("QtQuick3D.Helpers"));
-    assert!(stands_in("QtQuick3D.Effects"));
     assert!(stands_in("QtGraphs"));
     assert!(!stands_in("QtQuick3D"));
+    assert!(!stands_in("QtQuick3D.Effects"));
 }

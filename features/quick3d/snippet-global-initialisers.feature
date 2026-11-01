@@ -63,10 +63,8 @@ Feature: A snippet's globals start with what they are given
               vertexShader: "global.vert"
               fragmentShader: "seen.frag"
               property real shift: 0.5
-            }
-          }
-        }
-      }
+            } }
+        } }
       """
 
   Scenario: A global of the fragment snippet is made of a property
