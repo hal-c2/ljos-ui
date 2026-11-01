@@ -60,8 +60,8 @@ pub struct Part {
 }
 
 /// A morph target layer per attribute and target, as the file keeps them from
-/// version 7: `width` by `width` texels of four floats each, attribute by
-/// attribute within a target.
+/// version 7: `width` by `width` texels of four floats each, target by
+/// target within an attribute.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MorphTargets {
     pub count: u32,
@@ -83,44 +83,43 @@ pub struct MeshFile {
     morphed: Arc<Mutex<Morphed>>,
 }
 
-/// Geometries as morphed by a part and its targets' weights and attributes,
+/// Geometries as morphed by a part and its targets' weights,
 /// so that a model whose weights hold still keeps one upload. Weak: what no
 /// scene holds any more goes.
-type Morphed = HashMap<(usize, Vec<(u32, i32)>), Weak<CustomGeometry>>;
+type Morphed = HashMap<(usize, Vec<u32>), Weak<CustomGeometry>>;
 
 impl MeshFile {
-    /// Part `which`'s geometry with `targets` weighed in: a weight and the
-    /// `MorphTarget.attributes` it moves, per target of the file.
-    pub fn morphed(&self, which: usize, targets: &[(f32, i32)]) -> Arc<CustomGeometry> {
+    /// Part `which`'s geometry gone towards the file's targets by `weights`,
+    /// one per target. What a `MorphTarget` says it is of changes nothing, as
+    /// in Qt 6.11: a shape goes towards all its mesh has of a target.
+    pub fn morphed(&self, which: usize, weights: &[f32]) -> Arc<CustomGeometry> {
         let part = &self.parts[which];
         let Some(morphs) = &self.morph_targets else {
             return part.geometry.clone();
         };
-        if targets.iter().all(|(weight, _)| *weight == 0.0) {
+        if weights.iter().all(|weight| *weight == 0.0) {
             return part.geometry.clone();
         }
-        let key = (
-            which,
-            targets.iter().map(|(w, a)| (w.to_bits(), *a)).collect(),
-        );
+        let key = (which, weights.iter().map(|w| w.to_bits()).collect());
         let mut made = self.morphed.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(geometry) = made.get(&key).and_then(Weak::upgrade) {
             return geometry;
         }
         made.retain(|_, geometry| geometry.strong_count() > 0);
-        let geometry = Arc::new(morph_part(part, morphs, targets));
+        let geometry = Arc::new(morph_part(part, morphs, weights));
         made.insert(key, Arc::downgrade(&geometry));
         geometry
     }
 }
 
-/// `part`'s geometry with each target's layers added in, times its weight.
-fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[(f32, i32)]) -> CustomGeometry {
+/// `part`'s geometry gone from its own values towards what each target has
+/// instead, by that target's weight: the file holds values, not changes, a
+/// layer per target of its first attribute, then of its next.
+fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[f32]) -> CustomGeometry {
     let source = &part.geometry;
     let stride = source.stride().max(1);
     let mut data = source.vertex_data().to_vec();
     let per_layer = morphs.width as usize * morphs.width as usize;
-    let layers = morphs.attributes.len();
     let offset_of = |semantic| {
         source
             .attributes()
@@ -128,32 +127,30 @@ fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[(f32, i32)]) -> Cus
             .find(|a| a.semantic == semantic)
             .map(|a| a.offset)
     };
-    for (t, (weight, attributes)) in targets.iter().enumerate().take(morphs.count as usize) {
+    for (t, weight) in targets.iter().enumerate().take(morphs.count as usize) {
         for (a, name) in morphs.attributes.iter().enumerate() {
-            let Some((flag, semantic, numbers)) = morph_layer(name) else {
+            let Some((semantic, numbers)) = morph_layer(name) else {
                 continue;
             };
-            if attributes & flag == 0 {
-                continue;
-            }
             let Some(at) = offset_of(semantic) else {
                 continue;
             };
-            let layer = (t * layers + a) * per_layer;
+            let layer = (a * morphs.count as usize + t) * per_layer;
             for (vertex, corner) in part.corners.iter().enumerate() {
                 let texel = (layer + *corner as usize) * 4;
-                let Some(delta) = morphs.texels.get(texel..texel + 4) else {
+                let Some(to) = morphs.texels.get(texel..texel + 4) else {
                     continue;
                 };
-                for (n, d) in delta.iter().enumerate().take(numbers) {
-                    // A change of v, in a file measured from the bottom.
-                    let d = *d;
+                for (n, to) in to.iter().enumerate().take(numbers) {
                     let i = vertex * stride + at + n * 4;
-                    let Some(bytes) = data.get_mut(i..i + 4) else {
+                    let (Some(bytes), Some(own)) =
+                        (data.get_mut(i..i + 4), source.vertex_data().get(i..i + 4))
+                    else {
                         continue;
                     };
-                    let old = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
-                    bytes.copy_from_slice(&(old + d * weight).to_le_bytes());
+                    let own = f32::from_le_bytes([own[0], own[1], own[2], own[3]]);
+                    let now = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                    bytes.copy_from_slice(&(now + (to - own) * weight).to_le_bytes());
                 }
             }
         }
@@ -186,16 +183,15 @@ fn morph_part(part: &Part, morphs: &MorphTargets, targets: &[(f32, i32)]) -> Cus
     geometry
 }
 
-/// A layer's `MorphTarget.attributes` flag, what it changes in the vertices
-/// and how many numbers. Tangents are not kept, so they are not moved.
-fn morph_layer(name: &str) -> Option<(i32, Semantic, usize)> {
-    use crate::qml::enums::morph;
+/// What a layer changes in the vertices and how many numbers. Tangents are not
+/// kept, so they are not moved.
+fn morph_layer(name: &str) -> Option<(Semantic, usize)> {
     Some(match name {
-        "attr_pos" => (morph::POSITION, Semantic::Position, 3),
-        "attr_norm" => (morph::NORMAL, Semantic::Normal, 3),
-        "attr_uv0" => (morph::TEX_COORD_0, Semantic::TexCoord0, 2),
-        "attr_uv1" => (morph::TEX_COORD_1, Semantic::TexCoord1, 2),
-        "attr_color" => (morph::COLOR, Semantic::Color, 4),
+        "attr_pos" => (Semantic::Position, 3),
+        "attr_norm" => (Semantic::Normal, 3),
+        "attr_uv0" => (Semantic::TexCoord0, 2),
+        "attr_uv1" => (Semantic::TexCoord1, 2),
+        "attr_color" => (Semantic::Color, 4),
         _ => return None,
     })
 }

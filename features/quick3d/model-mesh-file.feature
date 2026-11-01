@@ -312,7 +312,7 @@ Feature: A Model draws the mesh file at its source
       Then the pixel at 60, 100 of the window is within 2 of "#ff0000"
       And the pixel at 190, 100 of the window is "#1e1e1e"
 
-    Scenario: A target moves only the attributes it names
+    Scenario: What a target says it is of changes nothing, as in Qt 6.11
       Given the model file "morph.mesh"
       And the QML:
         """qml
@@ -333,7 +333,8 @@ Feature: A Model draws the mesh file at its source
         }
         """
       When 100 milliseconds pass
-      Then the pixel at 60, 100 of the window is within 2 of "#ff0000"
+      Then the pixel at 190, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 60, 100 of the window is "#1e1e1e"
 
   # colored.mesh, made by the same: a square 100 units across, all its corners
   # red.

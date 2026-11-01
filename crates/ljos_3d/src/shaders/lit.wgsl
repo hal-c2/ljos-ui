@@ -653,7 +653,7 @@ fn fs_main(raw: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<
             roughness = pow(clamp(pow(squared(roughness), 2.0) + kernel, 0.0, 1.0), 0.25);
             plain_rough = pow(clamp(pow(squared(plain_rough), 2.0) + kernel, 0.0, 1.0), 0.25);
         }
-        let ao = mix(1.0, channel(occlusion_t, 4u), model.map_params.y);
+        let ao = channel(occlusion_t, 4u) * model.map_params.y;
         let shine = model.shine;
         let bent = vec3<f32>(shine.z);
         let f0 = mix(bent, base.rgb, metal);

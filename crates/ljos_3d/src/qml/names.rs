@@ -251,6 +251,7 @@ props! {
     DiffuseMap = "diffuseMap",
     SpecularAmount = "specularAmount",
     SpecularRoughness = "specularRoughness",
+    BumpAmount = "bumpAmount",
     BaseColor = "baseColor",
     BaseColorMap = "baseColorMap",
     Metalness = "metalness",

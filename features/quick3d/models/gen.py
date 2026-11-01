@@ -600,8 +600,8 @@ def square_rows(x0, x1, half):
 
 def morph_mesh():
     """A square 100 units across with one target that moves every corner 100
-    units right, in a texture of 2 by 2."""
-    numbers = [100.0, 0.0, 0.0, 0.0] * 4
+    units right, in a texture of 2 by 2, which holds where each corner goes."""
+    numbers = [n for x, y in [(-50, -50), (50, -50), (50, 50), (-50, 50)] for n in (x + 100.0, float(y), 0.0, 0.0)]
     mesh_file(
         HERE / "morph.mesh",
         square_rows(-50, 50, 50),

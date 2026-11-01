@@ -218,3 +218,31 @@ Feature: A CustomMaterial on an instanced model reads its copy
         """
       Then the pixel at 150, 100 of the window is within 2 of "#ffff00"
       And the pixel at 50, 100 of the window is "#1e1e1e"
+
+  Rule: A lit material's copies have their entry's colour
+
+    Scenario: The colour is of the surface, whatever the shader said of it
+      Given the text file "lit.frag":
+        """
+        void MAIN() { BASE_COLOR = vec4(1.0); ROUGHNESS = 1.0; EMISSIVE_COLOR = vec3(0.0); }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#000000"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            DirectionalLight { }
+            Model {
+              source: "#Rectangle"
+              instancing: InstanceList { InstanceListEntry { color: "#ff0000" } }
+              materials: CustomMaterial { fragmentShader: "lit.frag" }
+            }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is within 60 of "#ff0000"

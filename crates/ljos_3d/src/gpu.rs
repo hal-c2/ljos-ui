@@ -887,6 +887,7 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
             u.params2[1] = m.specular_amount.clamp(0.0, 1.0);
             u.params2[2] = m.specular_roughness.clamp(0.0, 1.0);
             u.maps[1] = m.opacity_channel.index() << 6;
+            u.map_params[0] = m.bump_amount;
             u.emissive = [m.emissive[0], m.emissive[1], m.emissive[2], 0.0];
             let tint = m.specular_tint.to_linear();
             u.tint = [tint[0], tint[1], tint[2], 0.0];
@@ -919,7 +920,10 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
                 | maps.opacity_channel.index() << 6;
             u.map_params = [
                 maps.normal_strength,
-                maps.occlusion_amount.clamp(0.0, 1.0),
+                // With no picture nothing is taken away, whatever the amount.
+                maps.occlusion
+                    .as_ref()
+                    .map_or(1.0, |_| maps.occlusion_amount.clamp(0.0, 1.0)),
                 1.0,
                 0.0,
             ];
@@ -2099,6 +2103,10 @@ impl Renderer {
                 let mut uniform = model_uniform(&model.material, &placed);
                 uniform.params2[3] = f32::from(u8::from(node.receives_shadows));
                 uniform.map_params[2] = opacity;
+                // Lit by its own shader, a copy's colour is part of its surface.
+                if node.instancing.is_some() && matches!(model.material, Material::Custom(_)) {
+                    uniform.map_params[3] = 1.0;
+                }
                 if !scoped.is_empty() {
                     scope_uniform(&mut uniform, scene, *id, &scoped);
                 }

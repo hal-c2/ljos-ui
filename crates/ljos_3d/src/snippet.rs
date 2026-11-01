@@ -717,6 +717,9 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          vec4 INSTANCE_COLOR; vec4 INSTANCE_DATA; int INSTANCE_INDEX; mat4 ljosinstance;\n\
          // There are no derivatives here to choose a level of detail by.
          #define texture(ljoss, ljosuv) textureLod(ljoss, ljosuv, 0.0)\n\
+         // Targets are weighed in before the shader runs, so it is handed a mesh with none.
+         const int QT_MORPH_MAX_COUNT = 0;\n\
+         const float MORPH_WEIGHTS[1] = float[1](0.0);\n\
          vec3 MORPH_POSITION(int ljosi) { return VERTEX; }\n\
          vec3 MORPH_NORMAL(int ljosi) { return NORMAL; }\n\
          vec3 MORPH_TANGENT(int ljosi) { return TANGENT; }\n\
@@ -1259,7 +1262,7 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          \x20   out.world = vec4<f32>(v.ljosworld, v.ljosbinormal.y);\n\
          \x20   out.uvs = v.ljosuvs;\n\
          \x20   out.tangent = vec4<f32>(v.ljostangent, v.ljosbinormal.z);\n\
-         \x20   out.color = v.ljoscolor;\n"
+         \x20   out.color = v.ljoscolor * copy.color;\n"
     );
     for i in 0..locations(out) {
         let l = letters(i);
@@ -1364,7 +1367,8 @@ fn shaded_glue(f: &Functions) -> String {
     format!(
         "fn cm_shade(in: CmVsOut, front: bool) -> vec4<f32> {{\n\
          \x20   let s = cm_surface(in, front);\n\
-         \x20   let base = s.ljosbase.rgb;\n\
+         \x20   let copied = select(vec4<f32>(1.0), in.color, model.map_params.w != 0.0);\n\
+         \x20   let base = s.ljosbase.rgb * copied.rgb;\n\
          \x20   let n = s.ljosnormal;\n\
          \x20   let v = s.ljosview;\n\
          \x20   let nv = max(dot(n, v), 1e-4);\n\
@@ -1454,7 +1458,9 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       );\n\
          \x20       sum = sum * (vec3<f32>(1.0) - coat * over) + coating * coat;\n\
          \x20   }}\n\
-         \x20   return cmf_ljosfinish(sum);\n\
+         \x20   var done = cmf_ljosfinish(sum);\n\
+         \x20   done.a *= copied.a * model.map_params.z;\n\
+         \x20   return done;\n\
          }}\n\
          fn cm_out(c: vec4<f32>) -> vec3<f32> {{\n\
          \x20   return tonemap(c.rgb, frame.tone);\n\

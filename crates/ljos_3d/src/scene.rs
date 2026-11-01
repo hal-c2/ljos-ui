@@ -204,6 +204,8 @@ pub struct DefaultMaterial {
     pub specular_amount: f32,
     /// 0 to 1: how far the highlight spreads.
     pub specular_roughness: f32,
+    /// How far its normal map turns it; 0, Qt's default, not at all.
+    pub bump_amount: f32,
     pub cull_mode: CullMode,
     pub depth_draw: DepthDraw,
     /// Multiplies `diffuse_color`'s alpha.
@@ -242,6 +244,7 @@ impl Default for DefaultMaterial {
             lighting: Lighting::Fragment,
             specular_amount: 0.0,
             specular_roughness: 0.0,
+            bump_amount: 0.0,
             cull_mode: CullMode::Back,
             depth_draw: DepthDraw::OpaqueOnly,
             opacity: 1.0,

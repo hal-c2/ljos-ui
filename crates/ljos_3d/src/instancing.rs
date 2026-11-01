@@ -105,8 +105,15 @@ impl Instancing {
     /// `model` whose world transform is `world`: the root's place without
     /// its own turn and scale. The model's are then applied inside each
     /// entry's, so a copy is turned and scaled as the model is, and moved
-    /// by the entry within the root's space.
+    /// by the entry within the root's space. A model that is its own root
+    /// has its position inside each entry too: only what is above it is left.
     pub fn global(&self, scene: &Scene, model: NodeId, world: &Mat4) -> Mat4 {
+        if self.root == Some(model) {
+            let parent = scene.node(model).and_then(|node| node.parent());
+            return parent
+                .and_then(|p| scene.world(p))
+                .unwrap_or(Mat4::IDENTITY);
+        }
         let root = self.root.unwrap_or(model);
         let root_world = if root == model {
             Some(*world)

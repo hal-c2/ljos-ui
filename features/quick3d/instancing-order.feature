@@ -55,6 +55,30 @@ Feature: Where instanced copies begin and the order they are drawn in
       And the pixel at 170, 100 of the window is within 2 of "#00ff00"
       And the pixel at 120, 100 of the window is "#1e1e1e"
 
+  Rule: A model that is its own root has its position inside each entry
+
+    Scenario: An entry's size moves the model's position too
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model {
+              id: own; source: "#Rectangle"; x: 25; scale: Qt.vector3d(0.2, 0.2, 0.2); instanceRoot: own
+              instancing: InstanceList { InstanceListEntry { scale: Qt.vector3d(2, 2, 2) } }
+              materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "red" }
+            }
+          }
+        }
+        """
+      Then the pixel at 150, 100 of the window is within 2 of "#ff0000"
+      And the pixel at 125, 100 of the window is "#1e1e1e"
+
   Rule: Depth sorting draws the copies from the farthest
 
     # Two half-transparent squares, one behind the other, the nearer blue

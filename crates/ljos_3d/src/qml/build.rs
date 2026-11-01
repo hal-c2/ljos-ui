@@ -291,19 +291,14 @@ impl<S: SceneSource> Walk<'_, S> {
     /// settings hold for all of them. The shared geometries are one upload.
     fn mesh_file(&mut self, obj: S::Object, id: NodeId, file: &MeshFile) {
         let s = self.s;
-        let targets: Vec<(f32, i32)> = s
+        let weights: Vec<f32> = s
             .objects(obj, P::MorphTargets)
             .into_iter()
-            .map(|t| {
-                (
-                    num(s, t, P::Weight, d::morph_target::WEIGHT),
-                    int(s, t, P::Attributes, d::morph_target::ATTRIBUTES),
-                )
-            })
+            .map(|t| num(s, t, P::Weight, d::morph_target::WEIGHT))
             .collect();
         let parts = file.parts.iter().enumerate();
         let parts = parts.filter(|(_, part)| !part.empty);
-        self.parts(obj, id, parts.map(|(i, _)| (i, file.morphed(i, &targets))));
+        self.parts(obj, id, parts.map(|(i, _)| (i, file.morphed(i, &weights))));
     }
 
     /// Adds what a model's mesh is made of under its node `id`, each with
@@ -599,6 +594,7 @@ fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Ma
             lighting: lighting(dm::LIGHTING),
             specular_amount: num(s, obj, P::SpecularAmount, dm::SPECULAR_AMOUNT),
             specular_roughness: num(s, obj, P::SpecularRoughness, dm::SPECULAR_ROUGHNESS),
+            bump_amount: num(s, obj, P::BumpAmount, dm::BUMP_AMOUNT),
             cull_mode: cull_mode(),
             opacity: num(s, obj, P::Opacity, dm::OPACITY),
             opacity_channel: channel(P::OpacityChannel, dm::OPACITY_CHANNEL),
