@@ -88,7 +88,7 @@ pub struct Node {
     #[qml(notify)]
     pub visible: bool,
     /// Where the node is in the scene: its own place through its parents'
-    /// transforms. This and the five below are made when first read
+    /// transforms. This and the six below are made when first read
     /// (`space.rs`), so a node nobody asks holds no binding for them.
     #[qml(notify, readonly)]
     pub scene_position: Vector3d,
@@ -103,6 +103,9 @@ pub struct Node {
     pub up: Vector3d,
     #[qml(notify, readonly)]
     pub right: Vector3d,
+    /// Everything of the above as one `matrix4x4`, for a script.
+    #[qml(notify, readonly)]
+    pub scene_transform: Value,
 }
 
 fn node_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -148,6 +151,7 @@ impl Default for Node {
                 y: 0.0,
                 z: 0.0,
             },
+            scene_transform: Value::Undefined,
         }
     }
 }

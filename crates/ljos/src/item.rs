@@ -111,6 +111,7 @@ pub use ljos_quick::text_input::{
     CharFormatSpan, HighlightSpan, Highlighter, char_formats, highlights, set_highlighter,
     set_highlights,
 };
+pub use ljos_quick::transform::matrix_value;
 /// For a module crate with animations of its own (`QtQuick.Timeline`).
 pub use ljos_quick::{
     Animation, EasingGroup, NumberAnimation, PropertyAnimation, between, curve_of, easing,

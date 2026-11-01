@@ -8062,6 +8062,7 @@ module QtQuick3D
 		prop forward QtQuick.vector3d named readonly
 		prop up QtQuick.vector3d named readonly
 		prop right QtQuick.vector3d named readonly
+		prop sceneTransform QtQml.var named readonly
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -8078,6 +8079,7 @@ module QtQuick3D
 		signal forwardChanged
 		signal upChanged
 		signal rightChanged
+		signal sceneTransformChanged
 		method mapPositionToScene
 		method mapPositionFromScene
 		method mapPositionToNode

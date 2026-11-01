@@ -538,28 +538,121 @@ pub(crate) fn scene_map(e: &Engine, obj: ObjectId) -> Projective {
 }
 
 /// `Qt.matrix4x4()`: what `Matrix4x4.matrix` takes. With no arguments the
-/// identity; with sixteen numbers (or an array of them) row by row.
+/// identity; with sixteen numbers (or an array of them) row by row. Its
+/// methods are the `matrix4x4` value type's, on a shared prototype so that
+/// the members are still just `m11` to `m44`; as in Qt, a matrix that has
+/// no inverse inverts to the identity.
 const INSTALL: &str = r#"(function () {
   if ("matrix4x4" in Qt) return;
   const names = [];
   for (let r = 1; r <= 4; r++) for (let c = 1; c <= 4; c++) names.push("m" + r + c);
+  const values = (m) => names.map((n) => m[n]);
+  function minor(v, r, c) {
+    const a = [];
+    for (let i = 0; i < 4; i++) {
+      if (i === r) continue;
+      for (let j = 0; j < 4; j++) if (j !== c) a.push(v[i * 4 + j]);
+    }
+    return a[0] * (a[4] * a[8] - a[5] * a[7])
+      - a[1] * (a[3] * a[8] - a[5] * a[6])
+      + a[2] * (a[3] * a[7] - a[4] * a[6]);
+  }
+  const cofactor = (v, r, c) => ((r + c) % 2 ? -1 : 1) * minor(v, r, c);
+  const determinant = (v) => {
+    let d = 0;
+    for (let c = 0; c < 4; c++) d += v[c] * cofactor(v, 0, c);
+    return d;
+  };
+  const isVector3d = (o) => typeof o === "object" && o !== null
+    && "x" in o && "y" in o && "z" in o && !("w" in o);
+  const isVector4d = (o) => typeof o === "object" && o !== null && "w" in o;
+  const prototype = {
+    toString() {
+      return "QMatrix4x4(" + values(this).join(", ") + ")";
+    },
+    times(o) {
+      const v = values(this);
+      if (typeof o === "number") return make(v.map((x) => x * o));
+      if (isVector3d(o) || isVector4d(o)) {
+        const h = [o.x, o.y, o.z, isVector4d(o) ? o.w : 1];
+        const out = [0, 0, 0, 0];
+        for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) out[r] += v[r * 4 + c] * h[c];
+        if (isVector4d(o)) return Qt.vector4d(out[0], out[1], out[2], out[3]);
+        return Qt.vector3d(out[0] / out[3], out[1] / out[3], out[2] / out[3]);
+      }
+      const w = values(o);
+      const out = new Array(16).fill(0);
+      for (let r = 0; r < 4; r++)
+        for (let c = 0; c < 4; c++)
+          for (let k = 0; k < 4; k++) out[r * 4 + c] += v[r * 4 + k] * w[k * 4 + c];
+      return make(out);
+    },
+    plus(o) {
+      const w = values(o);
+      return make(values(this).map((x, i) => x + w[i]));
+    },
+    minus(o) {
+      const w = values(o);
+      return make(values(this).map((x, i) => x - w[i]));
+    },
+    row(i) {
+      const v = values(this);
+      return Qt.vector4d(v[i * 4], v[i * 4 + 1], v[i * 4 + 2], v[i * 4 + 3]);
+    },
+    column(i) {
+      const v = values(this);
+      return Qt.vector4d(v[i], v[4 + i], v[8 + i], v[12 + i]);
+    },
+    determinant() {
+      return determinant(values(this));
+    },
+    inverted() {
+      const v = values(this);
+      const d = determinant(v);
+      if (d === 0) return make([]);
+      const out = new Array(16);
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) out[c * 4 + r] = cofactor(v, r, c) / d;
+      return make(out);
+    },
+    transposed() {
+      const v = values(this);
+      const out = new Array(16);
+      for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) out[c * 4 + r] = v[r * 4 + c];
+      return make(out);
+    },
+    fuzzyEquals(o, epsilon) {
+      const e = epsilon === undefined ? 0.00001 : epsilon;
+      const w = values(o);
+      return values(this).every((x, i) => Math.abs(x - w[i]) <= e);
+    },
+  };
+  for (const name of Object.keys(prototype))
+    Object.defineProperty(prototype, name, { enumerable: false });
+  function make(v) {
+    if (v.length !== 16) v = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+    const m = Object.create(prototype);
+    for (let i = 0; i < 16; i++) m[names[i]] = Number(v[i]);
+    return m;
+  }
   Object.defineProperty(Qt, "matrix4x4", {
     enumerable: true,
     value: function () {
-      let v = arguments.length === 1 && Array.isArray(arguments[0])
-        ? arguments[0] : Array.prototype.slice.call(arguments);
-      if (v.length !== 16) v = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
-      const m = {};
-      for (let i = 0; i < 16; i++) m[names[i]] = Number(v[i]);
-      Object.defineProperty(m, "toString", {
-        value: function () {
-          return "QMatrix4x4(" + names.map((n) => this[n]).join(", ") + ")";
-        },
-      });
-      return m;
+      return make(arguments.length === 1 && Array.isArray(arguments[0])
+        ? arguments[0] : Array.prototype.slice.call(arguments));
     },
   });
 })"#;
+
+/// A `matrix4x4` value of the sixteen numbers `rows`, row by row, for a
+/// property a script reads as one: what `Qt.matrix4x4` makes, methods and
+/// all. Undefined before the engine's script runtime has started.
+pub fn matrix_value(e: &Engine, rows: [f64; 16]) -> Value {
+    let list = rows.iter().map(|x| Value::Real(*x)).collect();
+    e.eval_js("Qt.matrix4x4")
+        .ok()
+        .and_then(|make| e.call_js(&make, &[Value::List(std::sync::Arc::new(list))]))
+        .unwrap_or_default()
+}
 
 pub(crate) fn register(engine: &Engine) {
     for meta in [

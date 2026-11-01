@@ -26,6 +26,13 @@ Feature: Mapping between the view, the scene and a node
       View3D {
         id: view; objectName: "view"; width: 200; height: 100
         property vector3d out
+        property vector3d mapped
+        property int turns
+        function through(x, y, z) {
+          mapped = hand.sceneTransform.times(Qt.vector3d(x, y, z))
+          out = hand.sceneTransform.inverted().times(mapped)
+        }
+        Connections { target: cam; function onSceneTransformChanged() { view.turns++ } }
         function from3D(x, y, z) { out = view.mapFrom3DScene(Qt.vector3d(x, y, z)) }
         function to3D(x, y, z) { out = view.mapTo3DScene(Qt.vector3d(x, y, z)) }
         function toViewport(x, y, z) { out = cam.mapToViewport(Qt.vector3d(x, y, z)) }
@@ -92,6 +99,32 @@ Feature: Mapping between the view, the scene and a node
       And the property "forward.x" of "hand" is within 0.001 of -1
       And the property "right.z" of "hand" is within 0.001 of -1
       And the property "up.y" of "hand" is within 0.001 of 1
+
+    Scenario: A node's scene transform is its place, turn and scale as a matrix
+      Then the property "sceneTransform.m14" of "hand" is within 0.01 of 150
+      And the property "sceneTransform.m24" of "hand" is within 0.01 of 0
+      And the property "sceneTransform.m34" of "hand" is within 0.01 of 0
+      And the property "sceneTransform.m13" of "hand" is within 0.001 of 2
+      And the property "sceneTransform.m31" of "hand" is within 0.001 of -2
+      And the property "sceneTransform.m22" of "hand" is within 0.001 of 2
+
+    Scenario: A scene transform maps a point into the scene and its inverse back
+      When the method "through" of "view" is called with 1, 2, 3
+      Then the property "mapped.x" of "view" is within 0.01 of 156
+      And the property "mapped.y" of "view" is within 0.01 of 4
+      And the property "mapped.z" of "view" is within 0.01 of -2
+      And the property "out.x" of "view" is within 0.01 of 1
+      And the property "out.y" of "view" is within 0.01 of 2
+      And the property "out.z" of "view" is within 0.01 of 3
+
+    Scenario: A scene transform says when it changes
+      When the property "z" of "cam" is set to 200
+      Then the property "turns" of "view" is 1
+      And the property "sceneTransform.m34" of "cam" is within 0.01 of 200
+
+    Scenario: A scene transform follows the node's parent
+      When the property "x" of "arm" is set to 0
+      Then the property "sceneTransform.m14" of "hand" is within 0.01 of 50
 
     Scenario: A scene property follows the node's parent
       When the property "x" of "arm" is set to 0

@@ -242,3 +242,41 @@ Feature: Item transforms
       When the user presses the pointer at 110, 110
       And the user releases the pointer at 110, 110
       Then the property "clicks" of "area" is 1
+
+  Rule: A matrix4x4 calculates as Qt's value type does
+
+    # The expected text is what qml6 printed for the same calls.
+    Scenario Outline: <call>
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string said: String(Qt.matrix4x4(1, 2, 0, 4, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1).<call>)
+        }
+        """
+      Then the property "said" of "root" is "<said>"
+
+      Examples:
+        | call                       | said                                                                 |
+        | inverted()                 | QMatrix4x4(1, -2, 0, -4, 0, 1, 0, 0, 0, 0, 0.5, 0, 0, 0, 0, 1)       |
+        | times(Qt.matrix4x4())      | QMatrix4x4(1, 2, 0, 4, 0, 1, 0, 0, 0, 0, 2, 0, 0, 0, 0, 1)           |
+        | times(2)                   | QMatrix4x4(2, 4, 0, 8, 0, 2, 0, 0, 0, 0, 4, 0, 0, 0, 0, 2)           |
+        | times(Qt.vector3d(1,1,1))  | QVector3D(7, 1, 2)                                                   |
+        | times(Qt.vector4d(1,1,1,1)) | QVector4D(7, 1, 2, 1)                                               |
+        | determinant()              | 2                                                                    |
+        | transposed()               | QMatrix4x4(1, 0, 0, 0, 2, 1, 0, 0, 0, 0, 2, 0, 4, 0, 0, 1)           |
+        | row(0)                     | QVector4D(1, 2, 0, 4)                                                |
+        | column(3)                  | QVector4D(4, 0, 0, 1)                                                |
+        | fuzzyEquals(Qt.matrix4x4()) | false                                                               |
+
+    Scenario: A matrix with no inverse inverts to the identity
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property string said: String(Qt.matrix4x4(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0).inverted())
+        }
+        """
+      Then the property "said" of "root" is "QMatrix4x4(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1)"

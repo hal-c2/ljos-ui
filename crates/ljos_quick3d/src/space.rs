@@ -251,7 +251,20 @@ fn bind_scene_properties(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
             e.bind_initial(obj, prop, move |e| make(&place(e, obj)))
         })?;
     }
-    Ok(())
+    e.bind_on_read(obj, Node::SCENE_TRANSFORM.index, |e, obj, prop| {
+        e.bind_initial(obj, prop, move |e| scene_transform(e, &place(e, obj)))
+    })
+}
+
+/// `place` as a `matrix4x4`, row by row; [`Mat4`] is by columns.
+fn scene_transform(e: &Engine, place: &Place) -> Value {
+    let mut rows = [0.0; 16];
+    for (c, column) in place.world.0.iter().enumerate() {
+        for (r, x) in column.iter().enumerate() {
+            rows[r * 4 + c] = f64::from(*x);
+        }
+    }
+    ljos::item::matrix_value(e, rows)
 }
 
 fn inverse(m: Mat4) -> Mat4 {
