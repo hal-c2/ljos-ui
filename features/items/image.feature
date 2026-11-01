@@ -75,6 +75,13 @@ Feature: Image
     And the property "implicitWidth" of "empty" is 60
     And the property "implicitHeight" of "empty" is 40
 
+  Scenario: A TGA file loads as a PNG file does
+    Given a 30 by 10 image file "green.tga" filled with "#00ff00"
+    When the property "source" of "empty" is set to "green.tga"
+    Then the property "status" of "empty" is 1
+    And the property "implicitWidth" of "empty" is 30
+    And the property "implicitHeight" of "empty" is 10
+
   Scenario: A TIFF file loads as a PNG file does
     Given a 30 by 10 image file "green.tif" filled with "#00ff00"
     When the property "source" of "empty" is set to "green.tif"

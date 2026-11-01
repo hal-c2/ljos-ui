@@ -416,7 +416,10 @@ pub(crate) fn dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
             .dimensions()
             .ok();
     }
-    jpeg_frame(bytes).map(|f| (f.width, f.height))
+    if let Some(size) = jpeg_frame(bytes).map(|f| (f.width, f.height)) {
+        return Some(size);
+    }
+    Tga::of(bytes).map(|tga| (tga.width, tga.height))
 }
 
 /// Decodes `bytes` of `url`, then scales and clips them to `request`.
@@ -1318,7 +1321,7 @@ fn is_tiff(bytes: &[u8]) -> bool {
     bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*")
 }
 
-/// Decodes a PNG, JPEG, TIFF or GIF (its first frame), told apart by their first
+/// Decodes a PNG, JPEG, TIFF, GIF (its first frame) or TGA, told apart by their first
 /// bytes as Qt does (the file name's ending plays no part), with the
 /// pixels as the decoder gave them.
 fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
@@ -1336,6 +1339,9 @@ fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
             .pop()
             .ok_or_else(|| LoadError::decode(url, "Unable to read image data"))?;
         (width, height, 4, rgba)
+    } else if let Some(tga) = Tga::of(bytes) {
+        tga.decode(bytes)
+            .map_err(|reason| LoadError::decode(url, reason))?
     } else {
         return Err(LoadError::decode(url, "Unsupported image format"));
     };
@@ -1356,6 +1362,97 @@ fn decode_raw<'a>(url: &str, bytes: &[u8]) -> Result<Raw<'a>, LoadError> {
 
 /// Width, height, channels (3 or 4) and the straight pixels.
 type Decoded = (u32, u32, usize, Vec<u8>);
+
+/// The header of a TGA with no palette. The format has no signature, so this
+/// is asked last, and only of what all of the header makes sense for.
+struct Tga {
+    width: u32,
+    height: u32,
+    /// Bytes of a pixel: 1 grey, 2 is 5-5-5-1, 3 BGR, 4 BGRA.
+    depth: usize,
+    run_length: bool,
+    top_down: bool,
+    first_pixel: usize,
+}
+
+impl Tga {
+    fn of(bytes: &[u8]) -> Option<Self> {
+        let header = bytes.get(..18)?;
+        if header[1] != 0 || !matches!(header[2], 2 | 3 | 10 | 11) {
+            return None;
+        }
+        let grey = matches!(header[2], 3 | 11);
+        let depth = match (grey, header[16]) {
+            (true, 8) => 1,
+            (false, 15 | 16) => 2,
+            (false, 24) => 3,
+            (false, 32) => 4,
+            _ => return None,
+        };
+        let width = u32::from(u16::from_le_bytes([header[12], header[13]]));
+        let height = u32::from(u16::from_le_bytes([header[14], header[15]]));
+        (width > 0 && height > 0).then_some(Tga {
+            width,
+            height,
+            depth,
+            run_length: header[2] >= 10,
+            top_down: header[17] & 0x20 != 0,
+            first_pixel: 18 + usize::from(header[0]),
+        })
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<Decoded, String> {
+        if !fits((self.width, self.height)) {
+            return Err("Image is too large".to_owned());
+        }
+        let (width, height) = (self.width as usize, self.height as usize);
+        let cut_short = || "The file is cut short".to_owned();
+        let mut from = bytes.get(self.first_pixel..).ok_or_else(cut_short)?;
+        let mut rgba = Vec::with_capacity(width * height * 4);
+        while rgba.len() < width * height * 4 {
+            let (count, repeat) = if self.run_length {
+                let (&packet, rest) = from.split_first().ok_or_else(cut_short)?;
+                from = rest;
+                (usize::from(packet & 0x7f) + 1, packet & 0x80 != 0)
+            } else {
+                (1, false)
+            };
+            let left = width * height - rgba.len() / 4;
+            let count = count.min(left);
+            let stored = if repeat { 1 } else { count };
+            let pixels = from.get(..stored * self.depth).ok_or_else(cut_short)?;
+            from = &from[stored * self.depth..];
+            for _ in 0..if repeat { count } else { 1 } {
+                for pixel in pixels.chunks_exact(self.depth) {
+                    rgba.extend_from_slice(&self.pixel(pixel));
+                }
+            }
+        }
+        if !self.top_down {
+            let upside_down = rgba;
+            rgba = upside_down
+                .chunks_exact(width * 4)
+                .rev()
+                .flatten()
+                .copied()
+                .collect();
+        }
+        Ok((self.width, self.height, 4, rgba))
+    }
+
+    fn pixel(&self, p: &[u8]) -> [u8; 4] {
+        match self.depth {
+            1 => [p[0], p[0], p[0], 255],
+            2 => {
+                let v = u16::from_le_bytes([p[0], p[1]]);
+                let wide = |c: u16| (((c & 31) * 255 + 15) / 31) as u8;
+                [wide(v >> 10), wide(v >> 5), wide(v), 255]
+            }
+            3 => [p[2], p[1], p[0], 255],
+            _ => [p[2], p[1], p[0], p[3]],
+        }
+    }
+}
 
 /// A PNG kept smaller than it is, made smaller row by row as it is
 /// decoded: the picture is never whole in memory. None for what this does
@@ -1452,7 +1549,11 @@ fn decode_tiff(bytes: &[u8]) -> Result<Decoded, String> {
         other => return Err(format!("Unsupported TIFF layout {other:?}")),
     };
     // Extra sample 1 is alpha already multiplied in (TIFF 6.0, ExtraSamples).
-    let associated = dec.find_tag_unsigned::<u16>(Tag::ExtraSamples).ok().flatten() == Some(1);
+    let associated = dec
+        .find_tag_unsigned::<u16>(Tag::ExtraSamples)
+        .ok()
+        .flatten()
+        == Some(1);
     let wide = match dec.read_image().map_err(|e| e.to_string())? {
         DecodingResult::U8(data) => data,
         DecodingResult::U16(data) => data.into_iter().map(|v| (v >> 8) as u8).collect(),

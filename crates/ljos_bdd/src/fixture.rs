@@ -4,7 +4,7 @@
 use std::io::Cursor;
 
 /// An image file of one colour, encoded as its extension says (`.png`,
-/// `.jpg`/`.jpeg`, `.tif`). The colour is `#rrggbb`, or `#aarrggbb` for a PNG
+/// `.jpg`/`.jpeg`, `.tif`, `.tga`). The colour is `#rrggbb`, or `#aarrggbb` for a PNG
 /// whose alpha matters (a mask, say). A JPEG has no alpha.
 ///
 /// # Errors
@@ -20,10 +20,27 @@ pub fn image_file(name: &str, width: u32, height: u32, colour: &str) -> Result<V
         Some("png") => png(width, height, rgba),
         Some("jpg" | "jpeg") => jpeg(width, height, [rgba[1], rgba[2], rgba[3]]),
         Some("tif") => Ok(tiff(width, height, [rgba[1], rgba[2], rgba[3]])),
+        Some("tga") => Ok(tga(width, height, [rgba[1], rgba[2], rgba[3]])),
         _ => Err(format!(
-            "{name}: image files made here are .png, .jpg or .tif"
+            "{name}: image files made here are .png, .jpg, .tif or .tga"
         )),
     }
+}
+
+/// A run-length TGA, its rows from the bottom as is usual for one, written out
+/// by hand so the toolkit's reader is what is tested.
+fn tga(width: u32, height: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let mut out = vec![0, 0, 10, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    out.extend_from_slice(&(width as u16).to_le_bytes());
+    out.extend_from_slice(&(height as u16).to_le_bytes());
+    out.extend_from_slice(&[24, 0]);
+    let mut left = width as usize * height as usize;
+    while left > 0 {
+        let run = left.min(128);
+        out.extend_from_slice(&[0x80 | (run - 1) as u8, rgb[2], rgb[1], rgb[0]]);
+        left -= run;
+    }
+    out
 }
 
 /// An uncompressed little-endian RGB TIFF, one strip, written out by hand
