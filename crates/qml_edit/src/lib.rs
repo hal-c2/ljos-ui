@@ -72,7 +72,9 @@ pub use tree::{Object, Templates, TreeChange, diff, diff_with, keys, keys_with, 
 
 use qml_syntax::{
     Allocator, GetSpan, Span,
-    ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject, QmlQualifiedName},
+    ast::{
+        QmlBinding, QmlBindingValue, QmlMember, QmlObject, QmlPropertyDeclaration, QmlQualifiedName,
+    },
 };
 
 /// One step from an object to an object written in it.
@@ -190,13 +192,23 @@ pub enum Edit {
     /// the crate docs); otherwise it goes after the object's last binding
     /// or property that comes before its first child object, function or
     /// inline component.
+    ///
+    /// A name has one value, however it is written, because QML refuses a
+    /// file that gives it two. The value of a property the object declares
+    /// is in the declaration (`property int a: 1`), except an alias's, whose
+    /// `: b.c` says what it is an alias of, and a required property's, which
+    /// has none there. `font: x` takes the place of `font.bold: y` and
+    /// `font { }`. `font.bold` goes into the object that `font: Font { }`
+    /// holds, and is refused with [`Error::BoundWhole`] when `font` is an
+    /// expression, which has no parts to change.
     SetBinding {
         object: NodePath,
         name: String,
         value: String,
     },
     /// Take `name` out, found as [`SetBinding`](Self::SetBinding) finds
-    /// it. A group it leaves empty goes too, unless a comment is in it.
+    /// it. A group it leaves empty goes too, unless a comment is in it. A
+    /// declaration stays, without its value.
     RemoveBinding {
         object: NodePath,
         name: String,
@@ -258,6 +270,13 @@ pub enum Error {
     NotAChild(NodePath),
     #[error("{object} has no binding `{name}`")]
     NoBinding { object: NodePath, name: String },
+    /// `name` is part of `whole`, whose value is an expression.
+    #[error("{object} binds `{whole}` as a whole, so `{name}` cannot be set apart from it")]
+    BoundWhole {
+        object: NodePath,
+        name: String,
+        whole: String,
+    },
     #[error("an object cannot be moved into itself")]
     IntoItself,
     /// A layout the splicer does not handle yet. Nothing was changed.
@@ -527,46 +546,11 @@ impl<'s> Text<'s> {
                 value,
             } => {
                 let target = resolve(root, object)?;
-                if let Some(chain) = find_binding(target, name) {
-                    let (holder, index) = chain[chain.len() - 1];
-                    let QmlMember::Binding(b) = &holder.members[index] else {
-                        unreachable!("find_binding gives bindings")
-                    };
-                    let span = value_span(self.src, b);
-                    let indent = self.indent_at(b.span.start as usize).to_owned();
-                    let replacement = self.reindent(
-                        &Snippet {
-                            text: value.clone(),
-                            base: String::new(),
-                            gaps: None,
-                        },
-                        &indent,
-                    );
-                    return Ok(vec![Change {
-                        range: span.start as usize..span.end as usize,
-                        replacement,
-                    }]);
-                }
-                Ok(vec![self.new_binding(root, target, name, value)?])
+                self.set_binding(root, target, object, name, value)
             }
             Edit::RemoveBinding { object, name } => {
                 let target = resolve(root, object)?;
-                let chain = find_binding(target, name).ok_or_else(|| Error::NoBinding {
-                    object: object.clone(),
-                    name: name.clone(),
-                })?;
-                // A group the binding leaves empty goes with it, unless a
-                // comment of its own is in it.
-                let mut level = chain.len() - 1;
-                while level > 0 {
-                    let (group, index) = chain[level];
-                    if group.members.len() > 1 || self.has_own_comment(group, index) {
-                        break;
-                    }
-                    level -= 1;
-                }
-                let (holder, index) = chain[level];
-                Ok(vec![self.removal(holder, index)])
+                self.remove_binding(target, object, name)
             }
             Edit::InsertObject {
                 parent,
@@ -657,6 +641,127 @@ impl<'s> Text<'s> {
                 Ok(vec![cut, put])
             }
         }
+    }
+
+    fn set_binding(
+        &self,
+        root: &QmlObject<'_>,
+        target: &QmlObject<'_>,
+        path: &NodePath,
+        name: &str,
+        value: &str,
+    ) -> Result<Vec<Change>, Error> {
+        if let Some(chain) = find_binding(target, name) {
+            let (holder, index) = chain[chain.len() - 1];
+            let QmlMember::Binding(b) = &holder.members[index] else {
+                unreachable!("find_binding gives bindings")
+            };
+            let at = b.span.start as usize;
+            let range = value_span(self.src, b);
+            return Ok(vec![self.value_change(at, range, "", value)]);
+        }
+        if let Some((whole, rest, held)) = holds_whole(target, name) {
+            let QmlBindingValue::Object(inner) = held else {
+                return Err(Error::BoundWhole {
+                    object: path.clone(),
+                    name: name.to_owned(),
+                    whole: whole.to_owned(),
+                });
+            };
+            return self.set_binding(root, inner, path, rest, value);
+        }
+        if let Some(declared) = declared(target, name).filter(|p| !is_alias(p)) {
+            let at = declared.span.start as usize;
+            let (end, span_end) = (declared.name.span.end, declared.span.end);
+            if let Some(held) = &declared.value {
+                let range = held_span(self.src, held, end, span_end);
+                return Ok(vec![self.value_change(at, range, "", value)]);
+            }
+            if !declared.is_required {
+                let range = Span::new(end, end);
+                return Ok(vec![self.value_change(at, range, ": ", value)]);
+            }
+        }
+        let mut parts = Vec::new();
+        written_under(target, name, &mut parts);
+        let Some(((holder, index, written), rest)) = parts.split_first() else {
+            return Ok(vec![self.new_binding(root, target, name, value)?]);
+        };
+        let mut span = member_span(&holder.members[*index]);
+        // The `;` that ends it stays: something may follow on the line.
+        if self.src[..span.end as usize].ends_with(';') {
+            span.end -= 1;
+        }
+        let mut changes =
+            vec![self.value_change(span.start as usize, span, &format!("{written}: "), value)];
+        changes.extend(rest.iter().map(|(h, i, _)| self.removal(h, *i)));
+        Ok(changes)
+    }
+
+    /// The change that puts `value`, after `before`, in the place of `span`
+    /// in the member that starts at `at`.
+    fn value_change(&self, at: usize, span: Span, before: &str, value: &str) -> Change {
+        let indent = self.indent_at(at).to_owned();
+        let value = self.reindent(
+            &Snippet {
+                text: value.to_owned(),
+                base: String::new(),
+                gaps: None,
+            },
+            &indent,
+        );
+        Change {
+            range: span.start as usize..span.end as usize,
+            replacement: format!("{before}{value}"),
+        }
+    }
+
+    fn remove_binding(
+        &self,
+        target: &QmlObject<'_>,
+        path: &NodePath,
+        name: &str,
+    ) -> Result<Vec<Change>, Error> {
+        if let Some(chain) = find_binding(target, name) {
+            // A group the binding leaves empty goes with it, unless a
+            // comment of its own is in it.
+            let mut level = chain.len() - 1;
+            while level > 0 {
+                let (group, index) = chain[level];
+                if group.members.len() > 1 || self.has_own_comment(group, index) {
+                    break;
+                }
+                level -= 1;
+            }
+            let (holder, index) = chain[level];
+            return Ok(vec![self.removal(holder, index)]);
+        }
+        let none = || Error::NoBinding {
+            object: path.clone(),
+            name: name.to_owned(),
+        };
+        if let Some((_, rest, held)) = holds_whole(target, name) {
+            let QmlBindingValue::Object(inner) = held else {
+                return Err(none());
+            };
+            return self.remove_binding(inner, path, rest);
+        }
+        if let Some(declared) = declared(target, name).filter(|p| !is_alias(p))
+            && let Some(held) = &declared.value
+        {
+            let end = declared.name.span.end;
+            let span = held_span(self.src, held, end, declared.span.end);
+            return Ok(vec![Change {
+                range: end as usize..span.end as usize,
+                replacement: String::new(),
+            }]);
+        }
+        let mut parts = Vec::new();
+        written_under(target, name, &mut parts);
+        if parts.is_empty() {
+            return Err(none());
+        }
+        Ok(parts.iter().map(|(h, i, _)| self.removal(h, *i)).collect())
     }
 
     /// The change that writes the binding `name: value` into `object`,
@@ -1495,6 +1600,78 @@ fn find_binding<'b, 'a>(
         })
 }
 
+/// The property `object` declares by that name.
+fn declared<'b, 'a>(
+    object: &'b QmlObject<'a>,
+    name: &str,
+) -> Option<&'b QmlPropertyDeclaration<'a>> {
+    object.members.iter().find_map(|m| match m {
+        QmlMember::Property(p) if p.name.name == name => Some(p),
+        _ => None,
+    })
+}
+
+/// An alias's `: b.c` is what it refers to, not a value it holds.
+fn is_alias(property: &QmlPropertyDeclaration<'_>) -> bool {
+    property
+        .type_name
+        .as_ref()
+        .is_some_and(|t| t.name.parts.iter().copied().eq(["alias"]))
+}
+
+/// The first part of `name` that `object` gives a value of its own (`font`
+/// of `font.bold`), what is left of `name` after it, and the value.
+fn holds_whole<'b, 'a, 'n>(
+    object: &'b QmlObject<'a>,
+    name: &'n str,
+) -> Option<(&'n str, &'n str, &'b QmlBindingValue<'a>)> {
+    name.match_indices('.').find_map(|(dot, _)| {
+        let (whole, rest) = (&name[..dot], &name[dot + 1..]);
+        let held = match find_binding(object, whole) {
+            Some(chain) => {
+                let (holder, index) = chain[chain.len() - 1];
+                let QmlMember::Binding(b) = &holder.members[index] else {
+                    unreachable!("find_binding gives bindings")
+                };
+                &b.value
+            }
+            None => declared(object, whole)
+                .filter(|p| !is_alias(p))?
+                .value
+                .as_ref()?,
+        };
+        Some((whole, rest, held))
+    })
+}
+
+/// The members that give parts of `name` a value (`font.bold: x` and
+/// `font { }` for `font`): each with the object it is in, and `name` as that
+/// object calls it.
+fn written_under<'b, 'a, 'n>(
+    object: &'b QmlObject<'a>,
+    name: &'n str,
+    out: &mut Vec<(&'b QmlObject<'a>, usize, &'n str)>,
+) {
+    let parts = name.split('.').count();
+    let starts =
+        |of: &QmlQualifiedName<'_>| name.split('.').eq(of.parts.iter().take(parts).copied());
+    for (index, member) in object.members.iter().enumerate() {
+        match member {
+            QmlMember::Binding(b) if b.name.parts.len() > parts && starts(&b.name) => {
+                out.push((object, index, name));
+            }
+            QmlMember::Object(group) if is_group(group) => {
+                if group.type_name.parts.len() >= parts && starts(&group.type_name) {
+                    out.push((object, index, name));
+                } else if let Some(rest) = group_rest(member, name) {
+                    written_under(group, rest, out);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// What is left of `name` inside `member` if that is the group it starts
 /// with: `bold` for `font.bold` in `font { }`.
 fn group_rest<'n>(member: &QmlMember<'_>, name: &'n str) -> Option<&'n str> {
@@ -1525,17 +1702,22 @@ fn member_span(member: &QmlMember<'_>) -> Span {
 
 /// The text after a binding's `:`.
 fn value_span(source: &str, b: &QmlBinding<'_>) -> Span {
-    match &b.value {
+    held_span(source, &b.value, b.name.span.end, b.span.end)
+}
+
+/// Where a value is written, given where the name before it ends and where
+/// the member it is in ends.
+fn held_span(source: &str, value: &QmlBindingValue<'_>, name_end: u32, member_end: u32) -> Span {
+    match value {
         QmlBindingValue::Expression(e) => e.span(),
         QmlBindingValue::Statement(s) => s.span(),
         QmlBindingValue::Object(o) => o.span,
         QmlBindingValue::Objects(_) => {
-            let colon = b.name.span.end as usize
-                + source[b.name.span.end as usize..].find(':').unwrap_or(0);
+            let colon = name_end as usize + source[name_end as usize..].find(':').unwrap_or(0);
             let open = colon + source[colon..].find('[').unwrap_or(0);
-            let close = source[..b.span.end as usize]
+            let close = source[..member_end as usize]
                 .rfind(']')
-                .map_or(b.span.end as usize, |i| i + 1);
+                .map_or(member_end as usize, |i| i + 1);
             Span::new(open as u32, close as u32)
         }
     }

@@ -152,7 +152,7 @@ fn refusal(e: qml_edit::Error) -> SurfaceError {
     let code = match &e {
         E::Syntax(_) => ErrorCode::Syntax,
         E::NotFound(_) | E::NoBinding { .. } => ErrorCode::NotFound,
-        E::NotAChild(_) | E::IntoItself => ErrorCode::InvalidArgument,
+        E::NotAChild(_) | E::IntoItself | E::BoundWhole { .. } => ErrorCode::InvalidArgument,
         E::Unsupported(_) => ErrorCode::Unsupported,
         E::WouldBreak(_) => ErrorCode::WouldBreak,
     };

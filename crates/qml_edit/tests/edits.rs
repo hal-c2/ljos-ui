@@ -783,3 +783,145 @@ fn an_object_apart_in_an_empty_object_is_put_as_it_always_was() {
     let source = "Item {\n}\n";
     assert_eq!(put(source, 0, true), put(source, 0, false));
 }
+
+fn set_in(source: &str, name: &str, value: &str) -> Result<String, Error> {
+    apply(
+        source,
+        &Edit::SetBinding {
+            object: NodePath::root(),
+            name: name.into(),
+            value: value.into(),
+        },
+    )
+    .map(|applied| applied.text)
+}
+
+#[test]
+fn a_declared_value_is_replaced_and_kept_in_its_declaration() {
+    for (before, after) in [
+        (
+            "Item {\n    property int a: 1\n}\n",
+            "Item {\n    property int a: 5\n}\n",
+        ),
+        (
+            "Item {\n    property int a\n}\n",
+            "Item {\n    property int a: 5\n}\n",
+        ),
+        (
+            "Item { property int a: 1; x: 2 }\n",
+            "Item { property int a: 5; x: 2 }\n",
+        ),
+        (
+            "Item {\n    property int a\n    a: 1\n}\n",
+            "Item {\n    property int a\n    a: 5\n}\n",
+        ),
+    ] {
+        assert_eq!(set_in(before, "a", "5").unwrap(), after);
+    }
+}
+
+#[test]
+fn the_whole_takes_the_place_of_its_parts_wherever_they_are() {
+    for (before, name, after) in [
+        ("Item {\n    a { b: 1 }\n}\n", "a", "Item {\n    a: 5\n}\n"),
+        (
+            "Item {\n    a.b { c: 1 }\n}\n",
+            "a",
+            "Item {\n    a: 5\n}\n",
+        ),
+        (
+            "Item {\n    a { b { c: 1 } }\n}\n",
+            "a.b",
+            "Item {\n    a { b: 5 }\n}\n",
+        ),
+        (
+            "Item {\n    a.b.c: 1\n}\n",
+            "a.b",
+            "Item {\n    a.b: 5\n}\n",
+        ),
+        (
+            "Item { a.b: 1; a.c: 2; x: 3 }\n",
+            "a",
+            "Item { a: 5; x: 3 }\n",
+        ),
+        (
+            "Item {\n    a { b: 1 }\n    x: 2\n    a.c: 3\n}\n",
+            "a",
+            "Item {\n    a: 5\n    x: 2\n}\n",
+        ),
+    ] {
+        assert_eq!(set_in(before, name, "5").unwrap(), after, "{before}");
+    }
+}
+
+/// `ab` is no part of `a`, and `Behavior on x` is no value of `x`.
+#[test]
+fn what_only_looks_like_the_name_is_left_alone() {
+    assert_eq!(
+        set_in("Item {\n    ab.c: 1\n    a: 2\n}\n", "a", "5").unwrap(),
+        "Item {\n    ab.c: 1\n    a: 5\n}\n"
+    );
+    assert_eq!(
+        set_in("Item {\n    ab.c: 1\n}\n", "a", "5").unwrap(),
+        "Item {\n    ab.c: 1\n    a: 5\n}\n"
+    );
+    assert_eq!(
+        set_in("Item {\n    Behavior on x { }\n    x: 1\n}\n", "x", "5").unwrap(),
+        "Item {\n    Behavior on x { }\n    x: 5\n}\n"
+    );
+}
+
+#[test]
+fn a_part_goes_into_the_object_that_is_the_value() {
+    assert_eq!(
+        set_in("Item {\n    a { b: X { c: 1 } }\n}\n", "a.b.c", "5").unwrap(),
+        "Item {\n    a { b: X { c: 5 } }\n}\n"
+    );
+    assert_eq!(
+        set_in("Item {\n    a: X { }\n}\n", "a.b", "5").unwrap(),
+        set_in("Item {\n    a: X { }\n}\n", "a", "X { b: 5 }").unwrap()
+    );
+    assert!(matches!(
+        set_in("Item {\n    a: [ X { } ]\n}\n", "a.b", "5"),
+        Err(Error::BoundWhole { .. })
+    ));
+    assert!(matches!(
+        set_in("Item {\n    property var a: 1\n}\n", "a.b", "5"),
+        Err(Error::BoundWhole { .. })
+    ));
+    // An alias's target is no value: a part of it is set beside it.
+    assert_eq!(
+        set_in("Item {\n    property alias a: t.font\n}\n", "a.bold", "5").unwrap(),
+        "Item {\n    property alias a: t.font\n    a.bold: 5\n}\n"
+    );
+}
+
+#[test]
+fn removing_is_found_as_setting_is() {
+    let remove = |source: &str, name: &str| {
+        apply(
+            source,
+            &Edit::RemoveBinding {
+                object: NodePath::root(),
+                name: name.into(),
+            },
+        )
+        .map(|applied| applied.text)
+    };
+    assert_eq!(
+        remove("Item {\n    property int a: 1 + 2;\n}\n", "a").unwrap(),
+        "Item {\n    property int a;\n}\n"
+    );
+    assert_eq!(
+        remove("Item {\n    a: X { b: 1 }\n}\n", "a.b").unwrap(),
+        "Item {\n    a: X {}\n}\n"
+    );
+    assert_eq!(
+        remove("Item {\n    a.b: 1\n    a { c: 2 }\n    x: 3\n}\n", "a").unwrap(),
+        "Item {\n    x: 3\n}\n"
+    );
+    assert!(matches!(
+        remove("Item {\n    property alias a: b.c\n}\n", "a"),
+        Err(Error::NoBinding { .. })
+    ));
+}

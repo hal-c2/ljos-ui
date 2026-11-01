@@ -243,6 +243,191 @@ Feature: Editing QML with the authoring tools
         }
         """
 
+  # qml6 refuses to load a file that gives one name two values, in any of
+  # the forms these scenarios start from: `property int a: 1` with `a: 2`,
+  # `f { }` or `f.bold: x` with `f: y`, `f: x` with `f.bold: y`, and
+  # `o: Item { }` with `o.width: 5`. It loads an alias with a binding of its
+  # name, and a required property with one.
+  Rule: A name has one value, however it is written
+
+    Background:
+      Given the authoring tools are connected with the capabilities "fs"
+
+    Scenario Outline: The value there is is replaced, whatever kind it is
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            <before>
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"path": "root"}, "name": "a", "value": "5"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Item {
+            <after>
+        }
+        """
+
+      Examples:
+        | before                         | after                       |
+        | a: 1 // why                    | a: 5 // why                 |
+        | a: { return 1 }                | a: 5                        |
+        | a: Item { width: 3 }           | a: 5                        |
+        | a: [ Item { }, Item { } ]      | a: 5                        |
+        | a: [1, 2]                      | a: 5                        |
+        | a: ({ x: 1 })                  | a: 5                        |
+        | a: function () { return 1 }    | a: 5                        |
+        | property int a: 1 // why       | property int a: 5 // why    |
+        | property var a: { return 1 }   | property var a: 5           |
+        | property Item a: Item { }      | property Item a: 5          |
+        | property list<Item> a: [ Item { } ] | property list<Item> a: 5 |
+        | readonly property int a: 1     | readonly property int a: 5  |
+        | default property var a: 1      | default property var a: 5   |
+        | readonly property int a        | readonly property int a: 5  |
+        | property int a                 | property int a: 5           |
+        | a { b: 1 }                     | a: 5                        |
+        | a.b: 1                         | a: 5                        |
+
+    Scenario: All the parts of a name go when the whole takes their place
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Text {
+            font.bold: true
+            width: 10 // stays
+            font.pixelSize: 12
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"path": "root"}, "name": "font", "value": "Qt.font({})"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Text {
+            font: Qt.font({})
+            width: 10 // stays
+        }
+        """
+
+    Scenario: An object that is the value is where its members go
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            property Item a: Item { width: 3 }
+            b: Item {
+                height: 1
+            }
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"path": "root"}, "name": "b.height", "value": "2"}}
+        """
+      And the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"path": "root"}, "name": "a.width", "value": "5"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Item {
+            property Item a: Item { width: 5 }
+            b: Item {
+                height: 2
+            }
+        }
+        """
+
+    Scenario: A part of an expression's value is refused
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Text {
+            font: Qt.font({})
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"path": "root"}, "name": "font.bold", "value": "true"}}
+        """
+      Then the agent is refused with "invalid_argument"
+      And the refusal mentions "`font`"
+      And the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Text {
+            font: Qt.font({})
+        }
+        """
+
+    Scenario Outline: What says no value of its own gets a binding beside it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            <declaration>
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "set_binding", "object": {"path": "root"}, "name": "a", "value": "5"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Item {
+            <declaration>
+            a: 5
+        }
+        """
+
+      Examples:
+        | declaration             |
+        | required property int a |
+        | property alias a: b.c   |
+
+    Scenario: Taking out the value leaves the declaration
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            property int a: 1 // why
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "remove_binding", "object": {"path": "root"}, "name": "a"}}
+        """
+      Then the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Item {
+            property int a // why
+        }
+        """
+
+    Scenario: A declaration with no value has nothing to take out
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            property int a
+        }
+        """
+      When the agent calls the tool "qml_edit_apply" with:
+        """json
+        {"path": "Main.qml", "write": true, "edit": {"op": "remove_binding", "object": {"path": "root"}, "name": "a"}}
+        """
+      Then the agent is refused with "not_found"
+
   Rule: Without `write`, the agent is shown what would change
 
     Scenario: A dry run answers the splices and the text, and writes nothing
