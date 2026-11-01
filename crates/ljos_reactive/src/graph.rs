@@ -2723,6 +2723,15 @@ impl<V: Clone + 'static> Graph<V> {
         }
     }
 
+    /// Whether the property's binding is one [`Graph::mark_following`] says
+    /// only follows.
+    pub fn is_following(&self, n: NodeId) -> bool {
+        matches!(
+            self.inner.borrow().nodes.get(n).map(|node| &node.kind),
+            Some(Kind::Property(p)) if p.top().following
+        )
+    }
+
     /// Has the note handler ([`Graph::set_note_handler`]) told of each
     /// change of the property `n` from now on: a value written to it, a
     /// binding put on it, or a change reaching its binding. Told after the

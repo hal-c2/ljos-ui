@@ -60,3 +60,5 @@ value:load-handlers-positioner:number  NaN given to a child's width is ignored, 
 value:load-handlers-free:int-range  NaN given to a width is ignored, so no handler runs (features/items/geometry-nan.feature)
 value:step-free:number              a size bound to the value it has still follows its implicit size on Qt (features/layouts/placed-geometry-writes.feature)
 warning:binding-loop(ljos-only):width  both warn of a loop through an implicit size bound to the x its right anchor gives; Qt names implicitWidth, Ljós width (features/layouts/placed-geometry-writes.feature)
+value:load-handlers-free:number       a size given only NaN goes on following its implicit size (features/items/geometry-nan.feature)
+value:load-center-in:nan-ljos         an item centred in a parent of height NaN is at the lowest int (features/items/geometry-nan.feature)

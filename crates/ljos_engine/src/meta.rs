@@ -128,6 +128,11 @@ pub enum WriteFilter {
     /// it is stored. A write of the property it filters is refused
     /// ([`EngineError::WriteInOwnSetter`]); its reads are not tracked.
     Cx(CxWrite),
+    /// Ignores a NaN, as the setters of an item's geometry do in Qt. On its
+    /// own and not a [`WriteFilter::Native`] so that these properties, the
+    /// ones written the most, keep the short ways of a property with no
+    /// filter for every other number.
+    NotNaN,
 }
 /// A [`WriteFilter::Cx`] setter.
 pub type CxWrite = fn(&Cx<'_>, &Value) -> Result<Option<Value>, ConvertError>;

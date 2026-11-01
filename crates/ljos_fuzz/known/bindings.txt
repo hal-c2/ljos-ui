@@ -127,6 +127,7 @@ value:load:text-rounding              a number halfway between two shortest text
 value:load:empty-qt                   a string given a point is empty (features/language/property-conversions.feature); or a url given text that is no address is empty (features/language/url-values.feature)
 value:load:record-vs-string           a url is an object to a script (features/language/url-values.feature)
 value:step:record-vs-string           a url is an object to a script (features/language/url-values.feature)
+result:none/none:call:record-vs-string a url is an object to a script, here returned from a function (features/language/url-values.feature)
 value:load:nan-qt                     a url given text that is no address is empty (features/language/url-values.feature)
 value:load:encoding                   a url writes what an address cannot hold in percent codes (features/language/url-values.feature)
 value:step:encoding                   a url writes what an address cannot hold in percent codes (features/language/url-values.feature)
@@ -201,3 +202,9 @@ warning:assign(ljos-only):Cannot_assign_double_to_Text::HAlignment  NaN given to
 warning:assign(ljos-only):Unable_to_assign_bool_to_QFont  an empty list given an empty list is told as a change, so what reads it warns again (features/language/list-properties.feature)
 warning:assign(ljos-only):Unable_to_assign_int_to_QFont   a value refused while made, then replaced by a change handler, is not logged (features/bindings/errors-during-creation.feature)
 warning:assign(ljos-only):Unable_to_assign_double_to_QFont  a value refused while made, then replaced by a change handler, is not logged (features/bindings/errors-during-creation.feature)
+# Found once the warnings of a binding a script replaced stopped being logged, and geometry given
+# NaN stopped being what a case first differed in.
+warning:assign(ljos-only):Unable_to_assign_QColor_to_int      an outer handler runs before a child's binding, which it so replaces too early (features/bindings/errors-during-creation.feature)
+warning:assign(ljos-only):Unable_to_assign_QString_to_QRectF  an outer handler runs before a child's binding, which it so replaces too early (features/bindings/errors-during-creation.feature)
+value:load-handlers:nan-ljos          a handler that fails to write a later binding still takes it away, or runs at another time than on Qt (features/bindings/errors-during-creation.feature)
+value:alias-to-member:number          a handler run while made reads a later binding's member before it has run on Qt (features/bindings/errors-during-creation.feature)

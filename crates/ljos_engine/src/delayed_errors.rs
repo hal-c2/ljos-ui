@@ -225,6 +225,26 @@ impl Engine {
             .retain(|h| h.obj != obj || h.prop != prop || h.layer != layer);
     }
 
+    /// A script wrote `prop` of `obj`, which takes away its own binding
+    /// unless something is laid over it: what that binding holds is not
+    /// logged.
+    pub(crate) fn binding_written_over(&self, obj: ObjectId, prop: PropIndex) {
+        if self.inner.delayed.held.borrow().is_empty() {
+            return;
+        }
+        let overridden = self
+            .inner
+            .store
+            .borrow()
+            .objects
+            .get(obj)
+            .and_then(|h| h.node(prop))
+            .is_some_and(|n| self.inner.graph.override_count(n) > 0);
+        if !overridden {
+            self.forget_held_warnings(obj, prop, BindingLayer::OWN);
+        }
+    }
+
     /// What the property says of the value its binding on `obj`'s `prop`
     /// gave, after the run: held with what the run said while that is.
     pub(crate) fn warn_of_binding(&self, obj: ObjectId, prop: PropIndex, msg: String) {

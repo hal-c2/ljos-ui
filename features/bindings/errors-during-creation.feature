@@ -91,7 +91,38 @@ Feature: A binding that fails while its object is made is forgiven if it recover
   # warning:RangeError(ljos-only):function-call+loose-eq+rect.height.
   Rule: A binding replaced before the creation is complete is not logged
 
-    @backlog
+    # Found by ljos-fuzz (rotating), bucket
+    # warning:assign(ljos-only):Unable_to_assign_QString_to_QPointF.
+    Scenario: A string a point refuses, replaced by Component.onCompleted, is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: r
+          objectName: "root"
+          property string words: "text"
+          property point at: r.words
+          property real seen
+          Component.onCompleted: { r.at = Qt.point(2, 3); seen = at.x }
+        }
+        """
+      Then the property "seen" of "root" is 2
+      And the log has no warning matching "Unable to assign"
+
+    Scenario: A binding still failing beside the one replaced is logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: r
+          objectName: "root"
+          property real a: "#000000".a
+          property real b: "#000000".a
+          Component.onCompleted: r.a = 3
+        }
+        """
+      Then the log has 1 warning matching "Unable to assign"
+
     Scenario: A binding Component.onCompleted replaces is not logged
       Given the QML:
         """qml
@@ -123,7 +154,6 @@ Feature: A binding that fails while its object is made is forgiven if it recover
 
     # Backlog: an assignment that takes a binding away does not yet forget what the binding
     # holds, once it has run (bindings infrastructure).
-    @backlog
     Scenario: A binding whose value its property refuses, replaced by Component.onCompleted, is not logged
       Given the QML:
         """qml
@@ -138,7 +168,6 @@ Feature: A binding that fails while its object is made is forgiven if it recover
       Then the property "p" of "root" is 3
       And the log has no warning matching "Unable to assign"
 
-    @backlog
     Scenario: A binding a change handler replaces while the object is made is not logged
       Given the QML:
         """qml
@@ -153,6 +182,28 @@ Feature: A binding that fails while its object is made is forgiven if it recover
         """
       Then the property "flag" of "root" is true
       And the log has no warning matching "TypeError"
+
+  # Found by ljos-fuzz (rotating), buckets warning:assign(ljos-only):Unable_to_assign_QColor_to_int
+  # and warning:assign(ljos-only):Unable_to_assign_QString_to_QRectF: the handler runs before the
+  # child's binding on Ljós, so it replaces nothing yet.
+  Rule: A binding of a child that an outer handler replaces is not logged
+
+    @backlog
+    Scenario: A refused value of a child's binding an outer handler replaces is not logged
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property list<string> names: []
+          onNamesChanged: inner.n = 0
+          QtObject {
+            id: inner
+            property int n: Qt.hsla(0, 0, 0, 0)
+          }
+        }
+        """
+      Then the log has no warning matching "Unable to assign"
 
   # Found by ljos-fuzz (bindings), buckets value:int:size.width and
   # value:var(bool):default.
@@ -199,7 +250,6 @@ Feature: A binding that fails while its object is made is forgiven if it recover
 
     # Found by ljos-fuzz (bindings), bucket warning:assign(ljos-only):Unable_to_assign_int_to_QFont:
     # as a binding a change handler replaces, with a value refused in place of one that throws.
-    @backlog
     Scenario: A refused value a change handler replaces while the object is made is not logged
       Given the QML:
         """qml

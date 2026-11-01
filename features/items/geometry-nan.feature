@@ -9,7 +9,6 @@ Feature: An item's geometry is never NaN
   `x`, `y`, `width` and `height` given NaN keep the value they had: nothing changes and no
   change is told, whether a binding or a script gives it.
 
-  @backlog
   Scenario: A binding that gives NaN leaves the geometry where it was
     Given the QML:
       """qml
@@ -27,7 +26,6 @@ Feature: An item's geometry is never NaN
     And the property "moves" of "root" is 0
     And the property "yIsNaN" of "root" is false
 
-  @backlog
   Scenario: A script that gives NaN leaves the size where it was
     Given the QML:
       """qml
@@ -66,7 +64,6 @@ Feature: An item's geometry is never NaN
 
   # Found by ljos-fuzz (bindings), bucket warning:assign(ljos-only):Cannot_assign_double_to_Text::HAlignment,
   # (geometry) value:load-handlers-free:int-range: the handler that would fail never runs.
-  @backlog
   Scenario: The handler of a size given NaN does not run while the object is made
     Given the QML:
       """qml
@@ -88,7 +85,6 @@ Feature: An item's geometry is never NaN
 
   # Found by ljos-fuzz (geometry), bucket value:load-handlers-positioner:number: the width stays
   # 0, so the Column leaves the child out whatever height it is then given.
-  @backlog
   Scenario: A positioner's child whose width was given NaN stays out of its size
     Given the QML:
       """qml
@@ -108,3 +104,108 @@ Feature: An item's geometry is never NaN
       """
     When 50 milliseconds pass
     Then the property "settled" of "root" is 0
+
+  # Found by ljos-fuzz (geometry), bucket value:load-anchors:nan-ljos.
+  Scenario Outline: Anchors with a margin of NaN, <anchors>, read <seen>
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        width: 100
+        height: 100
+        property string seen
+        Rectangle {
+          id: box
+          <anchors>
+        }
+        Component.onCompleted: seen = box.x + " " + box.y + " " + box.width + " " + box.height
+      }
+      """
+    Then the property "seen" of "root" is "<seen>"
+
+    Examples:
+      | anchors                                                                 | seen            |
+      | anchors.top: parent.verticalCenter; anchors.margins: NaN                | 0 0 0 0         |
+      | anchors.top: parent.verticalCenter; anchors.topMargin: 3; anchors.margins: NaN | 0 53 0 0 |
+      | anchors.left: parent.left; anchors.right: parent.right; anchors.margins: NaN | 0 0 0 0    |
+      | anchors.fill: parent; anchors.margins: NaN                              | NaN NaN NaN NaN |
+
+  # Found by ljos-fuzz (geometry), bucket value:load-free:nan-qt.
+  Scenario: A size that follows its implicit size follows it to NaN
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        implicitWidth: parseFloat("")
+        property bool nan: isNaN(width)
+      }
+      """
+    Then the property "nan" of "root" is true
+
+  # Found by ljos-fuzz (geometry), bucket value:load-free:nan-qt.
+  Scenario: A size whose binding takes it back follows its implicit size to NaN
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        width: "#000000".a
+        implicitWidth: parseFloat("")
+        property bool nan: isNaN(width)
+      }
+      """
+    Then the property "nan" of "root" is true
+
+  # Found by ljos-fuzz (geometry), bucket value:load-handlers-center-in:nan-qt.
+  Scenario: An item centred in its parent given an offset of NaN afterwards is at NaN
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property bool nan: isNaN(box.y)
+        Rectangle {
+          id: box
+          anchors.centerIn: parent
+          Component.onCompleted: box.anchors.verticalCenterOffset = NaN
+        }
+      }
+      """
+    Then the property "nan" of "root" is true
+
+  # Found by ljos-fuzz (geometry), bucket value:load-center-in:nan-ljos: Qt rounds the centre to a
+  # whole number first, and NaN comes out as the lowest int.
+  @backlog
+  Scenario: An item centred in a parent of height NaN is at the lowest int
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        implicitHeight: parseFloat("")
+        Item {
+          id: box
+          anchors.centerIn: parent
+        }
+        property real at: box.y
+      }
+      """
+    Then the property "at" of "root" is -2147483648
+
+  # Found by ljos-fuzz (geometry), bucket value:load-handlers-free:number: a binding that gives
+  # NaN gives nothing, so the size goes on following its implicit size.
+  @backlog
+  Scenario: A size given only NaN goes on following its implicit size
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: box
+        objectName: "root"
+        height: ("x" * 1)
+        Component.onCompleted: box.implicitHeight = 4
+      }
+      """
+    Then the property "height" of "root" is 4

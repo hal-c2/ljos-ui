@@ -452,11 +452,22 @@ pub(crate) fn run(engine: &Engine, obj: ObjectId, state: &AnchorState) {
     for _ in 0..32 {
         state.set_flag(REENTERED_FLAG, false);
         if let Some((mut cx, h, v)) = compute(engine, obj, state) {
+            // A margin of NaN comes out of `fill` and `centerIn` as NaN, as
+            // it does on Qt; a line alone leaves the item where it is, as
+            // geometry given NaN does.
+            let lines_alone = !state.flag(FILL_FLAG) && !state.flag(CENTER_IN_FLAG);
             let apply_all = || -> Result<(), EngineError> {
-                apply(engine, obj, Item::WIDTH.index, &state.w, h.len)?;
-                apply(engine, obj, Item::X.index, &state.x, h.pos)?;
-                apply(engine, obj, Item::HEIGHT.index, &state.h, v.len)?;
-                apply(engine, obj, Item::Y.index, &state.y, v.pos)
+                apply(engine, obj, Item::WIDTH.index, &state.w, h.len, lines_alone)?;
+                apply(engine, obj, Item::X.index, &state.x, h.pos, lines_alone)?;
+                apply(
+                    engine,
+                    obj,
+                    Item::HEIGHT.index,
+                    &state.h,
+                    v.len,
+                    lines_alone,
+                )?;
+                apply(engine, obj, Item::Y.index, &state.y, v.pos, lines_alone)
             };
             // Length before position is visible to geometry handlers; with
             // no observer, one notification round has the same result.
@@ -784,7 +795,11 @@ fn apply(
     prop: PropIndex,
     slot: &Cell<Option<OverrideId>>,
     v: Option<f64>,
+    ignore_nan: bool,
 ) -> Result<(), EngineError> {
+    if ignore_nan && v.is_some_and(f64::is_nan) {
+        return Ok(());
+    }
     match (v, slot.get()) {
         (None, None) => Ok(()),
         (None, Some(id)) => {
@@ -802,6 +817,16 @@ fn apply(
         (Some(v), Some(id)) => {
             let cur = engine.untrack(|| engine.read(obj, prop)).to_number();
             if cur == v || (cur.is_nan() && v.is_nan()) {
+                return Ok(());
+            }
+            // A write is one the property refuses NaN of; a layer is not.
+            if v.is_nan() {
+                engine.remove_override(obj, prop, id, RestoreMode::None)?;
+                slot.set(Some(engine.push_hold(
+                    obj,
+                    prop,
+                    OverrideContent::Value(Value::Real(v)),
+                )?));
                 return Ok(());
             }
             if engine

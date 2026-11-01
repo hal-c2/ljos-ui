@@ -15,7 +15,7 @@ use ljos_reactive::NodeId;
 
 use crate::engine::Engine;
 use crate::ids::{ObjectId, PropIndex};
-use crate::meta::{PropertyAccess, PropertyFlags, Setter};
+use crate::meta::{PropertyAccess, PropertyFlags, Setter, WriteFilter};
 use crate::object::{ObjectHeader, QmlObject};
 use crate::types::TypeTag;
 use crate::value::Value;
@@ -28,6 +28,8 @@ pub struct NumberSlot {
     node: NodeId,
     /// An `int` takes `Value::Int`, anything else `Value::Real`.
     int: bool,
+    /// A NaN is not the slot's to write ([`WriteFilter::NotNaN`]).
+    not_nan: bool,
     field: Field,
 }
 
@@ -58,11 +60,18 @@ impl Engine {
         if p.is_alias() || p.flags.contains(PropertyFlags::GROUP) || h.makes_on_read(prop) {
             return None;
         }
+        let not_nan = matches!(
+            p.access,
+            PropertyAccess::Field {
+                write: Some(WriteFilter::NotNaN),
+                ..
+            }
+        );
         let field = match p.access {
             PropertyAccess::Field {
                 owner,
                 set,
-                write: None,
+                write: None | Some(WriteFilter::NotNaN),
                 ..
             } => Field::Native {
                 depth: depth_of(&*h.native, owner)?,
@@ -76,6 +85,7 @@ impl Engine {
             prop,
             node: h.node(prop)?,
             int,
+            not_nan,
             field,
         })
     }
@@ -91,7 +101,8 @@ impl Engine {
         if !matches!(
             (slot.int, &v),
             (false, Value::Real(_)) | (true, Value::Int(_))
-        ) {
+        ) || slot.refuses(&v)
+        {
             return Err(v);
         }
         let g = &self.inner.graph;
@@ -142,11 +153,18 @@ impl NumberSlot {
     /// would only widen; `None` for anything else, which the generic path
     /// converts.
     pub(crate) fn number(&self, v: &Value) -> Option<Value> {
+        if self.refuses(v) {
+            return None;
+        }
         match (self.int, v) {
             (false, Value::Real(_)) | (true, Value::Int(_)) => Some(v.clone()),
             (false, Value::Int(i)) => Some(Value::Real(f64::from(*i))),
             _ => None,
         }
+    }
+
+    fn refuses(&self, v: &Value) -> bool {
+        self.not_nan && matches!(v, Value::Real(n) if n.is_nan())
     }
 
     fn store(&self, h: &mut ObjectHeader, v: &Value) {

@@ -32,15 +32,15 @@ use crate::palette::Palette;
 pub struct Item {
     #[qml(base)]
     pub object: QtObject,
-    #[qml(notify, change = crate::scene::moved)]
+    #[qml(notify, not_nan, change = crate::scene::moved)]
     pub x: f64,
-    #[qml(notify, change = crate::scene::moved)]
+    #[qml(notify, not_nan, change = crate::scene::moved)]
     pub y: f64,
     #[qml(notify, change = crate::scene::reshaped)]
     pub z: f64,
-    #[qml(notify, reset = SIZE_RESET, change = crate::scene::reshaped)]
+    #[qml(notify, not_nan, reset = SIZE_RESET, change = crate::scene::reshaped)]
     pub width: f64,
-    #[qml(notify, reset = SIZE_RESET, change = crate::scene::reshaped)]
+    #[qml(notify, not_nan, reset = SIZE_RESET, change = crate::scene::reshaped)]
     pub height: f64,
     #[qml(notify)]
     pub implicit_width: f64,

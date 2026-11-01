@@ -55,6 +55,9 @@ struct FieldAttrs {
     holds: Option<String>,
     /// `write = path`: what every write goes through before it is stored.
     write: Option<syn::Path>,
+    /// `not_nan`: a NaN written is ignored, and every other value goes
+    /// through as it would with no filter.
+    not_nan: bool,
     /// `given = path`: told when the property is given a value, a binding
     /// or an override.
     given: Option<syn::Path>,
@@ -171,6 +174,8 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 f.holds = Some(m.value()?.parse::<LitStr>()?.value());
             } else if p.is_ident("write") {
                 f.write = Some(m.value()?.parse::<syn::Path>()?);
+            } else if p.is_ident("not_nan") {
+                f.not_nan = true;
             } else if p.is_ident("given") {
                 f.given = Some(m.value()?.parse::<syn::Path>()?);
             } else if p.is_ident("change") {
@@ -183,7 +188,7 @@ fn field_attrs(attrs: &[Attribute]) -> Result<FieldAttrs> {
                 });
             } else {
                 return Err(m.error(
-                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, given, change",
+                    "expected one of: base, notify, readonly, required, constant, group, lazy, list, append, insert, remove, skip, rename, enumeration, flags, reset, object, holds, write, not_nan, given, change",
                 ));
             }
             Ok(())
@@ -502,6 +507,9 @@ pub(crate) fn derive(input: &DeriveInput) -> Result<TokenStream2> {
         }
         if let Some(holds) = &a.holds {
             builder.push(quote!(.holds(#holds)));
+        }
+        if a.not_nan {
+            builder.push(quote!(.write(#e::WriteFilter::NotNaN)));
         }
         if let Some(path) = &a.write {
             if a.list {

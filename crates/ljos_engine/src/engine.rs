@@ -2062,6 +2062,9 @@ impl Engine {
             }
         };
         let r = self.write_filtered(obj, prop, v, (node, hook), how, internal);
+        if r.is_ok() && how == WriteKind::Imperative && !internal {
+            self.binding_written_over(obj, prop);
+        }
         if r.is_ok()
             && let Some(given) = given
         {
@@ -2149,10 +2152,7 @@ impl Engine {
             (&p.ty, v),
             (TypeTag::Real, Value::Real(_)) | (TypeTag::Int, Value::Int(_))
         );
-        let unfiltered = matches!(
-            p.access,
-            PropertyAccess::Field { write: None, .. } | PropertyAccess::Dynamic { .. }
-        );
+        let unfiltered = unfiltered(&p.access, v);
         let animation = matches!(how, WriteKind::Animation);
         if !same
             || !unfiltered
@@ -2197,10 +2197,7 @@ impl Engine {
                     | (TypeTag::Bool, Value::Bool(_))
                     | (TypeTag::String, Value::String(_))
             );
-            let unfiltered = matches!(
-                p.access,
-                PropertyAccess::Field { write: None, .. } | PropertyAccess::Dynamic { .. }
-            );
+            let unfiltered = unfiltered(&p.access, v);
             if !kind
                 || !unfiltered
                 || p.is_alias()
@@ -3964,6 +3961,22 @@ fn node_and_hook(
 /// What a write of `v` to a native field stores: `v`, what the field's
 /// [`WriteFilter`](crate::meta::WriteFilter) makes of it, or nothing if
 /// the filter refuses it.
+/// Whether a write of `v` has no filter to go through.
+fn unfiltered(access: &PropertyAccess, v: &Value) -> bool {
+    match access {
+        PropertyAccess::Field { write: None, .. } | PropertyAccess::Dynamic { .. } => true,
+        PropertyAccess::Field {
+            write: Some(WriteFilter::NotNaN),
+            ..
+        } => !is_nan(v),
+        _ => false,
+    }
+}
+
+fn is_nan(v: &Value) -> bool {
+    matches!(v, Value::Real(n) if n.is_nan())
+}
+
 fn filter_access(
     native: &dyn QmlObject,
     access: &PropertyAccess,
@@ -3977,6 +3990,7 @@ fn filter_access(
         } => match (write, find_native(native, owner)) {
             (WriteFilter::Native(write), Some(o)) => Ok(Filtered::Done(write(o, &v)?)),
             (WriteFilter::Cx(write), Some(_)) => Ok(Filtered::WithCx(write, v)),
+            (WriteFilter::NotNaN, _) => Ok(Filtered::Done((!is_nan(&v)).then_some(v))),
             (_, None) => Ok(Filtered::Done(Some(v))),
         },
         PropertyAccess::Group {
@@ -4188,8 +4202,10 @@ impl Wrapped {
             };
             // A binding that yields `undefined` takes the property back
             // and stays: its next value is given as any other.
+            let mut took_back = false;
             let v = match reset {
                 Some(reset) if reset.takes_back(&v) => {
+                    took_back = true;
                     let _t = Tracking::enter(&engine.inner.tracking);
                     engine.reset_value(obj, prop, reset)
                 }
@@ -4218,6 +4234,16 @@ impl Wrapped {
             let coerced = {
                 let store = engine.inner.store.borrow();
                 coerce_for(&store, Some(obj), ty, &v).and_then(|v| match store.objects.get(obj) {
+                    // What an item's size only follows is no value given:
+                    // an implicit size of NaN comes through, as on Qt.
+                    Some(h)
+                        if is_nan(&v)
+                            && (took_back
+                                || h.node(prop)
+                                    .is_some_and(|n| engine.inner.graph.is_following(n))) =>
+                    {
+                        Ok(Filtered::Done(Some(v)))
+                    }
                     Some(h) => Ok(filter_in(h, prop, v)?),
                     None => Ok(Filtered::Done(Some(v))),
                 })
