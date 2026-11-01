@@ -1931,6 +1931,20 @@ mod tests {
     }
 
     #[test]
+    fn an_application_changes_what_a_particle_looks_like() {
+        let (e, l) = (emitter(), Look::default());
+        let mut c = Counter::default();
+        let mut t = Table::default();
+        burst(&mut c, 1, &e, &l, &mut t, 0.0, 1, 0.0, None);
+        let p = t.slots[0].unwrap();
+        let mine = [Affector::Custom(CustomAffect(Arc::new(|_, _, c| {
+            c.color = [1, 2, 3, 4];
+        })))];
+        let seen = look(&p, 0, 0.5, 1, &l, &mine).unwrap();
+        assert_eq!(seen.color, [1, 2, 3, 4]);
+    }
+
+    #[test]
     fn a_shape_keeps_inside_its_extents() {
         let s = Shape::Sphere {
             extents: [10.0, 10.0, 10.0],

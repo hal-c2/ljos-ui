@@ -5,6 +5,8 @@
 #   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-lineparticle3d.html
 #   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-pointrotator3d.html
 #   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-repeller3d.html
+#   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-attractor3d.html
+#   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-targetdirection3d.html
 #   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-trailemitter3d.html
 #   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-dynamicburst3d.html
 #   https://doc.qt.io/qt-6/qml-qtquick3d-particles3d-spriteparticle3d.html
@@ -288,6 +290,84 @@ Feature: What happens to particles over time
       }
       """
     When the property "time" of "system" is set to 2000
+    Then the pixel at 100, 100 of the window is within 4 of "#000000"
+
+  Scenario: An attractor brings a particle to its place by the end of its life
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Particles3D
+      Rectangle {
+        width: 200; height: 200
+        View3D {
+          anchors.fill: parent
+          environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+          OrthographicCamera { z: 600 }
+          ParticleSystem3D {
+            objectName: "system"
+            running: false
+            useRandomSeed: false
+            SpriteParticle3D { id: kind; color: "#808080"; particleScale: 20; fadeInEffect: Particle3D.FadeNone; fadeOutEffect: Particle3D.FadeNone; maxAmount: 10 }
+            ParticleEmitter3D { particle: kind; lifeSpan: 1000; velocity: VectorDirection3D { direction: Qt.vector3d(0, 0, 0) } EmitBurst3D { amount: 1 } }
+            Attractor3D { x: 60; duration: 1000 }
+          }
+        }
+      }
+      """
+    When the property "time" of "system" is set to 500
+    Then the pixel at 130, 100 of the window is within 4 of "#808080"
+    And the pixel at 100, 100 of the window is within 4 of "#000000"
+
+  Scenario: A target direction sends a particle to a place
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Particles3D
+      Rectangle {
+        width: 200; height: 200
+        View3D {
+          anchors.fill: parent
+          environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+          OrthographicCamera { z: 600 }
+          ParticleSystem3D {
+            objectName: "system"
+            running: false
+            useRandomSeed: false
+            SpriteParticle3D { id: kind; color: "#808080"; particleScale: 20; fadeInEffect: Particle3D.FadeNone; fadeOutEffect: Particle3D.FadeNone; maxAmount: 10 }
+            ParticleEmitter3D { particle: kind; lifeSpan: 100000; velocity: TargetDirection3D { position: Qt.vector3d(0, 50, 0); normalized: false } EmitBurst3D { amount: 1 } }
+          }
+        }
+      }
+      """
+    When the property "time" of "system" is set to 1000
+    Then the pixel at 100, 50 of the window is within 4 of "#808080"
+    And the pixel at 100, 100 of the window is within 4 of "#000000"
+
+  Scenario: A dynamic burst has not come before its time
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Particles3D
+      Rectangle {
+        width: 200; height: 200
+        View3D {
+          anchors.fill: parent
+          environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+          OrthographicCamera { z: 600 }
+          ParticleSystem3D {
+            objectName: "system"
+            running: false
+            useRandomSeed: false
+            SpriteParticle3D { id: kind; color: "#808080"; particleScale: 20; fadeInEffect: Particle3D.FadeNone; fadeOutEffect: Particle3D.FadeNone; maxAmount: 10 }
+            ParticleEmitter3D { particle: kind; lifeSpan: 100000; emitRate: 0; velocity: VectorDirection3D { direction: Qt.vector3d(0, 0, 0) } DynamicBurst3D { amount: 1; time: 200 } }
+          }
+        }
+      }
+      """
+    When the property "time" of "system" is set to 100
     Then the pixel at 100, 100 of the window is within 4 of "#000000"
 
   Scenario: A model particle shows its delegate with the colour of the kind
