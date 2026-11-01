@@ -841,7 +841,7 @@ pub(crate) fn open(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> 
 }
 
 /// Whether `popup` is on its way out: its exit transition runs.
-pub(super) fn is_going(engine: &Engine, popup: ObjectId) -> bool {
+pub(crate) fn is_going(engine: &Engine, popup: ObjectId) -> bool {
     state_of(engine, popup).is_some_and(|s| s.phase.get() == Phase::Going)
 }
 

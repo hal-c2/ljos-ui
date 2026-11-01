@@ -1169,8 +1169,10 @@ fn item_hovered(e: &Engine, menu: ObjectId, item: ObjectId) {
     if !over || !cascades(e, menu) || !takes_input(e, item) {
         return;
     }
-    // The click that closes the menu ends over the item it chose.
-    if !popup::is_shown(e, menu) {
+    // The click that closes the menu ends over the item it chose, and
+    // making that current on the way out would take the keyboard from
+    // whoever has it now.
+    if !popup::is_shown(e, menu) || popup::is_going(e, menu) {
         return;
     }
     let (Some(st), Some(index)) = (state_of(e, menu), index_of(e, menu, item)) else {
