@@ -420,12 +420,11 @@ fn pack_writes(out: &[Varying]) -> String {
     let mut at = 0;
     for v in out {
         let _ = writeln!(s, "    ljospacked = {};", pack(v));
-        for c in 0..v.width {
+        for (c, packed) in COMPONENTS.iter().enumerate().take(v.width) {
             let (location, component) = slot(at + c);
             let _ = writeln!(
                 s,
-                "    ljosout.ljosvary{location}.{component} = ljospacked.{};",
-                COMPONENTS[c]
+                "    ljosout.ljosvary{location}.{component} = ljospacked.{packed};"
             );
         }
         at += v.width;

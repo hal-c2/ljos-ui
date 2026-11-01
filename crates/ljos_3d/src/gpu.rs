@@ -2344,6 +2344,7 @@ impl Renderer {
 
     /// Draws the depth the post-processing passes read: what writes depth
     /// in the picture, seen from the camera.
+    #[allow(clippy::too_many_arguments)]
     fn draw_depth(
         &self,
         device: &wgpu::Device,
