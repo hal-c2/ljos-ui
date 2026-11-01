@@ -11,28 +11,38 @@ with `LJOS_CUA_GPU=/dev/dri/renderD128` and a `LJOS_CUA_HOME` of their own: a sa
 has no adapter on this machine (`radeon` and `nvidia` drivers only, no `lavapipe`), and every 3D view
 stays empty without a word. The first pictures were taken that way, so read "empty" in them with care.
 
-C++ of an app's own: a mock the app ships is found (`backend_mock/Backend`). Otherwise
-`corpus/standins/<id>/` holds QML for it and `gallery:run` aliases each module there; what the app's
-`main` does to its root is in `ljos_gallery_backends::launcher_calls`.
+An app's C++ takes one of these routes, none written for one app in the toolkit, and a type on none
+of them is a compile error whose note says the project's CMake lists native sources:
+
+1. A mock the app ships is found (`backend_mock/Backend`).
+2. `corpus/standins/<id>/` holds QML for the module, and `gallery:run` aliases each module there.
+   With stand-ins present it sets `QML_XHR_ALLOW_FILE_READ`, so they can read the app's files.
+3. `Geometry` and `TextureData` are writable from QML, so a stand-in can replace a C++ subclass of them.
+4. A Rust crate in `examples/` registers the type, listed in `examples/gallery_backends`; what the
+   app's `main` does to its root is in `ljos_gallery_backends::launcher_calls`.
+5. `corpus/assets.json` and `mise run gallery:assets <id>` fetch what the build would download.
 
 Not every app in this answer is 3D: stocqt below is here because its `StockEngine` is the same case
 as robotarm's `Backend` and car-configurator's `AssetDownloader`.
 
 | App | Starts | Picture opened | What's wrong | Cause |
 |---|---|---|---|---|
-| dice | yes | yes: settings panel over an empty grey room, no table, no dice | nothing can be thrown; the table is not in view | `QtQuick3D.Physics` is not built, its types stand in as empty Items |
-| osmbuildings | yes | yes: map tiles and buildings from the network, fog to the horizon, with a white highlight at the lower left at the start | camera controls not driven | stand-ins in `corpus/standins/osmbuildings/` over `Geometry` and `TextureData` in QML; no Qt to compare with, judged against Qt's doc picture, taken from a steeper tilt where that highlight is off screen |
-| toycustomizer | yes | yes: "Tap to Start", no toy | no toy, nothing loads | assets are downloaded at build time; `QtQuick3D.Effects` and `QtQuick.Timeline` stand in as empty Items |
-| robotarm | yes (mock found) | yes, on the GPU: controls and circles at the right joints, no arm | the arm is not drawn; `+Material/` files are not chosen | `Model.source` takes only built-in meshes, `.mesh` files are left out without a word; file selectors not built |
-| car-configurator | yes (stand-in) | yes: "Built with Qt", "Initializing..." | stays at the splash | not yet known; material and environment properties missing (`clearcoatAmount`, `indexOfRefraction`, `specularAmount`, `blendMode`, `receivesReflections`, `fog`, ...), `MorphTarget`, `QtQuick.Timeline`, `Particles3D`, `Effects` |
-| fx-material-showroom | yes | yes: "Downloading Assets..." for ever | never reaches its screen | stand-in for `StudioApplication` and assets are there; the launcher's `downloadComplete()` not yet confirmed; `.mesh` as for robotarm |
+| dice | yes | yes: wooden table, rug and sky; a throw lands 11 dice in the table, settings panel works | nothing known | real physics through `QtQuick3D.Physics` on rapier3d |
+| osmbuildings | yes, release profile only | yes: map tiles and buildings from the network, fog to the horizon | a white highlight at the lower left at the start and roofs whiter than Qt's doc picture; dragging and zooming not driven; a debug build hits the JS heap limit; about 5.5 GB; while tiles arrive one turn of `onMapsDataReady` took 20.8 s, so a click timed out and two more were not seen | stand-ins over `Geometry` and `TextureData` in QML that build every mesh in script; the highlight's cause is specular at the shader's `FRESNEL_POWER` 1.0, judged against the doc picture, not against Qt running |
+| toycustomizer | yes | yes: the bear turns on its start page; the drive went Start, Choose, Back, Exit and each changed the page's items, its picture is of the start page it ended on | `ToyAnimations.qml:353` logs `name of undefined` twice, then recovers | the app's binding runs before `node.currentElement` is set; not checked against Qt |
+| robotarm | yes (mock found) | yes: the arm follows the sliders, claw and dark mode work, `+Material/` files chosen | nothing known | |
+| car-configurator | yes (stand-in, downloaded assets) | yes: car on the desert floor, a click opens its door | wall effects are absent; `ShapeAffector3D`'s `targetVelocity` has no effect; turn-budget warnings in debug; the drive reached only the door, the settings panel was not clicked | `WallEffect*` ships only compiled `.qsb` shaders and Ljós has no qsb reader (ARCHITECTURE.md, on purpose) |
+| fx-material-showroom | yes (stand-in) | yes: all 9 materials change the dragon; rain, smoke, heatwave, sparks and flames show; models None, Qt ball and dragon work | snow, dust and clouds faint or not visible in the shot taken, not settled; `floor.frag` names `paramsTexture`, which it never declares, so the studio floor's shader fails; a pale blue strip under the dragon is unexplained; the rabbit model was not clicked | black bands are the app's own `Scale` letterbox |
+| stocqt | yes (stand-in) | yes: list of stocks with logos, prices and changes | the chart is empty; the stand-in's data is the app's sample files, not live prices | `QtGraphs` is not part of Ljós and stands in as empty Items |
 
 | App | Native type | Route | State |
 |---|---|---|---|
 | robotarm | `Backend` | mock the app ships | works |
-| car-configurator | `AssetDownloader` | `corpus/standins/car-configurator` | loads; see the table |
-| fx-material-showroom | `StudioApplication` | `corpus/standins/fx-material-showroom`, `launcher_calls` | loads; see the table |
-| stocqt | `StockEngine`, `TimeFormatter` (QML singleton of module `StocQt`) | `corpus/standins/stocqt` | stand-in in; reads `data/*.json` by `XMLHttpRequest`, which needs `QML_XHR_ALLOW_FILE_READ`, not implemented yet |
+| car-configurator | `AssetDownloader` | `corpus/standins/car-configurator`, `gallery:assets` | works |
+| car-configurator | `ShapeAffector3D` | `examples/carconfigurator` | works, except as in the table |
+| fx-material-showroom | `StudioApplication` | `corpus/standins/fx-material-showroom`, `launcher_calls` | works |
+| stocqt | `StockEngine`, `TimeFormatter` (QML singleton of module `StocQt`) | `corpus/standins/stocqt`, reads `data/*.json` by `XMLHttpRequest` | works |
+| osmbuildings | `OSMGeometry`, `OSMManager`, tile textures | `corpus/standins/osmbuildings`, over `Geometry` and `TextureData` | works, as in the table |
 
 Not in the example list:
 
