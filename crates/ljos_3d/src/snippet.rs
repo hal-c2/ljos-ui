@@ -171,13 +171,7 @@ pub fn effect(
         .any(|w| w == "DEPTH_TEXTURE");
 
     let set = 0;
-    let mut header = header(set, uniforms, textures, &["INPUT"], depth);
-    if [fragment_src.as_str(), vertex_src.as_str()]
-        .iter()
-        .any(|src| mentions(src, "max") || mentions(src, "min"))
-    {
-        header.push_str(&exact_min_max());
-    }
+    let header = header(set, uniforms, textures, &["INPUT"], depth);
     let vs = stage_module(
         "vertex",
         ShaderStage::Vertex,
@@ -550,6 +544,103 @@ fn header(
     h
 }
 
+/// The author's code, then `ljosglobals`, which gives its globals their values.
+fn push_user(s: &mut String, user: &str) {
+    let (code, late) = late_globals(&strip_comments(user));
+    s.push_str(&code);
+    let _ = write!(s, "\nvoid ljosglobals() {{ {late} }}\n");
+}
+
+/// A snippet's globals with their values taken out, and the assignments that
+/// give them. A global made of a property is not a constant, and the front end
+/// would start it at 0 without a word; the wrapper runs these before `MAIN`.
+/// Lines stay where they are, for errors. What is declared in a preprocessor
+/// condition stays too, as an assignment would not be under that condition, and
+/// so does a declaration of several.
+fn late_globals(src: &str) -> (String, String) {
+    let mut code = String::with_capacity(src.len());
+    let mut late = String::new();
+    let (mut braces, mut conditions) = (0usize, 0usize);
+    let mut start = 0;
+    let mut at_line_start = true;
+    let mut chars = src.char_indices().peekable();
+    while let Some((i, c)) = chars.next() {
+        match c {
+            '#' if at_line_start && braces == 0 => {
+                let end = src[i..].find('\n').map_or(src.len(), |e| i + e);
+                let word = src[i + 1..end].trim_start();
+                if word.starts_with("if") {
+                    conditions += 1;
+                } else if word.starts_with("endif") {
+                    conditions = conditions.saturating_sub(1);
+                }
+                code.push_str(&src[start..end]);
+                start = end;
+                while chars.next_if(|&(at, _)| at < end).is_some() {}
+                continue;
+            }
+            '{' => braces += 1,
+            '}' => {
+                braces = braces.saturating_sub(1);
+                if braces == 0 {
+                    code.push_str(&src[start..=i]);
+                    start = i + 1;
+                }
+            }
+            ';' if braces == 0 => {
+                let statement = &src[start..i];
+                match (conditions == 0).then(|| split_global(statement)).flatten() {
+                    Some((left, name, value)) => {
+                        let _ = write!(late, "{name} = {value}; ");
+                        code.push_str(left);
+                        code.push(';');
+                        code.extend(value.chars().filter(|&c| c == '\n'));
+                    }
+                    None => {
+                        code.push_str(statement);
+                        code.push(';');
+                    }
+                }
+                start = i + 1;
+            }
+            _ => {}
+        }
+        at_line_start = c == '\n' || (at_line_start && c.is_whitespace());
+    }
+    code.push_str(&src[start..]);
+    (code, late.replace('\n', " "))
+}
+
+/// A statement outside any function as (what declares the global, its name,
+/// its value), if it is a global given a value that may be moved.
+fn split_global(statement: &str) -> Option<(&str, &str, &str)> {
+    let mut depth = 0usize;
+    let mut equals = None;
+    let bytes = statement.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        match b {
+            b'(' | b'[' => depth += 1,
+            b')' | b']' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => return None,
+            b'=' if depth == 0 && equals.is_none() => equals = Some(i),
+            _ => {}
+        }
+    }
+    let (left, value) = (&statement[..equals?], &statement[equals? + 1..]);
+    let mut words = left.split(is_break).filter(|w| !w.is_empty());
+    if words.clone().count() < 2
+        || words.any(|w| matches!(w, "const" | "in" | "out" | "uniform" | "layout" | "shared"))
+    {
+        return None;
+    }
+    let name = left
+        .split('[')
+        .next()?
+        .split(is_break)
+        .rfind(|w| !w.is_empty())?;
+    Some((left, name, value))
+}
+
 fn lines(s: &str) -> u32 {
     s.matches('\n').count() as u32
 }
@@ -587,7 +678,7 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          }\n",
     );
     let before = lines(&s);
-    s.push_str(&bone_normals(user));
+    push_user(&mut s, &bone_normals(user));
     s.push_str("\nstruct LjosVertex {\n    vec4 ljosclip; vec3 ljosworld; vec3 ljosnormal; vec4 ljosuvs;\n    vec3 ljostangent; vec3 ljosbinormal; vec4 ljoscolor;\n");
     for i in 0..locations(out) {
         let _ = writeln!(s, "    vec4 ljosvary{};", letters(i));
@@ -617,6 +708,7 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
     for v in out {
         let _ = writeln!(s, "    {} = {}(0.0);", v.name, glsl_type(v.width));
     }
+    s.push_str("    ljosglobals();\n");
     if defines(src, "MAIN") {
         s.push_str("    MAIN();\n");
     }
@@ -735,7 +827,7 @@ fn material_fragment(
     let mut s = String::from(header);
     s.push_str(FRAGMENT_KEYWORDS);
     let before = lines(&s);
-    s.push_str(user);
+    push_user(&mut s, user);
     s.push_str(
         "\nstruct LjosSurface {\n\
          \x20   vec4 ljosbase; vec3 ljosemissive; vec3 ljosnormal; vec3 ljosview;\n\
@@ -769,6 +861,7 @@ fn material_fragment(
     for (i, v) in ins.iter().enumerate() {
         s.push_str(&unpack(v, &format!("ljosvary{}", letters(i))));
     }
+    s.push_str("    ljosglobals();\n");
     if f.main {
         s.push_str("    MAIN();\n");
     }
@@ -836,7 +929,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
     let mut s = String::from(header);
     s.push_str("vec3 VERTEX; vec4 POSITION; vec2 INPUT_UV; vec2 TEXTURE_UV;\n");
     let before = lines(&s);
-    s.push_str(user);
+    push_user(&mut s, user);
     s.push_str("\nstruct LjosVertex {\n    vec4 ljosclip; vec4 ljosuvs;\n");
     for i in 0..locations(out) {
         let _ = writeln!(s, "    vec4 ljosvary{};", letters(i));
@@ -850,6 +943,7 @@ fn effect_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Strin
     for v in out {
         let _ = writeln!(s, "    {} = {}(0.0);", v.name, glsl_type(v.width));
     }
+    s.push_str("    ljosglobals();\n");
     if defines(src, "MAIN") {
         s.push_str("    MAIN();\n");
     }
@@ -869,7 +963,7 @@ fn effect_fragment(header: &str, user: &str, src: &str, ins: &[Varying]) -> (Str
     let mut s = String::from(header);
     s.push_str("vec2 INPUT_UV; vec2 TEXTURE_UV; vec4 FRAGCOLOR; vec4 FRAGCOORD;\n");
     let before = lines(&s);
-    s.push_str(user);
+    push_user(&mut s, user);
     s.push_str("\nvec4 ljoseffect(vec4 ljosuvs, vec4 ljosfragcoord");
     for i in 0..ins.len() {
         let _ = write!(s, ", vec4 ljosvary{}", letters(i));
@@ -882,6 +976,7 @@ fn effect_fragment(header: &str, user: &str, src: &str, ins: &[Varying]) -> (Str
     for (i, v) in ins.iter().enumerate() {
         s.push_str(&unpack(v, &format!("ljosvary{}", letters(i))));
     }
+    s.push_str("    ljosglobals();\n");
     if defines(src, "MAIN") {
         s.push_str("    MAIN();\n");
     }
@@ -1278,6 +1373,21 @@ mod tests {
 
     fn uniforms(list: &[(&str, UniformKind)]) -> Vec<(String, UniformKind)> {
         list.iter().map(|(n, k)| ((*n).to_owned(), *k)).collect()
+    }
+
+    #[test]
+    fn a_global_with_a_value_gets_it_in_ljosglobals() {
+        let (code, late) = late_globals(
+            "const float A = 1.0;\nfloat b = a * 2.0;\nvec2 c[2] = vec2[2](\n  vec2(0.0), vec2(1.0));\nfloat d, e = 1.0;\nstruct S { float f; };\nfloat g(float h) { float i = h; return i; }\n#ifdef X\nfloat j = k;\n#endif\n",
+        );
+        assert_eq!(
+            late,
+            "b =  a * 2.0; c = vec2[2](   vec2(0.0), vec2(1.0)); ".replace("c = vec2", "c =  vec2")
+        );
+        assert_eq!(
+            code,
+            "const float A = 1.0;\nfloat b ;\nvec2 c[2] ;\n\nfloat d, e = 1.0;\nstruct S { float f; };\nfloat g(float h) { float i = h; return i; }\n#ifdef X\nfloat j = k;\n#endif\n"
+        );
     }
 
     #[test]
