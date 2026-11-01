@@ -547,3 +547,63 @@ Feature: CustomMaterial runs the author's shader snippets
         """
       Then the pixel at 100, 50 of the window is "#ff0000"
       And the pixel at 100, 150 of the window is "#0000ff"
+
+    Scenario: A model's scale does not lengthen the normal a shader reads
+      Given the text file "normal.frag":
+        """
+        void MAIN() {
+            FRAGCOLOR = length(VAR_WORLD_NORMAL) > 1.5 ? vec4(1.0, 0.0, 0.0, 1.0) : vec4(0.0, 1.0, 0.0, 1.0);
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(0.5, 0.5, 0.5)
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                cullMode: Material.NoCulling
+                fragmentShader: "normal.frag"
+              }
+            }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is "#00ff00"
+
+    Scenario: The larger of nothing and what is not a number is nothing, as GLSL defines it
+      Given the text file "guarded.frag":
+        """
+        void MAIN() {
+            float guarded = max(0.0, zero / zero);
+            FRAGCOLOR = guarded == 0.0 ? vec4(0.0, 1.0, 0.0, 1.0) : vec4(1.0, 0.0, 0.0, 1.0);
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            OrthographicCamera { z: 600 }
+            Model {
+              source: "#Rectangle"
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                cullMode: Material.NoCulling
+                fragmentShader: "guarded.frag"
+                property real zero: 0
+              }
+            }
+          }
+        }
+        """
+      Then the pixel at 100, 100 of the window is "#00ff00"

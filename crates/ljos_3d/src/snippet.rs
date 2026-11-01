@@ -107,6 +107,7 @@ pub fn material(
 
     let set = 2;
     let mut header = header(set, uniforms, textures, &[], reads_depth);
+    header.push_str(&min_and_max(&[&vertex_src, &fragment_src]));
     if screen != Screen::None {
         // One picture serves both names; only the mip levels differ, and
         // those are made when either asks for them.
@@ -177,7 +178,8 @@ pub fn effect(
         .any(|w| w == "DEPTH_TEXTURE");
 
     let set = 0;
-    let header = header(set, uniforms, textures, &["INPUT"], depth);
+    let mut header = header(set, uniforms, textures, &["INPUT"], depth);
+    header.push_str(&min_and_max(&[&vertex_src, &fragment_src]));
     let vs = stage_module(
         "vertex",
         ShaderStage::Vertex,
@@ -696,6 +698,51 @@ fn the_scenes_probe(mut wgsl: String) -> String {
         .replace("cmf_ljosprobesampler", "cube_sampler")
 }
 
+/// GLSL defines max(x, y) as "y if x < y, otherwise x", and min the other
+/// way, which says what a NaN gives. A SPIR-V or GLES maximum leaves that
+/// open, and drivers differ: a shader that guards a 0/0 with max(0.0, ...)
+/// paints black on one and is right on another. Written out, it is the same
+/// on all of them. Only for the names a snippet uses, and only the integer
+/// vectors if it has any, since every function here is compiled for it.
+fn min_and_max(sources: &[&str]) -> String {
+    let says = |word: &str| sources.iter().any(|s| mentions(s, word));
+    let mut families = vec![("float", "vec"), ("int", "ivec"), ("uint", "uvec")];
+    families
+        .retain(|(_, vector)| *vector == "vec" || (2..=4).any(|n| says(&format!("{vector}{n}"))));
+    let mut out = String::new();
+    for (name, chosen) in [("max", "a < b"), ("min", "b < a")] {
+        if !says(name) {
+            continue;
+        }
+        let _ = writeln!(out, "#define {name} ljos{name}");
+        for scalar in ["float", "int", "uint"] {
+            let _ = writeln!(
+                out,
+                "{scalar} ljos{name}({scalar} a, {scalar} b) {{ return {chosen} ? b : a; }}"
+            );
+        }
+        for (scalar, vector) in &families {
+            for n in 2..=4 {
+                let parts = ["x", "y", "z", "w"][..n]
+                    .iter()
+                    .map(|c| format!("ljos{name}(a.{c}, b.{c})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let v = format!("{vector}{n}");
+                let _ = writeln!(
+                    out,
+                    "{v} ljos{name}({v} a, {v} b) {{ return {v}({parts}); }}"
+                );
+                let _ = writeln!(
+                    out,
+                    "{v} ljos{name}({v} a, {scalar} b) {{ return ljos{name}(a, {v}(b)); }}"
+                );
+            }
+        }
+    }
+    out
+}
+
 fn lines(s: &str) -> u32 {
     s.matches('\n').count() as u32
 }
@@ -782,7 +829,7 @@ fn material_vertex(header: &str, user: &str, src: &str, out: &[Varying]) -> (Str
          \x20   LjosVertex ljosout;\n\
          \x20   ljosout.ljosclip = POSITION;\n\
          \x20   ljosout.ljosworld = (ljosplace * vec4(VERTEX, 1.0)).xyz;\n\
-         \x20   ljosout.ljosnormal = ljoscofactor(ljosinstance) * (NORMAL_MATRIX * (ljoscofactor(ljosskin) * NORMAL));\n\
+         \x20   ljosout.ljosnormal = normalize(ljoscofactor(ljosinstance) * (NORMAL_MATRIX * (ljoscofactor(ljosskin) * NORMAL)));\n\
          \x20   ljosout.ljosuvs = vec4(UV0, UV1);\n\
          \x20   ljosout.ljostangent = (ljosplace * vec4(TANGENT, 0.0)).xyz;\n\
          \x20   ljosout.ljosbinormal = (ljosplace * vec4(BINORMAL, 0.0)).xyz;\n\
