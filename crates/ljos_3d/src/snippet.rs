@@ -133,7 +133,7 @@ pub fn material(
     let functions = Functions::of(&fragment_src);
     let mut wgsl = String::from(LIT);
     wgsl.push_str(&vs);
-    wgsl.push_str(&fs);
+    wgsl.push_str(&the_scenes_probe(fs));
     wgsl.push_str(&material_glue(&out, &ins, shaded, &functions));
     validate(&wgsl)?;
     let kind = if shaded {
@@ -306,6 +306,7 @@ struct Functions {
     point: bool,
     spot: bool,
     specular: bool,
+    probe: bool,
     post: bool,
 }
 
@@ -318,6 +319,7 @@ impl Functions {
             point: defines(src, "POINT_LIGHT"),
             spot: defines(src, "SPOT_LIGHT"),
             specular: defines(src, "SPECULAR_LIGHT"),
+            probe: defines(src, "IBL_PROBE"),
             post: defines(src, "POST_PROCESS"),
         }
     }
@@ -641,6 +643,19 @@ fn split_global(statement: &str) -> Option<(&str, &str, &str)> {
     Some((left, name, value))
 }
 
+/// A fragment stage's probe as the one lit.wgsl declares: two names for one
+/// binding would not validate.
+fn the_scenes_probe(mut wgsl: String) -> String {
+    while let Some(start) = wgsl.find("@group(3)") {
+        let end = wgsl[start..]
+            .find(';')
+            .map_or(wgsl.len(), |e| start + e + 1);
+        wgsl.replace_range(start..end, "");
+    }
+    wgsl.replace("cmf_ljosprobetexture", "specular_cube")
+        .replace("cmf_ljosprobesampler", "cube_sampler")
+}
+
 fn lines(s: &str) -> u32 {
     s.matches('\n').count() as u32
 }
@@ -814,7 +829,11 @@ vec3 VAR_WORLD_NORMAL; vec3 VAR_WORLD_TANGENT; vec3 VAR_WORLD_BINORMAL; vec3 VAR
 vec4 VAR_COLOR; vec3 VIEW_VECTOR; vec4 FRAGCOORD;\n\
 vec3 DIFFUSE; vec3 SPECULAR; vec3 EMISSIVE; vec3 LIGHT_COLOR; float LIGHT_ATTENUATION;\n\
 float SPOT_FACTOR; float SHADOW_CONTRIB; vec3 TO_LIGHT_DIR; vec3 TOTAL_AMBIENT_COLOR;\n\
-vec3 FRESNEL_CONTRIB; float AO_FACTOR; vec4 COLOR_SUM; vec4 FRAGCOLOR;\n";
+vec3 FRESNEL_CONTRIB; float AO_FACTOR; vec4 COLOR_SUM; vec4 FRAGCOLOR;\n\
+mat3 IBL_ORIENTATION; float IBL_EXPOSE; float IBL_HORIZON; float IBL_MAXMIPMAP;\n\
+layout(set = 3, binding = 0) uniform textureCube ljosprobetexture;\n\
+layout(set = 3, binding = 2) uniform sampler ljosprobesampler;\n\
+#define IBL_TEXTURE samplerCube(ljosprobetexture, ljosprobesampler)\n";
 
 fn material_fragment(
     header: &str,
@@ -911,6 +930,15 @@ fn material_fragment(
         call(&mut s, "ljospoint", f.point, "POINT_LIGHT");
         call(&mut s, "ljosspot", f.spot, "SPOT_LIGHT");
         call(&mut s, "ljosspecularlight", f.specular, "SPECULAR_LIGHT");
+        if f.probe {
+            s.push_str(
+                "void ljosprobe(mat3 ljosorientation, float ljosexpose, float ljoshorizon, float ljoslevels) {\n\
+                 \x20   IBL_ORIENTATION = ljosorientation; IBL_EXPOSE = ljosexpose;\n\
+                 \x20   IBL_HORIZON = ljoshorizon; IBL_MAXMIPMAP = ljoslevels;\n\
+                 \x20   IBL_PROBE();\n\
+                 }\n",
+            );
+        }
         s.push_str(
             "vec4 ljosfinish() {\n\
              \x20   EMISSIVE = EMISSIVE_COLOR;\n\
@@ -1301,6 +1329,9 @@ fn shaded_glue(f: &Functions) -> String {
          \x20       {specular}\n\
          \x20   }}\n\
          \x20   if frame.env.w > 0.5 {{\n\
+         \x20       {own_probe}\n\
+         \x20   }}\n\
+         \x20   if frame.env.w > 0.5 && {builtin_probe} {{\n\
          \x20       let horizon = frame.env.y;\n\
          \x20       let irradiance = textureSampleLevel(irradiance_cube, cube_sampler, probe_dir(n), 0.0).rgb\n\
          \x20           * (1.0 - horizon * (1.0 - n.y) * 0.5);\n\
@@ -1326,6 +1357,12 @@ fn shaded_glue(f: &Functions) -> String {
         directional = pick(f.directional, "cmf_ljosdirectional"),
         point = pick(f.point, "cmf_ljospoint"),
         spot_light = pick(f.spot, "cmf_ljosspot"),
+        own_probe = if f.probe {
+            "cmf_ljosprobe(mat3x3<f32>(frame.probe_rot[0].xyz, frame.probe_rot[1].xyz, frame.probe_rot[2].xyz), frame.env.x, frame.env.y, frame.env.z);"
+        } else {
+            ""
+        },
+        builtin_probe = !f.probe,
     )
 }
 
