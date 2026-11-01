@@ -45,6 +45,9 @@ pub struct View3D {
     /// Kept: every mode is drawn in paint order, as `Offscreen` is.
     #[qml(notify, enumeration = "RenderMode")]
     pub render_mode: i32,
+    /// The numbers of how this scene is drawn, made when first read.
+    #[qml(notify, readonly, object = "RenderStats")]
+    pub render_stats: Option<ObjectId>,
     /// The scene last painted, kept while a walk comes out the same so
     /// that its picture is not drawn again.
     #[qml(skip)]

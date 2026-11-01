@@ -8550,11 +8550,13 @@ module QtQuick3D
 		prop importScene QtQuick3D.Node named pointer
 		prop scene QtQuick3D.Node named pointer readonly
 		prop renderMode RenderMode
+		prop renderStats QtQuick3D.Helpers.RenderStats named pointer readonly
 		signal cameraChanged
 		signal environmentChanged
 		signal importSceneChanged
 		signal sceneChanged
 		signal renderModeChanged
+		signal renderStatsChanged
 		method pick
 		method pickAll
 		method rayPick
@@ -8615,6 +8617,7 @@ module QtQuick3D.Helpers
 	ProceduralTextureData QtQuick3D.Helpers.ProceduralTextureData
 	RandomInstancing QtQuick3D.Helpers.RandomInstancing
 	RenderStatistics QtQuick3D.Helpers.RenderStatistics
+	RenderStats QtQuick3D.Helpers.RenderStats
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
 	TorusGeometry QtQuick3D.Helpers.TorusGeometry
 	WasdController QtQuick3D/Helpers/WasdController.qml
@@ -9073,6 +9076,19 @@ module QtQuick3D.Helpers
 		signal gpuTimeChanged
 		signal gpuPostTimeChanged
 		method refresh
+	type QtQuick3D.Helpers.RenderStats RenderStats
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop fps QtQml.int named readonly
+		prop frameTime QtQml.real named readonly
+		prop maxFrameTime QtQml.real named readonly
+		prop renderTime QtQml.real named readonly
+		prop syncTime QtQml.real named readonly
+		signal fpsChanged
+		signal frameTimeChanged
+		signal maxFrameTimeChanged
+		signal renderTimeChanged
+		signal syncTimeChanged
 	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3

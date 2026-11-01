@@ -185,6 +185,7 @@ impl View3D {
         let node = cx
             .engine
             .create_native(crate::Node::default(), Some(cx.this))?;
+        crate::helpers::bind_render_stats(cx.engine, cx.this)?;
         cx.engine.set_internal(cx.this, View3D::SCENE, Some(node))
     }
 

@@ -19,6 +19,8 @@ pub struct RenderStats {
     /// long a frame is while the scene is animated, and a gap when it is
     /// not. 0 before the second scene.
     pub frame_seconds: f64,
+    /// The longest of those since [`take_longest_frame`] last asked.
+    pub longest_frame_seconds: f64,
     /// Seconds the GPU took for the last scene, its post-processing
     /// included, when the host measures it ([`set_gpu_seconds`]).
     pub gpu_seconds: Option<f64>,
@@ -40,6 +42,7 @@ static RECORD: Mutex<Record> = Mutex::new(Record {
         draw_calls: 0,
         shadow_passes: 0,
         frame_seconds: 0.0,
+        longest_frame_seconds: 0.0,
         gpu_seconds: None,
         gpu_post_seconds: None,
     },
@@ -57,6 +60,11 @@ pub fn snapshot() -> RenderStats {
     record().stats
 }
 
+/// The longest frame since the last call, which starts the next count.
+pub fn take_longest_frame() -> f64 {
+    std::mem::take(&mut record().stats.longest_frame_seconds)
+}
+
 /// Called by the renderer when it has drawn a scene.
 pub fn record_render(draw_calls: u32, shadow_passes: u64) {
     let mut r = record();
@@ -69,6 +77,7 @@ pub fn record_render(draw_calls: u32, shadow_passes: u64) {
         r.stats.frame_seconds = r
             .last
             .map_or(0.0, |before| now.duration_since(before).as_secs_f64());
+        r.stats.longest_frame_seconds = r.stats.longest_frame_seconds.max(r.stats.frame_seconds);
         r.last = Some(now);
     }
 }
