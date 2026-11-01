@@ -5270,6 +5270,8 @@ module QtQuick.Controls.Material
 		prototype QtQuick.Templates.ApplicationWindow named
 	type QtQuick/Controls/Material/Button.qml Button
 		prototype QtQuick.Templates.Button named
+		prop __hasIcon QtQml.bool named readonly
+		signal __hasIconChanged
 	type QtQuick/Controls/Material/CheckBox.qml CheckBox
 		prototype QtQuick.Templates.CheckBox named
 	type QtQuick/Controls/Material/Dialog.qml Dialog

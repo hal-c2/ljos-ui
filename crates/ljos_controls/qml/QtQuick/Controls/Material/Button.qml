@@ -17,8 +17,11 @@ T.Button {
     bottomInset: 6
     topPadding: 14
     bottomPadding: 14
-    leftPadding: 24
-    rightPadding: 16
+    // Less on the side of an icon, which has room of its own; less again when
+    // flat, with no edge for the text to keep clear of.
+    readonly property bool __hasIcon: icon.name !== "" || String(icon.source) !== ""
+    leftPadding: flat ? 12 : __hasIcon ? 16 : 24
+    rightPadding: flat ? (__hasIcon && text !== "" ? 16 : 12) : text !== "" ? 24 : 16
     spacing: 8
 
     icon.width: 24
@@ -39,7 +42,7 @@ T.Button {
         Rectangle {
             implicitWidth: 64
             implicitHeight: 40
-            radius: 4
+            radius: 20
             visible: !control.flat || control.down || control.checked || control.highlighted
                      || pressLayer.opacity > 0
             color: control.Material.buttonColor(

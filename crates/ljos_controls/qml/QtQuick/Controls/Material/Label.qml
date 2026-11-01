@@ -7,5 +7,5 @@ import QtQuick.Templates as T
 T.Label {
     id: control
 
-    color: control.Material.foreground
+    color: enabled ? control.Material.foreground : control.Material.hintTextColor
 }
