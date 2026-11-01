@@ -972,6 +972,7 @@ pub(crate) fn register(engine: &Engine) {
         })
         .ok()
     });
+    ljos_quick::register_backdrop(engine, MetaRef::Static(Window::static_meta()));
     ljos_quick::focus::register_focus_scope(engine, MetaRef::Static(Window::static_meta()));
     app::register(engine);
 }

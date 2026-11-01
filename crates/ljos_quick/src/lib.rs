@@ -128,7 +128,8 @@ pub use input::{
 pub use input::{ScrollPhase, WheelEvent};
 pub use item::{
     AnchorLine, AnchorProps, Anchors, Edge, Item, ItemLayer, WindowPosition, effective_margin,
-    init_item, is_item, local_transform, map_to_scene, register_window_position, scene_transform,
+    init_item, is_item, local_transform, map_to_scene, register_backdrop, register_window_position,
+    scene_transform,
 };
 pub use item_picture::{ItemPicture, PictureArea, item_picture};
 pub use layer::{

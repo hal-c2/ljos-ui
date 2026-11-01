@@ -1067,6 +1067,27 @@ fn point_of(x: &Value, y: &Value) -> Point {
     }
 }
 
+#[derive(Default)]
+struct Backdrops(std::cell::RefCell<Vec<ljos_engine::MetaRef>>);
+
+/// Makes the items of type `meta` paint under all their children, those with
+/// a negative `z` too. A window is one: its colour is what it is cleared to.
+pub fn register_backdrop(engine: &Engine, meta: ljos_engine::MetaRef) {
+    engine.extension::<Backdrops>().0.borrow_mut().push(meta);
+}
+
+pub(crate) fn is_backdrop(engine: &Engine, obj: ObjectId) -> bool {
+    let Some(meta) = engine.meta_of(obj) else {
+        return false;
+    };
+    engine
+        .extension::<Backdrops>()
+        .0
+        .borrow()
+        .iter()
+        .any(|m| meta.inherits(m))
+}
+
 /// Where the window an item is shown in is on the desktop, as a
 /// [`WindowPosition`] hook gives it.
 pub type WindowPosition = fn(&Engine, ObjectId) -> Option<Point>;

@@ -126,6 +126,8 @@ pub struct RenderNode {
     pub(crate) paint_order: Box<[NodeId]>,
     /// How many leading entries of `paint_order` have `z < 0`.
     pub(crate) neg_count: usize,
+    /// Own content comes before every child, whatever its `z`.
+    pub(crate) backdrop: bool,
     pub(crate) local: Affine,
     pub(crate) world: Affine,
     pub(crate) size: Size,
@@ -165,6 +167,7 @@ impl RenderNode {
             children: SmallVec::new(),
             paint_order: Box::new([]),
             neg_count: 0,
+            backdrop: false,
             local: Affine::IDENTITY,
             world: Affine::IDENTITY,
             size: Size::ZERO,
@@ -674,6 +677,19 @@ impl RenderTree {
         });
     }
 
+    /// Make the node's own content come before all its children, those with
+    /// a negative `z` too: what a window is cleared to, not an item's paint.
+    pub fn set_backdrop(&mut self, id: NodeId, backdrop: bool) {
+        let changed = self.with_node(id, |n| {
+            let changed = n.backdrop != backdrop;
+            n.backdrop = backdrop;
+            changed
+        });
+        if changed {
+            self.nodes[id].dirty.insert(Dirty::ORDER | Dirty::A11Y);
+        }
+    }
+
     /// Set `z`. Re-sorts the parent's paint order, nothing else.
     pub fn set_z(&mut self, id: NodeId, z: f32) {
         let mut parent = None;
@@ -799,8 +815,12 @@ impl RenderTree {
             .map(|(i, c)| (self.nodes[*c].z, i, *c))
             .collect();
         keyed.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
-        let neg = keyed.iter().take_while(|k| k.0 < 0.0).count();
         let n = &mut self.nodes[id];
+        let neg = if n.backdrop {
+            0
+        } else {
+            keyed.iter().take_while(|k| k.0 < 0.0).count()
+        };
         n.paint_order = keyed.into_iter().map(|k| k.2).collect();
         n.neg_count = neg;
         n.dirty.remove(Dirty::ORDER);

@@ -2141,6 +2141,9 @@ impl QuickScene {
         init_item(engine, obj)?;
         let node = self.tree.insert_child(parent_node, index);
         let kind = class.kind;
+        if kind == Kind::Rectangle && crate::item::is_backdrop(engine, obj) {
+            self.tree.set_backdrop(node, true);
+        }
         let may_scroll =
             parent.is_some_and(|p| self.items.get(p).is_some_and(|r| r.class.flickable));
         if kind == Kind::Editor {
