@@ -203,7 +203,8 @@ ljos-ui/
 │   ├── ljos_controls/          QtQuick.Controls types + clean-room Basic style
 │   ├── ljos_text/              TextEngine (Parley + Fontique), glyph atlas, elide,
 │   │                           RichDoc + front ends, TextModel (editing, undo)
-│   ├── ljos_input/             InputRouter, FocusTree, key dispatch, Shortcut,
+│   ├── ljos_input/             (not yet a crate: the `focus` and `keys` modules of ljos_quick,
+│   │                           section 11) InputRouter, FocusTree, key dispatch, Shortcut,
 │   │                           gesture arena, ScrollPhysics, TextInputClient
 │   ├── ljos_a11y/              a11y pass, role table, live regions, SystemPrefs model
 │   ├── ljos_design/            design rules (codes, limits), colour maths, motion and palette tokens; no deps
@@ -221,6 +222,12 @@ ljos-ui/
 │   │                           media clock, null sink [features decode, audio] (7.6)
 │   ├── ljos_lottie/            Qt.labs.lottieqt: LottieAnimation, own Lottie model (7.7)
 │   ├── ljos_jsonmodel/         Ljos.Models: JsonListModel, rows from a JSON document (M2)
+│   ├── ljos_folderlistmodel/   Qt.labs.folderlistmodel: a read-only list model of a folder's files
+│   ├── ljos_localstorage/      QtQuick.LocalStorage: SQLite databases opened by name (bundled SQLite)
+│   ├── ljos_positioning/       QtPositioning: coordinates, shapes, PositionSource
+│   ├── ljos_timeline/          QtQuick.Timeline: keyframes driven by a frame number
+│   ├── ljos_studio/            QtQuick.Studio.Components and DesignEffects, built in as IR
+│   ├── ljos_design_qml/        Ljos.Design: the design tokens as QML singletons and transitions
 │   ├── ljos_3d/                the scene a View3D shows and its wgpu renderer [feature gpu];
 │   │                           no egui, no engine (7.8)
 │   ├── ljos_quick3d/           QtQuick3D types writing an ljos_3d scene (7.8)
@@ -234,6 +241,13 @@ ljos-ui/
 │   ├── ljos_test/              kittest harness wrapper, a11y audit, QtTest TestCase runner
 │   ├── ljos_bdd/               cucumber World, Backend trait, Ljós + Qt backends, steps
 │   ├── ljos_ratchet/           acceptance suites' PIN, globs and RATCHET, judged without a backend
+│   ├── ljos_fuzz/              differential, property-based testing of Ljós against Qt (`mise run fuzz:qt`)
+│   ├── ljos_bench/             `ljos bench`: apps measured on Ljós and Qt inside a cgroup limit
+│   ├── ljos_child/             a child process killed and reaped on drop
+│   ├── ljos_aot/               bindings and handlers of shipped QML compiled to Rust at build time (5.4)
+│   ├── ljos_facade_aot/        build check: an app with its own native module, QML compiled ahead of time
+│   ├── ljos_facade_dev/        build check: the facade with exactly the features a dev build with hot reload needs
+│   ├── ljos_web/               what the `ljos` facade is on wasm32 (struct, tellings and paint on a page)
 │   ├── ljos/                   facade: re-exports, prelude, module! registration
 │   └── ljos_cli/               `ljos` binary
 ├── .mcp.json                   `ljos mcp` for agents working in this repo (section 19)
