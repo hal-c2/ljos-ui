@@ -226,16 +226,21 @@ ljos-ui/
 │   ├── ljos_localstorage/      QtQuick.LocalStorage: SQLite databases opened by name (bundled SQLite)
 │   ├── ljos_positioning/       QtPositioning: coordinates, shapes, PositionSource
 │   ├── ljos_timeline/          QtQuick.Timeline: keyframes driven by a frame number
+│   ├── ljos_xml/               QtQml.XmlListModel: a read-only list model over an XML document
 │   ├── ljos_studio/            QtQuick.Studio.Components and DesignEffects, built in as IR
 │   ├── ljos_design_qml/        Ljos.Design: the design tokens as QML singletons and transitions
 │   ├── ljos_3d/                the scene a View3D shows and its wgpu renderer [feature gpu];
 │   │                           no egui, no engine (7.8)
 │   ├── ljos_quick3d/           QtQuick3D types writing an ljos_3d scene (7.8)
+│   ├── ljos_physics/           a rigid body world over rapier in QtQuick3D.Physics's terms; no engine, QML or GPU
+│   ├── ljos_quick3d_physics/   QtQuick3D.Physics: bodies, shapes and a world that moves a scene's nodes
 │   ├── ljos_shell/             app runner: eframe (M0) → own egui-winit loop, GL or wgpu (M2)
 │   ├── ljos_dev/               watcher, devtools WebSocket, error and `top` overlays,
 │   │                           MCP inspector [feature "mcp"]
 │   ├── ljos_mcp_core/          McpSurface, ToolRegistry, caps/tokens, snapshot renderer (rmcp)
 │   ├── ljos_mcp_author/        `ljos mcp` authoring tools (CLI only)
+│   ├── ljos_audit/             the design audit: ljos_design's rules checked on a laid-out, drawn scene
+│   ├── ljos_blocks/            an application's functional blocks and contracts, read from its type dump and qmldir
 │   ├── ljos_drive/             scene driver: settle, advance a test clock, find, input,
 │   │                           a11y and pictures by one set of rules (no egui, no parser)
 │   ├── ljos_test/              kittest harness wrapper, a11y audit, QtTest TestCase runner
@@ -248,6 +253,7 @@ ljos-ui/
 │   ├── ljos_facade_aot/        build check: an app with its own native module, QML compiled ahead of time
 │   ├── ljos_facade_dev/        build check: the facade with exactly the features a dev build with hot reload needs
 │   ├── ljos_web/               what the `ljos` facade is on wasm32 (struct, tellings and paint on a page)
+│   ├── ljos_facade_app/        build check: native types, a singleton and a module against the facade alone (MIGRATION.md 6)
 │   ├── ljos/                   facade: re-exports, prelude, module! registration
 │   └── ljos_cli/               `ljos` binary
 ├── .mcp.json                   `ljos mcp` for agents working in this repo (section 19)
