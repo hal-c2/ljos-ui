@@ -74,10 +74,7 @@ Feature: A mesh made from lists
                   Qt.vector3d(-80, -40, 0), Qt.vector3d(-10, -40, 0), Qt.vector3d(-45, 40, 0),
                   Qt.vector3d(10, -40, 0), Qt.vector3d(80, -40, 0), Qt.vector3d(45, 40, 0)
                 ]
-                subsets: [
-                  ProceduralMeshSubset { offset: 0; length: 3 },
-                  ProceduralMeshSubset { offset: 3; length: 3 }
-                ]
+                subsets: [ProceduralMeshSubset { offset: 0; length: 3 }, ProceduralMeshSubset { offset: 3; length: 3 }]
               }
               materials: [
                 DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "red"; cullMode: DefaultMaterial.NoCulling },
