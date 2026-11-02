@@ -129,7 +129,8 @@ impl Fan {
 /// A square 100 units across, around its origin and facing +Z, with two
 /// UV sets (`features/quick3d/uv-sets.feature`): the first puts every
 /// corner in the top left quadrant of a picture, the second spreads the
-/// whole picture over it, its top at the square's top.
+/// whole picture over it, its top at the square's top. A geometry's v runs
+/// up the picture.
 #[derive(Debug, Default, QmlObject)]
 #[qml(module = "Fixtures", name = "TwoUvSquare", extends = Geometry)]
 pub(super) struct TwoUvSquare {
@@ -150,9 +151,9 @@ impl TwoUvSquare {
                     50.0 * y,
                     0.0,
                     0.25,
-                    0.25,
+                    0.75,
                     (x + 1.0) / 2.0,
-                    (1.0 - y) / 2.0,
+                    (1.0 + y) / 2.0,
                 ]
             })
             .collect();
