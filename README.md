@@ -10,7 +10,7 @@ Ljós is a Rust UI toolkit that runs QML, aiming for compatibility with Qt Quick
 - Erlang-style fault isolation;
 - MCP tooling for coding agents out of the box.
 
-Status: early scaffolding (milestone M0). See `docs/ARCHITECTURE.md`.
+Status: under active development. The engine, the Qt Quick and Controls types, the MCP tooling and the QML test and Gherkin suites run today; `docs/ARCHITECTURE.md` has the design and its milestones (section 20).
 
 Ljós is a clean-room implementation: see `CLEAN_ROOM.md`.
 
