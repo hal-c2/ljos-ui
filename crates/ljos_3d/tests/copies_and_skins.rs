@@ -19,15 +19,8 @@ use ljos_3d::{
 const SIDE: u32 = 200;
 const CLEAR: [u8; 3] = [30, 30, 30];
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 fn save(name: &str, picture: &Rgba) {
     let Some(dir) = std::env::var_os("LJOS_3D_PICTURES") else {
@@ -157,6 +150,7 @@ fn ten_thousand_copies_are_one_draw() {
     save("instancing-count-override.png", &p);
     let mut target = Target::new(&gpu.device, &gpu.renderer, [SIDE, SIDE]);
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
+    let gpu = &mut gpu.offscreen;
     gpu.renderer
         .render(&gpu.device, &gpu.queue, &mut encoder, &s, &mut target);
     assert_eq!(target.drawn_models(), 1);

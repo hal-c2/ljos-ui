@@ -8,7 +8,6 @@ use std::time::Instant;
 
 use ljos_3d::math::Vec3;
 use ljos_3d::mesh::Mesh;
-use ljos_3d::offscreen::Offscreen;
 use ljos_3d::{
     Background, Camera, Color, ComponentType, CustomGeometry, DefaultMaterial, Environment,
     LightProbe, Lighting, Material, MeshSource, Model, Node, NodeKind, PixelEncoding, Primitive,
@@ -18,15 +17,8 @@ use ljos_3d::{
 
 const SIDE: u32 = 200;
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 #[derive(Debug)]
 struct Pixels {

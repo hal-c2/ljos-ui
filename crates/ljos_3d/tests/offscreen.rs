@@ -8,15 +8,8 @@ use spike_scene::{CLEAR, HEIGHT, WIDTH, grey, lit_cube};
 
 /// No adapter (a machine with no GPU driver and no software Vulkan or GL)
 /// is said, not failed: the scene is not what is wrong there.
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 #[test]
 fn a_lit_cube_under_a_perspective_camera() {
@@ -75,7 +68,7 @@ fn an_unchanged_scene_is_not_drawn_again() {
         queue,
         mut renderer,
         ..
-    } = gpu;
+    } = gpu.offscreen;
     let mut scene = lit_cube(grey());
     let mut target = Target::new(&device, &renderer, [WIDTH, HEIGHT]);
     let mut draw = |scene: &ljos_3d::Scene, target: &mut Target| {

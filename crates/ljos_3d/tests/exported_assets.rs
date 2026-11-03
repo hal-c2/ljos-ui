@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use ljos_3d::gltf::{self, Asset};
 use ljos_3d::math::Vec3;
-use ljos_3d::offscreen::{Offscreen, Rgba};
+use ljos_3d::offscreen::Rgba;
 use ljos_3d::{Background, Camera, Color, Environment, Light, Node, NodeKind, Scene, Transform};
 
 const SIDE: u32 = 200;
@@ -38,15 +38,8 @@ fn load(name: &str) -> Option<Asset> {
     Some(asset)
 }
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 fn save(name: &str, picture: &Rgba) {
     let Some(dir) = std::env::var_os("LJOS_3D_PICTURES") else {

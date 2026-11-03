@@ -19,15 +19,8 @@ use ljos_3d::{
 
 const SIDE: u32 = 200;
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 fn scene(environment: Environment) -> Scene {
     let mut scene = Scene::new();

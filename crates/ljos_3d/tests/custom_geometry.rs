@@ -14,15 +14,8 @@ use ljos_3d::{
 const SIDE: u32 = 100;
 const RED: [u8; 4] = [255, 0, 0, 255];
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 /// A square of side `size` about the origin, facing +Z, as a fan.
 fn square(size: f32) -> CustomGeometry {
