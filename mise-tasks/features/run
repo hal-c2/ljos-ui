@@ -3,7 +3,7 @@
 #MISE depends=[]
 set -euo pipefail
 # A glob is a path under features/, with or without that prefix (a directory, a file, or a *.feature pattern).
-# cucumber takes a single --input, so several paths become one {a,b} glob.
+# cucumber takes a single --input, so the paths become one {a,b} glob.
 # Everything else is passed through (-t, -n, --backlog).
 args=()
 globs=()
@@ -17,6 +17,9 @@ while [ $# -gt 0 ]; do
       g="${1#features/}"; shift
       if [ -d "features/$g" ]; then
         g="${g%/}/**/*.feature"
+      elif [ -f "features/$g" ]; then
+        # One file is that file, not every file of its name below its directory.
+        :
       else
         g="$(dirname "$g")/**/$(basename "${g%.feature}").feature"
       fi
@@ -24,11 +27,10 @@ while [ $# -gt 0 ]; do
       ;;
   esac
 done
-case ${#globs[@]} in
-  0) ;;
-  1) args+=(--input "$PWD/features/${globs[0]}") ;;
-  *) args+=(--input "$PWD/features/{$(IFS=,; echo "${globs[*]}")}") ;;
-esac
+# Always in braces: a path without a pattern in it is matched by nothing.
+if [ ${#globs[@]} -gt 0 ]; then
+  args+=(--input "$PWD/features/{$(IFS=,; echo "${globs[*]}")}")
+fi
 
 # @desktop scenarios run Ljós on a real compositor: the desktop sandbox (scripts/cua-sandbox.sh),
 # headless and on its own bus, of its own here so that a sandbox someone drives is left alone.
@@ -43,6 +45,16 @@ if [ -n "${LJOS_BDD_CARGO_FEATURES:-}" ]; then
   case ",$LJOS_BDD_CARGO_FEATURES," in
     *,webengine,*) cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
   esac
+fi
+
+# LJOS_BDD_FEATURES_BIN is a features test built before, as CI builds it once
+# for all its shards; LJOS_BIN and LJOS_FUZZ_BIN then name the programs
+# its steps run. Without it the test is built here. It runs where cargo
+# would run it, in its package's directory.
+if [ -n "${LJOS_BDD_FEATURES_BIN:-}" ]; then
+  runner=(env -C "$PWD/crates/ljos_bdd" "$(realpath "$LJOS_BDD_FEATURES_BIN")")
+else
+  runner=(cargo test --quiet -p ljos_bdd "${features[@]}" --test features --)
 fi
 
 desktop=
@@ -67,15 +79,17 @@ if [ -n "$desktop" ]; then
   if why=$(scripts/cua-sandbox.sh env 2>&1 > "$target/features/desktop.env"); then
     # Built once here, outside the test, which then runs this one: a build
     # from inside it would be told the test's package (see testrun.rs).
-    cargo build --quiet -p ljos_cli --bin ljos
-    export LJOS_BIN="$target/debug/ljos"
+    if [ -z "${LJOS_BIN:-}" ]; then
+      cargo build --quiet -p ljos_cli --bin ljos
+      export LJOS_BIN="$target/debug/ljos"
+    fi
     export LJOS_BDD_DESKTOP="$target/features/desktop.env"
     trap 'scripts/cua-sandbox.sh stop' EXIT
   else
     export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
   fi
-  cargo test --quiet -p ljos_bdd "${features[@]}" --test features -- "${args[@]}"
+  "${runner[@]}" "${args[@]}"
 else
   export LJOS_BDD_DESKTOP_SKIP=
-  exec cargo test --quiet -p ljos_bdd "${features[@]}" --test features -- "${args[@]}"
+  exec "${runner[@]}" "${args[@]}"
 fi
