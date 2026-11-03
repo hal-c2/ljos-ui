@@ -384,7 +384,7 @@ impl LjosBackend {
         ljos_controls::register(&engine);
         // Opt-in modules a scenario may import (QtQml.XmlListModel,
         // Qt.labs.folderlistmodel, Qt.labs.lottieqt, QtPositioning,
-        // QtMultimedia, QtQuick.LocalStorage).
+        // QtMultimedia, QtQuick.LocalStorage, QtWebEngine).
         // Sound goes nowhere: the clock is virtual.
         ljos_xml::register(&engine);
         ljos_jsonmodel::register(&engine);
@@ -396,6 +396,7 @@ impl LjosBackend {
         ljos_positioning::register(&engine);
         ljos_media::register(&engine);
         ljos_media::use_null_audio(&engine);
+        ljos_webengine::register(&engine);
         ljos_localstorage::register(&engine);
         fixtures::register(&engine);
         let clock = Arc::new(VirtualClock::new());
@@ -588,6 +589,7 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
                 ljos_folderlistmodel::register(&snapshot);
                 ljos_positioning::register(&snapshot);
                 ljos_media::register(&snapshot);
+                ljos_webengine::register(&snapshot);
                 ljos_localstorage::register(&snapshot);
                 fixtures::register(&snapshot);
                 ljos::dev::EngineOracle::from_engine(&snapshot)

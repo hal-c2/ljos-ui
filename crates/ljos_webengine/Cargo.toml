@@ -1,0 +1,30 @@
+[package]
+name = "ljos_webengine"
+description = "QtWebEngine for Ljós: WebEngineView and its types, showing live pages through CEF's off-screen rendering as an ordinary item of the scene"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[features]
+default = []
+# Show pages with the Chromium Embedded Framework. Without it the types
+# are there and every load fails, saying there is no web engine.
+cef = ["dep:cef"]
+
+[dependencies]
+ljos_engine = { path = "../ljos_engine" }
+ljos_controls = { path = "../ljos_controls" }
+ljos_platform = { path = "../ljos_platform" }
+ljos_quick = { path = "../ljos_quick" }
+ljos_render = { path = "../ljos_render", default-features = false }
+serde_json.workspace = true
+cef = { workspace = true, optional = true }
+
+[dev-dependencies]
+ljos_compiler = { path = "../ljos_compiler" }
+
+[lints]
+workspace = true

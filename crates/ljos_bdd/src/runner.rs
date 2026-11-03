@@ -73,7 +73,6 @@ fn changes_files(
 pub fn run() -> bool {
     let mode = BackendMode::from_env();
     // Without Ljós in the run, a scenario that Qt cannot see has nothing to run on.
-    #[cfg_attr(not(target_os = "linux"), expect(unused_mut))]
     let mut selection = Selection {
         require_tag: (mode == BackendMode::Qt).then(|| "qt-parity".to_owned()),
         oracle_only: mode == BackendMode::Qt,
@@ -92,6 +91,16 @@ pub fn run() -> bool {
             // Empty when none was selected.
             Some(why) if why.is_empty() => {}
             Some(why) => eprintln!("@desktop scenarios not run: {why}"),
+        }
+    }
+    // A page needs a web engine: Qt's always has one; Ljós's is a feature
+    // of the build and a runtime beside it.
+    if mode == BackendMode::Qt {
+        selection.surfaces.push("chromium".into());
+    } else {
+        match ljos_webengine::unavailable() {
+            None => selection.surfaces.push("chromium".into()),
+            Some(why) => eprintln!("@chromium scenarios not run: {why}"),
         }
     }
     let junit = junit_path();
