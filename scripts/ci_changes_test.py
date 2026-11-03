@@ -203,6 +203,13 @@ class Plans(unittest.TestCase):
                 "crates/ljos_mcp_author/src/prompts.rs": 'const B: &str = include_str!("../../../docs/design/brief.md");',
                 "crates/ljos_engine/tests/manifest.rs": 'const L: &str = include_str!("../../../ledger/x.toml");',
                 "crates/ljos_quick/src/own.rs": 'const O: &str = include_str!("own.txt");',
+                "crates/ljos_quick/src/model.rs": (
+                    'fn a() {}\n#[cfg(all(test, feature = "decode"))]\nmod tests { const C: &[u8] = include_bytes!("../../../docs/media/clip.h264"); }'
+                ),
+                "crates/qml_fmt/src/tests.rs": (
+                    'const D: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ljos_quick/demo/Main.qml"));'
+                ),
+                "crates/ljos_engine/src/lib.rs": 'fn f() { Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/x"); }',
             }.items():
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text(text)
@@ -211,7 +218,15 @@ class Plans(unittest.TestCase):
             self.assertEqual(ws.includes, {
                 "docs/design/brief.md": {("ljos_mcp_author", "src")},
                 "ledger/x.toml": {("ljos_engine", "tests")},
+                "docs/media/clip.h264": {("ljos_quick", "tests")},
+                "crates/ljos_quick/demo/Main.qml": {("qml_fmt", "tests")},
+                "corpus/x": {("ljos_engine", "tests")},
             })
+            out, _ = cc.plan("pr", ["docs/media/clip.h264"], ws, FEATURES)
+            self.assertEqual(tested(out), {"ljos_quick"})
+            self.assertFalse(out["clippy"])
+            out, _ = cc.plan("pr", ["corpus/x/main.qml"], ws, FEATURES)
+            self.assertIn("ljos_engine", tested(out))
             out, _ = cc.plan("pr", ["docs/design/brief.md"], ws, FEATURES)
             self.assertIn("ljos_cli", tested(out))
             self.assertTrue(out["clippy"])

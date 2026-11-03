@@ -134,6 +134,9 @@ CONFINED = {
     "ljos_xml": {"imports": ("QtQml.XmlListModel",)},
 }
 
+# `#[cfg(test)]`, or one that names `test` among others, as `#[cfg(all(test, feature = "x"))]`.
+TEST_GATE = re.compile(r"#\[cfg\((?:test|(?:all|any)\([^\]]*\btest\b[^\]]*)\)\]")
+
 # The crate the features runner is, and the one whose binary @desktop scenarios run.
 RUNNER = "ljos_bdd"
 DESKTOP_BIN = "ljos_cli"
@@ -187,10 +190,17 @@ class Workspace:
         return cls(root, dirs, deps, path_deps, test_targets, doctests)
 
     def scan_includes(self, root: Path) -> None:
-        """Finds the files each package embeds from outside its own directory. One its
-        library or binaries embed is part of what they build, so it changes the package;
-        one only its tests embed is read by them."""
-        pattern = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
+        """Finds the files each package's code names outside its own directory.
+
+        A file its library or binaries embed (include_str!, include_bytes!) is part of
+        what they build, so a change to it changes the package. One only its tests embed,
+        after a `#[cfg(test)]` or in tests/, is read by them; so is a path its code joins to
+        CARGO_MANIFEST_DIR, which is read when the code runs, not built in."""
+        literal = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
+        from_manifest = re.compile(
+            r'include_(?:str|bytes)!\(\s*concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)'
+        )
+        joined = re.compile(r'env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*\)?\s*\.join\(\s*"([^"]+)"\s*\)')
         for name, d in self.dirs.items():
             if d == ".":
                 continue
@@ -198,20 +208,40 @@ class Workspace:
             for rs in base.rglob("*.rs"):
                 if self.package_at(str(PurePosixPath(rs.relative_to(root)))) != name:
                     continue  # a package nested in this one's directory
-                rel = rs.relative_to(base).parts
-                kind = "tests" if rel[0] in ("tests", "benches") or "tests" in rs.stem else "src"
                 try:
                     text = rs.read_text(encoding="utf-8")
                 except (OSError, UnicodeDecodeError):
                     continue
-                for m in pattern.finditer(text):
-                    target = os.path.normpath(rs.parent / m.group(1))
+                rel = rs.relative_to(base).parts
+                in_tests = rel[0] in ("tests", "benches") or rs.stem == "tests" or rs.stem.endswith("_tests")
+                # A test module is the end of its file by custom; what follows it is tests'.
+                gate = None if in_tests else TEST_GATE.search(text)
+                cut = 0 if in_tests else (gate.start() if gate else len(text) + 1)
+
+                def kind(at: int) -> str:
+                    return "tests" if at >= cut else "src"
+
+                found = [(rs.parent / m.group(1), kind(m.start())) for m in literal.finditer(text)]
+                found += [(base / m.group(1).lstrip("/"), kind(m.start())) for m in from_manifest.finditer(text)]
+                found += [(base / m.group(1), "tests") for m in joined.finditer(text)]
+                for target, k in found:
                     try:
-                        path = str(PurePosixPath(Path(target).relative_to(root)))
+                        path = str(PurePosixPath(Path(os.path.normpath(target)).relative_to(root)))
                     except ValueError:
                         continue
+                    # The whole tree, or the build's own output: what reads it is listed by hand.
+                    if path in (".", "target") or path.startswith("target/"):
+                        continue
                     if path != d and not path.startswith(d + "/"):
-                        self.includes.setdefault(path, set()).add((name, kind))
+                        self.includes.setdefault(path, set()).add((name, k))
+
+    def includers(self, path: str) -> set[tuple[str, str]]:
+        """Who names `path`, itself or a directory holding it."""
+        out: set[tuple[str, str]] = set()
+        for named, who in self.includes.items():
+            if path == named or path.startswith(named + "/"):
+                out |= who
+        return out
 
     def package_at(self, path: str) -> str | None:
         """The package whose directory holds `path`, the deepest one if they nest."""
@@ -282,7 +312,7 @@ def classify(paths: list[str], ws: Workspace, existing_features: set[str]) -> Ch
         if f := matches(path, FULL):
             full(f"{path} ({f})")
             continue
-        for pkg, kind in ws.includes.get(path, ()):
+        for pkg, kind in ws.includers(path):
             (c.crates if kind == "src" else c.readers).add(pkg)
         if path.endswith(".qml") and not path.startswith("features/"):
             c.readers.update(QML_READERS)
