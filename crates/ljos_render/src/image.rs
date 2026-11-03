@@ -314,14 +314,44 @@ impl ImageHandle {
     /// something else holds it (a display list still drawing it) they are.
     /// `damage` is clipped to the image; empty means nothing changed.
     pub fn successor(self, damage: &[PixelRect], write: impl FnOnce(&mut [u8])) -> Self {
-        let (id, width, height) = (self.0.id, self.0.width, self.0.height);
-        let (encoding, was_opaque) = (self.0.encoding, self.0.opaque);
+        let head = (
+            self.0.id,
+            self.0.width,
+            self.0.height,
+            self.0.encoding,
+            self.0.opaque,
+        );
+        let mut data = self.into_data();
+        write(&mut data);
+        Self::next(head, damage, data)
+    }
+
+    /// The next picture of a live source, as [`ImageHandle::successor`],
+    /// in pixels the source keeps itself: `data` is the whole new picture,
+    /// differing from this one only in `damage`. A source that keeps two
+    /// buffers and swaps them writes each picture without copying the one
+    /// a display list is still drawing.
+    pub fn successor_with(&self, damage: &[PixelRect], data: Vec<u8>) -> Result<Self, ImageError> {
+        check(self.0.width, self.0.height, data.len())?;
+        let head = (
+            self.0.id,
+            self.0.width,
+            self.0.height,
+            self.0.encoding,
+            self.0.opaque,
+        );
+        Ok(Self::next(head, damage, data))
+    }
+
+    fn next(
+        (id, width, height, encoding, was_opaque): (u64, u32, u32, ImageEncoding, bool),
+        damage: &[PixelRect],
+        data: Vec<u8>,
+    ) -> Self {
         let damage: Box<[PixelRect]> = damage
             .iter()
             .filter_map(|r| r.within(width, height))
             .collect();
-        let mut data = self.into_data();
-        write(&mut data);
         // Only the damage can have changed: an opaque picture stays opaque
         // when its damage is. One that was not stays "not", which costs at
         // most an occlusion it could have had, never a wrong picture.
@@ -1126,6 +1156,20 @@ mod tests {
             "what still draws the old one keeps it"
         );
         assert_eq!(c.pixel(0, 0)[0], 2);
+    }
+
+    #[test]
+    fn a_successor_in_the_sources_own_pixels_takes_them_and_replaces_the_one_before() {
+        let a = ImageHandle::filled(4, 4, [9, 9, 9, 255]).unwrap();
+        let mut mine = a.data().to_vec();
+        mine[0] = 1;
+        let at = mine.as_ptr();
+        let b = a.successor_with(&[rect(0, 0, 1, 1)], mine).unwrap();
+        assert_eq!(b.data().as_ptr(), at, "no copy");
+        assert_eq!(b.replaces(), Some((a.id(), &[rect(0, 0, 1, 1)][..])));
+        assert!(b.is_live() && b.is_opaque());
+        assert_eq!(a.pixel(0, 0)[0], 9, "the one before is untouched");
+        assert!(a.successor_with(&[], vec![0; 3]).is_err());
     }
 
     #[test]
