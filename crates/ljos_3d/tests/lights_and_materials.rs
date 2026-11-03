@@ -14,15 +14,8 @@ use ljos_3d::{
 const SIDE: u32 = 200;
 const CLEAR: Color = Color::rgb(0.0, 0.0, 0.0);
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 /// A black scene seen from z 600 by an orthographic camera.
 fn scene() -> Scene {
@@ -482,7 +475,7 @@ fn frustum_culling_leaves_out_what_the_camera_cannot_see() {
         queue,
         mut renderer,
         ..
-    } = gpu;
+    } = gpu.offscreen;
     let mut s = scene();
     let white = Material::Default(DefaultMaterial::default());
     model(&mut s, Primitive::Cube, white.clone(), Transform::default());
@@ -519,7 +512,7 @@ fn multisampling_softens_an_edge_and_resolves_into_the_picture() {
         queue,
         mut renderer,
         ..
-    } = gpu;
+    } = gpu.offscreen;
     let diamond = |samples| {
         let mut s = scene();
         s.set_environment(Environment {
@@ -571,7 +564,7 @@ fn a_moved_model_moves_in_a_kept_target() {
         queue,
         mut renderer,
         ..
-    } = gpu;
+    } = gpu.offscreen;
     let mut s = scene();
     let red = unlit(Color::rgb(1.0, 0.0, 0.0));
     let ids: Vec<NodeId> = (0..20)

@@ -16,15 +16,8 @@ use ljos_3d::{
 
 const SIDE: u32 = 200;
 
-fn offscreen() -> Option<Offscreen> {
-    match Offscreen::new() {
-        Ok(o) => Some(o),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
-}
+mod device;
+use device::offscreen;
 
 fn at(x: f32, y: f32, z: f32) -> Transform {
     Transform {
