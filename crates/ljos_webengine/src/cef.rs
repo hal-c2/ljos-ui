@@ -613,11 +613,21 @@ struct Load {
     status: Option<i32>,
 }
 
+/// The pictures a page painted, in two buffers taking turns: the one on
+/// screen, which a display list may still be drawing, and the one before,
+/// which nothing draws by the next paint and is written again in place.
+#[derive(Default)]
+struct Frames {
+    shown: Option<ImageHandle>,
+    /// The picture before `shown`, and where `shown` differs from it.
+    spare: Option<(ImageHandle, Vec<PixelRect>)>,
+}
+
 struct Shared {
     sink: Sink,
     geometry: Mutex<Geometry>,
     zoom: Mutex<f64>,
-    frame: Mutex<Option<ImageHandle>>,
+    frame: Mutex<Frames>,
     popup: Mutex<Popup>,
     load: Mutex<Load>,
     dev: Mutex<Dev>,
@@ -890,10 +900,28 @@ fn paint_view(shared: &Shared, bgra: &[u8], w: u32, h: u32, dirty: &[Rect]) {
             copy_bgra(data, w, pixels, *pw, src, clip.x, clip.y);
         }
     };
-    let mut last = Shared::lock(&shared.frame);
-    let image = match last.take() {
-        Some(prev) if prev.width() == w && prev.height() == h => {
-            prev.successor(&damage, |data| write(data, &damage))
+    let mut frames = Shared::lock(&shared.frame);
+    let spare = frames.spare.take();
+    let image = match frames.shown.take() {
+        Some(shown) if shown.width() == w && shown.height() == h => {
+            // The spare buffer is two pictures behind: it is brought up to
+            // date where the shown one changed and where this one does.
+            let (data, stale) = match spare {
+                Some((old, since)) if old.width() == w && old.height() == h => {
+                    let mut stale = since;
+                    stale.extend_from_slice(&damage);
+                    (old.into_data(), stale)
+                }
+                // The first time, or after a resize: there is no spare yet.
+                _ => (shown.data().to_vec(), damage.clone()),
+            };
+            let mut data = data;
+            write(&mut data, &stale);
+            let Ok(image) = shown.successor_with(&damage, data) else {
+                return;
+            };
+            frames.spare = Some((shown, damage));
+            image
         }
         _ => {
             let mut data = vec![0; w as usize * h as usize * 4];
@@ -913,8 +941,8 @@ fn paint_view(shared: &Shared, bgra: &[u8], w: u32, h: u32, dirty: &[Rect]) {
             image
         }
     };
-    *last = Some(image.clone());
-    drop(last);
+    frames.shown = Some(image.clone());
+    drop(frames);
     shared.sink.send(Ev::Frame(image));
 }
 
@@ -1094,14 +1122,7 @@ wrap_life_span_handler! {
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut c_int>,
         ) -> c_int {
-            use sys::cef_window_open_disposition_t as D;
-            // WebEngineNewWindowRequest's destinations.
-            let destination = match *target_disposition.as_ref() {
-                D::CEF_WOD_NEW_BACKGROUND_TAB => 1,
-                D::CEF_WOD_NEW_WINDOW => 2,
-                D::CEF_WOD_NEW_POPUP => 3,
-                _ => 0,
-            };
+            let destination = destination_of(&target_disposition).unwrap_or(0);
             let geometry = popup_features.map_or((0.0, 0.0, 0.0, 0.0), |f| {
                 (f.x as f64, f.y as f64, f.width as f64, f.height as f64)
             });
@@ -1131,9 +1152,45 @@ wrap_life_span_handler! {
     }
 }
 
+/// The `WebEngineNewWindowRequest` destination a disposition asks for,
+/// when it asks for a window other than the page's own.
+fn destination_of(disposition: &WindowOpenDisposition) -> Option<i32> {
+    use sys::cef_window_open_disposition_t as D;
+    match *disposition.as_ref() {
+        D::CEF_WOD_NEW_WINDOW => Some(0),
+        D::CEF_WOD_NEW_FOREGROUND_TAB => Some(1),
+        D::CEF_WOD_NEW_POPUP => Some(2),
+        D::CEF_WOD_NEW_BACKGROUND_TAB => Some(3),
+        _ => None,
+    }
+}
+
 wrap_request_handler! {
     struct PageRequests { shared: Arc<Shared> }
     impl RequestHandler {
+        // A link clicked holding Ctrl or Shift, or with the middle button,
+        // asks for another window here rather than as a popup. The view
+        // is asked, as for a popup, and the page stays where it is.
+        fn on_open_urlfrom_tab(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            target_url: Option<&CefString>,
+            target_disposition: WindowOpenDisposition,
+            user_gesture: c_int,
+        ) -> c_int {
+            let Some(destination) = destination_of(&target_disposition) else {
+                return 0;
+            };
+            self.shared.sink.send(Ev::NewWindow {
+                url: string_of(target_url),
+                destination,
+                geometry: (0.0, 0.0, 0.0, 0.0),
+                user_initiated: user_gesture != 0,
+            });
+            1
+        }
+
         fn on_render_process_terminated(
             &self,
             _browser: Option<&mut Browser>,
@@ -1482,6 +1539,11 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
                 Pending::Ignore,
             ));
         }
+    }
+    // Told before the first page is asked for: the effect that tells a
+    // view's browser it is hidden ran before there was one.
+    if start.hidden {
+        host.was_hidden(1);
     }
     shared.send_dev(out);
     host.set_audio_muted(start.muted as c_int);
