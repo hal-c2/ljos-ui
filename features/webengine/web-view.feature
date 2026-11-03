@@ -89,6 +89,47 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "-6 net::ERR_FILE_NOT_FOUND 1"
     And the property "loading" of "view" is false
 
+  @api-QtWebEngine.WebEngineView.loadingChanged
+  Scenario: The first page in a window is loaded once and succeeds
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Window {
+        width: 200; height: 100; visible: true
+        WebEngineView {
+          id: view; objectName: "view"
+          anchors.fill: parent
+          property string seen: ""
+          url: Qt.resolvedUrl("page.html")
+          onLoadingChanged: info => seen += info.status
+        }
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is "02"
+
+  @api-QtWebEngine.WebEngineView.url
+  Scenario: A page the view was sent to that fails becomes the view's url
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property bool there: url.toString().endsWith("/missing.html")
+        url: Qt.resolvedUrl("page.html")
+        function follow() { runJavaScript("location.href = 'missing.html'") }
+      }
+      """
+    When 2 seconds pass
+    Then the property "there" of "view" is false
+    When the method "follow" of "view" is called
+    And 2 seconds pass
+    Then the property "there" of "view" is true
+    And the property "loading" of "view" is false
+
   Scenario: A port a browser does not visit fails to load and says why
     Given the QML:
       """qml
@@ -281,7 +322,8 @@ Feature: A web page in a WebEngineView
         width: 200; height: 100
         property string seen: ""
         url: Qt.resolvedUrl("page.html")
-        userScripts.collection: [{ name: "mark", sourceCode: "window.marked = 'yes'",
+        Component.onCompleted: userScripts.collection = [{ name: "mark",
+          sourceCode: "window.marked = 'yes'",
           injectionPoint: WebEngineScript.DocumentCreation, worldId: WebEngineScript.MainWorld }]
         onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
           runJavaScript("window.marked", r => seen += (seen ? " " : "") + r) }

@@ -165,6 +165,9 @@ struct Run {
     next_script: u64,
     /// Why there is no browser, said once.
     refused: bool,
+    /// The browser says where it is: the URL written is news, not
+    /// somewhere to go.
+    reporting: bool,
 }
 
 impl fmt::Debug for WebEngineView {
@@ -222,8 +225,10 @@ impl WebEngineView {
                 cx.engine.resolve_url(cx.this, url.0.as_str()).as_str(),
             ))
         };
-        let completed = cx.with(|v: &Self| v.run.completed).unwrap_or(false);
-        if completed && !resolved.0.as_str().is_empty() {
+        let (completed, reporting) = cx
+            .with(|v: &Self| (v.run.completed, v.run.reporting))
+            .unwrap_or((false, false));
+        if completed && !reporting && !resolved.0.as_str().is_empty() {
             let e = cx.engine;
             let me = cx.this;
             let target = resolved.0.as_str().to_owned();
@@ -364,6 +369,11 @@ fn view_completed(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
     }
     let scope = e.object_scope(me).unwrap_or_else(|| e.graph().root());
     let serial = e.graph().property(scope, Value::Int(0)).ok();
+    // Read before the view is complete: a binding on `url` not yet
+    // evaluated writes it now, and a write to a complete view navigates,
+    // so the first page was asked for twice and the first load reported
+    // as stopped by the second.
+    let url = e.get(me, WebEngineView::URL)?;
     e.with_mut::<WebEngineView, _>(me, |v| {
         v.run.serial = serial;
         v.run.completed = true;
@@ -389,7 +399,6 @@ fn view_completed(e: &Engine, me: ObjectId) -> Result<(), EngineError> {
             b.set_muted(v.to_boolean());
         }
     })?;
-    let url = e.get(me, WebEngineView::URL)?;
     if !url.0.as_str().is_empty() {
         let target = url.0.as_str().to_owned();
         e.call_at(e.now(), move |e| navigate(e, me, &target));
@@ -403,16 +412,47 @@ fn browser(e: &Engine, me: ObjectId) -> Option<Rc<dyn Browser>> {
         .flatten()
 }
 
+/// The file a `file:` URL names, as the browser must be told it: an
+/// application whose files live under a root of their own (a test's
+/// sandbox) names them from that root, the browser from the machine's.
+fn to_browser_url(e: &Engine, url: &str) -> String {
+    let env = Platform::of(e).env();
+    let Some(rest) = url.strip_prefix("file://") else {
+        return url.to_owned();
+    };
+    let cut = rest.find(['?', '#']).unwrap_or(rest.len());
+    let (path, tail) = rest.split_at(cut);
+    match env.real(std::path::Path::new(path)) {
+        Ok(real) if real.as_os_str() != path => format!("file://{}{tail}", real.display()),
+        _ => url.to_owned(),
+    }
+}
+
+/// The URL the browser names, as the application names it.
+fn from_browser_url(e: &Engine, url: &str) -> String {
+    let env = Platform::of(e).env();
+    if let Some(rest) = url.strip_prefix("file://")
+        && let Ok(root) = env.real(std::path::Path::new("/"))
+        && root.as_os_str() != "/"
+        && let Some(inside) = rest.strip_prefix(&*root.to_string_lossy())
+        && inside.starts_with('/')
+    {
+        return format!("file://{inside}");
+    }
+    url.to_owned()
+}
+
 /// Goes to `url`, making the browser if there is none yet.
 fn navigate(e: &Engine, me: ObjectId, url: &str) {
     if !e.is_alive(me) {
         return;
     }
+    let target = to_browser_url(e, url);
     if let Some(b) = browser(e, me) {
-        b.navigate(url);
+        b.navigate(&target);
         return;
     }
-    let start = start_of(e, me, url);
+    let start = start_of(e, me, &target);
     match backend::start(e, me, start) {
         Ok(b) => {
             let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.browser = Some(b));
@@ -521,6 +561,37 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
     if !e.is_alive(me) {
         return;
     }
+    let event = match event {
+        Event::LoadStarted { url } => Event::LoadStarted {
+            url: from_browser_url(e, &url),
+        },
+        Event::LoadEnded {
+            url,
+            status,
+            code,
+            error,
+            domain,
+        } => Event::LoadEnded {
+            url: from_browser_url(e, &url),
+            status,
+            code,
+            error,
+            domain,
+        },
+        Event::Url(url) => Event::Url(from_browser_url(e, &url)),
+        Event::NewWindow {
+            url,
+            destination,
+            geometry,
+            user_initiated,
+        } => Event::NewWindow {
+            url: from_browser_url(e, &url),
+            destination,
+            geometry,
+            user_initiated,
+        },
+        other => other,
+    };
     match event {
         Event::LoadStarted { url } => {
             let reply = Platform::of(e).expect_for(format!("page {url}"), Some(me));
@@ -556,7 +627,9 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             emit_loading(e, me, &url, status, code, error, domain);
         }
         Event::Url(url) => {
+            let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.reporting = true);
             let _ = e.set_internal(me, WebEngineView::URL, Url(Atom::from(url.as_str())));
+            let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.reporting = false);
         }
         Event::Title(title) => {
             let _ = e.set_internal(me, WebEngineView::TITLE, title);
@@ -568,11 +641,7 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                 (p * 100.0).round().clamp(0.0, 100.0) as i32,
             );
         }
-        Event::Navigation {
-            loading: _,
-            back,
-            forward,
-        } => {
+        Event::Navigation { back, forward } => {
             let _ = e.set_internal(me, WebEngineView::CAN_GO_BACK, back);
             let _ = e.set_internal(me, WebEngineView::CAN_GO_FORWARD, forward);
         }
@@ -626,12 +695,6 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
         } => new_window(e, me, &url, destination, geometry, user_initiated),
         Event::CloseRequested => {
             let _ = e.emit_by_name(me, "windowCloseRequested", &[]);
-        }
-        Event::Audible(on) => {
-            let _ = e.set_internal(me, WebEngineView::RECENTLY_AUDIBLE, on);
-        }
-        Event::Zoom(f) => {
-            let _ = e.set_internal(me, WebEngineView::ZOOM_FACTOR, f);
         }
         Event::Crashed { status, code } => {
             let _ = e.emit_by_name(
