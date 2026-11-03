@@ -235,11 +235,16 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      # Every test program of the workspace, linked, does not fit beside a restored cache in the
+      # 37 GB the setup leaves (the linker died of a full disk). More of the image goes, and the
+      # programs go as soon as they are linked: the cache keeps the dependencies, not them.
+      - run: sudo rm -rf /opt/hostedtoolcache /usr/local/share/boost /usr/local/share/powershell /usr/share/swift /usr/local/.ghcup /usr/local/lib/node_modules && df -h /
       - uses: ./.github/actions/setup
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-      - run: cargo clippy --workspace --all-targets
       - run: cargo test --workspace --no-run
+      - run: find target/debug/deps -maxdepth 1 -type f -executable -delete && df -h /
+      - run: cargo clippy --workspace --all-targets
       - run: cargo test -p ljos_bdd --test features --no-run
       - run: cargo build -p ljos_cli -p ljos_fuzz -p ljos_bdd --bin ljos --bin ljos-fuzz --bin features-lint
       - run: df -h /
