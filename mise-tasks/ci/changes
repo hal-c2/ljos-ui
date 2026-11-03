@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+#MISE description="What CI runs for the change since a revision: ci:changes [base] (default origin/main); prints the jobs' inputs"
+set -euo pipefail
+exec python3 scripts/ci_changes.py --mode pr --base "${1:-origin/main}" --head HEAD
