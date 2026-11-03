@@ -45,6 +45,18 @@ impl PixelRect {
         u64::from(self.width) * u64::from(self.height)
     }
 
+    /// The part of it inside a `width` × `height` picture, if any.
+    pub fn within(&self, width: u32, height: u32) -> Option<Self> {
+        let x1 = self.x.saturating_add(self.width).min(width);
+        let y1 = self.y.saturating_add(self.height).min(height);
+        (x1 > self.x && y1 > self.y).then(|| Self {
+            x: self.x,
+            y: self.y,
+            width: x1 - self.x,
+            height: y1 - self.y,
+        })
+    }
+
     fn right(&self) -> u32 {
         self.x + self.width
     }
