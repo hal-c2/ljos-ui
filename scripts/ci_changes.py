@@ -16,6 +16,9 @@ the change between `--base` and `--head` can reach:
   from `cargo metadata`), is built, linted and tested.
 - A file outside the crates that a crate's tests read (docs/design, corpus/, skills/, the
   media under features/multimedia, ...) tests that crate alone: READERS.
+- A file a crate embeds from outside its directory (include_str!, include_bytes!) is part
+  of that crate when its library or binaries embed it, and read by its tests otherwise.
+- A .qml file anywhere but features/ also tests QML_READERS, whose tests read every one.
 - A changed feature file runs; a changed fixture under features/<area>/ runs that area.
   A crate the features runner links runs every feature file, unless it is one of the
   crates in CONFINED, which serve QML modules that only some files import.
@@ -31,6 +34,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -92,12 +96,17 @@ READERS = {
         "qml_fmt",
         "qml_syntax",
     ),
-    "bench/": ("ljos_bench", "ljos_cli"),
+    "bench/": ("ljos_bench", "ljos_cli", "ljos_compiler", "qml_edit"),
     "features/README.md": ("ljos_mcp_author",),
     "features/multimedia/media/": ("ljos", "ljos_media"),
     "features/quick3d/models/": ("ljos_3d",),
     "scripts/cua-sandbox.sh": ("ljos_bdd",),
 }
+
+# Tests that read the QML files of the whole tree, wherever they are: the formatter's and
+# the editor's round trips and the compiler's keys (qml_fmt, qml_edit and ljos_compiler's
+# tests/corpus.rs and tests/keys.rs). A .qml file anywhere tests them too.
+QML_READERS = ("ljos_compiler", "qml_edit", "qml_fmt")
 
 # The feature files a path outside crates/ selects, besides its own directory's.
 FEATURE_READERS = {
@@ -153,6 +162,9 @@ class Workspace:
     test_targets: dict[str, int]
     # package names with a library whose doctests run
     doctests: set[str]
+    # a file a package's code embeds with include_str!/include_bytes! from outside its
+    # own directory -> (package, "src"|"tests") pairs; see `scan_includes`
+    includes: dict[str, set[tuple[str, str]]] = field(default_factory=dict)
 
     @classmethod
     def from_metadata(cls, meta: dict) -> Workspace:
@@ -173,6 +185,33 @@ class Workspace:
             if any("lib" in t["kind"] and t.get("doctest", False) for t in p["targets"]):
                 doctests.add(name)
         return cls(root, dirs, deps, path_deps, test_targets, doctests)
+
+    def scan_includes(self, root: Path) -> None:
+        """Finds the files each package embeds from outside its own directory. One its
+        library or binaries embed is part of what they build, so it changes the package;
+        one only its tests embed is read by them."""
+        pattern = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
+        for name, d in self.dirs.items():
+            if d == ".":
+                continue
+            base = root / d
+            for rs in base.rglob("*.rs"):
+                if self.package_at(str(PurePosixPath(rs.relative_to(root)))) != name:
+                    continue  # a package nested in this one's directory
+                rel = rs.relative_to(base).parts
+                kind = "tests" if rel[0] in ("tests", "benches") or "tests" in rs.stem else "src"
+                try:
+                    text = rs.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError):
+                    continue
+                for m in pattern.finditer(text):
+                    target = os.path.normpath(rs.parent / m.group(1))
+                    try:
+                        path = str(PurePosixPath(Path(target).relative_to(root)))
+                    except ValueError:
+                        continue
+                    if path != d and not path.startswith(d + "/"):
+                        self.includes.setdefault(path, set()).add((name, kind))
 
     def package_at(self, path: str) -> str | None:
         """The package whose directory holds `path`, the deepest one if they nest."""
@@ -243,6 +282,10 @@ def classify(paths: list[str], ws: Workspace, existing_features: set[str]) -> Ch
         if f := matches(path, FULL):
             full(f"{path} ({f})")
             continue
+        for pkg, kind in ws.includes.get(path, ()):
+            (c.crates if kind == "src" else c.readers).add(pkg)
+        if path.endswith(".qml") and not path.startswith("features/"):
+            c.readers.update(QML_READERS)
         if path.startswith("acceptance/"):
             c.acceptance = True
             continue
@@ -490,6 +533,7 @@ def main(argv: list[str] | None = None) -> int:
             args.mode = "full"
             meta = {"workspace_root": str(args.root), "packages": []}
     ws = Workspace.from_metadata(meta)
+    ws.scan_includes(args.root)
     features = read_features(args.root, args.head if args.at_head else None)
     paths = changed_paths(args.base, args.head, args.root) if args.mode == "pr" else []
     out, log = plan(args.mode, paths, ws, features)
