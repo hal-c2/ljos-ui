@@ -1,0 +1,29 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Home page</title>
+<style>
+  body { font: 16px/1.5 sans-serif; margin: 0; background: #f4f1ea; color: #222; }
+  header { background: #2d6a4f; color: white; padding: 24px 32px; }
+  h1 { margin: 0; font-size: 28px; }
+  main { padding: 24px 32px; }
+  .cards { display: flex; gap: 16px; flex-wrap: wrap; }
+  .card { background: white; border-radius: 8px; padding: 16px; width: 220px; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .card b { display: block; margin-bottom: 6px; }
+  a { color: #1b4332; }
+  .swatch { height: 60px; border-radius: 6px; background: linear-gradient(90deg, #d00000, #ffba08, #3f88c5, #136f63); }
+</style>
+</head>
+<body>
+<header><h1>Home page</h1>A local page shown by a WebEngineView.</header>
+<main>
+  <p>Follow a link, then use back and forward.</p>
+  <div class="cards">
+    <div class="card"><b>Another page</b><a id="next" href="second.html">Go to the second page</a></div>
+    <div class="card"><b>A page that is not there</b><a id="missing" href="missing.html">Go to a missing page</a></div>
+    <div class="card"><b>Drawn by the page</b><div class="swatch"></div></div>
+  </div>
+</main>
+</body>
+</html>
