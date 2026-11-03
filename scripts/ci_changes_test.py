@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -176,6 +177,47 @@ class Plans(unittest.TestCase):
     def test_full_mode_without_metadata_tests_the_workspace(self):
         out, _ = cc.plan("full", [], cc.Workspace.from_metadata({"workspace_root": ROOT, "packages": []}), FEATURES)
         self.assertEqual(out["tests"], [{"name": "1/1", "packages": "--workspace", "doc": "--workspace"}])
+
+
+    def test_qml_anywhere_tests_the_tree_wide_qml_readers(self):
+        meta = json.loads(json.dumps(META))
+        for name in cc.QML_READERS:
+            meta["packages"].append(package(name))
+        ws = cc.Workspace.from_metadata(meta)
+        for path in ("crates/ljos_quick/qml/Button.qml", "bench/form.qml", "examples/hello/main.qml"):
+            with self.subTest(path):
+                out, _ = cc.plan("pr", [path], ws, FEATURES)
+                self.assertLessEqual(set(cc.QML_READERS), tested(out))
+        out, _ = cc.plan("pr", ["features/quick/fixtures/a.qml"], ws, FEATURES)
+        self.assertFalse(set(cc.QML_READERS) & tested(out))
+
+    def test_an_embedded_file_changes_the_crate_that_embeds_it(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            meta = json.loads(json.dumps(META).replace(ROOT, tmp))
+            # The binary that serves the brief.
+            next(p for p in meta["packages"] if p["name"] == "ljos_cli")["dependencies"].append(
+                {"name": "ljos_mcp_author", "kind": None, "path": f"{tmp}/crates/ljos_mcp_author"}
+            )
+            for rel, text in {
+                "crates/ljos_mcp_author/src/prompts.rs": 'const B: &str = include_str!("../../../docs/design/brief.md");',
+                "crates/ljos_engine/tests/manifest.rs": 'const L: &str = include_str!("../../../ledger/x.toml");',
+                "crates/ljos_quick/src/own.rs": 'const O: &str = include_str!("own.txt");',
+            }.items():
+                (root / rel).parent.mkdir(parents=True, exist_ok=True)
+                (root / rel).write_text(text)
+            ws = cc.Workspace.from_metadata(meta)
+            ws.scan_includes(root)
+            self.assertEqual(ws.includes, {
+                "docs/design/brief.md": {("ljos_mcp_author", "src")},
+                "ledger/x.toml": {("ljos_engine", "tests")},
+            })
+            out, _ = cc.plan("pr", ["docs/design/brief.md"], ws, FEATURES)
+            self.assertIn("ljos_cli", tested(out))
+            self.assertTrue(out["clippy"])
+            out, _ = cc.plan("pr", ["ledger/x.toml"], ws, FEATURES)
+            self.assertIn("ljos_engine", tested(out))
+            self.assertNotIn("ljos_quick", tested(out))
 
 
 class Shards(unittest.TestCase):

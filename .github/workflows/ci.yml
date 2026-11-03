@@ -262,9 +262,10 @@ jobs:
             and ([.[] | .result] | all(. == "success" or . == "skipped"))' > /dev/null
 
   qt-types:
-    # The same gates as `check`, in a build that reads QML against a table of Qt's types. It is
-    # where the tests run that compare Ljós's types with Qt's description of them (they print
-    # `SKIPPED` in `check`), and where a type Qt has and Ljós lacks is told from a slip.
+    # The gates of `clippy`, `test` and `features`, in a build that reads QML against a table of
+    # Qt's types. It is where the tests run that compare Ljós's types with Qt's description of
+    # them (they print `SKIPPED` in the `test` shards), and where a type Qt has and Ljós lacks is
+    # told from a slip.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
@@ -282,7 +283,7 @@ jobs:
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
         with:
-          # Not the cache of `check`: every crate is built against another table here.
+          # Not the cache the other jobs share: every crate is built against another table here.
           key: qt-types
       - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config tzdata-legacy
       # The table is generated from the qmldir and .qmltypes files of the Qt it is written for.
