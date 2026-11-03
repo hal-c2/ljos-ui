@@ -227,7 +227,8 @@ jobs:
   # Builds what the other jobs build, on main, and saves it as the cache they restore. It
   # gates nothing: on main every other job builds the same things and checks them.
   cache:
-    if: github.event_name != 'pull_request'
+    # A dispatch with a `base` is a subset run, like a pull request's.
+    if: github.event_name != 'pull_request' && inputs.base == ''
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -266,7 +267,7 @@ jobs:
     # Qt's types. It is where the tests run that compare Ljós's types with Qt's description of
     # them (they print `SKIPPED` in the `test` shards), and where a type Qt has and Ljós lacks is
     # told from a slip.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.base == '')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
@@ -303,7 +304,7 @@ jobs:
 
   gallery:
     # Needs the corpus/qtdoc submodule and qml6 (a black box, offscreen). See corpus/README.md.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.base == '')
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
