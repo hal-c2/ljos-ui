@@ -176,7 +176,6 @@ This is the same renderer that powers the `ljos render` CLI command.
 
 ## See also
 
-- [How a Rust and QML App Fits Together](./overview.md)
+- [Embedding QML in Rust](../SKILL.md)
 - [Native Types in Rust](./native-types.md)
 - [Threads, Tasks and UiHandle](./threads-and-uihandle.md)
-- [Desktop, Mobile and the Platform Host](./platforms.md)
