@@ -196,7 +196,7 @@ impl Render {
         );
         let source = match &self.example {
             Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
-            None => compile(&dir, &key, notes, EngineOracle::table_only())?,
+            None => compile(&dir, &key, notes, oracle_for_modules())?,
         };
         // Before the root is made, so nothing binds to the module's own
         // roles first. A theme that is refused stops the render, as a file
@@ -303,6 +303,8 @@ pub(crate) fn register_modules(engine: &Engine) {
     ljos_timeline::register(engine);
     ljos_folderlistmodel::register(engine);
     ljos_positioning::register(engine);
+    #[cfg(feature = "webengine")]
+    ljos_webengine::register(engine);
 }
 
 /// Registers what a run with no window and no device has: every module,
@@ -345,6 +347,23 @@ pub(crate) fn launch_example(engine: &Engine, root: ljos_engine::ObjectId, examp
     }
 }
 
+/// What a program with no types of its own compiles against: the table,
+/// and the types of an opt-in module this build registers that the
+/// table only has as Qt's (QtWebEngine with `webengine`), which would
+/// otherwise stand in.
+pub(crate) fn oracle_for_modules() -> EngineOracle {
+    #[cfg(feature = "webengine")]
+    {
+        let engine = Engine::new();
+        ljos_quick::register(&engine);
+        ljos_controls::register(&engine);
+        ljos_webengine::register(&engine);
+        EngineOracle::from_engine(&engine)
+    }
+    #[cfg(not(feature = "webengine"))]
+    EngineOracle::table_only()
+}
+
 /// The compiler's knowledge of an example's types: the table of types as
 /// usual, and the native types registered for the example on top of it.
 /// Shared with `ljos run --example`, which compiles before its shell
@@ -355,7 +374,7 @@ pub(crate) fn oracle_for_example(id: &str) -> EngineOracle {
     // todolist), and the first object waits for the compile: an example
     // with no types of its own compiles as a program without one does.
     if !ljos_gallery_backends::has_backends(id) {
-        return EngineOracle::table_only();
+        return oracle_for_modules();
     }
     let engine = Engine::new();
     ljos_quick::register(&engine);

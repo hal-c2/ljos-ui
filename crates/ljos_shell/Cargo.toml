@@ -22,6 +22,9 @@ ljos_host = { path = "../ljos_host" }
 # Only with `media` (on by default): QtMultimedia, registered beside the
 # standard modules.
 ljos_media = { path = "../ljos_media", optional = true, default-features = false, features = ["decode"] }
+# Only with `webengine`: QtWebEngine on CEF, registered beside the
+# standard modules.
+ljos_webengine = { path = "../ljos_webengine", optional = true }
 # The desktop's own clipboard, dialogs and HTTP fetcher, which only the
 # shell's loop installs; the other hosts keep the in-process ones.
 ljos_platform = { path = "../ljos_platform", features = ["native", "http"] }
@@ -125,6 +128,8 @@ default = ["media", "media-audio"]
 media = ["dep:ljos_media"]
 # Sound through the system's output device (cpal).
 media-audio = ["media", "ljos_media/audio"]
+# QtWebEngine: live pages drawn off-screen by CEF into the scene.
+webengine = ["dep:ljos_webengine", "ljos_webengine/cef"]
 # QtQuick3D's views: drawn by the painter on its own device (egui-wgpu's, or
 # wgpu on the GL painter's context), and off-screen and read back where the
 # painter is the processor.

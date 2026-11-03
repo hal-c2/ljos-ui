@@ -395,6 +395,8 @@ impl<M: Send + 'static> ShellApp<M> {
         ljos_controls::register(&engine);
         #[cfg(feature = "media")]
         ljos_media::register(&engine);
+        #[cfg(feature = "webengine")]
+        ljos_webengine::register(&engine);
         // Before `setup`: a window knows from its first moment whether it
         // is an item of a scene or a window of the platform.
         let (tree, waker, changed, display) = match hosting {
