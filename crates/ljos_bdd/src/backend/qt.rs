@@ -584,6 +584,11 @@ pub fn oracle_env(command: &mut Command, dir: &Path, platform: &str) -> std::io:
         // them would give the controls a dark palette on a desktop that
         // prefers one.
         .env("GSETTINGS_BACKEND", "memory");
+    // Chromium's sandbox needs namespaces a test machine may not grant;
+    // the pages here are the scenario's own.
+    if std::env::var_os("QTWEBENGINE_CHROMIUM_FLAGS").is_none() {
+        command.env("QTWEBENGINE_CHROMIUM_FLAGS", "--no-sandbox");
+    }
     Ok(())
 }
 
