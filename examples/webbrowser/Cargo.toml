@@ -1,0 +1,19 @@
+[package]
+name = "ljos_example_webbrowser"
+description = "A browser in one window over WebEngineView: back, forward, reload, a URL field, the page's title read by its own script, and a page that fails"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+ljos = { path = "../../crates/ljos", features = ["dev-qml"] }
+ljos_webengine = { path = "../../crates/ljos_webengine" }
+ljos_compiler = { path = "../../crates/ljos_compiler" }
+
+[lints]
+workspace = true
