@@ -4,7 +4,8 @@
     doc_links.py [FILE.md ...]    the files given, or every tracked *.md
 
 Files under vendor/ and third_party/ are left out: they are copies of other
-projects' trees, whose links point into trees not copied.
+projects' trees, whose links point into trees not copied. So is skills/, which
+ljos_mcp_author's tests write from docs/site (LJOS_SKILLS=write) and hold to it.
 
 A link is `[text](target)` outside code; a target with a scheme (`https:`, `mailto:`),
 a bare `#anchor` or a `<...>` placeholder is not a file and is left alone. The anchor of
@@ -20,6 +21,7 @@ from pathlib import Path
 
 LINK = re.compile(r"(?<!!)\[[^\]\n]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)|!\[[^\]\n]*\]\(([^)\s]+)\)")
 FENCE = re.compile(r"^\s*(```|~~~)")
+SKIPPED = ("vendor/", "third_party/", "skills/")
 CODE_SPAN = re.compile(r"`[^`\n]*`")
 
 
@@ -61,7 +63,7 @@ def main(argv: list[str]) -> int:
         files = [
             root / f
             for f in listed
-            if not f.startswith(("vendor/", "third_party/")) and (root / f).exists()
+            if not f.startswith(SKIPPED) and (root / f).exists()
         ]
     problems = [p for f in files for p in broken(f, root)]
     for p in problems:

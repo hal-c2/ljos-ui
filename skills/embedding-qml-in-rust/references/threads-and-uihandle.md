@@ -117,7 +117,7 @@ Because a native method called from QML runs on the UI thread, an unexpectedly s
 
 ## See also
 
-- [Embedding QML in Rust](../SKILL.md)
+- [How a Rust and QML App Fits Together](./overview.md)
 - [Native Types in Rust](./native-types.md)
 - [Models for Views](./models.md)
 - [Testing a Rust and QML App](./testing-rust.md)

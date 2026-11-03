@@ -248,6 +248,7 @@ A stand-in's properties hold what they are given and report changes. Its signals
 
 ## See also
 
-- [Embedding QML in Rust](../SKILL.md)
+- [How a Rust and QML App Fits Together](./overview.md)
+- [Singletons and Multiple Windows](./singletons-and-windows.md)
 - [Models for Views](./models.md)
 - [Testing a Rust and QML App](./testing-rust.md)
