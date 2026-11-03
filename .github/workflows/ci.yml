@@ -44,8 +44,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
       # Font discovery links fontconfig on Linux (the test fonts themselves are in the repository),
-      # and the audio sink links ALSA.
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config
+      # and the audio sink links ALSA. The time-zone scenarios name legacy zones (`EST5EDT`), which
+      # Ubuntu 26.04 keeps out of tzdata.
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config tzdata-legacy
       - run: mise run check
       # All of them, so one run shows every failure a runner has.
       - run: mise run test -- --no-fail-fast
@@ -82,7 +83,7 @@ jobs:
         with:
           # Not the cache of `check`: every crate is built against another table here.
           key: qt-types
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config
+      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config tzdata-legacy
       # The table is generated from the qmldir and .qmltypes files of the Qt it is written for.
       - uses: jurplel/install-qt-action@v4
         with:
@@ -111,7 +112,7 @@ jobs:
       - uses: jdx/mise-action@v3
       - uses: Swatinem/rust-cache@v2
       # Font discovery links fontconfig and the audio sink ALSA, as in the other jobs.
-      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev pkg-config
+      - run: sudo apt-get update && sudo apt-get install -y libfontconfig1-dev libasound2-dev pkg-config tzdata-legacy
       # The Qt the floors were set against, as in `qt-types`. Ubuntu's own is older and splits
       # Qt Quick into packages: without Particles, XmlListModel, folderlistmodel and the Controls
       # styles half the reference pictures could not be taken.
