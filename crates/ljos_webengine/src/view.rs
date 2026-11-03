@@ -290,7 +290,8 @@ impl WebEngineView {
         }
     }
 
-    /// Shows `html` as a page whose address is `baseUrl`.
+    /// Shows `html` as a page. Not built: `baseUrl` (ARCHITECTURE.md §7.9);
+    /// the page is a `data:` URL, so nothing resolves against it.
     #[qml(invokable, name = "loadHtml")]
     fn load_html(cx: &Cx, html: Value, base_url: Value) {
         let _ = base_url;
@@ -530,6 +531,7 @@ fn start_of(e: &Engine, me: ObjectId, url: &str) -> backend::Start {
         scripts,
         javascript,
         muted,
+        hidden: !e.untrack(|| shown_tracked(e, me)),
     }
 }
 

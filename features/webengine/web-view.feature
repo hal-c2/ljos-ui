@@ -130,6 +130,45 @@ Feature: A web page in a WebEngineView
     Then the property "there" of "view" is true
     And the property "loading" of "view" is false
 
+  @api-QtWebEngine.WebEngineView.newWindowRequested @api-QtWebEngine.WebEngineNewWindowRequest.destination
+  Scenario: A page asking for a new window says what kind of window it asks for
+    Given the text file "links.html":
+      """
+      <!doctype html>
+      <html><body style="margin:0">
+      <a href="second.html" target="_blank"
+         style="display:block; height:50px; background:#ff0000"></a>
+      <div onclick="window.open('second.html', '_blank', 'width=200,height=100')"
+           style="height:50px; background:#0000ff"></div>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        property bool stayed: url.toString().endsWith("/links.html")
+        url: Qt.resolvedUrl("links.html")
+        onNewWindowRequested: request => seen += request.destination
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 25
+    And the user releases the pointer at 100, 25
+    And 1 second passes
+    And the user presses the pointer at 100, 75
+    And the user releases the pointer at 100, 75
+    And 1 second passes
+    And the user clicks at 100, 25 holding "Ctrl"
+    And 1 second passes
+    And the user clicks at 100, 25 holding "Shift"
+    And 1 second passes
+    Then the property "seen" of "view" is "1230"
+    And the property "stayed" of "view" is true
+
   Scenario: A port a browser does not visit fails to load and says why
     Given the QML:
       """qml
@@ -388,6 +427,34 @@ Feature: A web page in a WebEngineView
       WebEngineView {
         width: 200; height: 100
         url: Qt.resolvedUrl("page.html")
+      }
+      """
+    When 2 seconds pass
+    Then the application has nothing scheduled
+
+  Scenario: A moving page in a view nobody can see leaves the application idle
+    Given the text file "moving.html":
+      """
+      <!doctype html>
+      <html><head><style>
+      @keyframes spin { to { transform: rotate(360deg) } }
+      div { width: 40px; height: 40px; background: #0000ff; animation: spin 1s linear infinite }
+      </style></head><body><div></div></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        width: 200; height: 100
+        Item {
+          anchors.fill: parent
+          visible: false
+          WebEngineView {
+            anchors.fill: parent
+            url: Qt.resolvedUrl("moving.html")
+          }
+        }
       }
       """
     When 2 seconds pass

@@ -138,6 +138,9 @@ pub struct Start {
     pub scripts: Vec<Script>,
     pub javascript: bool,
     pub muted: bool,
+    /// Whether the view cannot be seen as the browser is made, so a page
+    /// nobody sees never starts drawing.
+    pub hidden: bool,
 }
 
 /// What shows the pages of one view.
