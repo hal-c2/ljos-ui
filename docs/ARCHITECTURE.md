@@ -24,7 +24,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 
 **Non-goals (for now)**
 
-- Qt3D, WebEngine, QtLocation, QtGraphs and Qt.labs modules. These appear in the qtdoc corpus (08) but not in HAL-C2. In the API ledger they are `dropped` with a reason. QtQuick3D was on this list; it is being built, drawn with wgpu natively and on the web (section 7.8). QtQuick.Particles was on this list; the part the corpus uses first (systems, emitters, image particles, a seeded simulation) is built (`features/items/particles.feature`), and affectors, trails and sprite particles are not yet. ShaderEffect with custom shaders was on this list too; it is built from the shaders' GLSL source, drawn by the GL painter only (section 7.1, "As built: shader effects").
+- Qt3D, QtLocation, QtGraphs and Qt.labs modules. These appear in the qtdoc corpus (08) but not in HAL-C2. In the API ledger they are `dropped` with a reason. QtWebEngine was on this list; it is built as an opt-in cargo feature, `webengine`, showing pages through CEF's off-screen rendering (section 7.9). QtQuick3D was on this list; it is being built, drawn with wgpu natively and on the web (section 7.8). QtQuick.Particles was on this list; the part the corpus uses first (systems, emitters, image particles, a seeded simulation) is built (`features/items/particles.feature`), and affectors, trails and sprite particles are not yet. ShaderEffect with custom shaders was on this list too; it is built from the shaders' GLSL source, drawn by the GL painter only (section 7.1, "As built: shader effects").
 - Source compatibility with C++ `QObject` code. Native types are written in Rust (section 5.5).
 - A JS debugger in v1. quickjs-ng has no debugger API (03 §4.2). Logging, stack traces with QML file and line, and the dev overlays come first.
 - Non-QtQuick QML dialects, such as HAL-C2's TUI dialect (`import OpenTUI`) (D6).
@@ -750,6 +750,59 @@ QtQuick3D, to the Qt 6 documentation and how `qml6` behaves (`features/quick3d/`
 **Idle.** A target remembers the revision it shows, and an unchanged scene at an unchanged size is not drawn again: the blit costs one textured triangle, and on the GL painter a frame that changes nothing in the view leaves it out of the areas drawn. Nothing polls. A property change on a 3D type bumps the revision and marks the `View3D`'s node `CONTENT`-dirty, which schedules a repaint as any other item does. A running animation on a 3D property asks for frames through `FrameScheduler` like any animation, and when it stops, the frames stop.
 
 **Colour.** The scene is lit in linear space and written as premultiplied sRGB into an `Rgba8Unorm` target, so the blit copies it into egui's premultiplied gamma-space pass without converting it again (section 7.1, colour).
+
+### 7.9 WebEngine (`ljos_webengine`)
+
+`QtWebEngine` 1.x for showing live web pages, to the Qt 6 documentation and how `qml6` behaves (`features/webengine/`): `WebEngineView`, `WebEngineProfile`, `WebEngineScript` and the view's script collection, `WebEngineSettings`, `WebEngineLoadingInfo`, `WebEngineNewWindowRequest` and the `WebEngine` singleton. The scope came first from what real applications' browser panels use (a url, back, forward, reload, stop, title, loading and progress, `runJavaScript`, user scripts, console messages, new-window requests, zoom), then from the Qt docs.
+
+**Crate.** `ljos_webengine` is a runtime crate: it depends on `ljos_engine`, `ljos_quick`, `ljos_controls`, `ljos_render` (without egui) and `ljos_platform`, never on `qml_syntax`, `qml_front` or egui. It is opt-in twice:
+- The crate's `cef` feature is the browser. Without it the types load and every load fails with `net::ERR_FAILED`, and one warning says the build has no web engine.
+- The `webengine` feature of `ljos`, `ljos_shell` and `ljos_cli` registers the crate with the `cef` feature on. It is in no `default`, so the default build links nothing of it, and `import QtWebEngine` there stands in as empty items, as before (`features/components/module-stand-in.feature`).
+
+**The seam.** A view talks to a `Browser` (`backend.rs`): navigate, history, resize, zoom, hidden, focus, scripts, input. What the browser has to say comes back as `Event`s through a `Sink`, from any thread. Events wait in the sink and one job posted through `Platform::poster` applies all that came since the last, so a busy page costs one wake per frame and a still one none. A newer picture replaces one not yet shown. The BDD runner and the hosts use the same seam; a test backend can stand in for CEF.
+
+**Drawing.** DECISION: CEF in windowless (off-screen) rendering, through the `cef` crate (156.x). CEF hands `on_paint` a BGRA picture and its dirty rectangles. The picture becomes an `ImageHandle` the view paints as an ordinary item of the scene, so a page is clipped, transformed, faded and stacked like any image. The next picture is the previous one's successor (`ImageHandle::successor`): only the dirty rectangles are copied, and the B0 backend uploads only what changed. An open `<select>` list (CEF's popup) is drawn over the page where it is. The page is drawn at the window's device scale. Input reaches the page through the item's pointer, wheel, key and input-method hooks (`input.rs`), in the view's own logical pixels.
+
+**Processes and the helper.** DECISION: a separate helper executable, `ljos-webengine-helper` (a `[[bin]]` of the crate). CEF is told its path (`browser_subprocess_path`) and starts the renderer, GPU and utility processes from it, so the application keeps its own `main` and never has to look at its arguments first. The application's process only hosts the browser. The sandbox is off (`no_sandbox`) for now.
+
+**Where it finds things.**
+- CEF's runtime (`libcef.so`, the `.pak` files, `icudtl.dat`, the V8 snapshot, the locales) is where the loaded `libcef.so` is, or in `LJOS_CEF_DIR`, or beside the executable. On Linux the binaries are linked with an `$ORIGIN` rpath, so an application ships `libcef.so` beside itself. A build gets CEF through the `cef` crate's `CEF_PATH`, which is downloaded once, outside the repository.
+- The helper is beside the executable (or one directory up, for a test in `deps/`), or in `LJOS_WEBENGINE_HELPER`.
+- A profile keeps its data under the user's data directory, in `<app>/ljos-webengine`, or in `LJOS_WEBENGINE_ROOT`. A second running copy of the application uses a directory of its own under the temporary one, and says so; the default profile is off the record, as Qt's is.
+- `LJOS_WEBENGINE_CHROMIUM_FLAGS` hands Chromium switches (`--ozone-platform=headless`, say). The application's own arguments never reach Chromium.
+- On Linux, Chromium is told the display the window can reach, as winit chooses it: Wayland when `WAYLAND_DISPLAY` is set, else X11 when `DISPLAY` is, else none (`headless`; an off-screen page needs no display). Left to itself it took the session's word (`XDG_SESSION_TYPE`) and exited when that display was not there. A `--ozone-platform` in the flags wins.
+- When none of that is there, the view says why: `ljos_webengine::unavailable()` returns the reason, and the BDD runner leaves the `@chromium` scenarios out with it.
+
+**Weight.** The CEF 156 runtime for Linux x86-64 is about 1.5 GB as the archive unpacks, nearly all of it `libcef.so`'s debug information: stripped, `libcef.so` is 278 MB, and with the resources an application ships (one locale) about 335 MB. That is why the feature is opt-in. What Ljós adds itself is small: the release `ljos` binary, stripped, is 0.6 MB larger with the feature (120.8 MB against 120.2 MB), and the stripped helper is 0.34 MB.
+
+**Startup.** CEF starts when the first view needs a browser, not with the program. A release `ljos run` of a window with one view, warm, in the off-screen sandbox: the root is complete about 57 ms after the process starts (39 ms for the same window without a view), and the local page has loaded about 230 ms after it starts.
+
+**Threads and the pump.** CEF runs on the Engine thread with its external message pump (`multi_threaded_message_loop` off, `external_message_pump` on). Nothing polls:
+- CEF asks for work (`on_schedule_message_pump_work`) from its own threads when they hand the UI thread something. A pump thread waits on a condition variable for the earliest time asked and posts one `do_message_loop_work` job to the Engine; a job already posted is not posted again.
+- CEF does not ask for what the UI thread leaves itself (delayed tasks, work a turn ran out of time for). So after each turn a follow-up comes 33 ms later, for as long as anybody keeps asking. Thirty follow-ups in a row that nobody asked for mean the browser has settled, and the pump sleeps until asked again. A call from the view (navigate, resize, a key) asks too.
+- While the pump is awake it holds a platform answer (`Platform::expect_for`), and each load holds one until its first picture after it ended, as does each script until its result. A host's loop never waits for one; a test that lets time pass (`Platform::finish`) does, as for a fetch, so a scenario's "when 2 seconds pass" sees the page loaded.
+
+**Compiling `import QtWebEngine`.** The compiler stands a module of Qt's that Ljós does not build in as empty items, unless the type oracle has the type as one Ljós builds. A program built with the feature registers the module, so `ljos run` and `ljos render` compile against an oracle made from an Engine with the modules registered (`EngineOracle::from_engine`): a type the table knows only from Qt's resolves to the registered type. Without the feature they compile against the table alone, as before.
+
+**The first page.** The first URL is asked for through DevTools (`Page.navigate`), after `Runtime.enable`, `Page.enable` and the user scripts, so the scripts are in place for the first document. Until the first navigation there is no renderer, and scripts added then did not reach the first document; the first install asks for them to run in the document there is as well (`runImmediately`). `stop()` stops through DevTools too, since the first page may not have begun when it comes.
+
+**Files and the test sandbox.** A `file:` URL goes to Chromium through the platform's path environment (`PathEnv::real`), and the URL it reports comes back through the same map, so a test's sandboxed files load as they would on disk and the view reports the URL the application gave.
+
+**Idle.** A page that has loaded and does not move leaves the application with nothing scheduled: the pump sleeps after its follow-ups, the load's answer is kept, and no picture comes (`features/webengine/web-view.feature`, the last scenario). A hidden view tells the browser so, and a hidden page draws nothing. Measured on the example browser (`examples/webbrowser`) in the off-screen sandbox, once its static home page had loaded and about a second after the last input (the pump's follow-ups): 0.000 s of processor time in 30 s, over the application and the seven processes of CEF's it had started. A focused text field's blinking cursor is the application's own and costs what it costs anywhere.
+
+**As built.**
+- Loading a URL, a file, a page from a web server; a load that fails makes the page that failed the view's `url`, as qml6 shows it; `loading`, `loadProgress`, `title`, `url`, `loadingChanged` with `WebEngineLoadingInfo` (status, error string, code and domain, the HTTP status of a page a server refused even when its body is empty); a stop as a load starts reports `LoadStoppedStatus`.
+- `goBack`, `goForward`, `reload`, `stop`, `canGoBack`, `canGoForward`.
+- `runJavaScript` with a callback and a world; a script that throws hands back nothing.
+- User scripts with injection points and worlds, set imperatively (`userScripts.collection = [...]`, `insert`, `clear`).
+- `javaScriptConsoleMessage` with its level, line and source.
+- `zoomFactor` clamped to 0.25–5, as Qt clamps it.
+- `newWindowRequested`, `windowCloseRequested`, `renderProcessTerminated`.
+- Named profiles and the off-the-record default; `clearHttpCache`.
+
+**Not built:** a declarative grouped binding on `userScripts` (`userScripts.collection: [...]`: the collection is made when the view completes, after the binding would have been set), `recentlyAudible` (CEF's audio handler takes the sound away from the speakers, so it cannot say what is heard), downloads, permissions and certificate errors, `printToPdf`, find-in-page, `grabToImage` of a page, dev tools, the Chromium sandbox, a macOS application bundle with its helper apps (on macOS the view says CEF needs one), accelerated (shared-texture) off-screen rendering, and `WebChannel`.
+
+**On the web.** `ljos-web` can only stand a view in with an `<iframe>`. What cannot work there: `runJavaScript` and user scripts in a page of another origin, `grabToImage`, console messages and title and URL changes from another origin, history beyond the frame's own, zoom of the page, and a profile of its own.
 
 ---
 
