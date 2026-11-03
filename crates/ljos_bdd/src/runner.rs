@@ -10,6 +10,7 @@ use futures::FutureExt as _;
 
 use crate::{
     backend::BackendMode,
+    deadline::Watchdog,
     filter::{BacklogFilter, Selection},
     world::LjosWorld,
 };
@@ -64,6 +65,15 @@ fn changes_files(
                             || text.ends_with(" is removed")
                             || text.ends_with(" by a save that has not finished")))
             })
+}
+
+/// `features/<file>:<line> <name>`, as a report names a scenario.
+fn scenario_place(root: &Path, feature: &gherkin::Feature, scenario: &gherkin::Scenario) -> String {
+    let file = feature.path.as_deref().map_or_else(
+        || feature.name.clone(),
+        |p| p.strip_prefix(root).unwrap_or(p).display().to_string(),
+    );
+    format!("{file}:{} \"{}\"", scenario.position.line, scenario.name)
 }
 
 /// Run the ledger and return whether every selected scenario passed.
@@ -121,6 +131,10 @@ pub fn run() -> bool {
         .discard_stats_writes()
         .discard_arbitrary_writes();
     let writer = console.tee::<LjosWorld, _>(junit_out).normalized();
+    let root = workspace_root();
+    let watchdog = Watchdog::deadline_from_env().map(Watchdog::exiting);
+    let started = watchdog.clone();
+    let finished = watchdog.clone();
     let result = futures::executor::block_on(
         LjosWorld::cucumber::<PathBuf>()
             .with_parser(BacklogFilter::new(
@@ -130,7 +144,10 @@ pub fn run() -> bool {
             .with_writer(writer)
             .max_concurrent_scenarios(1)
             .fail_on_skipped()
-            .before(|feature, rule, scenario, world| {
+            .before(move |feature, rule, scenario, world| {
+                if let Some(dog) = &started {
+                    dog.start(scenario_place(&root, feature, scenario));
+                }
                 let tagged = |tag: &str| {
                     let is = |t: &String| t == tag;
                     feature.tags.iter().any(is)
@@ -143,8 +160,19 @@ pub fn run() -> bool {
                 }
                 async {}.boxed_local()
             })
+            .after(move |_, _, _, _, _| {
+                if let Some(dog) = &finished {
+                    dog.stop();
+                }
+                async {}.boxed_local()
+            })
             .run(workspace_root().join("features")),
     );
+    // What a run leaves behind (a web engine's processes, the desktop
+    // sandbox) is let go of after the last scenario; that has its deadline too.
+    if let Some(dog) = &watchdog {
+        dog.start("the shutdown after the last scenario".into());
+    }
     use cucumber::writer::Stats as _;
     !result.execution_has_failed() && result.parsing_errors() == 0
 }
