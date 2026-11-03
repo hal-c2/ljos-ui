@@ -3,7 +3,8 @@
 #   https://doc.qt.io/qt-6/qml-qtgraphs-graphsview.html
 #   https://doc.qt.io/qt-6/qtlocation-index.html
 #   docs/ARCHITECTURE.md §1 Goals and non-goals
-# Qt 3D, WebEngine, QtLocation and QtGraphs are non-goals; QtQuick.Timeline
+# Qt 3D, QtLocation and QtGraphs are non-goals, and QtWebEngine stands in
+# unless the app is built with the `webengine` feature; QtQuick.Timeline
 # is not built yet. Qt Quick 3D is built (features/quick3d), and most of
 # its Helpers (the types Ljós does not build stand in), but not its
 # Effects, Particles3D and other add-on modules.

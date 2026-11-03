@@ -34,6 +34,17 @@ esac
 # headless and on its own bus, of its own here so that a sandbox someone drives is left alone.
 # It is started only when the selected files have such a scenario, and stopped after the run.
 # Without it the runner leaves them out and says why.
+# LJOS_BDD_CARGO_FEATURES picks optional features of ljos_bdd, as
+# `webengine`, which runs the @chromium scenarios on CEF; its helper is
+# built first, beside the test.
+features=()
+if [ -n "${LJOS_BDD_CARGO_FEATURES:-}" ]; then
+  features=(--features "$LJOS_BDD_CARGO_FEATURES")
+  case ",$LJOS_BDD_CARGO_FEATURES," in
+    *,webengine,*) cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
+  esac
+fi
+
 desktop=
 if [ "${LJOS_BDD_BACKEND:-ljos}" != qt ]; then
   shopt -s globstar nullglob
@@ -63,8 +74,8 @@ if [ -n "$desktop" ]; then
   else
     export LJOS_BDD_DESKTOP_SKIP="${why##*$'\n'}"
   fi
-  cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"
+  cargo test --quiet -p ljos_bdd "${features[@]}" --test features -- "${args[@]}"
 else
   export LJOS_BDD_DESKTOP_SKIP=
-  exec cargo test --quiet -p ljos_bdd --test features -- "${args[@]}"
+  exec cargo test --quiet -p ljos_bdd "${features[@]}" --test features -- "${args[@]}"
 fi

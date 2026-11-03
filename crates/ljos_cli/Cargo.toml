@@ -56,6 +56,7 @@ ljos_quick = { path = "../ljos_quick", features = ["pdf"] }
 # `ljos shaders`: `.ljsh` artifacts made at build time.
 ljos_shader = { path = "../ljos_shader", features = ["compile"] }
 ljos_media = { path = "../ljos_media" }
+ljos_webengine = { path = "../ljos_webengine", optional = true }
 # `ljos render --network`: the fetcher a desktop application has.
 ljos_platform = { path = "../ljos_platform", features = ["http"] }
 ljos_render = { path = "../ljos_render", default-features = false }
@@ -92,6 +93,9 @@ windows-sys = { workspace = true, features = [
 ] }
 
 [features]
+# QtWebEngine on CEF in `ljos run`; needs CEF's runtime beside the binary
+# (docs/ARCHITECTURE.md §7.9). Off by default.
+webengine = ["dep:ljos_webengine", "ljos_webengine/cef"]
 # Every heap allocation of Rust code recorded with its call stack, for a
 # memory profile by subsystem; see docs/BENCHMARKS.md. Slow: never shipped.
 dhat-heap = ["dep:dhat"]

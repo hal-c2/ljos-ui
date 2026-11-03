@@ -400,7 +400,7 @@ fn compile(
     let oracle = match (example, types) {
         (Some(id), _) => crate::render::oracle_for_example(id),
         (None, Some(types)) => oracle_for_types(types)?,
-        (None, None) => EngineOracle::table_only(),
+        (None, None) => crate::render::oracle_for_modules(),
     };
     OnDemand::open(dir, key, aliases, oracle, say)
 }

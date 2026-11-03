@@ -158,6 +158,8 @@ pub const WITHOUT_QT_TABLE: &str = "this build knows Ljós's own types only: wit
 /// Qt's modules Ljós does not build (ARCHITECTURE.md §1), with the modules
 /// below them: what they draw (a web page, a map, a chart) is one part of
 /// a window, and the rest of an application that shows one still loads.
+/// `QtWebEngine` is built only with the `webengine` feature (§7.9); without
+/// it, its types stand in here.
 /// Then the ones it has not built yet: the modules below `QtQuick3D`
 /// (which itself is built, `ljos_quick3d`), and Qt Design Studio's modules
 /// (a timeline, design effects, its components), with which an application

@@ -218,7 +218,16 @@ start() {
   (($#)) || die "usage: mise run desktop:cua <file.qml> [<ljos run args>]"
   up
   stop_one app
-  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli
+  # LJOS_CLI_CARGO_FEATURES picks optional features of `ljos`, as `webengine`,
+  # whose helper is built beside it.
+  local features=()
+  if [ -n "${LJOS_CLI_CARGO_FEATURES:-}" ]; then
+    features=(--features "$LJOS_CLI_CARGO_FEATURES")
+    case ",$LJOS_CLI_CARGO_FEATURES," in
+      *,webengine,*) cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
+    esac
+  fi
+  cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli "${features[@]}"
   # X11 through XWayland: cua-driver's input and capture are X11's.
   "${sandbox_env[@]}" setsid "$target/debug/ljos" run "$@" > "$home/app.log" 2>&1 &
   track $! app

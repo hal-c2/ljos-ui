@@ -320,6 +320,8 @@ pub fn engine() -> Engine {
     ljos_controls::register(&engine);
     #[cfg(feature = "media")]
     ljos_media::register(&engine);
+    #[cfg(feature = "webengine")]
+    ljos_webengine::register(&engine);
     engine
 }
 

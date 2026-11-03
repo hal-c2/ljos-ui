@@ -5,6 +5,11 @@ use std::path::Path;
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     let os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    // With `webengine`, CEF's libcef.so is beside the binary, as cef-dll-sys
+    // copies it into the target directory and as an installed app ships it.
+    if os == "linux" && std::env::var_os("CARGO_FEATURE_WEBENGINE").is_some() {
+        println!("cargo:rustc-link-arg-bins=-Wl,-rpath,$ORIGIN");
+    }
     let env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     // A position-independent binary is relocated as it loads, and glibc's
     // loader reads one 24-byte entry per pointer: 140 000 of them, 3.3 MB

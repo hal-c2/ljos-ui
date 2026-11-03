@@ -189,6 +189,13 @@ impl std::fmt::Debug for EngineOracle {
     }
 }
 
+/// Whether the table has `uri`'s `name` as a type Ljós builds: one the
+/// table describes only from Qt's is the registered type's, if the
+/// program registers one.
+fn built_in_table(qt: &QtTypeOracle, uri: &str, name: &str) -> bool {
+    qt.module_type(uri, name).is_some_and(|ty| qt.is_built(ty))
+}
+
 impl EngineOracle {
     /// The table of types alone: with no example a render compiles
     /// exactly as it did before `--example` existed.
@@ -203,7 +210,7 @@ impl EngineOracle {
         let mut natives: Vec<NativeType> = Vec::new();
         for module in engine.type_dump().modules {
             for ty in &module.types {
-                if qt.module_type(&module.uri, &ty.name).is_some() {
+                if built_in_table(&qt, &module.uri, &ty.name) {
                     continue;
                 }
                 if let Some(meta) = engine.lookup_type(&module.uri, &ty.name) {
@@ -227,7 +234,7 @@ impl EngineOracle {
         let mut natives: Vec<NativeType> = Vec::new();
         for module in &dump.modules {
             for ty in &module.types {
-                if qt.module_type(&module.uri, &ty.name).is_some() {
+                if built_in_table(&qt, &module.uri, &ty.name) {
                     continue;
                 }
                 natives.push(flatten(dump, engine, ty, module.uri.clone(), 0)?);
@@ -411,13 +418,19 @@ impl TypeOracle for EngineOracle {
     }
 
     fn module_type(&self, uri: &str, name: &str) -> Option<EngineType> {
-        if let Some(ty) = QtTypeOracle.module_type(uri, name) {
+        let qt = QtTypeOracle.module_type(uri, name);
+        if let Some(ty) = qt
+            && QtTypeOracle.is_built(ty)
+        {
             return Some(EngineType::Qt(ty));
         }
+        // A type of Qt's that Ljós does not build itself, which a module
+        // the program registers has (an opt-in module, as QtWebEngine).
         self.natives
             .iter()
             .position(|n| n.module == uri && n.name == name)
             .map(|i| EngineType::Native(i as u32))
+            .or(qt.map(EngineType::Qt))
     }
 
     fn name(&self, ty: EngineType) -> &str {

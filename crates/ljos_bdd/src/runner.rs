@@ -98,6 +98,13 @@ pub fn run() -> bool {
     if mode == BackendMode::Qt {
         selection.surfaces.push("chromium".into());
     } else {
+        // Pages of a test keep nothing where the user's apps do.
+        if std::env::var_os("LJOS_WEBENGINE_ROOT").is_none() {
+            let root =
+                std::env::temp_dir().join(format!("ljos-bdd-webengine-{}", std::process::id()));
+            // SAFETY: no other thread runs yet.
+            unsafe { std::env::set_var("LJOS_WEBENGINE_ROOT", root) };
+        }
         match ljos_webengine::unavailable() {
             None => selection.surfaces.push("chromium".into()),
             Some(why) => eprintln!("@chromium scenarios not run: {why}"),

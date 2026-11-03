@@ -22,6 +22,7 @@ ljos_platform = { path = "../ljos_platform" }
 # Only with `media` (on by default): QtMultimedia. Its sound output is
 # `media-audio`'s.
 ljos_media = { path = "../ljos_media", optional = true, default-features = false, features = ["decode"] }
+ljos_webengine = { path = "../ljos_webengine", optional = true }
 # Only with `shell`: the desktop loop an application runs in. Without it
 # the facade is the runtime alone (headless hosts, tests, other shells).
 ljos_shell = { path = "../ljos_shell", optional = true, default-features = false }
@@ -109,6 +110,14 @@ media = ["dep:ljos_media", "ljos_shell?/media"]
 # (`default-features = false, features = ["media"]`). Without it sound
 # goes to a null sink.
 media-audio = ["media", "ljos_media/audio", "ljos_shell?/media-audio"]
+# QtWebEngine (WebEngineView and its kin), in the Engine `engine()` makes
+# and, with `shell`, in the shell's: live pages drawn off-screen by the
+# Chromium Embedded Framework into the scene. Off by default: it needs
+# CEF's runtime (libcef and its files, about 1.5 GB unpacked, about
+# 335 MB of it shipped) beside the program and the `ljos-webengine-helper`
+# executable (docs/ARCHITECTURE.md §7.9). Without it the module is not
+# installed, as in a Qt without QtWebEngine.
+webengine = ["dep:ljos_webengine", "ljos_webengine/cef", "ljos_shell?/webengine"]
 # Development only: `ljos::dev::compile_dir` and `App::qml_dir` compile a
 # directory of QML at start-up. Never in a shipped application.
 dev-qml = ["dep:ljos_compiler", "dep:qml_front", "dep:ljos_ir", "dep:ljos_js"]
