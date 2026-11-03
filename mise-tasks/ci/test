@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+#MISE description="Test the scripts CI runs: the change selection and the doc link check"
+set -euo pipefail
+python3 scripts/ci_changes_test.py
+python3 scripts/doc_links.py
