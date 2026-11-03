@@ -10,56 +10,256 @@ on:
     - cron: "17 3 * * *"
   # The nightly jobs, on demand: after a change to them, or to see whether a fix holds.
   workflow_dispatch:
+    inputs:
+      base:
+        description: "Run only what the change since this revision reaches, as a pull request would; empty runs everything"
+        default: ""
 
+# Every run of main is kept to its end, so main is never left without a verdict; a pull
+# request's newer push replaces its older run.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+# The workspace links well over a hundred test binaries, each with the whole toolkit in it,
+# which is more than a hosted runner's disk holds with line tables in every one. A panic still
+# names its file and line without them.
+env:
+  CARGO_PROFILE_DEV_DEBUG: "0"
+  CARGO_PROFILE_DEV_STRIP: debuginfo
+  # No Qt is installed here. The front end reads QML against Ljós's own description of its
+  # types, which is committed (crates/qt_types/src/ljos.txt); the table of Qt's types is
+  # generated from an installed Qt and never committed (ARCHITECTURE.md D1), so a checkout has
+  # none. `none` says so outright instead of leaving it to the file being absent. What only
+  # Qt's table can test runs in the `qt-types` job below.
+  LJOS_QT_TYPES: none
 
 jobs:
-  check:
-    if: github.event_name != 'schedule'
+  # What the change can reach (scripts/ci_changes.py): a pull request runs that, main, the
+  # nightly run and a dispatch run everything.
+  changes:
     runs-on: ubuntu-latest
-    # The workspace links well over a hundred test binaries, each with the whole toolkit in it,
-    # which is more than a hosted runner's disk holds with line tables in every one. A panic still
-    # names its file and line without them.
-    env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_DEV_STRIP: debuginfo
-      # No Qt is installed here. The front end reads QML against Ljós's own description of its
-      # types, which is committed (crates/qt_types/src/ljos.txt); the table of Qt's types is
-      # generated from an installed Qt and never committed (ARCHITECTURE.md D1), so a checkout has
-      # none. `none` says so outright instead of leaving it to the file being absent. What only
-      # Qt's table can test runs in the `qt-types` job below.
-      LJOS_QT_TYPES: none
+    timeout-minutes: 10
+    outputs:
+      full: ${{ steps.plan.outputs.full }}
+      clippy: ${{ steps.plan.outputs.clippy }}
+      clippy_args: ${{ steps.plan.outputs.clippy_args }}
+      wasm: ${{ steps.plan.outputs.wasm }}
+      tests: ${{ steps.plan.outputs.tests }}
+      lint: ${{ steps.plan.outputs.lint }}
+      features: ${{ steps.plan.outputs.features }}
+      acceptance: ${{ steps.plan.outputs.acceptance }}
+    steps:
+      # A pull request is checked out as its merge with the base, whose first parent is the base.
+      # A dispatch with a base needs the history back to it.
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: ${{ inputs.base != '' && 0 || 2 }}
+          persist-credentials: false
+      # The image's own cargo reads the workspace's shape; no toolchain is installed for it.
+      - id: plan
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ inputs.base }}
+        run: |
+          if [ "$EVENT" = pull_request ]; then
+            mode=(--mode pr --base HEAD^1)
+          elif [ -n "$BASE" ]; then
+            mode=(--mode pr --base "$BASE")
+          else
+            mode=(--mode full)
+          fi
+          python3 scripts/ci_changes.py "${mode[@]}" | tee -a "$GITHUB_OUTPUT"
+
+  # Links and the scripts CI runs: no build, so every run has them.
+  docs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
         with:
-          submodules: false
-      # FilmCraft (QtMultimedia's decoders) is a submodule the workspace builds from by path;
-      # only it is fetched, shallow, not the corpus.
-      - run: git submodule update --init --depth 1 third_party/filmcraft
-      # Toolchains the image ships and this job never uses.
-      - run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL && df -h /
-      - uses: jdx/mise-action@v3
-      - uses: Swatinem/rust-cache@v2
-      # The egui_kittest render tests need a wgpu adapter; lavapipe is a software Vulkan.
-      # Font discovery links fontconfig on Linux (the test fonts themselves are in the repository),
-      # and the audio sink links ALSA. The time-zone scenarios name legacy zones (`EST5EDT`), which
-      # Ubuntu 26.04 keeps out of tzdata.
-      - run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers libfontconfig1-dev libasound2-dev pkg-config tzdata-legacy
-      - run: mise run check
-      # All of them, so one run shows every failure a runner has.
-      - run: mise run test -- --no-fail-fast
+          persist-credentials: false
+      - run: python3 scripts/doc_links.py
+      - run: python3 scripts/ci_changes_test.py
+
+  clippy:
+    needs: changes
+    if: needs.changes.outputs.clippy == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: read -ra args <<< "$CLIPPY_ARGS" && mise run check -- "${args[@]}"
+        env:
+          CLIPPY_ARGS: ${{ needs.changes.outputs.clippy_args }}
+      - run: mise run check:wasm
+        if: needs.changes.outputs.wasm == 'true'
+
+  test:
+    needs: changes
+    if: needs.changes.outputs.tests != '[]'
+    name: test ${{ matrix.shard.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.tests) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      # All of them, so one run shows every failure a runner has; a test that runs past its
+      # deadline (.config/nextest.toml) is ended and named.
+      - run: read -ra args <<< "$PACKAGES" && cargo nextest run --profile ci --no-tests=pass "${args[@]}"
+        env:
+          PACKAGES: ${{ matrix.shard.packages }}
+      # nextest does not run doctests.
+      - run: read -ra args <<< "$DOC" && cargo test --doc "${args[@]}"
+        if: ${{ !cancelled() && matrix.shard.doc != '' }}
+        env:
+          DOC: ${{ matrix.shard.doc }}
       - run: df -h /
         if: always()
-      - run: mise run features:lint
-      # Every scenario that is not backlog passes on the Ljós backend, so the whole ledger gates.
-      # The Qt oracle (features:parity) runs nightly where Qt is installed (ARCHITECTURE.md 18.6).
-      - run: mise run features
-      # External acceptance suites (acceptance/README.md): the in-repo example proves the
-      # mechanism; both tasks read a fixture in this repository and need no Qt.
+
+  # The features runner and the programs its steps run, built once for the lint and every shard.
+  features-build:
+    needs: changes
+    if: needs.changes.outputs.features != '[]' || needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          runner=$(cargo test -p ljos_bdd --test features --no-run --message-format=json \
+            | jq -r 'select(.reason == "compiler-artifact" and .target.name == "features" and .executable != null) | .executable')
+          cp "$runner" "$RUNNER_TEMP/bin/features"
+          cargo build -p ljos_cli -p ljos_fuzz -p ljos_bdd --bin ljos --bin ljos-fuzz --bin features-lint
+          cp target/debug/ljos target/debug/ljos-fuzz target/debug/features-lint "$RUNNER_TEMP/bin/"
+          ls -la "$RUNNER_TEMP/bin"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: features-bin
+          path: ${{ runner.temp }}/bin
+          retention-days: 1
+
+  lint:
+    needs: [changes, features-build]
+    if: needs.changes.outputs.lint == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: features-bin
+          path: ${{ runner.temp }}/bin
+      - uses: ./.github/actions/setup
+        with:
+          rust: "false"
+      - run: chmod +x "$RUNNER_TEMP"/bin/* && "$RUNNER_TEMP/bin/features-lint"
+
+  # Every scenario that is not backlog passes on the Ljós backend, so the ledger gates; a
+  # pull request runs the files its change reaches. The Qt oracle (features:parity) runs
+  # nightly where Qt is installed (ARCHITECTURE.md 18.6).
+  features:
+    needs: [changes, features-build]
+    if: needs.changes.outputs.features != '[]'
+    name: features ${{ matrix.shard.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.changes.outputs.features) }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: features-bin
+          path: ${{ runner.temp }}/bin
+      - uses: ./.github/actions/setup
+        with:
+          rust: "false"
+      # A scenario that runs past its deadline (features/README.md) ends the shard and is named.
+      - run: |
+          chmod +x "$RUNNER_TEMP"/bin/*
+          read -ra files <<< "$FILES"
+          bash mise-tasks/features/run --backend ljos "${files[@]}"
+        env:
+          FILES: ${{ matrix.shard.files }}
+          LJOS_BDD_FEATURES_BIN: ${{ runner.temp }}/bin/features
+          LJOS_BIN: ${{ runner.temp }}/bin/ljos
+          LJOS_FUZZ_BIN: ${{ runner.temp }}/bin/ljos-fuzz
+
+  # External acceptance suites (acceptance/README.md): the in-repo example proves the
+  # mechanism; both tasks read a fixture in this repository and need no Qt.
+  acceptance:
+    needs: changes
+    if: needs.changes.outputs.acceptance == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
       - run: mise run features:acceptance example
       - run: mise run features:acceptance-test
+
+  # Builds what the other jobs build, on main, and saves it as the cache they restore. It
+  # gates nothing: on main every other job builds the same things and checks them.
+  cache:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      - run: cargo clippy --workspace --all-targets
+      - run: cargo test --workspace --no-run
+      - run: cargo test -p ljos_bdd --test features --no-run
+      - run: cargo build -p ljos_cli -p ljos_fuzz -p ljos_bdd --bin ljos --bin ljos-fuzz --bin features-lint
+      - run: df -h /
+        if: always()
+
+  # The one check a branch rule names: it passes when each job the change needed passed, and
+  # the jobs it did not need were left out.
+  ci-ok:
+    if: always()
+    needs: [changes, docs, clippy, test, features-build, lint, features, acceptance]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          # `changes` decides what is left out, so it must have run; the rest passed or were left out.
+          echo "$NEEDS" | jq -e '
+            .changes.result == "success"
+            and ([.[] | .result] | all(. == "success" or . == "skipped"))' > /dev/null
 
   qt-types:
     # The same gates as `check`, in a build that reads QML against a table of Qt's types. It is
@@ -67,9 +267,10 @@ jobs:
     # `SKIPPED` in `check`), and where a type Qt has and Ljós lacks is told from a slip.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
     env:
-      CARGO_PROFILE_DEV_DEBUG: "0"
-      CARGO_PROFILE_DEV_STRIP: debuginfo
+      # The table of Qt's types, generated below, is the one read here.
+      LJOS_QT_TYPES: ""
     steps:
       - uses: actions/checkout@v5
         with:
@@ -103,6 +304,10 @@ jobs:
     # Needs the corpus/qtdoc submodule and qml6 (a black box, offscreen). See corpus/README.md.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      # The gallery reads QML against the table of Qt's types it finds, as it always has.
+      LJOS_QT_TYPES: ""
     steps:
       - uses: actions/checkout@v5
         with:
