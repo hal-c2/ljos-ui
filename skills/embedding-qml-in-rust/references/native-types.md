@@ -248,7 +248,7 @@ A stand-in's properties hold what they are given and report changes. Its signals
 
 ## See also
 
-- [How a Rust and QML App Fits Together](./overview.md)
-- [Singletons and Multiple Windows](./singletons-and-windows.md)
+- How a Rust and QML App Fits Together (in the Ljós documentation)
+- Singletons and Multiple Windows (in the Ljós documentation)
 - [Models for Views](./models.md)
 - [Testing a Rust and QML App](./testing-rust.md)

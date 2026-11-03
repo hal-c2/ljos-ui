@@ -142,7 +142,7 @@ Even with 10,000 rows in the model, at most 14 delegates exist at once for a 300
 
 ## See also
 
-- [How a Rust and QML App Fits Together](./overview.md)
+- How a Rust and QML App Fits Together (in the Ljós documentation)
 - [Native Types in Rust](./native-types.md)
-- [Singletons and Multiple Windows](./singletons-and-windows.md)
+- Singletons and Multiple Windows (in the Ljós documentation)
 - [Threads, Tasks and UiHandle](./threads-and-uihandle.md)

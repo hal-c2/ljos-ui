@@ -211,6 +211,7 @@ fn files() -> BTreeMap<PathBuf, String> {
         let server = prompts::body(skill.prompt, Reader::Server).expect("a skill's prompt exists");
         // What the server's text quotes of a document, such as the brief's
         // own pointers, is not something the skill points to.
+        let mut references = Vec::new();
         for doc in docs_named(&server) {
             let name = prompts::doc(Reader::Skill, doc);
             if !body.contains(&name) {
@@ -218,10 +219,67 @@ fn files() -> BTreeMap<PathBuf, String> {
             }
             let source = std::fs::read_to_string(repository().join(doc))
                 .unwrap_or_else(|e| panic!("{doc}: {e}"));
-            out.insert(dir.join(name), reference(&source));
+            references.push((dir.join(&name), reference(&source)));
+        }
+        let copied: Vec<PathBuf> = references.iter().map(|(path, _)| path.clone()).collect();
+        for (path, text) in references {
+            let text = unlink_missing(&text, &path, &copied);
+            out.insert(path, text);
         }
     }
     out
+}
+
+/// A reference's links to the site's other pages, `[label](./page.md)`,
+/// would lead nowhere in a skill that copies only the pages its prompt
+/// names: those that are not copied keep their label and say where it is.
+fn unlink_missing(text: &str, path: &Path, copied: &[PathBuf]) -> String {
+    let dir = path.parent().unwrap_or(Path::new(""));
+    let mut out = String::with_capacity(text.len());
+    let mut fenced = false;
+    for line in text.split_inclusive('\n') {
+        if line.starts_with("```") {
+            fenced = !fenced;
+        }
+        if fenced {
+            out.push_str(line);
+            continue;
+        }
+        let mut rest = line;
+        while let Some(mid) = rest.find("](") {
+            let target_end = rest[mid + 2..].find(')').map(|end| mid + 2 + end);
+            let (Some(open), Some(end)) = (rest[..mid].rfind('['), target_end) else {
+                out.push_str(&rest[..mid + 2]);
+                rest = &rest[mid + 2..];
+                continue;
+            };
+            let (label, target) = (&rest[open + 1..mid], &rest[mid + 2..end]);
+            let page = target.split('#').next().unwrap_or(target);
+            let relative = page.ends_with(".md") && !page.contains("://");
+            out.push_str(&rest[..open]);
+            if relative && !copied.contains(&dir.join(page.trim_start_matches("./"))) {
+                out.push_str(&format!("{label} (in the Ljós documentation)"));
+            } else {
+                out.push_str(&rest[open..=end]);
+            }
+            rest = &rest[end + 1..];
+        }
+        out.push_str(rest);
+    }
+    out
+}
+
+#[test]
+fn a_link_to_a_page_not_copied_keeps_its_label() {
+    let copied = [PathBuf::from("s/references/models.md")];
+    let path = Path::new("s/references/testing.md");
+    let text = "- [Models](./models.md)\n- [x] [Overview](./overview.md#start)\n\
+        ```\n[a](./b.md)\n```\n[site](https://example.org/x.md)\n";
+    assert_eq!(
+        unlink_missing(text, path, &copied),
+        "- [Models](./models.md)\n- [x] Overview (in the Ljós documentation)\n\
+        ```\n[a](./b.md)\n```\n[site](https://example.org/x.md)\n"
+    );
 }
 
 #[test]
