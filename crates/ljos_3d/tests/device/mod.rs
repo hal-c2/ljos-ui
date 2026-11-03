@@ -3,7 +3,7 @@
 //! Each test gets a device of its own, so no test sees another's caches or
 //! counts. They take turns because each `Offscreen::new` brings up wgpu's
 //! Vulkan and GL backends together. On a software driver both are Mesa,
-//! and they share one LLVM. Eight tests doing that at once while others JIT
+//! and they share one LLVM. Several tests doing that at once while others JIT
 //! and tear their devices down killed a test run with SIGSEGV on lavapipe
 //! (CI run 41716115603) and printed nothing. One live device per process is
 //! also what a host has (`ljos_render`'s off-screen 3D keeps one).
