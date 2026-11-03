@@ -44,9 +44,8 @@ pub enum Event {
     Title(String),
     /// From 0 to 1.
     Progress(f64),
-    /// Whether anything loads, and the history around the page.
+    /// The history around the page.
     Navigation {
-        loading: bool,
         back: bool,
         forward: bool,
     },
@@ -74,10 +73,6 @@ pub enum Event {
     },
     /// The page asks to be closed (`window.close()`).
     CloseRequested,
-    /// Whether the page plays sound now.
-    Audible(bool),
-    /// The page's zoom moved (a pinch, Ctrl and the wheel).
-    Zoom(f64),
     /// The process that drew the page went away.
     Crashed {
         status: i32,

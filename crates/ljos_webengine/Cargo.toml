@@ -14,6 +14,11 @@ default = []
 # are there and every load fails, saying there is no web engine.
 cef = ["dep:cef"]
 
+[[bin]]
+name = "ljos-webengine-helper"
+path = "src/bin/helper.rs"
+required-features = ["cef"]
+
 [dependencies]
 ljos_engine = { path = "../ljos_engine" }
 ljos_controls = { path = "../ljos_controls" }

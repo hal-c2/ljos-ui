@@ -3846,6 +3846,7 @@ dependencies = [
  "ljos_shell",
  "ljos_text",
  "ljos_web",
+ "ljos_webengine",
  "qml_front",
  "qt_types",
  "serde_json",
@@ -4030,6 +4031,7 @@ dependencies = [
  "ljos_shell",
  "ljos_test",
  "ljos_timeline",
+ "ljos_webengine",
  "ljos_xml",
  "qml_fmt",
  "qml_front",
@@ -4275,6 +4277,15 @@ dependencies = [
  "ljos",
  "ljos_compiler",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "ljos_example_webbrowser"
+version = "0.0.0"
+dependencies = [
+ "ljos",
+ "ljos_compiler",
+ "ljos_webengine",
 ]
 
 [[package]]
@@ -4752,6 +4763,7 @@ dependencies = [
  "ljos_render",
  "ljos_runtime",
  "ljos_shell",
+ "ljos_webengine",
  "ljos_xml",
  "objc2 0.6.5",
  "objc2-app-kit 0.3.2",
