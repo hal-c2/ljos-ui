@@ -557,3 +557,121 @@ fn egui_is_told_a_small_limit_and_pictures_keep_the_gpus() {
         .size;
     assert_eq!(size, [3000, 10], "not shrunk to egui's limit");
 }
+
+/// Each texture egui was told about since the last call, and where on it
+/// the pixels go (`None`: all of it, a new texture) and how many. egui's
+/// own font texture is left out.
+fn texture_writes(ctx: &Context) -> Vec<(TextureId, Option<[usize; 2]>, [usize; 2])> {
+    let mut delta = ctx.tex_manager().write().take_delta();
+    let writes = delta
+        .set
+        .iter()
+        .filter(|(id, _)| **id != TextureId::default())
+        .flat_map(|(id, ds)| ds.iter().map(move |d| (*id, d.pos, d.image.size())))
+        .collect();
+    delta.clear();
+    writes
+}
+
+#[test]
+fn a_successor_updates_its_predecessors_texture_where_it_changed() {
+    let ctx = Context::default();
+    // Small enough for a shared page, but live: a texture of its own.
+    let first = picture(32, 16);
+    first.set_live();
+    let mut s = Scene::new(100.0, 100.0);
+    let n = s.node(0.0, 0.0, 32.0, 16.0);
+    s.op(n, whole(&first, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let mut be = EpaintBackend::new();
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    let texture = meshes[0].texture_id;
+    assert_eq!(be.image_pages(), 0, "not on a page");
+    assert_eq!(texture_writes(&ctx), [(texture, None, [32, 16])]);
+
+    // The producer keeps no handle; the display list holds the old one
+    // until the new one replaces it.
+    let damage = ljos_render::PixelRect {
+        x: 4,
+        y: 2,
+        width: 3,
+        height: 5,
+    };
+    let next = first.successor(&[damage], |px| {
+        for y in 2..7 {
+            for x in 4..7 {
+                let i = (y * 32 + x) * 4;
+                px[i..i + 4].copy_from_slice(&[0, 255, 0, 255]);
+            }
+        }
+    });
+    s.op(n, whole(&next, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes[0].texture_id, texture, "the same texture");
+    assert_eq!(texture_writes(&ctx), [(texture, Some([4, 2]), [3, 5])]);
+    assert_eq!((be.image_textures(), be.texture_uploads()), (1, 1));
+
+    // Nothing changed: nothing is sent.
+    let same = next.successor(&[], |_| {});
+    s.op(n, whole(&same, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes[0].texture_id, texture);
+    assert!(texture_writes(&ctx).is_empty());
+    assert_eq!(be.image_textures(), 1);
+}
+
+#[test]
+fn a_successor_whose_predecessor_is_still_drawn_gets_a_texture_of_its_own() {
+    let ctx = Context::default();
+    let first = picture(32, 16);
+    first.set_live();
+    let mut s = Scene::new(100.0, 100.0);
+    let a = s.node(0.0, 0.0, 32.0, 16.0);
+    let b = s.node(0.0, 50.0, 32.0, 16.0);
+    s.op(a, whole(&first, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let mut be = EpaintBackend::new();
+    s.run(&mut be, Some(&ctx));
+    texture_writes(&ctx);
+
+    let next = first.clone().successor(&[], |_| {});
+    s.op(b, whole(&next, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes.len(), 2);
+    assert_ne!(meshes[0].texture_id, meshes[1].texture_id);
+    assert_eq!((be.image_textures(), be.texture_uploads()), (2, 2));
+}
+
+#[test]
+fn a_successor_of_a_picture_on_a_page_is_uploaded_whole_once() {
+    let ctx = Context::default();
+    let first = picture(32, 16);
+    let mut s = Scene::new(100.0, 100.0);
+    let n = s.node(0.0, 0.0, 32.0, 16.0);
+    s.op(n, whole(&first, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let mut be = EpaintBackend::new();
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.image_pages(), 1);
+
+    let damage = ljos_render::PixelRect {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    let second = first.successor(&[damage], |_| {});
+    s.op(n, whole(&second, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    let texture = meshes[0].texture_id;
+    assert_eq!(be.texture_uploads(), 2, "whole, on a texture of its own");
+    texture_writes(&ctx);
+
+    let third = second.successor(&[damage], |_| {});
+    s.op(n, whole(&third, Rect::new(0.0, 0.0, 32.0, 16.0), true));
+    let (meshes, _) = s.run(&mut be, Some(&ctx));
+    assert_eq!(meshes[0].texture_id, texture);
+    assert_eq!(texture_writes(&ctx), [(texture, Some([0, 0]), [1, 1])]);
+    assert_eq!(be.texture_uploads(), 2);
+    s.tree.set_content(n, None);
+    drop(third);
+    s.run(&mut be, Some(&ctx));
+    assert_eq!(be.image_textures(), 0, "gone with the last picture");
+}

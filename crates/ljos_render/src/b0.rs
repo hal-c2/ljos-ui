@@ -43,7 +43,9 @@
 //! drawn, one per sampling mode it is used with. The backend holds the image
 //! only weakly: the texture goes when the image does, or when it has not been
 //! drawn for a while. Once uploaded, pixels that can be made again are let
-//! go ([`ImageHandle::let_go`]).
+//! go ([`ImageHandle::let_go`]). A live image ([`ImageHandle::set_live`])
+//! has a texture of its own, and its successor ([`ImageHandle::successor`])
+//! takes that texture over and sends only the rectangles that changed.
 
 use std::sync::{Arc, Weak};
 
@@ -190,6 +192,9 @@ struct TextureEntry {
     texture: Held,
     owner: WeakImage,
     last_used: u64,
+    /// Its image is live: a successor may take this texture over once the
+    /// image is gone ([`ImageHandle::successor`]).
+    live: bool,
 }
 
 enum Held {
@@ -354,6 +359,9 @@ fn texture_for(
     }
     let image = owner.upgrade()?;
     let max_side = max_texture_side(ctx);
+    if let Some(sampled) = take_over(textures, frame, key, &image, owner, max_side) {
+        return Some(sampled);
+    }
     let fitted = fit_texture(&image, max_side)?;
     let pixels = ColorImage::from_rgba_premultiplied(
         [fitted.width() as usize, fitted.height() as usize],
@@ -363,23 +371,9 @@ fn texture_for(
     // held twice; what reads it later has it made again.
     drop(fitted);
     image.let_go();
-    let filter = if key.smooth {
-        TextureFilter::Linear
-    } else {
-        TextureFilter::Nearest
-    };
-    let options = TextureOptions {
-        magnification: filter,
-        minification: filter,
-        wrap_mode: if key.repeat {
-            TextureWrapMode::Repeat
-        } else {
-            TextureWrapMode::ClampToEdge
-        },
-        mipmap_mode: key.mipmap.then_some(TextureFilter::Linear),
-    };
-    let shared = key
-        .may_share()
+    let options = handle_options(key);
+    let live = image.is_live();
+    let shared = (key.may_share() && !live)
         .then(|| pages.place(ctx, &pixels, options, max_side))
         .flatten();
     let texture = match shared {
@@ -396,10 +390,91 @@ fn texture_for(
         texture,
         owner: owner.clone(),
         last_used: frame,
+        live,
     };
     let sampled = entry.sampled();
     textures.insert(key, entry);
     Some(sampled)
+}
+
+/// The texture of the image `image` replaces, updated in place where they
+/// differ, when that is a texture of its own of the same size and sampling
+/// that nothing else draws in this frame. Only the damage is uploaded.
+fn take_over(
+    textures: &mut FxHashMap<TextureKey, TextureEntry>,
+    frame: u64,
+    key: TextureKey,
+    image: &ImageHandle,
+    owner: &WeakImage,
+    max_side: usize,
+) -> Option<Sampled> {
+    let (before, damage) = image.replaces()?;
+    let old = TextureKey {
+        image: before,
+        ..key
+    };
+    let fits = |n: u32| n as usize <= max_side;
+    let entry = textures.get(&old)?;
+    let Held::Own(handle) = &entry.texture else {
+        return None;
+    };
+    // Mipmaps would be made again from the whole texture by some
+    // renderers and not by others; a smaller copy is not the pixels.
+    let size = [image.width() as usize, image.height() as usize];
+    let usable = !key.mipmap
+        && fits(image.width())
+        && fits(image.height())
+        && handle.size() == size
+        && !(entry.last_used == frame && entry.owner.is_alive());
+    if !usable {
+        return None;
+    }
+    let mut entry = textures.remove(&old)?;
+    let Held::Own(handle) = &mut entry.texture else {
+        unreachable!("checked above");
+    };
+    if !damage.is_empty() {
+        let data = image.data_to_upload();
+        let options = handle_options(key);
+        for r in damage {
+            let (w, h) = (r.width as usize, r.height as usize);
+            let mut part = Vec::with_capacity(w * h * 4);
+            for y in r.y as usize..(r.y + r.height) as usize {
+                let row = (y * size[0] + r.x as usize) * 4;
+                part.extend_from_slice(&data[row..row + w * 4]);
+            }
+            handle.set_partial(
+                [r.x as usize, r.y as usize],
+                ColorImage::from_rgba_premultiplied([w, h], &part),
+                options,
+            );
+        }
+    }
+    entry.owner = owner.clone();
+    entry.last_used = frame;
+    entry.live = true;
+    let sampled = entry.sampled();
+    textures.insert(key, entry);
+    Some(sampled)
+}
+
+/// How a texture for `key` is sampled.
+fn handle_options(key: TextureKey) -> TextureOptions {
+    let filter = if key.smooth {
+        TextureFilter::Linear
+    } else {
+        TextureFilter::Nearest
+    };
+    TextureOptions {
+        magnification: filter,
+        minification: filter,
+        wrap_mode: if key.repeat {
+            TextureWrapMode::Repeat
+        } else {
+            TextureWrapMode::ClampToEdge
+        },
+        mipmap_mode: key.mipmap.then_some(TextureFilter::Linear),
+    }
 }
 
 /// The GPU's limit as the host said it ([`set_max_texture_side`]).
@@ -2068,8 +2143,16 @@ impl RenderBackend for EpaintBackend {
         // unless it is all there is of the pixels: dropping it would cost
         // a decode when the picture is seen again. Pressure drops it all
         // the same.
-        self.textures
-            .retain(|_, t| t.owner.is_alive() && (t.last_used >= keep_after || t.only_copy()));
+        // A live picture's texture also outlives its image until the end
+        // of the next encode, which may bring the successor that takes it
+        // over.
+        self.textures.retain(|_, t| {
+            if t.owner.is_alive() {
+                t.last_used >= keep_after || t.only_copy()
+            } else {
+                t.live
+            }
+        });
         self.pages.sweep();
     }
 
@@ -2488,6 +2571,8 @@ impl RenderBackend for EpaintBackend {
         // just replaced that one's entry: what only it used goes now, not
         // frames later.
         self.lists.retain(|_, e| e.owner.strong_count() > 0);
+        // No successor took these over in this frame.
+        self.textures.retain(|_, t| t.owner.is_alive());
         self.shapes.forget_orphans();
         self.views3d.end_frame();
         stats.shapes = sink.shapes.len() as u32;

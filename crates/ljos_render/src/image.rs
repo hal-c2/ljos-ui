@@ -15,6 +15,12 @@
 //! let go ([`ImageHandle::let_go`]) once they are a texture, so a picture
 //! is not held twice, and while nothing shows them. Whatever reads them
 //! after that has them made again, once, and they stay.
+//!
+//! A live source (a page drawn off-screen, a video) hands a new picture
+//! many times a second, mostly the same as the last. Its pictures are
+//! successors ([`ImageHandle::successor`]): new images that say which one
+//! they replace and where they differ, so B0 changes only that much of the
+//! texture it already has. R draws a successor as any new image.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
@@ -22,6 +28,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use thiserror::Error;
 use vello_cpu::kurbo::{Rect, Size};
 
+use crate::damage::PixelRect;
 use crate::display_list::{Insets, TileMode};
 
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
@@ -63,6 +70,18 @@ struct Pixels {
     /// Something other than an upload read the pixels after they were let
     /// go: it may again, so they are not let go twice.
     read_back: AtomicBool,
+    /// More pictures will follow this one in its place
+    /// ([`ImageHandle::set_live`]).
+    live: AtomicBool,
+    /// The image these pixels replace and where they differ from it
+    /// ([`ImageHandle::successor`]).
+    replaces: Option<Replaces>,
+}
+
+/// What a successor says about the image it replaces.
+struct Replaces {
+    id: u64,
+    damage: Box<[PixelRect]>,
 }
 
 /// What the four bytes of a pixel mean.
@@ -238,6 +257,8 @@ impl ImageHandle {
             encoding: ImageEncoding::Premultiplied,
             again: OnceLock::new(),
             read_back: AtomicBool::new(false),
+            live: AtomicBool::new(false),
+            replaces: None,
         })))
     }
 
@@ -253,6 +274,8 @@ impl ImageHandle {
             encoding: ImageEncoding::Rgbe,
             again: OnceLock::new(),
             read_back: AtomicBool::new(false),
+            live: AtomicBool::new(false),
+            replaces: None,
         })))
     }
 
@@ -270,12 +293,81 @@ impl ImageHandle {
             encoding: ImageEncoding::Straight,
             again: OnceLock::new(),
             read_back: AtomicBool::new(false),
+            live: AtomicBool::new(false),
+            replaces: None,
         })))
     }
 
     /// What the bytes of a pixel mean.
     pub fn encoding(&self) -> ImageEncoding {
         self.0.encoding
+    }
+
+    /// The next picture of a live source (a page drawn off-screen, a video):
+    /// these pixels with only `damage` changed by `write`, which is given
+    /// all of them and must leave the rest as they are. The result has its
+    /// own id and says it replaces this one ([`ImageHandle::replaces`]), so
+    /// a backend can update what it made of this one in place and send only
+    /// the damage to the GPU. It is live ([`ImageHandle::set_live`]).
+    ///
+    /// The pixels are not copied when this is their only handle; when
+    /// something else holds it (a display list still drawing it) they are.
+    /// `damage` is clipped to the image; empty means nothing changed.
+    pub fn successor(self, damage: &[PixelRect], write: impl FnOnce(&mut [u8])) -> Self {
+        let (id, width, height) = (self.0.id, self.0.width, self.0.height);
+        let (encoding, was_opaque) = (self.0.encoding, self.0.opaque);
+        let damage: Box<[PixelRect]> = damage
+            .iter()
+            .filter_map(|r| r.within(width, height))
+            .collect();
+        let mut data = self.into_data();
+        write(&mut data);
+        // Only the damage can have changed: an opaque picture stays opaque
+        // when its damage is. One that was not stays "not", which costs at
+        // most an occlusion it could have had, never a wrong picture.
+        let opaque = was_opaque
+            && damage.iter().all(|r| {
+                (r.y..r.y + r.height).all(|y| {
+                    let row = (y as usize * width as usize + r.x as usize) * 4;
+                    data[row..row + r.width as usize * 4]
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .all(|p| p[3] == 255)
+                })
+            });
+        Self(Arc::new(Pixels {
+            id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
+            width,
+            height,
+            data: Mutex::new(Some(Arc::new(data))),
+            opaque,
+            encoding,
+            again: OnceLock::new(),
+            read_back: AtomicBool::new(false),
+            live: AtomicBool::new(true),
+            replaces: Some(Replaces { id, damage }),
+        }))
+    }
+
+    /// The id of the image this one replaces and the rectangles where they
+    /// differ, clipped to the image (none: they are the same), when it was
+    /// made by [`ImageHandle::successor`].
+    pub fn replaces(&self) -> Option<(u64, &[PixelRect])> {
+        self.0.replaces.as_ref().map(|r| (r.id, &*r.damage))
+    }
+
+    /// Says more pictures will follow this one in its place: a backend
+    /// gives it a texture of its own, which a successor can update, rather
+    /// than a place on a shared page, and keeps its pixels, which the
+    /// successor starts from. Successors are live by themselves.
+    pub fn set_live(&self) {
+        self.0.live.store(true, Ordering::Relaxed);
+    }
+
+    /// Whether more pictures follow this one ([`ImageHandle::set_live`]).
+    pub fn is_live(&self) -> bool {
+        self.0.live.load(Ordering::Relaxed)
     }
 
     /// Wrap straight-alpha RGBA8 pixels, premultiplying them.
@@ -378,7 +470,11 @@ impl ImageHandle {
     /// now. Whether they went.
     pub fn let_go(&self) -> bool {
         let worth = |a: &MakeAgain| a.holds < self.byte_len();
-        if !self.0.again.get().is_some_and(worth) || self.0.read_back.load(Ordering::Relaxed) {
+        // A live picture's successor starts from its pixels.
+        if !self.0.again.get().is_some_and(worth)
+            || self.0.read_back.load(Ordering::Relaxed)
+            || self.is_live()
+        {
             return false;
         }
         let mut data = self.0.data.lock().unwrap_or_else(PoisonError::into_inner);
@@ -972,6 +1068,86 @@ mod tests {
         drop(a);
         assert!(!weak.is_alive());
         assert!(weak.upgrade().is_none());
+    }
+
+    fn rect(x: u32, y: u32, width: u32, height: u32) -> PixelRect {
+        PixelRect {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn a_successor_is_a_new_image_that_says_what_it_replaces() {
+        let a = ImageHandle::filled(10, 8, [0, 0, 255, 255]).unwrap();
+        assert!(!a.is_live());
+        assert_eq!(a.replaces(), None);
+        let first = a.id();
+        let damage = [rect(2, 2, 3, 1), rect(8, 6, 5, 5), rect(20, 0, 4, 4)];
+        let b = a.successor(&damage, |px| {
+            for x in 2..5 {
+                let i = (2 * 10 + x) * 4;
+                px[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        });
+        assert_ne!(b.id(), first);
+        assert!(b.is_live());
+        assert_eq!((b.width(), b.height()), (10, 8));
+        assert_eq!(b.encoding(), ImageEncoding::Premultiplied);
+        // Clipped to the image; what lies wholly outside is left out.
+        let (id, d) = b.replaces().unwrap();
+        assert_eq!(id, first);
+        assert_eq!(d, [rect(2, 2, 3, 1), rect(8, 6, 2, 2)]);
+        assert_eq!(b.pixel(3, 2), [255, 0, 0, 255]);
+        assert_eq!(b.pixel(3, 3), [0, 0, 255, 255]);
+        assert!(b.is_opaque());
+
+        // No damage: nothing changed.
+        let second = b.id();
+        let c = b.successor(&[], |_| {});
+        assert_eq!(c.replaces().map(|(id, d)| (id, d.len())), Some((second, 0)));
+    }
+
+    #[test]
+    fn a_successor_takes_the_pixels_of_an_only_handle_and_copies_a_shared_one() {
+        let a = ImageHandle::filled(4, 4, [9, 9, 9, 255]).unwrap();
+        let before = a.data().as_ptr();
+        let b = a.successor(&[rect(0, 0, 1, 1)], |px| px[0] = 1);
+        assert_eq!(b.data().as_ptr(), before, "no copy");
+
+        let kept = b.clone();
+        let c = b.successor(&[rect(0, 0, 1, 1)], |px| px[0] = 2);
+        assert_ne!(c.data().as_ptr(), kept.data().as_ptr(), "a copy");
+        assert_eq!(
+            kept.pixel(0, 0)[0],
+            1,
+            "what still draws the old one keeps it"
+        );
+        assert_eq!(c.pixel(0, 0)[0], 2);
+    }
+
+    #[test]
+    fn a_successor_is_opaque_only_while_its_damage_is() {
+        let a = ImageHandle::filled(4, 4, [9, 9, 9, 255]).unwrap();
+        let b = a.successor(&[rect(1, 1, 1, 1)], |px| {
+            let i = (4 + 1) * 4;
+            px[i..i + 4].copy_from_slice(&[0, 0, 0, 0]);
+        });
+        assert!(!b.is_opaque());
+    }
+
+    #[test]
+    fn a_live_image_keeps_its_pixels() {
+        let a = ImageHandle::filled(64, 64, [9, 9, 9, 255]).unwrap();
+        a.make_again_with(MakeAgain {
+            holds: 0,
+            make: Arc::new(|| None),
+        });
+        a.set_live();
+        assert!(!a.let_go());
+        assert!(a.is_resident());
     }
 
     #[test]
