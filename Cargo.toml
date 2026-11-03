@@ -113,6 +113,12 @@ filmcraft-isobmff = { path = "third_party/filmcraft/crates/isobmff" }
 # Audio output: ALSA (libasound2-dev on Linux), CoreAudio, WASAPI, AAudio.
 cpal = "0.18.2"
 
+# Web pages (ljos_webengine, section 7.9): the Chromium Embedded Framework
+# in off-screen rendering, through tauri-apps/cef-rs (Apache-2.0 OR MIT).
+# Its build fetches CEF's minimal distribution once into $CEF_PATH; only
+# a build that asks for `webengine/cef` links it.
+cef = { version = "=156.3.0", default-features = false }
+
 # Text editing
 # Grapheme clusters for cursor movement.
 unicode-general-category = "1.1.0"

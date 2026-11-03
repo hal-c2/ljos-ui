@@ -17,6 +17,11 @@ harness = false
 # `--test features`.
 test = false
 
+[features]
+# Show web pages (`@chromium` scenarios) through CEF: `CEF_PATH` names
+# the runtime, which is copied beside the runner.
+webengine = ["ljos_webengine/cef"]
+
 [dependencies]
 cucumber = { workspace = true, features = ["output-junit"] }
 gherkin.workspace = true
@@ -74,6 +79,9 @@ ljos_timeline = { path = "../ljos_timeline" }
 ljos_folderlistmodel = { path = "../ljos_folderlistmodel" }
 ljos_positioning = { path = "../ljos_positioning" }
 ljos_media = { path = "../ljos_media" }
+# QtWebEngine's types load in every run; pages show only with the
+# `webengine` feature and a CEF runtime beside the runner.
+ljos_webengine = { path = "../ljos_webengine" }
 # QtQuick.LocalStorage keeps its databases in the scenario's home.
 ljos_localstorage = { path = "../ljos_localstorage" }
 # The system a scenario runs on: its files and its dialogs, answered by
