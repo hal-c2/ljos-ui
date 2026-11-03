@@ -70,6 +70,47 @@ Feature: A web page in a WebEngineView
     Then the pixel at 50, 50 of the window is "#ff0000"
     And the pixel at 150, 50 of the window is "#00ff00"
 
+  @api-QtWebEngine.WebEngineView.url
+  Scenario: A page that changes one part at a time is drawn whole after each change
+    Given the text file "halves.html":
+      """
+      <!doctype html>
+      <html><body style="margin:0; display:flex">
+      <div id="a" style="width:100px; height:100px; background:#000000"></div>
+      <div id="b" style="width:100px; height:100px; background:#000000"></div>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        url: Qt.resolvedUrl("halves.html")
+        function paint(id, color) {
+          runJavaScript("document.getElementById('" + id + "').style.background = '" + color + "'")
+        }
+      }
+      """
+    When 2 seconds pass
+    And the method "paint" of "view" is called with "a", "#ff0000"
+    And 1 second passes
+    Then the pixel at 50, 50 of the window is "#ff0000"
+    And the pixel at 150, 50 of the window is "#000000"
+    When the method "paint" of "view" is called with "b", "#0000ff"
+    And 1 second passes
+    Then the pixel at 50, 50 of the window is "#ff0000"
+    And the pixel at 150, 50 of the window is "#0000ff"
+    When the method "paint" of "view" is called with "a", "#00ff00"
+    And 1 second passes
+    Then the pixel at 50, 50 of the window is "#00ff00"
+    And the pixel at 150, 50 of the window is "#0000ff"
+    When the method "paint" of "view" is called with "b", "#ffff00"
+    And 1 second passes
+    Then the pixel at 50, 50 of the window is "#00ff00"
+    And the pixel at 150, 50 of the window is "#ffff00"
+
   @api-QtWebEngine.WebEngineView.loadingChanged
   Scenario: A file that is not there fails to load and says why
     Given the QML:
