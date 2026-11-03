@@ -49,7 +49,7 @@ Coding agents can check, look up, lint, and test QML without starting a running 
 
 Some parts of the wider Qt ecosystem are outside Ljós's scope:
 
-- **3D, web, location, and graphing modules:** `QtQuick3D`, `Qt3D`, `WebEngine`, `QtLocation`, `QtGraphs`, and `Qt.labs` modules are not supported. `QtQuick.Particles` supports systems, emitters, image particles, and seeded simulations, while affectors, trails, and sprite particles are not included. `ShaderEffect` with custom GLSL shaders is supported on the GL painter only.
+- **3D, web, location, and graphing modules:** `QtQuick3D`, `Qt3D`, `QtLocation`, `QtGraphs`, and `Qt.labs` modules are not supported. `QtWebEngine` is an opt-in build feature (`webengine`) that shows pages with the Chromium Embedded Framework. `QtQuick.Particles` supports systems, emitters, image particles, and seeded simulations, while affectors, trails, and sprite particles are not included. `ShaderEffect` with custom GLSL shaders is supported on the GL painter only.
 - **C++ `QObject` source compatibility:** Native types are written in Rust rather than C++.
 - **A JavaScript debugger:** Because `quickjs-ng` has no debugger API, Ljós focuses on logging, stack traces with QML file and line numbers, and development overlays instead.
 - **Non-QtQuick QML dialects:** Terminal UI dialects or other non-QtQuick QML vocabularies are out of scope.
