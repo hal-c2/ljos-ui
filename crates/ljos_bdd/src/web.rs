@@ -257,6 +257,7 @@ fn content_type_of(path: &str) -> &'static str {
         Some("json") => "application/json",
         Some("txt") => "text/plain",
         Some("xml") => "text/xml",
+        Some("html") => "text/html",
         _ => "application/octet-stream",
     }
 }
