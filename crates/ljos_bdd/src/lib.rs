@@ -7,6 +7,7 @@ pub mod acceptance;
 pub mod author;
 pub mod backend;
 pub mod catalogue;
+pub mod deadline;
 pub mod filter;
 pub mod fixture;
 pub mod lint;

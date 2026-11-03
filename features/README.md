@@ -110,6 +110,11 @@ Qt and Ljós and passes only if both do; scenarios without that tag run on Ljós
 engine is not built, the `ljos` backend reports every operation as `PENDING: not implemented yet`
 and those scenarios fail. Results go to `target/features/junit.xml`.
 
+A scenario that runs for more than 300 seconds stops the run: the runner prints
+`scenario deadline: features/<file>:<line> "<name>"` and aborts, so a hang names its scenario instead
+of holding the run. The shutdown after the last scenario has the same deadline.
+`LJOS_BDD_SCENARIO_DEADLINE=<seconds>` changes it; `0` turns it off.
+
 The ledger is not part of `cargo test --workspace` (its test target sets `test = false`); the
 `mise` tasks run it explicitly with `--test features`.
 
