@@ -194,11 +194,12 @@ class Workspace:
 
         A file its library or binaries embed (include_str!, include_bytes!) is part of
         what they build, so a change to it changes the package. One only its tests embed,
-        after a `#[cfg(test)]` or in tests/, is read by them; so is a path its code joins to
-        CARGO_MANIFEST_DIR, which is read when the code runs, not built in."""
+        after a `#[cfg(test)]` or in tests/, is read by them; so is a path its code joins or
+        concat!s to CARGO_MANIFEST_DIR outside an include, which is read when the code runs,
+        not built in."""
         literal = re.compile(r'include_(?:str|bytes)!\(\s*"([^"]+)"\s*\)')
         from_manifest = re.compile(
-            r'include_(?:str|bytes)!\(\s*concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)'
+            r'(include_(?:str|bytes)!\(\s*)?concat!\(\s*env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"([^"]+)"\s*\)'
         )
         joined = re.compile(r'env!\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*\)?\s*\.join\(\s*"([^"]+)"\s*\)')
         for name, d in self.dirs.items():
@@ -222,7 +223,10 @@ class Workspace:
                     return "tests" if at >= cut else "src"
 
                 found = [(rs.parent / m.group(1), kind(m.start())) for m in literal.finditer(text)]
-                found += [(base / m.group(1).lstrip("/"), kind(m.start())) for m in from_manifest.finditer(text)]
+                found += [
+                    (base / m.group(2).lstrip("/"), kind(m.start()) if m.group(1) else "tests")
+                    for m in from_manifest.finditer(text)
+                ]
                 found += [(base / m.group(1), "tests") for m in joined.finditer(text)]
                 for target, k in found:
                     try:

@@ -210,6 +210,12 @@ class Plans(unittest.TestCase):
                     'const D: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../ljos_quick/demo/Main.qml"));'
                 ),
                 "crates/ljos_engine/src/lib.rs": 'fn f() { Path::new(env!("CARGO_MANIFEST_DIR")).join("../../corpus/x"); }',
+                "crates/ljos_quick/src/render.rs": (
+                    'fn r() { std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../../features/q/m.mesh")); }'
+                ),
+                "crates/qml_fmt/src/lib.rs": (
+                    'const F: &str = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/../../docs/fmt.md"));'
+                ),
             }.items():
                 (root / rel).parent.mkdir(parents=True, exist_ok=True)
                 (root / rel).write_text(text)
@@ -221,6 +227,8 @@ class Plans(unittest.TestCase):
                 "docs/media/clip.h264": {("ljos_quick", "tests")},
                 "crates/ljos_quick/demo/Main.qml": {("qml_fmt", "tests")},
                 "corpus/x": {("ljos_engine", "tests")},
+                "features/q/m.mesh": {("ljos_quick", "tests")},
+                "docs/fmt.md": {("qml_fmt", "src")},
             })
             out, _ = cc.plan("pr", ["docs/media/clip.h264"], ws, FEATURES)
             self.assertEqual(tested(out), {"ljos_quick"})
