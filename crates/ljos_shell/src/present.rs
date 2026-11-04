@@ -584,6 +584,7 @@ pub(crate) fn bounds(shape: &Shape) -> Rect {
 /// adds a glyph or a picture where nothing sampled it yet, so the text
 /// and pictures already shown stay as they are: only a texture changed
 /// under them makes them draw again, not one that grew beside them.
+#[cfg_attr(not(gl_painter), allow(dead_code))]
 pub(crate) fn resampled(
     shapes: &[ClippedShape],
     changed: &[(TextureId, Option<Rect>)],
@@ -603,6 +604,7 @@ pub(crate) fn resampled(
 /// The texels of a `size` picture that a `part` handed over at `at`
 /// changes, as fractions of it, and half a texel more: filtered, a quad
 /// reads that far past its own.
+#[cfg_attr(not(gl_painter), allow(dead_code))]
 pub(crate) fn texels(at: [usize; 2], part: [usize; 2], size: [usize; 2]) -> Rect {
     let f = |x: usize, by: f32, side: usize| (x as f32 + by) / side as f32;
     Rect::from_min_max(
@@ -615,6 +617,7 @@ pub(crate) fn texels(at: [usize; 2], part: [usize; 2], size: [usize; 2]) -> Rect
 }
 
 /// Whether `shape` samples any of the texels of `changed`.
+#[cfg_attr(not(gl_painter), allow(dead_code))]
 fn samples(shape: &Shape, changed: &[(TextureId, Option<Rect>)]) -> bool {
     // Not only touching: a glyph filled beside one shown, past the texel
     // of padding between them, is not read by it.
