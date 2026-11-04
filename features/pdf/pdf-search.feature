@@ -66,6 +66,37 @@ Feature: Searching a PDF document
     And the property "count" of "m" is 3
     And the log has no warnings
 
+  # qml6 6.11 says countChanged more than once a search: twice for the first
+  # search here and three times for the second, though its count stays 3.
+  # Ljós says it once a search, whether the count changed or not, so that
+  # what was drawn from the results is drawn again.
+  @qt-diverges @api-QtQuick.Pdf.PdfSearchModel.count
+  Scenario: Each search says once that its count changed
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Pdf
+      Item {
+        id: root
+        objectName: "root"
+        PdfDocument { id: d; source: "text.pdf" }
+        PdfSearchModel { id: m; objectName: "m"; document: d; searchString: "hello" }
+        Connections { target: m; function onCountChanged() { root.said++ } }
+        property int said: 0
+      }
+      """
+    When 300 milliseconds pass
+    Then the property "said" of "root" is 1
+    When the property "searchString" of "m" is set to "HeLLo"
+    And 300 milliseconds pass
+    Then the property "count" of "m" is 3
+    And the property "said" of "root" is 2
+    When the property "searchString" of "m" is set to "says hello"
+    And 300 milliseconds pass
+    Then the property "count" of "m" is 1
+    And the property "said" of "root" is 3
+    And the log has no warnings
+
   @api-QtQuick.Pdf.PdfSearchModel.searchString
   Scenario Outline: Searching for "<text>" finds it <count> times
     Given the QML:
