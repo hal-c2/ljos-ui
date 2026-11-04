@@ -43,6 +43,12 @@ pub use group::{Alone, References, group, references};
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
 
+/// What a lowered file says of its scripts: they are Qt's JavaScript, which
+/// the checker of Ljós's API does not hold to its rules. A file is typed by
+/// taking the pragma out, and `ljos check` then says what to change
+/// (docs/DIALECT.md §8).
+pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
+
 /// The Qt types Ljós calls by another name. Every other type of the slice is
 /// called as Qt calls it.
 pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
@@ -207,9 +213,10 @@ impl<'s> Pass<'s> {
         let Some(span) = quick else {
             return Ok(false);
         };
+        // On the import's line, so every line stays where it was.
         self.change(
             span.start as usize..span.end as usize,
-            format!("import {MODULE}"),
+            format!("{JAVASCRIPT}; import {MODULE}"),
         );
         self.collect(&document.root);
         let root = self.object_type(&document.root)?;

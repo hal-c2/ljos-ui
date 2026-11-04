@@ -5,8 +5,8 @@
 //! it has a `fill`. So does a lowered file that renames `color` on a kept
 //! one. The pass decides per file what it can lower; a project decides per
 //! *group*, the files connected by a name of one in another (a type, a
-//! `"Button.qml"`, an imported directory), and lowers a group only when it
-//! can lower each of its files.
+//! `"Button.qml"`, an imported directory or module), and lowers a group
+//! only when it can lower each of its files.
 
 use std::collections::BTreeMap;
 
@@ -32,6 +32,9 @@ pub struct References {
     pub files: Vec<String>,
     /// Directories imported by path, relative to the file.
     pub dirs: Vec<String>,
+    /// Modules imported by name (`MyControls`, `My.Controls`): a module of
+    /// the project is a directory whose path ends in the name's parts.
+    pub modules: Vec<String>,
 }
 
 /// What `source` names that may be a file of the project. A file that does
@@ -44,10 +47,12 @@ pub fn references(source: &str) -> References {
         return found;
     }
     for import in &parsed.document.imports {
-        if let QmlImportSource::Path(path) = &import.source
-            && !path.ends_with(".js")
-        {
-            found.dirs.push((*path).to_string());
+        match &import.source {
+            QmlImportSource::Path(path) if !path.ends_with(".js") => {
+                found.dirs.push((*path).to_string());
+            }
+            QmlImportSource::Module(name) => found.modules.push(name.to_string()),
+            QmlImportSource::Path(_) => {}
         }
     }
     object(&parsed.document.root, &mut found);
@@ -153,6 +158,30 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
                 if k.strip_prefix(&prefix)
                     .is_some_and(|rest| !rest.contains('/'))
                 {
+                    sets.join(at, other);
+                }
+            }
+        }
+    }
+    // An import path makes a module of a directory whose path ends in the
+    // module's name, wherever the path starts: every file below such a
+    // directory may be the module's (a qmldir may name files in its
+    // subdirectories), and joining one that is not only keeps it with the
+    // importer.
+    let dirs: Vec<Vec<&str>> = keys
+        .iter()
+        .map(|key| {
+            let mut parts: Vec<&str> = key.split('/').collect();
+            parts.pop();
+            parts
+        })
+        .collect();
+    for (at, (_, file)) in files.iter().enumerate() {
+        for module in &file.references.modules {
+            let name: Vec<&str> = module.split('.').collect();
+            for (other, dir) in dirs.iter().enumerate() {
+                let below = (0..dir.len()).any(|end| dir[..=end].ends_with(&name));
+                if below {
                     sets.join(at, other);
                 }
             }

@@ -68,7 +68,7 @@ fn the_corpus_button_is_lowered_line_for_line() {
     let source = source.as_str();
     let text = lowered(source);
     assert_eq!(text.lines().count(), source.lines().count());
-    assert!(text.contains("import Ljos.Ui\n"));
+    assert!(text.contains("pragma Scripts: JavaScript; import Ljos.Ui\n"));
     assert!(!text.contains("import QtQuick"));
     // The rectangle's colour is its fill, in the binding and in the states;
     // the text's colour and the border's are colours still.
@@ -240,6 +240,45 @@ fn a_file_reached_by_address_or_directory_is_of_the_group() {
         // Named by nothing: alone.
         assert!(matches!(outcomes["app/Swatch"], Outcome::Lowered(_)));
     }
+}
+
+/// `import MyControls` keeps the importer; the module's `MyButton`, lowered
+/// alone, would have a `fill` where the importer sets `color`.
+#[test]
+fn a_module_of_the_project_is_of_the_group_of_the_files_that_import_it() {
+    let button = "import QtQuick\nRectangle { }\n";
+    let main = "import QtQuick\nimport MyControls\nItem { MyButton { color: \"red\" } }\n";
+    for module in ["app/MyControls/MyButton", "imports/MyControls/MyButton"] {
+        let files = std::collections::BTreeMap::from([
+            ("app/Main".to_string(), alone(main)),
+            (module.to_string(), alone(button)),
+            ("app/Lone".to_string(), alone(button)),
+        ]);
+        let outcomes = group(&files);
+        assert!(matches!(outcomes["app/Main"], Outcome::Kept(_)));
+        assert!(
+            matches!(outcomes[module], Outcome::Kept(_)),
+            "{module}: {:?}",
+            outcomes[module]
+        );
+        assert!(matches!(outcomes["app/Lone"], Outcome::Lowered(_)));
+    }
+    // A dotted name is a directory per part.
+    let dotted = "import QtQuick\nimport My.Controls\nItem { MyButton { color: \"red\" } }\n";
+    let files = std::collections::BTreeMap::from([
+        ("app/Main".to_string(), alone(dotted)),
+        ("lib/My/Controls/MyButton".to_string(), alone(button)),
+        ("lib/Controls/Other".to_string(), alone(button)),
+    ]);
+    let outcomes = group(&files);
+    assert!(matches!(
+        outcomes["lib/My/Controls/MyButton"],
+        Outcome::Kept(_)
+    ));
+    assert!(matches!(
+        outcomes["lib/Controls/Other"],
+        Outcome::Lowered(_)
+    ));
 }
 
 #[test]
