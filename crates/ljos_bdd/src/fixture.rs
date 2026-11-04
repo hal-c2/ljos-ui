@@ -387,6 +387,74 @@ pub fn pdf(pages: &[(f64, f64)], colour: &str) -> Result<Vec<u8>, String> {
     Ok(out.into_bytes())
 }
 
+/// A PDF document of the objects in `text`, numbered from 1 in order, each
+/// ending at a line `endobj`; the first is the catalogue. A stream is its
+/// dictionary, a line `stream`, its contents and a line `endstream`, and is
+/// given its `/Length`. The cross-reference table is worked out, so a
+/// scenario writes only what the document says.
+///
+/// # Errors
+/// There is no object, or a stream does not end.
+pub fn pdf_of_objects(text: &str) -> Result<Vec<u8>, String> {
+    use std::fmt::Write as _;
+    let mut objects: Vec<String> = Vec::new();
+    let mut current: Vec<&str> = Vec::new();
+    for line in text.lines() {
+        if line.trim() == "endobj" {
+            objects.push(pdf_object(&current)?);
+            current.clear();
+        } else {
+            current.push(line);
+        }
+    }
+    if current.iter().any(|l| !l.trim().is_empty()) {
+        objects.push(pdf_object(&current)?);
+    }
+    if objects.is_empty() {
+        return Err("a PDF has at least its catalogue".to_owned());
+    }
+    let mut out = String::from("%PDF-1.4\n");
+    let mut offsets = Vec::with_capacity(objects.len());
+    for (i, body) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        let _ = write!(out, "{} 0 obj\n{body}\nendobj\n", i + 1);
+    }
+    let xref = out.len();
+    let _ = write!(out, "xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1);
+    for at in offsets {
+        let _ = writeln!(out, "{at:010} 00000 n ");
+    }
+    let _ = write!(
+        out,
+        "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+        objects.len() + 1
+    );
+    Ok(out.into_bytes())
+}
+
+/// One object of [`pdf_of_objects`]: a stream's dictionary is given the
+/// length of what is between `stream` and `endstream`.
+fn pdf_object(lines: &[&str]) -> Result<String, String> {
+    let Some(start) = lines.iter().position(|l| l.trim() == "stream") else {
+        return Ok(lines.join("\n").trim().to_owned());
+    };
+    let end = lines
+        .iter()
+        .rposition(|l| l.trim() == "endstream")
+        .filter(|end| *end > start)
+        .ok_or("a stream ends at a line `endstream`")?;
+    let head = lines[..start].join("\n");
+    let head = head.trim();
+    let contents = lines[start + 1..end].join("\n");
+    let head = match head.strip_suffix(">>") {
+        Some(open) if !head.contains("/Length") => {
+            format!("{open} /Length {} >>", contents.len())
+        }
+        _ => head.to_owned(),
+    };
+    Ok(format!("{head}\nstream\n{contents}\nendstream"))
+}
+
 fn parse_colour(text: &str) -> Result<[u8; 4], String> {
     let hex = text
         .strip_prefix('#')
