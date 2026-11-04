@@ -10,8 +10,8 @@ use futures::FutureExt as _;
 
 use crate::{
     backend::BackendMode,
-    deadline::Watchdog,
     filter::{BacklogFilter, Selection},
+    watchdog::{Watchdog, watched_steps},
     world::LjosWorld,
 };
 
@@ -67,19 +67,16 @@ fn changes_files(
             })
 }
 
-/// `features/<file>:<line> <name>`, as a report names a scenario.
-fn scenario_place(root: &Path, feature: &gherkin::Feature, scenario: &gherkin::Scenario) -> String {
-    let file = feature.path.as_deref().map_or_else(
-        || feature.name.clone(),
-        |p| p.strip_prefix(root).unwrap_or(p).display().to_string(),
-    );
-    format!("{file}:{} \"{}\"", scenario.position.line, scenario.name)
-}
+/// How long closing web pages and shutting CEF down may take at the end.
+const SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Run the ledger and return whether every selected scenario passed.
 ///
+/// Every scenario has a deadline (`LJOS_BDD_SCENARIO_DEADLINE`, see
+/// [`crate::watchdog`]); one that runs past it ends the process.
+///
 /// # Panics
-/// When `LJOS_BDD_BACKEND` is invalid or the report file cannot be created.
+/// When `LJOS_BDD_BACKEND` or `LJOS_BDD_SCENARIO_DEADLINE` is invalid or the report file cannot be created.
 pub fn run() -> bool {
     let mode = BackendMode::from_env();
     // Without Ljós in the run, a scenario that Qt cannot see has nothing to run on.
@@ -130,11 +127,13 @@ pub fn run() -> bool {
     let junit_out = writer::JUnit::for_tee(file, 0)
         .discard_stats_writes()
         .discard_arbitrary_writes();
+    let dog = match crate::watchdog::timeout_from_env() {
+        Ok(Some(deadline)) => Watchdog::start(deadline, &workspace_root()),
+        Ok(None) => Watchdog::off(),
+        Err(why) => panic!("{why}"),
+    };
     let writer = console.tee::<LjosWorld, _>(junit_out).normalized();
-    let root = workspace_root();
-    let watchdog = Watchdog::deadline_from_env().map(Watchdog::exiting);
-    let started = watchdog.clone();
-    let finished = watchdog.clone();
+    let hook = dog.clone();
     let result = futures::executor::block_on(
         LjosWorld::cucumber::<PathBuf>()
             .with_parser(BacklogFilter::new(
@@ -142,12 +141,11 @@ pub fn run() -> bool {
                 selection,
             ))
             .with_writer(writer)
+            .steps(watched_steps::<LjosWorld>(&dog))
             .max_concurrent_scenarios(1)
             .fail_on_skipped()
             .before(move |feature, rule, scenario, world| {
-                if let Some(dog) = &started {
-                    dog.start(scenario_place(&root, feature, scenario));
-                }
+                hook.scenario(feature, rule, scenario);
                 let tagged = |tag: &str| {
                     let is = |t: &String| t == tag;
                     feature.tags.iter().any(is)
@@ -160,19 +158,17 @@ pub fn run() -> bool {
                 }
                 async {}.boxed_local()
             })
-            .after(move |_, _, _, _, _| {
-                if let Some(dog) = &finished {
-                    dog.stop();
-                }
-                async {}.boxed_local()
-            })
             .run(workspace_root().join("features")),
     );
-    // What a run leaves behind (a web engine's processes, the desktop
-    // sandbox) is let go of after the last scenario; that has its deadline too.
-    if let Some(dog) = &watchdog {
-        dog.start("the shutdown after the last scenario".into());
-    }
+    // Pages still open close before the process ends, or CEF's threads
+    // keep it from ending. The deadline covers the exit too: the watchdog
+    // is kept until the process has gone.
+    dog.phase(
+        "closing web pages, shutting the web engine down and exiting",
+        SHUTDOWN_DEADLINE,
+    );
+    ljos_webengine::shutdown();
+    std::mem::forget(dog);
     use cucumber::writer::Stats as _;
     !result.execution_has_failed() && result.parsing_errors() == 0
 }

@@ -3920,6 +3920,7 @@ dependencies = [
  "gherkin",
  "gif",
  "jpeg-encoder",
+ "libc",
  "ljos",
  "ljos_a11y",
  "ljos_audit",
