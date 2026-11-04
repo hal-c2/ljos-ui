@@ -127,6 +127,21 @@ pub fn extract(
         signals: HashMap::new(),
         namespaces: Vec::new(),
     };
+    // A module the file imports is imported as it is named, so that its
+    // values and its types are TypeScript's to check. The names are known
+    // before any declaration's type is written.
+    let mut imports = Vec::new();
+    for import in &parsed.document.imports {
+        if let QmlImportSource::Path(path) = &import.source
+            && crate::script::module::is_module(path)
+            && let Some(name) = &import.alias
+        {
+            let module = project.front.import_dir(key, path);
+            let line = format!("import * as {} from \"{modules}/{module}\";", name.name);
+            imports.push((line, writer.origin(import.span.start)));
+            writer.namespaces.push(name.name.to_string());
+        }
+    }
     writer.collect_signals(&parsed.document.root);
     writer
         .out
@@ -136,21 +151,8 @@ pub fn extract(
         None,
     );
     writer.out.line("export {};", None);
-    // A module the file imports is imported as it is named, so that its
-    // values and its types are TypeScript's to check.
-    for import in &parsed.document.imports {
-        if let QmlImportSource::Path(path) = &import.source
-            && crate::script::module::is_module(path)
-            && let Some(name) = &import.alias
-        {
-            let module = project.front.import_dir(key, path);
-            let origin = writer.origin(import.span.start);
-            writer.out.line(
-                &format!("import * as {} from \"{modules}/{module}\";", name.name),
-                origin,
-            );
-            writer.namespaces.push(name.name.to_string());
-        }
+    for (line, origin) in imports {
+        writer.out.line(&line, origin);
     }
     writer.object(&parsed.document.root);
     let objects = std::mem::take(&mut writer.objects);
