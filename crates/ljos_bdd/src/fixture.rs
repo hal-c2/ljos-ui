@@ -388,7 +388,9 @@ pub fn pdf(pages: &[(f64, f64)], colour: &str) -> Result<Vec<u8>, String> {
 }
 
 /// A PDF document of the objects in `text`, numbered from 1 in order, each
-/// ending at a line `endobj`; the first is the catalogue. A stream is its
+/// beginning at a line that starts with `<<` (the lines after it, indented,
+/// belong to it); the first is the catalogue. Leaving out `endobj` keeps a
+/// document short enough to read in a scenario. A stream is its
 /// dictionary, a line `stream`, its contents and a line `endstream`, and is
 /// given its `/Length`. The cross-reference table is worked out, so a
 /// scenario writes only what the document says.
@@ -400,12 +402,11 @@ pub fn pdf_of_objects(text: &str) -> Result<Vec<u8>, String> {
     let mut objects: Vec<String> = Vec::new();
     let mut current: Vec<&str> = Vec::new();
     for line in text.lines() {
-        if line.trim() == "endobj" {
+        if line.starts_with("<<") && current.iter().any(|l| !l.trim().is_empty()) {
             objects.push(pdf_object(&current)?);
             current.clear();
-        } else {
-            current.push(line);
         }
+        current.push(line);
     }
     if current.iter().any(|l| !l.trim().is_empty()) {
         objects.push(pdf_object(&current)?);
