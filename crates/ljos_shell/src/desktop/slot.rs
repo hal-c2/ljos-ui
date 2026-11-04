@@ -265,6 +265,15 @@ impl Slot {
         };
     }
 
+    /// An assistive technology asked something (to type, to focus, for
+    /// the tree), which is the user's input as a key is. Its pass is not
+    /// paced: the hold waits for the scene's next wish, which may be a
+    /// long way off (a focused field's cursor blink), and what the user
+    /// did is heard now. A window event clears the hold the same way.
+    pub(super) fn heard_input(&mut self) {
+        self.held = None;
+    }
+
     /// A pass that began at `began` was drawn. The display holds a drawn
     /// frame until it is shown, which paces the passes, except where
     /// presenting returns at once: a software rasteriser on an X server
