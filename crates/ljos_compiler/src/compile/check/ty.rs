@@ -314,6 +314,26 @@ impl Arena {
         }
     }
 
+    /// `ty` with only its parts in `written` widened: the literals written
+    /// where it was made, and not those of a type it was given.
+    pub(crate) fn widen_parts(&mut self, ty: Ty, written: &[Ty]) -> Ty {
+        if written.is_empty() {
+            return ty;
+        }
+        let parts: Vec<Ty> = self
+            .members(ty)
+            .into_iter()
+            .map(|part| {
+                if written.contains(&part) {
+                    self.widen(part)
+                } else {
+                    part
+                }
+            })
+            .collect();
+        self.union(parts)
+    }
+
     pub(crate) fn without_undefined(&mut self, ty: Ty) -> Ty {
         self.filter(ty, |_, part| part != Ty::UNDEFINED && part != Ty::VOID)
     }

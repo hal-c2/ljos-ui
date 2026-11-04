@@ -572,6 +572,8 @@ Feature: Checking the scripts of a file written in Ljós's API
             let picked = on ? "todo" : "done"
             onlyKnown(started)
             onlyKnown(picked)
+            let either = on ? given : 0
+            if (typeof either === "string") onlyKnown(either)
           }
         }
         """
