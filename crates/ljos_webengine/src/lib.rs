@@ -42,7 +42,7 @@ mod view;
 
 use ljos_engine::{Engine, Version};
 
-pub use backend::unavailable;
+pub use backend::{shutdown, unavailable};
 pub use types::{
     WebEngine, WebEngineLoadingInfo, WebEngineNewWindowRequest, WebEngineProfile, WebEngineScript,
     WebEngineScriptCollection, WebEngineSettings,

@@ -128,14 +128,23 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     };
+    shut_down_web_pages();
     stderr::flush();
     status
 }
 
 /// Ends the process with `status` once what it logged is written.
 fn exit(status: i32) -> ! {
+    shut_down_web_pages();
     stderr::flush();
     std::process::exit(status)
+}
+
+/// Pages a command showed close, and the web engine shuts down on the
+/// thread that ran it, or its threads keep the process from ending.
+fn shut_down_web_pages() {
+    #[cfg(feature = "webengine")]
+    ljos_webengine::shutdown();
 }
 
 fn run() -> anyhow::Result<()> {

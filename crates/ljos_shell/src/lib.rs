@@ -629,7 +629,16 @@ pub fn run<M: Send + 'static>(
     // read early.
     #[cfg(target_os = "linux")]
     drivers::choose();
-    desktop::run(config, setup)
+    let ran = desktop::run(config, setup);
+    shut_down_web_pages();
+    ran
+}
+
+/// Pages still open close and the web engine shuts down on the thread that
+/// ran it, or its threads keep the process from ending.
+fn shut_down_web_pages() {
+    #[cfg(feature = "webengine")]
+    ljos_webengine::shutdown();
 }
 
 /// Runs the application as [`run`] does, with no window and no display:
@@ -649,7 +658,9 @@ pub fn run_headless<M: Send + 'static>(
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
     large_buffers_from_the_system();
-    headless::run(config, setup)
+    let ran = headless::run(config, setup);
+    shut_down_web_pages();
+    ran
 }
 
 /// Starts reading the system's fonts on a thread of their own, so that

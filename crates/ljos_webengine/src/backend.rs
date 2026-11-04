@@ -236,6 +236,20 @@ pub fn unavailable() -> Option<String> {
     }
 }
 
+/// Closes every page and shuts the web engine down, on the thread that
+/// showed pages; a no-op on any other thread, or when none was shown.
+/// Returns whether it shut a web engine down.
+pub fn shutdown() -> bool {
+    #[cfg(feature = "cef")]
+    {
+        crate::cef::shutdown()
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        false
+    }
+}
+
 /// A browser for `view`, or why there is none.
 pub(crate) fn start(
     engine: &Engine,
