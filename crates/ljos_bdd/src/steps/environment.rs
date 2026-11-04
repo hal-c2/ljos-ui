@@ -29,6 +29,12 @@ fn compiled_ahead(w: &mut LjosWorld) -> StepResult {
     w.each(|b| b.environment()?.compiled_ahead_of_time())
 }
 
+// What `ljos migrate` would write, done as the files load (docs/DIALECT.md).
+#[given("Qt QML is lowered to the Ljós API")]
+fn qt_qml_lowered(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.environment()?.qt_qml_lowered())
+}
+
 // On in a debug build already, unless `LJOS_AOT_CHECK` says otherwise.
 #[given(regex = r"^the compiled code cross-check is (on|off)$")]
 fn aot_check_is(w: &mut LjosWorld, on: String) -> StepResult {

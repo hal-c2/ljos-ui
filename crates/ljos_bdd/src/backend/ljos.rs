@@ -120,6 +120,8 @@ struct Live {
     top: ljos_dev::Top,
     /// The files given run code compiled ahead of time.
     ahead: bool,
+    /// The files given are lowered from Qt's QML to Ljós's API first.
+    lowered: bool,
     /// What the application answered the last step of a drag from
     /// another application.
     outside_taken: Option<ljos_platform::DropAction>,
@@ -172,6 +174,8 @@ pub struct LjosBackend {
     tier1_check: Option<bool>,
     /// The scenario's files run code compiled ahead of time.
     ahead: bool,
+    /// The scenario's files are lowered to Ljós's API before they compile.
+    lowered: bool,
     /// The cross-check of that code the scenario asked for, when it asked.
     aot_check: Option<bool>,
     /// What native work takes on the clock of JavaScript's time limits,
@@ -412,7 +416,7 @@ impl LjosBackend {
         fixtures::log_documents(&engine);
         let mut compiled = BTreeMap::new();
         compiled.insert(format!("{DRIVER}.qml"), DRIVER_SOURCE.to_owned());
-        engine.set_component_source(compile(&compiled, None)?);
+        engine.set_component_source(compile(&compiled, None, false)?);
         let driver = engine
             .create_from_url(DRIVER, None, Vec::new())
             .map_err(|e| failed(format!("the test driver does not load: {e}")))?;
@@ -438,6 +442,7 @@ impl LjosBackend {
             disk: None,
             top: ljos_dev::Top::new(),
             ahead: false,
+            lowered: false,
             outside_taken: None,
             outside_at: (0.0, 0.0),
             rest: None,
@@ -496,6 +501,7 @@ impl LjosBackend {
         if let Some(on) = self.tier1_check {
             live.engine.set_tier1_check(on);
         }
+        live.lowered = self.lowered;
         if self.ahead {
             live.engine
                 .register_compiled(compiled::COMPILED)
@@ -598,7 +604,11 @@ pub(super) fn oracle() -> ljos::dev::EngineOracle {
     })
 }
 
-fn compile(files: &BTreeMap<String, String>, style: Option<&ControlsStyle>) -> Result<MapSource> {
+fn compile(
+    files: &BTreeMap<String, String>,
+    style: Option<&ControlsStyle>,
+    lowered: bool,
+) -> Result<MapSource> {
     let mut project = Project::new(oracle());
     // A scenario's files have the URLs of files at the root of the disk
     // (`file:///Main.qml`), so that is where a `file:` URL leads.
@@ -617,6 +627,8 @@ fn compile(files: &BTreeMap<String, String>, style: Option<&ControlsStyle>) -> R
             project.add_qmldir(dir, source);
         }
     }
+    // Once every file is in: files that name one another lower together.
+    project.set_compat(lowered);
     let mut out = MapSource::new();
     for name in files
         .keys()
@@ -696,7 +708,7 @@ impl Live {
         if wanted != self.compiled_from {
             // A scenario that reloads compiles through its reload session.
             if !self.reload_compile(&wanted)? {
-                let source = compile(&wanted, self.controls_style.as_ref())?;
+                let source = compile(&wanted, self.controls_style.as_ref(), self.lowered)?;
                 self.engine.set_component_source(source);
             }
             self.engine

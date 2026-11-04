@@ -633,6 +633,15 @@ pub trait Environment: Backend {
         Err(BackendError::NotImplemented("files compiled ahead of time"))
     }
 
+    /// The files the scenario gives in Qt's QML are lowered to Ljós's own
+    /// API (`Ljos.Ui`) before they compile, as `ljos run --compat=lower`
+    /// does. Qt has no such API.
+    fn qt_qml_lowered(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "Qt's QML lowered to Ljós's API",
+        ))
+    }
+
     /// Every run of code compiled ahead of time is compared with the
     /// dynamic one, a difference being a warning; or not (`on` false).
     fn aot_check(&mut self, _on: bool) -> Result<()> {
