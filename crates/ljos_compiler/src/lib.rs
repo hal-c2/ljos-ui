@@ -131,6 +131,9 @@ pub enum Code {
     TsVariance,
     /// The checker: what the subset leaves out of JavaScript.
     TsForbidden,
+    /// An anchor on a child of `Ljos.Ui`'s `Row`, `Column` or `Box`, which
+    /// places the child itself.
+    LayoutAnchored,
 }
 
 impl Code {
@@ -167,6 +170,7 @@ impl Code {
             Code::TsOptionalExact => "ts-optional-exact",
             Code::TsVariance => "ts-variance",
             Code::TsForbidden => "ts-forbidden",
+            Code::LayoutAnchored => "layout-anchored",
         }
     }
 }
