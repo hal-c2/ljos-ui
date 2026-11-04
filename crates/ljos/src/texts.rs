@@ -261,7 +261,7 @@ fn add_beside(
                 project.add(&key, text);
                 urls.insert(key, ljos_engine::file_url(&path));
             }
-        } else if name.ends_with(".js") || name.ends_with(".mjs") {
+        } else if qml_front::project::is_script(&name) {
             project.add_script(&format!("{prefix}/{name}"), text);
         }
     }

@@ -3069,9 +3069,7 @@ impl Engine {
             Arg::Namespace {
                 source: ljos_ir::ImportSource::Path(path),
                 ..
-            } if path.ends_with(".js") || path.ends_with(".mjs") => {
-                self.script_object(s, inst, path)
-            }
+            } if ljos_ir::is_script_path(path) => self.script_object(s, inst, path),
             Arg::Namespace { .. } => JsValue::Map(Vec::new()),
             Arg::Context {
                 component,

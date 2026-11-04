@@ -48,7 +48,7 @@ pub fn references(source: &str) -> References {
     }
     for import in &parsed.document.imports {
         match &import.source {
-            QmlImportSource::Path(path) if !path.ends_with(".js") => {
+            QmlImportSource::Path(path) if !is_script(path) => {
                 found.dirs.push((*path).to_string());
             }
             QmlImportSource::Module(name) => found.modules.push(name.to_string()),
@@ -262,4 +262,13 @@ impl Sets {
         let (a, b) = (self.root(a), self.root(b));
         self.0[a.max(b)] = a.min(b);
     }
+}
+
+/// `import "lib.js"`, `import "filter.ts"`: a script, not a directory of
+/// types (as `qml_front::project::is_script`, which this crate does not
+/// link, says).
+fn is_script(path: &str) -> bool {
+    path.ends_with(".js")
+        || path.ends_with(".mjs")
+        || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
 }

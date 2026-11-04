@@ -119,7 +119,7 @@ impl Engine {
                 Arg::Namespace {
                     source: ImportSource::Path(path),
                     ..
-                } if path.ends_with(".js") || path.ends_with(".mjs") => {
+                } if ljos_ir::is_script_path(path) => {
                     let script = file.ir.scripts.iter().find(|sc| &sc.path == path)?;
                     // What the script imports could make objects in turn.
                     if !script.imports.is_empty() || names_a_maker(&script.source) {

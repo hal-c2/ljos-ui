@@ -699,9 +699,13 @@ fn inline_shapes(summary: &mut Summary, object: &QmlObject<'_>) {
     }
 }
 
-/// `import "lib.js"`: a script, not a directory of types.
+/// `import "lib.js"`, `import "filter.ts"`: a script, not a directory of
+/// types. A `.d.ts` is types alone. (`ljos_ir::is_script_path` says the
+/// same for the runtime, which does not link the front end.)
 pub fn is_script(path: &str) -> bool {
-    path.ends_with(".js") || path.ends_with(".mjs")
+    path.ends_with(".js")
+        || path.ends_with(".mjs")
+        || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
 }
 
 /// The path on disk of a `file:` URL, with `/` between its parts: the

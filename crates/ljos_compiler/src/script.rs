@@ -12,8 +12,15 @@ use oxc_span::SourceType;
 
 use crate::i18n::without_directives;
 
+pub(crate) mod module;
+
+pub(crate) use module::is_module;
+
 /// `path` is the import's own, `key` where the file is from the root.
 pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
+    if is_module(key) {
+        return lower_module(path, key, source);
+    }
     let (text, _) = without_directives(source);
     let library = source.lines().any(|line| {
         let line = line.trim_start();
@@ -56,6 +63,53 @@ pub(crate) fn lower(path: &str, key: &str, source: &str) -> Script {
     }
 }
 
+/// A TypeScript module, its types erased. It is made once, whoever
+/// imports it, as an ECMAScript module is, and its importers read what it
+/// exports and write none of it.
+fn lower_module(path: &str, key: &str, source: &str) -> Script {
+    let erased = module::erase(key, source);
+    let members: Vec<String> = erased
+        .exports
+        .iter()
+        .map(|(name, read)| format!("get {}() {{ return {read}; }}", module_key(name)))
+        .collect();
+    let qt = if ["createComponent", "createQmlObject", "resolvedUrl"]
+        .iter()
+        .any(|maker| erased.text.contains(maker))
+    {
+        "const Qt = globalThis.__ljos_qt(__ljos_url);"
+    } else {
+        ""
+    };
+    // A module's code is strict, as an ECMAScript module's is. On the
+    // first line with the rest, so the module's lines do not move.
+    let source = format!(
+        "(function (__ljos_url, __ljos_imports) {{\"use strict\";{qt}{}\n;return {{ {} }};\n}})",
+        erased.text,
+        members.join(", ")
+    );
+    Script {
+        path: path.to_string(),
+        key: key.to_string(),
+        library: true,
+        source,
+        imports: erased.imports,
+    }
+}
+
+/// An exported name as a getter's name: quoted unless it is an identifier.
+fn module_key(name: &str) -> String {
+    if name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '$')
+        && !name.starts_with(|c: char| c.is_ascii_digit())
+    {
+        name.to_string()
+    } else {
+        format!("{name:?}")
+    }
+}
+
 /// `text` with each `.import` line of `source` (blank in `text`) declaring
 /// its name, on the line it was, so lines stay put. `.import Module as Name`
 /// is the module's types, each read as a script reads a type, by its enums;
@@ -88,7 +142,7 @@ fn with_imports(source: &str, text: &str, key: &str, imports: &mut Vec<ScriptImp
             if let Some(path) = module
                 .strip_prefix('"')
                 .and_then(|m| m.strip_suffix('"'))
-                .filter(|p| p.ends_with(".js"))
+                .filter(|p| qml_front::project::is_script(p))
             {
                 let index = imports.len();
                 imports.push(ScriptImport {
@@ -106,12 +160,15 @@ fn with_imports(source: &str, text: &str, key: &str, imports: &mut Vec<ScriptImp
 }
 
 /// Where and why a script does not parse: 1-based line and column (in
-/// characters), and the parser's message. None when it parses. `module`:
-/// an ECMAScript module (`.mjs`).
-pub(crate) fn syntax_error(source: &str, module: bool) -> Option<(u32, u32, String)> {
+/// characters), and the parser's message. None when it parses. `key` says
+/// how it is read: an ECMAScript module (`.mjs`), a TypeScript one (`.ts`),
+/// or a script.
+pub(crate) fn syntax_error(source: &str, key: &str) -> Option<(u32, u32, String)> {
     let (text, _) = without_directives(source);
     let allocator = Allocator::default();
-    let kind = if module {
+    let kind = if is_module(key) {
+        module::source_type()
+    } else if key.ends_with(".mjs") {
         SourceType::mjs()
     } else {
         SourceType::script()
@@ -168,13 +225,20 @@ mod tests {
 
     #[test]
     fn a_script_that_does_not_parse_says_where() {
-        let (line, column, _) = syntax_error("let a = 1\nfunction f(n) { return n * }\n", false)
+        let (line, column, _) = syntax_error("let a = 1\nfunction f(n) { return n * }\n", "a.js")
             .expect("does not parse");
         assert_eq!((line, column), (2, 28));
         assert_eq!(
-            syntax_error(".pragma library\nfunction f() {}\n", false),
+            syntax_error(".pragma library\nfunction f() {}\n", "a.js"),
             None
         );
-        assert_eq!(syntax_error("export function f() {}\n", true), None);
+        assert_eq!(syntax_error("export function f() {}\n", "a.mjs"), None);
+        assert_eq!(
+            syntax_error(
+                "export function f(n: number): number { return n }\n",
+                "a.ts"
+            ),
+            None
+        );
     }
 }

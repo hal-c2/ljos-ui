@@ -312,6 +312,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.arena.intern(Kind::Type(o))
                 }
             }
+            // DECISION: what a TypeScript module exports is let by until
+            // the checker reads the module.
+            Some(Target::Namespace(qml_front::project::Source::Path(path)))
+                if crate::script::is_module(&path) =>
+            {
+                Ty::ERROR
+            }
             Some(Target::Namespace(_)) => self.arena.intern(Kind::Namespace(name.into())),
             _ => Ty::ERROR,
         }
