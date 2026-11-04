@@ -331,6 +331,20 @@ fn throws(e: &Engine, f: ObjectId, st: &FlickState, axis: usize, at: kurbo::Poin
         && e.untrack(|| can_flick(e, f, axis))
 }
 
+/// Whether an interactive Flickable is around `item`: one that saw the
+/// press go to it.
+pub(crate) fn around(engine: &Engine, item: ObjectId) -> bool {
+    let mut cur = engine.untrack(|| engine.visual_parent(item));
+    for _ in 0..DEPTH {
+        let Some(f) = cur else { return false };
+        if is_flickable(engine, f) && takes_drags(engine, f) {
+            return true;
+        }
+        cur = engine.untrack(|| engine.visual_parent(f));
+    }
+    false
+}
+
 /// Asked by the scene before it delivers a move of a held press: whether
 /// a Flickable takes the press from `holder`, the item that has it. The
 /// scene then cancels the holder's press and gives the press to the

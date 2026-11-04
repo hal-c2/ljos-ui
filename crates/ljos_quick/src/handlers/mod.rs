@@ -988,8 +988,8 @@ fn deactivate(engine: &Engine, h: ObjectId, transition: i32) {
 /// Where a Flickable around the handler `h`, which holds the pointer,
 /// starts looking when it would take the pointer for a drag of its own:
 /// the handler's item. None when it may not: the handler took the press
-/// from a Flickable (qml6 leaves it with the handler then), or the
-/// handler does not let items take it.
+/// from a Flickable, or from a TapHandler inside one (qml6 leaves it with the
+/// handler then), or the handler does not let items take it.
 pub(crate) fn yields_to_flickable(engine: &Engine, h: ObjectId) -> Option<ObjectId> {
     let (holder, from) = grabs(engine).exclusive.get()?;
     if holder != h {
@@ -999,7 +999,12 @@ pub(crate) fn yields_to_flickable(engine: &Engine, h: ObjectId) -> Option<Object
     if perms & grab_permission::APPROVES_TAKE_OVER_BY_ITEMS == 0 {
         return None;
     }
-    if from.is_some_and(|f| crate::flickable::is_flickable(engine, f)) {
+    if from.is_some_and(|f| {
+        crate::flickable::is_flickable(engine, f)
+            || (is_a::<TapHandler>(engine, f)
+                && crate::input::tap_handler_target(engine, f)
+                    .is_some_and(|i| crate::flickable::drag::around(engine, i)))
+    }) {
         return None;
     }
     handler_item(engine, h)
