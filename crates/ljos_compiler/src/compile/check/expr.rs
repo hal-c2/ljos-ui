@@ -441,6 +441,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Expression::StaticMemberExpression(m) => {
                 let object = self.link(&m.object, short);
                 let object = self.optional(object, m.optional, short);
+                let object = self.defined(object, m.object.span());
                 let base = self.member_at(object, &m.property);
                 match self.root_local(&m.object) {
                     Some(local) => self.fact(self.text(m.span), local).unwrap_or(base),
@@ -450,6 +451,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Expression::ComputedMemberExpression(m) => {
                 let object = self.link(&m.object, short);
                 let object = self.optional(object, m.optional, short);
+                let object = self.defined(object, m.object.span());
                 let index = self.expr(&m.expression, None);
                 self.indexed = Some(m.span);
                 self.index(object, index)
@@ -470,6 +472,32 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return self.arena.without_undefined(object);
         }
         object
+    }
+
+    /// `value`, written at `span`, read or called: TypeScript refuses it
+    /// where it may be undefined (`strictNullChecks`), so it is said here,
+    /// once, and the rest is read as the value it is when it is there.
+    fn defined(&mut self, value: Ty, span: Span) -> Ty {
+        if !self.arena.has_undefined(value) {
+            return value;
+        }
+        let text = self.text(span);
+        if self.indexed == Some(span) {
+            self.report(
+                Code::TsIndexUndefined,
+                format!(
+                    "`{text}` may be undefined, as an index may be past the end: check it first"
+                ),
+                span,
+            );
+        } else {
+            self.report(
+                Code::TsAssignType,
+                format!("`{text}` may be undefined: compare it with `undefined` first"),
+                span,
+            );
+        }
+        self.arena.without_undefined(value)
     }
 
     /// `object[index]`.
@@ -505,6 +533,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     fn call(&mut self, call: &CallExpression<'a>, short: &mut bool) -> Ty {
         let callee = self.link(&call.callee, short);
         let callee = self.optional(callee, call.optional, short);
+        let callee = self.defined(callee, call.callee.span());
         match self.arena.kind(callee).clone() {
             Kind::Function(_) => self.apply(callee, &call.arguments, call.span),
             Kind::Method(receiver, Method::Array("map")) => self.map(receiver, call),
@@ -820,7 +849,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
                 let ty = self.expr(&unary.argument, None);
                 match unary.operator {
-                    UnaryOperator::LogicalNot => Ty::BOOLEAN,
+                    UnaryOperator::LogicalNot => {
+                        self.need_boolean(ty, &unary.argument, "`!`");
+                        Ty::BOOLEAN
+                    }
                     UnaryOperator::Typeof => Ty::STRING,
                     UnaryOperator::Void => Ty::UNDEFINED,
                     UnaryOperator::Delete => Ty::BOOLEAN,
@@ -865,7 +897,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 self.arena.or(left_part, right)
             }
             Expression::ConditionalExpression(conditional) => {
-                self.condition(&conditional.test, "`?:`");
+                self.test(&conditional.test, "`?:`");
                 let mark = self.facts.len();
                 self.facts(&conditional.test, true);
                 let yes = self.expr(&conditional.consequent, want);
@@ -1505,6 +1537,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.quiet += 1;
         let ty = self.expr(test, None);
         self.quiet -= 1;
+        self.need_boolean(ty, test, what);
+    }
+
+    /// `test`, of type `ty`, is where `what` takes a boolean.
+    fn need_boolean(&mut self, ty: Ty, test: &Expression<'a>, what: &str) {
         if ty == Ty::ERROR || ty == Ty::NEVER || self.arena.is_boolean(ty) {
             return;
         }

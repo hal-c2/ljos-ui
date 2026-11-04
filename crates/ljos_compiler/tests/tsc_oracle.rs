@@ -17,21 +17,7 @@ use ljos_compiler::{Severity, compile_project, ts};
 /// docs/DIALECT.md §5.1 is not built yet or does not reach that far. The
 /// test fails when one of them starts agreeing, so the list shrinks as the
 /// checker grows.
-const KNOWN_GAPS: &[(&str, &str)] = &[
-    (
-        "C01ToggleReject",
-        "`!` on a number is not reported (ts-condition-boolean covers `!` in §5.1)",
-    ),
-    (
-        "C19HoverReject",
-        "a member an id does not have is not reported in a binding",
-    ),
-    (
-        "N06CallbackReject",
-        "a call of what may be undefined is not reported",
-    ),
-    ("N10DayReject", "ts-index-undefined is not built"),
-];
+const KNOWN_GAPS: &[(&str, &str)] = &[];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Expect {
