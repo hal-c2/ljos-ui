@@ -1083,8 +1083,12 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             (Kind::Record(tf), Kind::Record(sf)) => {
                 tf.iter()
                     .all(|field| match sf.iter().find(|s| s.name == field.name) {
+                        // A readonly member does not go where it may be
+                        // written: TypeScript lets it, and the write lands
+                        // in what was readonly.
                         Some(given) => {
                             (field.optional || !given.optional)
+                                && (field.readonly || !given.readonly || !strict)
                                 && self.takes_as(field.ty, given.ty, strict)
                         }
                         None => field.optional,
@@ -1123,6 +1127,23 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             (Kind::Function(_), Kind::Method(..)) => true,
             _ => false,
         }
+    }
+
+    /// The readonly member of `given` that `target` would let be written.
+    fn readonly_given(&self, target: Ty, given: Ty) -> Option<String> {
+        let (Kind::Record(wanted), Kind::Record(fields)) =
+            (self.arena.kind(target), self.arena.kind(given))
+        else {
+            return None;
+        };
+        wanted.iter().find_map(|field| {
+            let f = fields.iter().find(|f| f.name == field.name)?;
+            if f.readonly && !field.readonly {
+                Some(f.name.to_string())
+            } else {
+                self.readonly_given(field.ty, f.ty)
+            }
+        })
     }
 
     /// Whether what variance alone refuses of `given`, where `target` is
@@ -1195,6 +1216,16 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             } else {
                 (word.to_string(), given_word)
             };
+            if let Some(member) = self.readonly_given(target, given) {
+                self.report(
+                    Code::TsReadonly,
+                    format!(
+                        "`{name}` may have its `{member}` written; this gives it one whose `{member}` is readonly: build a new object, or make the place readonly"
+                    ),
+                    span,
+                );
+                return;
+            }
             let why = if self.variance_in_function(target, given) {
                 "and a function must take everything its place may be given"
             } else {

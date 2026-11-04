@@ -917,6 +917,16 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-forbidden` | No `class`, `this` outside QML's scope object, prototypes, `delete`, `for…in`, `with`, `eval`, or `arguments`. |
 | `ts-boundary` | A compat `.js` module is called only through a `.d.ts` declaration (Q7, §14). |
 
+Not built yet, though the rules above cover them:
+
+- a value type's readonly fields: `pos.x = 1` on a `point` is not
+  reported;
+- a QML property declared `readonly` and assigned from a script is not
+  reported, as the type table gives the checker no readonly flag (the
+  `.d.ts` of `ljos types` has one);
+- `PointerArea`'s handlers give their event as `QtObject` in the type
+  table, so reading `event.x` is `ts-no-any` until the table types it.
+
 ### 5.2 How it says them
 
 The house style is that of `ljos check`. A message names the thing in the
@@ -976,10 +986,14 @@ How it holds the other rules:
   `readonly T[]` (a `list<T>` property reads as one) and the array
   methods that change an array (`push`, `splice`, …) on one are errors.
   A record or array is mutable where it is written without `readonly`, as
-  in TypeScript, so that `tsc` agrees with the checker. A QML property, a
-  `list<T>` property given a new array, and a model stay writable (Q6).
+  in TypeScript, so that `tsc` agrees with the checker. A record with a
+  readonly member does not go where that member may be written, which
+  TypeScript lets by. A QML property, a `list<T>` property given a new
+  array, and a model stay writable (Q6).
 - `ts-index-undefined`: `xs[i]` is `T | undefined`. Where it goes to a
-  place that takes `T` only, the error says it may be past the end.
+  place that takes `T` only, or a member of it is read or it is called,
+  the error says it may be past the end. Reading a member of, or calling,
+  any other value that may be `undefined` is `ts-assign-type`.
 - `ts-optional-exact`: an optional member given a value that may be
   `undefined`, in an object literal or by assignment, unless its type
   says `undefined` itself.
