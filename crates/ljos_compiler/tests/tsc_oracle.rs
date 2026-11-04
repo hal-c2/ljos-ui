@@ -8,6 +8,10 @@
 //! checker reports an error.
 //! `// expect: reject-subset <code>`: TypeScript accepts it, and the checker
 //! reports it with `<code>`, a rule of the subset TypeScript does not have.
+//!
+//! A case may import the TypeScript module beside it, `<Case>.ts`, and
+//! another case's: what TypeScript and the checker say of a module is said
+//! of the case it is named for, so an accepted case's module is clean too.
 
 use std::path::{Path, PathBuf};
 
@@ -122,7 +126,11 @@ fn typescript_agrees_with_each_expectation() {
             wrong.push(format!("{}: not given to TypeScript", case.key));
             continue;
         }
-        let of: Vec<&ts::Finding> = findings.iter().filter(|f| f.key == case.key).collect();
+        let module = format!("{}.ts", case.key);
+        let of: Vec<&ts::Finding> = findings
+            .iter()
+            .filter(|f| f.key == case.key || f.key == module)
+            .collect();
         let said = || {
             of.iter()
                 .map(ToString::to_string)
@@ -167,9 +175,20 @@ fn the_checker_agrees_or_the_gap_is_known() {
             .iter()
             .find(|r| r.key == case.key)
             .unwrap_or_else(|| panic!("{} was not compiled", case.key));
-        let diagnostics = match &file.result {
-            Ok(compiled) => &compiled.diagnostics,
-            Err(diagnostics) => diagnostics,
+        let module = format!("{}.ts", case.key);
+        let diagnostics: Vec<&ljos_compiler::Diagnostic> = match &file.result {
+            Ok(compiled) => compiled
+                .diagnostics
+                .iter()
+                .chain(
+                    compiled
+                        .modules
+                        .iter()
+                        .filter(|m| m.key == module)
+                        .flat_map(|m| &m.diagnostics),
+                )
+                .collect(),
+            Err(diagnostics) => diagnostics.iter().collect(),
         };
         let errors: Vec<String> = diagnostics
             .iter()
