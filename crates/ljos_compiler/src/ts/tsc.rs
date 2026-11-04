@@ -16,6 +16,7 @@ pub const COMPILER_OPTIONS: &str = r#"{
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitAny": true,
+    "allowImportingTsExtensions": true,
     "lib": ["es2022"]
   }"#;
 
@@ -92,9 +93,11 @@ impl Checker {
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );
+        // TypeScript may give a file by the path it resolved the directory to.
+        let real = dir.canonicalize().unwrap_or_else(|_| dir.to_owned());
         let said = match self {
-            Checker::Deno(_) => parse_deno(&text),
-            Checker::Tsc(_) => parse_tsc(&text),
+            Checker::Deno(_) => parse_deno(&text, &real),
+            Checker::Tsc(_) => parse_tsc(&text, &real),
         };
         if said.is_empty() && !out.status.success() {
             return Err(TsError::Failed {
@@ -122,7 +125,8 @@ fn on_path(name: &str) -> Option<PathBuf> {
 /// One error TypeScript reports.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Said {
-    /// The module, by its name in the directory.
+    /// The module, by its path in the directory, with `/` between its
+    /// parts: `f0.ts`, `m/filter.ts`.
     pub file: String,
     pub line: u32,
     pub column: u32,
@@ -134,7 +138,7 @@ pub struct Said {
 
 /// `TS2322 [ERROR]: message`, its source lines, then
 /// `    at file:///dir/a.ts:4:30`.
-fn parse_deno(text: &str) -> Vec<Said> {
+fn parse_deno(text: &str, dir: &Path) -> Vec<Said> {
     let mut said = Vec::new();
     let mut pending: Option<(String, String)> = None;
     for line in text.lines() {
@@ -151,7 +155,7 @@ fn parse_deno(text: &str) -> Vec<Said> {
         let Some((code, message)) = pending.take() else {
             continue;
         };
-        let Some((file, line, column)) = location(at) else {
+        let Some((file, line, column)) = location(at, dir) else {
             continue;
         };
         said.push(Said {
@@ -165,16 +169,34 @@ fn parse_deno(text: &str) -> Vec<Said> {
     said
 }
 
-/// `file:///dir/a.ts:4:30`: the file's name, the line and the column.
-fn location(at: &str) -> Option<(String, u32, u32)> {
+/// `file:///dir/a.ts:4:30`: the file's path in `dir`, the line and the
+/// column.
+fn location(at: &str, dir: &Path) -> Option<(String, u32, u32)> {
     let (rest, column) = at.trim().rsplit_once(':')?;
     let (path, line) = rest.rsplit_once(':')?;
-    let name = path.rsplit('/').next()?.to_owned();
-    Some((name, line.parse().ok()?, column.parse().ok()?))
+    let path = path.strip_prefix("file://").unwrap_or(path);
+    Some((in_dir(path, dir)?, line.parse().ok()?, column.parse().ok()?))
+}
+
+/// The path `path` has in `dir`, which TypeScript may give whole or as it
+/// is from `dir`; its name alone when it is neither.
+fn in_dir(path: &str, dir: &Path) -> Option<String> {
+    let path = path.replace('\\', "/");
+    let dir = dir.to_string_lossy().replace('\\', "/");
+    if let Some(rest) = path
+        .strip_prefix(dir.trim_end_matches('/'))
+        .and_then(|r| r.strip_prefix('/'))
+    {
+        return Some(rest.to_owned());
+    }
+    if !path.starts_with('/') && !path.contains(':') {
+        return Some(path.trim_start_matches("./").to_owned());
+    }
+    path.rsplit('/').next().map(str::to_owned)
 }
 
 /// `a.ts(4,30): error TS2322: message`.
-fn parse_tsc(text: &str) -> Vec<Said> {
+fn parse_tsc(text: &str, dir: &Path) -> Vec<Said> {
     text.lines()
         .filter_map(|line| {
             let (head, rest) = line.split_once("): error ")?;
@@ -182,7 +204,7 @@ fn parse_tsc(text: &str) -> Vec<Said> {
             let (line, column) = position.split_once(',')?;
             let (code, message) = rest.split_once(": ")?;
             Some(Said {
-                file: path.rsplit(['/', '\\']).next()?.to_owned(),
+                file: in_dir(path, dir)?,
                 line: line.parse().ok()?,
                 column: column.parse().ok()?,
                 code: code.to_owned(),
@@ -207,7 +229,7 @@ mod tests {
             code: "TS2322".into(),
             message: "Type 'string' is not assignable to type 'number'.".into(),
         }];
-        assert_eq!(parse_deno(deno), want);
-        assert_eq!(parse_tsc(tsc), want);
+        assert_eq!(parse_deno(deno, Path::new("/x")), want);
+        assert_eq!(parse_tsc(tsc, Path::new("/x")), want);
     }
 }

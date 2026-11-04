@@ -454,7 +454,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                             .iter()
                             .map(|param| SignalParam {
                                 name: param.name.name.to_string(),
-                                ty: param.type_name.as_ref().map(|t| t.name.to_string()),
+                                ty: param.type_name.as_ref().map(|t| {
+                                    if self.module_typed(&t.name.parts, t.span.start) {
+                                        "var".to_string()
+                                    } else {
+                                        t.name.to_string()
+                                    }
+                                }),
                             })
                             .collect(),
                     };
@@ -854,11 +860,16 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     .collect(),
             });
         let span = self.span(declaration.span);
-        let ty = self.property_type_name(&type_name.name.parts);
+        let module_typed = self.module_typed(&type_name.name.parts, type_name.span.start);
+        let ty = if module_typed {
+            "var".to_string()
+        } else {
+            self.property_type_name(&type_name.name.parts)
+        };
         self.def_mut(at).properties.push(PropertyDecl {
             name: name.clone(),
             ty,
-            is_list: type_name.is_list,
+            is_list: type_name.is_list && !module_typed,
             is_default: declaration.is_default,
             is_readonly: declaration.is_readonly,
             is_required: declaration.is_required,
@@ -869,6 +880,20 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             // Qt places such a binding at the declaration.
             self.value(owner, Slot::Own, name, declaration.span, value, false);
         }
+    }
+
+    /// Whether a type written `parts` at `at` is one a TypeScript module the
+    /// file imports exports (`Logic.Row`). Such a type is the checker's
+    /// only: the run time holds the value as a `var`, so the type costs
+    /// nothing once the file is checked.
+    fn module_typed(&self, parts: &[&str], at: u32) -> bool {
+        let [namespace, _] = parts else {
+            return false;
+        };
+        matches!(
+            self.lookup(namespace, at).and_then(|found| found.target),
+            Some(Target::Namespace(Source::Path(path))) if crate::script::module::is_module(&path)
+        )
     }
 
     /// The type a property is declared with, as written, unless it is one

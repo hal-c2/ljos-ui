@@ -2367,9 +2367,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                         };
                         let (left, right) = (left.name.as_str(), qualified.right.name.as_str());
                         if let Some(index) = self.named_module(left, qualified.span.start) {
-                            // DECISION: a type the module does not export
-                            // is said with the declarations' types (step 3).
-                            return self.exported(index, right).1.unwrap_or(Ty::ERROR);
+                            return self.exported_type(index, right, qualified.right.span);
                         }
                         if self.module.is_some() {
                             return Ty::ERROR;

@@ -20,6 +20,11 @@ pub use tsc::Checker;
 /// The name the declarations are written under, beside the modules.
 pub const DECLARATIONS: &str = "ljos.d.ts";
 
+/// The directory, beside the modules, the project's TypeScript modules are
+/// written under as they are laid out in the project, so that what one
+/// imports from another is found.
+pub const MODULES: &str = "m";
+
 #[derive(Debug, thiserror::Error)]
 pub enum TsError {
     #[error("the table of types has no module {0}")]
@@ -59,9 +64,15 @@ pub struct Finding {
 
 impl std::fmt::Display for Finding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // A TypeScript module's key is its file's name; a QML file's is not.
+        let suffix = if crate::script::module::is_module(&self.key) {
+            ""
+        } else {
+            ".qml"
+        };
         write!(
             f,
-            "{}.qml:{}:{}: error: {} [{}]",
+            "{}{suffix}:{}:{}: error: {} [{}]",
             self.key, self.line, self.column, self.message, self.code
         )
     }
@@ -101,11 +112,32 @@ pub fn check_project(
         path: declarations.clone(),
         source,
     })?;
+    let mut scripts: Vec<String> = Vec::new();
+    for (key, text) in project.scripts() {
+        if !crate::script::module::is_module(key) || !within(key) {
+            continue;
+        }
+        let path = scratch.path().join(MODULES).join(key);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| TsError::Io {
+                path: parent.to_owned(),
+                source,
+            })?;
+        }
+        std::fs::write(&path, text).map_err(|source| TsError::Io { path, source })?;
+        scripts.push(key.to_owned());
+    }
     let mut modules = Vec::new();
     let mut keys: Vec<&str> = project.files().collect();
     keys.sort_unstable();
     for key in keys {
-        let Some(extracted) = extract(project, &api, key, &format!("./{DECLARATIONS}")) else {
+        let Some(extracted) = extract(
+            project,
+            &api,
+            key,
+            &format!("./{DECLARATIONS}"),
+            &format!("./{MODULES}"),
+        ) else {
             continue;
         };
         let name = format!("f{}.ts", modules.len());
@@ -124,6 +156,23 @@ pub fn check_project(
     let mut findings: Vec<Finding> = Vec::new();
     let mut elsewhere: Vec<String> = Vec::new();
     for said in said {
+        // A module is its own text, so what TypeScript says of it is at its
+        // own lines.
+        if let Some(key) = said
+            .file
+            .strip_prefix(MODULES)
+            .and_then(|rest| rest.strip_prefix('/'))
+            .filter(|key| scripts.iter().any(|s| s == key))
+        {
+            findings.push(Finding {
+                key: key.to_owned(),
+                line: said.line,
+                column: said.column,
+                code: said.code,
+                message: said.message,
+            });
+            continue;
+        }
         let Some((_, key, extracted)) = modules.iter().find(|(name, _, _)| *name == said.file)
         else {
             elsewhere.push(format!(
@@ -152,6 +201,12 @@ pub fn check_project(
         files: modules.into_iter().map(|(_, key, _)| key).collect(),
         findings,
     })
+}
+
+/// Whether a script's key stays inside the project, so that it can be
+/// written under the scratch directory.
+fn within(key: &str) -> bool {
+    !key.starts_with('/') && !key.contains(':') && key.split('/').all(|part| part != "..")
 }
 
 /// A directory of its own under the system's temporary one, gone when the
