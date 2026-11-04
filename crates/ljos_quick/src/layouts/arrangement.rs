@@ -14,15 +14,16 @@
 //!
 //! Where nothing can grow, the box does not spread its children over the
 //! room it has, as RowLayout does: they stay at its start, as in a
-//! positioner. Nothing is rounded but a position a child is centred or
-//! pushed to the far side at, as Qt's layouts round it.
+//! positioner. Where room is shared out (a child grows or is squeezed),
+//! it is shared in whole pixels, and a child centred or pushed to the far
+//! side lands on one, as in Qt's layouts; nothing else is rounded.
 
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, QmlObject, Value};
 
-use super::distribute::{Total, Track, distribute};
+use super::distribute::{Total, Track, distribute, edges};
 use super::{Attached, H, Hint, Layout, Plan, V, show_own_minimum, state};
 use crate::enums::{EnumTable, align, layout_direction};
 use crate::item::{Item, is_a, is_unset, num, write_computed, write_placed};
@@ -253,21 +254,34 @@ pub(super) fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f
         + spacing * used.saturating_sub(1) as f64;
     // Room nobody can take is left at the end, not shared out.
     let sizes = distribute(tracks, spacing, content(main).min(most));
-    let mut starts = Vec::with_capacity(tracks.len());
-    let mut at = 0.0;
-    for (t, s) in tracks.iter().zip(&sizes) {
-        starts.push(at);
-        if t.used {
-            at += s + spacing;
-        }
-    }
+    // Room shared out is shared in whole pixels, as Qt's layouts share it;
+    // a line of children that keep their sizes is placed as they ask.
+    let shared = tracks
+        .iter()
+        .zip(&sizes)
+        .any(|(t, s)| t.used && *s != t.pref);
+    let lines: Vec<(f64, f64)> = if shared {
+        edges(tracks, &sizes, spacing)
+    } else {
+        let mut at = 0.0;
+        tracks
+            .iter()
+            .zip(&sizes)
+            .map(|(t, s)| {
+                let line = (at, at + s);
+                if t.used {
+                    at += s + spacing;
+                }
+                line
+            })
+            .collect()
+    };
     let rtl = plan.rtl && main == H;
     plan.cells
         .iter()
         .map(|c| {
             let i = if main == H { c.slot.column } else { c.slot.row };
-            let (s, len) = (starts[i], sizes[i]);
-            let (mut s0, mut s1) = (s, s + len);
+            let (mut s0, mut s1) = lines[i];
             if rtl {
                 (s0, s1) = (content(H) - s1, content(H) - s0);
             }
