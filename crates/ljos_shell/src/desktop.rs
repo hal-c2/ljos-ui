@@ -1726,25 +1726,9 @@ impl<M: Send + 'static> Desktop<M> {
         }) else {
             return;
         };
-        match event.window_event {
-            accesskit_winit::WindowEvent::InitialTreeRequested => {
-                slot.ctx.enable_accesskit();
-                slot.tree_told = false;
-                slot.sent_root = None;
-            }
-            accesskit_winit::WindowEvent::ActionRequested(request) => {
-                if let Some(surface) = slot.surface.as_mut() {
-                    surface.state.on_accesskit_action_request(request);
-                }
-            }
-            accesskit_winit::WindowEvent::AccessibilityDeactivated => {
-                slot.ctx.disable_accesskit();
-                slot.tree_told = false;
-                slot.sent_root = None;
-                return;
-            }
+        if hear_accessibility(slot, event.window_event) {
+            self.repaints.request(slot.key, Instant::now());
         }
-        self.repaints.request(slot.key, Instant::now());
     }
 
     /// A context or a waker asked for a pass.
@@ -2423,6 +2407,34 @@ fn resend_font_atlas(ctx: &egui::Context) {
     ctx.set_missing_glyph_policy(policy);
 }
 
+/// What an assistive technology said to window `slot`; whether it wants
+/// a pass.
+fn hear_accessibility(slot: &mut Slot, event: accesskit_winit::WindowEvent) -> bool {
+    match event {
+        accesskit_winit::WindowEvent::InitialTreeRequested => {
+            slot.ctx.enable_accesskit();
+            slot.tree_told = false;
+            slot.sent_root = None;
+        }
+        accesskit_winit::WindowEvent::ActionRequested(request) => {
+            if let Some(surface) = slot.surface.as_mut() {
+                surface.state.on_accesskit_action_request(request);
+            }
+        }
+        accesskit_winit::WindowEvent::AccessibilityDeactivated => {
+            slot.ctx.disable_accesskit();
+            slot.tree_told = false;
+            slot.sent_root = None;
+            return false;
+        }
+    }
+    // Input as a key is: with a field's cursor blinking, a value set
+    // through the accessibility bus waited for the blink, and the tool
+    // that set it read the old one back.
+    slot.heard_input();
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use ljos_host::{ButtonState, PointerKind};
@@ -2709,6 +2721,45 @@ mod tests {
         slot.drawn(t + ms(2), t + ms(22));
         slot.asked_at_once();
         assert_eq!(slot.held, None);
+    }
+
+    // A focused field's cursor blinks, so the pass that drew nothing is
+    // held until the blink. A value set through the accessibility bus
+    // (`set_value` of a computer-use driver) was applied at the blink, a
+    // third of a second on, and the driver had read the old value back.
+    #[test]
+    fn what_an_assistive_technology_asks_is_not_held_until_the_scenes_timer() {
+        let t = Instant::now();
+        let ms = Duration::from_millis;
+        let mut slot = Slot::new(0, None, egui::Context::default(), None);
+        slot.refresh = Some(50.0);
+        let request = |action| {
+            accesskit_winit::WindowEvent::ActionRequested(egui::accesskit::ActionRequest {
+                action,
+                target_tree: TreeId::ROOT,
+                target_node: egui::accesskit::NodeId(1),
+                data: None,
+            })
+        };
+        for event in [
+            request(egui::accesskit::Action::SetValue),
+            request(egui::accesskit::Action::Focus),
+            accesskit_winit::WindowEvent::InitialTreeRequested,
+        ] {
+            slot.not_drawn(t, Some(ms(500)));
+            slot.not_drawn(t + ms(1), Some(ms(499)));
+            assert!(slot.held.is_some());
+            assert!(hear_accessibility(&mut slot, event));
+            assert_eq!(slot.held, None, "not the blink, nor a frame");
+        }
+        // Being left alone asks for nothing.
+        slot.not_drawn(t, Some(ms(500)));
+        let held = slot.held;
+        assert!(!hear_accessibility(
+            &mut slot,
+            accesskit_winit::WindowEvent::AccessibilityDeactivated
+        ));
+        assert_eq!(slot.held, held);
     }
 
     #[test]
