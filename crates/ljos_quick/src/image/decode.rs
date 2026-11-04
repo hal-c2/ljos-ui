@@ -1302,6 +1302,13 @@ fn draw_pdf(url: &str, bytes: &[u8], request: Request) -> Result<Loaded, LoadErr
             .ok_or_else(|| too_large(url))
     };
     let (pw, ph) = (device(lw)?, device(lh)?);
+    // A document has no header `within_budget` reads, and a page may be
+    // 200 inches a side at any scale: held to the budget of every other
+    // picture here, or one page could ask for gigabytes and the machine
+    // swap until it is drawn.
+    if !fits((u32::from(pw), u32::from(ph))) {
+        return Err(too_large(url));
+    }
     let mut ctx = vello_cpu::RenderContext::new(pw, ph);
     let transform = hayro::kurbo::Affine::scale_non_uniform(f64::from(pw) / w, f64::from(ph) / h)
         * page.initial_transform(true).to_kurbo();
@@ -2018,6 +2025,12 @@ mod tests {
             kids.join(" "),
             pages.len()
         );
+        document(&objects, "")
+    }
+
+    /// A PDF document of these objects, numbered from 1, with `trailer`
+    /// added to its trailer's entries.
+    fn document(objects: &[String], trailer: &str) -> Vec<u8> {
         let mut out = String::from("%PDF-1.4\n");
         let mut offsets = Vec::new();
         for (i, body) in objects.iter().enumerate() {
@@ -2029,11 +2042,103 @@ mod tests {
         for at in offsets {
             out += &format!("{at:010} 00000 n \n");
         }
+        let trailer = trailer.replace("{xref}", &xref.to_string());
         out += &format!(
-            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            "trailer\n<< /Size {} /Root 1 0 R {trailer} >>\nstartxref\n{xref}\n%%EOF\n",
             objects.len() + 1
         );
         out.into_bytes()
+    }
+
+    /// Loads `bytes` on a thread of its own, failing if that takes longer
+    /// than a document of a few objects ever could: a reader that goes
+    /// round a loop in the document fails this rather than hanging.
+    #[cfg(feature = "pdf")]
+    fn load_in_time(bytes: Vec<u8>) -> Result<Loaded, LoadError> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(load_bytes("a.pdf", &bytes, Request::default()));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(20))
+            .expect("the document is read, or refused, in time")
+    }
+
+    /// A page of 40 by 20 points whose content is `content`, with
+    /// `resources`; objects from 5 on are `more`.
+    #[cfg(feature = "pdf")]
+    fn page_document(content: &str, resources: &str, more: &[String]) -> Vec<u8> {
+        let mut objects = vec![
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+            format!(
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] /Resources {resources} \
+                 /Contents 4 0 R >>"
+            ),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
+        ];
+        objects.extend_from_slice(more);
+        document(&objects, "")
+    }
+
+    #[test]
+    #[cfg(feature = "pdf")]
+    fn a_page_tree_that_is_its_own_kid_is_read_in_time() {
+        let objects = [
+            "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+            "<< /Type /Pages /Kids [2 0 R 3 0 R] /Count 2 >>".to_owned(),
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] >>".to_owned(),
+        ];
+        if let Ok(loaded) = load_in_time(document(&objects, "")) {
+            assert_eq!(loaded.pages, 1);
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "pdf")]
+    fn a_cross_reference_section_that_follows_itself_is_read_in_time() {
+        let bytes = document(
+            &[
+                "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] >>".to_owned(),
+            ],
+            "/Prev {xref}",
+        );
+        let _ = load_in_time(bytes);
+    }
+
+    #[test]
+    #[cfg(feature = "pdf")]
+    fn a_stream_whose_length_is_wrong_is_read_in_time() {
+        for length in ["-1", "0", "99999999", "4 0 R"] {
+            let content = "0 0 1 rg 0 0 20 20 re f";
+            let objects = [
+                "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+                "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 40 20] /Contents 4 0 R >>".to_owned(),
+                format!("<< /Length {length} >>\nstream\n{content}\nendstream"),
+            ];
+            let _ = load_in_time(document(&objects, ""));
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "pdf")]
+    fn a_form_that_draws_itself_twice_is_drawn_in_time() {
+        let form = "/F0 Do /F0 Do";
+        let bytes = page_document(
+            "/F0 Do",
+            "<< /XObject << /F0 5 0 R >> >>",
+            &[format!(
+                "<< /Type /XObject /Subtype /Form /BBox [0 0 40 20] \
+                 /Resources << /XObject << /F0 5 0 R >> >> /Length {} >>\nstream\n{form}\nendstream",
+                form.len()
+            )],
+        );
+        let _ = load_in_time(bytes);
     }
 
     #[test]
@@ -2071,6 +2176,25 @@ mod tests {
         assert_eq!(wider.natural, (100, 50));
         let sharp = load_bytes("a.pdf", &bytes, Request::default().at_scale(2.0)).unwrap();
         assert_eq!((sharp.image.width(), sharp.image.height()), (80, 40));
+    }
+
+    #[test]
+    #[cfg(feature = "pdf")]
+    fn a_pdf_page_larger_than_the_budget_is_too_large() {
+        // The largest page PDF allows, 200 inches a side: 14400 by 14400
+        // pixels at four bytes is over 256 MiB.
+        let bytes = pdf(&[(14400, 14400)]);
+        let err = load_in_time(bytes.clone()).unwrap_err();
+        assert_eq!(err, too_large("a.pdf"));
+        let small = Request {
+            width: 100,
+            height: 100,
+            ..Request::default()
+        };
+        assert_eq!(
+            load_bytes("a.pdf", &bytes, small).unwrap().natural,
+            (100, 100)
+        );
     }
 
     #[test]

@@ -139,3 +139,33 @@ Feature: PDF documents in an Image
     And the property "implicitWidth" of "picture" is 0
     And the pixel at 10, 10 of the window is "#0000ff"
     And the log has a warning matching "QML Image: Error decoding: file:///.*letter\.pdf: Unsupported image format$"
+
+  # Not checked on Qt. Ljós holds a page to the most pixels one picture may
+  # take, 256 MiB, as every other picture it decodes: a page drawn larger
+  # would take gigabytes and keep the machine swapping until it was drawn.
+  @ljos-only
+  Scenario: A page that would be drawn larger than a picture may be is an error
+    Given a PDF file "poster.pdf" of pages "14400 by 14400" painted "#ff0000"
+    And the QML:
+      """qml
+      import QtQuick
+      Rectangle {
+        width: 100; height: 100; color: "#0000ff"
+        Image { objectName: "picture"; source: "poster.pdf" }
+      }
+      """
+    Then the property "status" of "picture" is 3
+    And the pixel at 10, 10 of the window is "#0000ff"
+    And the log has a warning matching "QML Image: Error decoding: file:///.*poster\.pdf: the picture is too large$"
+
+  @ljos-only
+  Scenario: The same page asked at a size that fits is drawn
+    Given a PDF file "poster.pdf" of pages "14400 by 14400" painted "#ff0000"
+    And the QML:
+      """qml
+      import QtQuick
+      Image { objectName: "picture"; source: "poster.pdf"; sourceSize.width: 100 }
+      """
+    Then the property "status" of "picture" is 1
+    And the property "implicitWidth" of "picture" is 100
+    And the property "implicitHeight" of "picture" is 100
