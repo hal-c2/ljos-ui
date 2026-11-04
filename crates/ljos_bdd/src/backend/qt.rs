@@ -583,7 +583,11 @@ pub fn oracle_env(command: &mut Command, dir: &Path, platform: &str) -> std::io:
         // The desktop's settings stay out: a platform theme that reads
         // them would give the controls a dark palette on a desktop that
         // prefers one.
-        .env("GSETTINGS_BACKEND", "memory");
+        .env("GSETTINGS_BACKEND", "memory")
+        // A platform theme the desktop names (`gtk3`, say) hands Qt its
+        // accent colour, and every palette colour made from it (PdfStyle's
+        // selectionColor) would be the machine's, not Qt's own.
+        .env_remove("QT_QPA_PLATFORMTHEME");
     // Chromium's sandbox needs namespaces a test machine may not grant;
     // the pages here are the scenario's own.
     if std::env::var_os("QTWEBENGINE_CHROMIUM_FLAGS").is_none() {
