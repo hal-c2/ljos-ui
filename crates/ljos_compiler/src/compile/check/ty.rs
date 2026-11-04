@@ -56,6 +56,8 @@ pub(crate) struct Field {
     pub(crate) name: Box<str>,
     pub(crate) ty: Ty,
     pub(crate) optional: bool,
+    /// Written `readonly`: a script may read it, not write it.
+    pub(crate) readonly: bool,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -408,7 +410,12 @@ impl Arena {
                     .iter()
                     .map(|f| {
                         let optional = if f.optional { "?" } else { "" };
-                        format!("{}{optional}: {}", f.name, self.display(f.ty, object))
+                        let readonly = if f.readonly { "readonly " } else { "" };
+                        format!(
+                            "{readonly}{}{optional}: {}",
+                            f.name,
+                            self.display(f.ty, object)
+                        )
                     })
                     .collect();
                 format!("{{ {} }}", fields.join("; "))

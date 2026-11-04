@@ -75,8 +75,9 @@ pub(super) fn document<'a, O: TypeOracle>(
     found.dedup_by_key(|(_, _, span)| span.start);
     for (code, message, span) in found {
         // A name not in sight is the compiler's warning in Qt's QML; in
-        // Ljós's API it has no type, which is the checker's error.
-        if code == Code::TsNoAny {
+        // Ljós's API it has no type, or is left out of the subset, which is
+        // the checker's error.
+        if matches!(code, Code::TsNoAny | Code::TsForbidden) {
             compiler
                 .diagnostics
                 .retain(|d| !(d.code == Code::UnresolvedName && d.span.start == span.start));
@@ -174,6 +175,13 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     assigned: Vec<Fact<'a>>,
     fns: Vec<FnCtx>,
     own: HashMap<(usize, &'a str), Own>,
+    /// The element read by index last: what it gives may be undefined.
+    indexed: Option<Span>,
+    /// The QML object whose scope a script runs in: `this`.
+    this: Option<usize>,
+    /// Above 0, a script is in a `function` of its own, where `this` is
+    /// whatever calls it.
+    nested: u32,
 }
 
 impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
@@ -191,6 +199,9 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             assigned: Vec::new(),
             fns: Vec::new(),
             own: HashMap::new(),
+            indexed: None,
+            this: None,
+            nested: 0,
         }
     }
 
@@ -674,7 +685,9 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 QmlMember::Function(function) => {
                     let Some(index) = index else { continue };
                     let name = function.id.as_ref().map(|id| id.name.as_str());
+                    let outer = self.this.replace(index);
                     let ty = self.function(function, None);
+                    self.this = outer;
                     if let Some(name) = name {
                         self.own.insert((index, name), Own { ty, written: None });
                     }
@@ -698,6 +711,12 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     }
 
     fn members(&mut self, owner: usize, object: &QmlObject<'a>, group: &[&'a str]) {
+        let outer = self.this.replace(owner);
+        self.members_of(owner, object, group);
+        self.this = outer;
+    }
+
+    fn members_of(&mut self, owner: usize, object: &QmlObject<'a>, group: &[&'a str]) {
         for member in &object.members {
             match member {
                 QmlMember::Object(child) if is_group(child) => {
@@ -1021,6 +1040,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
 
     /// Whether a value of type `source` may go where `target` is wanted.
     fn takes(&self, target: Ty, source: Ty) -> bool {
+        self.takes_as(target, source, true)
+    }
+
+    /// `takes`, where `strict` holds a mutable array's elements and a
+    /// function's parameters to their variance; without it, they are taken
+    /// as TypeScript takes an array's and a method's, so that a message can
+    /// say what variance alone refuses.
+    fn takes_as(&self, target: Ty, source: Ty, strict: bool) -> bool {
         if target == source
             || source == Ty::ERROR
             || target == Ty::ERROR
@@ -1031,10 +1058,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         }
         let arena = &self.arena;
         if let Kind::Union(parts) = arena.kind(source) {
-            return parts.iter().all(|part| self.takes(target, *part));
+            return parts
+                .iter()
+                .all(|part| self.takes_as(target, *part, strict));
         }
         if let Kind::Union(parts) = arena.kind(target) {
-            return parts.iter().any(|part| self.takes(*part, source));
+            return parts
+                .iter()
+                .any(|part| self.takes_as(*part, source, strict));
         }
         match (arena.kind(target), arena.kind(source)) {
             (Kind::Number, Kind::Num(_) | Kind::Enum { .. } | Kind::Key { .. }) => true,
@@ -1053,7 +1084,8 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 tf.iter()
                     .all(|field| match sf.iter().find(|s| s.name == field.name) {
                         Some(given) => {
-                            (field.optional || !given.optional) && self.takes(field.ty, given.ty)
+                            (field.optional || !given.optional)
+                                && self.takes_as(field.ty, given.ty, strict)
                         }
                         None => field.optional,
                     })
@@ -1067,7 +1099,11 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                     elem: se,
                     readonly: sr,
                 },
-            ) => (*tr || !*sr) && self.takes(*te, *se),
+            ) => {
+                (*tr || !*sr)
+                    && self.takes_as(*te, *se, strict)
+                    && (*tr || !strict || self.takes_as(*se, *te, strict))
+            }
             (Kind::Map { key: tk, value: tv }, Kind::Map { key: sk, value: sv }) => {
                 tk == sk && tv == sv
             }
@@ -1075,13 +1111,35 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 let params_ok = s.params.iter().enumerate().all(|(at, given)| {
                     let wanted = t.params.get(at).map(|p| p.ty).or(t.rest);
                     match wanted {
-                        Some(wanted) => self.takes(given.ty, wanted),
+                        Some(wanted) => {
+                            self.takes_as(given.ty, wanted, strict)
+                                || (!strict && self.takes_as(wanted, given.ty, strict))
+                        }
                         None => given.optional,
                     }
                 });
-                params_ok && (t.ret == Ty::VOID || self.takes(t.ret, s.ret))
+                params_ok && (t.ret == Ty::VOID || self.takes_as(t.ret, s.ret, strict))
             }
             (Kind::Function(_), Kind::Method(..)) => true,
+            _ => false,
+        }
+    }
+
+    /// Whether what variance alone refuses of `given`, where `target` is
+    /// wanted, is a function's parameter rather than an array's element.
+    fn variance_in_function(&self, target: Ty, given: Ty) -> bool {
+        match (self.arena.kind(target), self.arena.kind(given)) {
+            (Kind::Function(_), _) => true,
+            (Kind::Record(wanted), Kind::Record(fields)) => wanted.iter().any(|field| {
+                fields.iter().any(|f| {
+                    f.name == field.name
+                        && !self.takes(field.ty, f.ty)
+                        && self.variance_in_function(field.ty, f.ty)
+                })
+            }),
+            (Kind::Array { elem: te, .. }, Kind::Array { elem: se, .. }) => {
+                self.takes(*te, *se) && self.variance_in_function(*te, *se)
+            }
             _ => false,
         }
     }
@@ -1104,15 +1162,56 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         Ty::ERROR
     }
 
+    /// Reports a value of type `given`, written at `span`, going where
+    /// `name`, of type `target` said as `word`, is: by the rule that
+    /// refuses it.
     fn check_assign(&mut self, name: &str, target: Ty, word: &str, given: Ty, span: Span) {
-        if !self.takes(target, given) {
-            let given = self.word(given);
+        if self.takes(target, given) {
+            return;
+        }
+        if self.indexed == Some(span) {
+            let defined = self.arena.without_undefined(given);
+            if self.takes(target, defined) {
+                let text = self.text(span);
+                self.report(
+                    Code::TsIndexUndefined,
+                    format!(
+                        "`{text}` may be undefined, as an index may be past the end: check it first"
+                    ),
+                    span,
+                );
+                return;
+            }
+        }
+        let given_word = self.word(given);
+        if self.takes_as(target, given, false) {
+            let functions = matches!(
+                (self.arena.kind(target), self.arena.kind(given)),
+                (Kind::Function(_), Kind::Function(_))
+            );
+            let (word, given_word) = if functions {
+                let display = |ty| format!("`{}`", self.arena.display(ty, &|o| self.obj_name(o)));
+                (display(target), display(given))
+            } else {
+                (word.to_string(), given_word)
+            };
+            let why = if self.variance_in_function(target, given) {
+                "and a function must take everything its place may be given"
+            } else {
+                "and a mutable array holds only its own type: copy it, or make the place readonly"
+            };
             self.report(
-                Code::TsAssignType,
-                format!("`{name}` is {word}; this gives it {given}"),
+                Code::TsVariance,
+                format!("`{name}` is {word}; this gives it {given_word}, {why}"),
                 span,
             );
+            return;
         }
+        self.report(
+            Code::TsAssignType,
+            format!("`{name}` is {word}; this gives it {given_word}"),
+            span,
+        );
     }
 }
 
