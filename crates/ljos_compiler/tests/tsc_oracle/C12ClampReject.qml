@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 8 TS2345
 // Shape: a clamp helper called with a string.
 // After corpus/qtdoc/examples/demos/FX_Material_Showroom/imports/QtQuick/Studio/Components/ArcItem.qml:291.
 import Ljos.Ui

@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 11 TS2379
 // Note 11 §3.5: a change that sets an optional member to undefined, which
 // exactOptionalPropertyTypes forbids.
 import Ljos.Ui

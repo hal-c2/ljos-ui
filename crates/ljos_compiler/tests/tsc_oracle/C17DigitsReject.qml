@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 9 TS2322
 // Shape: a number shown with the digits that fit, returned as a number.
 // After corpus/qtdoc/examples/demos/calqlatr/content/Display.qml:120.
 import Ljos.Ui
