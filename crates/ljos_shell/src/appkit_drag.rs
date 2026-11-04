@@ -43,13 +43,17 @@ thread_local! {
     static HOOKED: RefCell<HashSet<usize>> = RefCell::new(HashSet::new());
 }
 
-/// Follows drags until [`Drags::stop`].
-pub(crate) struct Drags(());
+/// Follows drags until [`Drags::stop`], and carries the application's
+/// out ([`crate::appkit_drag_out`]).
+pub(crate) struct Drags {
+    pub(crate) out: crate::appkit_drag_out::Out,
+}
 
 pub(crate) fn start(post: Arc<dyn Fn(DragStep) + Send + Sync>) -> Option<Drags> {
     MainThreadMarker::new()?;
+    let out = crate::appkit_drag_out::Out::new(Arc::clone(&post));
     FOLLOWER.with(|f| f.replace(Some(Follower::new(post))));
-    Some(Drags(()))
+    Some(Drags { out })
 }
 
 impl Drags {

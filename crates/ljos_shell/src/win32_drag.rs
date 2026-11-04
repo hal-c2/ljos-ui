@@ -42,12 +42,16 @@ thread_local! {
     static FOLLOWER: RefCell<Option<Follower>> = const { RefCell::new(None) };
 }
 
-/// Follows drags until [`Drags::stop`].
-pub(crate) struct Drags(());
+/// Follows drags until [`Drags::stop`], and carries the application's
+/// out ([`crate::win32_drag_out`]).
+pub(crate) struct Drags {
+    pub(crate) out: crate::win32_drag_out::Out,
+}
 
 pub(crate) fn start(post: Arc<dyn Fn(DragStep) + Send + Sync>) -> Option<Drags> {
+    let out = crate::win32_drag_out::Out::new(Arc::clone(&post));
     FOLLOWER.with(|f| f.replace(Some(Follower::new(post))));
-    Some(Drags(()))
+    Some(Drags { out })
 }
 
 impl Drags {
@@ -69,6 +73,7 @@ impl Drags {
     }
 
     pub(crate) fn stop(self) {
+        self.out.stop();
         FOLLOWER.with(|f| f.replace(None));
     }
 }
