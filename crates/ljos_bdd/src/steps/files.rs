@@ -179,6 +179,15 @@ fn a_pdf_file(w: &mut LjosWorld, name: String, pages: String, colour: String) ->
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// A PDF of the objects in the doc string, from the catalogue on: what a
+// document has to say beyond pages (text, links, an outline, page labels)
+// is written as PDF, and the fixture works out the lengths and offsets.
+#[given(regex = r#"^a PDF file "([^"]+)" of objects:$"#)]
+fn a_pdf_file_of_objects(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    let bytes = fixture::pdf_of_objects(&docstring(step)?)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 // An animated GIF beside the QML, one colour a frame, each frame shown
 // for the same time; the colours are a list ("#ff0000, #00ff00").
 #[given(
