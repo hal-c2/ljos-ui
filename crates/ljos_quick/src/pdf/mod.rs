@@ -5,7 +5,9 @@
 //! A document is opened on the spot, as Qt does, and what can be asked of it
 //! is kept; the pages are read again by whoever draws them.
 
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
 
 use hayro::hayro_syntax::object::DateTime;
 use hayro::hayro_syntax::{DecryptionError, LoadPdfError, Pdf};
@@ -18,6 +20,18 @@ use ljos_platform::Platform;
 use crate::enums::{EnumTable, keys};
 use crate::image::{Image, ImageBase};
 use crate::item::write_computed;
+
+mod models;
+mod selection;
+mod structure;
+mod text;
+mod values;
+
+pub use models::{PdfBookmarkModel, PdfLinkModel, PdfSearchModel};
+pub use selection::PdfSelection;
+
+use structure::{Entry, LabelRange, Link};
+use text::PageText;
 
 const CATEGORY: &str = "qml";
 
@@ -45,6 +59,98 @@ fn document_enums() -> EnumTable {
 
 /// Qt's words for what happened to the last opening.
 const NO_ERROR: &str = "no error";
+
+/// What is open, for every object that reads it: the document's own text,
+/// links and outline are read from it the first time they are asked for,
+/// on whichever thread asks.
+pub(crate) struct DocData {
+    pdf: Pdf,
+    labels: Vec<LabelRange>,
+    texts: Vec<OnceLock<Arc<PageText>>>,
+    links: Vec<OnceLock<Arc<Vec<Link>>>>,
+    outline: OnceLock<Arc<Vec<Entry>>>,
+}
+
+impl std::fmt::Debug for DocData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DocData")
+            .field("pages", &self.texts.len())
+            .finish_non_exhaustive()
+    }
+}
+
+// A search reads the text of every page off the engine's thread.
+const _: fn() = || {
+    fn shared<T: Send + Sync>() {}
+    shared::<DocData>();
+};
+
+impl DocData {
+    fn new(pdf: Pdf) -> Self {
+        let pages = pdf.pages().len();
+        Self {
+            labels: structure::labels(&pdf),
+            texts: (0..pages).map(|_| OnceLock::new()).collect(),
+            links: (0..pages).map(|_| OnceLock::new()).collect(),
+            outline: OnceLock::new(),
+            pdf,
+        }
+    }
+
+    pub(crate) fn page_count(&self) -> usize {
+        self.texts.len()
+    }
+
+    /// The text of page `page`; `None` for a page there is not.
+    pub(crate) fn text(&self, page: i32) -> Option<Arc<PageText>> {
+        let i = usize::try_from(page).ok()?;
+        let slot = self.texts.get(i)?;
+        Some(Arc::clone(slot.get_or_init(|| {
+            Arc::new(PageText::of(&self.pdf.pages()[i]))
+        })))
+    }
+
+    pub(crate) fn links(&self, page: i32) -> Arc<Vec<Link>> {
+        let Some((i, slot)) = usize::try_from(page)
+            .ok()
+            .and_then(|i| Some((i, self.links.get(i)?)))
+        else {
+            return Arc::default();
+        };
+        Arc::clone(slot.get_or_init(|| Arc::new(structure::links(&self.pdf, i))))
+    }
+
+    pub(crate) fn outline(&self) -> Arc<Vec<Entry>> {
+        Arc::clone(
+            self.outline
+                .get_or_init(|| Arc::new(structure::outline(&self.pdf))),
+        )
+    }
+
+    /// What page `page` is called: its number past the last page.
+    pub(crate) fn label(&self, page: usize) -> String {
+        if page < self.page_count() {
+            structure::label(&self.labels, page)
+        } else {
+            (page + 1).to_string()
+        }
+    }
+}
+
+/// What the document `doc` has open: `None` while it has nothing. A
+/// binding asking this asks again when the document opens something else.
+pub(crate) fn data_of(e: &Engine, doc: ObjectId) -> Option<Arc<DocData>> {
+    let _ = e.read(doc, PdfDocument::STATUS.index);
+    e.with(doc, |d: &PdfDocument| d.data.clone()).ok().flatten()
+}
+
+/// The document an object's `document` property names.
+pub(crate) fn document_of(e: &Engine, me: ObjectId, p: PropIndex) -> Option<ObjectId> {
+    match e.untrack(|| e.read(me, p)) {
+        Value::Object(d) if e.with(d, |_: &PdfDocument| ()).is_ok() => Some(d),
+        _ => None,
+    }
+}
 
 /// `PdfDocument`.
 #[derive(Debug, QmlObject)]
@@ -88,9 +194,48 @@ pub struct PdfDocument {
     pub creation_date: Value,
     #[qml(notify, readonly)]
     pub modification_date: Value,
+    /// A model of a row for each page, of its label and size.
+    #[qml(notify, readonly)]
+    pub page_model: Option<ObjectId>,
     /// Width and height of each page in points.
     #[qml(skip)]
     pages: Vec<(f64, f64)>,
+    #[qml(skip)]
+    data: Option<Arc<DocData>>,
+    #[qml(skip)]
+    page_rows: Rc<RefCell<PageRows>>,
+}
+
+/// The rows of `pageModel`.
+#[derive(Debug, Default)]
+struct PageRows {
+    rows: Vec<(String, (f64, f64))>,
+    signals: Option<ljos_engine::ModelSignals>,
+}
+
+struct PageModel(Rc<RefCell<PageRows>>);
+
+impl ljos_engine::QmlListModel for PageModel {
+    fn row_count(&self) -> usize {
+        self.0.borrow().rows.len()
+    }
+    fn role_names(&self) -> Vec<Atom> {
+        vec![Atom::from("label"), Atom::from("pointSize")]
+    }
+    fn data(&self, row: usize, role: &str) -> Value {
+        let rows = self.0.borrow();
+        let Some((label, (width, height))) = rows.rows.get(row) else {
+            return Value::Undefined;
+        };
+        match role {
+            "label" => text(label),
+            "pointSize" => Value::Size(Arc::new(Size {
+                width: *width,
+                height: *height,
+            })),
+            _ => Value::Undefined,
+        }
+    }
 }
 
 impl Default for PdfDocument {
@@ -112,7 +257,10 @@ impl Default for PdfDocument {
             creator: String::new(),
             creation_date: Value::Undefined,
             modification_date: Value::Undefined,
+            page_model: None,
             pages: Vec::new(),
+            data: None,
+            page_rows: Rc::default(),
         }
     }
 }
@@ -145,9 +293,67 @@ impl PdfDocument {
         }))
     }
 
+    /// What the document calls page `page`: its label, or its number.
+    #[qml(invokable, name = "pageLabel")]
+    fn page_label(cx: &Cx, page: i32) -> String {
+        let Some(data) = data_of(cx.engine, cx.this) else {
+            return String::new();
+        };
+        usize::try_from(page).map_or_else(|_| String::new(), |p| data.label(p))
+    }
+
+    /// The page the document calls `label`; -1 when it calls none so.
+    #[qml(invokable, name = "pageIndexForLabel")]
+    fn page_index_for_label(cx: &Cx, label: String) -> i32 {
+        data_of(cx.engine, cx.this)
+            .and_then(|d| (0..d.page_count()).position(|p| d.label(p) == label))
+            .and_then(|p| i32::try_from(p).ok())
+            .unwrap_or(-1)
+    }
+
+    /// The text of `page` between two points in points from its top left.
+    #[qml(invokable, name = "getSelection")]
+    fn get_selection(cx: &Cx, page: i32, start: Point, end: Point) -> Value {
+        values::remember_platform(cx.engine);
+        let Some(t) = data_of(cx.engine, cx.this).and_then(|d| d.text(page)) else {
+            return values::selection_value(None, "", &[]);
+        };
+        let p = |p: Point| hayro::kurbo::Point::new(p.x, p.y);
+        selected(&t, t.between(p(start), p(end)))
+    }
+
+    /// Up to `max_length` characters of `page` from the `start`th.
+    #[qml(invokable, name = "getSelectionAtIndex")]
+    fn get_selection_at_index(cx: &Cx, page: i32, start: i32, max_length: i32) -> Value {
+        values::remember_platform(cx.engine);
+        let Some(t) = data_of(cx.engine, cx.this).and_then(|d| d.text(page)) else {
+            return values::selection_value(None, "", &[]);
+        };
+        let start = usize::try_from(start).unwrap_or(0).min(t.len());
+        let end = start
+            .saturating_add(usize::try_from(max_length).unwrap_or(0))
+            .min(t.len());
+        selected(&t, (end > start).then_some((start, end)))
+    }
+
+    /// All the text of `page`.
+    #[qml(invokable, name = "getAllText")]
+    fn get_all_text(cx: &Cx, page: i32) -> Value {
+        values::remember_platform(cx.engine);
+        let Some(t) = data_of(cx.engine, cx.this).and_then(|d| d.text(page)) else {
+            return values::selection_value(None, "", &[]);
+        };
+        selected(&t, Some((0, t.len())))
+    }
+
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
+        let holder = e.create_native(QtObject::default(), Some(me))?;
+        let rows = e.with(me, |d: &PdfDocument| Rc::clone(&d.page_rows))?;
+        let signals = e.set_list_model(holder, Rc::new(PageModel(Rc::clone(&rows))))?;
+        rows.borrow_mut().signals = Some(signals);
+        set(e, me, PdfDocument::PAGE_MODEL.index, Value::Object(holder));
         let none = date(e, f64::NAN);
         set(e, me, PdfDocument::CREATION_DATE.index, none.clone());
         set(e, me, PdfDocument::MODIFICATION_DATE.index, none);
@@ -300,7 +506,7 @@ fn open(e: &Engine, me: ObjectId) {
     match opened {
         Ok(pdf) => {
             crate::image::remember_pdf_password(&url, &password);
-            show(e, me, Some(&pdf), NO_ERROR, status::READY);
+            show(e, me, Some(pdf), NO_ERROR, status::READY);
         }
         Err(why) => {
             show(e, me, None, why, status::ERROR);
@@ -311,10 +517,24 @@ fn open(e: &Engine, me: ObjectId) {
     }
 }
 
+/// A selection of `t`'s text.
+fn selected(t: &PageText, found: Option<(usize, usize)>) -> Value {
+    let (start, end) = found.unwrap_or((0, 0));
+    values::selection_value(
+        found,
+        &t.text(start, end),
+        &t.lines(start, end)
+            .into_iter()
+            .map(text::whole)
+            .collect::<Vec<_>>(),
+    )
+}
+
 /// Everything that can be asked of what is open, at once, for whoever is
 /// told of the change.
-fn show(e: &Engine, me: ObjectId, pdf: Option<&Pdf>, error: &str, now: i32) {
+fn show(e: &Engine, me: ObjectId, pdf: Option<Pdf>, error: &str, now: i32) {
     let pages: Vec<(f64, f64)> = pdf
+        .as_ref()
         .map(|pdf| {
             pdf.pages()
                 .iter()
@@ -328,8 +548,34 @@ fn show(e: &Engine, me: ObjectId, pdf: Option<&Pdf>, error: &str, now: i32) {
     let widest = pages.iter().fold(0.0_f64, |m, p| m.max(p.0));
     let tallest = pages.iter().fold(0.0_f64, |m, p| m.max(p.1));
     let count = i32::try_from(pages.len()).unwrap_or(i32::MAX);
-    let _ = e.with_mut(me, |d: &mut PdfDocument| d.pages = pages);
-    let info = pdf.map(Pdf::metadata);
+    let info = pdf.as_ref().map(Pdf::metadata).cloned();
+    let info = info.as_ref();
+    let data = pdf.map(|pdf| Arc::new(DocData::new(pdf)));
+    let rows: Vec<(String, (f64, f64))> = pages
+        .iter()
+        .enumerate()
+        .map(|(i, size)| {
+            (
+                data.as_ref().map_or_else(String::new, |d| d.label(i)),
+                *size,
+            )
+        })
+        .collect();
+    let Ok(page_rows) = e.with_mut(me, |d: &mut PdfDocument| {
+        d.pages = pages;
+        d.data = data;
+        Rc::clone(&d.page_rows)
+    }) else {
+        return;
+    };
+    let signals = {
+        let mut r = page_rows.borrow_mut();
+        r.rows = rows;
+        r.signals.clone()
+    };
+    if let Some(signals) = signals {
+        signals.model_reset(e);
+    }
     let word = |pick: fn(&hayro::hayro_syntax::metadata::Metadata) -> Option<&Vec<u8>>| {
         text(&info_text(info.and_then(pick)))
     };
@@ -457,9 +703,10 @@ impl Default for PdfPageNavigator {
 
 #[qml_impl]
 impl PdfPageNavigator {
-    /// An abrupt move, from `jump`, `back` or `forward`.
+    /// An abrupt move, from `jump`, `back` or `forward`: `current` is a
+    /// `pdfLink` to where the reader is now.
     #[qml(signal)]
-    fn jumped(page: i32, location: Point, zoom: f64);
+    fn jumped(current: Value);
 
     /// Forgets where the reader has been and goes back to the start.
     #[qml(invokable, name = "clear")]
@@ -470,13 +717,25 @@ impl PdfPageNavigator {
         });
     }
 
-    /// Adds a destination; what could be gone forward to is forgotten.
+    /// Adds a destination, a `pdfLink` or a page, a location and a zoom;
+    /// what could be gone forward to is forgotten.
     #[qml(invokable, name = "jump")]
-    fn jump(cx: &Cx, page: i32, location: Point, zoom: f64) {
-        let there = Destination {
-            page,
-            location,
-            zoom,
+    fn jump(cx: &Cx, to: Value, location: Value, zoom: Value) {
+        let there = match values::link_place(&to) {
+            Some((page, location, zoom)) => Destination {
+                page,
+                location,
+                zoom,
+            },
+            None if matches!(to, Value::Custom(_)) => return,
+            None => Destination {
+                page: to.to_number() as i32,
+                location: match location {
+                    Value::Point(p) => *p,
+                    _ => Point { x: 0.0, y: 0.0 },
+                },
+                zoom: zoom.to_number(),
+            },
         };
         // Going where the reader already is goes nowhere: nothing to go back
         // to, nothing said.
@@ -549,21 +808,22 @@ fn moved(cx: &Cx, jumped: bool, change: impl FnOnce(&mut PdfPageNavigator)) {
         set(e, me, N::FORWARD_AVAILABLE.index, Value::Bool(forward));
     });
     if jumped {
-        let _ = e.emit_by_name(
-            me,
-            "jumped",
-            &[
-                Value::Int(now.page),
-                Value::Point(Arc::new(now.location)),
-                Value::Real(now.zoom),
-            ],
-        );
+        values::remember_platform(e);
+        let current = values::place_value(structure::Place {
+            page: now.page,
+            location: hayro::kurbo::Point::new(now.location.x, now.location.y),
+            zoom: now.zoom,
+        });
+        let _ = e.emit_by_name(me, "jumped", &[current]);
     }
 }
 
 /// Registers the types of `QtQuick.Pdf` written in Rust.
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick.Pdf" 5.0 => [
-        PdfDocument, PdfPageImage, PdfPageNavigator,
+        PdfDocument, PdfPageImage, PdfPageNavigator, PdfSelection, PdfSearchModel,
+        PdfLinkModel, PdfBookmarkModel,
     ]));
+    engine.register_value_type(&values::LINK);
+    engine.register_value_type(&values::SELECTION);
 }
