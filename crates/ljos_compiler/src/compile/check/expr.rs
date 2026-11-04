@@ -2082,8 +2082,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let locals = self.locals.len();
                 let assigned = self.assigned.len();
                 let mut covered = Vec::with_capacity(statement.cases.len());
-                // The labels whose cases fall into the body read next, as
-                // their union; `None` once a `default` or a label that is
+                // What the subject may be in the body read next: its label,
+                // or, where a case falls into it, the label joined with what
+                // the case above left the subject as (which its body may
+                // have assigned). `None` once a `default` or a label that is
                 // not a literal is among them, which narrows nothing.
                 let mut labels: Option<Ty> = None;
                 let mut falling = false;
@@ -2110,6 +2112,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                         live &= self.statement(statement);
                     }
                     falling = live;
+                    if let Some((key, local, now, _)) = path
+                        && labels.is_some()
+                    {
+                        labels = Some(self.fact(key, local).unwrap_or(now));
+                    }
                     self.facts.truncate(mark);
                 }
                 self.locals.truncate(locals);
