@@ -102,6 +102,35 @@ Feature: A QML type on the right of instanceof
       | rect   | Keys     | false |
       | rect   | Layout   | false |
 
+  # The same type reached through a module imported under a name.
+  Scenario Outline: <object> instanceof <type>, a type with an attached type through a namespace, is <is>
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick as Q
+      import QtQuick.Controls as C
+      import QtQuick.Layouts as L
+      Item {
+        id: root
+        objectName: "root"
+        C.ToolTip { id: tip }
+        ListView { id: list }
+        Rectangle { id: rect }
+        property bool is: !<is>
+        Component.onCompleted: is = <object> instanceof <type>
+      }
+      """
+    Then the property "is" of "root" is <is>
+    And the log has no warnings
+
+    Examples:
+      | object | type       | is    |
+      | tip    | C.ToolTip  | true  |
+      | rect   | C.ToolTip  | false |
+      | list   | Q.ListView | true  |
+      | rect   | (Q.Keys)   | false |
+      | rect   | L.Layout   | false |
+
   Scenario Outline: <value> is no instance of a QML type
     Given the QML:
       """qml
