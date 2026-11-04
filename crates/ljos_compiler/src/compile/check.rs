@@ -31,7 +31,7 @@ use crate::{Code, Diagnostic};
 const MODULE: &str = "Ljos.Ui";
 
 /// Whether `document` is written in Ljós's API: it imports it itself.
-pub(super) fn is_dialect(document: &QmlDocument<'_>) -> bool {
+pub(crate) fn is_dialect(document: &QmlDocument<'_>) -> bool {
     document.imports.iter().any(|import| {
         matches!(&import.source, QmlImportSource::Module(name) if name.to_string() == MODULE)
     })
@@ -39,7 +39,7 @@ pub(super) fn is_dialect(document: &QmlDocument<'_>) -> bool {
 
 /// Whether `document` says its scripts are Qt's JavaScript, not yet the
 /// subset: `pragma Scripts: JavaScript`.
-pub(super) fn scripts_are_javascript(document: &QmlDocument<'_>) -> bool {
+pub(crate) fn scripts_are_javascript(document: &QmlDocument<'_>) -> bool {
     document
         .pragmas
         .iter()

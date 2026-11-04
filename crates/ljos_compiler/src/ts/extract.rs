@@ -24,14 +24,11 @@ use qml_front::{
 };
 use qml_syntax::{
     Allocator, GetSpan,
-    ast::{
-        QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject, QmlSignalDeclaration,
-        QmlTypeName,
-    },
+    ast::{QmlBindingValue, QmlDocument, QmlMember, QmlObject, QmlSignalDeclaration, QmlTypeName},
     js::{Expression, Function},
 };
 
-use super::dts::{API, Api};
+use super::dts::Api;
 use crate::{
     Project,
     js::{self, Form},
@@ -89,11 +86,11 @@ impl Extracted {
     }
 }
 
-/// Whether the file is written in Ljós's API.
+/// Whether the file is TypeScript's to check: written in Ljós's API, and not
+/// marked as still Qt's JavaScript (`pragma Scripts: JavaScript`), as the
+/// checker reads it.
 pub fn is_dialect(document: &QmlDocument<'_>) -> bool {
-    document.imports.iter().any(
-        |import| matches!(&import.source, QmlImportSource::Module(name) if name.to_string() == API),
-    )
+    crate::compile::is_dialect(document) && !crate::compile::scripts_are_javascript(document)
 }
 
 /// The file `key` as TypeScript, which reads its types from the declarations
