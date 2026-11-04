@@ -574,6 +574,11 @@ Feature: Checking the scripts of a file written in Ljós's API
             onlyKnown(picked)
             let either = on ? given : 0
             if (typeof either === "string") onlyKnown(either)
+            let below = on ? given : -1
+            if (typeof below === "string") onlyKnown(below)
+            const kept = on ? given : -1
+            let again = kept
+            if (typeof again === "string") onlyKnown(again)
           }
         }
         """
