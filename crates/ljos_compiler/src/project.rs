@@ -314,7 +314,13 @@ impl<O: TypeOracle> Project<O> {
         }
         self.written.insert(key.to_string(), source);
         self.lower_alone(key);
-        // A file beside it that names it read its root type.
+        self.lower_naming(key);
+        self.settle_compat();
+    }
+
+    /// Lowers again, alone, each file beside `key` that names it: the pass
+    /// read the root type of `key` for it, which is now another or none.
+    fn lower_naming(&mut self, key: &str) {
         let (dir, name) = key.rsplit_once('/').unwrap_or(("", key));
         let naming: Vec<String> = self
             .alone
@@ -329,7 +335,6 @@ impl<O: TypeOracle> Project<O> {
         for other in &naming {
             self.lower_alone(other);
         }
-        self.settle_compat();
     }
 
     fn put_text(&mut self, key: &str, source: String) {
@@ -434,11 +439,12 @@ impl<O: TypeOracle> Project<O> {
         self.front.remove(key);
         self.sources.remove(key);
         self.written.remove(key);
+        self.paths.remove(key);
         if self.alone.remove(key).is_some() {
             self.lowered.remove(key);
+            self.lower_naming(key);
             self.settle_compat();
         }
-        self.paths.remove(key);
         self.dynamic = OnceCell::new();
         self.callable.get_mut().clear();
     }

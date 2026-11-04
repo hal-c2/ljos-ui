@@ -90,3 +90,74 @@ fn a_file_changed_while_lowering_is_lowered_with_its_group_again() {
     assert!(lowered(&project, "Button"));
     assert!(project.source("Button").expect("Button").contains("fill:"));
 }
+
+#[test]
+fn a_file_removed_leaves_its_group_and_the_files_that_named_it_lowered_again() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Button", BUTTON);
+    project.add(
+        "Main",
+        "import QtQuick\nItem { Button { color: \"blue\" } }\n",
+    );
+    project.add(
+        "Kept",
+        "import QtQuick\nRectangle { Behavior on color { } }\n",
+    );
+    project.add("Other", "import QtQuick\nItem { Kept { } }\n");
+    project.set_compat(true);
+    assert!(lowered(&project, "Main"));
+    assert!(matches!(project.lowering("Other"), Some(Outcome::Kept(_))));
+
+    // Without its Kept, Other is lowered.
+    project.remove("Kept");
+    assert_eq!(project.lowering("Kept"), None);
+    assert!(
+        lowered(&project, "Other"),
+        "{:?}",
+        project.lowering("Other")
+    );
+
+    // Main's `fill` was a Button's: without Button it is what Main was
+    // written as again, as it would be had Button never been in.
+    project.remove("Button");
+    let mut alone = Project::new(Runtime::new());
+    alone.add(
+        "Main",
+        "import QtQuick\nItem { Button { color: \"blue\" } }\n",
+    );
+    alone.set_compat(true);
+    assert_eq!(project.lowering("Main"), alone.lowering("Main"));
+    assert_eq!(project.source("Main"), alone.source("Main"));
+}
+
+#[test]
+fn a_selectors_variant_is_lowered_in_the_place_of_its_file_and_gives_it_back() {
+    const VARIANT: &str = "import QtQuick\nRectangle { color: \"green\" }\n";
+    let mut project = Project::new(Runtime::new());
+    project.set_controls_style(Some(qml_front::project::ControlsStyle {
+        name: "Material".to_owned(),
+        fallback: None,
+    }));
+    project.add("Button", BUTTON);
+    project.add("Main", "import QtQuick\nItem { Button { } }\n");
+    project.set_compat(true);
+
+    project.add("+Material/Button", VARIANT);
+    assert_eq!(project.written("Button"), Some(VARIANT));
+    let source = project.source("Button").expect("Button");
+    assert!(source.contains("fill: \"green\""), "{source}");
+    assert!(lowered(&project, "Button"));
+
+    // The file it was in the place of comes back as written, lowered again.
+    project.remove("+Material/Button");
+    assert_eq!(project.written("Button"), Some(BUTTON));
+    let source = project.source("Button").expect("Button");
+    assert!(source.contains("fill: \"red\""), "{source}");
+
+    // Turned off, the pass gives back the file as written.
+    project.add("+Material/Button", VARIANT);
+    project.set_compat(false);
+    assert_eq!(project.source("Button"), Some(VARIANT));
+    project.remove("+Material/Button");
+    assert_eq!(project.source("Button"), Some(BUTTON));
+}
