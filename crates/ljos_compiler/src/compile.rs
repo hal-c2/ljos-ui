@@ -32,6 +32,7 @@ use crate::{
 };
 
 mod check;
+pub(crate) use check::{is_dialect, scripts_are_javascript};
 use oxc_ast_visit::Visit as _;
 mod expressions;
 

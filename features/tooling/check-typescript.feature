@@ -92,3 +92,15 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
         """
       When the files are checked with TypeScript
       Then TypeScript reports nothing
+
+    Scenario: A file whose scripts are still JavaScript is not given to TypeScript
+      Given the file "Gauge.qml":
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        Item {
+          property real level: 0
+          function reset() { level = "0" }
+        }
+        """
+      When the files are checked with TypeScript
+      Then TypeScript reports nothing
