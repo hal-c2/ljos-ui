@@ -529,13 +529,24 @@ module Ljos.Models
 
 module Ljos.Ui
 	import QtQml
+	Box Ljos.Ui.Box
+	Column Ljos.Ui.Column
 	Font QtQuick.Font
 	Item QtQuick.Item
+	Layout QtQuick.Layouts.Layout
 	PointerArea Ljos.Ui.PointerArea
 	PropertyChanges QtQuick.PropertyChanges
 	Rectangle Ljos.Ui.Rectangle
+	Row Ljos.Ui.Row
 	State QtQuick.State
 	Text QtQuick.Text
+	type Ljos.Ui.Box Box
+		prototype Ljos.Ui.Arrangement
+		enum Direction Row=0 Column=1
+		prop direction Direction
+		signal directionChanged
+	type Ljos.Ui.Column Column
+		prototype Ljos.Ui.Arrangement
 	type Ljos.Ui.PointerArea PointerArea
 		prototype QtQuick.Item named
 		prop hoverEnabled QtQml.bool named
@@ -587,6 +598,25 @@ module Ljos.Ui
 		signal topRightRadiusChanged
 		signal bottomLeftRadiusChanged
 		signal bottomRightRadiusChanged
+	type Ljos.Ui.Row Row
+		prototype Ljos.Ui.Arrangement
+	type Ljos.Ui.Arrangement Arrangement
+		prototype QtQuick.Layouts.Layout named
+		is uncreatable
+		prop spacing QtQml.real named
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop layoutDirection Qt::LayoutDirection
+		signal spacingChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal topPaddingChanged
+		signal bottomPaddingChanged
+		signal layoutDirectionChanged
 	type Ljos.Ui.RectangleBorder RectangleBorder
 		is uncreatable
 		prop width QtQml.real named

@@ -489,3 +489,60 @@ fn placing_a_child_leaves_its_binding_and_makes_a_size_a_given_one() {
     assert_eq!(num(&e, bound, "width"), 60.0);
     assert_eq!(layout_runs(&e, find(&e, root, "layout")), before);
 }
+
+const BOXES: &str = r#"
+import Ljos.Ui
+Item {
+    width: 300; height: 300
+    Box {
+        objectName: "box"; width: 200; height: 100
+        Rectangle { objectName: "a"; width: 20; height: 10 }
+        Rectangle { objectName: "b"; Layout.fillWidth: true; implicitHeight: 10 }
+    }
+    Row {
+        objectName: "fixed"; y: 150
+        Rectangle { objectName: "c"; width: 20; height: 10 }
+        Rectangle { objectName: "d"; width: 20; height: 10 }
+    }
+}
+"#;
+
+/// `Ljos.Ui`'s arrangement, planned (a child with a `Layout`) or placing as
+/// a positioner (none has one), polishes once for a new scene and once for
+/// each frame in which something it reads changed, however many did.
+#[test]
+fn a_box_polishes_once_for_each_change() {
+    let e = engine();
+    let root = load(&e, BOXES);
+    let item = |n: &str| find(&e, root, n);
+    let runs = || [layout_runs(&e, item("box")), layout_runs(&e, item("fixed"))];
+    let mut s = scene(&e, root, 300.0, 300.0);
+    frame(&mut s, &e);
+    assert_eq!(runs(), [1, 1]);
+    assert_eq!(num(&e, item("b"), "width"), 180.0);
+    assert_eq!(num(&e, item("d"), "x"), 20.0);
+    frame(&mut s, &e);
+    assert_eq!(runs(), [1, 1], "an idle frame polishes nothing");
+
+    // Two changes to each in one frame: one polish each.
+    set(&e, item("box"), "spacing", Value::Real(4.0));
+    set(&e, item("a"), "width", Value::Real(30.0));
+    set(&e, item("fixed"), "spacing", Value::Real(4.0));
+    set(&e, item("c"), "width", Value::Real(30.0));
+    assert!(s.needs_frame());
+    frame(&mut s, &e);
+    assert_eq!(runs(), [2, 2]);
+    assert_eq!(num(&e, item("b"), "x"), 34.0);
+    assert_eq!(num(&e, item("b"), "width"), 166.0);
+    assert_eq!(num(&e, item("d"), "x"), 34.0);
+    assert!(!s.needs_frame());
+
+    // A box turning is one more.
+    set(&e, item("box"), "direction", Value::Int(1));
+    frame(&mut s, &e);
+    assert_eq!(runs(), [3, 2]);
+    assert_eq!(num(&e, item("b"), "y"), 14.0);
+    assert_eq!(num(&e, item("b"), "width"), 200.0);
+    frame(&mut s, &e);
+    assert_eq!(runs(), [3, 2]);
+}

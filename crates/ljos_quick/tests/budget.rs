@@ -132,7 +132,11 @@ fn spent(e: &Engine, s: &mut QuickScene, from: u64, step: impl FnOnce()) -> Budg
     for i in 0..FRAMES {
         frame_at(s, e, from + i * 16);
     }
-    let b = now(e);
+    between(a, now(e))
+}
+
+/// What happened between `a` and `b`.
+fn between(a: Budget, b: Budget) -> Budget {
     Budget {
         objects: b.objects - a.objects,
         graph: Census {
@@ -644,4 +648,60 @@ fn hundred_list_model_appends() {
             bytes: 7744,
         }
     );
+}
+
+/// A second instance of a `Row` of `n` items with sizes, under `import`,
+/// laid out: what it added. The first instance warms what they share.
+fn row_of(import: &str, n: usize) -> Budget {
+    let e = engine();
+    let children: String = (0..n)
+        .map(|i| format!("    Item {{ width: {}; height: 10 }}\n", 10 + i))
+        .collect();
+    let source = format!(
+        "import {import}\nItem {{\n  width: 2000; height: 100\n  Row {{\n    objectName: \"row\"\n    \
+         spacing: 2\n{children}  }}\n}}\n"
+    );
+    compile(&e, &[("Main", &source)]);
+    let make = |from: u64| {
+        let root = e
+            .create_from_url("Main", None, Vec::new())
+            .unwrap_or_else(|err| panic!("{import}: {err}"));
+        let mut s = scene(&e, root, 2000.0, 100.0);
+        settle(&mut s, &e, from);
+        (root, s)
+    };
+    let _warm = make(0);
+    let a = now(&e);
+    let (root, s) = make(1000);
+    let b = now(&e);
+    // Laid out: the last is after every other and its spacing.
+    let row = find(&e, root, "row");
+    let last = *child_items(&e, row).last().unwrap();
+    let x = (0..n - 1).map(|i| 10 + i + 2).sum::<usize>();
+    assert_eq!(num(&e, last, "x"), x as f64, "{import}");
+    drop(s);
+    between(a, b)
+}
+
+/// `Ljos.Ui`'s `Row` of children that only have sizes is a positioner, at
+/// a positioner's cost (docs/DIALECT.md): no more objects, nodes,
+/// allocations or bytes than QtQuick's `Row` of the same children, in all
+/// and for each child more.
+#[test]
+fn a_box_of_fixed_children_costs_no_more_than_a_row_positioner() {
+    let _alone = alone();
+    let qt = [row_of("QtQuick", 10), row_of("QtQuick", 20)];
+    let ljos = [row_of("Ljos.Ui", 10), row_of("Ljos.Ui", 20)];
+    let nodes = |b: &Budget| b.graph.values + b.graph.bindings + b.graph.effects + b.graph.scopes;
+    let said = format!("QtQuick {qt:#?}\nLjos.Ui {ljos:#?}");
+    for i in 0..2 {
+        assert!(ljos[i].objects <= qt[i].objects, "{said}");
+        assert!(nodes(&ljos[i]) <= nodes(&qt[i]), "{said}");
+        assert!(ljos[i].allocations <= qt[i].allocations, "{said}");
+        assert!(ljos[i].bytes <= qt[i].bytes, "{said}");
+    }
+    let more = |b: &[Budget; 2]| (b[1].allocations - b[0].allocations, b[1].bytes - b[0].bytes);
+    let (ljos_more, qt_more) = (more(&ljos), more(&qt));
+    assert!(ljos_more.0 <= qt_more.0, "{said}");
+    assert!(ljos_more.1 <= qt_more.1, "{said}");
 }
