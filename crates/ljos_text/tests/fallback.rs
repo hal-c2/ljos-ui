@@ -12,6 +12,15 @@ fn symbols() -> Vec<u8> {
     .unwrap()
 }
 
+/// The same characters at 500 units, in a family whose name comes first.
+fn alternate() -> Vec<u8> {
+    std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../features/text/fonts/LjosAlternateTest-Regular.ttf"
+    ))
+    .unwrap()
+}
+
 fn style() -> TextStyle {
     TextStyle {
         pixel_size: 20.0,
@@ -42,6 +51,22 @@ fn a_box_laid_out_before_the_font_was_added_is_set_in_it_after() {
     assert_ne!(boxed, 11.984375);
     e.register_font(symbols()).unwrap();
     assert_eq!(advance(&mut e, "\u{F8F0}"), 11.984375);
+}
+
+// The first family by name has the character, whichever font came first.
+#[test]
+fn the_font_chosen_does_not_depend_on_the_order_fonts_came_in() {
+    let mut e = TextEngine::new();
+    e.register_font(symbols()).unwrap();
+    assert_eq!(advance(&mut e, "\u{F8F0}"), 11.984375);
+    e.register_font(alternate()).unwrap();
+    let later = advance(&mut e, "\u{F8F0}");
+
+    let mut e = TextEngine::new();
+    e.register_font(alternate()).unwrap();
+    e.register_font(symbols()).unwrap();
+    assert_eq!(advance(&mut e, "\u{F8F0}"), later);
+    assert_eq!(later, 9.984375);
 }
 
 #[test]

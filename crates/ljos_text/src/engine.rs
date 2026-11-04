@@ -2729,7 +2729,10 @@ impl TextEngine {
     fn fonts_changed(&mut self) {
         self.generation += 1;
         self.families.first_fonts.borrow_mut().clear();
-        self.families.coverage.borrow_mut().fonts_changed();
+        self.families
+            .coverage
+            .borrow_mut()
+            .fonts_changed(&mut self.fcx);
         self.clear_caches();
     }
 

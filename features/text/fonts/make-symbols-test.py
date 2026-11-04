@@ -6,6 +6,10 @@ a scenario can tell which font a character was set in. No installed font has
 U+F8F0 or U+10FFF0; this one has both, each with an advance of its own
 (600 and 700 units of 1000), and nothing else but .notdef.
 
+Also writes LjosAlternateTest-Regular.ttf, the same characters at 500 units
+each in family "Ljos Alternate Test", whose name comes first: with both
+fonts, a character either has is set in it.
+
 Run it from this directory: `python3 make-symbols-test.py`. Only the standard
 library is used, so the file can be made again anywhere.
 """
@@ -13,7 +17,6 @@ library is used, so the file can be made again anywhere.
 import struct
 
 UPM = 1000
-FAMILY = "Ljos Symbols Test"
 # (code point, advance, outline): a box and a triangle.
 GLYPHS = [
     (0xF8F0, 600, [(50, 0), (550, 0), (550, 700), (50, 700)]),
@@ -46,14 +49,14 @@ def glyph(points):
     return out
 
 
-def name_table():
+def name_table(family):
     records = {
-        1: FAMILY,
+        1: family,
         2: "Regular",
-        3: FAMILY + " Regular",
-        4: FAMILY + " Regular",
+        3: family + " Regular",
+        4: family + " Regular",
         5: "Version 1.0",
-        6: "LjosSymbolsTest-Regular",
+        6: family.replace(" ", "") + "-Regular",
     }
     strings = b""
     entries = b""
@@ -89,7 +92,7 @@ def cmap_table():
     return header + f4 + f12
 
 
-def build() -> bytes:
+def build(family, advance=None) -> bytes:
     glyf = b""
     loca = [0]
     outlines = [None] + [g[2] for g in GLYPHS]
@@ -97,7 +100,7 @@ def build() -> bytes:
         if points:
             glyf += glyph(points)
         loca.append(len(glyf))
-    advances = [NOTDEF_ADVANCE] + [g[1] for g in GLYPHS]
+    advances = [NOTDEF_ADVANCE] + [advance or g[1] for g in GLYPHS]
     all_points = [p for g in GLYPHS for p in g[2]]
     x_min = min(p[0] for p in all_points)
     x_max = max(p[0] for p in all_points)
@@ -122,7 +125,7 @@ def build() -> bytes:
     tables[b"loca"] = b"".join(struct.pack(">I", o) for o in loca)
     tables[b"glyf"] = glyf
     tables[b"cmap"] = cmap_table()
-    tables[b"name"] = name_table()
+    tables[b"name"] = name_table(family)
     tables[b"post"] = struct.pack(">IIhhIIIII", 0x00030000, 0, -100, 50, 0, 0, 0, 0, 0)
     tables[b"OS/2"] = struct.pack(
         ">HhHHHhhhhhhhhhhh10sIIII4sHHHhhhHHII",
@@ -152,4 +155,6 @@ def build() -> bytes:
 
 if __name__ == "__main__":
     with open("LjosSymbolsTest-Regular.ttf", "wb") as f:
-        f.write(build())
+        f.write(build("Ljos Symbols Test"))
+    with open("LjosAlternateTest-Regular.ttf", "wb") as f:
+        f.write(build("Ljos Alternate Test", advance=500))
