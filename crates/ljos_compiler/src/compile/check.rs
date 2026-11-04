@@ -1297,9 +1297,11 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         }
         let mut given_word = self.word(given);
         // Literal types say nothing in words: "a string" for `"todo"` and
-        // `"todo" | "doing"` alike. They are written out instead.
+        // `"todo" | "doing"` alike. They are written out instead, as
+        // TypeScript writes them, and so is what a place of literals is
+        // given.
         let written;
-        let word = if given_word == word {
+        let word = if given_word == word || self.has_literal(target) {
             let display = |ty| format!("`{}`", self.arena.display(ty, &|o| self.obj_name(o)));
             given_word = display(given);
             written = display(target);
@@ -1352,14 +1354,6 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             self.report(Code::TsAssignType, message, span);
             return;
         }
-        // A place of literal types is said as TypeScript writes it: its
-        // words ("a string") would be those of what it refuses.
-        let (word, given_word) = if self.has_literal(target) {
-            let display = |ty| format!("`{}`", self.arena.display(ty, &|o| self.obj_name(o)));
-            (display(target), display(given))
-        } else {
-            (word.to_string(), given_word)
-        };
         self.report(
             Code::TsAssignType,
             format!("`{name}` is {word}; this gives it {given_word}"),

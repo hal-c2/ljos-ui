@@ -273,6 +273,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         let floor = std::mem::take(&mut self.floor);
         let assigned = std::mem::take(&mut self.assigned);
         let fns = std::mem::take(&mut self.fns);
+        let fresh = std::mem::take(&mut self.fresh);
         let nested = std::mem::take(&mut self.nested);
         let indexed = self.indexed.take();
         let code = if module.broken {
@@ -297,6 +298,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         self.floor = floor;
         self.assigned = assigned;
         self.fns = fns;
+        self.fresh = fresh;
         self.nested = nested;
         self.indexed = indexed;
         self.read[index] = Read::Done(exports);
