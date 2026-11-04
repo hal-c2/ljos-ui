@@ -362,9 +362,13 @@ fn configure(
     // does not read back.
     if let Some(hal) = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() } {
         let layer = hal.render_layer().lock();
-        // SAFETY: an extern static of CoreGraphics, always present.
-        let srgb = unsafe { objc2_core_graphics::kCGColorSpaceSRGB };
-        layer.setColorspace(objc2_core_graphics::CGColorSpace::with_name(Some(srgb)).as_deref());
+        // None is what wgpu makes of sRGB; any other space is its own.
+        if layer.colorspace().is_none() {
+            // SAFETY: an extern static of CoreGraphics, always present.
+            let srgb = unsafe { objc2_core_graphics::kCGColorSpaceSRGB };
+            layer
+                .setColorspace(objc2_core_graphics::CGColorSpace::with_name(Some(srgb)).as_deref());
+        }
     }
 }
 
@@ -408,5 +412,49 @@ mod tests {
         view.resize(80, 60);
         assert!(named_srgb(&layer), "resized");
         drop(view);
+    }
+
+    /// A surface configured for another colour space keeps the one wgpu
+    /// gave its layer.
+    #[test]
+    fn a_metal_layer_configured_extended_keeps_its_colour_space() {
+        let layer = CAMetalLayer::new();
+        let gpu = match pollster::block_on(Gpu::new()) {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                eprintln!("SKIPPED: {e}");
+                return;
+            }
+        };
+        let target = wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(objc2::rc::Retained::as_ptr(
+            &layer,
+        ) as *mut _);
+        // SAFETY: the layer outlives the surface, which is dropped first.
+        let surface = unsafe { gpu.instance.create_surface_unsafe(target) }.unwrap();
+        let format = wgpu::TextureFormat::Rgba16Float;
+        let caps = surface.get_capabilities(&gpu.adapter);
+        if !caps.formats.contains(&format) {
+            eprintln!("SKIPPED: no {format:?} surface");
+            return;
+        }
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format,
+            color_space: wgpu::SurfaceColorSpace::ExtendedSrgbLinear,
+            width: 64,
+            height: 48,
+            desired_maximum_frame_latency: 2,
+            present_mode: wgpu::PresentMode::Fifo,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![],
+        };
+        super::configure(&surface, &gpu.device, &config);
+        // SAFETY: an extern static of CoreGraphics.
+        let linear = unsafe { objc2_core_graphics::kCGColorSpaceExtendedLinearSRGB };
+        let named = layer
+            .colorspace()
+            .and_then(|space| CGColorSpace::name(Some(&space)));
+        assert_eq!(named.as_deref(), Some(linear));
+        drop(surface);
     }
 }

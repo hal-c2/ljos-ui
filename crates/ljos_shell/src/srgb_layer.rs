@@ -10,8 +10,8 @@
 //! and when the window is resized, each time taking the tag away. A frame
 //! is composited with the colour space its layer had when it was
 //! presented, so the layer is looked at before every frame the painter
-//! shows (a few messages while it is still tagged) and tagged again when
-//! it is not. A surface egui-wgpu finds stale and configures inside a
+//! shows (a few messages while it is still tagged) and tagged when it
+//! has none. A surface egui-wgpu finds stale and configures inside a
 //! paint shows that one frame untagged.
 
 use egui_winit::winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -54,15 +54,13 @@ pub(crate) fn tag_tree(root: &CALayer) {
     }
 }
 
+/// wgpu leaves a layer for sRGB with no colour space, and gives every
+/// other (extended, HDR) one its own, which is kept.
 fn tag_layer(layer: &CAMetalLayer) {
-    // SAFETY: an extern static of CoreGraphics, always present.
-    let srgb = unsafe { kCGColorSpaceSRGB };
-    let named = layer
-        .colorspace()
-        .and_then(|space| CGColorSpace::name(Some(&space)));
-    if named.as_deref() != Some(srgb) {
-        let space = CGColorSpace::with_name(Some(srgb));
-        layer.setColorspace(space.as_deref());
+    if layer.colorspace().is_none() {
+        // SAFETY: an extern static of CoreGraphics, always present.
+        let srgb = unsafe { kCGColorSpaceSRGB };
+        layer.setColorspace(CGColorSpace::with_name(Some(srgb)).as_deref());
     }
 }
 
@@ -99,5 +97,19 @@ mod tests {
         under.setColorspace(None);
         super::tag_tree(&root);
         assert!(named_srgb(&under));
+    }
+
+    /// A layer wgpu gave another colour space (an extended or HDR one)
+    /// keeps it: only the one it left with none is sRGB.
+    #[test]
+    fn a_layer_with_its_own_colour_space_keeps_it() {
+        let layer = CAMetalLayer::new();
+        let p3 = unsafe { objc2_core_graphics::kCGColorSpaceDisplayP3 };
+        layer.setColorspace(CGColorSpace::with_name(Some(p3)).as_deref());
+        super::tag_tree(&layer);
+        let named = layer
+            .colorspace()
+            .and_then(|space| CGColorSpace::name(Some(&space)));
+        assert_eq!(named.as_deref(), Some(p3));
     }
 }
