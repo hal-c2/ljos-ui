@@ -231,7 +231,7 @@ ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
 |---|---|---|---|
 | `Qt.vector2d/3d/4d`, `quaternion`, `matrix4x4`, `point`, `size`, `rect` | constructors: `vector3d(x, y, z)` in `Ljos.Core` | pure, tier 1 | a value, no host call |
 | `Qt.rgba`, `hsla`, `darker`, `lighter`, `tint` | `color.rgba(…)`, `c.darker(f)` | pure, tier 1 | folded at compile time when constant |
-| `new Date()`, a `Timer` that reads it | `Clock.now(Clock.Resolution.Second)`: a reactive `Instant` | a source | one wake-up per resolution tick for the whole app, none while nothing that reads it is visible |
+| `new Date()`, a `Timer` that reads it | `Clock.now(Clock.Resolution.Second)`: a reactive `Instant` | a source | one wake-up per resolution tick for the whole app while anything reads it; a reader whose only effect is drawing is skipped while hidden, and any other reader (a handler, a `when:`, a non-visual object) keeps it ticking |
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
@@ -431,7 +431,10 @@ measures both with budget cases.
   explicit size with no `preferred*` and an implicit size not statically 0.
   That child is the case where the rules differ, and its file is kept, with
   that reason.
-- `GridLayout` → `Grid`.
+- `GridLayout` → `Grid`, and `Grid` → `Grid`, kept under the same
+  conditions as their row and column forms: a `Grid` positioner child with
+  `Layout.*`, or a `GridLayout` child with an explicit size, no
+  `preferred*` and an implicit size not statically 0.
 - `StackLayout` → `Pages`.
 - `Flow` → `Flow`.
 - `LayoutItemProxy` keeps its file. It needs a person to merge the two
@@ -449,22 +452,27 @@ zooms". The corpus has two input APIs for it:
 | | Uses | Files |
 |---|---:|---:|
 | `MouseArea` | 61 | 47 |
-| of which `anchors.fill: parent` and no children | 52 | |
+| of which `anchors.fill: parent` | 52 | |
+| of those, no children (no `Connections`, `PinchArea` or `DropArea` inside) | 45 | |
 | `TapHandler` / `DragHandler` / `PinchHandler` / `HoverHandler` / `WheelHandler` | 29 / 10 / 3 / 3 / 5 | |
 | `PinchArea`, `MultiPointTouchArea` | 2, 0 | |
 | `onClicked` | 196 | 81 |
 | `onPressed` / `onReleased` / `onPositionChanged` | 13 / 5 / 5 | |
 | `preventStealing`, `propagateComposedEvents`, `mouse.accepted` | 5, 0, 0 | |
 
-52 of the 61 MouseAreas fill their parent. They are an item made only to
-say "the parent is tappable", with a geometry that has to be kept equal to
-the parent's.
+52 of the 61 MouseAreas fill their parent, and 45 of those have nothing
+inside. They are an item made only to say "the parent is tappable", with a
+geometry that has to be kept equal to the parent's.
 
 **The design.** A gesture is a child object of the item it acts on, not an
 item: `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress`. All of them
 read one pointer stream (mouse, touch and pen alike). Each gesture
 recognises from that stream, and the first one to recognise takes the
-pointer. `takeOver: true` lets a gesture win over one that has already
+pointer. Gestures are offered a press from the inside out: the hit test
+finds the deepest item under the pointer, that item's gestures see it
+first, then its parent's, and so on up. A gesture that takes the pointer
+hides it from every gesture further out, as an accepted press does in Qt.
+So a gesture on an item never covers that item's children. `takeOver: true` lets a gesture win over one that has already
 started (a pinch over a drag), which replaces `preventStealing` and
 `grabPermissions`. Events are typed (`TapEvent`, `DragEvent`) and carry
 `position`, `modifiers`, `button` and `device`.
@@ -496,7 +504,14 @@ MouseArea.
 **Lowering.**
 
 - `MouseArea { anchors.fill: parent; onClicked }` with no children →
-  `Tap { onTapped }`. That is 52 of 61.
+  `Tap { onTapped }` on the parent. A gesture on the parent sees a press
+  after the parent's children, where the MouseArea sees it before the
+  siblings declared ahead of it (it is drawn over them). The two agree
+  unless an interactive sibling (a MouseArea, a handler, a control, a
+  view) is declared before the MouseArea or the MouseArea sets `z`. Such
+  a file is kept with that reason. 43 of the 45 lower; the two kept are
+  `samegame/content/Button.qml` (a sibling before it) and
+  `lightningviewer/SwitchMap.qml` (`z`).
 - `hoverEnabled` + `containsMouse` → `Hover` + `hover.hovered`.
 - `drag.target` → `Drag`.
 - `*Handler` → the gesture of the same kind, with members renamed.
@@ -584,9 +599,15 @@ where Qt's views reset when a model is replaced.
 - `FolderListModel` → `FolderModel`.
 
 DECISION: typed lists with keys are the default, and ListModel is for
-shared, edited lists. A ListModel's row type is fixed by its first
-`ListElement` or its `row:`, and a later element with other roles is a
-check error.
+shared, edited lists. A ListModel's row type is its `row:`, or else the
+union of its `ListElement`s' roles, each optional where an element leaves
+it out (Qt reads a missing role as `undefined`). A delegate that reads an
+optional role has to say what it does without it. A constant table whose
+elements differ lowers to a typed list with those optional fields.
+
+DECISION: a duplicate `key` is a check error in a constant list. At run
+time rows that share a key are matched in order (the second row with key
+`k` keeps the delegate the second one had), and the view logs it once.
 
 ### 4.9 States
 
@@ -622,22 +643,23 @@ check error.
 
 ```qml
 // Qt (calqlatr/CalculatorButton.qml)            // Ljós
-function getBackgroundColor() {                  state: dimmed ? "dimmed" : tap.pressed ? "pressed"
-    if (button.dimmable && button.dimmed)            : hover.hovered ? "hovered" : ""
-        return backgroundColor;                  states: [
-    if (button.pressed) return accentColor;          State { name: "dimmed"; PropertyChanges { label.color: … } },
-    return backgroundColor;                          State { name: "pressed"; PropertyChanges {
-}                                                        button.fill: button.accent
-function getBorderColor() { … }                          button.border.color: button.accent
-function getTextColor() { … }                            label.color: "#222222" } },
-background: Rectangle {                              State { name: "hovered"; PropertyChanges { … } }
+function getBackgroundColor() {                  states: [
+    if (button.dimmable && button.dimmed)            State { name: "dimmed"; when: button.dimmed
+        return backgroundColor;                          PropertyChanges { label.color: … } },
+    if (button.pressed) return accentColor;          State { name: "pressed"; when: tap.pressed
+    return backgroundColor;                              PropertyChanges { button.fill: button.accent
+}                                                            button.border.color: button.accent
+function getBorderColor() { … }                              label.color: "#222222" } },
+function getTextColor() { … }                        State { name: "hovered"; when: hover.hovered
+background: Rectangle {                                  PropertyChanges { … } }
     color: button.getBackgroundColor()           ]
     border.color: button.getBorderColor() }      // `state = "presed"` is a check error
 ```
 
 Qt's button re-derives each of its three colours from `pressed`,
 `hovered` and `dimmed` in a function of its own. Ljós's names the four
-looks once and derives which one applies.
+looks once, each with the condition it follows from. The first state
+whose `when:` holds applies.
 
 DECISION: no general state-machine type. 37 imperative assignments in 8
 files do not pay for a second model of states. The typed union and
@@ -710,7 +732,7 @@ row", and rarely "make one now". The corpus:
       gameCanvas, { type: Math.floor(...),               key: "id"
       x: column*gameCanvas.blockSize, ... })             delegate: area.block
   board[index(column,row)] = dynamicObject               exit: Transition {
-  ...                                                        ScriptAction { script: (target as Block).burst() }
+  ...                                                        ScriptAction { script: target.burst() }      
   board[i].dying = true                                      NumberAnimation { property: "opacity"; to: 0; duration: 200 }
   board[i].destroy(1000)                                     PauseAnimation { duration: 800 }
   ...                                                    }
@@ -718,6 +740,8 @@ row", and rarely "make one now". The corpus:
                                                      // Block.qml: x: column * size  (a binding; Behavior animates it)
   ```
 
+  In a view's `enter` and `exit`, `target` is the delegate, typed by the
+  view's `delegate` (here `Component<Block>`, so a `Block`). No cast.
   The board is a typed list in `game.ts`. The view owns the objects, so
   nothing leaks a block or touches one after it is destroyed.
 - `StackView` stays in `Ljos.Controls`, with `push(Page, { … })` typed by
@@ -797,8 +821,11 @@ construction.
 **Lowering.**
 
 - `font.pixelSize` → `font.size`.
-- `font.pointSize` → `font.size` × the screen's ratio where it is
-  constant; otherwise it keeps its file.
+- `font.pointSize: n` → `font.size: Screen.points(n)`. Points to pixels is
+  the screen's logical DPI / 72, known only at run time and different per
+  screen, so the lowering writes the conversion, not a number. It is
+  reactive on the item's screen, so text moved to another screen resizes
+  as it does in Qt.
 - `font.bold: true` → `font.weight: Font.Weight.Bold`.
 - `wrapMode: Text.WordWrap` → `wrap: Text.Wrap.Word`, and every other enum
   the same way, by its owner in the table.
@@ -809,13 +836,13 @@ construction.
 |---|---|---|
 | `Row`, `Column` | `Row`, `Column` (a Box) | mechanical; kept when a child has `Layout.*` (§4.6) |
 | `RowLayout`, `ColumnLayout` | `Row`, `Column` | mechanical; kept when an explicit size meets a non-zero implicit size |
-| `GridLayout`, `Grid` | `Grid` | mechanical |
+| `GridLayout`, `Grid` | `Grid` | mechanical; kept as `RowLayout` and `Row` are |
 | `StackLayout` | `Pages` | mechanical |
 | `Flow` | `Flow` | mechanical |
 | `LayoutItemProxy` | a Box whose `direction` is bound | DECISION: kept; a person merges the layouts |
 | `anchors.*` on a free parent | the same | none |
 | `anchors.*` on a layout child | `Layout.alignment`/margins | DECISION: kept (Qt overrides them at run time, so their effect is unclear) |
-| `MouseArea` filling its parent, no children | `Tap`/`Hover`/`Drag` | mechanical (52 of 61) |
+| `MouseArea` filling its parent, no children | `Tap`/`Hover`/`Drag` | mechanical (43 of 45); kept when an interactive sibling is declared before it or it sets `z` (§4.7) |
 | other `MouseArea` | `PointerArea` | mechanical (phase 1), gestures M3 |
 | `*Handler` | `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress` | mechanical, by member |
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
@@ -836,7 +863,7 @@ construction.
 | `palette.*` | `Theme.color.*` | mechanical where 1:1 |
 | `Material.*`, `Universal.*` | — | DECISION: kept (a style's own API) |
 | `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical |
-| `font.pointSize` | `font.size` | mechanical when constant, else kept |
+| `font.pointSize` | `font.size: Screen.points(…)` | mechanical (a run-time conversion) |
 | `horizontalAlignment`, `wrapMode`, `elide`, `textFormat`, `fillMode` | `align`, `wrap`, `elide`, `format`, `fit` | mechanical |
 | `Qt.*` globals | `Ljos.Core`, `App`, value types (§4.3) | mechanical, by member |
 | `date`, `Date` | `Instant`, `Locale` | mechanical when only stored or compared, else kept |
@@ -854,8 +881,11 @@ construction.
   hit test. They have no items and no geometry.
 - **Keyed views** diff a list by key. `enter`/`exit` live on the view, which
   keeps an exiting delegate until its transition ends.
-- **Clock** is one timer per resolution, scheduled by readers that are
-  visible. With none, there is no timer (rule 6).
+- **Clock** is one timer per resolution, scheduled by its readers. A
+  reader whose only effect is drawing does not count while it is hidden;
+  a handler, a `when:` or a non-visual object always counts, so a hidden
+  page's timeout still fires. With no reader that counts, there is no
+  timer (rule 6).
 - **Decoders** run at a model's boundary in tier 2. The rows they return
   are values.
 - **Theme** is a singleton with a live-reloaded source.
@@ -1004,7 +1034,7 @@ Why the 462 example files are kept:
 
 `Qt.*` keeps no file today: `Ljos.Ui` imports `QtQml`, so the namespace is
 still there. Modules, not globals, decide coverage. Phase 2 starts with
-them (§18).
+them (§17).
 
 ## 7. Tiers and the web
 
