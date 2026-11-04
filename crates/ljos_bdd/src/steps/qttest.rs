@@ -3,7 +3,7 @@
 use cucumber::{then, when};
 use gherkin::Step;
 
-use crate::backend::testrun::{TestRun, expected_lines};
+use crate::backend::testrun::{TestRun, declarations, expected_lines};
 use crate::value;
 use crate::world::LjosWorld;
 
@@ -91,6 +91,127 @@ fn files_checked_stats(w: &mut LjosWorld) -> StepResult {
         check: true,
         stats: true,
         ..TestRun::default()
+    })
+}
+
+// `ljos check --tsc`: the checker's findings, then TypeScript's at the
+// lines of the QML files they are in.
+#[when("the files are checked with TypeScript")]
+fn files_checked_tsc(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        tsc: true,
+        ..TestRun::default()
+    })
+}
+
+/// What `ljos check --tsc` says when the machine has no TypeScript.
+const NO_TSC: &str = "SKIPPED: no tsc";
+
+/// The lines of a report that are TypeScript's: their code is `TS` and a
+/// number.
+fn typescript_lines(lines: &[String]) -> Vec<&String> {
+    lines.iter().filter(|l| l.contains("[TS")).collect()
+}
+
+#[then("TypeScript reports the lines:")]
+fn typescript_reports_lines(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = expected_lines(&docstring(step)?);
+    w.each_test_report(|report| {
+        if report.lines.iter().any(|l| l == NO_TSC) {
+            return Ok(());
+        }
+        let said = typescript_lines(&report.lines);
+        if said.len() >= want.len()
+            && said
+                .windows(want.len())
+                .any(|w| w.iter().copied().eq(&want))
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "these lines are not what TypeScript reports; the check says\n{}",
+                report.text()
+            ))
+        }
+    })
+}
+
+#[then("TypeScript reports nothing")]
+fn typescript_reports_nothing(w: &mut LjosWorld) -> StepResult {
+    w.each_test_report(|report| {
+        // The count says the check ran: a refused command line has no
+        // TypeScript in it either.
+        let ran = report
+            .lines
+            .iter()
+            .any(|l| l == NO_TSC || l.contains(" files, "));
+        if ran && typescript_lines(&report.lines).is_empty() {
+            Ok(())
+        } else {
+            Err(format!("TypeScript reports\n{}", report.text()))
+        }
+    })
+}
+
+// `ljos types --dts`: no files are needed, the API is the table's.
+#[when("the declarations of Ljós's API are written")]
+fn declarations_written(w: &mut LjosWorld) -> StepResult {
+    w.ljos_report(declarations().map_err(|e| e.to_string())?);
+    Ok(())
+}
+
+#[then(regex = r#"^the declarations have the line "(.+)"$"#)]
+fn declarations_have_line(w: &mut LjosWorld, line: String) -> StepResult {
+    w.each_test_report(|report| {
+        if report.lines.iter().any(|l| l.trim() == line) {
+            Ok(())
+        } else {
+            Err(format!("no line is {line:?}"))
+        }
+    })
+}
+
+/// The lines between `interface NAME ` and the brace that closes it.
+fn declaration<'r>(lines: &'r [String], name: &str) -> Result<&'r [String], String> {
+    let head = format!("interface {name} ");
+    let start = lines
+        .iter()
+        .position(|l| l.trim_start().starts_with(&head))
+        .ok_or_else(|| format!("nothing declares the interface {name}"))?;
+    let indent = lines[start].len() - lines[start].trim_start().len();
+    let end = lines[start..]
+        .iter()
+        .position(|l| l.len() > indent && &l[indent..] == "}")
+        .map_or(lines.len(), |i| start + i);
+    Ok(&lines[start + 1..end])
+}
+
+#[then(regex = r#"^the declaration of "([^"]+)" has the member "(.+)"$"#)]
+fn declaration_has_member(w: &mut LjosWorld, name: String, member: String) -> StepResult {
+    w.each_test_report(|report| {
+        let body = declaration(&report.lines, &name)?;
+        if body.iter().any(|l| l.trim() == member) {
+            Ok(())
+        } else {
+            Err(format!("{name} declares\n{}", body.join("\n")))
+        }
+    })
+}
+
+#[then(regex = r#"^the declaration of "([^"]+)" has no member "([^"]+)"$"#)]
+fn declaration_lacks_member(w: &mut LjosWorld, name: String, member: String) -> StepResult {
+    w.each_test_report(|report| {
+        let body = declaration(&report.lines, &name)?;
+        let named = |line: &String| {
+            let line = line.trim().trim_start_matches("readonly ");
+            line.strip_prefix(&member)
+                .is_some_and(|rest| rest.starts_with([':', '(', '?']))
+        };
+        match body.iter().find(|l| named(l)) {
+            None => Ok(()),
+            Some(line) => Err(format!("{name} declares {}", line.trim())),
+        }
     })
 }
 

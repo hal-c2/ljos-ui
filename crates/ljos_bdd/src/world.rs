@@ -166,6 +166,12 @@ impl LjosWorld {
         ran
     }
 
+    /// Keeps what a program of Ljós's own said, as the report the
+    /// `Then the check …` steps read: nothing of Qt's says the same.
+    pub fn ljos_report(&mut self, report: TestReport) {
+        self.test_reports = vec![("ljos", report)];
+    }
+
     /// Check what each runner said; the failures are labelled with the
     /// backend, as [`Self::each`] labels them.
     ///
