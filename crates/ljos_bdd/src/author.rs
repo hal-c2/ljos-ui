@@ -1412,6 +1412,47 @@ impl Slot {
         }
     }
 
+    /// Checks that two PNGs of the project, as commands wrote them, are the
+    /// same picture: the same size and every pixel alike.
+    ///
+    /// # Errors
+    /// One is not a PNG, or they differ; says where first.
+    pub fn pictures_alike(&mut self, files: &Files, a: &str, b: &str) -> Result<(), String> {
+        let rig = self.rig(files)?;
+        let decode = |name: &str| -> Result<(u32, u32, Vec<u8>), String> {
+            let path = rig.path(name)?;
+            let file = fs::File::open(&path).map_err(|e| format!("cannot read {name:?}: {e}"))?;
+            let mut reader = png::Decoder::new(std::io::BufReader::new(file))
+                .read_info()
+                .map_err(|e| format!("{name:?} is not a PNG: {e}"))?;
+            let mut buf = vec![0; reader.output_buffer_size().unwrap_or(0)];
+            let info = reader
+                .next_frame(&mut buf)
+                .map_err(|e| format!("{name:?} is not a PNG: {e}"))?;
+            buf.truncate(info.buffer_size());
+            Ok((info.width, info.height, buf))
+        };
+        let (aw, ah, ap) = decode(a)?;
+        let (bw, bh, bp) = decode(b)?;
+        if (aw, ah) != (bw, bh) {
+            return Err(format!(
+                "{a:?} is {aw} by {ah} pixels and {b:?} {bw} by {bh}"
+            ));
+        }
+        if ap.len() != bp.len() {
+            return Err(format!("{a:?} and {b:?} store their pixels differently"));
+        }
+        let channels = ap.len() / (aw as usize * ah as usize).max(1);
+        match ap.iter().zip(&bp).position(|(x, y)| x != y) {
+            None => Ok(()),
+            Some(i) => {
+                let pixel = i / channels.max(1);
+                let (x, y) = (pixel % aw as usize, pixel / aw as usize);
+                Err(format!("{a:?} and {b:?} first differ at {x}, {y}"))
+            }
+        }
+    }
+
     /// Checks the text at `pointer` of the last answer against a doc string.
     ///
     /// # Errors

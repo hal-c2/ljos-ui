@@ -286,6 +286,12 @@ fn picture_file_is(w: &mut LjosWorld, name: String, width: u32, height: u32) -> 
     author.picture_is(files, &name, width, height)
 }
 
+#[then(regex = r#"^the pictures "([^"]+\.png)" and "([^"]+\.png)" have the same pixels$"#)]
+fn pictures_alike(w: &mut LjosWorld, a: String, b: String) -> StepResult {
+    let (author, files) = w.author();
+    author.pictures_alike(files, &a, &b)
+}
+
 #[then("the command prints:")]
 fn command_prints(w: &mut LjosWorld, step: &Step) -> StepResult {
     let want = author_doc(step)?;
