@@ -283,15 +283,24 @@ pub mod win32 {
             .collect()
     }
 
-    /// The Windows path of a `file:` URL: `file:///C:/a%20b` is `C:\a b`
-    /// and `file://host/share/x` is `\\host\share\x`. `None` for any
+    /// The Windows path of a `file:` URL: `file:///C:/a%20b` (and
+    /// `file://C:/a%20b`) is `C:\a b` and `file://host/share/x` is
+    /// `\\host\share\x`. `None` for any
     /// other address, or a file URL that names no drive or host.
     pub fn path_of(url: &str) -> Option<String> {
         let rest = url.strip_prefix("file://")?;
         let rest = rest.strip_prefix("localhost").unwrap_or(rest);
+        // `file://C:/x`, which some applications write, has its drive
+        // where the host would be.
+        let bytes = rest.as_bytes();
+        let drive_first = bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':';
         let (host, path) = match rest.strip_prefix('/') {
-            Some(_) => ("", rest),
-            None => rest.split_at(rest.find('/')?),
+            Some(_) => ("", rest.to_owned()),
+            None if drive_first => ("", format!("/{rest}")),
+            None => {
+                let (host, path) = rest.split_at(rest.find('/')?);
+                (host, path.to_owned())
+            }
         };
         let decoded = ljos_engine::url_path(&format!("file://{path}"))?;
         let decoded = decoded.to_string_lossy().replace('/', "\\");
@@ -359,20 +368,37 @@ pub mod win32 {
         }
     }
 
-    /// The action of the effect `DoDragDrop` ended with: the target's
-    /// answer to the drop; `None` for none, or a drag given up.
-    pub fn action_of(effect: u32, dropped: bool) -> Option<DropAction> {
+    /// The format a target writes the effect it really performed in
+    /// (`IDataObject::SetData`), a DWORD in global memory.
+    pub const LOGICAL_PERFORMED: &str = "Logical Performed DropEffect";
+
+    /// The DWORD a target wrote into the data object; `None` when it is
+    /// shorter.
+    pub fn dword(bytes: &[u8]) -> Option<u32> {
+        Some(u32::from_le_bytes(bytes.get(..4)?.try_into().ok()?))
+    }
+
+    /// The action of a drag out that `DoDragDrop` ended with `effect`,
+    /// the target having written `logical` as the effect it performed;
+    /// `None` for none, or a drag given up. Explorer moves a file within
+    /// a volume itself (an optimized move) and answers none, so that the
+    /// source deletes nothing, and writes the move as the logical effect:
+    /// the drag heard none then, and the logical effect is the action.
+    pub fn action_of(effect: u32, logical: Option<u32>, dropped: bool) -> Option<DropAction> {
         if !dropped {
             return None;
         }
-        [
-            (DROPEFFECT_MOVE, DropAction::Move),
-            (DROPEFFECT_COPY, DropAction::Copy),
-            (DROPEFFECT_LINK, DropAction::Link),
-        ]
-        .into_iter()
-        .find(|&(bit, _)| effect & bit != 0)
-        .map(|(_, action)| action)
+        let of = |effect: u32| {
+            [
+                (DROPEFFECT_MOVE, DropAction::Move),
+                (DROPEFFECT_COPY, DropAction::Copy),
+                (DROPEFFECT_LINK, DropAction::Link),
+            ]
+            .into_iter()
+            .find(|&(bit, _)| effect & bit != 0)
+            .map(|(_, action)| action)
+        };
+        of(effect).or_else(|| of(logical?))
     }
 
     /// What `IDropSource::QueryContinueDrag` answers.
@@ -860,6 +886,11 @@ mod tests {
             win32::path_of("file://host/share/f").as_deref(),
             Some("\\\\host\\share\\f")
         );
+        assert_eq!(
+            win32::path_of("file://C:/x/y").as_deref(),
+            Some("C:\\x\\y"),
+            "a drive where the host would be is the path's"
+        );
         assert_eq!(win32::path_of("file:///tmp/unix"), None, "no drive");
         assert_eq!(win32::path_of("https://example.org/"), None);
     }
@@ -890,16 +921,32 @@ mod tests {
         );
         assert_eq!(win32::effects_of(DropActions::NONE), win32::DROPEFFECT_COPY);
         assert_eq!(
-            win32::action_of(win32::DROPEFFECT_MOVE, true),
+            win32::action_of(win32::DROPEFFECT_MOVE, None, true),
             Some(DropAction::Move)
         );
         assert_eq!(
-            win32::action_of(win32::DROPEFFECT_LINK, true),
+            win32::action_of(win32::DROPEFFECT_LINK, None, true),
             Some(DropAction::Link)
         );
-        assert_eq!(win32::action_of(win32::DROPEFFECT_NONE, true), None);
+        assert_eq!(win32::action_of(win32::DROPEFFECT_NONE, None, true), None);
         assert_eq!(
-            win32::action_of(win32::DROPEFFECT_COPY, false),
+            win32::action_of(win32::DROPEFFECT_NONE, Some(win32::DROPEFFECT_MOVE), true),
+            Some(DropAction::Move),
+            "Explorer's optimized move says none and writes the move it did"
+        );
+        assert_eq!(
+            win32::action_of(win32::DROPEFFECT_COPY, Some(win32::DROPEFFECT_MOVE), true),
+            Some(DropAction::Copy),
+            "the effect DoDragDrop gave wins when it says one"
+        );
+        assert_eq!(
+            win32::action_of(win32::DROPEFFECT_NONE, Some(win32::DROPEFFECT_MOVE), false),
+            None
+        );
+        assert_eq!(win32::dword(&7u32.to_le_bytes()), Some(7));
+        assert_eq!(win32::dword(&[1, 2]), None);
+        assert_eq!(
+            win32::action_of(win32::DROPEFFECT_COPY, None, false),
             None,
             "given up"
         );
