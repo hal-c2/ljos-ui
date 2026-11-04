@@ -164,8 +164,8 @@ Feature: Ljós's one arrangement: Row, Column and Box
       When the files are checked
       Then the check reports:
         """
-        Bar.qml:3:17: error: `anchors.left` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
-        Bar.qml:4:45: error: `anchors.verticalCenter` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
+        Bar.qml:3:23: error: `anchors.left` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
+        Bar.qml:4:51: error: `anchors.verticalCenter` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
         """
@@ -196,7 +196,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        would lower Main.qml (13 edits)
+        would lower ./Main.qml (13 edits)
         1 files, 1 lowered, 0 kept
         """
       When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
@@ -217,7 +217,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept Main.qml:4:24: `width` of a `Text` in a `RowLayout` is not its size there, and would be in Ljós's `Row`; give it `Layout.preferredWidth`
+        kept ./Main.qml:4:24: `width` of a `Text` in a `RowLayout` is not its size there, and would be in Ljós's `Row`; give it `Layout.preferredWidth`
         1 files, 0 lowered, 1 kept
         """
 
@@ -236,6 +236,6 @@ Feature: Ljós's one arrangement: Row, Column and Box
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept Main.qml:5:15: `Layout.fillWidth` is ignored by Qt's `Row` and would be honoured by Ljós's
+        kept ./Main.qml:6:15: `Layout.fillWidth` is ignored by Qt's `Row` and would be honoured by Ljós's
         1 files, 0 lowered, 1 kept
         """
