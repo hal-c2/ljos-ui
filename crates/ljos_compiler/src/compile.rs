@@ -31,6 +31,8 @@ use crate::{
     oracle::{Held, Written, is_color},
 };
 
+mod check;
+use oxc_ast_visit::Visit as _;
 mod expressions;
 
 /// Compiles the file `key` of the project.
@@ -96,6 +98,10 @@ fn compile_alone<O: TypeOracle>(
     );
     let mut compiler = Compiler::new(project, key, source, lines, types, &tree);
     compiler.diagnostics = diagnostics;
+    // A file the compat pass lowered is Qt's QML, which the checker's
+    // rules are not for: it is checked when `ljos migrate` makes it Ljós's.
+    compiler.dialect = check::is_dialect(&parsed.document)
+        && !matches!(project.lowering(key), Some(qml_compat::Outcome::Lowered(_)));
     if let Some(context) = translator(&parsed.document) {
         compiler.context = context.to_string();
     }
@@ -199,6 +205,9 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     /// The `Qt` global, for its enums.
     qt: Option<O::Type>,
     warned: HashSet<String>,
+    /// The file is written in Ljós's API, and its scripts are checked
+    /// ([`check`]).
+    dialect: bool,
 }
 
 impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
@@ -261,6 +270,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             enums: Vec::new(),
             qt,
             warned: HashSet::new(),
+            dialect: false,
         }
     }
 
@@ -433,7 +443,12 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     };
                     self.def_mut(at).signals.push(declaration);
                 }
-                QmlMember::Function(function) => self.method(owner, function),
+                QmlMember::Function(function) => {
+                    self.check(|checker| {
+                        checker.visit_function(function, oxc_syntax::scope::ScopeFlags::Function);
+                    });
+                    self.method(owner, function);
+                }
                 QmlMember::InlineComponent(inline) => {
                     if let Some(index) = self.object(&inline.object, None) {
                         let component = &mut self.components[self.place[index].component.index()];
@@ -954,6 +969,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         value: &QmlBindingValue<'a>,
         may_handle: bool,
     ) {
+        match value {
+            QmlBindingValue::Expression(expression) => {
+                self.check(|checker| checker.visit_expression(expression));
+            }
+            QmlBindingValue::Statement(statement) => {
+                self.check(|checker| checker.visit_statement(statement));
+            }
+            QmlBindingValue::Object(_) | QmlBindingValue::Objects(_) => {}
+        }
         let at = self.place[owner];
         let name_span = self.span(name_span);
         let signal = handled(&name).filter(|_| may_handle);
