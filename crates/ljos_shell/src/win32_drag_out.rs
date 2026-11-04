@@ -38,8 +38,12 @@ use windows::Win32::System::Com::{
     IEnumFORMATETC, IEnumSTATDATA, STGMEDIUM, STGMEDIUM_0, TYMED_HGLOBAL,
 };
 use windows::Win32::System::DataExchange::RegisterClipboardFormatW;
-use windows::Win32::System::Memory::{GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalUnlock};
-use windows::Win32::System::Ole::{DROPEFFECT, DoDragDrop, IDropSource, IDropSource_Impl};
+use windows::Win32::System::Memory::{
+    GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
+};
+use windows::Win32::System::Ole::{
+    DROPEFFECT, DoDragDrop, IDropSource, IDropSource_Impl, ReleaseStgMedium,
+};
 use windows::Win32::System::SystemServices::MODIFIERKEYS_FLAGS;
 use windows::Win32::UI::Shell::SHCreateStdEnumFmtEtc;
 use windows::core::{BOOL, HRESULT, HSTRING, Ref, implement};
@@ -51,9 +55,11 @@ type Formats = Vec<(u16, Vec<u8>)>;
 type Post = Arc<dyn Fn(DragStep) + Send + Sync>;
 
 thread_local! {
-    /// The drag out the timer is to start: its formats and allowed
-    /// effects.
-    static ASKED: RefCell<Option<(Formats, u32)>> = const { RefCell::new(None) };
+    /// The drag out the timer is to start: its formats, allowed effects
+    /// and the number of `Logical Performed DropEffect`.
+    static ASKED: RefCell<Option<(Formats, u32, u16)>> = const { RefCell::new(None) };
+    /// The effect the target wrote it performed, during the drag.
+    static LOGICAL: Cell<Option<u32>> = const { Cell::new(None) };
     /// The application gave the drag up: the source cancels it.
     static GIVEN_UP: Cell<bool> = const { Cell::new(false) };
     /// How the last drag ended, until the loop asks.
@@ -86,7 +92,8 @@ impl Out {
         if formats.is_empty() {
             return false;
         }
-        ASKED.with(|a| a.replace(Some((formats, win32::effects_of(actions.allowed)))));
+        let logical = number(&Format::Named(win32::LOGICAL_PERFORMED.to_owned())).unwrap_or(0);
+        ASKED.with(|a| a.replace(Some((formats, win32::effects_of(actions.allowed), logical))));
         // SAFETY: a thread timer (no window), whose callback is a function
         // of this module; winit's loop dispatches it on this thread.
         let timer =
@@ -140,20 +147,22 @@ unsafe extern "system" fn begin(
 ) {
     // SAFETY: the thread timer `id` this callback was set for.
     unsafe { windows_sys::Win32::UI::WindowsAndMessaging::KillTimer(0, id) };
-    let Some((formats, effects)) = ASKED.with(|a| a.take()) else {
+    let Some((formats, effects, logical)) = ASKED.with(|a| a.take()) else {
         return;
     };
     let action = if GIVEN_UP.get() {
         None
     } else {
-        let data: IDataObject = Data { formats }.into();
+        LOGICAL.set(None);
+        let data: IDataObject = Data { formats, logical }.into();
         let source: IDropSource = Source.into();
         let mut effect = DROPEFFECT(0);
         // SAFETY: OLE was initialised on this thread, the loop's, for the
         // windows' drop targets; both objects are the shell's, alive for
         // the call.
         let result = unsafe { DoDragDrop(&data, &source, DROPEFFECT(effects), &mut effect) };
-        win32::action_of(effect.0 & effects, result == DRAGDROP_S_DROP)
+        let performed = LOGICAL.take().map(|l| l & effects);
+        win32::action_of(effect.0 & effects, performed, result == DRAGDROP_S_DROP)
     };
     UNDER_WAY.set(false);
     ENDED.set(Some(action));
@@ -183,6 +192,8 @@ impl IDropSource_Impl for Source_Impl {
 #[implement(IDataObject)]
 struct Data {
     formats: Formats,
+    /// `Logical Performed DropEffect`'s number (0: not registered).
+    logical: u16,
 }
 
 impl Data {
@@ -260,16 +271,42 @@ impl IDataObject_Impl for Data_Impl {
         DATA_S_SAMEFORMATETC
     }
 
-    /// The shell's drag helpers and targets write how the drag went
-    /// (`Performed DropEffect` and the like) here; the drag hears the
-    /// effect from `DoDragDrop`, so they are not kept.
+    /// Targets write how the drag went here. `Logical Performed
+    /// DropEffect` is kept: Explorer moving a file within a volume itself
+    /// answers `DoDragDrop` with none and writes the move it did there
+    /// (`win32::action_of`). Anything else is refused.
     fn SetData(
         &self,
-        _format: *const FORMATETC,
-        _medium: *const STGMEDIUM,
-        _release: BOOL,
+        format: *const FORMATETC,
+        medium: *const STGMEDIUM,
+        release: BOOL,
     ) -> windows::core::Result<()> {
-        Err(E_NOTIMPL.into())
+        if format.is_null() || medium.is_null() {
+            return Err(E_POINTER.into());
+        }
+        // SAFETY: OLE's in parameters, valid for the call.
+        let (format, given) = unsafe { (&*format, &*medium) };
+        if self.logical == 0
+            || format.cfFormat != self.logical
+            || given.tymed != TYMED_HGLOBAL.0 as u32
+        {
+            return Err(E_NOTIMPL.into());
+        }
+        // SAFETY: an `HGLOBAL` medium, read while locked; when `release`,
+        // the medium is this object's, and is given back once read.
+        unsafe {
+            let global = given.u.hGlobal;
+            let at = GlobalLock(global);
+            if !at.is_null() {
+                let bytes = std::slice::from_raw_parts(at.cast::<u8>(), GlobalSize(global));
+                LOGICAL.set(win32::dword(bytes));
+                let _ = GlobalUnlock(global);
+            }
+            if release.as_bool() {
+                ReleaseStgMedium(medium.cast_mut());
+            }
+        }
+        Ok(())
     }
 
     fn EnumFormatEtc(&self, direction: u32) -> windows::core::Result<IEnumFORMATETC> {
