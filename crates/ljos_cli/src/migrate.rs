@@ -67,11 +67,11 @@ impl Migrate {
                 }
             };
             // A type the file names that a file beside it is: what that
-            // file's root is written as.
+            // file's root object.
             let dir = file.parent().unwrap_or(Path::new("."));
             let locals = |name: &str| {
                 let beside = std::fs::read_to_string(dir.join(format!("{name}.qml"))).ok()?;
-                qml_compat::root_type(&beside)
+                qml_compat::root(&beside)
             };
             let key = key_of(file);
             alone.insert(

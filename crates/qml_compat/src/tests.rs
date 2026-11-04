@@ -1,5 +1,12 @@
 use super::*;
 
+fn root_of(type_name: &str, bindings: &[&str]) -> Root {
+    Root {
+        type_name: type_name.to_string(),
+        bindings: bindings.iter().map(ToString::to_string).collect(),
+    }
+}
+
 fn lowered(source: &str) -> String {
     match lower(source, &no_locals) {
         Outcome::Lowered(lowered) => lowered.text,
@@ -154,7 +161,7 @@ fn what_the_pass_cannot_type_keeps_the_file() {
 
 #[test]
 fn a_file_of_the_project_is_the_type_its_root_is() {
-    let locals = |name: &str| (name == "Swatch").then(|| "Rectangle".to_string());
+    let locals = |name: &str| (name == "Swatch").then(|| root_of("Rectangle", &[]));
     let Outcome::Lowered(lowered) = lower(
         "import QtQuick\nItem { Swatch { id: s; color: \"red\" } Text { color: s.color } }\n",
         &locals,
@@ -185,7 +192,7 @@ fn a_file_names_the_files_of_the_project_it_may_use() {
 }
 
 fn alone(source: &str) -> Alone {
-    let locals = |name: &str| (name == "Button").then(|| "Rectangle".to_string());
+    let locals = |name: &str| (name == "Button").then(|| root_of("Rectangle", &["color"]));
     Alone {
         outcome: lower(source, &locals),
         references: references(source),
@@ -313,12 +320,13 @@ fn a_row_layout_is_a_row_with_its_defaults_written_out() {
 
 #[test]
 fn a_column_layout_counts_an_empty_child_and_keeps_its_spacing() {
+    // Not the root: no file that uses this one can size it.
     let text = lowered(&format!(
-        "{LAYOUTS}ColumnLayout {{ spacing: 2; Item {{ width: 10 }} Rectangle {{ width: 10; height: 4 }} }}\n"
+        "{LAYOUTS}Item {{ ColumnLayout {{ spacing: 2; Item {{ width: 10 }} Rectangle {{ width: 10; height: 4 }} }} }}\n"
     ));
     assert!(
         text.ends_with(
-            "Column { spacing: 2; Item { Layout.fillWidth: false; width: 10 } Rectangle { width: 10; height: 4 } }\n"
+            "Item { Column { spacing: 2; Item { Layout.fillWidth: false; width: 10 } Rectangle { width: 10; height: 4 } } }\n"
         ),
         "{text}"
     );
@@ -383,9 +391,92 @@ fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
 fn a_positioner_is_lowered_as_it_is_written() {
     let source =
         "import QtQuick\nColumn { spacing: 4; Rectangle { width: 6; height: 4 } Swatch { } }\n";
+    let locals = |name: &str| (name == "Swatch").then(|| root_of("Rectangle", &["color", "width"]));
+    let Outcome::Lowered(lowered) = lower(source, &locals) else {
+        panic!("not lowered");
+    };
     assert!(
-        lowered(source)
+        lowered
+            .text
             .ends_with("Column { spacing: 4; Rectangle { width: 6; height: 4 } Swatch { } }\n")
+    );
+}
+
+/// A child that is a file of the project is placed by what its root binds
+/// too: Qt's `Row` ignores a `Layout` and a `y` there, Ljós's would not.
+#[test]
+fn a_positioner_child_is_checked_by_its_files_root() {
+    let locals = |name: &str| match name {
+        "Swatch" => Some(root_of("Item", &["Layout.fillWidth", "width"])),
+        "Tile" => Some(root_of("Item", &["y"])),
+        "Chip" => Some(root_of("Tile", &["color"])),
+        "Pin" => Some(root_of("Item", &["anchors.centerIn"])),
+        _ => None,
+    };
+    for (body, child, why) in [
+        (
+            "Row { Swatch { } }",
+            "Swatch",
+            "`Swatch`'s root sets `Layout.fillWidth`, which is ignored by Qt's `Row` and would \
+             be honoured by Ljós's",
+        ),
+        ("Row { Tile { } }", "Tile", "`Tile`'s root sets `y`"),
+        ("Row { Chip { } }", "Chip", "`Chip`'s root sets `y`"),
+        ("Row { Pin { } }", "Pin", "`anchors.centerIn` on a child"),
+        (
+            "Item { component Mark: Item { y: 2 } Row { Mark { } } }",
+            "Mark { }",
+            "`Mark`'s root sets `y`",
+        ),
+    ] {
+        let source = format!("import QtQuick\n{body}\n");
+        let Outcome::Kept(kept) = lower(&source, &locals) else {
+            panic!("{body}: lowered");
+        };
+        assert!(kept.reason.contains(why), "{body}: {}", kept.reason);
+        assert_eq!(
+            kept.at,
+            source.rfind(child).unwrap(),
+            "{body}: at the child"
+        );
+    }
+}
+
+/// A layout at the root of a file, or of an inline component, may be sized
+/// by a file that uses it: with nothing to fill the room, Qt spreads it.
+#[test]
+fn a_root_layout_with_nothing_to_fill_it_is_kept() {
+    for body in [
+        "RowLayout { Item { implicitWidth: 8 } }",
+        "Item { component Bar: ColumnLayout { Item { implicitHeight: 8 } } }",
+        "Item { property Item bar: RowLayout { Item { implicitWidth: 8 } } }",
+        "Item { Component { RowLayout { Item { implicitWidth: 8 } } } }",
+    ] {
+        let reason = kept_for(&format!("{LAYOUTS}{body}\n"));
+        assert!(reason.contains("spreads the room"), "{body}: {reason}");
+        assert!(
+            reason.contains("a file that uses it may size it"),
+            "{body}: {reason}"
+        );
+    }
+    lowered(&format!(
+        "{LAYOUTS}RowLayout {{ Item {{ implicitWidth: 8; Layout.fillWidth: true }} }}\n"
+    ));
+}
+
+#[test]
+fn an_alignment_the_pass_cannot_read_is_reported_at_its_binding() {
+    let source = format!(
+        "{LAYOUTS}Item {{ RowLayout {{ Item {{ Layout.alignment: {{ return Qt.AlignTop }} }} }} }}\n"
+    );
+    let Outcome::Kept(kept) = lower(&source, &no_locals) else {
+        panic!("lowered");
+    };
+    assert_eq!(
+        kept.at,
+        source.find("Layout.alignment").unwrap(),
+        "{}",
+        kept.reason
     );
 }
 

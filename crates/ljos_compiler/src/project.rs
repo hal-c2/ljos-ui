@@ -259,7 +259,7 @@ impl<O: TypeOracle> Project<O> {
         let Some(text) = self.written.get(key) else {
             return;
         };
-        let outcome = qml_compat::lower(text, &|name: &str| self.root_type_beside(key, name));
+        let outcome = qml_compat::lower(text, &|name: &str| self.root_beside(key, name));
         let references = qml_compat::references(text);
         self.alone.insert(
             key.to_string(),
@@ -292,11 +292,11 @@ impl<O: TypeOracle> Project<O> {
     /// The type the root object of the file `name` beside the file `key` is
     /// written as, from its text if it is in, else from the disk: the pass
     /// lowers one file of a directory before it has the others.
-    fn root_type_beside(&self, key: &str, name: &str) -> Option<String> {
+    fn root_beside(&self, key: &str, name: &str) -> Option<qml_compat::Root> {
         let dir = key.rsplit_once('/').map(|(dir, _)| dir);
         let sibling = dir.map_or_else(|| name.to_string(), |dir| format!("{dir}/{name}"));
         if let Some(text) = self.written(&sibling) {
-            return qml_compat::root_type(text);
+            return qml_compat::root(text);
         }
         let path = match (self.paths.get(key), &self.tree) {
             (Some(path), _) => path.parent()?.join(format!("{name}.qml")),
@@ -304,7 +304,7 @@ impl<O: TypeOracle> Project<O> {
             (None, None) => return None,
         };
         let text = std::fs::read_to_string(path).ok()?;
-        qml_compat::root_type(&text)
+        qml_compat::root(&text)
     }
 
     fn put(&mut self, key: &str, source: String) {

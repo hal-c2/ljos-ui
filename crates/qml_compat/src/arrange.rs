@@ -15,8 +15,11 @@
 //!   implicit one, Ljós's `Row` the one the file gives;
 //! - an implicit size that may be a fraction (a `Text`'s): `RowLayout`
 //!   rounds it up, Ljós's `Row` does not;
-//! - a layout sized along its line with nothing to fill it: `RowLayout`
-//!   spreads the room, Ljós's `Row` leaves it at the end;
+//! - a layout with nothing to fill it that may be sized along its line:
+//!   `RowLayout` spreads the room, Ljós's `Row` leaves it at the end. The
+//!   file may size it, or, for the root of the file, of an inline component
+//!   or of a `Component`, or an object given as a value, whatever uses or
+//!   holds it may, which the file does not show;
 //! - a layout in a layout: Qt's fills its cell and is bounded by its
 //!   children, Ljós's is a child like any other;
 //! - an anchored child, and `uniformCellSizes`.
@@ -25,7 +28,9 @@
 //! `Layout.` (Qt's ignores it, Ljós's would not), a child sets its own
 //! position across the row (Qt's leaves it, Ljós's sets it), a child is
 //! anchored, or the file uses what only a positioner has (`add`, `move`,
-//! `populate`, `Positioner`, `effectiveLayoutDirection`, `forceLayout`).
+//! `populate`, `Positioner`, `effectiveLayoutDirection`, `forceLayout`). A
+//! child that is a file of the project or an inline component is held to
+//! the same by what its root binds.
 
 use std::ops::Range;
 
@@ -103,6 +108,10 @@ const POSITIONER_ONLY_NAMES: &[&str] = &["effectiveLayoutDirection", "forceLayou
 pub(crate) trait Types {
     /// The QtQuick or QtQuick.Layouts type `name` names in the file.
     fn qt_type(&self, name: &str) -> Option<&'static Type>;
+    /// For a file of the project or an inline component, the names its
+    /// root binds, with those of the roots it is built on; `None` for a
+    /// type that is neither.
+    fn root_bindings(&self, name: &str) -> Option<Vec<String>>;
 }
 
 /// The edits that lower `object`, a `shape`, or why its file is kept.
@@ -110,11 +119,13 @@ pub(crate) fn arrange(
     source: &str,
     object: &QmlObject<'_>,
     shape: Shape,
+    a_root: bool,
     types: &dyn Types,
 ) -> Result<Vec<Change>, Kept> {
     let mut a = Arrange {
         source,
         shape,
+        a_root,
         types,
         changes: Vec::new(),
     };
@@ -128,6 +139,9 @@ pub(crate) fn arrange(
 struct Arrange<'s, 't> {
     source: &'s str,
     shape: Shape,
+    /// The root of the file or of an inline component: a file that uses
+    /// it may size it.
+    a_root: bool,
     types: &'t dyn Types,
     changes: Vec<Change>,
 }
@@ -177,28 +191,48 @@ impl Arrange<'_, '_> {
                 ));
             }
         }
-        let cross = ["x", "y"][1 - self.main()];
         for child in self.laid_out(object)? {
             for (name, binding) in bindings(child) {
-                let at = binding.span.start as usize;
-                if name.starts_with("Layout.") {
-                    return Err(self.keep(
-                        format!(
-                            "`{name}` is ignored by Qt's `{qt}` and would be honoured by Ljós's"
-                        ),
-                        at,
-                    ));
-                }
-                if name.starts_with("anchors.") {
-                    return Err(self.anchored(&name, at));
-                }
-                if name == cross {
-                    return Err(self.keep(
-                        format!("Qt's `{qt}` leaves a child's `{cross}` to it, and Ljós's sets it"),
-                        at,
-                    ));
+                self.placed(&name, "", binding.span.start as usize)?;
+            }
+            // What a file's root binds places it as much as what the child
+            // binds; Qt's positioner ignores both alike.
+            let ty = child.type_name.to_string();
+            if self.types.qt_type(&ty).is_none()
+                && let Some(names) = self.types.root_bindings(&ty)
+            {
+                let at = child.type_name.span.start as usize;
+                for name in names {
+                    self.placed(&name, &format!("`{ty}`'s root sets `{name}`, which "), at)?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Why a positioner's child binding `name` keeps the file, if it does;
+    /// `whose` leads the reason when the binding is not the child's own.
+    fn placed(&self, name: &str, whose: &str, at: usize) -> Result<(), Kept> {
+        let qt = self.shape.qt();
+        let cross = ["x", "y"][1 - self.main()];
+        if name.starts_with("Layout.") {
+            let reason = if whose.is_empty() {
+                format!("`{name}` is ignored by Qt's `{qt}` and would be honoured by Ljós's")
+            } else {
+                format!("{whose}is ignored by Qt's `{qt}` and would be honoured by Ljós's")
+            };
+            return Err(self.keep(reason, at));
+        }
+        if name.starts_with("anchors.") {
+            return Err(self.anchored(name, at));
+        }
+        if name == cross {
+            let reason = if whose.is_empty() {
+                format!("Qt's `{qt}` leaves a child's `{cross}` to it, and Ljós's sets it")
+            } else {
+                format!("{whose}Qt's `{qt}` leaves to it, and Ljós's sets")
+            };
+            return Err(self.keep(reason, at));
         }
         Ok(())
     }
@@ -233,18 +267,25 @@ impl Arrange<'_, '_> {
                 _ => {}
             }
         }
-        if fills != Some(true) && sized(&own, main) {
+        for child in children {
+            self.child(child)?;
+        }
+        if fills != Some(true) && (sized(&own, main) || self.a_root) {
+            // A root is sized by whatever uses it, which this file does not
+            // show.
+            let sized_by = if sized(&own, main) {
+                ""
+            } else {
+                " (a file that uses it may size it)"
+            };
             return Err(self.keep(
                 format!(
                     "`{qt}` spreads the room no child fills over its children, and Ljós's \
-                     `{ljos}` leaves it at the end; give a child `{}: true`",
+                     `{ljos}` leaves it at the end{sized_by}; give a child `{}: true`",
                     FILL[main]
                 ),
                 object.type_name.span.start as usize,
             ));
-        }
-        for child in children {
-            self.child(child)?;
         }
         let span = object.type_name.span;
         self.changes.push(Change {
@@ -295,8 +336,11 @@ impl Arrange<'_, '_> {
         if !self.shape.vertical() {
             // Qt's `RowLayout` centres a child across the row unless it says
             // otherwise; Ljós's `Row` puts it at the top.
-            match bound(child, "Layout.alignment") {
-                Some(value) => self.centre(value)?,
+            match bindings(child)
+                .into_iter()
+                .find(|(n, _)| n == "Layout.alignment")
+            {
+                Some((_, binding)) => self.centre(binding)?,
                 None => {
                     if let Some(at) = after_brace(self.source, child) {
                         self.insert(at, " Layout.alignment: Qt.AlignVCenter;");
@@ -386,9 +430,12 @@ impl Arrange<'_, '_> {
 
     /// A `RowLayout` child's own `Layout.alignment`, made to say it is
     /// centred across the row when it says nothing of that.
-    fn centre(&mut self, value: &QmlBindingValue<'_>) -> Result<(), Kept> {
-        let QmlBindingValue::Expression(e) = value else {
-            return Err(self.keep("`Layout.alignment` is not an expression".into(), 0));
+    fn centre(&mut self, binding: &QmlBinding<'_>) -> Result<(), Kept> {
+        let QmlBindingValue::Expression(e) = &binding.value else {
+            return Err(self.keep(
+                "`Layout.alignment` is not an expression".into(),
+                binding.span.start as usize,
+            ));
         };
         let span = e.span();
         let flags = flags(e)
@@ -526,6 +573,11 @@ fn bindings<'o, 'a>(object: &'o QmlObject<'a>) -> Vec<(String, &'o QmlBinding<'a
         }
     }
     out
+}
+
+/// The names `object` binds, as [`bindings`] has them.
+pub(crate) fn binding_names(object: &QmlObject<'_>) -> Vec<String> {
+    bindings(object).into_iter().map(|(n, _)| n).collect()
 }
 
 fn bound<'o, 'a>(object: &'o QmlObject<'a>, name: &str) -> Option<&'o QmlBindingValue<'a>> {

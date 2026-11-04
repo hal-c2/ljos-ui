@@ -85,21 +85,32 @@ pub struct Kept {
     pub at: usize,
 }
 
-/// What the pass needs to know of the files beside this one: for a type a
-/// file of the project is (`SimpleButton` for `SimpleButton.qml`), the type
-/// its root object is written as, in the file as it was written.
-pub trait Locals {
-    fn root_type(&self, name: &str) -> Option<String>;
+/// The root object of a file of the project, or of an inline component,
+/// as it was written.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Root {
+    /// The type it is written as.
+    pub type_name: String,
+    /// The names it binds, with those of its groups (`anchors.left` for
+    /// `anchors { left: … }`): what it says of how it is placed.
+    pub bindings: Vec<String>,
 }
 
-impl<F: Fn(&str) -> Option<String>> Locals for F {
-    fn root_type(&self, name: &str) -> Option<String> {
+/// What the pass needs to know of the files beside this one: for a type a
+/// file of the project is (`SimpleButton` for `SimpleButton.qml`), its root
+/// object.
+pub trait Locals {
+    fn root(&self, name: &str) -> Option<Root>;
+}
+
+impl<F: Fn(&str) -> Option<Root>> Locals for F {
+    fn root(&self, name: &str) -> Option<Root> {
         self(name)
     }
 }
 
 /// No files beside this one.
-pub fn no_locals(_: &str) -> Option<String> {
+pub fn no_locals(_: &str) -> Option<Root> {
     None
 }
 
@@ -144,13 +155,22 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
     }
 }
 
-/// The type the root object of `source` is written as: what a file of the
-/// project is, for [`Locals`].
-pub fn root_type(source: &str) -> Option<String> {
+/// The root object of `source`: what a file of the project is, for
+/// [`Locals`].
+pub fn root(source: &str) -> Option<Root> {
     let allocator = Allocator::default();
     let parsed = qml_syntax::parse(&allocator, source);
-    let name = parsed.document.root.type_name.to_string();
-    (!parsed.panicked && !name.is_empty()).then_some(name)
+    let root = Root::of(&parsed.document.root);
+    (!parsed.panicked && !root.type_name.is_empty()).then_some(root)
+}
+
+impl Root {
+    fn of(object: &QmlObject<'_>) -> Root {
+        Root {
+            type_name: object.type_name.to_string(),
+            bindings: arrange::binding_names(object),
+        }
+    }
 }
 
 fn kept(reason: impl Into<String>, at: usize) -> Outcome {
@@ -182,7 +202,7 @@ struct Pass<'s> {
     layouts: Option<&'static qt_types::Module>,
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
-    inline: Vec<(String, String)>,
+    inline: Vec<(String, Root)>,
     changes: Vec<Change>,
 }
 
@@ -235,7 +255,7 @@ impl<'s> Pass<'s> {
         );
         self.collect(&document.root);
         let root = self.object_type(&document.root)?;
-        self.object(&document.root, root, root)?;
+        self.object(&document.root, root, root, true)?;
         Ok(true)
     }
 
@@ -271,10 +291,8 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Object(child) => self.collect(child),
                 QmlMember::InlineComponent(component) => {
-                    self.inline.push((
-                        component.name.name.to_string(),
-                        component.object.type_name.to_string(),
-                    ));
+                    self.inline
+                        .push((component.name.name.to_string(), Root::of(&component.object)));
                     self.collect(&component.object);
                 }
                 QmlMember::Signal(_) | QmlMember::Function(_) | QmlMember::Enum(_) => {}
@@ -345,8 +363,8 @@ impl<'s> Pass<'s> {
             .inline
             .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, root)| root.clone())
-            .or_else(|| self.locals.root_type(name));
+            .map(|(_, root)| root.type_name.clone())
+            .or_else(|| self.locals.root(name).map(|r| r.type_name));
         match root {
             Some(root) if root != name => match self.named_type(&root, at, depth + 1)? {
                 // What it declares is not in the table: its members are
@@ -360,12 +378,15 @@ impl<'s> Pass<'s> {
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up
     /// on `scope` (itself, or for a group the object it is a group of) and
-    /// then on the file's root, `root`.
-    fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty) -> Step {
+    /// then on the file's root, `root`. `a_root` when what uses or holds it
+    /// may size it, which the file does not show: the root of the file, of
+    /// an inline component or of a `Component`, or an object given as a
+    /// value (a `Loader` sizes its `sourceComponent`'s).
+    fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty, a_root: bool) -> Step {
         if let Ty::Exact(t) = ty
             && let Some(shape) = arrange::Shape::of(t)
         {
-            let changes = arrange::arrange(self.source, object, shape, self)?;
+            let changes = arrange::arrange(self.source, object, shape, a_root, self)?;
             self.changes.extend(changes);
         }
         let scope = match ty {
@@ -391,7 +412,8 @@ impl<'s> Pass<'s> {
                     } else {
                         root
                     };
-                    self.object(child, child_ty, child_root)?;
+                    let made = matches!(ty, Ty::Exact(t) if t.name == "Component");
+                    self.object(child, child_ty, child_root, made)?;
                 }
                 QmlMember::Binding(binding) => self.binding(binding, ty, scope, root, target)?,
                 QmlMember::Property(property) => {
@@ -433,7 +455,7 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::InlineComponent(component) => {
                     let ty = self.object_type(&component.object)?;
-                    self.object(&component.object, ty, ty)?;
+                    self.object(&component.object, ty, ty, true)?;
                 }
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
@@ -610,12 +632,12 @@ impl<'s> Pass<'s> {
             }
             QmlBindingValue::Object(object) => {
                 let ty = self.object_type(object)?;
-                self.object(object, ty, root)
+                self.object(object, ty, root, true)
             }
             QmlBindingValue::Objects(objects) => {
                 for object in objects {
                     let ty = self.object_type(object)?;
-                    self.object(object, ty, root)?;
+                    self.object(object, ty, root, true)?;
                 }
                 Ok(())
             }
@@ -642,6 +664,31 @@ impl arrange::Types for Pass<'_> {
         self.quick
             .type_named(name)
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
+    }
+
+    fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
+        let mut found: Option<Vec<String>> = None;
+        let mut name = name.to_string();
+        // A root built on another file of the project binds what that
+        // file's root binds too; as far as `named_type` follows it.
+        for _ in 0..16 {
+            if self.qt_type(&name).is_some() {
+                break;
+            }
+            let root = self
+                .inline
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, root)| root.clone())
+                .or_else(|| self.locals.root(&name));
+            let Some(root) = root else { break };
+            found.get_or_insert_default().extend(root.bindings);
+            if root.type_name == name {
+                break;
+            }
+            name = root.type_name;
+        }
+        found
     }
 }
 
