@@ -464,11 +464,17 @@ fn load_project<O: TypeOracle<Type = EngineType>>(
             Err(why) => {
                 // The compiler's own words for the report; the loader's
                 // for whatever makes an object of the file.
+                // A module's error is said after the module's path.
                 let first = match &r.result {
-                    Ok(c) => c.diagnostics.iter().find(|d| d.severity == Severity::Error),
-                    Err(ds) => ds.first(),
-                }
-                .map_or_else(|| "does not compile".to_owned(), ToString::to_string);
+                    Ok(c) => c
+                        .diagnostics
+                        .iter()
+                        .find(|d| d.severity == Severity::Error)
+                        .map_or_else(|| c.failure_reason(), ToString::to_string),
+                    Err(ds) => ds
+                        .first()
+                        .map_or_else(|| "does not compile".to_owned(), ToString::to_string),
+                };
                 out.source.insert_failure(r.key.clone(), why);
                 out.compile_errors
                     .insert(format!("{}.qml", r.key), first.clone());

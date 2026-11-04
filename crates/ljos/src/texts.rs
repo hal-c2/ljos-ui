@@ -307,24 +307,19 @@ impl ComponentSource for Fallback {
 }
 
 /// The errors of a text, and of the modules it reaches (`Some` with the
-/// module's key), as a text's errors: a module's are at no place of the
-/// text, so they are at line 0 and say the module's place.
+/// module's key), as a text's errors ([`ljos_compiler::text_error`]).
 pub(crate) fn text_errors<'a>(
     diagnostics: impl Iterator<Item = (Option<&'a str>, &'a ljos_compiler::Diagnostic)>,
 ) -> Vec<QmlTextError> {
     diagnostics
         .filter(|(_, d)| d.severity == ljos_compiler::Severity::Error)
-        .map(|(module, d)| match module {
-            None => QmlTextError {
-                line: d.span.line,
-                column: d.span.column,
-                message: d.message.clone(),
-            },
-            Some(module) => QmlTextError {
-                line: 0,
-                column: 0,
-                message: format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message),
-            },
+        .map(|(module, d)| {
+            let (line, column, message) = ljos_compiler::text_error(module, d);
+            QmlTextError {
+                line,
+                column,
+                message,
+            }
         })
         .collect()
 }

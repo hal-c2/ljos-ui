@@ -185,7 +185,8 @@ impl Suite {
         };
 
         let mut files = HashMap::new();
-        let mut broken: BTreeMap<String, Diagnostic> = BTreeMap::new();
+        // Each with where its error is: the file, or a module it reaches.
+        let mut broken: BTreeMap<String, (Option<String>, Diagnostic)> = BTreeMap::new();
         // What each test file imports, also of one that has a mistake: a
         // module that is not there is the first thing wrong with it.
         let mut modules: HashMap<String, Vec<String>> = HashMap::new();
@@ -210,10 +211,14 @@ impl Suite {
             root: root.clone(),
             files,
         }));
-        for (key, diagnostic) in &broken {
+        let place = |key: &str, module: &Option<String>| match module {
+            None => path_of(root, key),
+            Some(module) => root.join(module),
+        };
+        for (key, (module, diagnostic)) in &broken {
             // One of a test file is a failed test in the report.
             if !tests.contains(key) {
-                eprintln!("{}:{diagnostic}", path_of(root, key).display());
+                eprintln!("{}:{diagnostic}", place(key, module).display());
             }
         }
 
@@ -245,7 +250,8 @@ impl Suite {
                 );
                 continue;
             }
-            if let Some(diagnostic) = broken.get(key) {
+            if let Some((module, diagnostic)) = broken.get(key) {
+                let file = place(key, module).to_string_lossy().into_owned();
                 session.compile_failure(
                     stem,
                     &diagnostic.message,
@@ -276,7 +282,12 @@ fn runtime_modules(file: &CompiledFile) -> Vec<String> {
 
 /// The compiled file, or the first thing that was wrong with it. A file
 /// with a mistake is not loaded in part: Qt loads none of it either.
-fn compiled(result: Result<Compiled, Vec<Diagnostic>>) -> Result<CompiledFile, Diagnostic> {
+///
+/// The error is the file's own (`None`), or that of a module it reaches,
+/// with the module's key: a file whose module has an error does not run.
+fn compiled(
+    result: Result<Compiled, Vec<Diagnostic>>,
+) -> Result<CompiledFile, (Option<String>, Diagnostic)> {
     let first_error = |diagnostics: &[Diagnostic]| {
         diagnostics
             .iter()
@@ -284,18 +295,27 @@ fn compiled(result: Result<Compiled, Vec<Diagnostic>>) -> Result<CompiledFile, D
             .cloned()
     };
     match result {
-        Ok(compiled) => match first_error(&compiled.diagnostics) {
-            None => Ok(compiled.file),
-            Some(error) => Err(error),
-        },
-        Err(diagnostics) => Err(first_error(&diagnostics).unwrap_or_else(|| {
-            // Only a file the parser gave up on fails without saying why.
-            Diagnostic::error(
-                ljos_compiler::Code::Syntax,
-                "does not compile",
-                ljos_ir::SourceSpan::default(),
-            )
-        })),
+        Ok(compiled) => {
+            let error = compiled
+                .all_diagnostics()
+                .find(|(_, d)| d.severity == Severity::Error)
+                .map(|(module, d)| (module.map(str::to_owned), d.clone()));
+            match error {
+                None => Ok(compiled.file),
+                Some(error) => Err(error),
+            }
+        }
+        Err(diagnostics) => Err((
+            None,
+            first_error(&diagnostics).unwrap_or_else(|| {
+                // Only a file the parser gave up on fails without saying why.
+                Diagnostic::error(
+                    ljos_compiler::Code::Syntax,
+                    "does not compile",
+                    ljos_ir::SourceSpan::default(),
+                )
+            }),
+        )),
     }
 }
 
@@ -303,26 +323,17 @@ fn compiled(result: Result<Compiled, Vec<Diagnostic>>) -> Result<CompiledFile, D
 /// against the files of the tests.
 fn text_compiler(project: Rc<RefCell<Project<QtTypeOracle>>>) -> QmlTextCompiler {
     Rc::new(move |text: QmlText<'_>| {
-        // A module's errors are at no place of the text: line 0, and the
-        // message says the module's place.
         let errors = |diagnostics: Vec<(Option<&str>, &Diagnostic)>| -> Vec<QmlTextError> {
             diagnostics
                 .into_iter()
                 .filter(|(_, d)| d.severity == Severity::Error)
-                .map(|(module, d)| match module {
-                    None => QmlTextError {
-                        line: d.span.line,
-                        column: d.span.column,
-                        message: d.message.clone(),
-                    },
-                    Some(module) => QmlTextError {
-                        line: 0,
-                        column: 0,
-                        message: format!(
-                            "{module}:{}:{}: {}",
-                            d.span.line, d.span.column, d.message
-                        ),
-                    },
+                .map(|(module, d)| {
+                    let (line, column, message) = ljos_compiler::text_error(module, d);
+                    QmlTextError {
+                        line,
+                        column,
+                        message,
+                    }
                 })
                 .collect()
         };
