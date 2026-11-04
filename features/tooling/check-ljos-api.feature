@@ -546,6 +546,22 @@ Feature: Checking the scripts of a file written in Ljós's API
         1 files, 0 errors, 0 warnings
         """
 
+    Scenario: A record with a readonly member is not given where the member may be written
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function rename(row: { readonly id: number; name: string }): void { const next: { id: number; name: string } = row; const seen: { readonly id: number } = row }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:3:122: error: `next` may have its `id` written; this gives it one whose `id` is readonly: build a new object, or make the place readonly [ts-readonly]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: An element read by index may be undefined
       Given the file "Gauge.qml":
         """qml
