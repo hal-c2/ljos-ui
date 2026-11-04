@@ -18,7 +18,7 @@ use std::{
 use anyhow::Context as _;
 use clap::Args;
 use ljos::dev::{EngineOracle, EngineType};
-use ljos_compiler::{Severity, compile_project_with};
+use ljos_compiler::{Severity, compile_roots_compat};
 use ljos_engine::{Engine, LogLevel, MapSource};
 use qml_front::TypeOracle;
 use serde_json::{Value, json};
@@ -78,6 +78,20 @@ pub struct Render {
     /// takes its pictures.
     #[arg(long)]
     network: bool,
+    /// `lower`: each file in Qt's QML is lowered to Ljós's API
+    /// (`Ljos.Ui`) as it loads, as `ljos migrate` would write it; a file
+    /// the pass cannot lower whole is compiled as it is written.
+    #[arg(long, value_enum, default_value_t = Compat::Keep)]
+    compat: Compat,
+}
+
+/// What is done with a file written in Qt's QML (docs/DIALECT.md).
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum Compat {
+    /// Compiled as it is written.
+    Keep,
+    /// Lowered to Ljós's API first.
+    Lower,
 }
 
 fn parse_now(text: &str) -> Result<f64, String> {
@@ -195,8 +209,14 @@ impl Render {
             ],
         );
         let source = match &self.example {
-            Some(_) => compile(&dir, &key, notes, EngineOracle::from_engine(&engine))?,
-            None => compile(&dir, &key, notes, oracle_for_modules())?,
+            Some(_) => compile(
+                &dir,
+                &key,
+                notes,
+                EngineOracle::from_engine(&engine),
+                self.compat,
+            )?,
+            None => compile(&dir, &key, notes, oracle_for_modules(), self.compat)?,
         };
         // Before the root is made, so nothing binds to the module's own
         // roles first. A theme that is refused stops the render, as a file
@@ -422,6 +442,7 @@ fn load_project<O: TypeOracle<Type = EngineType>>(
     dir: &Path,
     entry: &str,
     oracle: O,
+    compat: Compat,
 ) -> anyhow::Result<Loaded> {
     let base = format!("file://{}", dir.to_string_lossy().replace('\\', "/"));
     let mut out = Loaded {
@@ -432,7 +453,10 @@ fn load_project<O: TypeOracle<Type = EngineType>>(
         entry_seen: false,
         entry_error: None,
     };
-    for r in compile_project_with(dir, oracle).with_context(|| format!("{}", dir.display()))? {
+    let lower = compat == Compat::Lower;
+    for r in
+        compile_roots_compat(&[dir], oracle, lower).with_context(|| format!("{}", dir.display()))?
+    {
         out.files += 1;
         out.entry_seen |= r.key == entry;
         match r.usable() {
@@ -467,7 +491,7 @@ pub(crate) fn load<O: TypeOracle<Type = EngineType>>(
     entry: &str,
     oracle: O,
 ) -> anyhow::Result<MapSource> {
-    load_project(dir, entry, oracle)?.into_source(dir, entry)
+    load_project(dir, entry, oracle, Compat::Keep)?.into_source(dir, entry)
 }
 
 /// [`load_project`], told in `notes`.
@@ -476,8 +500,9 @@ fn compile<O: TypeOracle<Type = EngineType>>(
     entry: &str,
     notes: &mut Notes,
     oracle: O,
+    compat: Compat,
 ) -> anyhow::Result<MapSource> {
-    let loaded = load_project(dir, entry, oracle)?;
+    let loaded = load_project(dir, entry, oracle, compat)?;
     notes.files = loaded.files;
     notes.compiled = loaded.compiled;
     notes.compile_errors = loaded.compile_errors.clone();
@@ -512,6 +537,7 @@ mod tests {
             system_fonts: false,
             network: false,
             theme: None,
+            compat: Compat::Keep,
         };
         let mut notes = Notes::default();
         let result = r.render(&mut notes);
@@ -570,6 +596,7 @@ mod tests {
             system_fonts: false,
             network: true,
             theme: None,
+            compat: Compat::Keep,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -728,6 +755,7 @@ mod tests {
             system_fonts: false,
             network: false,
             theme: None,
+            compat: Compat::Keep,
         };
         r.render(&mut Notes::default()).unwrap();
         let image = ljos_render::RgbaImage::from_png(&std::fs::read(out).unwrap()).unwrap();
@@ -753,6 +781,7 @@ mod tests {
             system_fonts: false,
             network: false,
             theme: None,
+            compat: Compat::Keep,
         };
         let mut notes = Notes::default();
         r.render(&mut notes).unwrap();
@@ -779,7 +808,13 @@ mod tests {
         )]);
         // The table of types does not know it: the entry does not compile.
         let mut notes = Notes::default();
-        let plain = compile(dir.path(), "Main", &mut notes, EngineOracle::table_only());
+        let plain = compile(
+            dir.path(),
+            "Main",
+            &mut notes,
+            EngineOracle::table_only(),
+            Compat::Keep,
+        );
         assert!(plain.is_err(), "compiled without the backend");
         assert!(!notes.entry_compiles);
 
@@ -793,6 +828,7 @@ mod tests {
             "Main",
             &mut notes,
             EngineOracle::from_engine(&engine),
+            Compat::Keep,
         )
         .unwrap();
         assert!(notes.entry_compiles);
