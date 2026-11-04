@@ -3590,7 +3590,7 @@ impl QuickScene {
         button: MouseButtons,
         handled: &mut bool,
     ) -> bool {
-        for &obj in hits {
+        for (i, &obj) in hits.iter().enumerate() {
             // Drag and point handlers grab passively, and see it first.
             *handled |= crate::handlers::press(engine, obj, ev);
             // An item's pointer handlers see the event before the item.
@@ -3630,6 +3630,12 @@ impl QuickScene {
                     *handled = true;
                 } else {
                     self.pointer.grab = Some(Grab::Tap(h));
+                    // As in Qt, the handlers of the items below still see
+                    // the press, so that a drag can take it from the tap
+                    // (features/input/pointer-handler-grabs.feature).
+                    for &below in &hits[i + 1..] {
+                        crate::handlers::press(engine, below, ev);
+                    }
                     return true;
                 }
             }
@@ -4684,7 +4690,7 @@ pub(crate) fn contains_local(engine: &Engine, obj: ObjectId, p: kurbo::Point) ->
 }
 
 /// How a TapHandler that held the point alone let go of it.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum LetGo {
     /// The pointer left its bounds.
     Moved,
@@ -4722,9 +4728,47 @@ fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point, let_go: Option<Le
         return;
     }
     crate::long_press::ended(engine, h);
+    // A press another handler takes is cancelled before the handler lets
+    // go of it, and once more after, as qml6 tells it; in a Flickable,
+    // which saw the press too, only after
+    // (features/input/pointer-handler-grabs.feature).
+    let alone =
+        num(engine, h, TapHandler::GESTURE_POLICY.index) as i32 != gesture_policy::DRAG_THRESHOLD;
+    if alone
+        && let_go == Some(LetGo::Taken)
+        && !crate::input::tap_handler_target(engine, h)
+            .is_some_and(|t| crate::flickable::drag::around(engine, t))
+    {
+        let point = crate::input::tap_event_point(engine, h, pos, point_state::UPDATED);
+        emit(engine, h, "canceled", &[point]);
+        if !engine.is_alive(h) {
+            return;
+        }
+        tap_ungrab(
+            engine,
+            h,
+            grab_transition::CANCEL_GRAB_EXCLUSIVE,
+            pos,
+            point_state::UPDATED,
+        );
+        if !engine.is_alive(h) {
+            return;
+        }
+        set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
+        if !engine.is_alive(h) {
+            return;
+        }
+        let point = crate::input::tap_event_point(engine, h, pos, point_state::UPDATED);
+        let changed = crate::input::tap_point_clear(engine, h);
+        emit(engine, h, "canceled", &[point]);
+        if engine.is_alive(h) && (crate::input::tap_point_clear(engine, h) || changed) {
+            crate::input::tap_point_changed(engine, h);
+        }
+        return;
+    }
     set(engine, h, TapHandler::PRESSED.index, Value::Bool(false));
     if let Some(how) = let_go
-        && num(engine, h, TapHandler::GESTURE_POLICY.index) as i32 != gesture_policy::DRAG_THRESHOLD
+        && alone
     {
         let (transition, state) = match how {
             LetGo::Moved => (grab_transition::UNGRAB_EXCLUSIVE, point_state::UPDATED),
@@ -4738,8 +4782,6 @@ fn cancel_tap(engine: &Engine, h: ObjectId, pos: kurbo::Point, let_go: Option<Le
     }
     // As in Qt a handler that held the press alone has an empty point when
     // it says `canceled`; one that only watched still has the point.
-    let alone =
-        num(engine, h, TapHandler::GESTURE_POLICY.index) as i32 != gesture_policy::DRAG_THRESHOLD;
     let point = crate::input::tap_event_point(engine, h, pos, point_state::UPDATED);
     let mut changed = alone && crate::input::tap_point_clear(engine, h);
     emit(engine, h, "canceled", &[point]);

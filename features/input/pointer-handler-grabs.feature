@@ -18,8 +18,7 @@ Feature: Who gets the pointer: handlers, MouseAreas and Flickables
       """qml
       import QtQuick
       Flickable {
-        id: flick
-        objectName: "flick"
+        id: flick; objectName: "flick"
         width: 200; height: 200
         contentWidth: 200; contentHeight: 1000
         signal said(string s)
@@ -40,6 +39,7 @@ Feature: Who gets the pointer: handlers, MouseAreas and Flickables
             onActiveChanged: flick.said("dh2.active=" + active + " ")
           }
         }
+        Page { x: 100; onSaid: (s) => flick.said(s) }
       }
       """
     And the file "Nested.qml":
@@ -69,6 +69,28 @@ Feature: Who gets the pointer: handlers, MouseAreas and Flickables
         }
       }
       """
+    And the file "Page.qml":
+      """qml
+      import QtQuick
+      Item {
+        id: page
+        width: 100; height: 90
+        signal said(string s)
+        DragHandler {
+          target: null
+          onActiveChanged: page.said("page.active=" + active + " ")
+        }
+        Item {
+          width: 100; height: 40
+          TapHandler {
+            gesturePolicy: TapHandler.WithinBounds
+            onPressedChanged: page.said("link.pressed=" + pressed + " ")
+            onCanceled: page.said("link.canceled ")
+            onTapped: page.said("link.tapped ")
+          }
+        }
+      }
+      """
     And the QML:
       """qml
       import QtQuick
@@ -91,6 +113,7 @@ Feature: Who gets the pointer: handlers, MouseAreas and Flickables
           }
         }
         Nested { x: 210; y: 210; onSaid: (s) => root.log += s }
+        Page { x: 300; y: 110; onSaid: (s) => root.log += s }
       }
       """
 
@@ -118,6 +141,27 @@ Feature: Who gets the pointer: handlers, MouseAreas and Flickables
       When the user presses the pointer at 50, 150
       And the user moves the pointer to 80, 150
       Then the property "log" of "root" is "ma.pressed ma.canceled dh2.active=true "
+
+    @api-QtQuick.PointerHandler.grabPermissions @api-QtQuick.TapHandler.gesturePolicy
+    Scenario: A DragHandler takes the press from a TapHandler of a child that holds it
+      When the user presses the pointer at 320, 130
+      And the user moves the pointer to 360, 130
+      And the user releases the pointer at 360, 130
+      Then the property "log" of "root" is "link.pressed=true link.canceled link.pressed=false link.canceled page.active=true page.active=false "
+
+    @api-QtQuick.PointerHandler.grabPermissions @api-QtQuick.TapHandler.canceled
+    Scenario: A DragHandler in a Flickable keeps the press it took from a child's TapHandler
+      When the user presses the pointer at 120, 20
+      And the user moves the pointer to 120, 50
+      And the user moves the pointer to 120, 80
+      And the user releases the pointer at 120, 80
+      Then the property "log" of "root" is "link.pressed=true link.pressed=false link.canceled page.active=true page.active=false "
+      And the property "contentY" of "flick" is 0
+
+    @api-QtQuick.TapHandler.gesturePolicy
+    Scenario: A TapHandler of a child that holds the press still taps
+      When the user touches 320, 130
+      Then the property "log" of "root" is "link.pressed=true link.tapped link.pressed=false "
 
   Rule: Which of several handlers
 
