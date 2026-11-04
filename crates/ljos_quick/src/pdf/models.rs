@@ -290,6 +290,10 @@ fn search(e: &Engine, me: ObjectId) {
             found.borrow_mut().rows = hits;
             reset(&found, e);
             set(e, me, M::COUNT.index, Value::Int(count));
+            // What boundingPolygonsOnPage drew depends on the rows, which
+            // changed even when a new search finds as many places: its
+            // bindings must run again though the count stays the same.
+            let _ = e.notify(me, M::COUNT.index);
             show_current(e, me);
         });
     });
