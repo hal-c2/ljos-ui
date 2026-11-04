@@ -344,6 +344,9 @@ before grouping. `qml_compat::references` collects what a file may name:
 - property types;
 - `.qml` string literals;
 - directories imported by path;
+- modules imported by name: a module of the project is a directory whose
+  path ends in the name's parts (`import My.Controls` is any `…/My/Controls/`),
+  as an import path finds it, and every file below it is of the group;
 - capitalised identifiers, such as an enum's owner.
 
 `qml_compat::group` joins files with union-find. A group is lowered only
@@ -421,7 +424,15 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 ```
 
 - It runs the same pass and the same grouping as `--compat lower`. A
-  migrated file is the text a lowered run compiled, byte for byte.
+  migrated file is the text a lowered run compiled, byte for byte, and it
+  compiles to the same program.
+- A lowered file says its scripts are still Qt's JavaScript:
+  `pragma Scripts: JavaScript`, on the import's line so that every line
+  stays where it was. The checker does not hold such a file to its rules,
+  so `==`, `null`, `var` and `if (count)` keep compiling as they did.
+  Taking the pragma out is the step that types a file, and `ljos check`
+  then says what to change. Renaming the API and typing the scripts are
+  two steps, and only the first is mechanical.
 - Without `--write` it says what it would do. With `--write` it writes in
   place.
 - Exit status 0 means every file was read, and 2 means a file could not be
@@ -499,15 +510,16 @@ copied into scratch by `docs/research/tools/dialect_spike.sh`, with a
 
 **What lowering did** (5 edits, the `ljos migrate` diff):
 
-- `import QtQuick` → `import Ljos.Ui` (module);
+- `import QtQuick` → `pragma Scripts: JavaScript; import Ljos.Ui` (module,
+  and the scripts are still JavaScript, §8);
 - `MouseArea {` → `PointerArea {` (renamed type);
 - `color: buttonColor` → `fill: buttonColor` on the root `Rectangle`
   (cleaned member);
 - two `PropertyChanges { target: button; color: … }` → `fill: …` (the
   member followed into states).
 
-The typed property is `property color buttonColor`. The checker types
-`fill`, `buttonColor` and `state`. The TS handler is
+The typed property is `property color buttonColor`. With the pragma taken
+out, the checker types `fill`, `buttonColor` and `state`. The TS handler is
 `onPressed: button.state = "PRESSED"`, which passes `ts-assign-type`. A
 copy with `button.state = 1` is reported.
 
@@ -516,8 +528,9 @@ copy with `button.state = 1` is reported.
 - Kept, lowered and migrated renders are identical PNGs.
 - Each scores `content 0.946, pixels 0.9756` against qml6. The differences
   are font raster only, and identical for all three.
-- `ljos check` on the migrated file: 0 errors.
-- The mutated copy: `` `state` is a string; this gives it a number
+- `ljos check` on the migrated file, and on it with the pragma taken out:
+  0 errors.
+- The mutated copy, without the pragma: `` `state` is a string; this gives it a number
   [ts-assign-type] ``.
 - The feature pair in §10 shows the same states, handler counts and pixels
   for a press and a release.
@@ -639,8 +652,9 @@ bindings and states without a rule.
   runtime checks to break.
 - At run time both are the same tier 2 (TS is erased), so the boundary is
   checked statically only and costs nothing.
-- A lowered file is compat code, with no checker. A file becomes Ljós code
-  when a person migrates it and its import says `Ljos.Ui`.
+- A lowered or migrated file is compat code, with no checker: it says
+  `pragma Scripts: JavaScript`. A file becomes Ljós code when a person
+  takes the pragma out.
 
 ## 15. Decisions
 
@@ -652,7 +666,11 @@ bindings and states without a rule.
   a renamed member costs nothing at run time. M5 renames the natives
   themselves.
 - DECISION: the checker runs only on files that import `Ljos.Ui`
-  themselves. Lowered files are compat code and are not checked.
+  themselves and do not say `pragma Scripts: JavaScript`. The pass writes
+  the pragma into every file it lowers, so a migrated file compiles as the
+  file did (PR #184 review). Migrate does not refuse a file the checker
+  would reject, nor rewrite `==` to `===`: either would change what runs or
+  how much migrates, and typing is a person's step.
 - DECISION: a file is lowered all-or-nothing, and so is a group of files
   that name one another. Grouping is conservative.
 - DECISION: `Qt.createQmlObject` keeps its file until M5.

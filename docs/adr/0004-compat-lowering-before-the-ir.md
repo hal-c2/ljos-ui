@@ -39,14 +39,18 @@ Compat is **a lowering pass in front of a Qt-agnostic IR** (option 3):
   same native and the same member indices.
 - **All or nothing, by group.** A file is lowered whole or kept as written.
   Files that name one another are lowered together or kept together
-  (`qml_compat::group`). A kept file runs on the same runtime as today.
+  (`qml_compat::group`): by type name in a directory, by directory import,
+  and by a module of the project imported by name. A kept file runs on the
+  same runtime as today.
 - **One pass, two uses.** At load (`Project::set_compat`, `--compat
   lower`), the lowered text is compiled and the written text is kept for
   reload. Offline, `ljos migrate --write` writes the same text. A migrated
   file is byte for byte what a lowered run compiled.
 - **The checker is the API's, not compat's.** It runs on files that import
-  `Ljos.Ui` themselves. A lowered file is still JavaScript and is not
-  checked.
+  `Ljos.Ui` themselves. A lowered file says so:
+  `pragma Scripts: JavaScript` goes on its import's line, the checker does
+  not hold it to its rules, and a migrated file compiles as it did. A
+  person types a file by taking the pragma out.
 - **Opt-in while the API is small.** The default is `--compat keep`, where
   the pass does not run at all.
 
@@ -64,9 +68,9 @@ Compat is **a lowering pass in front of a Qt-agnostic IR** (option 3):
   plus a union-find over the project, and only with `--compat lower`.
 - Coverage is what the API has. A file naming anything the API lacks is
   kept, so the pass is never wrong by being incomplete. It is only unused.
-- Reload must lower again. `Project::put` lowers the file and its
-  same-directory namers, then settles every group, which is O(files) per
-  edit.
+- Reload must lower again. `Project::put` and `Project::forget` lower the
+  file and its same-directory namers, then settle every group, which is
+  O(files) per edit.
 - Some Qt programs build names at run time (`obj[name]`, QML text in
   `createQmlObject`, `.qml` URLs from template literals). The pass cannot
   see these. It keeps the files that do this, and DIALECT.md R1 records the
