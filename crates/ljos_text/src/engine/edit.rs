@@ -10,7 +10,7 @@ use parley::{BaseDirection, PositionedLayoutItem};
 
 use super::{
     BreakClass, OwnedRanged, RawLine, Shape, ShapedEntry, TextEngine, Vertical, break_lines,
-    ceil64, extract, key_hash, reported_width, shape, snapped, snapped_widths_kept,
+    ceil64, extract, key_hash, reported_width, shape_unbroken, snapped, snapped_widths_kept,
 };
 use crate::direction::in_right_to_left_block;
 use crate::edit::{
@@ -346,7 +346,7 @@ impl TextEngine {
         {
             return (e.lines.clone(), e.natural);
         }
-        let mut shape = shape(
+        let mut shape = shape_unbroken(
             &mut self.fcx,
             &mut self.lcx,
             &self.families,
@@ -356,7 +356,6 @@ impl TextEngine {
             class,
             BaseDirection::Auto,
         );
-        break_lines(&mut shape, None, false);
         let ((_, natural), advances) = snapped_widths_kept(&shape);
         // As in `build_layout`: a text that fits as Qt counts it is not
         // broken because the shaper's advances are a touch wider.

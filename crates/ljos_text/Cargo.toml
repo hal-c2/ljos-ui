@@ -10,6 +10,9 @@ publish.workspace = true
 
 [dependencies]
 harfrust.workspace = true
+# The script of a character, as Parley's itemiser reads it, for the fallback
+# a character no font of its style has is added to (`coverage.rs`).
+icu_properties.workspace = true
 icu_segmenter.workspace = true
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
@@ -19,6 +22,8 @@ parley_engine.workspace = true
 # HTML renderer is never linked, raw HTML in a document is shown as text.
 pulldown-cmark = { version = "0.13.4", default-features = false }
 rustc-hash.workspace = true
+# Character maps, read for the blocks a font has characters in.
+skrifa.workspace = true
 thiserror.workspace = true
 # Grapheme clusters for cursor movement.
 unicode-segmentation.workspace = true
