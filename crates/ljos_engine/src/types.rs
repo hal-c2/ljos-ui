@@ -163,7 +163,9 @@ impl TypeTag {
     /// the imports, decides whether they are enums instead.
     pub fn parse(s: &str) -> TypeTag {
         match s.trim() {
-            "var" | "variant" | "date" => TypeTag::Var,
+            // `unknown` is the Ljós API's `var`: any value, which a checked
+            // script narrows before it uses it (docs/DIALECT.md).
+            "var" | "variant" | "date" | "unknown" => TypeTag::Var,
             "bool" => TypeTag::Bool,
             "int" => TypeTag::Int,
             "real" | "double" | "number" => TypeTag::Real,

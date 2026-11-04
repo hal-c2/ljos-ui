@@ -427,6 +427,8 @@ pub struct MetaObject {
     pub required_at: Vec<(PropIndex, Atom)>,
     /// Scripts see a plain object, not a QObject: it prints as one.
     pub plain_object: bool,
+    /// The type is its base under other names ([`MetaBuilder::face`]).
+    face: bool,
     /// Declared a functional block. Boxed: nearly no type is one.
     pub block: Option<Box<BlockInfo>>,
     lookup: OnceLock<Lookup>,
@@ -577,6 +579,22 @@ impl MetaObject {
         self.default_property
             .as_ref()
             .or_else(|| self.base.as_ref()?.default_property())
+    }
+
+    /// The type this one is under other names, when it is a face of one
+    /// ([`MetaBuilder::face`]).
+    pub fn face_of(&self) -> Option<&MetaRef> {
+        self.base.as_ref().filter(|_| self.face)
+    }
+
+    /// The type a description of this one names as what it builds on: the
+    /// base, or for a face the base of the type it faces, whose own
+    /// members are the face's own under their new names.
+    pub fn prototype(&self) -> Option<&MetaRef> {
+        match self.face_of() {
+            Some(of) => of.base.as_ref(),
+            None => self.base.as_ref(),
+        }
     }
 
     /// This type and its bases, most derived first.
@@ -959,6 +977,7 @@ impl MetaBuilder {
                 enums: Vec::new(),
                 required_at: Vec::new(),
                 plain_object: false,
+                face: false,
                 block: None,
                 lookup: OnceLock::new(),
                 classes: RwLock::new(Vec::new()),
@@ -1399,6 +1418,61 @@ impl MetaBuilder {
             category: category.map(str::to_string),
             summary: summary.map(str::to_string),
         }));
+        self
+    }
+
+    /// A face of `of`: the same type under other names, which
+    /// [`rename`](Self::rename) gives it. It is `of` to everything that asks
+    /// what a type is ([`MetaObject::inherits`]), makes, paints and takes
+    /// input as `of`, and has `of`'s members at `of`'s indices, so a
+    /// renamed member costs nothing once its name is linked. A name it
+    /// renamed is not one of its names: a module that renames a member has
+    /// only the new name.
+    ///
+    /// It is how a module of other names is put over native types before
+    /// those are renamed themselves (docs/DIALECT.md).
+    #[inline(never)]
+    pub fn face(self, of: impl Into<MetaRef>) -> Self {
+        let of = of.into();
+        let mut b = self.base_ref(of.clone());
+        let m = &mut b.meta;
+        // The faced type's own members are the face's own: that is what
+        // a description of it says it adds to its prototype.
+        m.property_offset = of.property_offset;
+        m.signal_offset = of.signal_offset;
+        m.method_offset = of.method_offset;
+        m.native = of.native;
+        m.plain_object = of.plain_object;
+        m.attached = of.attached;
+        m.required_at = of.required_at.clone();
+        m.face = true;
+        b
+    }
+
+    /// Calls the member `old` of a [face](Self::face) `new`: a property,
+    /// with its change signal, a signal or a method. Panics when the type
+    /// has no member `old`, which is a mistake in the module's source.
+    #[inline(never)]
+    pub fn rename(mut self, old: &str, new: &str) -> Self {
+        assert!(self.meta.face, "{}: only a face renames", self.meta.name);
+        let m = &mut self.meta;
+        if let Some(i) = m.properties.iter().rposition(|p| p.name == old) {
+            let p = Arc::make_mut(&mut m.properties[i]);
+            p.name = Atom::intern(new);
+            if let Some(s) = p.notify {
+                let s = Arc::make_mut(&mut m.signals[s.0 as usize]);
+                s.name = Atom::intern(&format!("{new}Changed"));
+            }
+            if m.default_property().is_some_and(|d| *d == old) {
+                m.default_property = Some(Atom::intern(new));
+            }
+        } else if let Some(i) = m.signals.iter().rposition(|s| s.name == old) {
+            Arc::make_mut(&mut m.signals[i]).name = Atom::intern(new);
+        } else if let Some(i) = m.methods.iter().rposition(|f| f.name == old) {
+            m.methods[i].name = Atom::intern(new);
+        } else {
+            panic!("{} has no member `{old}` to call `{new}`", m.name);
+        }
         self
     }
 
