@@ -78,11 +78,25 @@ impl Compiled {
             .find(|(_, d)| d.severity == Severity::Error)
         {
             Some((None, d)) => failure_reason(std::slice::from_ref(d)),
-            Some((Some(module), d)) => {
-                format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message)
-            }
+            Some((Some(module), d)) => text_error(Some(module), d).2,
             None => failure_reason(&[]),
         }
+    }
+}
+
+/// A finding as an error of a QML text (`Qt.createQmlObject`'s): line,
+/// column and message. One in a module the text reaches (`module` is its
+/// key) is at no place of the text, so it is at line 0 and its message
+/// says the module's place: `filter.ts:2:14: …`.
+#[must_use]
+pub fn text_error(module: Option<&str>, d: &Diagnostic) -> (u32, u32, String) {
+    match module {
+        None => (d.span.line, d.span.column, d.message.clone()),
+        Some(module) => (
+            0,
+            0,
+            format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message),
+        ),
     }
 }
 
@@ -318,7 +332,7 @@ impl FileResult {
     pub fn usable(&self) -> Result<&Compiled, String> {
         match &self.result {
             Ok(c) if !c.has_errors() => Ok(c),
-            Ok(c) => Err(failure_reason(&c.diagnostics)),
+            Ok(c) => Err(c.failure_reason()),
             Err(ds) => Err(failure_reason(ds)),
         }
     }

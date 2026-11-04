@@ -228,6 +228,29 @@ Feature: TypeScript modules imported by a QML file
     Then the property "status" of "loader" is 3
     And the log has a warning matching "Pick\.qml: bad\.ts:1:36: `limit` is a number; this gives it a string"
 
+  Scenario: A test file that reaches a module with an error is a failed test, at the module's line
+    Given the file "bad.ts":
+      """ts
+      export const limit: number = "10"
+      """
+    And the file "tst_limit.qml":
+      """qml
+      import QtQuick
+      import QtTest
+      import "bad.ts" as Bad
+      TestCase {
+        name: "Limit"
+        function test_it() { compare(Bad.limit, "10") }
+      }
+      """
+    When the tests are run
+    Then the test report is:
+      """
+      FAIL!  : tst_limit::compile() `limit` is a number; this gives it a string
+         Loc: [bad.ts(1)]
+      Totals: 0 passed, 1 failed, 0 skipped
+      """
+
   Scenario: An edit that breaks a module is refused, at the module's line, and the file runs as it was
     Given the QML:
       """qml

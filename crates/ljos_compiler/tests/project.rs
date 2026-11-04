@@ -252,3 +252,23 @@ fn the_qmldir_says_which_file_a_type_is_over_the_build() {
     let main = ljos_compiler::compile_file(&project, "Main").expect("compiles");
     assert_eq!(main.file.components[0].objects[1].ty, display);
 }
+
+#[test]
+fn a_file_whose_module_has_an_error_is_refused_with_the_modules_place() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::write(
+        dir.path().join("bad.ts"),
+        "export const limit: number = \"10\"\n",
+    )
+    .expect("bad.ts");
+    std::fs::write(
+        dir.path().join("Main.qml"),
+        "import QtQuick\nimport \"bad.ts\" as Bad\nItem { property var n: Bad.limit }\n",
+    )
+    .expect("Main");
+    let results =
+        ljos_compiler::compile_roots_with(&[dir.path()], Runtime::new()).expect("readable");
+    let main = results.iter().find(|r| r.key == "Main").expect("Main");
+    let why = main.usable().expect_err("its module has an error");
+    assert!(why.starts_with("bad.ts:1:30: "), "{why}");
+}
