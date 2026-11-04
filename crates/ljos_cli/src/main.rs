@@ -25,6 +25,7 @@ mod heap;
 #[global_allocator]
 static ALLOC: ljos_shell::CountingAlloc = ljos_shell::CountingAlloc;
 mod i18n;
+mod migrate;
 mod observe;
 mod parent;
 mod render;
@@ -85,6 +86,10 @@ enum Command {
     /// Lay QML files out the one way the formatter knows: `--check` says
     /// which files are not laid out, `--diff` shows what would change.
     Fmt(fmt::Fmt),
+    /// Rewrite files in Qt's QML in Ljós's own API (`Ljos.Ui`), with the
+    /// edits `ljos render --compat=lower` makes as a file loads; without
+    /// `--write`, say what would change.
+    Migrate(migrate::Migrate),
     /// Compile the GLSL 440 shaders of `ShaderEffect`s to `.ljsh` files
     /// beside them, for an application that compiles none at run time:
     /// `--check` says which are missing or out of date.
@@ -209,6 +214,11 @@ fn run() -> anyhow::Result<()> {
         Command::Fmt(fmt) => match fmt.run() {
             0 => Ok(()),
             status => exit(status),
+        },
+        // 2 is a file that could not be read or written.
+        Command::Migrate(migrate) => match migrate.run() {
+            0 => Ok(()),
+            status => exit(i32::from(status)),
         },
         // As `fmt`: 1 is `--check` finding work, 2 a shader in error.
         Command::Shaders(shaders) => match shaders.run() {
