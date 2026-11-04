@@ -64,6 +64,8 @@ mod screen_reader;
 mod settings;
 #[cfg(gl_painter)]
 mod software;
+#[cfg(target_os = "macos")]
+mod srgb_layer;
 mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
