@@ -398,6 +398,253 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 2 errors
         """
 
+  Rule: A script keeps to the rest of the subset's rules
+
+    Scenario: `as` and `!` are reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property unknown last
+          function read(given: number | undefined): void { level = last as number; level = given!; level = <number>last }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:73: error: `as` tells the checker a type it cannot see: narrow the value with `typeof` or a comparison [ts-no-cast]
+        Gauge.qml:5:97: error: `!` tells the checker a value is not undefined: compare it with `undefined` first [ts-no-cast]
+        Gauge.qml:5:108: error: `<number>` tells the checker a type it cannot see: narrow the value with `typeof` or a comparison [ts-no-cast]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: A narrowed value, and `as const`, need no cast
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property unknown last
+          function read(given: number | undefined): void { if (typeof last === "number") { level = last } if (given !== undefined) { level = given } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A switch on a union that leaves a case out is reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string mode: "idle"
+          function step(kind: "start" | "stop" | "pause" | "skip", on: boolean): void {
+            switch (kind) { case "start": mode = "running"; break; case "stop": mode = "idle"; break }
+            switch (on) { case true: mode = "on" }
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:13: error: this `switch` leaves out `"pause"` and `"skip"`: add a case for each, or a `default` [ts-switch-exhaustive]
+        Gauge.qml:6:13: error: this `switch` leaves out `false`: add a case for it, or a `default` [ts-switch-exhaustive]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A switch that covers every case, or has a default, has nothing to report
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string mode: "idle"
+          function step(kind: "start" | "stop", on: boolean): void {
+            switch (kind) { case "start": mode = "running"; break; case "stop": mode = "idle"; break }
+            switch (on) { case true: mode = "on"; break; case false: mode = "off" }
+            switch (mode) { case "idle": break; default: mode = "idle" }
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A write to a readonly member or array is reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property list<real> levels
+          function add(row: { readonly id: number; name: string }, xs: readonly number[]): void { row.id = 2; row.name = "x"; xs.push(1); xs[0] = 2; levels.push(3) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:103: error: `id` is readonly: build a new object with the value it should have [ts-readonly]
+        Gauge.qml:4:130: error: `push` changes the array, and it is a readonly number[]: build a new one [ts-readonly]
+        Gauge.qml:4:139: error: `xs` is a readonly number[]: build a new array rather than change it [ts-readonly]
+        Gauge.qml:4:157: error: `push` changes the array, and it is a readonly number[]: build a new one [ts-readonly]
+        1 files, 4 errors, 0 warnings
+        ljos: 4 errors
+        """
+
+    Scenario: A mutable object or array, and a property of a list given a new one, may be written
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property list<real> levels
+          function add(row: { id: number }, xs: number[]): void { row.id = 2; xs.push(1); xs[0] = 2; levels = [...levels, 3] }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: An element read by index may be undefined
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function first(xs: readonly number[]): void { level = xs[0]; const n: number = xs[1] }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:65: error: `xs[0]` may be undefined, as an index may be past the end: check it first [ts-index-undefined]
+        Gauge.qml:4:90: error: `xs[1]` may be undefined, as an index may be past the end: check it first [ts-index-undefined]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: An element read by index and checked has nothing to report
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function first(xs: readonly number[]): void { const n = xs[0]; if (n !== undefined) { level = n } level = xs[1] ?? 0 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: An optional member set to undefined is reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function tag(given: string | undefined): void { const a: { name?: string } = { name: undefined }; let b: { name?: string } = {}; b.name = given }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:3:96: error: `name` is optional: leave it out rather than set it to undefined [ts-optional-exact]
+        Gauge.qml:3:149: error: `name` is optional: leave it out rather than set it to undefined [ts-optional-exact]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: An optional member left out, or one whose type says undefined, has nothing to report
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function tag(given: string | undefined): void { let b: { name?: string } = {}; b = given === undefined ? {} : { name: given }; const c: { name?: string | undefined } = { name: given } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A mutable array, or a method, given where variance refuses it is reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function share(counts: number[]): void { const both: (number | string)[] = counts; const take: { f(x: number | string): void } = { f: (x: number): void => {} } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:3:86: error: `both` is a (number | string)[]; this gives it a number[], and a mutable array holds only its own type: copy it, or make the place readonly [ts-variance]
+        Gauge.qml:3:145: error: `f` is `(x: number | string) => void`; this gives it `(x: number) => void`, and a function must take everything its place may be given [ts-variance]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A readonly array, and a method that takes more, are given where they go
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function share(counts: number[]): void { const seen: readonly (number | string)[] = counts; const take: { f(x: number): void } = { f: (x: number | string): void => {} } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: Classes, `this` in a function, prototypes, `delete`, `for…in`, `eval` and `arguments` are reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function odd(row: { id?: number }): void { delete row.id; for (const key in row) {} const f = function (): void { this.width = 1 } }
+          function worse(): number { eval("1"); return arguments.length }
+          function worst(): void { class Box {} const p = level.prototype }
+          property real level: 0
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:3:54: error: `delete` is not in Ljós's API: make the member optional, and build the object without it [ts-forbidden]
+        Gauge.qml:3:69: error: `for…in` is not in Ljós's API: write `for…of` over an array or a `Map` [ts-forbidden]
+        Gauge.qml:3:125: error: `this` is not in Ljós's API: in a `function` it is whatever calls it; name the object by its id [ts-forbidden]
+        Gauge.qml:4:38: error: `eval` is not in Ljós's API: write the code it would run [ts-forbidden]
+        Gauge.qml:4:56: error: `arguments` is not in Ljós's API: write a rest parameter (`...args: number[]`) [ts-forbidden]
+        Gauge.qml:5:36: error: `class` is not in Ljós's API: write a function, or a component [ts-forbidden]
+        Gauge.qml:5:65: error: `prototype` is not in Ljós's API: write a function that takes the object [ts-forbidden]
+        1 files, 7 errors, 0 warnings
+        ljos: 7 errors
+        """
+
+    Scenario: `this` in QML's scope, and in an arrow there, is the scope object
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function grow(by: number): void { this.width = this.width + by; const ys = [1, 2]; for (const y of ys) { by = y } const f = (): void => { this.height = by } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
   Rule: A file in Qt's QML is not held to it
 
     Scenario: The same script in Qt's QML has nothing to report

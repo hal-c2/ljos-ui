@@ -116,6 +116,21 @@ pub enum Code {
     /// The checker: a value it cannot type, which TypeScript would call
     /// `any`.
     TsNoAny,
+    /// The checker: `as` or `!`, which tell it a type it cannot see.
+    TsNoCast,
+    /// The checker: a `switch` on a union that leaves a case out.
+    TsSwitchExhaustive,
+    /// The checker: a write to a readonly member or array.
+    TsReadonly,
+    /// The checker: an element read by index, which may be past the end.
+    TsIndexUndefined,
+    /// The checker: an optional member set to `undefined`.
+    TsOptionalExact,
+    /// The checker: a mutable array, or a function, given where what it
+    /// would be given or written does not fit it.
+    TsVariance,
+    /// The checker: what the subset leaves out of JavaScript.
+    TsForbidden,
 }
 
 impl Code {
@@ -145,6 +160,13 @@ impl Code {
             Code::TsConditionBoolean => "ts-condition-boolean",
             Code::TsNoVar => "ts-no-var",
             Code::TsNoAny => "ts-no-any",
+            Code::TsNoCast => "ts-no-cast",
+            Code::TsSwitchExhaustive => "ts-switch-exhaustive",
+            Code::TsReadonly => "ts-readonly",
+            Code::TsIndexUndefined => "ts-index-undefined",
+            Code::TsOptionalExact => "ts-optional-exact",
+            Code::TsVariance => "ts-variance",
+            Code::TsForbidden => "ts-forbidden",
         }
     }
 }

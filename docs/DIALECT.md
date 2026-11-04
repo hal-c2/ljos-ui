@@ -908,13 +908,13 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-condition-boolean` | `if`, `while`, `for`, `?:` and `!` take a boolean, with no truthiness. |
 | ✓ `ts-no-var` | No `var`. |
 | ✓ `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
-| `ts-no-cast` | No `as` except to a declared decoder's result. No `!`. |
-| `ts-switch-exhaustive` | A `switch` on a union covers every case. |
-| `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
-| `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
-| `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
-| `ts-variance` | Method parameters are contravariant, and mutable arrays are invariant. |
-| `ts-forbidden` | No `class`, `this` outside QML's scope object, prototypes, `delete`, `for…in`, `with`, `eval`, or `arguments`. |
+| ✓ `ts-no-cast` | No `as` except to a declared decoder's result. No `!`. |
+| ✓ `ts-switch-exhaustive` | A `switch` on a union covers every case. |
+| ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
+| ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
+| ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
+| ✓ `ts-variance` | Method parameters are contravariant, and mutable arrays are invariant. |
+| ✓ `ts-forbidden` | No `class`, `this` outside QML's scope object, prototypes, `delete`, `for…in`, `with`, `eval`, or `arguments`. |
 | `ts-boundary` | A compat `.js` module is called only through a `.d.ts` declaration (Q7, §14). |
 
 ### 5.2 How it says them
@@ -962,6 +962,34 @@ missing, with what gives it one. A method the type table names without
 types takes and gives `unknown`. It lets by, without a type, a model's
 role, a member only the running program knows, and an alias (whose type is
 its target's).
+
+How it holds the other rules:
+
+- `ts-no-cast`: `as T`, `<T>x` and `x!` are errors, at the `as`, the
+  `<T>` or the `!`. `as const` asserts nothing and is allowed. Until
+  decoders (M4), no cast is a decoder's result.
+- `ts-switch-exhaustive`: a `switch` with no `default` on a union of
+  literals (strings, numbers, booleans, `undefined`) names the cases it
+  leaves out. A switch on a wider type, or on a QML enum, whose keys Qt
+  combines as flags, is not held to it.
+- `ts-readonly`: a member written `readonly`, an element of a
+  `readonly T[]` (a `list<T>` property reads as one) and the array
+  methods that change an array (`push`, `splice`, …) on one are errors.
+  A record or array is mutable where it is written without `readonly`, as
+  in TypeScript, so that `tsc` agrees with the checker. A QML property, a
+  `list<T>` property given a new array, and a model stay writable (Q6).
+- `ts-index-undefined`: `xs[i]` is `T | undefined`. Where it goes to a
+  place that takes `T` only, the error says it may be past the end.
+- `ts-optional-exact`: an optional member given a value that may be
+  `undefined`, in an object literal or by assignment, unless its type
+  says `undefined` itself.
+- `ts-variance`: a mutable array takes only its own element type, so a
+  `number[]` is not a `(number | string)[]`; a readonly array is
+  covariant. A function's parameters, a method's among them, are
+  contravariant.
+- `ts-forbidden`: `class`, `this` in a `function` of a script's own (in
+  QML's scope and its arrows, `this` is the scope object), `prototype`
+  and `__proto__`, `delete`, `for…in`, `with`, `eval` and `arguments`.
 
 ## 6. Compat: the lowering pass
 
