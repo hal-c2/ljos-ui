@@ -70,3 +70,65 @@ Feature: Which window's menu bar the system shows
       """
     Then the property "inWindow" of "window" is true
     And the system shows no menu bar
+
+  @api-QtQuick.Window.closing
+  Scenario: A bar that is gone is shown no more, and Quit closes the windows left
+    Given the system shows menu bars of its own
+    And the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root; objectName: "root"
+        function unload() { loader.active = false }
+        Loader {
+          id: loader
+          sourceComponent: ApplicationWindow {
+            width: 200; height: 100; visible: true
+            menuBar: MenuBar {
+              Menu {
+                title: "File"
+                Action { text: "Open" }
+                Action { text: "Exit" }
+              }
+            }
+          }
+        }
+        Window {
+          objectName: "other"; width: 200; height: 100; visible: true
+          property int asked: 0
+          onClosing: (close) => asked++
+        }
+      }
+      """
+    Then the system's menu bar shows "File > Open"
+    When the method "unload" of "root" is called
+    And the user chooses "Quit" in the system's application menu
+    Then the system's menu bar does not show "File"
+    And the property "asked" of "other" is 1
+
+  @api-QtQuick.Window.closing
+  Scenario: A window that will not close stops Quit, and no other is asked
+    Given the system shows menu bars of its own
+    And the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root; objectName: "root"
+        property int asked: 0
+        ApplicationWindow {
+          objectName: "first"; width: 200; height: 100; visible: true
+          onClosing: (close) => { root.asked++; close.accepted = false }
+          menuBar: MenuBar { Menu { title: "File"; Action { text: "Open" } } }
+        }
+        Window {
+          objectName: "second"; width: 200; height: 100; visible: true
+          onClosing: (close) => { root.asked++; close.accepted = false }
+        }
+      }
+      """
+    When the user chooses "Quit" in the system's application menu
+    Then the property "asked" of "root" is 1
+    And the property "visible" of "first" is true
+    And the property "visible" of "second" is true

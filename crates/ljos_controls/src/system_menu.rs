@@ -41,6 +41,8 @@ struct Bars {
     /// window is active, as its effect last read them.
     bars: RefCell<Vec<(ObjectId, SystemBar, bool)>>,
     shown: RefCell<Option<(ObjectId, SystemBar)>>,
+    /// Whether destroyed bars are being let go of.
+    listening: std::cell::Cell<bool>,
 }
 
 /// Gives `bar` to the system's menu bar, if the system has one: done when
@@ -60,6 +62,19 @@ pub(crate) fn adopt(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
         Item::CLIP.index,
         OverrideContent::Value(Value::Bool(true)),
     )?;
+    let bars = e.extension::<Bars>();
+    if !bars.listening.replace(true) {
+        // A bar that goes (its window unloaded) is shown no more, and its
+        // items are not offered: nothing of it runs again to say so.
+        e.on_destroyed(|e, gone| {
+            let bars = e.extension::<Bars>();
+            let before = bars.bars.borrow().len();
+            bars.bars.borrow_mut().retain(|(b, ..)| !gone.contains(b));
+            if bars.bars.borrow().len() != before {
+                publish(e);
+            }
+        });
+    }
     let att = e.attached_object(bar, &MetaRef::Static(Window::static_meta()))?;
     e.effect_in(bar, move |e| {
         let described = describe(e, bar);
@@ -96,7 +111,13 @@ fn publish(e: &Engine) {
             .or_else(|| all.first())
             .map(|(b, bar, _)| (*b, bar.clone()))
     };
-    let Some(pick) = pick else { return };
+    let Some(pick) = pick else {
+        // No bar is left: the application menu alone.
+        if bars.shown.borrow_mut().take().is_some() {
+            Platform::of(e).menu_bar().show(&SystemBar::default());
+        }
+        return;
+    };
     if bars.shown.borrow().as_ref() == Some(&pick) {
         return;
     }
@@ -118,7 +139,7 @@ pub fn choose(e: &Engine, id: u64) -> bool {
 /// The user chose Quit in the application menu: the item that quits is
 /// triggered, or with none every window is asked to close as its user
 /// would close it, and the application quits if all of them do, as
-/// `QCoreApplication::quit()` does.
+/// `QCoreApplication::quit()` does: a window that will not close stops it.
 pub fn quit(e: &Engine) {
     let quit_item = e
         .extension::<Bars>()
@@ -126,20 +147,18 @@ pub fn quit(e: &Engine) {
         .borrow()
         .as_ref()
         .and_then(|(_, bar)| bar.quit.as_ref().map(|q| q.id));
-    if let Some(id) = quit_item {
-        choose(e, id);
+    if quit_item.is_some_and(|id| choose(e, id)) {
         return;
     }
     let sys = crate::window::WindowSystem::of(e);
-    let mut all_closed = true;
     for win in sys.windows(e) {
+        // The first window that will not close stops the quit, and the
+        // rest are not asked.
         if flag(e, win, Window::VISIBLE.index) && !sys.request_close(e, win) {
-            all_closed = false;
+            return;
         }
     }
-    if all_closed {
-        e.request_quit();
-    }
+    e.request_quit();
 }
 
 #[derive(Clone, Copy, PartialEq)]
