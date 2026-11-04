@@ -12,7 +12,7 @@ publish.workspace = true
 default = ["gpu"]
 # The renderer. Without it the crate is the scene alone, which the QML
 # types build without linking wgpu (ARCHITECTURE.md §7.8).
-gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:tracing"]
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:tracing", "dep:objc2-quartz-core", "dep:objc2-core-graphics"]
 # glTF and Wavefront OBJ files read into a scene's nodes, meshes and
 # materials, and their images decoded to plain pixels (`gltf`, `obj`). No
 # GPU state: binding textures is the renderer's business.
@@ -37,6 +37,13 @@ naga = { workspace = true, optional = true, features = ["wgsl-out"] }
 wgpu = { workspace = true, optional = true, features = ["parking_lot", "vulkan", "metal", "dx12", "gles"] }
 # Only for `offscreen`, whose device is its own and asked for in a blocking call.
 pollster = { version = "1.0.1", optional = true }
+# A Metal layer is told its pictures are sRGB, which wgpu leaves untold
+# (#192).
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-quartz-core = { workspace = true, optional = true }
+objc2-core-graphics = { workspace = true, optional = true }
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true, optional = true, features = ["webgpu", "webgl"] }
 

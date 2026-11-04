@@ -196,6 +196,10 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 # `system-ui`; the versions fontique already brings.
 objc2-core-foundation = { version = "0.3.2", default-features = false, features = ["std", "CFString", "CFURL"] }
 objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTFontDescriptor"] }
+# The colour space of a window's Metal layer, which wgpu leaves untagged
+# (#192); the versions wgpu-hal already brings.
+objc2-quartz-core = { version = "0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
 # Blocks for AppKit's notifications; the version objc2-foundation 0.3 takes.
 block2 = { version = "0.6.2", default-features = false, features = ["std"] }
 # Win32 for the shell; the version winit already brings.

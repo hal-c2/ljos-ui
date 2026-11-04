@@ -230,7 +230,7 @@ impl<'w> SurfaceView<'w> {
                 vec![view_format]
             },
         };
-        surface.configure(&gpu.device, &config);
+        configure(&surface, &gpu.device, &config);
         let target = {
             let mut renderer = gpu.renderer();
             renderer.prepare_blit(&gpu.device, view_format);
@@ -269,7 +269,7 @@ impl<'w> SurfaceView<'w> {
         }
         self.config.width = width;
         self.config.height = height;
-        self.surface.configure(&self.gpu.device, &self.config);
+        configure(&self.surface, &self.gpu.device, &self.config);
         self.target = Target::new(&self.gpu.device, &self.gpu.renderer(), [width, height]);
         self.presented = None;
     }
@@ -335,7 +335,7 @@ impl<'w> SurfaceView<'w> {
                 wgpu::CurrentSurfaceTexture::Success(t)
                 | wgpu::CurrentSurfaceTexture::Suboptimal(t) => return Some(t),
                 wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                    self.surface.configure(&self.gpu.device, &self.config);
+                    configure(&self.surface, &self.gpu.device, &self.config);
                 }
                 wgpu::CurrentSurfaceTexture::Timeout
                 | wgpu::CurrentSurfaceTexture::Occluded
@@ -343,5 +343,70 @@ impl<'w> SurfaceView<'w> {
             }
         }
         None
+    }
+}
+
+/// Configures `surface` and, on Metal, says its pictures are sRGB, which
+/// they are. wgpu configures a Metal layer for sRGB by taking its colour
+/// space away, and Core Animation does not colour-match a layer with none:
+/// a wide-gamut display shows its values in the display's own primaries,
+/// more saturated than written (#192).
+fn configure(
+    surface: &wgpu::Surface<'_>,
+    device: &wgpu::Device,
+    config: &wgpu::SurfaceConfiguration,
+) {
+    surface.configure(device, config);
+    #[cfg(target_os = "macos")]
+    // SAFETY: the layer is only told its colour space, which the surface
+    // does not read back.
+    if let Some(hal) = unsafe { surface.as_hal::<wgpu::hal::api::Metal>() } {
+        let layer = hal.render_layer().lock();
+        // SAFETY: an extern static of CoreGraphics, always present.
+        let srgb = unsafe { objc2_core_graphics::kCGColorSpaceSRGB };
+        layer.setColorspace(objc2_core_graphics::CGColorSpace::with_name(Some(srgb)).as_deref());
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use objc2_core_graphics::{CGColorSpace, kCGColorSpaceSRGB};
+    use objc2_quartz_core::CAMetalLayer;
+
+    use super::{Gpu, SurfaceView};
+
+    fn named_srgb(layer: &CAMetalLayer) -> bool {
+        // SAFETY: an extern static of CoreGraphics.
+        let srgb = unsafe { kCGColorSpaceSRGB };
+        layer
+            .colorspace()
+            .and_then(|space| CGColorSpace::name(Some(&space)))
+            .as_deref()
+            == Some(srgb)
+    }
+
+    /// The view's pictures are sRGB, and a Metal layer says so: one with
+    /// no colour space is not colour-matched, and shows them too saturated
+    /// on a wide-gamut display (#192).
+    #[test]
+    fn a_metal_layer_is_tagged_srgb_when_configured_and_resized() {
+        let layer = CAMetalLayer::new();
+        let gpu = match pollster::block_on(Gpu::new()) {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                eprintln!("SKIPPED: {e}");
+                return;
+            }
+        };
+        let target = wgpu::SurfaceTargetUnsafe::CoreAnimationLayer(objc2::rc::Retained::as_ptr(
+            &layer,
+        ) as *mut _);
+        // SAFETY: the layer outlives the surface, which is dropped first.
+        let surface = unsafe { gpu.instance.create_surface_unsafe(target) }.unwrap();
+        let mut view = SurfaceView::on(gpu, surface, 64, 48).unwrap();
+        assert!(named_srgb(&layer), "configured");
+        view.resize(80, 60);
+        assert!(named_srgb(&layer), "resized");
+        drop(view);
     }
 }
