@@ -20,6 +20,10 @@ ljos_i18n = { path = "../ljos_i18n", default-features = false }
 # The compiled style is embedded as IR and read back at registration.
 ljos_ir = { path = "../ljos_ir" }
 ljos_quick = { path = "../ljos_quick" }
+# The system's menu bar a MenuBar is shown in (src/system_menu.rs).
+ljos_platform = { path = "../ljos_platform" }
+# An item of the system's menu bar is named by its object's number.
+slotmap.workspace = true
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 thiserror.workspace = true

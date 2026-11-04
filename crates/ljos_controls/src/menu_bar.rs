@@ -404,7 +404,8 @@ impl MenuBar {
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        init_bar(cx.engine, cx.this)
+        init_bar(cx.engine, cx.this)?;
+        crate::system_menu::adopt(cx.engine, cx.this)
     }
 }
 

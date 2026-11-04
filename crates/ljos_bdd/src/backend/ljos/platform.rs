@@ -246,6 +246,55 @@ impl Platform for LjosBackend {
         live.settle()
     }
 
+    fn system_menu_bar(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "say that the system shows menu bars of its own before the QML",
+            ));
+        }
+        self.platform.system_menu_bar();
+        Ok(())
+    }
+
+    fn system_menu_bar_shown(&mut self) -> Result<Option<ljos_platform::SystemBar>> {
+        Ok(self.platform.system_menu_bar_shown())
+    }
+
+    fn choose_in_system_menu_bar(&mut self, path: &[String]) -> Result<()> {
+        let bar = self
+            .platform
+            .system_menu_bar_shown()
+            .ok_or_else(|| failed("the system shows no menu bar"))?;
+        let parts: Vec<&str> = path.iter().map(String::as_str).collect();
+        let item = bar
+            .item(&parts)
+            .ok_or_else(|| failed(format!("no item {path:?} in\n{bar}")))?;
+        // As the system does: a disabled item cannot be chosen.
+        let (id, enabled) = (item.id, item.enabled);
+        let live = self.live()?;
+        if enabled {
+            ljos_controls::system_menu::choose(&live.engine, id);
+        }
+        live.settle()
+    }
+
+    fn choose_in_application_menu(&mut self, text: &str) -> Result<()> {
+        let bar = self
+            .platform
+            .system_menu_bar_shown()
+            .ok_or_else(|| failed("the system shows no menu bar"))?;
+        let item = bar.application_item(text).map(|i| i.id);
+        let live = self.live()?;
+        match (text, item) {
+            ("Quit", _) => ljos_controls::system_menu::quit(&live.engine),
+            (_, Some(id)) => {
+                ljos_controls::system_menu::choose(&live.engine, id);
+            }
+            (_, None) => return Err(failed(format!("no {text:?} in the application menu"))),
+        }
+        live.settle()
+    }
+
     fn opened_urls(&mut self) -> Result<Vec<String>> {
         Ok(self.platform.opened_urls())
     }

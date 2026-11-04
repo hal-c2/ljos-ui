@@ -46,6 +46,9 @@ pub struct FakePlatform {
     /// A window system that carries drags out of the window, when the
     /// scenario says so; it carries none to anywhere.
     drag_out: Option<RecordedDragOut>,
+    /// The system's menu bar, which says the system has one when the
+    /// scenario says so.
+    menu_bar: ljos_platform::RecordedMenuBar,
 }
 
 impl std::fmt::Debug for FakePlatform {
@@ -97,6 +100,7 @@ impl FakePlatform {
             platform.set_permissions(Rc::new(asking.clone()));
         }
         self.install_drag_out(engine);
+        platform.set_menu_bar(Rc::new(self.menu_bar.clone()));
         platform.set_held(true);
         Ok(())
     }
@@ -161,6 +165,16 @@ impl FakePlatform {
     /// The system's dialogs cannot be closed by the application.
     pub fn dialogs_stay(&self) {
         self.dialogs.cannot_close();
+    }
+
+    /// The system has a menu bar of its own.
+    pub fn system_menu_bar(&mut self) {
+        self.menu_bar = ljos_platform::RecordedMenuBar::native();
+    }
+
+    /// The menu bar the system shows last.
+    pub fn system_menu_bar_shown(&self) -> Option<ljos_platform::SystemBar> {
+        self.menu_bar.shown()
     }
 
     /// The system asks the user before it grants a permission.

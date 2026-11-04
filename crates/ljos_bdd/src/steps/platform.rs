@@ -456,3 +456,104 @@ fn system_asks_no_permission(w: &mut LjosWorld) -> StepResult {
         }
     })
 }
+
+// The system's menu bar (macOS's): what the application shows there and
+// what the user chooses in it.
+
+#[given("the system shows menu bars of its own")]
+fn system_menu_bar(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| b.platform()?.system_menu_bar())
+}
+
+fn shown_bar(
+    b: &mut dyn crate::backend::Platform,
+) -> Result<ljos_platform::SystemBar, BackendError> {
+    b.system_menu_bar_shown()?
+        .ok_or_else(|| BackendError::Failed("the system shows no menu bar".into()))
+}
+
+fn path_of(path: &str) -> Vec<&str> {
+    path.split(" > ").collect()
+}
+
+#[then("the system's menu bar is:")]
+fn system_menu_bar_is(w: &mut LjosWorld, step: &Step) -> StepResult {
+    let want = super::docstring(step)?;
+    w.each(|b| {
+        let got = shown_bar(b.platform()?)?.to_string();
+        if got.trim_matches('\n') == want.trim_matches('\n') {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "the system's menu bar is\n{got}not\n{want}"
+            )))
+        }
+    })
+}
+
+#[then(
+    regex = r#"^the system's menu bar shows "([^"]+)"(?: (enabled|disabled|checked|unchecked))?$"#
+)]
+fn system_menu_bar_shows(w: &mut LjosWorld, path: String, state: String) -> StepResult {
+    w.each(|b| {
+        let bar = shown_bar(b.platform()?)?;
+        let parts = path_of(&path);
+        if parts.len() == 1 {
+            return if bar.menus.iter().any(|m| m.title == parts[0]) {
+                Ok(())
+            } else {
+                Err(BackendError::Failed(format!("no menu {path:?} in\n{bar}")))
+            };
+        }
+        let item = bar
+            .item(&parts)
+            .ok_or_else(|| BackendError::Failed(format!("no item {path:?} in\n{bar}")))?;
+        let ok = match state.as_str() {
+            "enabled" => item.enabled,
+            "disabled" => !item.enabled,
+            "checked" => item.checkable && item.checked,
+            "unchecked" => item.checkable && !item.checked,
+            _ => true,
+        };
+        if ok {
+            Ok(())
+        } else {
+            Err(BackendError::Failed(format!(
+                "{path:?} is not {state}: {item}"
+            )))
+        }
+    })
+}
+
+#[then(regex = r#"^the system's menu bar does not show "([^"]+)"$"#)]
+fn system_menu_bar_lacks(w: &mut LjosWorld, title: String) -> StepResult {
+    w.each(|b| {
+        let bar = shown_bar(b.platform()?)?;
+        if bar.menus.iter().any(|m| m.title == title) {
+            Err(BackendError::Failed(format!("{title:?} is in\n{bar}")))
+        } else {
+            Ok(())
+        }
+    })
+}
+
+#[then("the system shows no menu bar")]
+fn system_shows_no_menu_bar(w: &mut LjosWorld) -> StepResult {
+    w.each(|b| match b.platform()?.system_menu_bar_shown()? {
+        None => Ok(()),
+        Some(bar) => Err(BackendError::Failed(format!(
+            "the system shows the menu bar\n{bar}"
+        ))),
+    })
+}
+
+#[when(regex = r#"^the user chooses "([^"]+)" in the system's menu bar$"#)]
+fn choose_in_system_menu_bar(w: &mut LjosWorld, path: String) -> StepResult {
+    let parts: Vec<String> = path_of(&path).into_iter().map(str::to_owned).collect();
+    w.each(|b| b.platform()?.choose_in_system_menu_bar(&parts))
+}
+
+#[when(regex = r#"^the user chooses "([^"]+)" in the system's application menu$"#)]
+fn choose_in_application_menu(w: &mut LjosWorld, text: String) -> StepResult {
+    w.each(|b| b.platform()?.choose_in_application_menu(&text))
+}
