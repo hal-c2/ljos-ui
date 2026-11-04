@@ -2121,7 +2121,12 @@ fn the_type(plan: Plan) -> Plan {
     if !member.is_empty() {
         return plan;
     }
-    let through = format!("$t_{}", type_name(ty));
+    // The attached object's parameter, `$a_ToolTip` or `$a_C_ToolTip`
+    // through a namespace, names the type's the same way.
+    let through = match &plan.param {
+        Some(Param { name, .. }) if name.starts_with("$a_") => format!("$t_{}", &name[3..]),
+        _ => format!("$t_{}", type_name(ty)),
+    };
     Plan {
         resolved: Resolved::Type(ty.clone()),
         param: Some(Param {

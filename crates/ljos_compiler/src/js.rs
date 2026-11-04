@@ -838,6 +838,12 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
             while let Expression::ParenthesizedExpression(inner) = of {
                 of = &inner.expression;
             }
+            // `C.ToolTip`: the type through a namespace the file imports.
+            if let Expression::StaticMemberExpression(member) = of
+                && !member.optional
+            {
+                of = &member.object;
+            }
             if let Expression::Identifier(id) = of {
                 self.instance_types.push(id.span.start);
             }
@@ -1090,9 +1096,9 @@ mod tests {
     }
 
     #[test]
-    fn a_name_alone_right_of_instanceof_is_marked() {
+    fn a_type_right_of_instanceof_is_marked_alone_or_through_a_namespace() {
         let analysis = analyze(
-            "a instanceof B || c instanceof (D) || E instanceof F.G",
+            "a instanceof B || c instanceof (D) || E instanceof F.G || h instanceof I.J.K || l instanceof m.n",
             Form::Expression,
             &[],
         )
@@ -1103,7 +1109,9 @@ mod tests {
             .filter(|free| free.instance_type)
             .map(|free| free.name.as_str())
             .collect();
-        assert_eq!(typed, ["B", "D"]);
+        // `I.J.K` is a member of a type, `m.n` of a value; `m` is marked,
+        // and resolving it as a type changes nothing, as for `B`.
+        assert_eq!(typed, ["B", "D", "F", "m"]);
     }
 
     #[test]
