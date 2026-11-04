@@ -9,7 +9,10 @@
 # tall with its baseline at 17.109375, against 18 and 14.484375 for Liberation
 # Sans. The scenarios compare the two families rather than state numbers.
 # A generic family is the system's too: `fc-match monospace` names the
-# machine's fixed-pitch face, and Qt sets "monospace" text in it.
+# machine's fixed-pitch face, and Qt sets "monospace" text in it. On macOS
+# the fixed-pitch face is the font CoreText gives for the user's fixed-pitch
+# interface font (Menlo on a default install), as
+# `QFontDatabase::systemFont(QFontDatabase::FixedFont)` is there.
 
 Feature: A font family that is not installed
   A family the machine does not have is set in the family the system's font

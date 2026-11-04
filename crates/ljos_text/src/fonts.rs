@@ -47,8 +47,19 @@ pub(crate) fn font_context(system_fonts: bool) -> FontContext {
         system_fonts,
     });
     #[cfg(target_os = "macos")]
-    if system_fonts && let Some(path) = system_ui::font_path() {
-        lead_system_ui(&mut collection, &path);
+    if system_fonts {
+        use objc2_core_text::CTFontUIFontType;
+        // `monospace` as `QFontDatabase::systemFont(FixedFont)` gives it:
+        // Fontique names Courier for it, which a Mac may not list under
+        // that name and which is not the face macOS calls fixed pitch.
+        for (generic, kind) in [
+            (GenericFamily::SystemUi, CTFontUIFontType::System),
+            (GenericFamily::Monospace, CTFontUIFontType::UserFixedPitch),
+        ] {
+            if let Some(path) = system_ui::font_path(kind) {
+                lead_generic(&mut collection, generic, &path);
+            }
+        }
     }
     let mut bundled = Vec::new();
     for bytes in [REGULAR, BOLD] {
@@ -72,15 +83,20 @@ pub(crate) fn font_context(system_fonts: bool) -> FontContext {
     }
 }
 
-/// Puts the families of the font file at `path` first among `system-ui`'s,
+/// Puts the families of the font file at `path` first among `generic`'s,
 /// reading the file when the collection has not. Fontique finds the
-/// platform's `system-ui` by family names it knows ("System Font" and
-/// ".SF NS" on macOS), and the file of the system UI font need not be
-/// named either: then `system-ui` was empty and text fell to
-/// `sans-serif` (Helvetica). The file the platform names is found
-/// whatever it calls itself. `false` when it holds no font.
+/// platform's generic families by family names it knows ("System Font" and
+/// ".SF NS" for `system-ui` on macOS, Courier for `monospace`), and the
+/// file of the platform's font need not be named either: then `system-ui`
+/// was empty and text fell to `sans-serif` (Helvetica). The file the
+/// platform names is found whatever it calls itself. `false` when it holds
+/// no font.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub(crate) fn lead_system_ui(collection: &mut Collection, path: &Path) -> bool {
+pub(crate) fn lead_generic(
+    collection: &mut Collection,
+    generic: GenericFamily,
+    path: &Path,
+) -> bool {
     let mut lead = families_of_file(collection, path);
     if lead.is_empty() {
         collection.load_fonts_from_paths([path]);
@@ -90,10 +106,10 @@ pub(crate) fn lead_system_ui(collection: &mut Collection, path: &Path) -> bool {
         return false;
     }
     let rest: Vec<FamilyId> = collection
-        .generic_families(GenericFamily::SystemUi)
+        .generic_families(generic)
         .filter(|id| !lead.contains(id))
         .collect();
-    collection.set_generic_families(GenericFamily::SystemUi, lead.into_iter().chain(rest));
+    collection.set_generic_families(generic, lead.into_iter().chain(rest));
     true
 }
 
@@ -113,7 +129,7 @@ fn families_of_file(collection: &mut Collection, path: &Path) -> Vec<FamilyId> {
         .collect()
 }
 
-/// The system UI font as CoreText gives it.
+/// The interface fonts as CoreText gives them.
 #[cfg(target_os = "macos")]
 mod system_ui {
     use std::path::PathBuf;
@@ -121,12 +137,11 @@ mod system_ui {
     use objc2_core_foundation::{CFURL, CFURLPathStyle};
     use objc2_core_text::{CTFont, CTFontUIFontType, kCTFontURLAttribute};
 
-    /// The file of the font CoreText draws the interface in.
-    pub(super) fn font_path() -> Option<PathBuf> {
+    /// The file of the font CoreText draws that kind of interface text in.
+    pub(super) fn font_path(kind: CTFontUIFontType) -> Option<PathBuf> {
         // SAFETY: CoreText calls with no pointers of ours; each result is
         // checked for absence before it is used.
-        let font =
-            unsafe { CTFont::new_ui_font_for_language(CTFontUIFontType::System, 0.0, None) }?;
+        let font = unsafe { CTFont::new_ui_font_for_language(kind, 0.0, None) }?;
         let url = unsafe { font.attribute(kCTFontURLAttribute) }?;
         let url = url.downcast::<CFURL>().ok()?;
         let path = url.file_system_path(CFURLPathStyle::CFURLPOSIXPathStyle)?;
@@ -213,7 +228,11 @@ mod tests {
             .unwrap();
         c.set_generic_families(GenericFamily::SystemUi, [other].into_iter());
         // Named as nothing Fontique looks for; found by its file.
-        assert!(lead_system_ui(&mut c, bundled_file()));
+        assert!(lead_generic(
+            &mut c,
+            GenericFamily::SystemUi,
+            bundled_file()
+        ));
         let ids: Vec<FamilyId> = c.generic_families(GenericFamily::SystemUi).collect();
         let lead = families_of_file(&mut c, bundled_file());
         assert_eq!(lead.len(), 1);
@@ -222,11 +241,27 @@ mod tests {
         assert_eq!(ids.iter().filter(|&&id| id == lead[0]).count(), 1);
     }
 
+    // On a Mac without the names Fontique knows for `monospace` (Courier),
+    // the generic was empty and its text fell to `sans-serif`.
+    #[test]
+    fn the_platforms_fixed_pitch_file_fills_an_empty_monospace() {
+        let mut c = bare();
+        assert_eq!(c.generic_families(GenericFamily::Monospace).count(), 0);
+        assert!(lead_generic(
+            &mut c,
+            GenericFamily::Monospace,
+            bundled_file()
+        ));
+        let ids: Vec<FamilyId> = c.generic_families(GenericFamily::Monospace).collect();
+        assert_eq!(ids, families_of_file(&mut c, bundled_file()));
+        assert_eq!(c.generic_families(GenericFamily::SystemUi).count(), 0);
+    }
+
     #[test]
     fn a_file_with_no_font_leaves_system_ui_as_it_was() {
         let mut c = bare();
         let not_a_font = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"));
-        assert!(!lead_system_ui(&mut c, not_a_font));
+        assert!(!lead_generic(&mut c, GenericFamily::SystemUi, not_a_font));
         assert_eq!(c.generic_families(GenericFamily::SystemUi).count(), 0);
     }
 }
