@@ -495,6 +495,30 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    // A native type of the engine's table is flat (its bases' members are
+    // its own) and names its signals' arguments without types: the
+    // checker takes it as built on nothing and its arguments as unknown.
+    fn prototype(&self, ty: EngineType) -> Option<EngineType> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.prototype(ty).map(EngineType::Qt),
+            EngineType::Native(_) => None,
+        }
+    }
+
+    fn signal_types(&self, ty: EngineType, name: &str) -> Option<Vec<String>> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.signal_types(ty, name),
+            EngineType::Native(_) => None,
+        }
+    }
+
+    fn is_value(&self, ty: EngineType) -> bool {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.is_value(ty),
+            EngineType::Native(_) => false,
+        }
+    }
+
     fn has_method(&self, ty: EngineType, name: &str) -> bool {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.has_method(ty, name),

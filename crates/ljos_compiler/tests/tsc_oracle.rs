@@ -23,36 +23,14 @@ const KNOWN_GAPS: &[(&str, &str)] = &[
         "`!` on a number is not reported (ts-condition-boolean covers `!` in §5.1)",
     ),
     (
-        "C05ConnectionsReject",
-        "a Connections handler's parameter is not typed",
-    ),
-    (
-        "C11FormatReject",
-        "a binding's value is not checked against its property",
-    ),
-    (
-        "C12ClampReject",
-        "a call's arguments are not checked against the function's parameters",
-    ),
-    (
-        "C17DigitsReject",
-        "a returned value is not checked against the function's return type",
-    ),
-    (
         "C19HoverReject",
         "a member an id does not have is not reported in a binding",
     ),
     ("N02ToggleReject", "ts-no-any is not built"),
     ("N03StatusReject", "ts-switch-exhaustive is not built"),
-    ("N05RecordReject", "ts-optional-exact is not built"),
     (
         "N06CallbackReject",
         "a call of what may be undefined is not reported",
-    ),
-    ("N07AnswerReject", "ts-index-undefined is not built"),
-    (
-        "N08KeysReject",
-        "a local `const` is not typed, so its truthiness is let by",
     ),
     ("N10DayReject", "ts-index-undefined is not built"),
 ];

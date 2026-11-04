@@ -93,6 +93,187 @@ Feature: Checking the scripts of a file written in Ljós's API
         1 files, 0 errors, 0 warnings
         """
 
+  Rule: The checker knows the type of every value a script makes
+
+    Scenario: A local takes the type of what it starts as
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property string label: "gauge"
+          function show() { const text = label + "!"; let count = 0; count = text; level = text }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:78: error: `count` is a number; this gives it a string [ts-assign-type]
+        Gauge.qml:5:92: error: `level` is a real; this gives it a string [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A parameter hides the property of its name
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string level: ""
+          function set(level: real) { level = 2 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A let hides the property of its name in its block only
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function name() { if (level > 1) { let level = "full"; level = "empty" } level = "none" }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:92: error: `level` is a real; this gives it a string [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: Members and calls have the types of what they read and give
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          id: root
+          property real level: 0
+          property string name: ""
+          function grow(by: real): real { return Math.max(level, by) }
+          function rename() { name = grow(2); root.level = name.length; level = name.toUpperCase() }
+          PointerArea { onClicked: root.width = root.name }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:7:38: error: `name` is a string; this gives it a number [ts-assign-type]
+        Gauge.qml:7:81: error: `level` is a real; this gives it a string [ts-assign-type]
+        Gauge.qml:8:49: error: `width` is a real; this gives it a string [ts-assign-type]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: Arrays, arrows, templates and object literals are typed
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real total: 0
+          property string label: ""
+          function sum(values: readonly real[]) {
+            total = values.reduce((sum, value) => sum + value, 0)
+            label = values.map((value) => `${value} cm`).join(", ")
+            total = values.filter((value) => value > 1).length
+            const box = { width: 2, label: "two" }
+            total = box.label
+            label = values.map((value) => value * 2)
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:10:21: error: `total` is a real; this gives it a string [ts-assign-type]
+        Gauge.qml:11:21: error: `label` is a string; this gives it a readonly number[] [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: An operator gives the type of what it makes, and takes only what it works on
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property bool full: false
+          property string label: full ? 1 : "none"
+          property real twice: level * "2"
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:34: error: `label` is a string; this gives it a number or a string [ts-assign-type]
+        Gauge.qml:6:40: error: `*` needs numbers, and this is a string [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A comparison with undefined and typeof narrow what a name is
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property unknown given
+          function follow(next: real | undefined) { if (next !== undefined) { level = next } level = next }
+          function take() { if (typeof given === "number") { level = given } level = given }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:102: error: `level` is a real; this gives it a number or undefined [ts-assign-type]
+        Gauge.qml:6:86: error: `level` is a real; this gives it an unknown value [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: Optional chaining gives undefined where the object may be missing
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function follow(other?: Item) { level = other?.width ?? 0; level = other?.width }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:78: error: `level` is a real; this gives it a number or undefined [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: A binding gives its property the type of its value
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string label: "full"
+          property real level: label
+          width: label + "!"
+          Text { text: label.length; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.Fit }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:32: error: `level` is a real; this gives it a string [ts-assign-type]
+        Gauge.qml:5:18: error: `width` is a real; this gives it a string [ts-assign-type]
+        Gauge.qml:6:24: error: `text` is a string; this gives it a number [ts-assign-type]
+        Gauge.qml:6:97: error: `verticalAlignment` is a Text.VAlignment; this gives it `Text.Fit` [ts-assign-type]
+        1 files, 4 errors, 0 warnings
+        ljos: 4 errors
+        """
+
   Rule: A file in Qt's QML is not held to it
 
     Scenario: The same script in Qt's QML has nothing to report

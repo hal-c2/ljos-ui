@@ -183,6 +183,25 @@ pub trait TypeOracle {
     fn class_name(&self, _ty: Self::Type) -> Option<&str> {
         None
     }
+
+    /// The type `ty` is built on, where the oracle knows it: what a value
+    /// of it may also be taken as.
+    fn prototype(&self, _ty: Self::Type) -> Option<Self::Type> {
+        None
+    }
+
+    /// The type of each argument of the signal, as the table writes it, in
+    /// the order of [`signal`](Self::signal)'s names. None where the table
+    /// has no types for it.
+    fn signal_types(&self, _ty: Self::Type, _name: &str) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Whether a value of the type is copied, not referred to: `font`,
+    /// `point`.
+    fn is_value(&self, _ty: Self::Type) -> bool {
+        false
+    }
 }
 
 /// The message for `name`, which is written as a type and is none of
@@ -485,6 +504,25 @@ impl TypeOracle for QtTypeOracle {
         // Ljós's own table names a class by its module and QML name, and a
         // type that is a QML file is named by a counter Qt makes up.
         (!ty.0.is_own && ty.0.qml_file.is_none()).then_some(ty.0.class)
+    }
+
+    fn prototype(&self, ty: QtType) -> Option<QtType> {
+        ty.0.prototype().map(QtType)
+    }
+
+    fn signal_types(&self, ty: QtType, name: &str) -> Option<Vec<String>> {
+        let signal = ty.0.signal(name)?;
+        (signal.parameter_types.len() == signal.parameters.len()).then(|| {
+            signal
+                .parameter_types
+                .iter()
+                .map(|name| (*name).to_string())
+                .collect()
+        })
+    }
+
+    fn is_value(&self, ty: QtType) -> bool {
+        ty.0.is_value
     }
 }
 
