@@ -13,7 +13,7 @@ use qml_syntax::Span;
 
 use super::{
     ATTACHED, Compiler, HELD, PLACE, Plan, SINGLETON, VALUE_AT, VALUE_HELD, VALUE_IN, block, held,
-    import_source, is_key_name, or_throw, read_or_throw, type_name, value_in,
+    import_source, is_key_name, or_throw, read_or_throw, the_type, type_name, value_in,
 };
 use crate::{
     Code, Diagnostic,
@@ -107,7 +107,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if form == Form::Statement && kind == BindingKind::Property {
             edits.extend(js::completion_returns(text));
         }
-        let mut plans: HashMap<(String, Vec<String>), Plan> = HashMap::new();
+        let mut plans: HashMap<(String, Vec<String>, bool), Plan> = HashMap::new();
         let written: HashSet<&str> = analysis
             .free
             .iter()
@@ -127,9 +127,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         for free in &analysis.free {
             let offset = span.start + free.span.start;
             let plan = plans
-                .entry((free.name.clone(), free.chain.clone()))
+                .entry((free.name.clone(), free.chain.clone(), free.instance_type))
                 .or_insert_with(|| {
                     let plan = self.resolve(&free.name, offset, &free.chain, scope);
+                    let plan = if free.instance_type {
+                        the_type(plan)
+                    } else {
+                        plan
+                    };
                     if written.contains(free.name.as_str()) {
                         held(plan)
                     } else {
@@ -265,7 +270,11 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     // engine passes in by value has no place to go back to.
                     let found = analysis.free.iter().find(|free| free.span.start == *start);
                     let through = found.and_then(|free| {
-                        let plan = plans.get(&(free.name.clone(), free.chain.clone()))?;
+                        let plan = plans.get(&(
+                            free.name.clone(),
+                            free.chain.clone(),
+                            free.instance_type,
+                        ))?;
                         plan.replace.is_none().then_some(())?;
                         Some((free, plan.rewrite.clone()?))
                     });
@@ -332,7 +341,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     .free
                     .iter()
                     .filter(|free| free.span.start == start)
-                    .filter_map(|free| plans.get(&(free.name.clone(), free.chain.clone())))
+                    .filter_map(|free| {
+                        plans.get(&(free.name.clone(), free.chain.clone(), free.instance_type))
+                    })
                     .any(|plan| {
                         matches!(
                             plan.resolved,

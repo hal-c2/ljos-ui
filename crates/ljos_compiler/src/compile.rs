@@ -2077,6 +2077,28 @@ fn block(body: &str) -> String {
     }
 }
 
+/// The plan for a type's name alone right of `instanceof`. A type that
+/// attaches is, as a value, what it attached to the scope object; to
+/// `instanceof` it is still the type (`tip instanceof ToolTip`), as in Qt.
+fn the_type(plan: Plan) -> Plan {
+    let Resolved::Attached { ty, member } = &plan.resolved else {
+        return plan;
+    };
+    if !member.is_empty() {
+        return plan;
+    }
+    let through = format!("$t_{}", type_name(ty));
+    Plan {
+        resolved: Resolved::Type(ty.clone()),
+        param: Some(Param {
+            name: through.clone(),
+            arg: Arg::Type(ty.clone()),
+        }),
+        rewrite: None,
+        replace: Some((through, plan.replace.map_or(0, |(_, members)| members))),
+    }
+}
+
 /// The plan for a name the script assigns to. A name the running program
 /// supplies reaches a script by value, and assigning to a value changes
 /// nothing but the script's copy: such a name is read and written through

@@ -72,6 +72,36 @@ Feature: A QML type on the right of instanceof
       | tile           | Rectangle     | true  |
       | tile           | Swatch        | false |
 
+  # A type with an attached type is that attached object as a value (`"" + ToolTip`
+  # names the attached object of the scope), and still the type to instanceof.
+  Scenario Outline: <object> instanceof <type>, a type with an attached type, is <is>
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls
+      import QtQuick.Layouts
+      Item {
+        id: root
+        objectName: "root"
+        ToolTip { id: tip }
+        ListView { id: list }
+        Rectangle { id: rect }
+        property bool is: !<is>
+        Component.onCompleted: is = <object> instanceof <type>
+      }
+      """
+    Then the property "is" of "root" is <is>
+    And the log has no warnings
+
+    Examples:
+      | object | type     | is    |
+      | tip    | ToolTip  | true  |
+      | rect   | ToolTip  | false |
+      | list   | ListView | true  |
+      | rect   | ListView | false |
+      | rect   | Keys     | false |
+      | rect   | Layout   | false |
+
   Scenario Outline: <value> is no instance of a QML type
     Given the QML:
       """qml
