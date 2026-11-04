@@ -132,3 +132,42 @@ Feature: Which window's menu bar the system shows
     Then the property "asked" of "root" is 1
     And the property "visible" of "first" is true
     And the property "visible" of "second" is true
+
+  @api-QtQuick.Window.closing
+  Scenario: When the shown bar goes, another window's bar is shown and its Quit is the one chosen
+    Given the system shows menu bars of its own
+    And the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root; objectName: "root"
+        property int kept: 0
+        function unload() { loader.active = false }
+        Loader {
+          id: loader
+          sourceComponent: ApplicationWindow {
+            objectName: "gone"; width: 200; height: 100; visible: true; transientParent: null
+            Component.onCompleted: requestActivate()
+            menuBar: MenuBar { Menu { title: "Draw"; Action { text: "Line" } } }
+          }
+        }
+        ApplicationWindow {
+          objectName: "stays"; width: 200; height: 100; visible: true; transientParent: null
+          menuBar: MenuBar {
+            Menu {
+              title: "Write"
+              Action { text: "Word" }
+              Action { text: "Exit"; onTriggered: root.kept++ }
+            }
+          }
+        }
+      }
+      """
+    When 50 milliseconds pass
+    Then the system's menu bar shows "Draw > Line"
+    When the method "unload" of "root" is called
+    Then the system's menu bar shows "Write > Word"
+    And the system's menu bar does not show "Draw"
+    When the user chooses "Quit" in the system's application menu
+    Then the property "kept" of "root" is 1
