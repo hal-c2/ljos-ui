@@ -394,6 +394,8 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .env("TZ", run.time_zone())
         .env("LANG", "en_US.UTF-8")
         .env("GSETTINGS_BACKEND", "memory")
+        // The desktop's platform theme would give the palette its accent.
+        .env_remove("QT_QPA_PLATFORMTHEME")
         .current_dir(&staged.root)
         .stdin(Stdio::null())
         .output()
