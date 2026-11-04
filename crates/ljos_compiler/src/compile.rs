@@ -33,7 +33,6 @@ use crate::{
 
 mod check;
 pub(crate) use check::{is_dialect, scripts_are_javascript};
-use oxc_ast_visit::Visit as _;
 mod expressions;
 
 /// Compiles the file `key` of the project.
@@ -108,6 +107,9 @@ fn compile_alone<O: TypeOracle>(
     }
     compiler.collect_enums(&parsed.document.root, None);
     compiler.object(&parsed.document.root, None);
+    if compiler.dialect {
+        check::document(&mut compiler, &parsed.document);
+    }
     Ok(compiler.finish(&parsed.document))
 }
 
@@ -445,9 +447,6 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     self.def_mut(at).signals.push(declaration);
                 }
                 QmlMember::Function(function) => {
-                    self.check(&[], |checker| {
-                        checker.visit_function(function, oxc_syntax::scope::ScopeFlags::Function);
-                    });
                     self.method(owner, function);
                 }
                 QmlMember::InlineComponent(inline) => {
@@ -970,24 +969,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         value: &QmlBindingValue<'a>,
         may_handle: bool,
     ) {
-        let signal = handled(&name).filter(|_| may_handle);
-        // A handler's script is given the signal's arguments by name, and
-        // they hide the properties they share a name with.
-        let given = signal
-            .as_ref()
-            .and_then(|signal| self.signal_args(owner, &slot, signal))
-            .unwrap_or_default();
-        match value {
-            QmlBindingValue::Expression(expression) => {
-                self.check(&given, |checker| checker.visit_expression(expression));
-            }
-            QmlBindingValue::Statement(statement) => {
-                self.check(&given, |checker| checker.visit_statement(statement));
-            }
-            QmlBindingValue::Object(_) | QmlBindingValue::Objects(_) => {}
-        }
         let at = self.place[owner];
         let name_span = self.span(name_span);
+        let signal = handled(&name).filter(|_| may_handle);
         let target = self.describe(owner, &slot, &name);
         match value {
             QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) if signal.is_some() => {
