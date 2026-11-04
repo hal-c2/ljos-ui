@@ -3,7 +3,8 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-qt.html#fontFamilies-method
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # The font files are in features/text/fonts (Noto Serif Test, see
-# LICENSE-Noto.txt there).
+# LICENSE-Noto.txt there; Ljos Symbols Test, made by make-symbols-test.py
+# there, whose U+F8F0 is 600 units of 1000 wide and is in no other font).
 
 @qt-parity
 Feature: FontLoader
@@ -60,6 +61,26 @@ Feature: FontLoader
       }
       """
     Then the property "font.family" of "t" is "Noto Serif Test"
+
+  # The family is named outright, not read from the loader, so nothing the
+  # text reads changes when the font arrives: only the fonts do.
+  Scenario: A text that names the loaded family is measured in it
+    Given the font file "LjosSymbolsTest-Regular.ttf"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        FontLoader { source: "LjosSymbolsTest-Regular.ttf" }
+        Text {
+          objectName: "t"
+          text: String.fromCodePoint(0xF8F0)
+          font.family: "Ljos Symbols Test"
+          font.pixelSize: 20
+        }
+      }
+      """
+    Then the property "contentWidth" of "t" is 11.984375
+    And the property "implicitWidth" of "t" is 11.984375
 
   @api-QtQuick.FontLoader.source
   Scenario: A loader without a source has loaded nothing

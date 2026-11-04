@@ -231,9 +231,10 @@ pub struct Text {
     #[qml(skip)]
     initialised: bool,
     /// What the completion measured the text with, until the scene's first
-    /// look at it: a polish of the same inputs would only measure it again.
+    /// look at it: a polish of the same inputs in the same fonts would only
+    /// measure it again.
     #[qml(skip)]
-    measured: Option<Box<TextInputs>>,
+    measured: Option<Box<Measured>>,
     /// The inputs its sizes are to be measured with when one is read
     /// ([`measure_on_read`]), and what they measured once one was.
     #[qml(skip)]
@@ -380,10 +381,17 @@ impl Text {
         if t.params.width.is_some() || t.text.is_empty() {
             return Ok(());
         }
-        write_measured(cx.engine, cx.this, &t, &text_engine())?;
+        let te = text_engine();
+        write_measured(cx.engine, cx.this, &t, &te)?;
         if t.rich.is_none() {
-            cx.engine
-                .with_mut(cx.this, |x: &mut Text| x.measured = Some(Box::new(t)))?;
+            let measured = Measured {
+                generation: te.borrow().generation(),
+                engine: Rc::downgrade(&te),
+                inputs: t,
+            };
+            cx.engine.with_mut(cx.this, |x: &mut Text| {
+                x.measured = Some(Box::new(measured));
+            })?;
         }
         Ok(())
     }
@@ -1217,14 +1225,36 @@ pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
     }
 }
 
-/// Whether `t` is what the completion measured the text with and nothing
-/// measured it since. Asked once: the answer is forgotten either way.
+/// What the completion measured a text with ([`Text::measured`]).
+#[derive(Debug)]
+pub(crate) struct Measured {
+    inputs: TextInputs,
+    /// The text engine that measured it, and its fonts then: a font loaded
+    /// after the text was completed (a `FontLoader` completed after it) may
+    /// set the same inputs in another font.
+    engine: std::rc::Weak<RefCell<TextEngine>>,
+    generation: u64,
+}
+
+/// Whether `t` is what the completion measured the text with, in the fonts
+/// there are now, and nothing measured it since. Asked once: the answer is
+/// forgotten either way.
 pub(crate) fn completion_measured(engine: &Engine, obj: ObjectId, t: &TextInputs) -> bool {
-    engine
+    let Some(m) = engine
         .with_mut(obj, |x: &mut Text| x.measured.take())
         .ok()
         .flatten()
-        .is_some_and(|m| *m == *t)
+    else {
+        return false;
+    };
+    m.inputs == *t
+        && text_engine_in_use().is_some_and(|te| {
+            // Measured again when the engine is in use: never wrong.
+            std::ptr::eq(m.engine.as_ptr(), Rc::as_ptr(&te))
+                && te
+                    .try_borrow()
+                    .is_ok_and(|te| te.generation() == m.generation)
+        })
 }
 
 /// What a Text measures, in the properties that say it, in this order.
