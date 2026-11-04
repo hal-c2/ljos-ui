@@ -534,6 +534,29 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 2 errors
         """
 
+    Scenario: A case that falls through carries what its body made of the subject
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string mode: "idle"
+          function onlyDoing(s: "doing"): void { mode = s }
+          function onlyNotDone(s: "todo" | "doing"): void { mode = s }
+          function step(given: "todo" | "doing" | "done"): void {
+            let status: "todo" | "doing" | "done" = given
+            switch (status) { case "todo": status = "doing"; case "doing": onlyDoing(status); break; default: break }
+            switch (status) { case "todo": status = "done"; case "doing": onlyNotDone(status); break; default: break }
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:9:87: error: `s` is `"doing" | "todo"`; this gives it `"doing" | "done"` [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: A write to a readonly member or array is reported
       Given the file "Gauge.qml":
         """qml
