@@ -24,7 +24,10 @@ use qml_front::{
 };
 use qml_syntax::{
     Allocator, GetSpan,
-    ast::{QmlBindingValue, QmlDocument, QmlMember, QmlObject, QmlSignalDeclaration, QmlTypeName},
+    ast::{
+        QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject, QmlSignalDeclaration,
+        QmlTypeName,
+    },
     js::{Expression, Function},
 };
 
@@ -94,13 +97,15 @@ pub fn is_dialect(document: &QmlDocument<'_>) -> bool {
 }
 
 /// The file `key` as TypeScript, which reads its types from the declarations
-/// at `declarations` (a path relative to the module). None when the file is
-/// not in Ljós's API or does not parse: the checker says why.
+/// at `declarations` and the project's TypeScript modules under `modules`
+/// (paths relative to the module). None when the file is not in Ljós's API
+/// or does not parse: the checker says why.
 pub fn extract(
     project: &Project<qml_front::QtTypeOracle>,
     api: &Api,
     key: &str,
     declarations: &str,
+    modules: &str,
 ) -> Option<Extracted> {
     let source = project.source(key)?;
     let allocator = Allocator::default();
@@ -120,6 +125,7 @@ pub fn extract(
         next: 0,
         objects: Vec::new(),
         signals: HashMap::new(),
+        namespaces: Vec::new(),
     };
     writer.collect_signals(&parsed.document.root);
     writer
@@ -130,6 +136,22 @@ pub fn extract(
         None,
     );
     writer.out.line("export {};", None);
+    // A module the file imports is imported as it is named, so that its
+    // values and its types are TypeScript's to check.
+    for import in &parsed.document.imports {
+        if let QmlImportSource::Path(path) = &import.source
+            && crate::script::module::is_module(path)
+            && let Some(name) = &import.alias
+        {
+            let module = project.front.import_dir(key, path);
+            let origin = writer.origin(import.span.start);
+            writer.out.line(
+                &format!("import * as {} from \"{modules}/{module}\";", name.name),
+                origin,
+            );
+            writer.namespaces.push(name.name.to_string());
+        }
+    }
     writer.object(&parsed.document.root);
     let objects = std::mem::take(&mut writer.objects);
     for object in objects {
@@ -174,6 +196,8 @@ struct Writer<'w, 'a, 'p> {
     objects: Vec<Declared>,
     /// The parameters of each signal the file declares, by object and name.
     signals: HashMap<(usize, String), String>,
+    /// The names the file imports TypeScript modules as.
+    namespaces: Vec<String>,
 }
 
 impl<'a> Writer<'_, 'a, '_> {
@@ -225,7 +249,10 @@ impl<'a> Writer<'_, 'a, '_> {
             return "unknown".to_string();
         };
         let name = ty.name.to_string();
-        let mapped = if name == "alias" {
+        let module_typed = matches!(&ty.name.parts[..], [namespace, _] if self.namespaces.iter().any(|n| n == namespace));
+        let mapped = if module_typed {
+            name
+        } else if name == "alias" {
             "unknown".to_string()
         } else {
             self.api

@@ -663,6 +663,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                                 "declare it as a number of milliseconds or a string",
                                 type_name.span,
                             )
+                        } else if let Some(ty) =
+                            self.module_type(&type_name.name.parts, type_name.name.span)
+                        {
+                            if type_name.is_list {
+                                self.arena.array(ty, true)
+                            } else {
+                                ty
+                            }
                         } else {
                             let types = self.c.types;
                             self.written(&written, type_name.is_list, &types)
@@ -689,7 +697,11 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                         .map(|p| {
                             let name = p.name.name.as_str();
                             let ty = match &p.type_name {
-                                Some(t) => self.written(&t.name.to_string(), t.is_list, &types),
+                                Some(t) => match self.module_type(&t.name.parts, t.name.span) {
+                                    Some(ty) if t.is_list => self.arena.array(ty, true),
+                                    Some(ty) => ty,
+                                    None => self.written(&t.name.to_string(), t.is_list, &types),
+                                },
                                 None => self.untyped(
                                     name,
                                     &format!("write its type (`{name}: real`, say)"),

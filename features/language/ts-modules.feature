@@ -178,3 +178,86 @@ Feature: TypeScript modules imported by a QML file
       3 files, 2 errors, 0 warnings
       ljos: 2 errors
       """
+
+  Scenario: A property typed by the module holds what it is given
+    Given the QML:
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        objectName: "root"
+        property Logic.Row picked: ({ tag: "b", count: 3 })
+        property list<Logic.Row> kept: []
+        property Logic.Tag tag: "a"
+        property real shown: 0
+        property real fired: 0
+        signal chosen(row: Logic.Row)
+        onChosen: row => { fired = row.count }
+        function keep(row: Logic.Row): void { kept = [row]; tag = "b"; shown = row.count; chosen(row) }
+        function choose() { keep(picked) }
+      }
+      """
+    When the method "choose" of "root" is called
+    Then the property "shown" of "root" is 3
+    And the property "tag" of "root" is "b"
+    And the property "fired" of "root" is 3
+
+  Scenario: What a declaration typed by the module is given is checked
+    Given the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        property Logic.Tag tag: "c"
+        property Logic.Row picked: ({ tag: "a", count: "1" })
+        property list<Logic.Row> kept: [picked, 2]
+        signal chosen(row: Logic.Row)
+        function keep(row: Logic.Row): void { tag = row.tag; chosen(row.count) }
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Pick.qml:4:33: error: `tag` is `"a" | "b"`; this gives it `"c"` [ts-assign-type]
+      Pick.qml:5:36: error: `picked.count` is a number; this gives it a string [ts-assign-type]
+      Pick.qml:6:40: error: `kept` is a list<Logic.Row>; this gives it a (number | { tag: string; count: number })[] [ts-assign-type]
+      Pick.qml:8:53: error: `tag` is `"a" | "b"`; this gives it `string` [ts-assign-type]
+      Pick.qml:8:69: error: `row` is an object; this gives it a number [ts-assign-type]
+      2 files, 5 errors, 0 warnings
+      ljos: 5 errors
+      """
+
+  Scenario: A type the module does not export is reported
+    Given the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        property Logic.Rows many
+        function keep(row: Logic.Line): void { }
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Pick.qml:4:24: error: `Rows` is not a type filter.ts exports: it exports the types `Row` and `Tag` [unknown-type]
+      Pick.qml:5:34: error: `Line` is not a type filter.ts exports: it exports the types `Row` and `Tag` [unknown-type]
+      2 files, 2 errors, 0 warnings
+      ljos: 2 errors
+      """
+
+  Scenario: TypeScript reads a declaration typed by the module as the checker does
+    Given the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        property Logic.Row picked: ({ tag: "a", count: 1 })
+        function keep(row: Logic.Row): void { picked = row.tag }
+      }
+      """
+    When the files are checked with TypeScript
+    Then TypeScript reports the lines:
+      """
+      Pick.qml:5:47: error: Type 'string' is not assignable to type 'Row'. [TS2322]
+      """

@@ -194,6 +194,28 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         (find(&exports.values), find(&exports.types))
     }
 
+    /// The type the module at `index` exports as `name`, written at
+    /// `span`: an error, reported, when it exports none.
+    pub(super) fn exported_type(&mut self, index: usize, name: &str, span: Span) -> Ty {
+        if let Some(ty) = self.exported(index, name).1 {
+            return ty;
+        }
+        self.not_exported(index, name, Space::Type, span);
+        Ty::ERROR
+    }
+
+    /// The type a declaration of the file writes as `parts`, at `span`,
+    /// when its first part names a module the file imports
+    /// (`property Logic.Row picked`).
+    pub(super) fn module_type(&mut self, parts: &[&str], span: Span) -> Option<Ty> {
+        let [namespace, name] = parts else {
+            return None;
+        };
+        let index = self.imported_module(namespace, span.start)?;
+        let at = Span::new(span.end - name.len() as u32, span.end);
+        Some(self.exported_type(index, name, at))
+    }
+
     /// Reports `name`, written at `span`, as one the module at `index`
     /// does not export in `space`.
     pub(super) fn not_exported(&mut self, index: usize, name: &str, space: Space, span: Span) {
