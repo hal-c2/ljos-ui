@@ -43,14 +43,29 @@ pub use style::{controls_style, controls_style_on, platform_style};
 pub struct Compiled {
     pub file: CompiledFile,
     pub diagnostics: Vec<Diagnostic>,
+    /// The TypeScript modules the file reaches, each checked as Ljós code
+    /// with its findings at its own lines.
+    pub modules: Vec<CheckedModule>,
 }
 
 impl Compiled {
+    /// Whether the file, or a module it reaches, has an error: either way
+    /// it is not a file to run.
     pub fn has_errors(&self) -> bool {
         self.diagnostics
             .iter()
+            .chain(self.modules.iter().flat_map(|m| &m.diagnostics))
             .any(|d| d.severity == Severity::Error)
     }
+}
+
+/// A TypeScript module a file imports, directly or through another, and
+/// what checking it found.
+#[derive(Debug, Clone)]
+pub struct CheckedModule {
+    /// Its path from the project's root: `content/filter.ts`.
+    pub key: String,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

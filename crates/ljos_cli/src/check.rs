@@ -246,7 +246,17 @@ impl Checked {
         // This project's lines, the stand-in notes among them, which no
         // finding is the same as.
         let start = self.diagnostics.len();
+        // A module many files import is checked with each, and said once.
+        let mut modules: std::collections::BTreeMap<String, Vec<ljos_compiler::Diagnostic>> =
+            std::collections::BTreeMap::new();
         for file in compile_project(dir)? {
+            if let Ok(compiled) = &file.result {
+                for module in &compiled.modules {
+                    modules
+                        .entry(module.key.clone())
+                        .or_insert_with(|| module.diagnostics.clone());
+                }
+            }
             self.files += 1;
             keys.push(file.key.clone());
             let name = shown_name(label, &file.key);
@@ -285,6 +295,20 @@ impl Checked {
                 }
                 self.diagnostics
                     .push(format!("{name}.qml:{diagnostic} [{}]", diagnostic.code));
+            }
+        }
+        // DECISION: a module counts as a file of the project, checked.
+        for (key, diagnostics) in modules {
+            self.files += 1;
+            let name = shown_name(label, &key);
+            for diagnostic in diagnostics {
+                if diagnostic.severity == Severity::Error {
+                    self.errors += 1;
+                } else {
+                    self.warnings += 1;
+                }
+                self.diagnostics
+                    .push(format!("{name}:{diagnostic} [{}]", diagnostic.code));
             }
         }
         // What the compiler does not say and the run would: a name that is

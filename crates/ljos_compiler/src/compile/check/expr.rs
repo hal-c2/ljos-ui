@@ -14,6 +14,7 @@ use qml_syntax::{
     },
 };
 
+use super::module::{Space, listed};
 use super::ty::{Field, Global, Kind, Method, Param, Sig, Ty};
 use super::{Binding, Checker, Fact, FnCtx, Obj, builtins, primitive};
 use crate::Code;
@@ -282,6 +283,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if let Some(global) = builtins::global(name) {
             return self.arena.intern(Kind::Global(global));
         }
+        // A module has no QML scope: what it does not declare or import is
+        // not there.
+        if self.module.is_some() {
+            return self.untyped(name, "it is not in scope", id.span);
+        }
         let Some(resolution) = self.c.lookup(name, id.span.start) else {
             return self.untyped(name, "it is not in scope", id.span);
         };
@@ -312,12 +318,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.arena.intern(Kind::Type(o))
                 }
             }
-            // DECISION: what a TypeScript module exports is let by until
-            // the checker reads the module.
             Some(Target::Namespace(qml_front::project::Source::Path(path)))
                 if crate::script::is_module(&path) =>
             {
-                Ty::ERROR
+                let key = self.c.project.front().import_dir(self.c.key, &path);
+                match self.module_at(&key) {
+                    Some(index) => self.module_value(index),
+                    // DECISION: a module that is not there is the
+                    // compiler's to say; one being read, reached again
+                    // through a cycle, is let by.
+                    None => Ty::ERROR,
+                }
             }
             Some(Target::Namespace(_)) => self.arena.intern(Kind::Namespace(name.into())),
             _ => Ty::ERROR,
@@ -369,6 +380,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 return self.member(mutable, name);
             }
         }
+        for &part in &parts {
+            if let Some(index) = self.module_of(part)
+                && self.exported(index, name).0.is_none()
+            {
+                self.not_exported(index, name, Space::Value, property.span);
+                return Ty::ERROR;
+            }
+        }
         for part in parts {
             let checked = !matches!(
                 self.arena.kind(part),
@@ -399,6 +418,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     let o = self.of_kind(&found.kind);
                     Some(self.arena.intern(Kind::Type(o)))
                 }
+            }
+            Kind::Module(_) => {
+                let index = self.module_of(part)?;
+                self.exported(index, name).0
             }
             Kind::Record(fields) => {
                 let field = fields.iter().find(|field| &*field.name == name)?;
@@ -1247,7 +1270,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     /// Reports what the subset leaves out of JavaScript.
-    fn forbidden(&mut self, what: &str, fix: &str, span: Span) -> Ty {
+    pub(super) fn forbidden(&mut self, what: &str, fix: &str, span: Span) -> Ty {
         self.report(
             Code::TsForbidden,
             format!("`{what}` is not in Ljós's API: {fix}"),
@@ -1343,6 +1366,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 key: Some((name, Some(local.id))),
                 exact: None,
             });
+        }
+        if self.module.is_some() {
+            return None;
         }
         let resolution = self.c.lookup(name, id.span.start)?;
         if resolution.aimed.is_some() || !resolution.roles.is_empty() {
@@ -1587,7 +1613,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     }
                     None => {
                         let now = self.name(id);
-                        let base = match self.c.lookup(name, id.span.start).and_then(|r| r.target) {
+                        let found = if self.module.is_some() {
+                            None
+                        } else {
+                            self.c.lookup(name, id.span.start).and_then(|r| r.target)
+                        };
+                        let base = match found {
                             Some(Target::Property { object, name }) => self
                                 .instance_member(object, &name)
                                 .map_or(Ty::ERROR, |own| own.ty),
@@ -1772,29 +1803,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         // `let`, `const`, functions and types are the block's before their
         // declarations run.
         for statement in statements {
-            match statement {
-                Statement::VariableDeclaration(declaration)
-                    if declaration.kind != VariableDeclarationKind::Var =>
-                {
-                    for declarator in &declaration.declarations {
-                        self.bind_dead(&declarator.id);
-                    }
-                }
-                Statement::FunctionDeclaration(function) => {
-                    if let Some(id) = &function.id {
-                        let ty = self.signature(&function.params, function.return_type.as_deref());
-                        self.bind(id.name.as_str(), ty, Binding::Function);
-                    }
-                }
-                Statement::TSTypeAliasDeclaration(alias) => {
-                    let ty = self.annot(&alias.type_annotation);
-                    self.bind(alias.id.name.as_str(), ty, Binding::Type);
-                }
-                Statement::TSInterfaceDeclaration(interface) => {
-                    let ty = self.record(&interface.body.body);
-                    self.bind(interface.id.name.as_str(), ty, Binding::Type);
-                }
-                _ => {}
+            if let Some(declaration) = statement.as_declaration() {
+                self.bind_ahead(declaration);
             }
         }
         let mut live = true;
@@ -1805,7 +1815,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         live
     }
 
-    fn bind_dead(&mut self, pattern: &BindingPattern<'a>) {
+    pub(super) fn bind_dead(&mut self, pattern: &BindingPattern<'a>) {
         match pattern {
             BindingPattern::BindingIdentifier(id) => {
                 self.bind(id.name.as_str(), Ty::ERROR, Binding::Dead);
@@ -1880,7 +1890,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
-    fn declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+    pub(super) fn declaration(&mut self, declaration: &VariableDeclaration<'a>) {
         let binding = match declaration.kind {
             VariableDeclarationKind::Var => {
                 let start = declaration.span.start;
@@ -2221,8 +2231,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             .collect();
         let (list, each) = match missing.as_slice() {
             [] => return,
-            [one] => (one.clone(), "it"),
-            [rest @ .., last] => (format!("{} and {last}", rest.join(", ")), "each"),
+            [_] => (listed(&missing), "it"),
+            _ => (listed(&missing), "each"),
         };
         let start = span.start;
         self.report(
@@ -2339,6 +2349,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             TSType::TSFunctionType(function) => {
                 self.signature(&function.params, Some(&function.return_type))
             }
+            // DECISION: a type predicate (`v is Row`) is a boolean to the
+            // checker: what it narrows to is a decoder's (T3b).
+            TSType::TSTypePredicate(_) => Ty::BOOLEAN,
             TSType::TSTypeReference(reference) => {
                 let arguments: &[TSType<'a>] = match &reference.type_arguments {
                     Some(arguments) => &arguments.params,
@@ -2353,6 +2366,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             return Ty::ERROR;
                         };
                         let (left, right) = (left.name.as_str(), qualified.right.name.as_str());
+                        if let Some(index) = self.named_module(left, qualified.span.start) {
+                            // DECISION: a type the module does not export
+                            // is said with the declarations' types (step 3).
+                            return self.exported(index, right).1.unwrap_or(Ty::ERROR);
+                        }
+                        if self.module.is_some() {
+                            return Ty::ERROR;
+                        }
                         let types = self.c.types;
                         if let Some(found) = types.find(&[left])
                             && types.declared_enum(&found.kind, right) == Some(true)
@@ -2397,13 +2418,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if let Some(ty) = primitive(name) {
             return ty;
         }
+        // A module names no QML type.
+        if self.module.is_some() {
+            return Ty::ERROR;
+        }
         match self.c.types.find(&[name]) {
             Some(found) => self.object_ty(&found.kind),
             None => Ty::ERROR,
         }
     }
 
-    fn record(&mut self, members: &[TSSignature<'a>]) -> Ty {
+    pub(super) fn record(&mut self, members: &[TSSignature<'a>]) -> Ty {
         let mut fields = Vec::with_capacity(members.len());
         for member in members {
             if let TSSignature::TSMethodSignature(method) = member

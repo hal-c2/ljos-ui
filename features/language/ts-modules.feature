@@ -14,7 +14,7 @@ Feature: TypeScript modules imported by a QML file
 
   Background:
     Given the file "filter.ts":
-      """
+      """ts
       export interface Row { tag: string; count: number }
       export type Tag = "a" | "b"
       const rows: readonly Row[] = [{ tag: "a", count: 2 }, { tag: "b", count: 3 }]
@@ -23,7 +23,7 @@ Feature: TypeScript modules imported by a QML file
         for (const row of rows) { if (row.tag === tag) { total = total + row.count } }
         return total
       }
-      export const label = "rows" as string
+      export const label: string = "rows"
       """
 
   Scenario: A handler of a file in Ljós's API calls a function the module exports
@@ -44,7 +44,7 @@ Feature: TypeScript modules imported by a QML file
 
   Scenario: A module imports what another module exports
     Given the file "sum.ts":
-      """
+      """ts
       import { only } from "./filter.ts"
       import * as Filter from "./filter.ts"
       export function both(): number { return only("a") + Filter.only("b") }
@@ -71,3 +71,110 @@ Feature: TypeScript modules imported by a QML file
       }
       """
     Then the property "shown" of "root" is 3
+
+  Scenario: The checker types what a module exports
+    Given the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        property real shown: Logic.only("a")
+        property string title: Logic.label
+        function choose() { shown = Logic.only("b") }
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      2 files, 0 errors, 0 warnings
+      """
+
+  Scenario: A call of what a module exports is checked against its parameters
+    Given the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        property real shown: Logic.only("c")
+        property string title: Logic.only("a")
+        function choose() { shown = Logic.only("a", "b") }
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Pick.qml:4:41: error: `tag` is `"a" | "b"`; this gives it `"c"` [ts-assign-type]
+      Pick.qml:5:32: error: `title` is a string; this gives it a number [ts-assign-type]
+      Pick.qml:6:37: error: this call takes 1 arguments, and is given 2 [ts-assign-type]
+      2 files, 3 errors, 0 warnings
+      ljos: 3 errors
+      """
+
+  Scenario: A name the module does not export is reported
+    Given the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        property real shown: Logic.total("a")
+        property real many: Logic.rows.length
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      Pick.qml:4:36: error: `total` is not exported by filter.ts: it exports `only` and `label` [unknown-member]
+      Pick.qml:5:35: error: `rows` is not exported by filter.ts: export it there (`export const rows`) [unknown-member]
+      2 files, 2 errors, 0 warnings
+      ljos: 2 errors
+      """
+
+  Scenario: A module's own errors are reported at the module's lines
+    Given the file "bad.ts":
+      """ts
+      export const limit: number = "10"
+      export enum Side { Left, Right }
+      export function half(n: number): string { return n / 2 }
+      """
+    And the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "bad.ts" as Bad
+      Item {
+        property real shown: Bad.limit
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      bad.ts:1:36: error: `limit` is a number; this gives it a string [ts-assign-type]
+      bad.ts:2:14: error: an `enum` is not only a type, and does not erase: write a union of strings (`type Mode = "a" | "b"`) [ts-forbidden]
+      bad.ts:3:56: error: this function returns a string; this gives it a number [ts-assign-type]
+      2 files, 3 errors, 0 warnings
+      ljos: 3 errors
+      """
+
+  Scenario: What a module imports from another is checked at the module's lines
+    Given the file "sum.ts":
+      """ts
+      import { only, type Row } from "./filter.ts"
+      import * as Filter from "./filter.ts"
+      export function both(): number { return only("a") + Filter.only(2) }
+      export const first: Row = { tag: "a", count: "2" }
+      """
+    And the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "sum.ts" as Sum
+      Item {
+        property real total: Sum.both()
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      sum.ts:3:71: error: `tag` is `"a" | "b"`; this gives it `2` [ts-assign-type]
+      sum.ts:4:33: error: `first.count` is a number; this gives it a string [ts-assign-type]
+      3 files, 2 errors, 0 warnings
+      ljos: 2 errors
+      """

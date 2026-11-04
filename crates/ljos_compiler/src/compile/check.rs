@@ -21,7 +21,10 @@
 
 mod builtins;
 mod expr;
+mod module;
 mod ty;
+
+pub(super) use module::{Module, modules};
 
 use std::collections::HashMap;
 
@@ -59,18 +62,22 @@ pub(crate) fn scripts_are_javascript(document: &QmlDocument<'_>) -> bool {
         .any(|pragma| pragma.name == "Scripts" && pragma.value == Some("JavaScript"))
 }
 
-/// Holds the scripts of a dialect file to the checker's rules.
+/// Holds the scripts of a dialect file, and the modules it reaches, to
+/// the checker's rules.
 pub(super) fn document<'a, O: TypeOracle>(
     compiler: &mut Compiler<'_, 'a, '_, O>,
     document: &QmlDocument<'a>,
+    modules: &[Module<'a>],
 ) {
-    let mut found = {
-        let mut checker = Checker::new(compiler);
+    let (mut found, in_modules) = {
+        let mut checker = Checker::new(compiler, modules);
         checker.declare(&document.root, None);
         checker.functions(&document.root, None);
         checker.object(&document.root);
-        checker.found
+        checker.read_all();
+        (checker.found, checker.module_found)
     };
+    compiler.modules = checked_modules(modules, in_modules);
     found.sort_by_key(|(_, _, span)| span.start);
     found.dedup_by_key(|(_, _, span)| span.start);
     for (code, message, span) in found {
@@ -94,6 +101,47 @@ pub(super) fn document<'a, O: TypeOracle>(
             .diagnostics
             .push(Diagnostic::error(code, message, span));
     }
+}
+
+/// Holds the modules a file in Qt's QML reaches to the checker's rules:
+/// they are Ljós code, whichever file imports them.
+pub(super) fn modules_only<'a, O: TypeOracle>(
+    compiler: &mut Compiler<'_, 'a, '_, O>,
+    modules: &[Module<'a>],
+) {
+    let found = {
+        let mut checker = Checker::new(compiler, modules);
+        checker.read_all();
+        checker.module_found
+    };
+    compiler.modules = checked_modules(modules, found);
+}
+
+/// Each module, with what was found in it at its own lines, once each.
+fn checked_modules(
+    modules: &[Module<'_>],
+    mut found: Vec<(usize, Code, String, Span)>,
+) -> Vec<crate::CheckedModule> {
+    found.sort_by_key(|(index, _, _, span)| (*index, span.start));
+    found.dedup_by_key(|(index, _, _, span)| (*index, span.start));
+    modules
+        .iter()
+        .enumerate()
+        .map(|(index, module)| {
+            let lines = super::Lines::new(module.source);
+            let diagnostics = found
+                .iter()
+                .filter(|(at, ..)| *at == index)
+                .map(|(_, code, message, span)| {
+                    Diagnostic::error(*code, message.clone(), lines.span(module.source, *span))
+                })
+                .collect();
+            crate::CheckedModule {
+                key: module.key.clone(),
+                diagnostics,
+            }
+        })
+        .collect()
 }
 
 /// An object the checker's types name: by its place in [`Checker::objs`].
@@ -160,9 +208,18 @@ struct Own {
 
 pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     c: &'c Compiler<'t, 'a, 'p, O>,
+    /// The text of what is walked: the file's, or a module's.
+    source: &'a str,
+    /// The modules the file reaches, how far each is read, and the one
+    /// being walked.
+    modules: &'c [Module<'a>],
+    read: Vec<module::Read<'a>>,
+    module: Option<usize>,
     arena: Arena,
     objs: Vec<Obj<O::Type>>,
     found: Vec<(Code, String, Span)>,
+    /// What was found in the modules, by module.
+    module_found: Vec<(usize, Code, String, Span)>,
     /// Above 0, nothing is reported: a path is read again for a fact.
     quiet: u32,
     locals: Vec<Local<'a>>,
@@ -189,12 +246,17 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
 }
 
 impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
-    fn new(c: &'c Compiler<'t, 'a, 'p, O>) -> Self {
+    fn new(c: &'c Compiler<'t, 'a, 'p, O>, modules: &'c [Module<'a>]) -> Self {
         Self {
             c,
+            source: c.source,
+            modules,
+            read: modules.iter().map(|_| module::Read::Not).collect(),
+            module: None,
             arena: Arena::new(),
             objs: Vec::new(),
             found: Vec::new(),
+            module_found: Vec::new(),
             quiet: 0,
             locals: Vec::new(),
             next_local: 0,
@@ -211,13 +273,25 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     }
 
     fn report(&mut self, code: Code, message: String, span: Span) {
-        if self.quiet == 0 {
-            self.found.push((code, message, span));
+        if self.quiet > 0 {
+            return;
+        }
+        match self.module {
+            Some(index) => self.module_found.push((index, code, message, span)),
+            None => self.found.push((code, message, span)),
+        }
+    }
+
+    /// Reads each module the file reaches that its scripts did not.
+    fn read_all(&mut self) {
+        let modules = self.modules;
+        for module in modules {
+            self.module_at(&module.key);
         }
     }
 
     fn text(&self, span: Span) -> &'a str {
-        &self.c.source[span.start as usize..span.end as usize]
+        &self.source[span.start as usize..span.end as usize]
     }
 
     // Objects.
@@ -1254,11 +1328,60 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             );
             return;
         }
+        if let Some((field, want, got)) = self.field_refused(target, given) {
+            let want = self.word(want);
+            let message = match got {
+                Some(got) => format!(
+                    "`{name}.{field}` is {want}; this gives it {}",
+                    self.word(got)
+                ),
+                None => format!("`{name}.{field}` is {want}, and this leaves it out"),
+            };
+            self.report(Code::TsAssignType, message, span);
+            return;
+        }
+        // A place of literal types is said as TypeScript writes it: its
+        // words ("a string") would be those of what it refuses.
+        let (word, given_word) = if self.has_literal(target) {
+            let display = |ty| format!("`{}`", self.arena.display(ty, &|o| self.obj_name(o)));
+            (display(target), display(given))
+        } else {
+            (word.to_string(), given_word)
+        };
         self.report(
             Code::TsAssignType,
             format!("`{name}` is {word}; this gives it {given_word}"),
             span,
         );
+    }
+
+    /// For an object given where one of another object type goes, the
+    /// first field of the place it does not fill: its name, its type, and
+    /// what is given for it, if anything.
+    fn field_refused(&self, target: Ty, given: Ty) -> Option<(Box<str>, Ty, Option<Ty>)> {
+        let (Kind::Record(want), Kind::Record(got)) =
+            (self.arena.kind(target), self.arena.kind(given))
+        else {
+            return None;
+        };
+        for field in want.iter() {
+            match got.iter().find(|g| g.name == field.name) {
+                Some(g) if !self.takes(field.ty, g.ty) => {
+                    return Some((field.name.clone(), field.ty, Some(g.ty)));
+                }
+                None if !field.optional => return Some((field.name.clone(), field.ty, None)),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// Whether `ty` has a string or number literal among its parts.
+    fn has_literal(&self, ty: Ty) -> bool {
+        self.arena
+            .members(ty)
+            .into_iter()
+            .any(|part| matches!(self.arena.kind(part), Kind::Str(_) | Kind::Num(_)))
     }
 }
 
