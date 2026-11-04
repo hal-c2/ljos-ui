@@ -305,6 +305,34 @@ QML has no generic syntax for a property's type, so `ListModel<T>` and
 `ListModel`'s row type comes from its `ListElement`s. Interfaces and maps
 are declared in a `.ts` module and named from QML.
 
+What is built (`features/language/ts-modules.feature`):
+
+- A file, in Ljós's API or in Qt's QML, imports a module ending in `.ts`
+  as it imports a script, and a module imports another with
+  `import { x } from "./other.ts"` or `import * as`. Its types are erased
+  (`crates/ljos_compiler/src/script/module.rs`) and what is left runs at
+  tier 2 as a library script does. Its exports are read-only: a named
+  import is a copy taken when the module ran.
+- The module is the erasable subset of TypeScript (`erasableSyntaxOnly`):
+  no `enum`, `namespace` or parameter property, which would leave code
+  behind, and none of `export default` or `export *`. A module is checked
+  with the rules of §5, at its own lines, and counts as a file in
+  `ljos check`. A file that reaches a module with an error does not run.
+- `Logic.x` is typed by what the module exports. A name it does not
+  export is `unknown-member`, and a type it does not export is
+  `unknown-type`. Both name the module and say what it does export.
+- A property, a `list<T>` property, a signal's parameter and a
+  function's parameter take a type the module exports, written qualified
+  by the import (`Logic.Row`). The run time holds such a property as a
+  `var`: the type is the checker's, so it costs nothing once the file is
+  checked.
+- `ljos check --tsc` gives TypeScript the project's modules beside the
+  generated ones, and each generated module imports the modules its file
+  does. What TypeScript says of a module is said at the module's lines.
+  The generated `.d.ts` of `ljos types` stays the API's: a module's types
+  reach TypeScript through the module itself.
+- A type predicate (`x is T`) parses, and is typed as a boolean.
+
 The other direction is generated. Each QML component and native type has a
 `.d.ts` declaration, so a TS module can take `Card` or `ListView` as a
 parameter type. The declarations come from the same table `ljos check`
@@ -917,6 +945,11 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-forbidden` | No `class`, `this` outside QML's scope object, prototypes, `delete`, `for…in`, `with`, `eval`, or `arguments`. |
 | `ts-boundary` | A compat `.js` module is called only through a `.d.ts` declaration (Q7, §14). |
 
+The names a TypeScript module exports are held to two more: `unknown-member`
+for a value it does not export (`Logic.total`), and `unknown-type` for a
+type it does not (`property Logic.Rows`). `ts-boundary` waits for the
+decoders (M4, T3b).
+
 Not built yet, though the rules above cover them:
 
 - a value type's readonly fields: `pos.x = 1` on a `point` is not
@@ -965,7 +998,11 @@ are declared so), functions and enums. It reads them from:
 - arrows and functions, whose untyped parameters take the types of where
   the function goes (a handler's signal, a callback's array);
 - narrowing by `=== undefined`, `typeof`, a literal, a record's field, and
-  by assignment, and `?.`.
+  by assignment, and `?.`;
+- what a TypeScript module the file imports exports, values and types,
+  read from the module's own declarations when a name first reaches it.
+  A module that imports itself, directly or not, is let by where the
+  cycle closes.
 
 What it cannot type is an error (`ts-no-any`), at the place the type is
 missing, with what gives it one. A method the type table names without
@@ -1321,7 +1358,7 @@ on the Qt backend (10 steps).
 | **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
-| **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
+| **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
 | **M6** Controls | `Ljos.Controls` and styles | Controls corpus lowered; qml6 parity on its features |
 
