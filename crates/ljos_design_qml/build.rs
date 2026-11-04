@@ -31,8 +31,10 @@ fn main() {
     for r in results {
         match r.result {
             Ok(c) => {
-                for d in &c.diagnostics {
-                    println!("cargo:warning={}.qml: {}", r.key, d.message);
+                // A module's error fails the file too; say it, at the module's line.
+                for (module, d) in c.all_diagnostics() {
+                    let (_, _, message) = ljos_compiler::text_error(module, d);
+                    println!("cargo:warning={}.qml: {message}", r.key);
                 }
                 failed |= c.has_errors();
                 let bytes = c
