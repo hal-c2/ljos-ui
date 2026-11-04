@@ -71,6 +71,54 @@ Feature: Ljós's one arrangement: Row, Column and Box
         | b    | 45  | 290   |
         | c    | 340 | 60    |
 
+    # Qt's RowLayout shares room out in whole pixels: three children that fill 100 are 33, 34
+    # and 33 wide (qml6). Ljós's Row does too, so a filled bar's edges fall on pixels.
+    @qt-parity
+    Scenario Outline: Room shared out is shared in whole pixels
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        RowLayout {
+          width: 100
+          spacing: 0
+          Rectangle { objectName: "a"; Layout.fillWidth: true; implicitHeight: 10 }
+          Rectangle { objectName: "b"; Layout.fillWidth: true; implicitHeight: 10 }
+          Rectangle { objectName: "c"; Layout.fillWidth: true; implicitHeight: 10 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "width" of "<item>" is <width>
+
+      Examples:
+        | item | x  | width |
+        | a    | 0  | 33    |
+        | b    | 33 | 34    |
+        | c    | 67 | 33    |
+
+    @ljos-only
+    Scenario Outline: The same room shared out by a Ljós Row
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Row {
+          width: 100
+          Rectangle { objectName: "a"; Layout.fillWidth: true; implicitHeight: 10 }
+          Rectangle { objectName: "b"; Layout.fillWidth: true; implicitHeight: 10 }
+          Rectangle { objectName: "c"; Layout.fillWidth: true; implicitHeight: 10 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "width" of "<item>" is <width>
+
+      Examples:
+        | item | x  | width |
+        | a    | 0  | 33    |
+        | b    | 33 | 34    |
+        | c    | 67 | 33    |
+
   Rule: What a child's file says is what it asks for
 
     # Qt's RowLayout gives a child with an implicit width that width, whatever width its file
