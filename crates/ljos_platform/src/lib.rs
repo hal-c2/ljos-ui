@@ -15,6 +15,8 @@
 //!   `Qt.openUrlExternally`);
 //! - the application's badge, a count on its icon ([`BadgeService`],
 //!   `QGuiApplication::setBadgeNumber`);
+//! - the system's menu bar ([`MenuBarService`]), where a `MenuBar` is shown
+//!   on macOS;
 //! - `QtSensors`: the device's accelerometer and other motion and
 //!   environment sensors, read through a [`SensorService`];
 //! - `Qt.platform`.
@@ -37,6 +39,7 @@ mod fetch;
 mod http;
 mod icon;
 mod library;
+mod menu_bar;
 mod network;
 
 use library::DialogLibrary;
@@ -76,6 +79,9 @@ pub use fetch::{
 #[cfg(feature = "http")]
 pub use http::HttpFetcher;
 pub use icon::{Icon, IconError};
+pub use menu_bar::{
+    KeyEquivalent, MenuBarService, RecordedMenuBar, SystemBar, SystemEntry, SystemItem, SystemMenu,
+};
 pub use network::{
     NetworkInformation, NetworkStatus, Reachability, TransportMedium, network_status,
     report_network_status, set_network_monitor,
