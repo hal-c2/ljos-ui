@@ -72,6 +72,27 @@ Feature: TypeScript modules imported by a QML file
       """
     Then the property "shown" of "root" is 3
 
+  Scenario: A type the module erases does not join the lines around it
+    Given the file "steps.ts":
+      """ts
+      let count: number = 0
+      function bump(): number { count = count + 1; return count }
+      export const once = bump
+      type Step = number
+      (bump)()
+      export function times(): number { return count }
+      """
+    And the QML:
+      """qml
+      import Ljos.Ui
+      import "steps.ts" as Steps
+      Item {
+        objectName: "root"
+        property real shown: Steps.times()
+      }
+      """
+    Then the property "shown" of "root" is 1
+
   Scenario: The checker types what a module exports
     Given the file "Pick.qml":
       """qml

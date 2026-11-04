@@ -128,6 +128,16 @@ impl<'s> Eraser<'s> {
         }
     }
 
+    /// Blank a whole statement or class member, leaving a `;` where it
+    /// began: without it, the line before could run on into the line
+    /// after (`f` then `(1)` is `f(1)`), where TypeScript read two.
+    fn blank_statement(&mut self, start: u32, end: u32) {
+        if start < end {
+            self.replace(Span::new(start, start + 1), ";".to_string());
+            self.blank(start + 1, end);
+        }
+    }
+
     fn replace(&mut self, span: Span, text: String) {
         self.edits.push(Edit {
             span,
@@ -176,7 +186,7 @@ impl<'s> Eraser<'s> {
         match statement {
             Statement::ImportDeclaration(import) => {
                 if import.import_kind == ImportOrExportKind::Type {
-                    return self.blank(import.span.start, import.span.end);
+                    return self.blank_statement(import.span.start, import.span.end);
                 }
                 let path = import.source.value.as_str();
                 if !self.reachable(import.source.span, path) {
@@ -215,7 +225,7 @@ impl<'s> Eraser<'s> {
                     }
                 }
                 if typed > 0 && typed == specifiers.len() {
-                    return self.blank(import.span.start, import.span.end);
+                    return self.blank_statement(import.span.start, import.span.end);
                 }
                 let index = self.import(path);
                 let from = format!("__ljos_imports[{index}]");
@@ -229,7 +239,7 @@ impl<'s> Eraser<'s> {
             Statement::ExportDeclaration(export) => {
                 let declaration = &export.declaration;
                 if self.type_only(declaration) {
-                    return self.blank(export.span.start, export.span.end);
+                    return self.blank_statement(export.span.start, export.span.end);
                 }
                 self.blank(export.span.start, declaration.span().start);
                 for name in declared_names(declaration) {
@@ -238,7 +248,7 @@ impl<'s> Eraser<'s> {
                 self.visit_declaration(declaration);
             }
             Statement::ExportNamedDeclaration(export) => {
-                self.blank(export.span.start, export.span.end);
+                self.blank_statement(export.span.start, export.span.end);
                 if export.export_kind == ImportOrExportKind::Type {
                     return;
                 }
@@ -256,7 +266,7 @@ impl<'s> Eraser<'s> {
                 }
             }
             Statement::ExportFromDeclaration(export) => {
-                self.blank(export.span.start, export.span.end);
+                self.blank_statement(export.span.start, export.span.end);
                 let path = export.source.value.as_str();
                 if export.export_kind == ImportOrExportKind::Type
                     || !self.reachable(export.source.span, path)
@@ -285,7 +295,7 @@ impl<'s> Eraser<'s> {
             }
             Statement::ExportAllDeclaration(export) => {
                 if export.export_kind == ImportOrExportKind::Type {
-                    return self.blank(export.span.start, export.span.end);
+                    return self.blank_statement(export.span.start, export.span.end);
                 }
                 self.fault(
                     export.span,
@@ -305,7 +315,7 @@ impl<'s> Eraser<'s> {
                 );
             }
             Statement::TSNamespaceExportDeclaration(it) => {
-                self.blank(it.span.start, it.span.end);
+                self.blank_statement(it.span.start, it.span.end);
             }
             other => self.visit_statement(other),
         }
@@ -374,7 +384,7 @@ impl<'a> Visit<'a> for Eraser<'_> {
     fn visit_declaration(&mut self, it: &Declaration<'a>) {
         if self.type_only(it) {
             let span = it.span();
-            return self.blank(span.start, span.end);
+            return self.blank_statement(span.start, span.end);
         }
         match it {
             Declaration::TSEnumDeclaration(it) => self.fault(
@@ -458,7 +468,7 @@ impl<'a> Visit<'a> for Eraser<'_> {
                 if method.value.body.is_none()
                     || method.r#type == MethodDefinitionType::TSAbstractMethodDefinition
                 {
-                    return self.blank(method.span.start, method.span.end);
+                    return self.blank_statement(method.span.start, method.span.end);
                 }
                 self.blank_modifiers(method.span.start, key_start(&method.key));
                 if method.optional {
@@ -473,7 +483,7 @@ impl<'a> Visit<'a> for Eraser<'_> {
                 if property.declare
                     || property.r#type == PropertyDefinitionType::TSAbstractPropertyDefinition
                 {
-                    return self.blank(property.span.start, property.span.end);
+                    return self.blank_statement(property.span.start, property.span.end);
                 }
                 self.blank_modifiers(property.span.start, key_start(&property.key));
                 if property.optional || property.definite {
@@ -497,7 +507,7 @@ impl<'a> Visit<'a> for Eraser<'_> {
                 }
             }
             ClassElement::TSIndexSignature(signature) => {
-                return self.blank(signature.span.start, signature.span.end);
+                return self.blank_statement(signature.span.start, signature.span.end);
             }
             ClassElement::StaticBlock(_) => {}
         }
@@ -647,8 +657,8 @@ mod tests {
         assert!(out.faults.is_empty(), "{:?}", out.faults);
         let lines: Vec<&str> = out.text.lines().collect();
         assert_eq!(lines.len(), 7);
-        assert_eq!(lines[0].trim(), "");
-        assert_eq!(lines[1].trim(), "");
+        assert_eq!(lines[0].trim(), ";");
+        assert_eq!(lines[1].trim(), ";");
         assert_eq!(
             lines[2].split_whitespace().collect::<Vec<_>>().join(" "),
             "function only (tag , rows ) {"
@@ -679,7 +689,7 @@ mod tests {
         let lines: Vec<&str> = out.text.lines().collect();
         assert_eq!(lines[0], "const { only, label: name } = __ljos_imports[0];");
         assert_eq!(lines[1], "const Other = __ljos_imports[0];");
-        assert_eq!(lines[2].trim(), "");
+        assert_eq!(lines[2].trim(), ";");
         assert_eq!(lines[3], "__ljos_imports[1];");
         let keys: Vec<&str> = out.imports.iter().map(|i| i.key.as_str()).collect();
         assert_eq!(keys, ["logic/other.ts", "logic/side.js"]);
@@ -711,8 +721,38 @@ mod tests {
         assert_eq!(words(lines[0]), "class Box {");
         assert_eq!(words(lines[1]), "size");
         assert_eq!(words(lines[2]), "count");
-        assert_eq!(words(lines[3]), "");
+        assert_eq!(words(lines[3]), ";");
         assert_eq!(words(lines[4]), "grow( by ) { this.count = by }");
+    }
+
+    #[test]
+    fn a_statement_erased_does_not_join_its_neighbours() {
+        // Without a semicolon, the line before a type would run on into the
+        // line after it, `f(1)`, where TypeScript reads two statements.
+        let out = erased(
+            "const f = (n: number) => n\n\
+             export const a = f\n\
+             type T = number\n\
+             (1)\n\
+             interface I { n: number }\n\
+             [a].length\n",
+        );
+        assert!(out.faults.is_empty(), "{:?}", out.faults);
+        let allocator = Allocator::default();
+        let parsed = Parser::new(&allocator, &out.text, SourceType::mjs()).parse();
+        assert!(parsed.diagnostics.is_empty(), "{}", out.text);
+        // `const f`, `const a`, `(1)` and `[a].length`, with the empty
+        // statements the types left.
+        let real: Vec<_> = parsed
+            .program
+            .body
+            .iter()
+            .filter(|s| !matches!(s, Statement::EmptyStatement(_)))
+            .collect();
+        assert_eq!(real.len(), 4, "{}", out.text);
+        let lines: Vec<&str> = out.text.lines().collect();
+        assert_eq!(lines[2].len(), "type T = number".len());
+        assert_eq!(lines[2].trim(), ";");
     }
 
     #[test]
