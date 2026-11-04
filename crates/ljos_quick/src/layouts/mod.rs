@@ -859,7 +859,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
             .iter()
             .all(|c| e.existing_attached_object(*c, &attacher()).is_none())
     {
-        return arrangement::line(e, obj, &shown);
+        return arrangement::line(e, obj, &children, &shown);
     }
     let mut seen = state(e, obj, |s| std::mem::take(&mut s.seen))?;
     seen.retain(|c, _| children.contains(c));

@@ -168,6 +168,30 @@ Feature: Ljós's one arrangement: Row, Column and Box
       And the property "implicitWidth" of "row" is 60.5
       And the property "implicitHeight" of "row" is 46
 
+    @ljos-only
+    Scenario: A child given a Layout, hidden and shown again, asks for its own size, not the one the box gave it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Row {
+          objectName: "row"
+          width: 300
+          spacing: 0
+          Rectangle { objectName: "filler"; Layout.fillWidth: true; implicitWidth: 50; height: 10 }
+          Rectangle { objectName: "fixed"; width: 20; height: 10 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "width" of "filler" is 280
+      And the property "implicitWidth" of "row" is 70
+      When the property "visible" of "filler" is set to false
+      And 100 milliseconds pass
+      Then the property "implicitWidth" of "row" is 20
+      When the property "visible" of "filler" is set to true
+      And 100 milliseconds pass
+      Then the property "width" of "filler" is 280
+      And the property "implicitWidth" of "row" is 70
+
   Rule: A Box turns
 
     @ljos-only
