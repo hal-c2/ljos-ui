@@ -38,6 +38,11 @@ pub enum TsError {
     },
     #[error("{} failed and said nothing of the files:\n{output}", program.display())]
     Failed { program: PathBuf, output: String },
+    /// TypeScript cannot read the declarations, or found an error in a file
+    /// that is not one of the modules: nothing it said of the files can be
+    /// trusted, so the check fails rather than passing.
+    #[error("TypeScript found errors outside the files it was given:\n{said}")]
+    Declarations { said: String },
 }
 
 /// What TypeScript says of a line of a QML file.
@@ -91,7 +96,7 @@ pub fn check_project(
     };
     let api = Api::new().ok_or(TsError::NoApi(dts::API))?;
     let scratch = Scratch::new()?;
-    let declarations = scratch.0.join(DECLARATIONS);
+    let declarations = scratch.path().join(DECLARATIONS);
     std::fs::write(&declarations, api.declarations()).map_err(|source| TsError::Io {
         path: declarations.clone(),
         source,
@@ -104,7 +109,7 @@ pub fn check_project(
             continue;
         };
         let name = format!("f{}.ts", modules.len());
-        let path = scratch.0.join(&name);
+        let path = scratch.path().join(&name);
         std::fs::write(&path, &extracted.text).map_err(|source| TsError::Io { path, source })?;
         modules.push((name, key.to_owned(), extracted));
     }
@@ -115,21 +120,32 @@ pub fn check_project(
         });
     }
     let names: Vec<String> = modules.iter().map(|(name, _, _)| name.clone()).collect();
-    let said = checker.check(&scratch.0, &names)?;
-    let mut findings: Vec<Finding> = said
-        .into_iter()
-        .filter_map(|said| {
-            let (_, key, extracted) = modules.iter().find(|(name, _, _)| *name == said.file)?;
-            let (line, column) = extracted.position(said.line, said.column).unwrap_or((1, 1));
-            Some(Finding {
-                key: key.clone(),
-                line,
-                column,
-                code: said.code,
-                message: said.message,
-            })
-        })
-        .collect();
+    let said = checker.check(scratch.path(), &names)?;
+    let mut findings: Vec<Finding> = Vec::new();
+    let mut elsewhere: Vec<String> = Vec::new();
+    for said in said {
+        let Some((_, key, extracted)) = modules.iter().find(|(name, _, _)| *name == said.file)
+        else {
+            elsewhere.push(format!(
+                "{}:{}:{}: {} [{}]",
+                said.file, said.line, said.column, said.message, said.code
+            ));
+            continue;
+        };
+        let (line, column) = extracted.position(said.line, said.column).unwrap_or((1, 1));
+        findings.push(Finding {
+            key: key.clone(),
+            line,
+            column,
+            code: said.code,
+            message: said.message,
+        });
+    }
+    if !elsewhere.is_empty() {
+        return Err(TsError::Declarations {
+            said: elsewhere.join("\n"),
+        });
+    }
     findings.sort_by(|a, b| (&a.key, a.line, a.column).cmp(&(&b.key, b.line, b.column)));
     findings.dedup();
     Ok(Outcome::Checked {
@@ -139,28 +155,23 @@ pub fn check_project(
 }
 
 /// A directory of its own under the system's temporary one, gone when the
-/// check is over.
-struct Scratch(PathBuf);
+/// check is over. Its name is random and it is made new, so a directory
+/// someone made beforehand is never written through.
+struct Scratch(tempfile::TempDir);
 
 impl Scratch {
     fn new() -> Result<Self, TsError> {
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static NEXT: AtomicU32 = AtomicU32::new(0);
-        let dir = std::env::temp_dir().join(format!(
-            "ljos-tsc-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(&dir).map_err(|source| TsError::Io {
-            path: dir.clone(),
-            source,
-        })?;
-        Ok(Self(dir))
+        tempfile::Builder::new()
+            .prefix("ljos-tsc-")
+            .tempdir()
+            .map(Self)
+            .map_err(|source| TsError::Io {
+                path: std::env::temp_dir(),
+                source,
+            })
     }
-}
 
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
+    fn path(&self) -> &Path {
+        self.0.path()
     }
 }
