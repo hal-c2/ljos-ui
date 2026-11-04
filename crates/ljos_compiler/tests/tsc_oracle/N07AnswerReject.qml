@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 9 TS18048
 // Note 11 §3.7 reading through members that may be missing.
 import Ljos.Ui
 Item {

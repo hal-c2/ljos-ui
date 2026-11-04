@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 6 TS7006
 // Note 11 §3.2 as JavaScript wrote it: parameters without types.
 import Ljos.Ui
 Item {

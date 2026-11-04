@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 9 TS2532
 // Note 11 §3.10 indexing as if every part were there.
 import Ljos.Ui
 Item {

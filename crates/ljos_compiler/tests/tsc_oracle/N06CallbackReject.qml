@@ -1,4 +1,4 @@
-// expect: reject-type
+// expect: reject-type 12 TS2722
 // Note 11 §3.6 calling the optional callback as if it were always there.
 import Ljos.Ui
 Item {

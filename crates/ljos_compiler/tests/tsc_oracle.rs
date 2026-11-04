@@ -3,7 +3,9 @@
 //! and this holds TypeScript and the checker to it.
 //!
 //! `// expect: accept`: neither reports anything.
-//! `// expect: reject-type`: both report an error.
+//! `// expect: reject-type <line> <TScode>`: TypeScript reports `<TScode>`
+//! at that line of the QML file, the error the case is about, and the
+//! checker reports an error.
 //! `// expect: reject-subset <code>`: TypeScript accepts it, and the checker
 //! reports it with `<code>`, a rule of the subset TypeScript does not have.
 
@@ -58,7 +60,7 @@ const KNOWN_GAPS: &[(&str, &str)] = &[
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Expect {
     Accept,
-    RejectType,
+    RejectType { line: u32, code: String },
     RejectSubset(String),
 }
 
@@ -89,7 +91,17 @@ fn cases() -> Vec<Case> {
                 .unwrap_or_else(|| panic!("{key}.qml: the first line is not `// expect: …`"));
             let expect = match said.split_once(' ') {
                 None if said == "accept" => Expect::Accept,
-                None if said == "reject-type" => Expect::RejectType,
+                Some(("reject-type", at)) => {
+                    let (line, code) = at.split_once(' ').unwrap_or_else(|| {
+                        panic!("{key}.qml: `reject-type` takes `<line> <TScode>`")
+                    });
+                    Expect::RejectType {
+                        line: line
+                            .parse()
+                            .unwrap_or_else(|_| panic!("{key}.qml: `{line}` is not a line number")),
+                        code: code.to_owned(),
+                    }
+                }
                 Some(("reject-subset", code)) => Expect::RejectSubset(code.to_owned()),
                 _ => panic!("{key}.qml: `{said}` is not an expectation"),
             };
@@ -148,23 +160,30 @@ fn typescript_agrees_with_each_expectation() {
             wrong.push(format!("{}: not given to TypeScript", case.key));
             continue;
         }
-        let said: Vec<String> = findings
-            .iter()
-            .filter(|f| f.key == case.key)
-            .map(ToString::to_string)
-            .collect();
-        match (&case.expect, said.is_empty()) {
-            (Expect::RejectType, true) => {
-                wrong.push(format!("{}: TypeScript accepts it", case.key));
+        let of: Vec<&ts::Finding> = findings.iter().filter(|f| f.key == case.key).collect();
+        let said = || {
+            of.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        };
+        match &case.expect {
+            // Any error would do for "rejected"; the case is about one, so
+            // TypeScript must find that one, where the QML file has it.
+            Expect::RejectType { line, code } => {
+                if !of.iter().any(|f| f.line == *line && f.code == *code) {
+                    wrong.push(format!(
+                        "{}: expected {code} at line {line}, TypeScript says\n  {}",
+                        case.key,
+                        said()
+                    ));
+                }
             }
-            (Expect::Accept | Expect::RejectSubset(_), false) => {
-                wrong.push(format!(
-                    "{}: TypeScript says\n  {}",
-                    case.key,
-                    said.join("\n  ")
-                ));
+            Expect::Accept | Expect::RejectSubset(_) => {
+                if !of.is_empty() {
+                    wrong.push(format!("{}: TypeScript says\n  {}", case.key, said()));
+                }
             }
-            _ => {}
         }
     }
     assert!(
@@ -197,7 +216,7 @@ fn the_checker_agrees_or_the_gap_is_known() {
             .collect();
         let agrees = match &case.expect {
             Expect::Accept => errors.is_empty(),
-            Expect::RejectType => !errors.is_empty(),
+            Expect::RejectType { .. } => !errors.is_empty(),
             Expect::RejectSubset(code) => errors.iter().any(|e| e.ends_with(&format!("[{code}]"))),
         };
         let known = KNOWN_GAPS.iter().any(|gap| gap.0 == case.key);
