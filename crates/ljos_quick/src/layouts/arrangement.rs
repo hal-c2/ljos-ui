@@ -18,7 +18,6 @@
 //! it is shared in whole pixels, and a child centred or pushed to the far
 //! side lands on one, as in Qt's layouts; nothing else is rounded.
 
-use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, QmlObject, Value};
@@ -319,7 +318,12 @@ pub(super) fn skipped(e: &Engine, c: ObjectId) -> bool {
 /// size, so the box is a positioner, and places them as one does, in one
 /// pass and keeping nothing of them. Gives whether its own size hints
 /// changed, as measuring does.
-pub(super) fn line(e: &Engine, obj: ObjectId, shown: &[ObjectId]) -> Result<bool, EngineError> {
+pub(super) fn line(
+    e: &Engine,
+    obj: ObjectId,
+    children: &[ObjectId],
+    shown: &[ObjectId],
+) -> Result<bool, EngineError> {
     let vertical = vertical(e, obj);
     let main = usize::from(vertical);
     let cross = 1 - main;
@@ -377,9 +381,10 @@ pub(super) fn line(e: &Engine, obj: ObjectId, shown: &[ObjectId]) -> Result<bool
         // measure again, and plan.
         s.plan = None;
         s.lined = Some(inputs);
-        if !s.seen.is_empty() {
-            s.seen = HashMap::new();
-        }
+        // What the box first saw of a child is kept, as a plan's measure
+        // keeps it: a hidden child it sized, shown again with a `Layout`,
+        // asks for its own size, not the one the box wrote.
+        s.seen.retain(|c, _| children.contains(c));
         if !s.placed.is_empty() {
             s.placed = Vec::new();
         }
