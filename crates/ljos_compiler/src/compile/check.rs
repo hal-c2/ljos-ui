@@ -182,6 +182,9 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     /// Above 0, a script is in a `function` of its own, where `this` is
     /// whatever calls it.
     nested: u32,
+    /// The `const`s without a written type whose value is a literal
+    /// written there: a variable given one widens it, as given the literal.
+    fresh: Vec<u32>,
 }
 
 impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
@@ -202,6 +205,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             indexed: None,
             this: None,
             nested: 0,
+            fresh: Vec::new(),
         }
     }
 

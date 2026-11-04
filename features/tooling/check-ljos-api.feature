@@ -557,6 +557,33 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 1 errors
         """
 
+    Scenario: A variable widens a written literal, and keeps a type it is given
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string mode: "idle"
+          function onlyKnown(s: "todo" | "doing" | "done"): void { mode = s }
+          function step(given: "todo" | "doing" | "done", on: boolean): void {
+            let copied = given
+            onlyKnown(copied)
+            const first = "todo"
+            let started = first
+            let picked = on ? "todo" : "done"
+            onlyKnown(started)
+            onlyKnown(picked)
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:11:23: error: `s` is `"todo" | "doing" | "done"`; this gives it `string` [ts-assign-type]
+        Gauge.qml:12:23: error: `s` is `"todo" | "doing" | "done"`; this gives it `string` [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
     Scenario: A write to a readonly member or array is reported
       Given the file "Gauge.qml":
         """qml
