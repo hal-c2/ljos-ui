@@ -44,7 +44,8 @@ pub(crate) struct Coverage {
     found: FxHashMap<char, Option<FamilyId>>,
     /// Made on the first lookup, dropped when the fonts change.
     index: Option<Index>,
-    /// The families added to a script's fallback, so each is added once.
+    /// The families added to a script's fallback, so each is added once and
+    /// taken out again when the fonts change.
     added: FxHashSet<(Script, FamilyId)>,
     /// Indexes made ([`Self::indexes`]).
     indexes: u64,
@@ -75,9 +76,26 @@ impl Coverage {
         }
     }
 
-    /// Fonts were added: a character no font had may now have one.
-    pub(crate) fn fonts_changed(&mut self) {
-        self.found.retain(|_, family| family.is_some());
+    /// Fonts were added: a character no font had may now have one, and one
+    /// found may now be in a family that comes before it by name. The
+    /// families added to the scripts' fallbacks are taken out of them again,
+    /// leaving the platform's, and every character is looked up anew, so the
+    /// choice does not depend on the order the fonts came in.
+    pub(crate) fn fonts_changed(&mut self, fcx: &mut FontContext) {
+        let mut by_script: FxHashMap<Script, Vec<FamilyId>> = FxHashMap::default();
+        for (script, family) in self.added.drain() {
+            by_script.entry(script).or_default().push(family);
+        }
+        for (script, ours) in by_script {
+            let key = FallbackKey::new(script, None);
+            let keep: Vec<FamilyId> = fcx
+                .collection
+                .fallback_families(key)
+                .filter(|f| !ours.contains(f))
+                .collect();
+            fcx.collection.set_fallbacks(key, keep.into_iter());
+        }
+        self.found.clear();
         self.index = None;
     }
 
@@ -105,7 +123,7 @@ impl Coverage {
                 continue;
             };
             let key = FallbackKey::new(script_at(text, at), None);
-            if !self.added.insert((key.script(), family)) {
+            if self.added.contains(&(key.script(), family)) {
                 continue;
             }
             // The platform's own fallback for the script is read first, so
@@ -113,9 +131,13 @@ impl Coverage {
             if fcx.collection.fallback_families(key).any(|f| f == family) {
                 continue;
             }
-            added |= fcx
+            if fcx
                 .collection
-                .append_fallbacks(key, std::iter::once(family));
+                .append_fallbacks(key, std::iter::once(family))
+            {
+                self.added.insert((key.script(), family));
+                added = true;
+            }
         }
         added
     }
