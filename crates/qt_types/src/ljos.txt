@@ -6104,13 +6104,22 @@ module QtQuick.Particles
 		signal affectedParameterChanged
 
 module QtQuick.Pdf
+	PdfBookmarkModel QtQuick.Pdf.PdfBookmarkModel
 	PdfDocument QtQuick.Pdf.PdfDocument
+	PdfLinkDelegate QtQuick/Pdf/PdfLinkDelegate.qml
+	PdfLinkModel QtQuick.Pdf.PdfLinkModel
 	PdfMultiPageView QtQuick/Pdf/PdfMultiPageView.qml
 	PdfPageImage QtQuick.Pdf.PdfPageImage
 	PdfPageNavigator QtQuick.Pdf.PdfPageNavigator
 	PdfPageView QtQuick/Pdf/PdfPageView.qml
 	PdfScrollablePageView QtQuick/Pdf/PdfScrollablePageView.qml
+	PdfSearchModel QtQuick.Pdf.PdfSearchModel
+	PdfSelection QtQuick.Pdf.PdfSelection
 	PdfStyle QtQuick/Pdf/PdfStyle.qml
+	type QtQuick.Pdf.PdfBookmarkModel PdfBookmarkModel
+		prototype QtQml.QtObject named
+		prop document QtQml.QtObject named pointer
+		signal documentChanged
 	type QtQuick.Pdf.PdfDocument PdfDocument
 		prototype QtQml.QtObject named
 		enum Status Null=0 Loading=1 Ready=2 Unloading=3 Error=4
@@ -6129,6 +6138,7 @@ module QtQuick.Pdf
 		prop creator QtQml.string named readonly
 		prop creationDate QtQml.var named readonly
 		prop modificationDate QtQml.var named readonly
+		prop pageModel QtQml.QtObject named pointer readonly
 		signal sourceChanged
 		signal passwordChanged
 		signal statusChanged
@@ -6144,8 +6154,36 @@ module QtQuick.Pdf
 		signal creatorChanged
 		signal creationDateChanged
 		signal modificationDateChanged
+		signal pageModelChanged
 		signal passwordRequired
 		method pagePointSize
+		method pageLabel
+		method pageIndexForLabel
+		method getSelection
+		method getSelectionAtIndex
+		method getAllText
+	type QtQuick/Pdf/PdfLinkDelegate.qml PdfLinkDelegate
+		prototype QtQuick.Item named
+		prop link QtQml.var named required
+		prop rectangle QtQml.rect named required
+		prop url QtQml.url named required
+		prop page QtQml.int named required
+		prop location QtQml.point named required
+		prop zoom QtQml.real named required
+		signal linkChanged
+		signal rectangleChanged
+		signal urlChanged
+		signal pageChanged
+		signal locationChanged
+		signal zoomChanged
+		signal tapped link:var
+		signal contextMenuRequested link:var
+	type QtQuick.Pdf.PdfLinkModel PdfLinkModel
+		prototype QtQml.QtObject named
+		prop document QtQml.QtObject named pointer
+		prop page QtQml.int named
+		signal documentChanged
+		signal pageChanged
 	type QtQuick/Pdf/PdfMultiPageView.qml PdfMultiPageView
 		prototype QtQuick.Item named
 		prop document QtQuick.Pdf.PdfDocument named pointer required
@@ -6153,7 +6191,7 @@ module QtQuick.Pdf
 		prop renderScale QtQml.real named
 		prop pageRotation QtQml.real named
 		prop searchString QtQml.string named
-		prop searchModel QtQml.var named readonly
+		prop searchModel QtQuick.Pdf.PdfSearchModel named pointer readonly
 		prop selectedText QtQml.string named readonly
 		prop currentPage QtQml.int named readonly
 		prop backEnabled QtQml.bool named readonly
@@ -6197,7 +6235,7 @@ module QtQuick.Pdf
 		signal currentZoomChanged
 		signal backAvailableChanged
 		signal forwardAvailableChanged
-		signal jumped page:int location:point zoom:real
+		signal jumped current:var
 		method clear
 		method jump
 		method update
@@ -6209,7 +6247,7 @@ module QtQuick.Pdf
 		prop renderScale QtQml.real named
 		prop zoomEnabled QtQml.bool named
 		prop searchString QtQml.string named
-		prop searchModel QtQml.var named readonly
+		prop searchModel QtQuick.Pdf.PdfSearchModel named pointer readonly
 		prop selectedText QtQml.string named readonly
 		prop currentPage QtQml.int named readonly
 		prop backEnabled QtQml.bool named readonly
@@ -6246,7 +6284,7 @@ module QtQuick.Pdf
 		prop renderScale QtQml.real named
 		prop pageRotation QtQml.real named
 		prop searchString QtQml.string named
-		prop searchModel QtQml.var named readonly
+		prop searchModel QtQuick.Pdf.PdfSearchModel named pointer readonly
 		prop selectedText QtQml.string named readonly
 		prop currentPage QtQml.int named readonly
 		prop backEnabled QtQml.bool named readonly
@@ -6281,6 +6319,48 @@ module QtQuick.Pdf
 		method copySelectionToClipboard
 		method searchBack
 		method searchForward
+	type QtQuick.Pdf.PdfSearchModel PdfSearchModel
+		prototype QtQml.QtObject named
+		prop document QtQml.QtObject named pointer
+		prop searchString QtQml.string named
+		prop currentPage QtQml.int named
+		prop currentResult QtQml.int named
+		prop currentResultLink QtQml.var named readonly
+		prop currentResultBoundingRect QtQml.var named readonly
+		prop currentResultBoundingPolygons QtQml.var named readonly
+		prop currentPageBoundingPolygons QtQml.var named readonly
+		prop count QtQml.int named readonly
+		signal documentChanged
+		signal searchStringChanged
+		signal currentPageChanged
+		signal currentResultChanged
+		signal currentResultLinkChanged
+		signal currentResultBoundingRectChanged
+		signal currentResultBoundingPolygonsChanged
+		signal currentPageBoundingPolygonsChanged
+		signal countChanged
+		method boundingPolygonsOnPage
+	type QtQuick.Pdf.PdfSelection PdfSelection
+		prototype QtQuick.Item named
+		prop document QtQml.QtObject named pointer
+		prop page QtQml.int named
+		prop renderScale QtQml.real named
+		prop from QtQml.point named
+		prop to QtQml.point named
+		prop hold QtQml.bool named
+		prop text QtQml.string named readonly
+		prop geometry QtQml.var named readonly
+		signal documentChanged
+		signal pageChanged
+		signal renderScaleChanged
+		signal fromChanged
+		signal toChanged
+		signal holdChanged
+		signal textChanged
+		signal geometryChanged
+		method clear
+		method selectAll
+		method copyToClipboard
 	type QtQuick/Pdf/PdfStyle.qml PdfStyle
 		prototype QtQml.QtObject named
 		prop selectionColor QtQuick.color named

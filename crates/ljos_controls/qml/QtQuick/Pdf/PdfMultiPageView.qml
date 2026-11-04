@@ -11,8 +11,8 @@ Item {
     property real renderScale: 1
     property real pageRotation: 0
     property string searchString
-    readonly property var searchModel: null
-    readonly property string selectedText: ""
+    readonly property PdfSearchModel searchModel: search
+    readonly property string selectedText: chosen.selection ? chosen.selection.text : ""
     readonly property int currentPage: navigator.currentPage
     readonly property bool backEnabled: navigator.backAvailable
     readonly property bool forwardEnabled: navigator.forwardAvailable
@@ -31,12 +31,19 @@ Item {
         renderScale = Math.min(width / first.width, height / first.height)
     }
 
-    // Finding and marking text in a page is not there yet: saying so beats
-    // doing nothing without a word.
-    function selectAll() { console.warn("PdfMultiPageView: selecting text is not implemented") }
-    function copySelectionToClipboard() { console.warn("PdfMultiPageView: selecting text is not implemented") }
-    function searchBack() { console.warn("PdfMultiPageView: searching is not implemented") }
-    function searchForward() { console.warn("PdfMultiPageView: searching is not implemented") }
+    function selectAll() {
+        const row = pages.itemAtIndex(currentPage)
+        if (row) {
+            chosen.take(row.selection)
+            row.selection.selectAll()
+        }
+    }
+    function copySelectionToClipboard() {
+        if (chosen.selection)
+            chosen.selection.copyToClipboard()
+    }
+    function searchBack() { search.show(search.currentResult - 1) }
+    function searchForward() { search.show(search.currentResult + 1) }
 
     function turned() { return (Math.abs(pageRotation) % 180) === 90 }
     function turnedSize(points) {
@@ -45,12 +52,53 @@ Item {
 
     onRenderScaleChanged: pages.showCurrentPage()
 
+    onCurrentPageChanged: search.currentPage = currentPage
+
+    // A document that loads is shown at its own size, whatever scale the
+    // view was given before, as qml6 does (features/pdf/pdf-views.feature).
+    Connections {
+        target: root.document
+        function onStatusChanged() {
+            if (root.document.status === PdfDocument.Ready)
+                root.resetScale()
+        }
+    }
+
     PdfPageNavigator {
         id: navigator
-        onJumped: function(page, location, zoom) {
-            if (zoom > 0)
-                root.renderScale = zoom
-            pages.show(page, location)
+        onJumped: function(current) {
+            if (current.zoom > 0)
+                root.renderScale = current.zoom
+            pages.show(current.page, current.location)
+        }
+    }
+
+    PdfSearchModel {
+        id: search
+        document: root.document
+        searchString: root.searchString
+
+        // The search wraps past either end and goes to the result's page;
+        // the view keeps its scale.
+        function show(index) {
+            currentResult = index
+            const found = currentResultLink
+            if (found.valid)
+                root.goToLocation(found.page, found.location, root.renderScale)
+        }
+    }
+
+    PdfStyle { id: style }
+
+    // Text is selected on one page at a time: selecting on another lets go
+    // of what was selected before.
+    QtObject {
+        id: chosen
+        property PdfSelection selection: null
+        function take(next) {
+            if (selection && selection !== next)
+                selection.clear()
+            selection = next
         }
     }
 
@@ -65,9 +113,12 @@ Item {
         function show(page, location) {
             placing = true
             positionViewAtIndex(page, ListView.Beginning)
-            contentX = middle + location.x * root.renderScale
-            contentY += location.y * root.renderScale
-            returnToBounds()
+            // Kept in bounds at once: a rebound would scroll after this,
+            // and the page the scroll ends on would be taken for the one
+            // gone to.
+            const within = (at, origin, size, view) => Math.max(origin, Math.min(at, origin + size - view))
+            contentX = within(middle + location.x * root.renderScale, originX, contentWidth, width)
+            contentY = within(contentY + location.y * root.renderScale, originY, contentHeight, height)
             placing = false
         }
         function showCurrentPage() { show(navigator.currentPage, Qt.point(0, 0)) }
@@ -99,6 +150,7 @@ Item {
             id: row
 
             required property int index
+            readonly property alias selection: selection
             // Read again when the document opens something else with as many pages.
             readonly property size points: root.document.status, root.document.pagePointSize(index)
             readonly property size shown: root.turnedSize(points)
@@ -123,6 +175,83 @@ Item {
                     asynchronous: true
                     onStatusChanged: if (row.index === root.currentPage) root.currentPageRenderingStatus = status
                     Component.onCompleted: if (row.index === root.currentPage) root.currentPageRenderingStatus = status
+
+                    // Each result on the page, and a line around the one the reader is on.
+                    Repeater {
+                        model: search.count, search.boundingPolygonsOnPage(row.index)
+                        delegate: Rectangle {
+                            required property var modelData
+                            x: modelData[0].x * root.renderScale
+                            y: modelData[0].y * root.renderScale
+                            width: (modelData[2].x - modelData[0].x) * root.renderScale
+                            height: (modelData[2].y - modelData[0].y) * root.renderScale
+                            color: style.pageSearchResultsColor
+                        }
+                    }
+                    Repeater {
+                        model: search.currentPage === row.index ? search.currentResultBoundingPolygons : []
+                        delegate: Rectangle {
+                            required property var modelData
+                            x: modelData[0].x * root.renderScale
+                            y: modelData[0].y * root.renderScale
+                            width: (modelData[2].x - modelData[0].x) * root.renderScale
+                            height: (modelData[2].y - modelData[0].y) * root.renderScale
+                            color: "transparent"
+                            border.color: style.currentSearchResultStrokeColor
+                            border.width: style.currentSearchResultStrokeWidth
+                        }
+                    }
+
+                    PdfSelection {
+                        id: selection
+                        anchors.fill: parent
+                        document: root.document
+                        page: row.index
+                        renderScale: root.renderScale
+
+                        Repeater {
+                            model: selection.geometry
+                            delegate: Rectangle {
+                                required property var modelData
+                                x: modelData[0].x
+                                y: modelData[0].y
+                                width: modelData[2].x - modelData[0].x
+                                height: modelData[2].y - modelData[0].y
+                                color: style.selectionColor
+                            }
+                        }
+                    }
+
+                    // A mouse selects text by dragging over it; a finger scrolls.
+                    DragHandler {
+                        target: null
+                        acceptedDevices: PointerDevice.Mouse | PointerDevice.Stylus
+                        onActiveChanged: if (active) {
+                            chosen.take(selection)
+                            selection.from = centroid.pressPosition
+                            selection.to = centroid.pressPosition
+                        }
+                        onCentroidChanged: if (active) selection.to = centroid.position
+                    }
+
+                    Repeater {
+                        model: PdfLinkModel {
+                            document: root.document
+                            page: row.index
+                        }
+                        delegate: PdfLinkDelegate {
+                            x: rectangle.x * root.renderScale
+                            y: rectangle.y * root.renderScale
+                            width: rectangle.width * root.renderScale
+                            height: rectangle.height * root.renderScale
+                            onTapped: function(link) {
+                                if (link.valid)
+                                    root.goToLocation(link.page, link.location, root.renderScale)
+                                else
+                                    Qt.openUrlExternally(link.url)
+                            }
+                        }
+                    }
                 }
             }
         }
