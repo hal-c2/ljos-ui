@@ -4034,6 +4034,7 @@ dependencies = [
  "ljos_timeline",
  "ljos_webengine",
  "ljos_xml",
+ "qml_compat",
  "qml_fmt",
  "qml_front",
  "qt_types",
@@ -4061,6 +4062,7 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "oxc_syntax",
+ "qml_compat",
  "qml_edit",
  "qml_front",
  "qml_syntax",
@@ -6539,6 +6541,19 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "qml_compat"
+version = "0.0.0"
+dependencies = [
+ "oxc_ast",
+ "oxc_ast_visit",
+ "oxc_span",
+ "oxc_syntax",
+ "qml_edit",
+ "qml_syntax",
+ "qt_types",
 ]
 
 [[package]]
