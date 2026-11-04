@@ -1204,7 +1204,18 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 return;
             }
         }
-        let given_word = self.word(given);
+        let mut given_word = self.word(given);
+        // Literal types say nothing in words: "a string" for `"todo"` and
+        // `"todo" | "doing"` alike. They are written out instead.
+        let written;
+        let word = if given_word == word {
+            let display = |ty| format!("`{}`", self.arena.display(ty, &|o| self.obj_name(o)));
+            given_word = display(given);
+            written = display(target);
+            written.as_str()
+        } else {
+            word
+        };
         if self.takes_as(target, given, false) {
             let functions = matches!(
                 (self.arena.kind(target), self.arena.kind(given)),
