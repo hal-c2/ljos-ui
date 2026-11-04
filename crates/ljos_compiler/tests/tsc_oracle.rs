@@ -26,7 +26,6 @@ const KNOWN_GAPS: &[(&str, &str)] = &[
         "C19HoverReject",
         "a member an id does not have is not reported in a binding",
     ),
-    ("N02ToggleReject", "ts-no-any is not built"),
     ("N03StatusReject", "ts-switch-exhaustive is not built"),
     (
         "N06CallbackReject",

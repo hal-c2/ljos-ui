@@ -67,12 +67,20 @@ pub(super) fn document<'a, O: TypeOracle>(
     let mut found = {
         let mut checker = Checker::new(compiler);
         checker.declare(&document.root, None);
+        checker.functions(&document.root, None);
         checker.object(&document.root);
         checker.found
     };
     found.sort_by_key(|(_, _, span)| span.start);
     found.dedup_by_key(|(_, _, span)| span.start);
     for (code, message, span) in found {
+        // A name not in sight is the compiler's warning in Qt's QML; in
+        // Ljós's API it has no type, which is the checker's error.
+        if code == Code::TsNoAny {
+            compiler
+                .diagnostics
+                .retain(|d| !(d.code == Code::UnresolvedName && d.span.start == span.start));
+        }
         if compiler
             .diagnostics
             .iter()
@@ -342,11 +350,13 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     }
 
     /// A function the checker knows nothing of: it takes anything.
+    /// A method the type table names without types: TYPES.md has it take
+    /// and give `unknown`.
     fn loose(&mut self) -> Ty {
         self.arena.function(Sig {
             params: Box::new([]),
-            rest: Some(Ty::ERROR),
-            ret: Ty::ERROR,
+            rest: Some(Ty::UNKNOWN),
+            ret: Ty::UNKNOWN,
         })
     }
 
@@ -399,6 +409,28 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     }
 
     /// What `name` is on an object of the type the oracle has.
+    /// The type table gives an Item's `parent` as a QtObject, the type of
+    /// the object it is owned by; what a script reads there is the visual
+    /// parent, an Item.
+    ///
+    /// DECISION: an Item's `parent` is an Item, as Qt documents it.
+    fn item_parent(&self, ty: O::Type, name: &str) -> Option<O::Type> {
+        if name != "parent" {
+            return None;
+        }
+        let oracle = self.c.types.oracle;
+        let item = oracle.module_type("QtQuick", "Item")?;
+        let mut at = Some(ty);
+        for _ in 0..64 {
+            let here = at?;
+            if here == item {
+                return Some(item);
+            }
+            at = oracle.prototype(here);
+        }
+        None
+    }
+
     fn native_member(&mut self, ty: O::Type, name: &str) -> Option<Own> {
         let oracle = self.c.types.oracle;
         if let Some(property) = oracle.property(ty, name) {
@@ -407,6 +439,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             let one = if let Some(primitive) = primitive(plain(text)) {
                 primitive
             } else if let Some(value) = property.value {
+                let value = self.item_parent(ty, name).unwrap_or(value);
                 self.object_ty(&QKind::Builtin(value))
             } else if let Some(enum_ty) = self.enum_of(ty, text) {
                 enum_ty
@@ -527,8 +560,19 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 QmlMember::Property(declaration) => {
                     if let (Some(index), Some(type_name)) = (index, &declaration.type_name) {
                         let written = type_name.name.to_string();
+                        let name = declaration.name.name.as_str();
                         let ty = if written == "alias" {
+                            // DECISION: an alias is let by: its type is its
+                            // target's, which the compiler resolves.
                             Ty::ERROR
+                        } else if matches!(plain(&written), "var" | "variant") {
+                            self.untyped(name, "write `property unknown` or a type", type_name.span)
+                        } else if matches!(plain(&written), "date") {
+                            self.untyped(
+                                name,
+                                "declare it as a number of milliseconds or a string",
+                                type_name.span,
+                            )
                         } else {
                             let types = self.c.types;
                             self.written(&written, type_name.is_list, &types)
@@ -553,9 +597,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                         .params
                         .iter()
                         .map(|p| {
+                            let name = p.name.name.as_str();
                             let ty = match &p.type_name {
                                 Some(t) => self.written(&t.name.to_string(), t.is_list, &types),
-                                None => Ty::ERROR,
+                                None => self.untyped(
+                                    name,
+                                    &format!("write its type (`{name}: real`, say)"),
+                                    p.name.span,
+                                ),
                             };
                             param(p.name.name.as_str(), ty)
                         })
@@ -601,6 +650,53 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         self.members(index, object, &[]);
     }
 
+    /// Walks the functions of the file's objects before their bindings, so
+    /// that a call has the return type a function's body gives.
+    ///
+    /// DECISION: a function with no return type written that calls another
+    /// such function declared after it gets the other's return type as
+    /// let by; TypeScript reads them in any order.
+    fn functions(&mut self, object: &QmlObject<'a>, owner: Option<usize>) {
+        let index = if is_group(object) {
+            owner
+        } else {
+            self.c.tree.index_of(object)
+        };
+        for member in &object.members {
+            match member {
+                QmlMember::Object(child) => self.functions(child, index),
+                QmlMember::Binding(binding) => self.functions_value(&binding.value, index),
+                QmlMember::Property(declaration) => {
+                    if let Some(value) = &declaration.value {
+                        self.functions_value(value, index);
+                    }
+                }
+                QmlMember::Function(function) => {
+                    let Some(index) = index else { continue };
+                    let name = function.id.as_ref().map(|id| id.name.as_str());
+                    let ty = self.function(function, None);
+                    if let Some(name) = name {
+                        self.own.insert((index, name), Own { ty, written: None });
+                    }
+                }
+                QmlMember::InlineComponent(inline) => self.functions(&inline.object, None),
+                QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+            }
+        }
+    }
+
+    fn functions_value(&mut self, value: &QmlBindingValue<'a>, owner: Option<usize>) {
+        match value {
+            QmlBindingValue::Object(object) => self.functions(object, owner),
+            QmlBindingValue::Objects(objects) => {
+                for object in objects {
+                    self.functions(object, owner);
+                }
+            }
+            QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => {}
+        }
+    }
+
     fn members(&mut self, owner: usize, object: &QmlObject<'a>, group: &[&'a str]) {
         for member in &object.members {
             match member {
@@ -629,14 +725,8 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                     };
                     self.value(name, target, value);
                 }
-                QmlMember::Function(function) => {
-                    let declared = function
-                        .id
-                        .as_ref()
-                        .and_then(|id| self.own.get(&(owner, id.name.as_str())))
-                        .map(|own| own.ty);
-                    self.function(function, declared);
-                }
+                // Walked first, by `functions`.
+                QmlMember::Function(_) => {}
                 QmlMember::InlineComponent(inline) => self.object(&inline.object),
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
@@ -1008,6 +1098,12 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
 
     /// Reports a value of type `given` going where `name`, of type
     /// `target`, said as `word`, is.
+    /// Reports what has no type, and how to give it one.
+    pub(super) fn untyped(&mut self, what: &str, fix: &str, span: Span) -> Ty {
+        self.report(Code::TsNoAny, format!("`{what}` has no type: {fix}"), span);
+        Ty::ERROR
+    }
+
     fn check_assign(&mut self, name: &str, target: Ty, word: &str, given: Ty, span: Span) {
         if !self.takes(target, given) {
             let given = self.word(given);

@@ -8,8 +8,8 @@ use qml_syntax::{
         Argument, ArrayExpressionElement, ArrowFunctionBody, AssignmentOperator, AssignmentTarget,
         BinaryOperator, BindingPattern, CallExpression, ChainElement, Expression, FormalParameters,
         Function, IdentifierReference, LogicalOperator, ObjectPropertyKind, PropertyKey,
-        SimpleAssignmentTarget, Statement, TSLiteral, TSSignature, TSType, TSTypeAnnotation,
-        TSTypeName, TSTypeOperatorOperator, UnaryOperator, VariableDeclaration,
+        SimpleAssignmentTarget, SpreadElement, Statement, TSLiteral, TSSignature, TSType,
+        TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator, UnaryOperator, VariableDeclaration,
         VariableDeclarationKind,
     },
 };
@@ -121,9 +121,19 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         for (at, p) in params.items.iter().enumerate() {
             let ty = match &p.type_annotation {
                 Some(annotation) => self.annot(&annotation.type_annotation),
-                None => want
-                    .and_then(|want| self.sig_param(want, at))
-                    .map_or(Ty::ERROR, |(ty, _)| ty),
+                None => match want.and_then(|want| self.sig_param(want, at)) {
+                    Some((ty, _)) => ty,
+                    // TypeScript infers a parameter's type from its default.
+                    None if p.initializer.is_some() => Ty::ERROR,
+                    None => {
+                        let name = pattern_name(&p.pattern);
+                        self.untyped(
+                            name,
+                            &format!("write its type (`{name}: number`, say)"),
+                            p.pattern.span(),
+                        )
+                    }
+                },
             };
             let ty = if p.optional {
                 self.arena.or(ty, Ty::UNDEFINED)
@@ -137,10 +147,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 written: None,
             });
         }
-        let rest = params
-            .rest
-            .as_ref()
-            .map(|rest| self.rest_elem(rest.type_annotation.as_deref()));
+        let rest = params.rest.as_ref().map(|rest| {
+            if rest.type_annotation.is_none() {
+                let name = pattern_name(&rest.rest.argument);
+                return self.untyped(
+                    name,
+                    &format!("write its type (`...{name}: number[]`, say)"),
+                    rest.rest.argument.span(),
+                );
+            }
+            self.rest_elem(rest.type_annotation.as_deref())
+        });
         let written = ret.map(|annotation| self.annot(&annotation.type_annotation));
         let wanted = want.map(|want| self.sig_ret(want));
         let declared = written.or(wanted.filter(|ret| *ret != Ty::VOID && *ret != Ty::ERROR));
@@ -255,7 +272,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return self.arena.intern(Kind::Global(global));
         }
         let Some(resolution) = self.c.lookup(name, id.span.start) else {
-            return Ty::ERROR;
+            return self.untyped(name, "it is not in scope", id.span);
         };
         // A role of a model, or a target's member only the running program
         // knows.
@@ -307,6 +324,27 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return Ty::ERROR;
         }
         self.arena.union(found)
+    }
+
+    /// `member`, where the member is written: one the value does not have
+    /// has no type. Where the compiler reports it too, its report is kept.
+    fn member_at(&mut self, receiver: Ty, property: &qml_syntax::js::IdentifierName<'a>) -> Ty {
+        let name = property.name.as_str();
+        for part in self.arena.members(receiver) {
+            let checked = !matches!(
+                self.arena.kind(part),
+                Kind::Error | Kind::Never | Kind::Undefined | Kind::Void | Kind::Global(Global::Qt)
+            );
+            if checked && self.member_one(part, name).is_none() {
+                let word = self.word(part);
+                return self.untyped(
+                    name,
+                    &format!("{word} has no member of that name"),
+                    property.span,
+                );
+            }
+        }
+        self.member(receiver, name)
     }
 
     fn member_one(&mut self, part: Ty, name: &str) -> Option<Ty> {
@@ -371,7 +409,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Expression::StaticMemberExpression(m) => {
                 let object = self.link(&m.object, short);
                 let object = self.optional(object, m.optional, short);
-                let base = self.member(object, m.property.name.as_str());
+                let base = self.member_at(object, &m.property);
                 match self.root_local(&m.object) {
                     Some(local) => self.fact(self.text(m.span), local).unwrap_or(base),
                     None => base,
@@ -453,6 +491,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
                 None => self.loose_args(&call.arguments),
             },
+            Kind::Unknown => {
+                self.loose_args(&call.arguments);
+                let callee = self.text(call.callee.span());
+                self.untyped(
+                    callee,
+                    "an unknown value is not a function: narrow it first",
+                    call.span,
+                )
+            }
             _ => self.loose_args(&call.arguments),
         }
     }
@@ -635,7 +682,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     elems.push(ty);
                 }
                 if elems.is_empty() {
-                    return want.unwrap_or(Ty::ERROR);
+                    return match want {
+                        Some(want) => want,
+                        None => self.untyped(
+                            "[]",
+                            "write the array's type where it goes (`const xs: number[] = []`)",
+                            array.span,
+                        ),
+                    };
                 }
                 let all = self.arena.union(elems);
                 if let Some(want) = want
@@ -652,15 +706,26 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Expression::ObjectExpression(object) => {
                 let mut fields: Vec<Field> = Vec::with_capacity(object.properties.len());
                 for property in &object.properties {
-                    let ObjectPropertyKind::ObjectProperty(property) = property else {
-                        return Ty::ERROR;
+                    let property = match property {
+                        ObjectPropertyKind::ObjectProperty(property) => property,
+                        ObjectPropertyKind::SpreadProperty(spread) => {
+                            if !self.spread_into(&mut fields, spread) {
+                                return Ty::ERROR;
+                            }
+                            continue;
+                        }
                     };
                     let name = match &property.key {
                         PropertyKey::StaticIdentifier(id) => id.name.as_str(),
                         PropertyKey::StringLiteral(s) => s.value.as_str(),
                         _ => {
                             self.expr(&property.value, None);
-                            return Ty::ERROR;
+                            let key = self.text(property.key.span());
+                            return self.untyped(
+                                key,
+                                "write each member of the object as `name: value`",
+                                property.key.span(),
+                            );
                         }
                     };
                     let field_want = want.and_then(|want| self.record_field(want, name));
@@ -676,7 +741,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                         optional: false,
                     });
                 }
-                self.arena.intern(Kind::Record(fields.into_boxed_slice()))
+                // A member written after a spread replaces the one it gave.
+                let mut seen = std::collections::HashSet::new();
+                let mut kept: Vec<Field> = fields
+                    .into_iter()
+                    .rev()
+                    .filter(|field| seen.insert(field.name.clone()))
+                    .collect();
+                kept.reverse();
+                self.arena.intern(Kind::Record(kept.into_boxed_slice()))
             }
             Expression::UnaryExpression(unary) => {
                 let ty = self.expr(&unary.argument, None);
@@ -860,8 +933,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.loose_args(&new.arguments);
                     return self.arena.intern(Kind::Map { key, value });
                 }
-                self.expr(&new.callee, None);
-                self.loose_args(&new.arguments)
+                self.loose_args(&new.arguments);
+                let callee = self.text(new.callee.span());
+                self.untyped(
+                    callee,
+                    "`new` makes only a `Map<K, V>()` in Ljós's API",
+                    new.span,
+                )
             }
             Expression::ArrowFunctionExpression(arrow) => {
                 let body = match &arrow.body {
@@ -910,6 +988,40 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             _ => Ty::ERROR,
         }
+    }
+
+    /// Adds the members `...value` gives to `fields`, as TypeScript does:
+    /// a required member replaces one before it, an optional one may leave
+    /// it, so it is either type. Whether the spread has a type.
+    fn spread_into(&mut self, fields: &mut Vec<Field>, spread: &SpreadElement<'a>) -> bool {
+        let given = self.expr(&spread.argument, None);
+        if given == Ty::ERROR {
+            return false;
+        }
+        // Spreading what may be undefined gives nothing when it is.
+        let maybe = self.arena.has_undefined(given);
+        let given = self.arena.without_undefined(given);
+        let Kind::Record(spread_fields) = self.arena.kind(given).clone() else {
+            let what = format!("...{}", self.text(spread.argument.span()));
+            self.untyped(
+                &what,
+                "only an object of a `{ … }` type spreads",
+                spread.span,
+            );
+            return false;
+        };
+        for field in spread_fields {
+            let optional = field.optional || maybe;
+            match fields.iter().position(|f| f.name == field.name) {
+                Some(at) if optional => {
+                    let before = fields[at].ty;
+                    fields[at].ty = self.arena.or(before, field.ty);
+                }
+                Some(at) => fields[at] = field,
+                None => fields.push(Field { optional, ..field }),
+            }
+        }
+        true
     }
 
     fn record_field(&self, record: Ty, name: &str) -> Option<Ty> {
@@ -1510,7 +1622,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                         None => self.arena.widen(given),
                     }
                 }
-                None => written.unwrap_or(Ty::ERROR),
+                None => match written {
+                    Some(written) => written,
+                    None => self.untyped(
+                        pattern_name(&declarator.id),
+                        "write its type or give it a value",
+                        declarator.id.span(),
+                    ),
+                },
             };
             self.bind_pattern(&declarator.id, ty, binding);
         }
@@ -1737,7 +1856,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     /// The type a TypeScript annotation names.
     pub(super) fn annot(&mut self, ty: &TSType<'a>) -> Ty {
         match ty {
-            TSType::TSAnyKeyword(_) => Ty::ERROR,
+            TSType::TSAnyKeyword(any) => self.untyped("any", "write `unknown` or a type", any.span),
             TSType::TSUnknownKeyword(_) => Ty::UNKNOWN,
             TSType::TSNeverKeyword(_) => Ty::NEVER,
             TSType::TSUndefinedKeyword(_) => Ty::UNDEFINED,
