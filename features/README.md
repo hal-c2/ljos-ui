@@ -110,13 +110,35 @@ Qt and Ljós and passes only if both do; scenarios without that tag run on Ljós
 engine is not built, the `ljos` backend reports every operation as `PENDING: not implemented yet`
 and those scenarios fail. Results go to `target/features/junit.xml`.
 
-A scenario that runs for more than 300 seconds stops the run: the runner prints
-`scenario deadline: features/<file>:<line> "<name>"` and aborts, so a hang names its scenario instead
-of holding the run. The shutdown after the last scenario has the same deadline.
-`LJOS_BDD_SCENARIO_DEADLINE=<seconds>` changes it; `0` turns it off.
-
 The ledger is not part of `cargo test --workspace` (its test target sets `test = false`); the
 `mise` tasks run it explicitly with `--test features`.
+
+### The scenario deadline
+
+A run never hangs its job. Each scenario has a deadline of `LJOS_BDD_SCENARIO_DEADLINE` seconds:
+300 if the variable is unset or empty, none if it is `0`. Any other value that is not a whole number
+stops the run before it starts. The clock starts as the scenario's backends start, after its World is
+made, and runs through its backgrounds and steps, the dropping of its World and the making of the
+next scenario's. The end of the run has 60 s of its own, for closing web pages, shutting the web
+engine down and exiting.
+
+A step that blocks never gives its thread back, so the run cannot fail that one scenario and go on.
+When a scenario runs past its deadline, `ljos-bdd` prints a report on stderr and ends the process at
+once with exit status **124** (the status `timeout(1)` uses). Paths in the report are relative to the
+workspace root:
+
+```text
+ljos-bdd: a scenario ran past its deadline of 300 s (LJOS_BDD_SCENARIO_DEADLINE) and failed; the run ends here
+  scenario: features/pdf/views.feature:12: Scenario: A view opens
+  step 2 of 3: features/pdf/views.feature:14: When the page is shown
+```
+
+The step count includes background steps. When no step was running at the time, the last line is
+`before its first step (its backends starting)`, or `after step N of M: …` followed by
+`(no step runs: its World is being dropped, or the next scenario's made)`. An overrun at the end of
+the run prints
+`ljos-bdd: closing web pages, shutting the web engine down and exiting ran past its deadline of 60 s; the run ends here`.
+A CI step can match on the `ljos-bdd: ` prefix and on status 124.
 
 ## Step catalogue
 

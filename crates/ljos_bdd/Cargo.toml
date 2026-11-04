@@ -17,6 +17,11 @@ harness = false
 # `--test features`.
 test = false
 
+# A process that dropped an engine with a page open still ends.
+[[test]]
+name = "webengine_exit"
+required-features = ["webengine"]
+
 [features]
 # Show web pages (`@chromium` scenarios) through CEF: `CEF_PATH` names
 # the runtime, which is copied beside the runner.
@@ -99,9 +104,14 @@ qt_types = { path = "../qt_types" }
 # Only the R (vello_cpu) backend: egui stays out of this crate.
 ljos_render = { path = "../ljos_render", default-features = false }
 
+# The scenario watchdog ends the process without running exit handlers.
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
 # The @desktop surface: the sandbox compositor's virtual pointer and its
 # windows (src/backend/desktop.rs). The sandbox is a Wayland compositor, so
 # the surface exists only on Linux.
+
 [target.'cfg(target_os = "linux")'.dependencies]
 ljos_bench = { path = "../ljos_bench" }
 
