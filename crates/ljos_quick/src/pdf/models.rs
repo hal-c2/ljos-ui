@@ -289,11 +289,16 @@ fn search(e: &Engine, me: ObjectId) {
             let count = i32::try_from(hits.len()).unwrap_or(i32::MAX);
             found.borrow_mut().rows = hits;
             reset(&found, e);
+            let before = e.untrack(|| e.read(me, M::COUNT.index));
             set(e, me, M::COUNT.index, Value::Int(count));
             // What boundingPolygonsOnPage drew depends on the rows, which
             // changed even when a new search finds as many places: its
-            // bindings must run again though the count stays the same.
-            let _ = e.notify(me, M::COUNT.index);
+            // bindings must run again though the count stays the same, as
+            // qml6 says countChanged after every search. A count that did
+            // change has told its readers already.
+            if before == Value::Int(count) {
+                let _ = e.notify(me, M::COUNT.index);
+            }
             show_current(e, me);
         });
     });
