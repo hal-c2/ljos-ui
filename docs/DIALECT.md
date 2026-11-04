@@ -143,15 +143,50 @@ property the spike tests (§12).
 
 ## 4. The Ljós API
 
+Qt's surface is where this section starts, not what it keeps. Every part
+below asks what an app is trying to say, counts how often the corpus says
+it (536 QML files under `corpus/`, counted by a
+scratch script that is not committed), and gives the one way Ljós says it.
+
+Five rules hold throughout:
+
+1. **Every Qt construct lowers mechanically, or has a written DECISION**
+   (§4.14). Compat never goes away, so a construct can wait for a later
+   milestone, but it is never lost.
+2. **Declarative first.** What an app states (a binding, a state, a keyed
+   list) is something Studio can edit losslessly, ljos-web can render
+   without a JS engine, and the AOT tiers can compile. An imperative escape
+   stays, typed.
+3. **The API costs less at run time, never more.** Each part says what its
+   run-time cost is next to Qt's.
+4. **General purpose.** Nothing below is for one app.
+5. **The type is the documentation.** Enums are their type's, unions are
+   strings the checker knows, and a misspelt name is a check error, not an
+   `undefined` at run time.
+
+Five corpus apps of different kinds are rewritten by hand in
+a scratch directory (corpus files are never committed). Excerpts
+are quoted side by side below:
+
+| App | Kind | What it exercises |
+|---|---|---|
+| `clocks` | a grid of live views | typed static rows, the `Clock` global, inline components |
+| `calqlatr` | input-heavy, responsive | one turning `Box`, keys as data, typed states, rules in TS |
+| `photosurface` | gestures and media | `Pinch`/`Drag`/`Wheel`/`Hover` as children, a folder model |
+| `samegame` | a game, objects made at run time | declarative creation, keyed exit transitions, `Component<T>` |
+| `rssnews` | network master/detail | decoders, `currentIndex` as the selection, `Instant` |
+
 ### 4.1 Modules
 
 | Module | Holds | Replaces |
 |---|---|---|
-| `Ljos.Ui` | items, visuals, input areas, states, text, images | `QtQuick` |
-| `Ljos.Layout` | rows, columns, grids, flows, stacks; `Layout.*` | `QtQuick.Layouts`, positioners |
-| `Ljos.Controls` | the controls and their styles | `QtQuick.Controls` |
-| `Ljos.Models` | typed list and tree models; delegates' typed `model` | `QtQml.Models`, `ListModel` |
-| `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, and the cleaned globals (§4.3) | `QtQml`, the `Qt` namespace |
+| `Ljos.Ui` | items, visuals, gestures, states, text, images | `QtQuick` |
+| `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
+| `Ljos.Controls` | the controls, built on `Ljos.Design` roles | `QtQuick.Controls` |
+| `Ljos.Models` | `ListModel`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
+| `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
+| `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
+| `Ljos.Platform` | `StandardPaths`, `FolderDialog`, `FileDialog`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
 | `Ljos.Blocks` | functional blocks and shells (ADR 0003) | (Ljós's own, already built) |
 
 DECISION: the module set is `Ljos.*`, one module per concern, named in the
@@ -159,7 +194,7 @@ singular. `Ljos.Ui` is the first and the only one phase 1 builds. It
 imports `QtQml` for `Component`, `Timer` and the `Qt` namespace until
 `Ljos.Core` exists.
 
-### 4.2 Cleaned-up types
+### 4.2 Names: the rename rule and phase 1's slice
 
 The rule for a rename is that a name says the one thing the member is, the
 same across types. Each rename has a mechanical lowering, which the pass
@@ -168,12 +203,10 @@ does.
 | Qt | Ljós | Why | Lowering |
 |---|---|---|---|
 | `Rectangle.color` | `Rectangle.fill` | `color` is the fill here, the glyphs on `Text` and the line on a border | the member, its handler (`onColorChanged` → `onFillChanged`), `PropertyChanges`, a value source's target (`… on color`), and any `id.color` with a known target |
-| `MouseArea` | `PointerArea` | it takes pen and touch as well | the type name |
-| `TapHandler`, `DragHandler`, … | members of `PointerArea` (milestone M3) | two input APIs for one job | per member, phase 2 |
-| `property var x` | a typed property | untyped state | phase 1: `property unknown x`, which is TypeScript's word for a value that must be narrowed before use; a type where one is known (M4) |
-| `Qt.AlignLeft`, string-typed enums | the type's own enum (`Text.Align.Left`) | one namespace for every enum | by the enum's owner in the Qt table |
-| `color: "#fff"` | the same | a string is a `color` only where `color` is declared | none: the checker enforces it in Ljós files |
-| positioners (`Row`, `Column`) | `Ljos.Layout` | one layout model | M2 |
+| `MouseArea` | `PointerArea` (phase 1), then gesture children (§4.7) | it takes pen and touch as well | the type name; §4.7 |
+| `property var x` | a typed property | untyped state | phase 1: `property unknown x`; a type where one is known (§4.4) |
+| `Qt.AlignLeft`, string-typed enums | the type's own enum (`Text.Align.Left`), and one shared `Align` | one namespace for every enum | by the enum's owner in the Qt table |
+| `color: "#fff"` | the same, or a theme role (§4.12) | a string is a `color` only where `color` is declared | none: the checker enforces it in Ljós files |
 | `Component.onCompleted` | kept | ordering is real | none |
 
 The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
@@ -186,25 +219,57 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 It is described in `crates/qt_types/src/ljos.txt`, so `ljos check` and the
 lowering know it with no Qt installed.
 
-### 4.3 Cleaned-up globals
+### 4.3 Globals
 
-The `Qt` object is split by what its members are:
-
-| Qt | Ljós | Kind |
-|---|---|---|
-| `Qt.vector2d/3d/4d`, `quaternion`, `matrix4x4`, `point`, `size`, `rect` | value types' constructors: `vector3d(x, y, z)` in `Ljos.Core` | pure, tier 1 |
-| `Qt.rgba`, `hsla`, `darker`, `lighter`, `tint` | `color.rgba(…)`, `c.darker(f)` | pure, tier 1 |
-| `Qt.formatDateTime`, `locale` | `Ljos.Core` `Locale` | pure |
-| `Qt.resolvedUrl` | `url("…")`, which is resolved against the file statically | compile time |
-| `Qt.binding` | a `Binding` object, or a state | declarative |
-| `Qt.createComponent`, `createQmlObject` | `Component` by type: `Loader { sourceComponent: Card }` | typed |
-| `Qt.quit`, `exit`, `application`, `platform`, `styleHints`, `inputMethod`, `openUrlExternally` | `App` singleton in `Ljos.Core` | effects, typed |
-| `Qt.callLater` | `later(() => …)` | scheduled, no polling |
-
-Every replacement is an import of a TypeScript module or a QML singleton.
-None is a global. A Ljós file sees only what it imports, plus the
+The `Qt` object (815 uses in 114 files) is one namespace for vectors,
+colours, factories, time and the app. It is split by what its members are,
+and nothing is global: a Ljós file sees only what it imports, plus the
 ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
 `String`, `Number`, `Array` read-only methods, `Map`).
+
+| Qt | Ljós | Kind | Cost |
+|---|---|---|---|
+| `Qt.vector2d/3d/4d`, `quaternion`, `matrix4x4`, `point`, `size`, `rect` | constructors: `vector3d(x, y, z)` in `Ljos.Core` | pure, tier 1 | a value, no host call |
+| `Qt.rgba`, `hsla`, `darker`, `lighter`, `tint` | `color.rgba(…)`, `c.darker(f)` | pure, tier 1 | folded at compile time when constant |
+| `new Date()`, a `Timer` that reads it | `Clock.now(Clock.Resolution.Second)`: a reactive `Instant` | a source | one wake-up per resolution tick for the whole app, none while nothing that reads it is visible |
+| `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
+| `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
+| `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
+| `Qt.binding` | a `Binding` object, or a state | declarative | |
+| `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
+| `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
+| `Qt.platform`, `styleHints`, `inputMethod` | `App.platform`, `Theme.motion`, `App.inputMethod` | reactive | |
+| `Math.random` for a range | `Random.between(lo, hi)`, `Random.pick(list)`; `Math.random` stays | effect | |
+| `Qt.callLater` | `later(() => …)` | scheduled, no polling | |
+| `StandardPaths`, `FolderDialog` | `Ljos.Platform` | effects | |
+
+`clocks` shows what a reactive clock is worth. Qt's version runs a 100 ms
+`Timer` in each of seven delegates, 70 wake-ups a second, and each one
+builds a `Date`:
+
+```qml
+// Qt (clocks/Clock.qml)                          // Ljós (Clock.qml)
+function timeChanged() {                           readonly property Zones.HandAngles angles:
+    var date = new Date;                               Zones.hands(Clock.now(Clock.Resolution.Second),
+    hours = internationalTime                                      clock.modelData)
+        ? date.getUTCHours() + Math.floor(clock.shift)
+        : date.getHours()
+    ...
+}
+Timer {
+    interval: 100; running: true; repeat: true;
+    onTriggered: clock.timeChanged()
+}
+```
+
+The Ljós version wakes once a second for the whole app, with all seven
+clocks reading one value. `hands` is a pure TypeScript function, so tier 1
+can compile it.
+
+DECISION: there is no `date` type in a Ljós file. An `Instant` is a number
+of UTC milliseconds with methods, and a calendar date is formatted through
+`Locale`. Qt's `date` lowers to `Instant` where it is only stored or
+compared, and keeps its file where it uses `Date`'s local-time getters.
 
 ### 4.4 Typed properties and the shared type namespace
 
@@ -233,21 +298,567 @@ Item {
 `filter.ts` is a plain TypeScript module:
 `export type Filter = { readonly kind: "none" } | { readonly kind: "only"; readonly tag: Tag }`.
 
+QML has no generic syntax for a property's type, so `ListModel<T>` and
+`Component<T>` are never written in a QML file. The checker infers them:
+`property Component block: Block` is a `Component<Block>`, and a
+`ListModel`'s row type comes from its `ListElement`s. Interfaces and maps
+are declared in a `.ts` module and named from QML.
+
 The other direction is generated. Each QML component and native type has a
 `.d.ts` declaration, so a TS module can take `Card` or `ListView` as a
-parameter type. The declarations are generated from the same table
-`ljos check` reads (§10), so `tsc` and an editor see what the checker sees.
+parameter type. The declarations come from the same table `ljos check`
+reads (§10, `ljos types --dts`), so `tsc` and an editor see what the
+checker sees.
 
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
 boundary through a declared decoder (note 11 §3.7). The decoder's result is
-the only cast the checker allows.
+the only cast the checker allows. `rssnews` shows this at the network
+boundary:
+
+```qml
+// Qt (rssnews/Main.qml)                                       // Ljós
+XmlListModel {                                                 XmlModel {
+    source: "https://" + window.currentFeed                        source: `https://${Feeds.feeds[categories.currentIndex]?.path ?? ""}`
+    query: "/rss/channel/item"                                     query: "/rss/channel/item"
+    XmlListModelRole { name: "title"; elementName: "title" }       decode: Feeds.article      // (item: XmlNode) => Article | undefined
+    XmlListModelRole { name: "content"; elementName: "content";}
+                       attributeName: "url" }
+    ...
+}
+// NewsDelegate.qml                                            // NewsDelegate.qml
+required property string title                                 required property Feeds.Article modelData
+required property string content
+required property string link
+required property string pubDate
+```
+
+In Qt's version a role misspelt in either place is an `undefined` at run
+time. In Ljós's it is a check error, and the delegate gets one typed value.
 
 ### 4.5 Scripts
 
 The subset is note 11 §7 (H1) without change. The rules the checker must
 enforce by M4 are listed in §5. Scripts are parsed by the oxc fork with
 `SourceType::ts()` (`crates/ljos_compiler/src/js.rs`). Types are erased
-before tier 2 runs them, so TS costs nothing at run time.
+before tier 2 runs them, so TS costs nothing at run time. Logic that is not
+about the view goes in a `.ts` module and is a pure function where it can
+be. `calqlatr`'s 158-line `calculator.js`, which keeps module globals,
+becomes `calc.ts`:
+`press(calc: Calc, key: Key): Calc`. `samegame`'s 542-line `samegame.js`
+becomes `game.ts`: `click(game: Game, column, row): Move`. Both can be
+tested with no UI.
+
+### 4.6 Layout: one model
+
+**What apps say.** "Put these next to each other", "this one takes the
+rest", and "this sits on top of that". The corpus says the first two
+through nine types, in two families that size children by different rules:
+
+| | Uses | Files |
+|---|---:|---:|
+| `Row` / `Column` / `Grid` / `Flow` (positioners: never size a child) | 43 / 46 / 1 / 3 | 72 |
+| `RowLayout` / `ColumnLayout` / `GridLayout` / `StackLayout` (size children) | 102 / 63 / 32 / 4 | ~120 |
+| `Layout.fillWidth/Height` | 269 | 63 |
+| `Layout.preferred*` | 286 | 47 |
+| `anchors.fill` | 307 | 164 |
+| anchor edges / margins | 641 / 488 | 106 / 104 |
+| `width: parent.width…` | 167 | 63 |
+
+The two families disagree on what a child asks for. Measured with qml6 as a
+black box (a 20-line probe file, run with `QT_QPA_PLATFORM=offscreen qml6`):
+
+```
+RowLayout { width: 400; spacing: 0
+    Rectangle { width: 50; implicitWidth: 80 }              -> 80   (the explicit width is ignored)
+    Rectangle { implicitWidth: 80; Layout.fillWidth: true } -> 290
+    Rectangle { width: 30 }                                 -> 30   (implicit 0: the explicit width is used) }
+Row { Rectangle { width: 50; implicitWidth: 80 }            -> 50   (explicit wins; Layout.fillWidth is ignored) }
+```
+
+**The design.** One arrangement, the *Box*, with one size rule.
+
+- `Box { direction: Box.Row | Box.Column }`. `Row` and `Column` are a Box
+  with the direction fixed. `Grid` places in cells, `Flow` wraps, and
+  `Pages` shows one child at a time (it replaces `StackLayout`, and
+  `StackView` for the simple case).
+- **The size rule, per axis:** `Layout.preferredX` if it is set, else an
+  explicit `width`/`height` if the file sets one, else the implicit size.
+  Then `fill`, `minimum` and `maximum` work as Qt's Layouts' do. A Box whose
+  children are all fixed or implicit and none fills is a positioner, so the
+  two families merge with no case lost.
+- `spacing` and `padding` (with sides) are on the container. A child's
+  `Layout.margins` are its own.
+- **Anchors are for a free parent only:** an `Item`, a `Rectangle`, or any
+  non-arrangement. Anchors on a child of a Box are a check error
+  (`layout-anchored`: "`anchors.left` on a child of a `Row` is overridden
+  by it; use `Layout.alignment` or move it out of the Row"). Qt only warns,
+  at run time. Overlap (z-stacking, `anchors.fill: parent`, a badge on a
+  corner) is what anchors are for, and they stay.
+- `LayoutItemProxy` (one item shown in two layouts) is not needed: a Box's
+  direction is a binding.
+
+`calqlatr` and `rssnews` turn with the window's aspect. Qt's calqlatr has
+two layouts and a proxy; Ljós's has one Box:
+
+```qml
+// Qt (calqlatr/Main.qml, abridged)                    // Ljós
+ColumnLayout { visible: root.isPortraitMode            Box {
+    LayoutItemProxy { target: calcDisplay                  anchors.fill: parent
+        Layout.minimumHeight: calcDisplay.minHeight }      direction: width < height ? Box.Column : Box.Row
+    LayoutItemProxy { target: numberPad                    Display { Layout.fillWidth: true; Layout.fillHeight: true
+        Layout.alignment: Qt.AlignHCenter }                          Layout.minimumHeight: minHeight }
+}                                                          NumberPad { Layout.alignment: Align.Center }
+RowLayout { visible: !root.isPortraitMode              }
+    LayoutItemProxy { target: calcDisplay }
+    LayoutItemProxy { target: numberPad
+        Layout.alignment: Qt.AlignVCenter }
+}
+```
+
+`rssnews`'s Qt version swaps width, height, orientation and four anchors on
+`isPortrait`, in four objects. Ljós's swaps one `direction`.
+
+**Cost.** A Box with no fill child does what a positioner does: one pass
+over its children, with no per-child allocation. One that fills does what a
+Layout does, one polish per change. The D1 spike (branch `dialect/d1-layout`)
+measures both with budget cases.
+
+**Lowering.**
+
+- `Row`/`Column` → `Row`/`Column`. A positioner child with `Layout.*` keeps
+  the file, since Qt ignores it and Ljós would honour it.
+- `RowLayout`/`ColumnLayout` → `Row`/`Column`, unless a child sets an
+  explicit size with no `preferred*` and an implicit size not statically 0.
+  That child is the case where the rules differ, and its file is kept, with
+  that reason.
+- `GridLayout` → `Grid`.
+- `StackLayout` → `Pages`.
+- `Flow` → `Flow`.
+- `LayoutItemProxy` keeps its file. It needs a person to merge the two
+  layouts into one Box.
+
+DECISION: an explicit size is a request in a Ljós Box, as it is in a
+positioner. Qt's Layouts ignoring it is the surprise this removes. The
+lowering keeps a file only where that changes a number.
+
+### 4.7 Input: one pointer stream, gestures as children
+
+**What apps say.** "When this is tapped", "this can be dragged", "this
+zooms". The corpus has two input APIs for it:
+
+| | Uses | Files |
+|---|---:|---:|
+| `MouseArea` | 61 | 47 |
+| of which `anchors.fill: parent` and no children | 52 | |
+| `TapHandler` / `DragHandler` / `PinchHandler` / `HoverHandler` / `WheelHandler` | 29 / 10 / 3 / 3 / 5 | |
+| `PinchArea`, `MultiPointTouchArea` | 2, 0 | |
+| `onClicked` | 196 | 81 |
+| `onPressed` / `onReleased` / `onPositionChanged` | 13 / 5 / 5 | |
+| `preventStealing`, `propagateComposedEvents`, `mouse.accepted` | 5, 0, 0 | |
+
+52 of the 61 MouseAreas fill their parent. They are an item made only to
+say "the parent is tappable", with a geometry that has to be kept equal to
+the parent's.
+
+**The design.** A gesture is a child object of the item it acts on, not an
+item: `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress`. All of them
+read one pointer stream (mouse, touch and pen alike). Each gesture
+recognises from that stream, and the first one to recognise takes the
+pointer. `takeOver: true` lets a gesture win over one that has already
+started (a pinch over a drag), which replaces `preventStealing` and
+`grabPermissions`. Events are typed (`TapEvent`, `DragEvent`) and carry
+`position`, `modifiers`, `button` and `device`.
+
+```qml
+// Qt (photosurface.qml, abridged)                   // Ljós
+PinchHandler {                                       Pinch {
+    minimumRotation: -360; maximumRotation: 360          rotation { minimum: -360; maximum: 360 }
+    minimumScale: 0.1; maximumScale: 10                  scale { minimum: 0.1; maximum: 10 }
+    grabPermissions: PointerHandler.CanTakeOverFromAnything   takeOver: true
+}                                                    }
+DragHandler { id: dragHandler                        Drag { momentum: Drag.Momentum.Ease }
+    onActiveChanged: { if (!active) anim.restart(     Hover { id: hover }
+        centroid.velocity) } }                       Wheel { modifiers: Modifier.Control; drives: "rotation" }
+MomentumAnimation { id: anim; target: frame }
+HoverHandler { id: hoverHandler }
+WheelHandler { acceptedModifiers: Qt.ControlModifier
+    property: "rotation" }
+```
+
+Qt's version needs a 40-line `MomentumAnimation` file to keep a flung photo
+moving. Ljós's `Drag.momentum` is that, built in, on the animation clock.
+
+**Cost.** A gesture is not an item: no geometry, no scene node, no hit-test
+rectangle of its own. A tap on a cell of `calqlatr`'s pad does one hit test
+against the cell, where Qt's version tests the cell and then its
+MouseArea.
+
+**Lowering.**
+
+- `MouseArea { anchors.fill: parent; onClicked }` with no children →
+  `Tap { onTapped }`. That is 52 of 61.
+- `hoverEnabled` + `containsMouse` → `Hover` + `hover.hovered`.
+- `drag.target` → `Drag`.
+- `*Handler` → the gesture of the same kind, with members renamed.
+- A MouseArea with children, a geometry of its own, or `mouse.accepted`
+  keeps its file as a `PointerArea` (phase 1's face) until M3.
+
+DECISION: Qt's attached `Drag` (drag and drop, 7 uses in 3 files) is not
+the `Drag` gesture. It becomes `DragSource` and `DropArea` in `Ljos.Ui`,
+since moving an item and carrying data are two different things.
+
+### 4.8 Models and delegates
+
+**What apps say.** "Show this list", "show these rows, and keep them when
+they change", "the user picked this one". The corpus:
+
+| | Uses | Files |
+|---|---:|---:|
+| `ListModel` / `ListElement` | 38 / 163 | 25 / 12 |
+| `model: [` (an array literal) / `model: N` | 14 / 6 | |
+| `Repeater` / `ListView` / `GridView` / `PathView` | 35 / 29 / 1 / 2 | |
+| `modelData` / `model.<role>` | 88 / 17 | 27 / 9 |
+| `required property` | 314 | 128 |
+| `.append({` / `.get(i)` / `.remove(` / `.clear()` | 17 / 38 / 9 / 20 | |
+| `currentIndex` | 94 | 26 |
+
+Most ListModels (12 files' worth of 163 ListElements) are constant tables
+written as objects. Their roles are strings that the delegates' `required`
+properties have to match by hand.
+
+**The design.**
+
+- **Static rows are a typed list.** `readonly property list<Zones.Zone> zones: [...]`
+  with `model: zones`, where the row type is a TS interface. The view's
+  delegate gets `required property Zones.Zone modelData`, and the checker
+  checks every field read against it.
+- **A view takes any `list<T>` and a `key`.** `key: "id"` makes the view
+  diff a new list against the old one by key. A row that stays keeps its
+  delegate (and its state and animations), a new key gets a new delegate
+  with the view's `enter` transition, and a removed one plays `exit`
+  before it is destroyed. Assigning a new list (`game = move.game`) is the
+  ordinary way to change a model, and a reducer in TS returns a new list.
+- **`ListModel` stays** for in-place edits (`append`, `move`) that another
+  part of the app observes. Its row type is inferred from its
+  `ListElement`s or declared with `ListModel { row: Calc.Line }`.
+- **Delegates' `required` properties are checked** against the row type,
+  so a misspelt role is a check error. `modelData` is kept as the name of
+  the row.
+- **The selection is the view's.** `currentIndex` is what is chosen, and
+  everything else is derived from it, never a second copy kept in step by
+  click handlers (rssnews's `currentFeed`).
+- `ListView.follow: ListView.Follow.End` keeps a log or a calculator tape
+  at its end. It replaces `onCountChanged: positionViewAtEnd()`.
+
+```qml
+// Qt (clocks/Main.qml)                              // Ljós
+ListView {                                           readonly property list<Zones.Zone> zones: [
+    model: ListModel {                                   { city: "New York", shift: -4 },
+        ListElement { city: "New York"; shift: -4 }      { city: "London", shift: 0 },
+        ListElement { city: "London"; shift: 0 }         ...
+        ...                                          ]
+    }                                                ListView { model: zones; key: "city"
+    delegate: Clock { city: model.city;                  delegate: Clock {} }
+                      shift: model.shift }           // Clock.qml
+}                                                    required property Zones.Zone modelData
+// Clock.qml: property string city; property real shift
+```
+
+`samegame` shows a keyed list doing what Qt's version does by hand
+(§4.11).
+
+**Cost.** A static list is a constant: nothing to build at start, where a
+`ListModel` builds a role table and its rows. Diffing by key is O(n) in the
+list's length per change. Keeping lists as persistent vectors (M5) would
+make it O(changes). A keyed view creates and destroys only what changed,
+where Qt's views reset when a model is replaced.
+
+**Lowering.**
+
+- A `ListModel` of constant `ListElement`s that nothing edits → a typed
+  list. The row type is written into a `.ts` module beside the file, and
+  each delegate's required properties become `modelData.<field>`. A
+  ListModel that is edited stays a ListModel.
+- `model.<role>` → `modelData.<role>`.
+- `XmlListModel` → `XmlModel` with a generated decoder.
+- `FolderListModel` → `FolderModel`.
+
+DECISION: typed lists with keys are the default, and ListModel is for
+shared, edited lists. A ListModel's row type is fixed by its first
+`ListElement` or its `row:`, and a later element with other roles is a
+check error.
+
+### 4.9 States
+
+**What apps say.** "In this condition it looks like this", and sometimes
+"go to that state now". The corpus says the first far more often:
+
+| | Uses | Files |
+|---|---:|---:|
+| `states: [` / `State {` | 90 / 322 | 82 / 90 |
+| `when:` | 186 | 56 |
+| `.state = "…"` (imperative) | 37 | 8 |
+| `state === "…"` (read back) | 13 | 2 |
+| `extend:` | 95 | 13 |
+| `PropertyChanges` with `target:` | most of the older files | |
+| `transitions:` with `from`/`to` strings | 23 | 12 |
+| `StateChangeScript` / `AnchorChanges` / `ParentChange` | 7 / 14 / 0 | |
+
+**The design.**
+
+- **`state` is typed as the union of the names a file declares.** Assigning
+  or comparing a name that is not declared is a check error, as are
+  `Transition.from`/`to` and an animation's `properties: "…"` naming
+  something that does not exist. Phase 1's checker already reports
+  `` `state` is a string; this gives it a number``.
+- **`when:` is the preferred form.** A state follows from the data, and a
+  person writes the condition once. The imperative `.state = "…"` stays,
+  typed.
+- **Only the `PropertyChanges { id.prop: … }` form.** `target:` and
+  `explicit` lower to it.
+- `AnchorChanges` stays for free parents. `StateChangeScript` is kept, and
+  a keyed view's `enter`/`exit` replaces its usual use (a delegate that
+  destroys itself).
+
+```qml
+// Qt (calqlatr/CalculatorButton.qml)            // Ljós
+function getBackgroundColor() {                  state: dimmed ? "dimmed" : tap.pressed ? "pressed"
+    if (button.dimmable && button.dimmed)            : hover.hovered ? "hovered" : ""
+        return backgroundColor;                  states: [
+    if (button.pressed) return accentColor;          State { name: "dimmed"; PropertyChanges { label.color: … } },
+    return backgroundColor;                          State { name: "pressed"; PropertyChanges {
+}                                                        button.fill: button.accent
+function getBorderColor() { … }                          button.border.color: button.accent
+function getTextColor() { … }                            label.color: "#222222" } },
+background: Rectangle {                              State { name: "hovered"; PropertyChanges { … } }
+    color: button.getBackgroundColor()           ]
+    border.color: button.getBorderColor() }      // `state = "presed"` is a check error
+```
+
+Qt's button re-derives each of its three colours from `pressed`,
+`hovered` and `dimmed` in a function of its own. Ljós's names the four
+looks once and derives which one applies.
+
+DECISION: no general state-machine type. 37 imperative assignments in 8
+files do not pay for a second model of states. The typed union and
+`when:` cover them, and a TS reducer (calqlatr's `press`) covers the rest.
+
+**Cost.** Unchanged from Qt's model. A `when:` is a binding, and a typed
+name is compiled to an index where the union is closed.
+
+### 4.10 Focus and keys
+
+**What apps say.** "This takes keys first", "these keys do that". The
+corpus is light on it: `focus: true` 18, `forceActiveFocus` 11,
+`FocusScope` 2, `Keys.onPressed` 5, and `Qt.Key_*` 78 uses in 5 files,
+mostly long `switch (event.key)` tables.
+
+**The design.**
+
+- A typed `KeyEvent` (`key: Key`, `text`, `modifiers: Modifier`, `repeat`)
+  and a `Key` enum in `Ljos.Ui` (`Key.Digit0`, `Key.Enter`, `Key.Escape`).
+- **Key tables are data.** A TS `Map<Key, Action>` from keys to what they
+  do replaces a chain of `if`s:
+
+  ```qml
+  // Qt (calqlatr/Main.qml: 21 cases)                  // Ljós
+  Keys.onPressed: function (event) {                   Keys.onPressed: (event: KeyEvent) => {
+      switch (event.key) {                                 const key = Calc.fromKey(event.key)
+          case Qt.Key_0: appState.digitPressed("0"); break;  if (key !== undefined) press(key)
+          case Qt.Key_1: appState.digitPressed("1"); break;  }
+          ...                                          // calc.ts: fromKey = (k: Key) => keys.get(k)
+  ```
+
+- `Shortcut { keys: "Ctrl+Q"; onActivated }` stays, with its sequence
+  checked at compile time.
+- `KeyNavigation.*` is kept as it is (0 uses in the corpus).
+
+**Option, not decided (§18):** every component's root is an implicit focus
+scope. That makes a component's `focus: true` local to it, which is what
+the 2 FocusScopes and most `forceActiveFocus` calls are working around.
+Lowering writes `Focus.scope: false` on a root that relies on Qt's flat
+focus, so nothing changes for a lowered file.
+
+### 4.11 Creation
+
+**What apps say.** "Show one of these here", "make one of these for each
+row", and rarely "make one now". The corpus:
+
+| | Uses | Files |
+|---|---:|---:|
+| `Loader` / `sourceComponent` | 8 / 2 | |
+| `source: "…qml"` (a file named by a string) | 563 | 150 |
+| `Component {` / inline `component X:` | 20 / 15 | |
+| `createObject(` / `Qt.createComponent` / `createQmlObject` | 19 / 15 / 9 | 6 / 3 / 2 |
+| `destroy(` | 6 | 6 |
+| `StackView` / `.push(` | 18 / 60 | 14 / 18 |
+
+**The design.**
+
+- **A component type is a value.** `Loader { component: Page }`,
+  `property Component block: Block` (a `Component<Block>`), and
+  `Block.createObject(parent, { column: 2 })` with its properties typed.
+  No file is named by a string in a Ljós file.
+- **Declarative creation is preferred.** A keyed `Repeater` over a list
+  creates, moves and removes objects as the list changes, with `enter` and
+  `exit` transitions. `samegame` makes every block this way:
+
+  ```qml
+  // Qt (samegame.js)                                // Ljós (GameArea.qml)
+  component = Qt.createComponent(blockSrc)           Repeater {
+  var dynamicObject = component.createObject(            model: area.game.blocks
+      gameCanvas, { type: Math.floor(...),               key: "id"
+      x: column*gameCanvas.blockSize, ... })             delegate: area.block
+  board[index(column,row)] = dynamicObject               exit: Transition {
+  ...                                                        ScriptAction { script: (target as Block).burst() }
+  board[i].dying = true                                      NumberAnimation { property: "opacity"; to: 0; duration: 200 }
+  board[i].destroy(1000)                                     PauseAnimation { duration: 800 }
+  ...                                                    }
+  obj.x = (column - fallDist) * blockSize            }
+                                                     // Block.qml: x: column * size  (a binding; Behavior animates it)
+  ```
+
+  The board is a typed list in `game.ts`. The view owns the objects, so
+  nothing leaks a block or touches one after it is destroyed.
+- `StackView` stays in `Ljos.Controls`, with `push(Page, { … })` typed by
+  the component.
+- `createQmlObject` (a string of QML compiled at run time) is compat only.
+
+**Cost.** A keyed Repeater creates only what is new and keeps only what is
+alive. Qt's samegame keeps a JS array of live items beside the scene, and
+every move is a JS write per block.
+
+**Lowering.** `Loader { source: "X.qml" }` with a static string →
+`Loader { component: X }`. `sourceComponent` → `component`.
+`Qt.createComponent("X.qml").createObject(p, {…})` with a static string →
+`X.createObject(p, {…})`. A URL built at run time, `createQmlObject` and
+`destroy()` keep their files (R1).
+
+DECISION: `destroy()` is not in a Ljós file. An object a view made is
+removed by its model, and one made by `createObject` is owned by its parent
+and removed with `parent.remove(child)`.
+
+### 4.12 Theming
+
+**What apps say.** "Use the app's colours, spacing and type". The corpus
+says it by hand: 880 colour literals (`"#…"`) in 198 files, a `Style` or
+`Theme` singleton in 86 files (413 uses) that each app writes for itself,
+`palette.*` 41 times, and `Material.*` 112 times.
+
+**The design.** `Ljos.Design` gives every app the same roles (ADR 0003):
+
+- `Theme.color.surface`, `.onSurface`, `.primary`, `.pressed`, `.hover`, …
+- `Theme.space.s/m/l`, `Theme.type.body/title`, `Theme.radius.m`
+- `Theme.motion.short/medium` (durations that honour reduced motion)
+
+A theme is a `theme.json` that `ljos run` reloads live. Controls are built
+on the roles, so a theme restyles every control and every app that uses
+roles in one place.
+
+**Lowering.**
+
+- `palette.<role>` → `Theme.color.<role>` where they map one to one.
+- `Material.*` and `Universal.*` keep their files, since a style's own
+  attached API is compat.
+- Colour literals stay. They are legal, and a person moves them to roles.
+
+**Cost.** A role is a property of one singleton: one binding read, the same
+as an app's own Style singleton.
+
+### 4.13 Text
+
+**What apps say.** "Show this string, this big, aligned so, wrapped so,
+translated". The corpus has `Text` 189, `Label` 105, `font.pixelSize` 272
+against `font.pointSize` 18, `horizontalAlignment` 126, `wrapMode` 77,
+`elide` 20, `qsTr(` 445, `.arg(` 50, and 18 strings concatenated into a
+translated text.
+
+**The design.**
+
+- `font.size` is in logical pixels, and there is no `pointSize`: two units
+  for one thing is a bug source (18 pointSizes against 272 pixelSizes).
+  `font.weight: Font.Weight.Bold` replaces `font.bold`.
+- `align: Align.Center` is one shared `Align` enum for text, layouts and
+  images, with `horizontalAlignment`/`verticalAlignment` as its axes.
+- Enums are their type's: `wrap: Text.Wrap.Word`, `elide: Text.Elide.End`,
+  `format: Text.Format.Rich`, `style: Text.Style.Raised`.
+- `Text.color` is the glyph colour, and keeps its name: §4.2's rule renames
+  only the member that names something else on another type
+  (`Rectangle.color` is a fill).
+- `qsTr("%1 of %2").arg(a).arg(b)` has its `.arg` count checked against
+  the placeholders. Plurals use `qsTr("%n minutes ago", "", n)`, and
+  concatenating a number into a translated string is a check warning
+  (rssnews's `'' + minutes + ' ' + qsTr("minutes ago")`).
+
+**Option, not decided (§18):** a tagged template
+``tr`${n} minutes ago` `` that extracts to the same catalogue, checked by
+construction.
+
+**Lowering.**
+
+- `font.pixelSize` → `font.size`.
+- `font.pointSize` → `font.size` × the screen's ratio where it is
+  constant; otherwise it keeps its file.
+- `font.bold: true` → `font.weight: Font.Weight.Bold`.
+- `wrapMode: Text.WordWrap` → `wrap: Text.Wrap.Word`, and every other enum
+  the same way, by its owner in the table.
+
+### 4.14 Every Qt construct, and where it goes
+
+| Qt | Ljós | Lowering |
+|---|---|---|
+| `Row`, `Column` | `Row`, `Column` (a Box) | mechanical; kept when a child has `Layout.*` (§4.6) |
+| `RowLayout`, `ColumnLayout` | `Row`, `Column` | mechanical; kept when an explicit size meets a non-zero implicit size |
+| `GridLayout`, `Grid` | `Grid` | mechanical |
+| `StackLayout` | `Pages` | mechanical |
+| `Flow` | `Flow` | mechanical |
+| `LayoutItemProxy` | a Box whose `direction` is bound | DECISION: kept; a person merges the layouts |
+| `anchors.*` on a free parent | the same | none |
+| `anchors.*` on a layout child | `Layout.alignment`/margins | DECISION: kept (Qt overrides them at run time, so their effect is unclear) |
+| `MouseArea` filling its parent, no children | `Tap`/`Hover`/`Drag` | mechanical (52 of 61) |
+| other `MouseArea` | `PointerArea` | mechanical (phase 1), gestures M3 |
+| `*Handler` | `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress` | mechanical, by member |
+| `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
+| attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical |
+| `Flickable` | `Flickable` | none |
+| `ListModel` of constants | `list<T>` | mechanical, with a generated row type |
+| `ListModel` edited | `ListModel` | none |
+| `XmlListModel`, `FolderListModel` | `XmlModel` (decoder), `FolderModel` | mechanical |
+| `model.<role>` | `modelData.<role>` | mechanical |
+| `DelegateModel`, `ObjectModel`, `Package` | — | DECISION: kept (0–1 uses) |
+| `State`, `PropertyChanges { target: }` | `PropertyChanges { id.prop: }` | mechanical |
+| `StateGroup` | the same | none |
+| `ParentChange` | — | DECISION: kept (0 uses) |
+| `Loader { source: "X.qml" }` | `Loader { component: X }` | mechanical when the string is static |
+| `Qt.createComponent(...).createObject` | `X.createObject` | mechanical when the string is static |
+| `createQmlObject`, `destroy()` | — | DECISION: kept (R1) |
+| `Component { id }` | an inline `component X:` or an inline delegate | mechanical |
+| `palette.*` | `Theme.color.*` | mechanical where 1:1 |
+| `Material.*`, `Universal.*` | — | DECISION: kept (a style's own API) |
+| `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical |
+| `font.pointSize` | `font.size` | mechanical when constant, else kept |
+| `horizontalAlignment`, `wrapMode`, `elide`, `textFormat`, `fillMode` | `align`, `wrap`, `elide`, `format`, `fit` | mechanical |
+| `Qt.*` globals | `Ljos.Core`, `App`, value types (§4.3) | mechanical, by member |
+| `date`, `Date` | `Instant`, `Locale` | mechanical when only stored or compared, else kept |
+| `Screen.primaryOrientation` | the window's aspect | DECISION: kept; the meaning differs on desktops |
+| `property var` | `property unknown`, or a type | mechanical |
+| `Qt.labs.platform`, `StandardPaths` | `Ljos.Platform` | mechanical |
+| `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
+| `Canvas`, `Shape` | the same | none |
+
+### 4.15 What this changes for the engine
+
+- **Box** is one native arrangement with the positioner fast path. It is the
+  D1 spike.
+- **Gestures** are recognisers on one pointer stream, attached to an item's
+  hit test. They have no items and no geometry.
+- **Keyed views** diff a list by key. `enter`/`exit` live on the view, which
+  keeps an exiting delegate until its transition ends.
+- **Clock** is one timer per resolution, scheduled by readers that are
+  visible. With none, there is no timer (rule 6).
+- **Decoders** run at a model's boundary in tier 2. The rows they return
+  are values.
+- **Theme** is a singleton with a live-reloaded source.
 
 ## 5. The checker
 
@@ -393,7 +1004,7 @@ Why the 462 example files are kept:
 
 `Qt.*` keeps no file today: `Ljos.Ui` imports `QtQml`, so the namespace is
 still there. Modules, not globals, decide coverage. Phase 2 starts with
-them (§17).
+them (§18).
 
 ## 7. Tiers and the web
 
@@ -691,6 +1302,21 @@ bindings and states without a rule.
   keep 364 of 462 kept example files, and `Qt.*` keeps none.
 - DECISION: the edits are text replacements at spans that keep every line,
   and they move onto `qml_edit` in M3.
+- DECISION (§4.6): one arrangement, the Box, with one size rule per axis:
+  `Layout.preferred*`, else an explicit size, else the implicit size.
+  Anchors on a Box child are a check error.
+- DECISION (§4.7): gestures are child objects that read one pointer stream,
+  not items. Qt's drag-and-drop `Drag` becomes `DragSource`/`DropArea`.
+- DECISION (§4.8): typed lists with a `key` are the default model, and
+  `ListModel` is for shared, edited lists, typed by its first element.
+- DECISION (§4.9): `state` is the union of declared names, and there is no
+  general state-machine type.
+- DECISION (§4.3): there is no `date` in a Ljós file; `Instant`, `Clock` and
+  `Locale` replace it.
+- DECISION (§4.11): a component type is a value, no file is named by a
+  string, and `destroy()` is not in a Ljós file.
+- DECISION (§4.14): every construct the table marks "kept" keeps its file,
+  for the reason given there.
 
 ## 16. Risks
 
@@ -743,3 +1369,16 @@ lead wants coverage sooner, it moves up before M3.
 
 Each comes with its feature pair (as written and `@qt-parity`, then
 lowered) and the corpus sweep.
+
+## 18. Choices still open
+
+Each changes how apps are written. A recommendation is given, but the
+choice is the project lead's.
+
+| Choice | Options | Recommendation |
+|---|---|---|
+| Focus scopes (§4.10) | (a) every component root is an implicit scope; (b) explicit `FocusScope`, as Qt | (a): it is what the corpus's `forceActiveFocus` calls work around, and lowering writes `Focus.scope: false` where it would differ |
+| Translated text (§4.13) | (a) `qsTr` with `.arg` counts checked; (b) also a tagged template ``tr`…` ``; (c) only the template | (a) now, (b) later: (a) lowers with no edit, and (b) is sugar over the same catalogue |
+| Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
+| States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
+| Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |
