@@ -284,31 +284,52 @@ pub(crate) fn compile_quiet_with_oracle<O: TypeOracle>(
 ) -> Result<Compiled, CompileError> {
     let mut source = MapSource::new();
     let mut found = Vec::new();
+    // A module many files reach is said once.
+    let mut modules: Vec<String> = Vec::new();
     let files = ljos_compiler::compile_roots_with(dirs, oracle)?;
-    for r in files {
+    let diagnostic = |path: &Path, key: &str, d: &ljos_compiler::Diagnostic| Diagnostic {
+        path: path.to_path_buf(),
+        key: key.to_owned(),
+        line: d.span.line,
+        column: d.span.column,
+        severity: match d.severity {
+            ljos_compiler::Severity::Error => Severity::Error,
+            ljos_compiler::Severity::Warning => Severity::Warning,
+        },
+        message: d.message.clone(),
+    };
+    for r in &files {
         let path = r.path.clone().unwrap_or_else(|| PathBuf::from(&r.key));
-        let diagnostics = match &r.result {
-            Ok(c) => &c.diagnostics,
-            Err(ds) => ds,
-        };
-        found.extend(diagnostics.iter().map(|d| Diagnostic {
-            path: path.clone(),
-            key: r.key.clone(),
-            line: d.span.line,
-            column: d.span.column,
-            severity: match d.severity {
-                ljos_compiler::Severity::Error => Severity::Error,
-                ljos_compiler::Severity::Warning => Severity::Warning,
-            },
-            message: d.message.clone(),
-        }));
+        match &r.result {
+            Ok(c) => {
+                // The project's root, which a module's key is from.
+                let root = path
+                    .to_str()
+                    .and_then(|p| p.strip_suffix(&format!("{}.qml", r.key)))
+                    .map(PathBuf::from)
+                    .unwrap_or_default();
+                for (module, d) in c.all_diagnostics() {
+                    match module {
+                        None => found.push(diagnostic(&path, &r.key, d)),
+                        Some(module) if !modules.iter().any(|m| m == module) => {
+                            found.push(diagnostic(&root.join(module), module, d));
+                        }
+                        Some(_) => {}
+                    }
+                }
+                modules.extend(c.modules.iter().map(|m| m.key.clone()));
+            }
+            Err(ds) => found.extend(ds.iter().map(|d| diagnostic(&path, &r.key, d))),
+        }
+    }
+    for r in files {
         if let Some(path) = &r.path {
             source.insert_url(r.key.clone(), absolute_url(path));
         }
         match r.result {
             Ok(c) if !c.has_errors() => source.insert(r.key, c.file),
             // Compiled only as far as it could: not a file to run.
-            Ok(c) => source.insert_failure(r.key, ljos_compiler::failure_reason(&c.diagnostics)),
+            Ok(c) => source.insert_failure(r.key, c.failure_reason()),
             Err(ds) => source.insert_failure(r.key, ljos_compiler::failure_reason(&ds)),
         }
     }

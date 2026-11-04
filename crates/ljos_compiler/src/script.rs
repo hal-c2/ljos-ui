@@ -121,29 +121,11 @@ fn with_imports(source: &str, text: &str, key: &str, imports: &mut Vec<ScriptImp
         .split_inclusive('\n')
         .zip(text.split_inclusive('\n'))
         .map(|(line, blank)| {
-            let words: Vec<&str> = line
-                .trim_start()
-                .strip_prefix(".import")
-                .map(|rest| rest.split_whitespace().collect())
-                .unwrap_or_default();
-            let (module, alias) = match words.as_slice() {
-                [module, "as", alias] | [module, _, "as", alias] => (*module, *alias),
-                _ => return blank.to_string(),
-            };
-            let named = |w: &str| {
-                !w.is_empty()
-                    && w.split('.')
-                        .all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'))
-            };
-            if !named(alias) || alias.contains('.') {
+            let Some((module, alias)) = import_line(line) else {
                 return blank.to_string();
-            }
+            };
             let end = if line.ends_with('\n') { "\n" } else { "" };
-            if let Some(path) = module
-                .strip_prefix('"')
-                .and_then(|m| m.strip_suffix('"'))
-                .filter(|p| qml_front::project::is_script(p))
-            {
+            if let Some(path) = script_path(module) {
                 let index = imports.len();
                 imports.push(ScriptImport {
                     path: path.to_string(),
@@ -157,6 +139,46 @@ fn with_imports(source: &str, text: &str, key: &str, imports: &mut Vec<ScriptImp
             format!("const {alias} = __ljos_module(\"{module}\");{end}")
         })
         .collect()
+}
+
+/// The paths of the scripts `source`'s `.import` lines import, as written:
+/// a module a script imports is one the file that imports the script
+/// reaches.
+pub(crate) fn script_imports(source: &str) -> impl Iterator<Item = &str> {
+    source
+        .lines()
+        .filter_map(import_line)
+        .filter_map(|(module, _)| script_path(module))
+}
+
+/// `.import <module> [version] as <alias>`, its module and alias.
+fn import_line(line: &str) -> Option<(&str, &str)> {
+    let words: Vec<&str> = line
+        .trim_start()
+        .strip_prefix(".import")?
+        .split_whitespace()
+        .collect();
+    let (module, alias) = match words.as_slice() {
+        [module, "as", alias] | [module, _, "as", alias] => (*module, *alias),
+        _ => return None,
+    };
+    (named(alias) && !alias.contains('.')).then_some((module, alias))
+}
+
+/// A dotted name: `QtQuick.LocalStorage`.
+fn named(word: &str) -> bool {
+    !word.is_empty()
+        && word
+            .split('.')
+            .all(|p| p.chars().all(|c| c.is_alphanumeric() || c == '_'))
+}
+
+/// The path of a quoted script: `"file.js"`.
+fn script_path(module: &str) -> Option<&str> {
+    module
+        .strip_prefix('"')
+        .and_then(|m| m.strip_suffix('"'))
+        .filter(|p| qml_front::project::is_script(p))
 }
 
 /// Where and why a script does not parse: 1-based line and column (in

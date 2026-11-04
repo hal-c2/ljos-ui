@@ -249,7 +249,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |
 | `When the input method composes "text"` | an input method shows the text at the cursor as what is being composed; `""` ends the composition with nothing typed (`@ljos-only`: the oracle has no input method) |
 | `When the input method commits "text"` | an input method ends the composition and types the text (`@ljos-only`) |
-| `When the file "X.qml" is changed to:` + doc string | a file of the running application is saved with that text, or made if there was none; it is applied once the files have been quiet for 120 milliseconds (`@ljos-only`: hot reload is a Ljós extension) |
+| `When the file "X.qml" is changed to:` + doc string | a file of the running application (a `.qml`, `.js`, `.mjs` or `.ts`) is saved with that text, or made if there was none; it is applied once the files have been quiet for 120 milliseconds (`@ljos-only`: hot reload is a Ljós extension) |
 | `When the file "X.qml" is removed` | the file is deleted while the application runs (`@ljos-only`) |
 | `When a native handler of "o" panics with "message"` | a method of a native type panics while it runs for that object, as a bug in the type would (`@ljos-only`: faults and their boundaries are Ljós's own) |
 | `When a reload happens` | the quiet time ends now: what was saved is applied, or refused with a reload error (`@ljos-only`) |

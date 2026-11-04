@@ -175,6 +175,79 @@ Feature: TypeScript modules imported by a QML file
       ljos: 3 errors
       """
 
+  Scenario: A module a script imports is checked as one the file imports is
+    Given the file "bad.ts":
+      """ts
+      export enum Side { Left, Right }
+      export const limit: number = "10"
+      """
+    And the file "helper.js":
+      """js
+      .import "bad.ts" as Bad
+      function limit() { return Bad.limit }
+      """
+    And the file "Pick.qml":
+      """qml
+      import QtQuick
+      import "helper.js" as Helper
+      Item {
+        property var shown: Helper.limit()
+      }
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      bad.ts:1:14: error: an `enum` is not only a type, and does not erase: write a union of strings (`type Mode = "a" | "b"`) [ts-forbidden]
+      bad.ts:2:36: error: `limit` is a number; this gives it a string [ts-assign-type]
+      2 files, 2 errors, 0 warnings
+      ljos: 2 errors
+      """
+
+  Scenario: A file that reaches a module with an error does not load, and says where in the module
+    Given the file "bad.ts":
+      """ts
+      export const limit: number = "10"
+      export enum Side { Left, Right }
+      """
+    And the file "Pick.qml":
+      """qml
+      import Ljos.Ui
+      import "bad.ts" as Bad
+      Item {
+        property real shown: Bad.limit
+      }
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Loader { objectName: "loader"; source: "Pick.qml" }
+      }
+      """
+    Then the property "status" of "loader" is 3
+    And the log has a warning matching "Pick\.qml: bad\.ts:1:36: `limit` is a number; this gives it a string"
+
+  Scenario: An edit that breaks a module is refused, at the module's line, and the file runs as it was
+    Given the QML:
+      """qml
+      import Ljos.Ui
+      import "filter.ts" as Logic
+      Item {
+        objectName: "root"
+        property real shown: Logic.only("a")
+      }
+      """
+    When the file "filter.ts" is changed to:
+      """ts
+      export type Tag = "a" | "b"
+      export enum Side { Left, Right }
+      export function only(tag: Tag): number { return tag === "a" ? 7 : 0 }
+      """
+    And a reload happens
+    Then the reload error is in "filter.ts" at line 2
+    And the property "shown" of "root" is 2
+
   Scenario: What a module imports from another is checked at the module's lines
     Given the file "sum.ts":
       """ts

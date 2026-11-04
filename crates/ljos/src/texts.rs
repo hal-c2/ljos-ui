@@ -128,21 +128,10 @@ pub(crate) fn compile_qml_text<O: TypeOracle>(
     project: &mut Project<O>,
     text: QmlText<'_>,
 ) -> Result<CompiledFile, Vec<QmlTextError>> {
-    fn errors(diagnostics: &[ljos_compiler::Diagnostic]) -> Vec<QmlTextError> {
-        diagnostics
-            .iter()
-            .filter(|d| d.severity == ljos_compiler::Severity::Error)
-            .map(|d| QmlTextError {
-                line: d.span.line,
-                column: d.span.column,
-                message: d.message.clone(),
-            })
-            .collect()
-    }
     match compile_text(project, text.key, text.text) {
         Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
-        Ok(compiled) => Err(errors(&compiled.diagnostics)),
-        Err(diagnostics) => Err(errors(&diagnostics)),
+        Ok(compiled) => Err(text_errors(compiled.all_diagnostics())),
+        Err(diagnostics) => Err(text_errors(diagnostics.iter().map(|d| (None, d)))),
     }
 }
 
@@ -224,8 +213,13 @@ impl State {
                 Some(file)
             }
             Ok(compiled) => {
-                let why = compiled.diagnostics.first().map(ToString::to_string);
-                self.failed.insert(key.to_owned(), why.unwrap_or_default());
+                // Its own error, or else that of a module it reaches.
+                let why = compiled
+                    .diagnostics
+                    .iter()
+                    .find(|d| d.severity == ljos_compiler::Severity::Error)
+                    .map_or_else(|| compiled.failure_reason(), ToString::to_string);
+                self.failed.insert(key.to_owned(), why);
                 None
             }
             Err(diagnostics) => {
@@ -310,4 +304,27 @@ impl ComponentSource for Fallback {
     fn bytecode(&self, key: &str) -> Option<Bytecode> {
         self.source.bytecode(key)
     }
+}
+
+/// The errors of a text, and of the modules it reaches (`Some` with the
+/// module's key), as a text's errors: a module's are at no place of the
+/// text, so they are at line 0 and say the module's place.
+pub(crate) fn text_errors<'a>(
+    diagnostics: impl Iterator<Item = (Option<&'a str>, &'a ljos_compiler::Diagnostic)>,
+) -> Vec<QmlTextError> {
+    diagnostics
+        .filter(|(_, d)| d.severity == ljos_compiler::Severity::Error)
+        .map(|(module, d)| match module {
+            None => QmlTextError {
+                line: d.span.line,
+                column: d.span.column,
+                message: d.message.clone(),
+            },
+            Some(module) => QmlTextError {
+                line: 0,
+                column: 0,
+                message: format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message),
+            },
+        })
+        .collect()
 }

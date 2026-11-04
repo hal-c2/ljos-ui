@@ -317,7 +317,11 @@ What is built (`features/language/ts-modules.feature`):
   no `enum`, `namespace` or parameter property, which would leave code
   behind, and none of `export default` or `export *`. A module is checked
   with the rules of §5, at its own lines, and counts as a file in
-  `ljos check`. A file that reaches a module with an error does not run.
+  `ljos check`. A file reaches a module through its imports, the
+  modules they import, and the `.import` lines of the scripts it
+  imports. A file that reaches a module with an error does not run:
+  whatever makes an object of it, a hot reload among them, is told the
+  module's first error after the module's path (`filter.ts:2:14: …`).
 - `Logic.x` is typed by what the module exports. A name it does not
   export is `unknown-member`, and a type it does not export is
   `unknown-type`. Both name the module and say what it does export.
