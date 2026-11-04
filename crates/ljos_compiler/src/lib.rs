@@ -28,6 +28,7 @@ pub mod reload_lint;
 mod script;
 mod style;
 pub mod tier1;
+pub mod ts;
 
 pub use alias::{Alias, AliasError, Aliases, Mount};
 pub use compile::compile_file;
