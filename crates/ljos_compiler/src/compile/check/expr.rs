@@ -1903,8 +1903,22 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             self.check_assign(name, written, &word, given, init.span());
                             written
                         }
-                        None if binding == Binding::Const => given,
-                        None => self.arena.widen(given),
+                        None if binding == Binding::Const => {
+                            if self.fresh(init)
+                                && let BindingPattern::BindingIdentifier(id) = &declarator.id
+                            {
+                                self.bind_pattern(&declarator.id, given, binding);
+                                if let Some(local) = self.local(id.name.as_str()) {
+                                    self.fresh.push(local.id);
+                                }
+                                continue;
+                            }
+                            given
+                        }
+                        // As TypeScript, only a literal written here widens:
+                        // a variable given a value of a literal type keeps it.
+                        None if self.fresh(init) => self.arena.widen(given),
+                        None => given,
                     }
                 }
                 None => match written {
@@ -1917,6 +1931,30 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 },
             };
             self.bind_pattern(&declarator.id, ty, binding);
+        }
+    }
+
+    /// Whether `e` gives a literal written in it, which a variable widens
+    /// (TypeScript's fresh literal types): a literal, a template, either side
+    /// of `?:` or a logical operator, an object or array literal, or a
+    /// `const` given one of these.
+    fn fresh(&self, e: &Expression<'a>) -> bool {
+        match e.without_parentheses() {
+            Expression::StringLiteral(_)
+            | Expression::NumericLiteral(_)
+            | Expression::BooleanLiteral(_)
+            | Expression::TemplateLiteral(_)
+            | Expression::ObjectExpression(_)
+            | Expression::ArrayExpression(_) => true,
+            Expression::UnaryExpression(unary) => self.fresh(&unary.argument),
+            Expression::ConditionalExpression(c) => {
+                self.fresh(&c.consequent) || self.fresh(&c.alternate)
+            }
+            Expression::LogicalExpression(l) => self.fresh(&l.left) || self.fresh(&l.right),
+            Expression::Identifier(id) => self
+                .local(id.name.as_str())
+                .is_some_and(|local| self.fresh.contains(&local.id)),
+            _ => false,
         }
     }
 
