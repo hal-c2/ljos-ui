@@ -350,7 +350,7 @@ Feature: Checking the scripts of a file written in Ljós's API
         """
         Gauge.qml:5:37: error: `missing` has no type: it is not in scope [ts-no-any]
         Gauge.qml:5:61: error: `size` has no type: a string has no member of that name [ts-no-any]
-        Gauge.qml:5:81: error: `size` has no type: an unknown value has no member of that name [ts-no-any]
+        Gauge.qml:5:81: error: `size` has no type: `given` is unknown: narrow it first (`typeof given === "object" && given !== null && "size" in given`), or decode it with a type guard [ts-no-any]
         1 files, 3 errors, 0 warnings
         ljos: 3 errors
         """

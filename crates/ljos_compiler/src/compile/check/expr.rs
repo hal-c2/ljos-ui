@@ -357,7 +357,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// `member`, where the member is written: one the value does not have
     /// has no type. Where the compiler reports it too, its report is kept.
-    fn member_at(&mut self, receiver: Ty, property: &qml_syntax::js::IdentifierName<'a>) -> Ty {
+    /// `object` is where the receiver is written, to name it in a fix.
+    fn member_at(
+        &mut self,
+        receiver: Ty,
+        property: &qml_syntax::js::IdentifierName<'a>,
+        object: Span,
+    ) -> Ty {
         let name = property.name.as_str();
         if self.forbid_member(name, property.span) {
             return Ty::ERROR;
@@ -394,12 +400,20 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 Kind::Error | Kind::Never | Kind::Undefined | Kind::Void | Kind::Global(Global::Qt)
             );
             if checked && self.member_one(part, name).is_none() {
-                let word = self.word(part);
-                return self.untyped(
-                    name,
-                    &format!("{word} has no member of that name"),
-                    property.span,
-                );
+                let of = self.text(object);
+                // What is not known to have the member is narrowed, as
+                // TypeScript narrows it: the fix names how.
+                let fix = match self.arena.kind(part) {
+                    Kind::Unknown => format!(
+                        "`{of}` is unknown: narrow it first (`typeof {of} === \"object\" && {of} !== null && \"{name}\" in {of}`), or decode it with a type guard"
+                    ),
+                    Kind::NonPrimitive => format!(
+                        "`{of}` is an object not known to have it: check `\"{name}\" in {of}` first"
+                    ),
+                    Kind::Null => format!("`{of}` may be null: compare it with `null` first"),
+                    _ => format!("{} has no member of that name", self.word(part)),
+                };
+                return self.untyped(name, &fix, property.span);
             }
         }
         self.member(receiver, name)
@@ -472,7 +486,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let object = self.link(&m.object, short);
                 let object = self.optional(object, m.optional, short);
                 let object = self.defined(object, m.object.span());
-                let base = self.member_at(object, &m.property);
+                let base = self.member_at(object, &m.property, m.object.span());
                 match self.root_local(&m.object) {
                     Some(local) => self.fact(self.text(m.span), local).unwrap_or(base),
                     None => base,
@@ -899,8 +913,37 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
             }
             Expression::BinaryExpression(binary) => {
-                let left = self.expr(&binary.left, None);
-                let right = self.expr(&binary.right, None);
+                let strict = matches!(
+                    binary.operator,
+                    BinaryOperator::StrictEquality | BinaryOperator::StrictInequality
+                );
+                // DECISION: `null` is written only to be compared with: a
+                // decoder tells `typeof v === "object"` from null by it.
+                let operand = |checker: &mut Self, side: &Expression<'a>| match side {
+                    Expression::NullLiteral(_) if strict => Ty::NULL,
+                    _ => checker.expr(side, None),
+                };
+                let left = operand(self, &binary.left);
+                let right = operand(self, &binary.right);
+                match binary.operator {
+                    BinaryOperator::Instanceof => {
+                        let (end, start) = (binary.left.span().end, binary.right.span().start);
+                        let at = self
+                            .text(Span::new(end, start))
+                            .find("instanceof")
+                            .map_or(end, |at| end + at as u32);
+                        return self.forbidden(
+                            "instanceof",
+                            "narrow with `typeof`, `in`, `Array.isArray` or a type guard",
+                            Span::new(at, at + 10),
+                        );
+                    }
+                    BinaryOperator::In => {
+                        self.in_object(right, binary.right.span());
+                        return Ty::BOOLEAN;
+                    }
+                    _ => {}
+                }
                 self.binary(
                     binary.operator,
                     (left, binary.left.span()),
@@ -1529,6 +1572,122 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
+    /// The right of `key in value`: TypeScript looks only into what is
+    /// known to be an object.
+    fn in_object(&mut self, value: Ty, span: Span) {
+        let objects = self.arena.parts(value).iter().all(|part| {
+            matches!(
+                self.arena.kind(*part),
+                Kind::Error
+                    | Kind::Never
+                    | Kind::NonPrimitive
+                    | Kind::Object(_)
+                    | Kind::Record(_)
+                    | Kind::Array { .. }
+                    | Kind::Map { .. }
+            )
+        });
+        if objects {
+            return;
+        }
+        let of = self.text(span);
+        if value == Ty::UNKNOWN {
+            self.untyped(
+                of,
+                &format!(
+                    "it is unknown, and `in` looks into an object: check `typeof {of} === \"object\" && {of} !== null` first"
+                ),
+                span,
+            );
+            return;
+        }
+        let word = self.word(value);
+        self.report(
+            Code::TsAssignType,
+            format!("`in` looks into an object, and `{of}` is {word}"),
+            span,
+        );
+    }
+
+    /// What `"name" in value` being `sense` leaves of `value`, as
+    /// TypeScript 4.9 narrows it: where a part declares the member, the
+    /// parts that may have it; where none does, each part with the member
+    /// added as `unknown` (TypeScript's `& Record<"name", unknown>`).
+    fn narrow_in(&mut self, value: Ty, name: &str, sense: bool) -> Ty {
+        let parts = self.arena.members(value);
+        let declares = |arena: &super::ty::Arena, part: Ty| -> Option<bool> {
+            match arena.kind(part) {
+                Kind::Record(fields) => Some(
+                    fields
+                        .iter()
+                        .find(|field| &*field.name == name)
+                        .map_or(!sense, |field| field.optional || sense),
+                ),
+                _ => None,
+            }
+        };
+        let known = parts.iter().any(|part| {
+            matches!(self.arena.kind(*part), Kind::Record(fields)
+                if fields.iter().any(|field| &*field.name == name))
+        });
+        if known {
+            return self
+                .arena
+                .filter(value, |arena, part| declares(arena, part).unwrap_or(true));
+        }
+        if !sense {
+            return value;
+        }
+        let added = Field {
+            name: name.into(),
+            ty: Ty::UNKNOWN,
+            optional: false,
+            readonly: false,
+        };
+        let widened: Vec<Ty> = parts
+            .into_iter()
+            .map(|part| match self.arena.kind(part).clone() {
+                Kind::NonPrimitive => self
+                    .arena
+                    .intern(Kind::Record(vec![added.clone()].into_boxed_slice())),
+                Kind::Record(fields) => {
+                    let mut fields = fields.to_vec();
+                    fields.push(added.clone());
+                    self.arena.intern(Kind::Record(fields.into_boxed_slice()))
+                }
+                _ => part,
+            })
+            .collect();
+        self.arena.union(widened)
+    }
+
+    /// What `Array.isArray(value)` being `sense` leaves of `value`.
+    /// DECISION: of what is unknown, an `unknown[]`, where TypeScript says
+    /// `any[]`: the subset has no `any`, so each element is narrowed too.
+    fn narrow_array(&mut self, value: Ty, sense: bool) -> Ty {
+        let is_array =
+            |arena: &super::ty::Arena, part: Ty| matches!(arena.kind(part), Kind::Array { .. });
+        if value == Ty::UNKNOWN {
+            return if sense {
+                self.arena.array(Ty::UNKNOWN, false)
+            } else {
+                value
+            };
+        }
+        let unknown_array = self.arena.array(Ty::UNKNOWN, false);
+        let parts: Vec<Ty> = self
+            .arena
+            .members(value)
+            .into_iter()
+            .filter_map(|part| match self.arena.kind(part) {
+                Kind::NonPrimitive => Some(if sense { unknown_array } else { part }),
+                _ if is_array(&self.arena, part) == sense => Some(part),
+                _ => None,
+            })
+            .collect();
+        self.arena.union(parts)
+    }
+
     /// What `a && b` gives of `a`: the parts of it that are falsy.
     fn falsy(&mut self, ty: Ty) -> Ty {
         let parts = self.arena.members(ty);
@@ -1539,6 +1698,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 Kind::Bool(true)
                 | Kind::Object(_)
                 | Kind::Record(_)
+                | Kind::NonPrimitive
                 | Kind::Array { .. }
                 | Kind::Map { .. }
                 | Kind::Function(_)
@@ -1558,7 +1718,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         for part in parts {
             kept.push(match self.arena.kind(part) {
                 Kind::Boolean | Kind::Bool(true) => Ty::TRUE,
-                Kind::Bool(false) | Kind::Undefined | Kind::Void => Ty::NEVER,
+                Kind::Bool(false) | Kind::Undefined | Kind::Void | Kind::Null => Ty::NEVER,
                 _ => part,
             });
         }
@@ -1679,8 +1839,37 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 self.compare_fact(&binary.left, &binary.right, equal);
                 self.compare_fact(&binary.right, &binary.left, equal);
             }
+            // `"tag" in v`.
+            Expression::BinaryExpression(binary) if binary.operator == BinaryOperator::In => {
+                let Expression::StringLiteral(name) = binary.left.without_parentheses() else {
+                    return;
+                };
+                let Some((key, local, now, base)) = self.path(&binary.right) else {
+                    return;
+                };
+                let ty = self.narrow_in(now, name.value.as_str(), sense);
+                self.push_fact(key, local, ty, base);
+            }
+            // `Array.isArray(v)`.
+            Expression::CallExpression(call) if self.is_array_test(call) => {
+                if let Some(argument) = call.arguments.first()
+                    && !matches!(argument, Argument::SpreadElement(_))
+                    && let Some((key, local, now, base)) = self.path(argument.to_expression())
+                {
+                    let ty = self.narrow_array(now, sense);
+                    self.push_fact(key, local, ty, base);
+                }
+            }
             _ => {}
         }
+    }
+
+    /// Whether `call` is `Array.isArray(…)`, of the global `Array`.
+    fn is_array_test(&self, call: &CallExpression<'a>) -> bool {
+        matches!(&call.callee, Expression::StaticMemberExpression(m)
+            if m.property.name == "isArray"
+                && matches!(&m.object, Expression::Identifier(id)
+                    if id.name == "Array" && self.local("Array").is_none()))
     }
 
     /// What `subject === other` (or `!==`, when `equal` is false) says of
@@ -1705,6 +1894,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     "string" => Ty::STRING,
                     "boolean" => Ty::BOOLEAN,
                     "undefined" => Ty::UNDEFINED,
+                    "object" => self.arena.or(Ty::OBJECT, Ty::NULL),
+                    // DECISION: what `typeof v === "function"` leaves is
+                    // not called in the subset, so it is not narrowed.
                     _ => return,
                 }
             } else {
@@ -1752,7 +1944,20 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         };
         let undefined = matches!(other, Expression::Identifier(id) if id.name == "undefined"
             && self.local("undefined").is_none());
-        let ty = if undefined {
+        let ty = if matches!(other, Expression::NullLiteral(_)) {
+            if now == Ty::UNKNOWN {
+                // DECISION: `v !== null` leaves unknown unknown, where
+                // TypeScript says `{}`: nothing can be read off either.
+                if !equal {
+                    return;
+                }
+                Ty::NULL
+            } else if equal {
+                self.arena.filter(now, |_, part| part == Ty::NULL)
+            } else {
+                self.arena.filter(now, |_, part| part != Ty::NULL)
+            }
+        } else if undefined {
             if equal {
                 self.arena
                     .filter(now, |_, part| part == Ty::UNDEFINED || part == Ty::VOID)

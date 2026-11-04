@@ -1162,6 +1162,15 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             (Kind::Number, Kind::Num(_) | Kind::Enum { .. } | Kind::Key { .. }) => true,
             (Kind::String | Kind::Color, Kind::String | Kind::Str(_) | Kind::Color) => true,
             (Kind::Boolean, Kind::Bool(_)) => true,
+            (
+                Kind::NonPrimitive,
+                Kind::Object(_)
+                | Kind::Record(_)
+                | Kind::Array { .. }
+                | Kind::Map { .. }
+                | Kind::Function(_)
+                | Kind::Method(..),
+            ) => true,
             (Kind::Undefined | Kind::Void, Kind::Undefined | Kind::Void) => true,
             (Kind::Enum { object, name }, Kind::Key { key, .. }) => {
                 self.has_key(*object, name, key)

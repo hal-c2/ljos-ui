@@ -23,6 +23,12 @@ impl Ty {
     pub(crate) const COLOR: Ty = Ty(8);
     pub(crate) const TRUE: Ty = Ty(9);
     pub(crate) const FALSE: Ty = Ty(10);
+    /// TypeScript's `object`: what `typeof v === "object"` leaves of an
+    /// unknown value once it is not `null`, with no member known yet.
+    pub(crate) const OBJECT: Ty = Ty(11);
+    /// `null`, only as narrowing finds it: the subset has no `null` to
+    /// write, but `typeof v === "object"` is true of it.
+    pub(crate) const NULL: Ty = Ty(12);
 }
 
 /// A built-in global of TYPES.md.
@@ -38,6 +44,8 @@ pub(crate) enum Global {
     QsTrId,
     /// `Map`, to be made with `new`.
     Map,
+    /// `Array`, for `Array.isArray`.
+    Array,
 }
 
 /// A method of a built-in type or global, bound to what it is read off.
@@ -95,6 +103,9 @@ pub(crate) enum Kind {
     String,
     Color,
     Bool(bool),
+    /// TypeScript's `object`.
+    NonPrimitive,
+    Null,
     /// A number literal type, by its bits.
     Num(u64),
     Str(Box<str>),
@@ -167,6 +178,8 @@ impl Arena {
             Kind::Color,
             Kind::Bool(true),
             Kind::Bool(false),
+            Kind::NonPrimitive,
+            Kind::Null,
         ] {
             arena.intern(kind);
         }
@@ -393,7 +406,12 @@ impl Arena {
             Kind::Number | Kind::Num(_) | Kind::Enum { .. } | Kind::Key { .. } => "number",
             Kind::String | Kind::Color | Kind::Str(_) => "string",
             Kind::Function(_) | Kind::Method(..) => "function",
-            Kind::Object(_) | Kind::Record(_) | Kind::Array { .. } | Kind::Map { .. } => "object",
+            Kind::Object(_)
+            | Kind::Record(_)
+            | Kind::Array { .. }
+            | Kind::Map { .. }
+            | Kind::NonPrimitive
+            | Kind::Null => "object",
             _ => return None,
         })
     }
@@ -419,6 +437,8 @@ impl Arena {
             Kind::String => "string".into(),
             Kind::Color => "color".into(),
             Kind::Bool(b) => b.to_string(),
+            Kind::NonPrimitive => "object".into(),
+            Kind::Null => "null".into(),
             Kind::Num(bits) => number_text(f64::from_bits(*bits)),
             Kind::Str(s) => format!("\"{s}\""),
             Kind::Union(parts) => parts
@@ -510,6 +530,8 @@ impl Arena {
                 Kind::Number | Kind::Num(_) => "a number".into(),
                 Kind::String | Kind::Str(_) => "a string".into(),
                 Kind::Color => "a color".into(),
+                Kind::NonPrimitive => "an object".into(),
+                Kind::Null => "null".into(),
                 Kind::Object(o) => article(&object(*o)),
                 Kind::Type(o) => format!("the type {}", object(*o)),
                 Kind::Namespace(name) => format!("the namespace {name}"),
