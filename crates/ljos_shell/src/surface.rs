@@ -368,6 +368,8 @@ impl Painter {
                     return Steps::default();
                 }
                 let upload = wgpu_upload(painter, pending);
+                #[cfg(target_os = "macos")]
+                crate::srgb_layer::tag(window);
                 let started = std::time::Instant::now();
                 // egui-wgpu draws and presents in one call, and times only
                 // the waits inside it: for the surface's next texture, the
