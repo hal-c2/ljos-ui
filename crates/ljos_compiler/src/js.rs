@@ -12,8 +12,8 @@ use std::collections::HashMap;
 
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, AssignmentTargetPropertyIdentifier, BindingPattern, CallExpression, ChainExpression,
-    Expression, IdentifierReference, NewExpression, ObjectProperty, Program,
+    Argument, AssignmentTargetPropertyIdentifier, BinaryExpression, BindingPattern, CallExpression,
+    ChainExpression, Expression, IdentifierReference, NewExpression, ObjectProperty, Program,
     SimpleAssignmentTarget, Statement, StaticMemberExpression, StringLiteral, TSAsExpression,
     TSNonNullExpression, TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion,
     TSTypeParameterDeclaration, TSTypeParameterInstantiation, TaggedTemplateExpression,
@@ -23,7 +23,7 @@ use oxc_ast_visit::{Visit, walk};
 use oxc_parser::Parser;
 use oxc_semantic::{Scoping, SemanticBuilder};
 use oxc_span::{GetSpan, SourceType, Span};
-use oxc_syntax::operator::UnaryOperator;
+use oxc_syntax::operator::{BinaryOperator, UnaryOperator};
 use oxc_syntax::scope::ScopeId;
 
 /// How a script is written in QML.
@@ -60,6 +60,9 @@ pub(crate) struct Free {
     /// `new Name.Kind()`): a call written in its place has to be put in
     /// parentheses, or `new` would take the call for the constructor.
     pub constructed: bool,
+    /// The name alone is what `instanceof` asks of (`x instanceof Name`):
+    /// a type that attaches is the type there, not what it attached.
+    pub instance_type: bool,
 }
 
 /// `object.Name`: a member that is named as a type is, read off a value.
@@ -247,6 +250,7 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
         optional: 0,
         asked: Vec::new(),
         constructed: Vec::new(),
+        instance_types: Vec::new(),
         declarators: Vec::new(),
         analysis: Analysis::default(),
     };
@@ -423,6 +427,8 @@ struct Reader<'s, 'r> {
     asked: Vec<u32>,
     /// Where the names start that a `new` makes one of.
     constructed: Vec<u32>,
+    /// Where the names start that stand alone right of an `instanceof`.
+    instance_types: Vec<u32>,
     /// Every declaration of a single name, in order of appearance.
     declarators: Vec<Declarator>,
     analysis: Analysis,
@@ -492,6 +498,7 @@ impl Reader<'_, '_> {
             shorthand,
             asked: self.asked.contains(&it.span.start),
             constructed: self.constructed.contains(&it.span.start),
+            instance_type: self.instance_types.contains(&it.span.start),
         });
     }
 
@@ -825,6 +832,19 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
         walk::walk_unary_expression(self, it);
     }
 
+    fn visit_binary_expression(&mut self, it: &BinaryExpression<'a>) {
+        if it.operator == BinaryOperator::Instanceof {
+            let mut of = &it.right;
+            while let Expression::ParenthesizedExpression(inner) = of {
+                of = &inner.expression;
+            }
+            if let Expression::Identifier(id) = of {
+                self.instance_types.push(id.span.start);
+            }
+        }
+        walk::walk_binary_expression(self, it);
+    }
+
     fn visit_new_expression(&mut self, it: &NewExpression<'a>) {
         self.not_values.push(it.callee.span());
         let mut base = &it.callee;
@@ -1067,6 +1087,23 @@ mod tests {
         .unwrap();
         let asked: Vec<bool> = analysis.free.iter().map(|free| free.asked).collect();
         assert_eq!(asked, [true, true, false, false]);
+    }
+
+    #[test]
+    fn a_name_alone_right_of_instanceof_is_marked() {
+        let analysis = analyze(
+            "a instanceof B || c instanceof (D) || E instanceof F.G",
+            Form::Expression,
+            &[],
+        )
+        .unwrap();
+        let typed: Vec<&str> = analysis
+            .free
+            .iter()
+            .filter(|free| free.instance_type)
+            .map(|free| free.name.as_str())
+            .collect();
+        assert_eq!(typed, ["B", "D"]);
     }
 
     #[test]
