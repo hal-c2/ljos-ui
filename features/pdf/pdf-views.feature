@@ -284,3 +284,37 @@ Feature: Viewers of a PDF document
       }
       """
     Then the property "r" of "root" is ["#80308cc6", "#80b0c4de", "#00ffff", 2]
+
+  # Measured on Qt 6.12 (qmltestrunner, offscreen): the page view keeps the
+  # scale it was given; the other two go back to 1 when their document loads,
+  # and keep a scale given after. Qt warns while a view's document has no
+  # source.
+  @api-QtQuick.Pdf.PdfMultiPageView.renderScale @api-QtQuick.Pdf.PdfScrollablePageView.renderScale
+  @api-QtQuick.Pdf.PdfPageView.renderScale
+  Scenario Outline: A <view> given a scale before its document loads shows it at <scale>
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Pdf
+      <view> {
+        objectName: "v"
+        width: 400; height: 300
+        renderScale: 2
+        document: PdfDocument { id: d }
+        function open() { d.source = "pages.pdf" }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "renderScale" of "v" is 2
+    When the method "open" of "v" is called
+    And 300 milliseconds pass
+    Then the property "renderScale" of "v" is <scale>
+    When the property "renderScale" of "v" is set to 3
+    And 300 milliseconds pass
+    Then the property "renderScale" of "v" is 3
+
+    Examples:
+      | view                  | scale |
+      | PdfPageView           | 2     |
+      | PdfScrollablePageView | 1     |
+      | PdfMultiPageView      | 1     |
