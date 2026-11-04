@@ -1,0 +1,251 @@
+use super::*;
+
+fn lowered(source: &str) -> String {
+    match lower(source, &no_locals) {
+        Outcome::Lowered(lowered) => lowered.text,
+        other => panic!("not lowered: {other:?}"),
+    }
+}
+
+fn kept_for(source: &str) -> String {
+    match lower(source, &no_locals) {
+        Outcome::Kept(kept) => kept.reason,
+        other => panic!("lowered: {other:?}"),
+    }
+}
+
+/// Every rename in the table says what `Ljos.Ui` has: the new name is
+/// there and the old one is not, so the table and the runtime cannot drift.
+#[test]
+fn the_renames_are_what_ljos_ui_has() {
+    let ui = qt_types::module(MODULE).expect("Ljos.Ui is described");
+    for (old, new) in TYPE_RENAMES {
+        assert!(ui.type_named(new).is_some(), "{new}");
+        assert!(ui.type_named(old).is_none(), "{old}");
+    }
+    for (ty, renames) in MEMBER_RENAMES {
+        let ty = ui.type_named(ty).expect("a renaming type");
+        for (old, new) in *renames {
+            assert!(ty.property(new).is_some(), "{}.{new}", ty.name);
+            assert!(ty.property(old).is_none(), "{}.{old}", ty.name);
+            assert!(
+                ty.signal(&format!("{new}Changed")).is_some(),
+                "{new}Changed"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_file_without_qtquick_is_unchanged() {
+    assert_eq!(
+        lower("import QtQml\nQtObject { }\n", &no_locals),
+        Outcome::Unchanged
+    );
+}
+
+/// The corpus is a submodule, not this repository's (CLEAN_ROOM.md): the
+/// file is read where it is checked out, and the test says so where it is not.
+fn corpus_file(path: &str) -> Option<String> {
+    let at = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../corpus/qtdoc")
+        .join(path);
+    let text = std::fs::read_to_string(&at).ok();
+    if text.is_none() {
+        eprintln!(
+            "SKIPPED: no corpus at {} (`git submodule update --init corpus/qtdoc`)",
+            at.display()
+        );
+    }
+    text
+}
+
+#[test]
+fn the_corpus_button_is_lowered_line_for_line() {
+    let Some(source) = corpus_file("examples/demos/hangman/qml/SimpleButton.qml") else {
+        return;
+    };
+    let source = source.as_str();
+    let text = lowered(source);
+    assert_eq!(text.lines().count(), source.lines().count());
+    assert!(text.contains("import Ljos.Ui\n"));
+    assert!(!text.contains("import QtQuick"));
+    // The rectangle's colour is its fill, in the binding and in the states;
+    // the text's colour and the border's are colours still.
+    assert!(text.contains("        fill: buttonColor\n"));
+    assert!(text.contains("            color: textColor\n"));
+    assert_eq!(text.matches("fill: button.buttonColor").count(), 1);
+    assert_eq!(text.matches("fill: \"transparent\"").count(), 1);
+    assert_eq!(text.matches("border.color:").count(), 2);
+    assert_eq!(text.matches("color: button.textColor").count(), 1);
+    assert!(text.contains("    PointerArea {\n"));
+    assert!(!text.contains("MouseArea"));
+    // Nothing else moved.
+    for (a, b) in source.lines().zip(text.lines()) {
+        if a != b {
+            assert!(
+                a.contains("import QtQuick") || a.contains("color:") || a.contains("MouseArea"),
+                "{a:?} became {b:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn var_is_unknown() {
+    let text =
+        lowered("import QtQuick\nItem {\n    property var model\n    property variant old: 1\n}\n");
+    assert!(text.contains("property unknown model"));
+    assert!(text.contains("property unknown old: 1"));
+}
+
+#[test]
+fn a_script_reads_the_new_name_off_an_id() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    Rectangle { id: r }\n    Text { id: t }\n    \
+         Component.onCompleted: { t.color = r.color; r.colorChanged.connect(f) }\n    \
+         function f() {}\n}\n",
+    );
+    assert!(
+        text.contains("t.color = r.fill; r.fillChanged.connect(f)"),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_unqualified_member_is_the_scope_objects() {
+    let text = lowered(
+        "import QtQuick\nRectangle {\n    width: 10\n    onColorChanged: console.log(color)\n    \
+         Item { height: color.r }\n    Text { width: color.r }\n}\n",
+    );
+    assert!(text.contains("onFillChanged: console.log(fill)"), "{text}");
+    // An Item has no colour: it is the root's.
+    assert!(text.contains("Item { height: fill.r }"), "{text}");
+    assert!(text.contains("Text { width: color.r }"), "{text}");
+}
+
+/// `Behavior on color` would be `on fill`, once `Ljos.Ui` has `Behavior`.
+#[test]
+fn a_type_outside_the_slice_keeps_the_file_whatever_it_is_on() {
+    assert!(
+        kept_for("import QtQuick\nRectangle {\n    Behavior on color { }\n}\n")
+            .contains("`Behavior` is not in Ljos.Ui yet")
+    );
+}
+
+#[test]
+fn what_the_pass_cannot_type_keeps_the_file() {
+    assert!(kept_for("import QtQuick\nItem { width: parent.color.r }\n").contains("`.color`"));
+    assert!(kept_for("import QtQuick\nItem { Image { } }\n").contains("`Image` is not in Ljos.Ui"));
+    assert!(
+        kept_for("import QtQuick\nItem { MyThing { color: \"red\" } }\n")
+            .contains("whose type is not known")
+    );
+    assert!(
+        kept_for("import QtQuick\nimport QtQuick.Layouts\nItem { }\n").contains("QtQuick.Layouts")
+    );
+    assert!(kept_for("import QtQuick as Q\nQ.Item { }\n").contains("under a name"));
+    assert!(
+        kept_for("import QtQuick\nRectangle { function f() { let color = 1; return color } }\n")
+            .contains("a local is called `color`")
+    );
+}
+
+#[test]
+fn a_file_of_the_project_is_the_type_its_root_is() {
+    let locals = |name: &str| (name == "Swatch").then(|| "Rectangle".to_string());
+    let Outcome::Lowered(lowered) = lower(
+        "import QtQuick\nItem { Swatch { id: s; color: \"red\" } Text { color: s.color } }\n",
+        &locals,
+    ) else {
+        panic!("not lowered");
+    };
+    assert!(
+        lowered
+            .text
+            .contains("Swatch { id: s; fill: \"red\" } Text { color: s.fill }"),
+        "{}",
+        lowered.text
+    );
+}
+
+#[test]
+fn a_file_names_the_files_of_the_project_it_may_use() {
+    let refs = references(
+        "import QtQuick\nimport \"parts\"\nimport \"lib.js\" as Lib\nItem {\n    property Swatch s\n    \
+         Button { }\n    Loader { source: \"panels/Side.qml\" }\n    \
+         function f() { return Qt.createComponent(\"Pop.qml\") }\n}\n",
+    );
+    assert_eq!(refs.dirs, ["parts"]);
+    assert_eq!(refs.files, ["Pop.qml", "panels/Side.qml"]);
+    for ty in ["Item", "Swatch", "Button", "Loader", "Qt"] {
+        assert!(refs.types.iter().any(|t| t == ty), "{ty}: {:?}", refs.types);
+    }
+}
+
+fn alone(source: &str) -> Alone {
+    let locals = |name: &str| (name == "Button").then(|| "Rectangle".to_string());
+    Alone {
+        outcome: lower(source, &locals),
+        references: references(source),
+    }
+}
+
+/// A kept file that sets `color` on a lowered `Button` would find a `fill`.
+#[test]
+fn files_that_name_one_another_are_lowered_together() {
+    let button = "import QtQuick\nRectangle { color: \"red\" }\n";
+    let files = std::collections::BTreeMap::from([
+        ("app/Button".to_string(), alone(button)),
+        (
+            "app/Main".to_string(),
+            alone("import QtQuick\nColumn { Button { color: \"blue\" } }\n"),
+        ),
+        ("other/Lone".to_string(), alone(button)),
+    ]);
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Button"] else {
+        panic!("{:?}", outcomes["app/Button"]);
+    };
+    assert!(
+        kept.reason.contains("`Main.qml`, which is kept"),
+        "{}",
+        kept.reason
+    );
+    assert!(matches!(outcomes["app/Main"], Outcome::Kept(_)));
+    assert!(matches!(outcomes["other/Lone"], Outcome::Lowered(_)));
+}
+
+#[test]
+fn a_file_reached_by_address_or_directory_is_of_the_group() {
+    let lowers = "import QtQuick\nRectangle { color: \"red\" }\n";
+    let kept = "import QtQuick\nImage { }\n";
+    for (main, other) in [
+        (
+            "import QtQuick\nLoader { source: \"../parts/Part.qml\" }\n",
+            "parts/Part",
+        ),
+        (
+            "import QtQuick\nimport \"../parts\"\nItem { }\n",
+            "parts/Part",
+        ),
+    ] {
+        let files = std::collections::BTreeMap::from([
+            ("app/Main".to_string(), alone(main)),
+            (other.to_string(), alone(kept)),
+            ("app/Swatch".to_string(), alone(lowers)),
+        ]);
+        let outcomes = group(&files);
+        assert!(matches!(outcomes["app/Main"], Outcome::Kept(_)), "{main}");
+        // Named by nothing: alone.
+        assert!(matches!(outcomes["app/Swatch"], Outcome::Lowered(_)));
+    }
+}
+
+#[test]
+fn qml_text_made_while_the_file_runs_keeps_it() {
+    assert!(
+        kept_for("import QtQuick\nItem { function f() { Qt.createQmlObject(\"import QtQuick; Rectangle {}\", this) } }\n")
+            .contains("QML text")
+    );
+}

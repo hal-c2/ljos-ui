@@ -1,0 +1,21 @@
+[package]
+name = "qml_compat"
+description = "Qt's QML lowered to Ljós's own API (docs/DIALECT.md): the edits that rename Qt's types and members, which a project makes as it loads a file and `ljos migrate` writes back."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+oxc_ast.workspace = true
+oxc_ast_visit.workspace = true
+oxc_span.workspace = true
+oxc_syntax.workspace = true
+qml_edit = { path = "../qml_edit" }
+qml_syntax = { path = "../qml_syntax" }
+qt_types = { path = "../qt_types" }
+
+[lints]
+workspace = true
