@@ -527,6 +527,73 @@ module Ljos.Models
 		method setProperty
 		method clear
 
+module Ljos.Ui
+	import QtQml
+	Font QtQuick.Font
+	Item QtQuick.Item
+	PointerArea Ljos.Ui.PointerArea
+	PropertyChanges QtQuick.PropertyChanges
+	Rectangle Ljos.Ui.Rectangle
+	State QtQuick.State
+	Text QtQuick.Text
+	type Ljos.Ui.PointerArea PointerArea
+		prototype QtQuick.Item named
+		prop hoverEnabled QtQml.bool named
+		prop containsMouse QtQml.bool named readonly
+		prop pressed QtQml.bool named readonly
+		prop containsPress QtQml.bool named readonly
+		prop pressedButtons Qt::MouseButtons readonly
+		prop mouseX QtQml.real named readonly
+		prop mouseY QtQml.real named readonly
+		prop acceptedButtons Qt::MouseButtons
+		prop preventStealing QtQml.bool named
+		prop drag QtQuick.Drag pointer readonly
+		prop cursorShape Qt::CursorShape reset
+		prop pressAndHoldInterval QtQml.int named reset
+		signal hoverEnabledChanged
+		signal containsMouseChanged
+		signal pressedChanged
+		signal containsPressChanged
+		signal pressedButtonsChanged
+		signal mouseXChanged
+		signal mouseYChanged
+		signal acceptedButtonsChanged
+		signal preventStealingChanged
+		signal cursorShapeChanged
+		signal pressAndHoldIntervalChanged
+		signal pressAndHold mouse:QtObject
+		signal pressed mouse:QtObject
+		signal released mouse:QtObject
+		signal clicked mouse:QtObject
+		signal doubleClicked mouse:QtObject
+		signal positionChanged mouse:QtObject
+		signal entered
+		signal exited
+		signal canceled
+		signal wheel wheel:QtObject
+	type Ljos.Ui.Rectangle Rectangle
+		prototype QtQuick.Item named
+		prop fill QtQuick.color named
+		prop radius QtQml.real named
+		prop topLeftRadius QtQml.real named reset
+		prop topRightRadius QtQml.real named reset
+		prop bottomLeftRadius QtQml.real named reset
+		prop bottomRightRadius QtQml.real named reset
+		prop border Ljos.Ui.RectangleBorder pointer readonly
+		prop gradient QtQml.var named reset
+		signal fillChanged
+		signal radiusChanged
+		signal topLeftRadiusChanged
+		signal topRightRadiusChanged
+		signal bottomLeftRadiusChanged
+		signal bottomRightRadiusChanged
+	type Ljos.Ui.RectangleBorder RectangleBorder
+		is uncreatable
+		prop width QtQml.real named
+		prop color QtQuick.color named
+		signal widthChanged
+		signal colorChanged
+
 module Qt.labs.folderlistmodel
 	FolderListModel Qt.labs.folderlistmodel.FolderListModel
 	type Qt.labs.folderlistmodel.FolderListModel FolderListModel

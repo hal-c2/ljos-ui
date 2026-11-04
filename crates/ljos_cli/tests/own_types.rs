@@ -421,7 +421,9 @@ impl<'a, 'c> Module<'a, 'c> {
     fn describe(&mut self, meta: &MetaRef, class: &str, exported: bool) {
         let engine = self.all.engine;
         let mut out = format!("\ttype {class} {}\n", meta.name);
-        if let Some(base) = &meta.base {
+        // A face is described flat: its prototype is the one of the type
+        // it faces, and that type's own members are its own.
+        if let Some(base) = meta.prototype() {
             let link = self.link(base);
             let _ = writeln!(out, "\t\tprototype {link}");
         }
@@ -443,8 +445,8 @@ impl<'a, 'c> Module<'a, 'c> {
         // The enums are flattened: one a base has is said there, unless
         // this type gives the name keys of its own.
         let inherited = |own: &EnumInfo| {
-            meta.base
-                .iter()
+            meta.prototype()
+                .into_iter()
                 .flat_map(|base| base.enums.iter())
                 .any(|e| e.name == own.name && e.keys == own.keys)
         };

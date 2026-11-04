@@ -38,6 +38,7 @@ mod item_picture;
 pub mod keys;
 mod layer;
 mod layouts;
+mod ljos_ui;
 mod loader;
 mod long_press;
 mod metrics;
@@ -245,6 +246,7 @@ pub fn register(engine: &Engine) {
     animation::register(engine);
     states::register(engine);
     font_enums::register(engine);
+    ljos_ui::register(engine);
     // What a scene shows of an item goes with it, and a child made in
     // slices is shown once it is whole.
     engine.on_destroyed(scene::destroyed);
