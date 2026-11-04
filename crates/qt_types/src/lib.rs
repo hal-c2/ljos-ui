@@ -242,6 +242,13 @@ pub fn modules() -> Vec<&'static str> {
     uris
 }
 
+/// The type of the class `class` (`QQuickItem`, `QtQuick.Item`): what a
+/// signal's parameter or a property is said to be by its class alone.
+pub fn type_of_class(class: &str) -> Option<&'static Type> {
+    let table = table();
+    table.classes.get(class).map(|index| &table.types[*index])
+}
+
 /// The types of the module `uri` that are native and not QML files: of Qt's
 /// description, what a runtime has to have of it. None when the table has no
 /// such module.
