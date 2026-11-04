@@ -36,6 +36,8 @@ pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 mod appkit_drag;
 #[cfg(target_os = "macos")]
 mod appkit_drag_out;
+#[cfg(target_os = "macos")]
+mod appkit_menu;
 mod badge;
 mod cpu;
 mod desktop;
