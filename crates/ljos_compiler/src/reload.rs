@@ -296,9 +296,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         // A broken script stays refused until it is mended or gone.
         let project = &self.project;
         self.broken_scripts.retain(|key, _| {
-            project.script(key).is_some_and(|text| {
-                crate::script::syntax_error(text, key.ends_with(".mjs")).is_some()
-            })
+            project
+                .script(key)
+                .is_some_and(|text| crate::script::syntax_error(text, key).is_some())
         });
         self.sources = self
             .project
@@ -361,7 +361,7 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         let source = source.into();
         if is_script(key) {
             if self.project.script(key) != Some(source.as_str()) {
-                match crate::script::syntax_error(&source, key.ends_with(".mjs")) {
+                match crate::script::syntax_error(&source, key) {
                     Some((line, column, message)) => {
                         let file = key.to_owned();
                         let fault = CompileFault {

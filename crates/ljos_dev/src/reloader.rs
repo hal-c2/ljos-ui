@@ -627,7 +627,7 @@ pub fn classify(root: &Path, path: &Path, is_dir: bool) -> Touch {
     if name.starts_with('.') {
         return Touch::Ignore;
     }
-    if name.ends_with(".qml") || name.ends_with(".js") || name.ends_with(".mjs") {
+    if name.ends_with(".qml") || qml_front::project::is_script(&name) {
         return Touch::File;
     }
     if ljos_quick::ImageStore::is_picture_file(path) {
