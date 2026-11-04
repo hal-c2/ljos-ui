@@ -235,7 +235,7 @@ ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
-| `font.pointSize`, `Screen.pixelDensity` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72); arrives with `Screen` in M1 | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
+| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72); arrives with `Screen` in M1 | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
 | `Qt.binding` | a `Binding` object, or a state | declarative | |
 | `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
 | `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
@@ -870,6 +870,7 @@ construction.
 | `Qt.*` globals | `Ljos.Core`, `App`, value types (§4.3) | mechanical, by member |
 | `date`, `Date` | `Instant`, `Locale` | mechanical when only stored or compared, else kept |
 | `Screen.primaryOrientation` | the window's aspect | DECISION: kept; the meaning differs on desktops |
+| `Screen.pixelDensity` | — | DECISION: kept; it is physical pixels per mm, not the logical DPI `Screen.points` uses, and the corpus has no use of it |
 | `property var` | `property unknown`, or a type | mechanical |
 | `Qt.labs.platform`, `StandardPaths` | `Ljos.Platform` | mechanical |
 | `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
