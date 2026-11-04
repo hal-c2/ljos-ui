@@ -298,6 +298,9 @@ struct Global {
     root: PathBuf,
     contexts: HashMap<String, RequestContext>,
     pages: Vec<std::rc::Weak<CefPage>>,
+    /// Every browser made, until CEF says it has closed: a page whose
+    /// engine has gone still has one, closing, that [`shutdown`] waits for.
+    browsers: Vec<Arc<Shared>>,
 }
 
 thread_local! {
@@ -487,6 +490,7 @@ fn initialize_cef(e: &Engine) -> Result<Global, String> {
         root,
         contexts: HashMap::new(),
         pages: Vec::new(),
+        browsers: Vec::new(),
     })
 }
 
@@ -1551,6 +1555,8 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
     with_global(e, |g| {
         g.pages.retain(|p| p.strong_count() > 0);
         g.pages.push(std::rc::Rc::downgrade(&page));
+        g.browsers.retain(|b| Shared::lock(&b.browser).is_some());
+        g.browsers.push(page.shared.clone());
     })?;
     Ok(page)
 }
@@ -1815,6 +1821,93 @@ impl Drop for CefPage {
     fn drop(&mut self) {
         self.close();
     }
+}
+
+// --- shutting down ----------------------------------------------------------
+
+/// How long [`shutdown`] waits for browsers to say they have closed.
+const CLOSE_DEADLINE: Duration = Duration::from_secs(10);
+
+/// Closes every browser still open, waits until CEF says each has closed,
+/// and shuts CEF down. A browser whose view has gone was told to close,
+/// but its engine no longer runs CEF's work, so nothing finished closing
+/// it; and a process that ends with CEF running hangs in its exit, waiting
+/// on CEF's threads. So the work is done here, on this thread, until every
+/// browser has closed: CEF must shut down on the thread that started it,
+/// which is the only thread whose [`GLOBAL`] holds it.
+///
+/// Returns whether CEF had started here and has shut down; after it, no
+/// page can show in this process.
+pub(crate) fn shutdown() -> bool {
+    let taken = GLOBAL.with(|g| {
+        let mut g = g.borrow_mut();
+        match g.take() {
+            Some(Ok(global)) => {
+                *g = Some(Err("the web engine has shut down".to_owned()));
+                Some(global)
+            }
+            other => {
+                *g = other;
+                None
+            }
+        }
+    });
+    let Some(global) = taken else {
+        return false;
+    };
+    // The work is done here from now on: never posted to an engine.
+    if let Some(pump) = PUMP.get() {
+        pump.post
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
+    }
+    let _ = AWAKE.try_with(|a| *a.borrow_mut() = (None, None));
+    let Global {
+        contexts,
+        pages,
+        browsers,
+        ..
+    } = global;
+    for shared in &browsers {
+        shared.closing.store(true, Ordering::Relaxed);
+        let host = Shared::lock(&shared.browser)
+            .as_ref()
+            .and_then(|b| b.host());
+        if let Some(host) = host {
+            host.close_browser(1);
+        }
+    }
+    let open = || {
+        browsers
+            .iter()
+            .filter(|b| Shared::lock(&b.browser).is_some())
+            .count()
+    };
+    let started = Instant::now();
+    while open() > 0 && started.elapsed() < CLOSE_DEADLINE {
+        do_message_loop_work();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let left = open();
+    if left > 0 {
+        // CEF cannot shut down with a browser open; the process ends
+        // without it, as it did before there was a shutdown.
+        eprintln!(
+            "ljos_webengine: {left} browser(s) did not close within {} s; CEF was not shut down",
+            CLOSE_DEADLINE.as_secs()
+        );
+        return false;
+    }
+    drop(pages);
+    drop(browsers);
+    drop(contexts);
+    // What closing left for the UI thread, before CEF stops.
+    for _ in 0..10 {
+        do_message_loop_work();
+    }
+    ::cef::shutdown();
+    true
 }
 
 /// Empties the HTTP cache: Chromium's is the browser's, so any page of
