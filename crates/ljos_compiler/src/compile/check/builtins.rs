@@ -106,6 +106,7 @@ fn sig(params: Vec<Param>, rest: Option<Ty>, ret: Ty) -> Sig {
         params: params.into_boxed_slice(),
         rest,
         ret,
+        guard: None,
     }
 }
 

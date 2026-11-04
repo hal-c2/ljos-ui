@@ -436,6 +436,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             params: params.into_boxed_slice(),
             rest: None,
             ret: Ty::VOID,
+            guard: None,
         })
     }
 
@@ -447,6 +448,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             params: Box::new([]),
             rest: Some(Ty::UNKNOWN),
             ret: Ty::UNKNOWN,
+            guard: None,
         })
     }
 

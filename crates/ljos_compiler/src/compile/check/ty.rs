@@ -83,6 +83,18 @@ pub(crate) struct Sig {
     /// The element type of a rest parameter.
     pub(crate) rest: Option<Ty>,
     pub(crate) ret: Ty,
+    /// What a type guard or an assertion function says of a parameter.
+    pub(crate) guard: Option<Guard>,
+}
+
+/// `v is T` (a type guard, which returns a boolean) or `asserts v is T`
+/// (an assertion function, which returns only when it holds).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct Guard {
+    /// The parameter it narrows, by its place.
+    pub(crate) param: usize,
+    pub(crate) ty: Ty,
+    pub(crate) asserts: bool,
 }
 
 impl Sig {
@@ -494,11 +506,15 @@ impl Arena {
                 if let Some(rest) = sig.rest {
                     params.push(format!("...rest: {}[]", self.display(rest, object)));
                 }
-                format!(
-                    "({}) => {}",
-                    params.join(", "),
-                    self.display(sig.ret, object)
-                )
+                let ret = match sig.guard {
+                    Some(guard) => {
+                        let name = sig.params.get(guard.param).map_or("v", |p| &*p.name);
+                        let asserts = if guard.asserts { "asserts " } else { "" };
+                        format!("{asserts}{name} is {}", self.display(guard.ty, object))
+                    }
+                    None => self.display(sig.ret, object),
+                };
+                format!("({}) => {ret}", params.join(", "))
             }
             Kind::Global(global) => format!("{global:?}"),
             Kind::Enum { object: o, name } | Kind::EnumNs { object: o, name } => {

@@ -9,13 +9,13 @@ use qml_syntax::{
         BinaryOperator, BindingPattern, CallExpression, ChainElement, Expression, FormalParameters,
         Function, IdentifierReference, LogicalOperator, ObjectPropertyKind, PropertyKey,
         SimpleAssignmentTarget, SpreadElement, Statement, TSLiteral, TSSignature, TSType,
-        TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator, UnaryOperator, VariableDeclaration,
-        VariableDeclarationKind,
+        TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator, TSTypePredicateName, UnaryOperator,
+        VariableDeclaration, VariableDeclarationKind,
     },
 };
 
 use super::module::{Space, listed};
-use super::ty::{Field, Global, Kind, Method, Param, Sig, Ty};
+use super::ty::{Field, Global, Guard, Kind, Method, Param, Sig, Ty};
 use super::{Binding, Checker, Fact, FnCtx, Obj, builtins, primitive};
 use crate::Code;
 
@@ -74,15 +74,66 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             .map(|rest| self.rest_elem(rest.type_annotation.as_deref()));
         // DECISION: a function with no return type written gives what the
         // checker lets by to a call made before its body is read.
-        let ret = match ret {
-            Some(annotation) => self.annot(&annotation.type_annotation),
-            None => Ty::ERROR,
+        let (ret, guard) = match ret {
+            Some(annotation) => self.returns(&annotation.type_annotation, params, false),
+            None => (Ty::ERROR, None),
         };
         self.arena.function(Sig {
             params: list.into_boxed_slice(),
             rest,
             ret,
+            guard,
         })
+    }
+
+    /// The return type `written` says, and what it says of a parameter
+    /// where it is a type predicate: `v is T` returns a boolean, `asserts
+    /// v is T` nothing. `report` says what TypeScript refuses of one.
+    fn returns(
+        &mut self,
+        written: &TSType<'a>,
+        params: &FormalParameters<'a>,
+        report: bool,
+    ) -> (Ty, Option<Guard>) {
+        let TSType::TSTypePredicate(predicate) = written else {
+            return (self.annot(written), None);
+        };
+        let ret = if predicate.asserts {
+            Ty::VOID
+        } else {
+            Ty::BOOLEAN
+        };
+        // DECISION: `this is T` has no `this` to narrow in the subset, and
+        // `asserts v` asserts truthiness, which it has none of: both are
+        // the boolean or void they return, narrowing nothing.
+        let (TSTypePredicateName::Identifier(name), Some(annotation)) =
+            (&predicate.parameter_name, &predicate.type_annotation)
+        else {
+            return (ret, None);
+        };
+        let ty = self.annot(&annotation.type_annotation);
+        let Some(param) = params
+            .items
+            .iter()
+            .position(|p| pattern_name(&p.pattern) == name.name.as_str())
+        else {
+            if report {
+                self.report(
+                    Code::TsAssignType,
+                    format!("`{}` is not a parameter of this function", name.name),
+                    name.span,
+                );
+            }
+            return (ret, None);
+        };
+        (
+            ret,
+            Some(Guard {
+                param,
+                ty,
+                asserts: predicate.asserts,
+            }),
+        )
     }
 
     fn rest_elem(&mut self, annotation: Option<&TSTypeAnnotation<'a>>) -> Ty {
@@ -162,7 +213,27 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             self.rest_elem(rest.type_annotation.as_deref())
         });
-        let written = ret.map(|annotation| self.annot(&annotation.type_annotation));
+        let (written, guard) = match ret {
+            Some(annotation) => {
+                let (ty, guard) = self.returns(&annotation.type_annotation, params, true);
+                (Some(ty), guard)
+            }
+            None => (None, None),
+        };
+        if let Some(guard) = guard
+            && let Some(param) = list.get(guard.param)
+            && !self.takes(param.ty, guard.ty)
+            && let Some(annotation) = ret
+        {
+            let (name, word, to) = (param.name.clone(), self.word(param.ty), self.word(guard.ty));
+            let span = annotation.type_annotation.span();
+            let text = self.text(span).trim_start_matches("asserts ").to_string();
+            self.report(
+                Code::TsAssignType,
+                format!("`{text}` narrows `{name}`, {word}, to what it cannot be: {to}"),
+                span,
+            );
+        }
         let wanted = want.map(|want| self.sig_ret(want));
         let declared = written.or(wanted.filter(|ret| *ret != Ty::VOID && *ret != Ty::ERROR));
         let mut inferred = Ty::VOID;
@@ -218,6 +289,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             params: list.into_boxed_slice(),
             rest,
             ret: written.unwrap_or(inferred),
+            guard,
         })
     }
 
@@ -582,6 +654,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Kind::Function(_) => self.apply(callee, &call.arguments, call.span),
             Kind::Method(receiver, Method::Array("map")) => self.map(receiver, call),
             Kind::Method(receiver, Method::Array("reduce")) => self.reduce(receiver, call),
+            Kind::Method(receiver, Method::Array("filter")) => self.filter(receiver, call),
             Kind::Method(receiver, method) => {
                 match builtins::method_sig(&mut self.arena, receiver, method) {
                     Some(sig) => {
@@ -630,9 +703,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// A call of the function of type `f`: its arguments' number and types.
     fn apply(&mut self, f: Ty, arguments: &[Argument<'a>], span: Span) -> Ty {
+        self.apply_with(f, arguments, span).0
+    }
+
+    /// `apply`, with the types of the arguments given.
+    fn apply_with(&mut self, f: Ty, arguments: &[Argument<'a>], span: Span) -> (Ty, Vec<Ty>) {
         let (count, required, rest, ret) = match self.arena.kind(f) {
             Kind::Function(sig) => (sig.params.len(), sig.required(), sig.rest, sig.ret),
-            _ => return self.loose_args(arguments),
+            _ => return (self.loose_args(arguments), Vec::new()),
         };
         let given = arguments.len();
         let spread = arguments
@@ -651,9 +729,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 span,
             );
         }
+        let mut given_types = Vec::with_capacity(arguments.len());
         for (at, argument) in arguments.iter().enumerate() {
             let want = self.sig_param(f, at).map(|(ty, _)| ty);
             let ty = self.argument(argument, want);
+            given_types.push(ty);
             if let Some(want) = want
                 && !self.takes(want, ty)
             {
@@ -668,7 +748,69 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 self.check_assign(&name, want, &wanted, ty, argument.span());
             }
         }
+        (ret, given_types)
+    }
+
+    /// `array.filter(predicate)`: as TypeScript 5.5 does for a predicate
+    /// that says what it keeps (`isRow`, of `v is Row`), an array of that.
+    /// DECISION: a predicate is not inferred from an arrow's body, as
+    /// TypeScript 5.5 infers one: a guard says `v is T` where it is written.
+    fn filter(&mut self, receiver: Ty, call: &CallExpression<'a>) -> Ty {
+        let Some(sig) = builtins::method_sig(&mut self.arena, receiver, Method::Array("filter"))
+        else {
+            return self.loose_args(&call.arguments);
+        };
+        let f = self.arena.function(sig);
+        let (ret, given) = self.apply_with(f, &call.arguments, call.span);
+        let Kind::Array { elem, .. } = *self.arena.kind(receiver) else {
+            return ret;
+        };
+        if let Some(&predicate) = given.first()
+            && let Kind::Function(sig) = self.arena.kind(predicate)
+            && let Some(guard) = sig.guard
+            && guard.param == 0
+            && !guard.asserts
+            && self.takes(elem, guard.ty)
+        {
+            return self.arena.array(guard.ty, true);
+        }
         ret
+    }
+
+    /// The guard of the function `call` calls, and the argument it narrows.
+    fn guard_of<'c>(
+        &mut self,
+        call: &'c CallExpression<'a>,
+    ) -> Option<(Guard, &'c Expression<'a>)> {
+        self.quiet += 1;
+        let callee = self.expr(&call.callee, None);
+        self.quiet -= 1;
+        let Kind::Function(sig) = self.arena.kind(callee) else {
+            return None;
+        };
+        let guard = sig.guard?;
+        match call.arguments.get(guard.param)? {
+            Argument::SpreadElement(_) => None,
+            argument => Some((guard, argument.to_expression())),
+        }
+    }
+
+    /// What a guard of `to` being `sense` leaves of `now`, as TypeScript
+    /// narrows by a type predicate: the parts that are a `to`, else `to`
+    /// itself; or, where it is false, the parts that are not.
+    fn narrow_guard(&mut self, now: Ty, to: Ty, sense: bool) -> Ty {
+        if now == Ty::UNKNOWN || now == Ty::ERROR {
+            return if sense { to } else { now };
+        }
+        let parts = self.arena.members(now);
+        let kept: Vec<Ty> = parts
+            .into_iter()
+            .filter(|part| self.takes(to, *part) == sense)
+            .collect();
+        if sense && kept.is_empty() {
+            return to;
+        }
+        self.arena.union(kept)
     }
 
     /// `array.map(callback)`: an array of what the callback gives.
@@ -735,6 +877,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             params,
             rest: None,
             ret,
+            guard: None,
         })
     }
 
@@ -1125,11 +1268,32 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.loose_args(&new.arguments);
                     return self.arena.intern(Kind::Map { key, value });
                 }
+                // DECISION: `new Error(message)` is made too, for an
+                // assertion function to throw; it is an object, its members
+                // not read.
+                if let Expression::Identifier(id) = &new.callee
+                    && id.name.as_str() == "Error"
+                    && self.local("Error").is_none()
+                {
+                    let message = self.arena.or(Ty::STRING, Ty::UNDEFINED);
+                    let f = self.arena.function(Sig {
+                        params: Box::new([Param {
+                            name: "message".into(),
+                            ty: message,
+                            optional: true,
+                            written: None,
+                        }]),
+                        rest: None,
+                        ret: Ty::OBJECT,
+                        guard: None,
+                    });
+                    return self.apply(f, &new.arguments, new.span);
+                }
                 self.loose_args(&new.arguments);
                 let callee = self.text(new.callee.span());
                 self.untyped(
                     callee,
-                    "`new` makes only a `Map<K, V>()` in Ljós's API",
+                    "`new` makes only a `Map<K, V>()` or an `Error(message)` in Ljós's API",
                     new.span,
                 )
             }
@@ -1860,6 +2024,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.push_fact(key, local, ty, base);
                 }
             }
+            // `isRow(v)`, of a type guard.
+            Expression::CallExpression(call) => {
+                if let Some((guard, subject)) = self.guard_of(call)
+                    && !guard.asserts
+                    && let Some((key, local, now, base)) = self.path(subject)
+                {
+                    let ty = self.narrow_guard(now, guard.ty, sense);
+                    self.push_fact(key, local, ty, base);
+                }
+            }
             _ => {}
         }
     }
@@ -2203,6 +2377,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Statement::BlockStatement(block) => self.stmts(&block.body),
             Statement::ExpressionStatement(statement) => {
                 self.expr(&statement.expression, None);
+                // `row(v)`, of an assertion function: it returns only where
+                // `v` is what it asserts.
+                if let Expression::CallExpression(call) = &statement.expression
+                    && let Some((guard, subject)) = self.guard_of(call)
+                    && guard.asserts
+                    && let Some((key, local, now, base)) = self.path(subject)
+                {
+                    let ty = self.narrow_guard(now, guard.ty, true);
+                    self.push_fact(key, local, ty, base);
+                }
                 true
             }
             Statement::VariableDeclaration(declaration) => {

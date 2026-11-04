@@ -145,3 +145,98 @@ Feature: Decoders: what is unknown is narrowed before it is used
       Then the property "shown" of "root" is "one"
       And the property "other" of "root" is "none"
       And the property "total" of "root" is 3
+
+  Rule: A type guard and an assertion function narrow what they are given
+
+    Background:
+      Given the file "row.ts":
+        """ts
+        export interface Row { tag: string; count: number }
+        export function isRow(v: unknown): v is Row {
+          return typeof v === "object" && v !== null && "tag" in v && typeof v.tag === "string" && "count" in v && typeof v.count === "number"
+        }
+        export function row(v: unknown): asserts v is Row {
+          if (!isRow(v)) { throw new Error("not a row") }
+        }
+        """
+
+    Scenario: A guard narrows in if, &&, ?:, !, an early return and filter, and an assertion narrows what follows it
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "row.ts" as Rows
+        Item {
+          property unknown given
+          property real shown: 0
+          property string label: ""
+          function isBig(v: unknown): v is number { return typeof v === "number" && v > 10 }
+          function viaIf(): void { if (Rows.isRow(given)) { shown = given.count } }
+          function viaAnd(): void { label = Rows.isRow(given) && given.tag === "a" ? "a" : "other" }
+          function viaReturn(v: unknown): number { if (!Rows.isRow(v)) { return 0 } return v.count }
+          function viaElse(v: unknown): string { return !Rows.isRow(v) ? "none" : v.tag }
+          function viaFilter(all: readonly unknown[]): number { const rows: readonly Rows.Row[] = all.filter(Rows.isRow); return rows.length }
+          function viaAssert(v: unknown): number { Rows.row(v); return v.count }
+          function viaOwn(v: unknown): number { return isBig(v) ? v : 0 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        2 files, 0 errors, 0 warnings
+        """
+
+    Scenario: What a guard has not said, a guard that gives no boolean, and one that narrows to what cannot be are reported
+      Given the file "bad.ts":
+        """ts
+        export function isTag(v: unknown): v is string { return 1 }
+        export function isCount(v: string): v is number { return false }
+        """
+      And the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "row.ts" as Rows
+        import "bad.ts" as Bad
+        Item {
+          property unknown given
+          property real shown: 0
+          function missed(): void { if (!Rows.isRow(given)) { shown = 1 } shown = given.count }
+          function wrong(v: unknown): void { Rows.row(v); shown = v.tag }
+          function rows(all: readonly unknown[]): void { const kept: readonly Rows.Row[] = all.filter(Bad.isTag) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:7:89: error: `count` has no type: `given` is unknown: narrow it first (`typeof given === "object" && given !== null && "count" in given`), or decode it with a type guard [ts-no-any]
+        Show.qml:8:67: error: `shown` is a real; this gives it a string [ts-assign-type]
+        Show.qml:9:92: error: `kept` is a readonly { tag: string; count: number }[]; this gives it a readonly string[] [ts-assign-type]
+        bad.ts:1:65: error: this function returns a boolean; this gives it a number [ts-assign-type]
+        bad.ts:2:45: error: `v is number` narrows `v`, a string, to what it cannot be: a number [ts-assign-type]
+        3 files, 5 errors, 0 warnings
+        ljos: 5 errors
+        """
+
+    Scenario: A handler decodes what it is given with a guard and an assertion
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import "row.ts" as Rows
+        Item {
+          objectName: "root"
+          property unknown given: ({ tag: "a", count: 4 })
+          property unknown bad: ({ tag: "a" })
+          property real shown: 0
+          property real fallback: 0
+          property string caught: ""
+          function show() {
+            if (Rows.isRow(given)) { shown = given.count }
+            const rows: readonly Rows.Row[] = [given, bad, 3].filter(Rows.isRow)
+            fallback = rows.length
+            try { Rows.row(bad); fallback = 99 } catch (e) { caught = "not a row" }
+          }
+        }
+        """
+      When the method "show" of "root" is called
+      Then the property "shown" of "root" is 4
+      And the property "fallback" of "root" is 1
+      And the property "caught" of "root" is "not a row"
