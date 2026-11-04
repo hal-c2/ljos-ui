@@ -10,7 +10,7 @@ use crate::world::LjosWorld;
 
 use super::{StepResult, docstring};
 
-#[when(regex = r#"^the file "([^"]+\.(?:qml|m?js))" is changed to:$"#)]
+#[when(regex = r#"^the file "([^"]+\.(?:qml|m?js|ts))" is changed to:$"#)]
 fn file_changed(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     let text = docstring(step)?;
     // An application the author started watches the project's files.

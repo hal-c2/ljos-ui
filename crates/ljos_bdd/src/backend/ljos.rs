@@ -639,7 +639,7 @@ fn compile(
         let key = key_of(name);
         match compile_file(&project, key) {
             Ok(c) if !c.has_errors() => out.insert(key, c.file),
-            Ok(c) => out.insert_failure(key, failure_reason(&c.diagnostics)),
+            Ok(c) => out.insert_failure(key, c.failure_reason()),
             Err(ds) => out.insert_failure(key, failure_reason(&ds)),
         }
     }

@@ -303,21 +303,33 @@ fn compiled(result: Result<Compiled, Vec<Diagnostic>>) -> Result<CompiledFile, D
 /// against the files of the tests.
 fn text_compiler(project: Rc<RefCell<Project<QtTypeOracle>>>) -> QmlTextCompiler {
     Rc::new(move |text: QmlText<'_>| {
-        let errors = |diagnostics: &[Diagnostic]| -> Vec<QmlTextError> {
+        // A module's errors are at no place of the text: line 0, and the
+        // message says the module's place.
+        let errors = |diagnostics: Vec<(Option<&str>, &Diagnostic)>| -> Vec<QmlTextError> {
             diagnostics
-                .iter()
-                .filter(|d| d.severity == Severity::Error)
-                .map(|d| QmlTextError {
-                    line: d.span.line,
-                    column: d.span.column,
-                    message: d.message.clone(),
+                .into_iter()
+                .filter(|(_, d)| d.severity == Severity::Error)
+                .map(|(module, d)| match module {
+                    None => QmlTextError {
+                        line: d.span.line,
+                        column: d.span.column,
+                        message: d.message.clone(),
+                    },
+                    Some(module) => QmlTextError {
+                        line: 0,
+                        column: 0,
+                        message: format!(
+                            "{module}:{}:{}: {}",
+                            d.span.line, d.span.column, d.message
+                        ),
+                    },
                 })
                 .collect()
         };
         match compile_text(&mut project.borrow_mut(), text.key, text.text) {
             Ok(compiled) if !compiled.has_errors() => Ok(compiled.file),
-            Ok(compiled) => Err(errors(&compiled.diagnostics)),
-            Err(diagnostics) => Err(errors(&diagnostics)),
+            Ok(compiled) => Err(errors(compiled.all_diagnostics().collect())),
+            Err(diagnostics) => Err(errors(diagnostics.iter().map(|d| (None, d)).collect())),
         }
     })
 }

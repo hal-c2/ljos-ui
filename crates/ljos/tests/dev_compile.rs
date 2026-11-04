@@ -245,6 +245,54 @@ fn a_compile_hands_back_what_it_found() {
 }
 
 #[test]
+fn a_module_with_an_error_is_said_once_and_refuses_each_file_that_reaches_it() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "logic/bad.ts",
+        "export enum Side { Left, Right }\nexport const limit: number = \"10\"\n",
+    );
+    for name in ["One.qml", "Two.qml"] {
+        write(
+            dir.path(),
+            name,
+            "import QtQuick\nimport \"logic/bad.ts\" as Bad\nItem {\n    property var n: Bad.limit\n}\n",
+        );
+    }
+    write(dir.path(), "Fine.qml", "import QtQuick\nItem {}\n");
+    let engine = ljos::engine();
+    let found = ljos::dev::compile_quiet(&[dir.path()], Some(&engine)).unwrap();
+    assert!(found.has_errors());
+
+    let in_module: Vec<String> = found
+        .diagnostics
+        .iter()
+        .filter(|d| d.key == "logic/bad.ts")
+        .map(|d| {
+            assert_eq!(d.path, dir.path().join("logic/bad.ts"));
+            format!("{}:{}", d.line, d.column)
+        })
+        .collect();
+    assert_eq!(in_module, ["1:8", "2:30"], "{:?}", found.diagnostics);
+
+    let failures: Vec<(&str, &str)> = found.source.failures().collect();
+    assert_eq!(failures.len(), 2, "{failures:?}");
+    for (_, why) in &failures {
+        assert!(why.starts_with("logic/bad.ts:1:8: "), "{why}");
+    }
+    let err = ljos::create_root(&engine, found.source, "One")
+        .unwrap_err()
+        .to_string();
+    assert!(
+        err.contains(&format!(
+            "{}: logic/bad.ts:1:8: ",
+            url_of(dir.path(), "One.qml")
+        )),
+        "{err}"
+    );
+}
+
+#[test]
 fn an_app_hands_its_diagnostics_to_the_application() {
     let dir = checked_dir();
     let seen: Rc<RefCell<Vec<Diagnostic>>> = Rc::default();

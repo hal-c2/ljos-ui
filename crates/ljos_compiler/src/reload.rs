@@ -48,9 +48,16 @@ impl CompileFault {
     /// Why the file cannot be made, as a loader says it after the file's
     /// URL ([`crate::failure_reason`]).
     #[must_use]
+    /// A fault in a module the file reaches is said after the module's
+    /// path: `filter.ts:2:14: …`.
     pub fn reason(&self) -> String {
         if self.line == 0 {
             self.message.clone()
+        } else if is_script(&self.file) {
+            format!(
+                "{}:{}:{}: {}",
+                self.file, self.line, self.column, self.message
+            )
         } else {
             format!("{}:{}: {}", self.line, self.column, self.message)
         }
@@ -59,6 +66,16 @@ impl CompileFault {
     fn of(key: &str, d: &Diagnostic) -> Self {
         Self {
             file: format!("{key}.qml"),
+            line: d.span.line,
+            column: d.span.column,
+            message: d.message.clone(),
+        }
+    }
+
+    /// `d`, found in the module `module` (its key, with `.ts`).
+    fn in_module(module: &str, d: &Diagnostic) -> Self {
+        Self {
+            file: module.to_owned(),
             line: d.span.line,
             column: d.span.column,
             message: d.message.clone(),
@@ -753,21 +770,21 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
                 Err(errors)
             }
             Ok(c) => {
+                // A module the file reaches is part of what it runs: its
+                // error refuses the file, at the module's line.
                 let (errors, warnings): (Vec<_>, Vec<_>) = c
-                    .diagnostics
-                    .iter()
-                    .partition(|d| d.severity == Severity::Error);
+                    .all_diagnostics()
+                    .map(|(module, d)| match module {
+                        None => CompileFault::of(key, d),
+                        Some(module) => CompileFault::in_module(module, d),
+                    })
+                    .zip(c.all_diagnostics().map(|(_, d)| d.severity))
+                    .partition(|(_, severity)| *severity == Severity::Error);
                 if errors.is_empty() {
-                    let warnings = warnings
-                        .into_iter()
-                        .map(|d| CompileFault::of(key, d))
-                        .collect();
+                    let warnings = warnings.into_iter().map(|(f, _)| f).collect();
                     Ok((Arc::new(c.file), warnings))
                 } else {
-                    Err(errors
-                        .into_iter()
-                        .map(|d| CompileFault::of(key, d))
-                        .collect())
+                    Err(errors.into_iter().map(|(f, _)| f).collect())
                 }
             }
         }

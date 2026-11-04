@@ -134,7 +134,10 @@ fn compile(engine: &Engine) -> anyhow::Result<MapSource> {
     project.add(KEY, MAIN);
     let compiled = match compile_file(&project, KEY) {
         Ok(c) if !c.has_errors() => c,
-        Ok(c) => bail!("the observer's QML: {:?}", c.diagnostics),
+        Ok(c) => bail!(
+            "the observer's QML: {:?}",
+            c.all_diagnostics().collect::<Vec<_>>()
+        ),
         Err(ds) => bail!("the observer's QML: {ds:?}"),
     };
     let mut source = MapSource::new();

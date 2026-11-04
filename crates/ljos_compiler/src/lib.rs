@@ -52,10 +52,37 @@ impl Compiled {
     /// Whether the file, or a module it reaches, has an error: either way
     /// it is not a file to run.
     pub fn has_errors(&self) -> bool {
-        self.diagnostics
-            .iter()
-            .chain(self.modules.iter().flat_map(|m| &m.diagnostics))
-            .any(|d| d.severity == Severity::Error)
+        self.all_diagnostics()
+            .any(|(_, d)| d.severity == Severity::Error)
+    }
+
+    /// What was found in the file, then in each module it reaches, with
+    /// the module's key (`content/filter.ts`); `None` is the file's own.
+    /// A program that says a file's errors, or refuses it, reads these:
+    /// the file's own alone miss a module's.
+    pub fn all_diagnostics(&self) -> impl Iterator<Item = (Option<&str>, &Diagnostic)> {
+        self.diagnostics.iter().map(|d| (None, d)).chain(
+            self.modules
+                .iter()
+                .flat_map(|m| m.diagnostics.iter().map(move |d| (Some(m.key.as_str()), d))),
+        )
+    }
+
+    /// Why the file is not one to run, as [`failure_reason`] says it: its
+    /// first error, or else a module's, after the module's path, as a
+    /// loader says it after the file's URL.
+    #[must_use]
+    pub fn failure_reason(&self) -> String {
+        match self
+            .all_diagnostics()
+            .find(|(_, d)| d.severity == Severity::Error)
+        {
+            Some((None, d)) => failure_reason(std::slice::from_ref(d)),
+            Some((Some(module), d)) => {
+                format!("{module}:{}:{}: {}", d.span.line, d.span.column, d.message)
+            }
+            None => failure_reason(&[]),
+        }
     }
 }
 

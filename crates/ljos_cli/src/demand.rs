@@ -109,8 +109,17 @@ impl<O: TypeOracle> OnDemand<O> {
                 done.insert(key, c.file);
                 Ok(())
             }
-            Ok(Compiled { diagnostics, .. }) | Err(diagnostics) => {
-                // The loader's words for whatever makes an object of it.
+            Ok(c) => {
+                // The loader's words for whatever makes an object of it:
+                // its own error, or else a module's, after the module's path.
+                done.insert_failure(key, c.failure_reason());
+                Err(c
+                    .diagnostics
+                    .iter()
+                    .find(|d| d.severity == Severity::Error)
+                    .map_or_else(|| c.failure_reason(), ToString::to_string))
+            }
+            Err(diagnostics) => {
                 done.insert_failure(key, failure_reason(&diagnostics));
                 Err(diagnostics
                     .iter()

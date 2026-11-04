@@ -79,13 +79,41 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
     document: &QmlDocument<'a>,
 ) -> Vec<Module<'a>> {
     let mut keys: Vec<String> = Vec::new();
+    // The scripts the file imports, and those they import: a module one
+    // of them imports runs as the file does.
+    let mut scripts: Vec<String> = Vec::new();
     for import in &document.imports {
         if let QmlImportSource::Path(path) = &import.source
-            && erase::is_module(path)
+            && project::is_script(path)
         {
             let key = project.front().import_dir(key, path);
-            if !keys.contains(&key) {
-                keys.push(key);
+            let list = if erase::is_module(path) {
+                &mut keys
+            } else {
+                &mut scripts
+            };
+            if !list.contains(&key) {
+                list.push(key);
+            }
+        }
+    }
+    let mut next = 0;
+    while next < scripts.len() {
+        let script = scripts[next].clone();
+        next += 1;
+        let Some(source) = project.script(&script) else {
+            continue;
+        };
+        let directory = project::directory(&script);
+        for path in crate::script::script_imports(source) {
+            let key = project::join(directory, path);
+            let list = if erase::is_module(path) {
+                &mut keys
+            } else {
+                &mut scripts
+            };
+            if !list.contains(&key) {
+                list.push(key);
             }
         }
     }
