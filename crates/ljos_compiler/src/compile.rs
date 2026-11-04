@@ -100,8 +100,8 @@ fn compile_alone<O: TypeOracle>(
     compiler.diagnostics = diagnostics;
     // A file the compat pass lowered says its scripts are JavaScript, and
     // so does one `ljos migrate` wrote: the same text compiles the same.
-    compiler.dialect =
-        check::is_dialect(&parsed.document) && !check::scripts_are_javascript(&parsed.document);
+    compiler.ljos_ui = check::is_dialect(&parsed.document);
+    compiler.dialect = compiler.ljos_ui && !check::scripts_are_javascript(&parsed.document);
     if let Some(context) = translator(&parsed.document) {
         compiler.context = context.to_string();
     }
@@ -211,6 +211,8 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     /// The file is written in Ljós's API, and its scripts are checked
     /// ([`check`]).
     dialect: bool,
+    /// The file imports `Ljos.Ui`, whatever its scripts are.
+    ljos_ui: bool,
 }
 
 impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
@@ -274,6 +276,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             qt,
             warned: HashSet::new(),
             dialect: false,
+            ljos_ui: false,
         }
     }
 
@@ -315,6 +318,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let index = self.tree.index_of(object)?;
         let at = self.place[index];
         let ty = self.object_type(index);
+        if let Some(arrangement) = parent.and_then(|p| self.arrangement(p)) {
+            self.anchored(object, &arrangement, &[]);
+        }
         let parent = parent
             .map(|p| self.place[p])
             .filter(|p| p.component == at.component)
@@ -1221,6 +1227,69 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 self.type_ref(&found, qualifier)
             }
             None => TypeRef::Unresolved(parts.join(".")),
+        }
+    }
+
+    /// The name of `Ljos.Ui`'s `Row`, `Column` or `Box` the object is, in
+    /// a file that imports it.
+    fn arrangement(&self, index: usize) -> Option<String> {
+        if !self.ljos_ui {
+            return None;
+        }
+        match self.object_type(index) {
+            TypeRef::Native { module, name }
+                if module == check::MODULE && matches!(name.as_str(), "Row" | "Column" | "Box") =>
+            {
+                Some(name)
+            }
+            _ => None,
+        }
+    }
+
+    /// Reports each anchor a child of an arrangement sets: the arrangement
+    /// places the child, and the anchor would never hold.
+    fn anchored(&mut self, object: &QmlObject<'a>, arrangement: &str, group: &[&'a str]) {
+        const SIDES: &[&str] = &[
+            "left",
+            "right",
+            "top",
+            "bottom",
+            "horizontalCenter",
+            "verticalCenter",
+            "baseline",
+            "fill",
+            "centerIn",
+        ];
+        for member in &object.members {
+            let (path, span) = match member {
+                QmlMember::Object(child) if is_group(child) => {
+                    let mut path = group.to_vec();
+                    path.extend(child.type_name.parts.iter().copied());
+                    if path.first() == Some(&"anchors") {
+                        self.anchored(child, arrangement, &path);
+                    }
+                    continue;
+                }
+                QmlMember::Binding(binding) => {
+                    let mut path = group.to_vec();
+                    path.extend(binding.name.parts.iter().copied());
+                    (path, binding.name.span)
+                }
+                _ => continue,
+            };
+            if let ["anchors", side] = path.as_slice()
+                && SIDES.contains(side)
+            {
+                let span = self.span(span);
+                self.diagnostics.push(Diagnostic::error(
+                    Code::LayoutAnchored,
+                    format!(
+                        "`anchors.{side}` on a child of a `{arrangement}` is overridden by it; \
+                         use `Layout.alignment` or move it out of the {arrangement}"
+                    ),
+                    span,
+                ));
+            }
         }
     }
 

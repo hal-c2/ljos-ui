@@ -124,7 +124,12 @@ fn anchors_in_layout<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
     } else {
         return;
     };
-    if !found.is(layout, class::LAYOUT) || found.is(layout, class::STACK_LAYOUT) {
+    // `Ljos.Ui`'s arrangements are the compiler's to report
+    // (`layout-anchored`), which says what to write instead.
+    if !found.is(layout, class::LAYOUT)
+        || found.is(layout, class::STACK_LAYOUT)
+        || found.is(layout, &["Ljos.Ui.Arrangement"])
+    {
         return;
     }
     // A `Repeater` or a non-visual object sits in a layout without being laid

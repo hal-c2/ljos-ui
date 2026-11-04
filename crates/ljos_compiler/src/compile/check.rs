@@ -41,7 +41,7 @@ use crate::{Code, Diagnostic};
 use ty::{Arena, Kind, Param, Sig, Ty, article};
 
 /// The module whose import makes a file one of Ljós's API.
-const MODULE: &str = "Ljos.Ui";
+pub(crate) const MODULE: &str = "Ljos.Ui";
 
 /// Whether `document` is written in Ljós's API: it imports it itself.
 pub(crate) fn is_dialect(document: &QmlDocument<'_>) -> bool {
