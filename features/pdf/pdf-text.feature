@@ -25,39 +25,27 @@ Feature: The text of a PDF document
       """
       << /Type /Catalog /Pages 2 0 R /Outlines 8 0 R
          /PageLabels << /Nums [0 << /S /r >> 1 << /S /D /P (A-) >>] >> >>
-      endobj
       << /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
-      endobj
       << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 4 0 R
          /Resources << /Font << /F1 7 0 R >> >> /Annots [11 0 R 12 0 R] >>
-      endobj
       << >>
       stream
       BT /F1 20 Tf 10 160 Td (Hello World) Tj 0 -30 Td (Second line hello) Tj ET
       endstream
-      endobj
       << /Type /Page /Parent 2 0 R /MediaBox [0 0 200 100] /Contents 6 0 R
          /Resources << /Font << /F1 7 0 R >> >> >>
-      endobj
       << >>
       stream
       BT /F1 10 Tf 20 50 Td (Page two says hello too) Tj ET
       endstream
-      endobj
       << /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
-      endobj
       << /Type /Outlines /First 9 0 R /Last 10 0 R /Count 2 >>
-      endobj
       << /Title (First) /Parent 8 0 R /Next 10 0 R /Dest [3 0 R /XYZ 10 150 2] >>
-      endobj
       << /Title (Second) /Parent 8 0 R /Prev 9 0 R /Dest [5 0 R /XYZ 0 100 0] >>
-      endobj
       << /Type /Annot /Subtype /Link /Rect [10 155 120 180] /Border [0 0 0]
          /A << /S /URI /URI (https://example.com/) >> >>
-      endobj
       << /Type /Annot /Subtype /Link /Rect [10 125 200 150] /Border [0 0 0]
          /Dest [5 0 R /XYZ 20 60 0] >>
-      endobj
       """
 
   @api-QtQuick.Pdf.PdfDocument.pageLabel @api-QtQuick.Pdf.PdfDocument.pageIndexForLabel
