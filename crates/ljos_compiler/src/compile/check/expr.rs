@@ -857,11 +857,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     UnaryOperator::Void => Ty::UNDEFINED,
                     UnaryOperator::Delete => Ty::BOOLEAN,
                     operator => {
-                        if let (UnaryOperator::UnaryNegation, Kind::Num(bits)) =
-                            (operator, self.arena.kind(ty))
+                        // As TypeScript, only a written `-1` is a literal:
+                        // the negation of a value of a literal type is a
+                        // number.
+                        if let (UnaryOperator::UnaryNegation, Expression::NumericLiteral(n)) =
+                            (operator, &unary.argument)
                         {
-                            let value = -f64::from_bits(*bits);
-                            return self.arena.num(value);
+                            return self.arena.num(-n.value);
                         }
                         self.need_number(operator.as_str(), ty, unary.argument.span());
                         Ty::NUMBER
@@ -1908,16 +1910,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             // widens: a variable given a value of a literal
                             // type keeps it.
                             let mut written = Vec::new();
-                            let all = self.fresh(init, &mut written);
+                            self.fresh(init, &mut written);
                             if binding == Binding::Const {
-                                if (all || !written.is_empty())
+                                if !written.is_empty()
                                     && let BindingPattern::BindingIdentifier(id) = &declarator.id
                                 {
-                                    let fresh = if all {
-                                        given
-                                    } else {
-                                        self.arena.union(written)
-                                    };
+                                    let fresh = self.arena.union(written);
                                     self.bind_pattern(&declarator.id, given, binding);
                                     if let Some(local) = self.local(id.name.as_str()) {
                                         self.fresh.push((local.id, fresh));
@@ -1925,8 +1923,6 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                                     continue;
                                 }
                                 given
-                            } else if all {
-                                self.arena.widen(given)
                             } else {
                                 self.arena.widen_parts(given, &written)
                             }
@@ -1948,25 +1944,29 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// The literal types `e` gives that are written in it, which a variable
     /// widens (TypeScript's fresh literal types), into `written`: a
-    /// literal, either side of `?:` or a logical operator, or a `const`
-    /// given one. True where all of `e`'s type widens: an object or array
-    /// literal, a template.
-    fn fresh(&mut self, e: &Expression<'a>, written: &mut Vec<Ty>) -> bool {
+    /// literal (`-1` too), either side of `?:` or a logical operator, or a
+    /// `const` given one. An object or array literal has widened its
+    /// members already, and a template or other unary operator gives no
+    /// literal.
+    fn fresh(&mut self, e: &Expression<'a>, written: &mut Vec<Ty>) {
         match e.without_parentheses() {
             Expression::StringLiteral(s) => written.push(self.arena.str(s.value.as_str())),
             Expression::NumericLiteral(n) => written.push(self.arena.num(n.value)),
             Expression::BooleanLiteral(b) => written.push(self.arena.boolean(b.value)),
-            Expression::TemplateLiteral(_)
-            | Expression::ObjectExpression(_)
-            | Expression::ArrayExpression(_)
-            | Expression::UnaryExpression(_) => return true,
+            Expression::UnaryExpression(u) => {
+                if let (UnaryOperator::UnaryNegation, Expression::NumericLiteral(n)) =
+                    (u.operator, &u.argument)
+                {
+                    written.push(self.arena.num(-n.value));
+                }
+            }
             Expression::ConditionalExpression(c) => {
-                let yes = self.fresh(&c.consequent, written);
-                return self.fresh(&c.alternate, written) || yes;
+                self.fresh(&c.consequent, written);
+                self.fresh(&c.alternate, written);
             }
             Expression::LogicalExpression(l) => {
-                let left = self.fresh(&l.left, written);
-                return self.fresh(&l.right, written) || left;
+                self.fresh(&l.left, written);
+                self.fresh(&l.right, written);
             }
             Expression::Identifier(id) => {
                 if let Some(local) = self.local(id.name.as_str())
@@ -1977,7 +1977,6 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             _ => {}
         }
-        false
     }
 
     /// Walks a statement; whether what follows it is reached.
