@@ -63,6 +63,12 @@ pub struct Check {
     /// a warning, for a tree of code that is not yours.
     #[arg(long, value_enum, default_value_t = LintMode::Error, value_name = "MODE")]
     lint: LintMode,
+    /// Give each file in Ljós's API to TypeScript as well, against the
+    /// declarations `ljos types --dts` writes, and report its errors at
+    /// their lines of the file: `deno check`, or the `tsc` `LJOS_TSC` names.
+    /// Without either it says `SKIPPED: no tsc` and checks as it would.
+    #[arg(long)]
+    tsc: bool,
     /// Instead of compiling: report the Qt Quick types and members the
     /// projects use that Ljós lacks, by module, most used first.
     #[arg(long)]
@@ -140,6 +146,9 @@ impl Check {
                 eprintln!("{line}");
             }
         }
+        if self.tsc {
+            checked.errors += self.typescript()?;
+        }
         if self.stats {
             out!("{}", checked.stats(self.top, !self.summary));
         } else {
@@ -154,6 +163,50 @@ impl Check {
             bail!("{} errors", checked.errors);
         }
         Ok(())
+    }
+}
+
+impl Check {
+    /// What TypeScript says of the files in Ljós's API, at their lines; how
+    /// many errors that is.
+    fn typescript(&self) -> anyhow::Result<usize> {
+        use ljos_compiler::ts::{self, Outcome};
+        let mut errors = 0;
+        for dir in &self.dirs {
+            let projects = if self.tree {
+                baseline::project_dirs(dir)
+            } else {
+                vec![dir.clone()]
+            };
+            for project in projects {
+                let label = if self.tree {
+                    project
+                        .strip_prefix(dir)
+                        .unwrap_or(&project)
+                        .to_string_lossy()
+                        .into_owned()
+                } else {
+                    String::new()
+                };
+                match ts::check_dir(&project, None)? {
+                    Outcome::Skipped => {
+                        outln!("SKIPPED: no tsc");
+                        return Ok(0);
+                    }
+                    Outcome::Checked { findings, .. } => {
+                        for finding in findings {
+                            let mut line = finding.to_string();
+                            if !label.is_empty() {
+                                line = format!("{label}/{line}");
+                            }
+                            eprintln!("{line}");
+                            errors += 1;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(errors)
     }
 }
 
