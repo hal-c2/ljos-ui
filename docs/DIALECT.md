@@ -235,6 +235,7 @@ ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
+| `font.pointSize`, `Screen.pixelDensity` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72); arrives with `Screen` in M1 | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
 | `Qt.binding` | a `Binding` object, or a state | declarative | |
 | `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
 | `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
@@ -644,7 +645,7 @@ time rows that share a key are matched in order (the second row with key
 ```qml
 // Qt (calqlatr/CalculatorButton.qml)            // Ljós
 function getBackgroundColor() {                  states: [
-    if (button.dimmable && button.dimmed)            State { name: "dimmed"; when: button.dimmed
+    if (button.dimmable && button.dimmed)            State { name: "dimmed"; when: button.dimmable && button.dimmed
         return backgroundColor;                          PropertyChanges { label.color: … } },
     if (button.pressed) return accentColor;          State { name: "pressed"; when: tap.pressed
     return backgroundColor;                              PropertyChanges { button.fill: button.accent
@@ -825,7 +826,8 @@ construction.
   the screen's logical DPI / 72, known only at run time and different per
   screen, so the lowering writes the conversion, not a number. It is
   reactive on the item's screen, so text moved to another screen resizes
-  as it does in Qt.
+  as it does in Qt (§4.3). `Screen` is not in `Ljos.Ui` until M1, so until
+  then a file that sets `pointSize` is kept.
 - `font.bold: true` → `font.weight: Font.Weight.Bold`.
 - `wrapMode: Text.WordWrap` → `wrap: Text.Wrap.Word`, and every other enum
   the same way, by its owner in the table.
@@ -863,7 +865,7 @@ construction.
 | `palette.*` | `Theme.color.*` | mechanical where 1:1 |
 | `Material.*`, `Universal.*` | — | DECISION: kept (a style's own API) |
 | `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical |
-| `font.pointSize` | `font.size: Screen.points(…)` | mechanical (a run-time conversion) |
+| `font.pointSize` | `font.size: Screen.points(…)` | kept until `Screen` lands (M1), then mechanical (a run-time conversion) |
 | `horizontalAlignment`, `wrapMode`, `elide`, `textFormat`, `fillMode` | `align`, `wrap`, `elide`, `format`, `fit` | mechanical |
 | `Qt.*` globals | `Ljos.Core`, `App`, value types (§4.3) | mechanical, by member |
 | `date`, `Date` | `Instant`, `Locale` | mechanical when only stored or compared, else kept |
