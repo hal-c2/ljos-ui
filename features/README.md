@@ -256,6 +256,8 @@ setter tries to write `depth` and logs the error it gets.
 | `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
 | `When the files are migrated and checked` | `ljos migrate --write` over the files given with `Given the file`, then `ljos check` of what it wrote; the report is what each said, in order (`@ljos-only`) |
 | `When the files are checked with statistics` | the same with `--stats`: the tiers of the expressions, how many would be compiled ahead of time, and where each of the rest is and why it runs dynamically (`@ljos-only`) |
+| `When the files are checked with TypeScript` | the same with `--tsc`: each file in Ljós's API is given to TypeScript as well, against the declarations `ljos types --dts` writes, and TypeScript's errors follow the checker's at their lines of the QML file (`@ljos-only`) |
+| `When the declarations of Ljós's API are written` | what `ljos types --dts` writes, one line of the report each; no file is needed (`@ljos-only`) |
 | `When the user chooses "path" in the system dialog` | the user picks a file or folder in the dialog the system shows (`@ljos-only`: the oracle cannot answer a dialog the system shows) |
 | `When the user chooses the files "path, path" in the system dialog` | the user picks several files, named with `", "` between them (`@ljos-only`) |
 | `When the user answers "button" in the system dialog` | the user presses the button with that text in the message the system shows (`@ljos-only`) |
@@ -327,6 +329,11 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the test results' "/pointer" is V` | a value of the machine-readable report, by JSON pointer (`@ljos-only`) |
 | `Then the check reports:` + doc string | everything `ljos check` said, in order: one line for each thing it found (`file:line:column: error: ...` or `warning: ...`), its count of files, errors and warnings, and `ljos: N errors` when there are errors (`@ljos-only`) |
 | `Then the check reports the lines:` + doc string | those lines are in what `ljos check` said, one after the other (`@ljos-only`) |
+| `Then TypeScript reports the lines:` + doc string | those lines are among TypeScript's in what `ljos check --tsc` said (`file:line:column: error: ... [TS2322]`), one after the other; a machine without TypeScript passes, as the check said `SKIPPED: no tsc` (`@ljos-only`) |
+| `Then TypeScript reports nothing` | no line of what `ljos check --tsc` said is TypeScript's (`@ljos-only`) |
+| `Then the declarations have the line "interface Rectangle extends Item {"` | a line of what `ljos types --dts` wrote is that, its indentation aside (`@ljos-only`) |
+| `Then the declaration of "Rectangle" has the member "fill: string;"` | a line of the interface's declaration is that, its indentation aside (`@ljos-only`) |
+| `Then the declaration of "Rectangle" has no member "color"` | no property or method of that name is in the interface's declaration (`@ljos-only`) |
 
 ### The inspector (`tooling/mcp/`; all `@ljos-only`)
 

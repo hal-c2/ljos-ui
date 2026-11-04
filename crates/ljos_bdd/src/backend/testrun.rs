@@ -43,6 +43,9 @@ pub struct TestRun {
     /// With `check`: `ljos migrate --write` first, and what it says before
     /// what the check says, so a scenario sees a migrated file compile.
     pub migrate: bool,
+    /// With `check`: `--tsc`, TypeScript's errors at their QML lines after
+    /// the checker's.
+    pub tsc: bool,
     /// The `TZ` the runner starts with; UTC when `None`.
     pub time_zone: Option<String>,
 }
@@ -319,6 +322,7 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .arg(ljos_bin()?)
         .arg(&staged.suite)
         .args(run.stats.then_some("--stats"))
+        .args(run.tsc.then_some("--tsc"))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| failed(format!("cannot start `ljos check`: {e}")))?;
@@ -328,6 +332,37 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .ok_or_else(|| failed("`ljos check` was killed"))?;
     Ok(TestReport {
         lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
+        status,
+        json: None,
+    })
+}
+
+/// What `ljos types --dts` writes: the declarations of Ljós's API for
+/// TypeScript, one line of the report each.
+///
+/// # Errors
+/// The program cannot be built or started.
+pub fn declarations() -> Result<TestReport> {
+    let out = Command::new(ljos_bin()?)
+        .args(["types", "--dts"])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| failed(format!("cannot start `ljos types`: {e}")))?;
+    let status = out
+        .status
+        .code()
+        .ok_or_else(|| failed("`ljos types` was killed"))?;
+    if status != 0 {
+        return Err(failed(format!(
+            "`ljos types --dts` failed:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        )));
+    }
+    Ok(TestReport {
+        lines: String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(|l| l.trim_end().to_owned())
+            .collect(),
         status,
         json: None,
     })
