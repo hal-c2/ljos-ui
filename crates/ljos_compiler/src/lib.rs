@@ -101,6 +101,17 @@ pub enum Code {
     /// An object of a type Qt's table names in a module the runtime
     /// implements, which the runtime's own description does not list.
     UnlistedType,
+    /// The checker of Ljós's API (docs/DIALECT.md): a value written to a
+    /// property of another type.
+    TsAssignType,
+    /// The checker: `null`, which the API has no place for.
+    TsNoNull,
+    /// The checker: `==` or `!=`, which convert what they compare.
+    TsLooseEquality,
+    /// The checker: a condition that is not a boolean.
+    TsConditionBoolean,
+    /// The checker: `var`, which is the function's wherever it is written.
+    TsNoVar,
 }
 
 impl Code {
@@ -124,6 +135,11 @@ impl Code {
             Code::ScriptUnavailable => "script-unavailable",
             Code::ReloadIdentity => "reload-identity",
             Code::UnlistedType => "unlisted-type",
+            Code::TsAssignType => "ts-assign-type",
+            Code::TsNoNull => "ts-no-null",
+            Code::TsLooseEquality => "ts-loose-equality",
+            Code::TsConditionBoolean => "ts-condition-boolean",
+            Code::TsNoVar => "ts-no-var",
         }
     }
 }
@@ -273,7 +289,19 @@ pub fn compile_roots_with<O: TypeOracle>(
     roots: &[&Path],
     oracle: O,
 ) -> Result<Vec<FileResult>, Error> {
-    let project = Project::load_roots(roots, oracle)?;
+    compile_roots_compat(roots, oracle, false)
+}
+
+/// [`compile_roots_with`], with each file in Qt's QML lowered to Ljós's API
+/// first when `lower` is true ([`Project::set_compat`]): what
+/// `--compat=lower` compiles.
+pub fn compile_roots_compat<O: TypeOracle>(
+    roots: &[&Path],
+    oracle: O,
+    lower: bool,
+) -> Result<Vec<FileResult>, Error> {
+    let mut project = Project::load_roots(roots, oracle)?;
+    project.set_compat(lower);
     Ok(project
         .files()
         .map(|key| FileResult {

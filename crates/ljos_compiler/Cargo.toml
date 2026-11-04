@@ -12,6 +12,7 @@ ljos_ir = { path = "../ljos_ir" }
 ljos_aot = { path = "../ljos_aot" }
 qml_syntax = { path = "../qml_syntax" }
 qml_front = { path = "../qml_front" }
+qml_compat = { path = "../qml_compat" }
 qt_types = { path = "../qt_types" }
 oxc_allocator.workspace = true
 oxc_ast.workspace = true

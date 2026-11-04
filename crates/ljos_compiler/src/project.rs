@@ -90,6 +90,14 @@ pub struct Project<O> {
     /// For a project [`open`](Self::open)ed: what is known of the tree
     /// before its files are read.
     tree: Option<Tree>,
+    /// Qt's QML is lowered to Ljós's API as each file comes in
+    /// ([`set_compat`](Self::set_compat)).
+    compat: bool,
+    /// Per file the compat pass was given: the text as written, what the
+    /// pass made of it alone, and what it made of it with its group.
+    written: BTreeMap<String, String>,
+    alone: BTreeMap<String, qml_compat::Alone>,
+    lowered: BTreeMap<String, qml_compat::Outcome>,
 }
 
 /// A project's tree as a program loads it: the modules are known from the
@@ -133,6 +141,10 @@ impl<O: TypeOracle> Project<O> {
             callable: RefCell::new(HashMap::new()),
             summarising: Cell::new(false),
             tree: None,
+            compat: false,
+            written: BTreeMap::new(),
+            alone: BTreeMap::new(),
+            lowered: BTreeMap::new(),
         }
     }
 
@@ -195,7 +207,132 @@ impl<O: TypeOracle> Project<O> {
         }
     }
 
+    /// Lowers each file written against Qt's API to Ljós's as it comes in,
+    /// those already in too (docs/adr/0004-compat-lowering-before-the-ir.md).
+    /// What the front end, the compiler and the IR see of such a file is
+    /// its lowered text; [`written`](Self::written) is the file as it is.
+    /// Files that name one another are lowered together or not at all
+    /// ([`qml_compat::group`]). Set it once the files are in: each file
+    /// put while it is on decides its group again.
+    pub fn set_compat(&mut self, lower: bool) {
+        if self.compat == lower {
+            return;
+        }
+        self.compat = lower;
+        if !lower {
+            for (key, written) in std::mem::take(&mut self.written) {
+                self.put_text(&key, written);
+            }
+            self.alone.clear();
+            self.lowered.clear();
+            return;
+        }
+        let keys: Vec<String> = self.sources.keys().cloned().collect();
+        for key in &keys {
+            let text = self.sources[key].clone();
+            self.written.insert(key.clone(), text);
+        }
+        for key in &keys {
+            self.lower_alone(key);
+        }
+        self.settle_compat();
+    }
+
+    /// What the compat pass made of the file `key`, with the files it is
+    /// lowered together with: none when it was not given the file
+    /// ([`set_compat`](Self::set_compat)).
+    pub fn lowering(&self, key: &str) -> Option<&qml_compat::Outcome> {
+        self.lowered.get(key)
+    }
+
+    /// The file `key` as it is written, which [`source`](Self::source) is
+    /// but for a file the compat pass lowered.
+    pub fn written(&self, key: &str) -> Option<&str> {
+        match self.written.get(key) {
+            Some(written) => Some(written),
+            None => self.source(key),
+        }
+    }
+
+    /// What the pass makes of the written file `key` alone.
+    fn lower_alone(&mut self, key: &str) {
+        let Some(text) = self.written.get(key) else {
+            return;
+        };
+        let outcome = qml_compat::lower(text, &|name: &str| self.root_type_beside(key, name));
+        let references = qml_compat::references(text);
+        self.alone.insert(
+            key.to_string(),
+            qml_compat::Alone {
+                outcome,
+                references,
+            },
+        );
+    }
+
+    /// Gives the front end each file as its group is lowered, where that
+    /// changed.
+    fn settle_compat(&mut self) {
+        for (key, outcome) in qml_compat::group(&self.alone) {
+            let text = match &outcome {
+                qml_compat::Outcome::Lowered(lowered) => Some(lowered.text.clone()),
+                qml_compat::Outcome::Unchanged | qml_compat::Outcome::Kept(_) => {
+                    self.written.get(&key).cloned()
+                }
+            };
+            if let Some(text) = text
+                && self.sources.get(&key) != Some(&text)
+            {
+                self.put_text(&key, text);
+            }
+            self.lowered.insert(key, outcome);
+        }
+    }
+
+    /// The type the root object of the file `name` beside the file `key` is
+    /// written as, from its text if it is in, else from the disk: the pass
+    /// lowers one file of a directory before it has the others.
+    fn root_type_beside(&self, key: &str, name: &str) -> Option<String> {
+        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
+        let sibling = dir.map_or_else(|| name.to_string(), |dir| format!("{dir}/{name}"));
+        if let Some(text) = self.written(&sibling) {
+            return qml_compat::root_type(text);
+        }
+        let path = match (self.paths.get(key), &self.tree) {
+            (Some(path), _) => path.parent()?.join(format!("{name}.qml")),
+            (None, Some(tree)) => tree.root.join(format!("{sibling}.qml")),
+            (None, None) => return None,
+        };
+        let text = std::fs::read_to_string(path).ok()?;
+        qml_compat::root_type(&text)
+    }
+
     fn put(&mut self, key: &str, source: String) {
+        if !self.compat {
+            self.put_text(key, source);
+            return;
+        }
+        self.written.insert(key.to_string(), source);
+        self.lower_alone(key);
+        // A file beside it that names it read its root type.
+        let (dir, name) = key.rsplit_once('/').unwrap_or(("", key));
+        let naming: Vec<String> = self
+            .alone
+            .iter()
+            .filter(|(other, alone)| {
+                other.as_str() != key
+                    && other.rsplit_once('/').map_or("", |(d, _)| d) == dir
+                    && alone.references.types.iter().any(|t| t == name)
+            })
+            .map(|(other, _)| other.clone())
+            .collect();
+        for other in &naming {
+            self.lower_alone(other);
+        }
+        self.settle_compat();
+    }
+
+    fn put_text(&mut self, key: &str, source: String) {
         // The front end keeps what it can; the errors are its to record.
         let _ = self.front.add(key, &source);
         self.sources.insert(key.to_string(), source);
@@ -215,6 +352,8 @@ impl<O: TypeOracle> Project<O> {
                 if !self.chosen.contains_key(plain)
                     && let Some(text) = self.sources.remove(plain)
                 {
+                    // As written: it is lowered again when it is put back.
+                    let text = self.written.get(plain).cloned().unwrap_or(text);
                     self.displaced.insert(plain.to_string(), text);
                 }
                 let text = self.variants[&variant].clone();
@@ -294,6 +433,11 @@ impl<O: TypeOracle> Project<O> {
     fn forget(&mut self, key: &str) {
         self.front.remove(key);
         self.sources.remove(key);
+        self.written.remove(key);
+        if self.alone.remove(key).is_some() {
+            self.lowered.remove(key);
+            self.settle_compat();
+        }
         self.paths.remove(key);
         self.dynamic = OnceCell::new();
         self.callable.get_mut().clear();
