@@ -22,7 +22,7 @@ source=$here/corpus/qtdoc/examples/demos/hangman/qml/SimpleButton.qml
 	exit 0
 }
 
-rm -rf "$work/button" "$work/migrated" "$work/bad"
+rm -rf "$work/button" "$work/migrated" "$work/typed" "$work/bad"
 mkdir -p "$work/button"
 cp "$source" "$work/button/SimpleButton.qml"
 # Two buttons, one pressed, laid out by `x` alone: a `Row` is not of the
@@ -52,8 +52,12 @@ cmp "$work/keep.png" "$work/migrated.png" && echo "keep and migrated: identical 
 
 echo "== the checker on the migrated file"
 "$ljos" check "$work/migrated"
-mkdir -p "$work/bad"
-sed 's/button.state = "PRESSED"/button.state = 1/' "$work/migrated/SimpleButton.qml" >"$work/bad/SimpleButton.qml"
+echo "== the checker on it typed (the pragma taken out)"
+# Taking the pragma out types the file, so the checker reads it.
+mkdir -p "$work/typed" "$work/bad"
+sed 's/pragma Scripts: JavaScript; //' "$work/migrated/SimpleButton.qml" >"$work/typed/SimpleButton.qml"
+"$ljos" check "$work/typed"
+sed -e 's/pragma Scripts: JavaScript; //' -e 's/button.state = "PRESSED"/button.state = 1/' "$work/migrated/SimpleButton.qml" >"$work/bad/SimpleButton.qml"
 "$ljos" check "$work/bad" || true
 
 echo "== against qml6"
