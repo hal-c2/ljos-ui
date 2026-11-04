@@ -2082,21 +2082,34 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let locals = self.locals.len();
                 let assigned = self.assigned.len();
                 let mut covered = Vec::with_capacity(statement.cases.len());
+                // The labels whose cases fall into the body read next, as
+                // their union; `None` once a `default` or a label that is
+                // not a literal is among them, which narrows nothing.
+                let mut labels: Option<Ty> = None;
+                let mut falling = false;
                 for case in &statement.cases {
                     let mark = self.facts.len();
-                    if let Some(test) = &case.test {
+                    let label = case.test.as_ref().and_then(|test| {
                         let given = self.expr(test, Some(over));
                         covered.push(given);
-                        if let Some((key, local, now, base)) = path
-                            && self.arena.is_literal(given)
-                            && self.takes(now, given)
-                        {
-                            self.push_fact(key, local, given, base);
-                        }
+                        self.arena.is_literal(given).then_some(given)
+                    });
+                    labels = match (falling, labels, label) {
+                        (false, _, label) => label,
+                        (true, Some(before), Some(label)) => Some(self.arena.or(before, label)),
+                        _ => None,
+                    };
+                    if let Some((key, local, now, base)) = path
+                        && let Some(labels) = labels
+                        && self.takes(now, labels)
+                    {
+                        self.push_fact(key, local, labels, base);
                     }
+                    let mut live = true;
                     for statement in &case.consequent {
-                        self.statement(statement);
+                        live &= self.statement(statement);
                     }
+                    falling = live;
                     self.facts.truncate(mark);
                 }
                 self.locals.truncate(locals);
