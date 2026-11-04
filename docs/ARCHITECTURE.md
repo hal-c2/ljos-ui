@@ -291,6 +291,8 @@ Sources: 06; 01 §3.4, §3.7.
 - **First fork improvement: member-level error recovery.** The parser should return a partial tree plus diagnostics, so that one typo does not fail the whole file. Hot reload, the LSP and `ljos check` all need this. Annotation support (`@Foo`) and structured diagnostics follow.
 - **Baselines** for the 495/495 parse and 464/495 compile figures must be re-measured on a fresh build before anyone quotes them. The earlier numbers came from a stale binary. Use a `CARGO_TARGET_DIR` outside `/tmp`, which has a disk quota.
 
+- **Compat lowering (proposed 2026-11-04, [ADR 0004](adr/0004-compat-lowering-before-the-ir.md)).** Ljós has an API of its own: the same syntax, cleaned-up types and members, typed properties, and scripts in a strict TypeScript subset ([DIALECT.md](DIALECT.md)). A file in Qt's QML can be lowered to it before the front end: `qml_compat` edits the text line by line, all or nothing per group of files that name one another, and `ljos migrate` writes the same edits. The IR and the engine know only the Ljós API; the Qt surface lives in the pass and its type table. The default is `--compat keep`, under which the pass does not run.
+
 ### 5.2 Semantics (`qml_front`)
 
 - **What it contains:** module discovery (`qmldir`, CMake `qt_add_qml_module`), the project graph, type-name lookup, the id and context scope chain, and name lookup.
