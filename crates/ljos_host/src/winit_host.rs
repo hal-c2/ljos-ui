@@ -60,11 +60,30 @@ impl<U: From<Wake> + Send + 'static> WinitHost<U> {
     /// # Errors
     /// There is no display, or the platform refused.
     pub fn with_x11_preferred(prefer_x11: bool) -> Result<Self, HostError> {
+        Self::with_options(prefer_x11, false)
+    }
+
+    /// As [`WinitHost::with_x11_preferred`], and with `own_menu` the
+    /// application's menu bar on macOS is the application's alone: winit
+    /// puts its own in place when the loop starts, over one the
+    /// application set while it was being built. Elsewhere `own_menu`
+    /// changes nothing.
+    ///
+    /// # Errors
+    /// There is no display, or the platform refused.
+    pub fn with_options(prefer_x11: bool, own_menu: bool) -> Result<Self, HostError> {
         let mut builder = EventLoop::<U>::with_user_event();
         let display = std::env::var_os("DISPLAY");
         if chooses_x11(prefer_x11, display.as_deref()) {
             platform::use_x11(&mut builder);
         }
+        #[cfg(target_os = "macos")]
+        if own_menu {
+            use winit::platform::macos::EventLoopBuilderExtMacOS;
+            builder.with_default_menu(false);
+        }
+        #[cfg(not(target_os = "macos"))]
+        let _ = own_menu;
         let event_loop = builder
             .build()
             .map_err(|e| HostError::Loop(e.to_string()))?;
