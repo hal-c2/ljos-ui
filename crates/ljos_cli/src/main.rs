@@ -34,6 +34,7 @@ mod shaders;
 mod stderr;
 mod stdout;
 mod test;
+mod types;
 mod walk;
 
 #[derive(Parser)]
@@ -69,6 +70,9 @@ enum Command {
     /// Compile QML projects and report what the compiler says; with
     /// `--stats`, how many expressions run in the tier-1 binding VM.
     Check(check::Check),
+    /// The table of types Ljós's API is checked against, for another
+    /// tool: `--dts` writes it as TypeScript declarations.
+    Types(types::Types),
     /// Run the design audit on what a QML file shows, under a matrix of
     /// settings (colour scheme, contrast, text size, window size); exits
     /// with 1 when it finds an error.
@@ -187,6 +191,7 @@ fn run() -> anyhow::Result<()> {
         Command::I18n { command } => i18n::run(command),
         Command::Design { command } => design::run(command),
         Command::Check(check) => check.run(),
+        Command::Types(types) => types.run(),
         Command::Audit(audit) => match audit.run()? {
             0 => Ok(()),
             status => exit(status),
