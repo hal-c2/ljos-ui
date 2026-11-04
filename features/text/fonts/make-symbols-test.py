@@ -10,6 +10,12 @@ Also writes LjosAlternateTest-Regular.ttf, the same characters at 500 units
 each in family "Ljos Alternate Test", whose name comes first: with both
 fonts, a character either has is set in it.
 
+Also writes LjosTrackTest-Regular.ttf, the same glyphs in family "Ljos Track
+Test" with an AAT tracking table ('trak', and the 'STAT' table that marks a
+font whose tracking a shaper applies, as San Francisco has): 100 units of
+1000 more between characters at 12 points, 100 fewer at 24, interpolated
+between.
+
 Run it from this directory: `python3 make-symbols-test.py`. Only the standard
 library is used, so the file can be made again anywhere.
 """
@@ -47,6 +53,35 @@ def glyph(points):
     out += dx + dy
     out += b"\0" * (-len(out) % 4)
     return out
+
+
+# (point size, units added after each character) of the tracking table.
+TRACKING = [(12, 100), (24, -100)]
+
+
+def fixed(value: float) -> bytes:
+    return struct.pack(">i", round(value * 65536))
+
+
+def trak_table():
+    # One horizontal track, the normal one (0), no vertical.
+    sizes = len(TRACKING)
+    header = 12
+    track_data = 8
+    entry = 8
+    size_table = track_data + entry
+    values = size_table + 4 * sizes
+    out = fixed(1.0) + struct.pack(">HHHH", 0, header, 0, 0)
+    out += struct.pack(">HHI", 1, sizes, header + size_table)
+    out += fixed(0.0) + struct.pack(">HH", 256, header + values)
+    out += b"".join(fixed(size) for size, _ in TRACKING)
+    out += b"".join(struct.pack(">h", units) for _, units in TRACKING)
+    return out
+
+
+def stat_table():
+    # Version 1.1 with no axes and no axis values.
+    return struct.pack(">HHHHIHIH", 1, 1, 8, 0, 0, 0, 0, 2)
 
 
 def name_table(family):
@@ -92,7 +127,7 @@ def cmap_table():
     return header + f4 + f12
 
 
-def build(family, advance=None) -> bytes:
+def build(family, advance=None, tracked=False) -> bytes:
     glyf = b""
     loca = [0]
     outlines = [None] + [g[2] for g in GLYPHS]
@@ -126,6 +161,9 @@ def build(family, advance=None) -> bytes:
     tables[b"glyf"] = glyf
     tables[b"cmap"] = cmap_table()
     tables[b"name"] = name_table(family)
+    if tracked:
+        tables[b"trak"] = trak_table()
+        tables[b"STAT"] = stat_table()
     tables[b"post"] = struct.pack(">IIhhIIIII", 0x00030000, 0, -100, 50, 0, 0, 0, 0, 0)
     tables[b"OS/2"] = struct.pack(
         ">HhHHHhhhhhhhhhhh10sIIII4sHHHhhhHHII",
@@ -158,3 +196,5 @@ if __name__ == "__main__":
         f.write(build("Ljos Symbols Test"))
     with open("LjosAlternateTest-Regular.ttf", "wb") as f:
         f.write(build("Ljos Alternate Test", advance=500))
+    with open("LjosTrackTest-Regular.ttf", "wb") as f:
+        f.write(build("Ljos Track Test", tracked=True))
