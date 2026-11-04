@@ -898,7 +898,7 @@ construction.
 ### 5.1 Rules
 
 Each rule is an error with a code that `ljos check` and the MCP tools
-print. Phase 1 builds the first five, marked ✓.
+print. Those the checker builds are marked ✓.
 
 | Code | Rule |
 |---|---|
@@ -907,7 +907,7 @@ print. Phase 1 builds the first five, marked ✓.
 | ✓ `ts-loose-equality` | No `==` / `!=`. |
 | ✓ `ts-condition-boolean` | `if`, `while`, `for`, `?:` and `!` take a boolean, with no truthiness. |
 | ✓ `ts-no-var` | No `var`. |
-| `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
+| ✓ `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
 | `ts-no-cast` | No `as` except to a declared decoder's result. No `!`. |
 | `ts-switch-exhaustive` | A `switch` on a union covers every case. |
 | `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
@@ -935,19 +935,33 @@ Columns count characters of the line as written (UTF-8 aware). Both the
 features and the MCP tool give the column a human clicks, never a byte
 offset.
 
-### 5.3 What phase 1's checker knows
+### 5.3 What the checker knows
 
-It knows a value's type from:
+Every expression of a script has a type of TYPES.md's mapping: literal
+types, primitives, unions, `undefined`, `unknown`, QML object types by
+their prototype chain, object literal types, arrays (readonly where they
+are declared so), functions and enums. It reads them from:
 
-- a literal;
-- a property it reads, by its declared type or its type's, as an
-  unqualified name or `id.name`;
-- an id;
-- the result of `!`, a comparison or `typeof`.
+- literals, templates, array and object literals;
+- names: ids, properties in scope, locals (a `const` keeps its literal
+  type, a `let` widens it) and parameters, which hide what QML has of
+  their name;
+- members of QML objects (the type table and the file's declarations),
+  of records, arrays, strings, `Map`, `Math`, `Number`, `console` and
+  `Qt`'s enums;
+- calls, by the function's parameters and return type: written,
+  inferred from its body, or the signal's;
+- operators, `&&`, `||`, `??` and `?:`;
+- arrows and functions, whose untyped parameters take the types of where
+  the function goes (a handler's signal, a callback's array);
+- narrowing by `=== undefined`, `typeof`, a literal, a record's field, and
+  by assignment, and `?.`.
 
-What it cannot type, it lets by. "Unknown" is not an error until
-`ts-no-any` (M4) makes every expression typed. Until then a rule holds of
-what the checker can type, not of every script.
+What it cannot type is an error (`ts-no-any`), at the place the type is
+missing, with what gives it one. A method the type table names without
+types takes and gives `unknown`. It lets by, without a type, a model's
+role, a member only the running program knows, and an alias (whose type is
+its target's).
 
 ## 6. Compat: the lowering pass
 
@@ -1366,7 +1380,7 @@ bindings and states without a rule.
 - **R4: printed names.** `String(obj)` and `toString()` print the class
   name. A face prints the native's name, which equals Qt's, so it is
   harmless today. It must stay so after M5.
-- **R5: checker soundness.** Unknown types are let by until `ts-no-any`.
+- **R5: checker soundness.** Since `ts-no-any`, what the checker cannot type is an error, except for a model's role, a member only the running program knows and an alias.
   H1's soundness rests on the rule list being complete.
 - **R6: reload cost.** `Project::put` lowers the file, its same-directory
   namers and settles the whole project, which is O(files) per put. Fine for

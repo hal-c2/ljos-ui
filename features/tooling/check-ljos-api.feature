@@ -274,6 +274,130 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 4 errors
         """
 
+  Rule: Nothing a script reads is without a type
+
+    Scenario: A parameter, or a local, with nothing to type it is reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function grow(by) { level = level + by }
+          function start() { let total; const none = []; level = total }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:25: error: `by` has no type: write its type (`by: number`, say) [ts-no-any]
+        Gauge.qml:5:34: error: `total` has no type: write its type or give it a value [ts-no-any]
+        Gauge.qml:5:54: error: `[]` has no type: write the array's type where it goes (`const xs: number[] = []`) [ts-no-any]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: A property of `var`, a signal parameter without a type and `any` are reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property var given
+          property unknown kept
+          signal moved(by)
+          function take(value: any) { kept = value }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:3:20: error: `given` has no type: write `property unknown` or a type [ts-no-any]
+        Gauge.qml:5:24: error: `by` has no type: write its type (`by: real`, say) [ts-no-any]
+        Gauge.qml:6:32: error: `any` has no type: write `unknown` or a type [ts-no-any]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: A name not in scope, and a member its value does not have, have no type
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property unknown given
+          function show() { level = missing; level = "full".size; level = given.size }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:37: error: `missing` has no type: it is not in scope [ts-no-any]
+        Gauge.qml:5:61: error: `size` has no type: a string has no member of that name [ts-no-any]
+        Gauge.qml:5:81: error: `size` has no type: an unknown value has no member of that name [ts-no-any]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: A handler's parameters, and a callback's, take their types from where they go
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          signal moved(by: real)
+          onMoved: (by) => { level = by }
+          onWidthChanged: level = width
+          function scaled(values: readonly real[]): readonly real[] { return values.map((value) => value * 2) }
+          PointerArea { onClicked: level = parent.width }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A handler's parameter has its signal's type where it is used
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string label: ""
+          signal moved(by: real)
+          onMoved: label = by
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:28: error: `label` is a string; this gives it a number [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: An object spread into another gives its members, and what follows wins
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property string label: ""
+          function merge(base: { readonly level: real; readonly label: string }, change: { readonly level?: real }) {
+            const next = { ...base, ...change }
+            level = next.level
+            label = { ...base, label: 2 }.label
+            label = { ...level }.label
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:8:21: error: `label` is a string; this gives it a number [ts-assign-type]
+        Gauge.qml:9:23: error: `...level` has no type: only an object of a `{ … }` type spreads [ts-no-any]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
   Rule: A file in Qt's QML is not held to it
 
     Scenario: The same script in Qt's QML has nothing to report

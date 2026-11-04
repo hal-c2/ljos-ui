@@ -113,6 +113,9 @@ pub enum Code {
     TsConditionBoolean,
     /// The checker: `var`, which is the function's wherever it is written.
     TsNoVar,
+    /// The checker: a value it cannot type, which TypeScript would call
+    /// `any`.
+    TsNoAny,
 }
 
 impl Code {
@@ -141,6 +144,7 @@ impl Code {
             Code::TsLooseEquality => "ts-loose-equality",
             Code::TsConditionBoolean => "ts-condition-boolean",
             Code::TsNoVar => "ts-no-var",
+            Code::TsNoAny => "ts-no-any",
         }
     }
 }
