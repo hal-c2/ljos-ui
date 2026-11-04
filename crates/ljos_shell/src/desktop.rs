@@ -2263,10 +2263,14 @@ pub(crate) fn run<M: Send + 'static>(
     let desktop_font = config
         .system_fonts
         .then(crate::desktop_font::Reading::start);
-    let host = WinitHost::<ShellEvent>::with_x11_preferred(crate::platform::prefers_x11(
-        config.prefer_x11,
-        std::env::var("LJOS_PREFER_X11").ok().as_deref(),
-    ))?;
+    // The application menu on macOS is the shell's (src/appkit_menu.rs).
+    let host = WinitHost::<ShellEvent>::with_options(
+        crate::platform::prefers_x11(
+            config.prefer_x11,
+            std::env::var("LJOS_PREFER_X11").ok().as_deref(),
+        ),
+        true,
+    )?;
     // The drivers start while the application is built.
     // A window that can be seen through is not chosen for the
     // processor: its pixels have no alpha.

@@ -61,6 +61,10 @@ fn install_desktop(engine: &Engine, platform: &std::rc::Rc<Platform>) {
     if let Some(badge) = crate::badge::service(platform) {
         platform.set_badge(badge);
     }
+    #[cfg(target_os = "macos")]
+    if let Some(bar) = crate::appkit_menu::AppKitMenuBar::new(platform.poster()) {
+        platform.set_menu_bar(std::rc::Rc::new(bar));
+    }
 }
 
 /// What the application is shown on.

@@ -69,10 +69,12 @@ blocking.workspace = true
 # display options and their change notification. Drags from other
 # applications (src/appkit_drag.rs): the destination's methods on the
 # content view, and the dragging pasteboard. Drags out of the application
-# (src/appkit_drag_out.rs): a dragging session and its source.
+# (src/appkit_drag_out.rs): a dragging session and its source. The
+# system's menu bar (src/appkit_menu.rs): NSMenu, NSMenuItem, and NSCell's
+# check mark state.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSGraphicsContext", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSView", "NSWindow", "objc2-quartz-core"] }
+objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSGraphicsContext", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSView", "NSWindow", "objc2-quartz-core", "NSMenu", "NSMenuItem", "NSCell"] }
 objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2", "NSArray", "NSData", "NSGeometry", "NSProcessInfo"] }
 block2.workspace = true
 # The wgpu painter's layer, tagged sRGB (src/srgb_layer.rs).
