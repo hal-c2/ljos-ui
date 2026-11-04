@@ -857,13 +857,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     UnaryOperator::Void => Ty::UNDEFINED,
                     UnaryOperator::Delete => Ty::BOOLEAN,
                     operator => {
-                        // As TypeScript, only a written `-1` is a literal:
-                        // the negation of a value of a literal type is a
-                        // number.
-                        if let (UnaryOperator::UnaryNegation, Expression::NumericLiteral(n)) =
-                            (operator, &unary.argument)
-                        {
-                            return self.arena.num(-n.value);
+                        // As TypeScript, only a written `-1` or `+1` is a
+                        // literal: the sign of a value of a literal type
+                        // gives a number.
+                        if let Some(value) = signed_literal(operator, &unary.argument) {
+                            return self.arena.num(value);
                         }
                         self.need_number(operator.as_str(), ty, unary.argument.span());
                         Ty::NUMBER
@@ -1944,7 +1942,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// The literal types `e` gives that are written in it, which a variable
     /// widens (TypeScript's fresh literal types), into `written`: a
-    /// literal (`-1` too), either side of `?:` or a logical operator, or a
+    /// literal (`-1` and `+1` too), either side of `?:` or a logical operator, or a
     /// `const` given one. An object or array literal has widened its
     /// members already, and a template or other unary operator gives no
     /// literal.
@@ -1954,10 +1952,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Expression::NumericLiteral(n) => written.push(self.arena.num(n.value)),
             Expression::BooleanLiteral(b) => written.push(self.arena.boolean(b.value)),
             Expression::UnaryExpression(u) => {
-                if let (UnaryOperator::UnaryNegation, Expression::NumericLiteral(n)) =
-                    (u.operator, &u.argument)
-                {
-                    written.push(self.arena.num(-n.value));
+                if let Some(value) = signed_literal(u.operator, &u.argument) {
+                    written.push(self.arena.num(value));
                 }
             }
             Expression::ConditionalExpression(c) => {
@@ -2451,4 +2447,17 @@ fn pattern_name<'a>(pattern: &BindingPattern<'a>) -> &'a str {
 fn is_const(annotation: &TSType<'_>) -> bool {
     matches!(annotation, TSType::TSTypeReference(reference)
         if matches!(&reference.type_name, TSTypeName::IdentifierReference(id) if id.name == "const"))
+}
+
+/// The number a written `-1` or `+1` is: the one unary form TypeScript
+/// gives a literal type.
+fn signed_literal(operator: UnaryOperator, argument: &Expression<'_>) -> Option<f64> {
+    let Expression::NumericLiteral(n) = argument else {
+        return None;
+    };
+    match operator {
+        UnaryOperator::UnaryNegation => Some(-n.value),
+        UnaryOperator::UnaryPlus => Some(n.value),
+        _ => None,
+    }
 }
