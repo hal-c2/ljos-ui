@@ -29,6 +29,7 @@ use parley_engine::{
 use rustc_hash::{FxHashMap, FxHasher};
 
 use crate::cache::FrameCache;
+use crate::coverage;
 use crate::edit::CaretCluster;
 use crate::elide::{Clusters, ELLIPSIS};
 use crate::face;
@@ -110,6 +111,10 @@ pub struct CacheStats {
     /// Of those, the ones whose run was kept from shaping the same text in
     /// the same font before, and not shaped again.
     pub runs_reused: u64,
+    /// Times every font's character map was read, to find a font for a
+    /// character no font of a text has: once, on the first such character,
+    /// and again only when fonts are added after it.
+    pub coverage_indexes: u64,
 }
 
 /// How a text may break, which Parley decides while shaping. Texts of
@@ -344,6 +349,8 @@ struct Families {
     pinned: Cell<u64>,
     /// Off only to compare against the whole stack in tests.
     pin: bool,
+    /// Which fonts have the characters a text's fonts do not.
+    coverage: RefCell<coverage::Coverage>,
     /// A text without spans or objects given to Parley as one style; off
     /// only to compare against the style built a property at a time.
     one_style: bool,
@@ -906,6 +913,34 @@ fn shape(
     }
     b.set_base_direction(base);
     b.build(text)
+}
+
+/// [`shape`] with its lines broken only at hard breaks, and a character no
+/// font of the text's has set in a font that has it ([`coverage`]): the
+/// text is shaped again when the lookup gave its script another fallback.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "internal; a struct would only rename them"
+)]
+fn shape_unbroken(
+    fcx: &mut FontContext,
+    lcx: &mut LayoutContext<u32>,
+    families: &Families,
+    text: &str,
+    style: &TextStyle,
+    ranged: &Ranged<'_>,
+    class: BreakClass,
+    base: BaseDirection,
+) -> Shape {
+    let mut shaped = shape(fcx, lcx, families, text, style, ranged, class, base);
+    break_lines(&mut shaped, None, false);
+    // Every family list ends in the bundled font, which has every ASCII
+    // character.
+    if !text.is_ascii() && families.coverage.borrow_mut().cover(fcx, text, &shaped) {
+        shaped = shape(fcx, lcx, families, text, style, ranged, class, base);
+        break_lines(&mut shaped, None, false);
+    }
+    shaped
 }
 
 /// Parley's own analysis and shaping, kept warm for [`shape_direct`], and
@@ -2588,6 +2623,7 @@ impl TextEngine {
                 pinned: Cell::new(0),
                 pin: true,
                 one_style: true,
+                coverage: RefCell::new(coverage::Coverage::new(system)),
             },
             shapes: FrameCache::new(MAX_SHAPES),
             layouts: FrameCache::new(MAX_LAYOUTS),
@@ -2599,6 +2635,7 @@ impl TextEngine {
             stats: CacheStats::default(),
             timed: None,
         };
+        engine.hold(std::iter::once(fonts::BUNDLED_FAMILY));
         if system {
             engine.warm_fallback();
         }
@@ -2624,6 +2661,7 @@ impl TextEngine {
     /// family names it provides.
     pub fn register_font(&mut self, bytes: Vec<u8>) -> Result<Vec<String>, FontError> {
         let names = fonts::register(&mut self.fcx, bytes)?;
+        self.hold(names.iter().map(String::as_str));
         self.fonts_changed();
         Ok(names)
     }
@@ -2646,6 +2684,7 @@ impl TextEngine {
         bytes: Vec<u8>,
     ) -> Result<Vec<fonts::RegisteredFace>, FontError> {
         let faces = fonts::register_faces(&mut self.fcx, bytes)?;
+        self.hold(faces.iter().map(|f| f.family.as_str()));
         self.fonts_changed();
         Ok(faces)
     }
@@ -2676,9 +2715,21 @@ impl TextEngine {
         self.generation
     }
 
+    /// The families named are of fonts the engine holds itself, which the
+    /// coverage index reads.
+    fn hold<'a>(&mut self, families: impl Iterator<Item = &'a str>) {
+        let mut coverage = self.families.coverage.borrow_mut();
+        for name in families {
+            if let Some(id) = self.fcx.collection.family_id(name) {
+                coverage.hold(id);
+            }
+        }
+    }
+
     fn fonts_changed(&mut self) {
         self.generation += 1;
         self.families.first_fonts.borrow_mut().clear();
+        self.families.coverage.borrow_mut().fonts_changed();
         self.clear_caches();
     }
 
@@ -2794,6 +2845,7 @@ impl TextEngine {
             glyphs_measured: measure::measured(),
             shapes_pinned: self.families.pinned.get(),
             runs_reused: self.direct.reused,
+            coverage_indexes: self.families.coverage.borrow().indexes(),
             ..self.stats
         }
     }
@@ -3133,7 +3185,7 @@ impl TextEngine {
         ranged: &Ranged<'_>,
         class: BreakClass,
     ) -> Shape {
-        let mut shape = shape(
+        shape_unbroken(
             &mut self.fcx,
             &mut self.lcx,
             &self.families,
@@ -3142,9 +3194,7 @@ impl TextEngine {
             ranged,
             class,
             BaseDirection::Auto,
-        );
-        break_lines(&mut shape, None, false);
-        shape
+        )
     }
 
     /// Cut `text` (one line) to `width`. `force` puts the ellipsis even when
@@ -3173,8 +3223,16 @@ impl TextEngine {
         } else {
             BaseDirection::Ltr
         };
-        let mut full = self.shape_once(text, style, ranged, base);
-        break_lines(&mut full, None, false);
+        let full = shape_unbroken(
+            &mut self.fcx,
+            &mut self.lcx,
+            &self.families,
+            text,
+            style,
+            ranged,
+            BreakClass::Word,
+            base,
+        );
         // By advances, as Qt elides: a text whose last glyph's ink alone
         // is past the width is truncated but keeps every character
         // (measured on Qt 6.11).

@@ -39,6 +39,7 @@
 
 mod bounds;
 mod cache;
+mod coverage;
 mod direction;
 mod edit;
 mod elide;
