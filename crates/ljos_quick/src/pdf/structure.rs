@@ -117,7 +117,10 @@ pub(crate) fn label(ranges: &[LabelRange], page: usize) -> String {
     let Some(r) = ranges.iter().rev().find(|r| r.first <= page) else {
         return (page + 1).to_string();
     };
-    let n = r.start + (page - r.first) as i64;
+    // A document's /St is any number it likes: the page's own must not
+    // overflow past it.
+    let offset = i64::try_from(page - r.first).unwrap_or(i64::MAX);
+    let n = r.start.saturating_add(offset);
     let number = match r.style {
         Some(b'D') => n.to_string(),
         Some(b'R') => roman(n),
@@ -129,7 +132,13 @@ pub(crate) fn label(ranges: &[LabelRange], page: usize) -> String {
     format!("{}{number}", r.prefix)
 }
 
+/// Roman numerals for 1 to 3999, the ones written without a bar over
+/// them; any other number in figures, so that a document's huge /St makes
+/// a short label rather than millions of Ms.
 fn roman(mut n: i64) -> String {
+    if !(1..=3999).contains(&n) {
+        return n.to_string();
+    }
     const DIGITS: [(i64, &str); 13] = [
         (1000, "M"),
         (900, "CM"),
@@ -378,5 +387,24 @@ mod tests {
         assert_eq!(label(&[], 4), "5");
         assert_eq!(roman(1994), "MCMXCIV");
         assert_eq!(letters(53), "AAA");
+    }
+
+    #[test]
+    fn a_huge_start_makes_a_short_label() {
+        assert_eq!(
+            label(&[range(0, b'R', "", 1_000_000_000_000)], 0),
+            "1000000000000"
+        );
+        assert_eq!(label(&[range(0, b'r', "", 4000)], 0), "4000");
+        assert_eq!(label(&[range(0, b'R', "", 3999)], 0), "MMMCMXCIX");
+        assert_eq!(
+            label(&[range(0, b'D', "", i64::MAX)], 3),
+            i64::MAX.to_string()
+        );
+        assert_eq!(
+            label(&[range(0, b'R', "", i64::MAX - 1)], 5),
+            i64::MAX.to_string()
+        );
+        assert_eq!(label(&[range(0, b'A', "", i64::MAX)], 2).len(), 1000);
     }
 }

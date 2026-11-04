@@ -86,6 +86,29 @@ Feature: Text, search and links in a PDF viewer
       | PdfScrollablePageView |
       | PdfMultiPageView      |
 
+  # qml6 draws its marks as a shape, at its own glyph positions, so the
+  # pixels are Ljós's own; the drive compares the two.
+  @ljos-only @api-QtQuick.Pdf.PdfPageView.searchString
+  Scenario: A new search that finds as many places marks the new ones
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Pdf
+      PdfPageView {
+        objectName: "v"
+        width: 400; height: 300
+        document: PdfDocument { source: "text.pdf" }
+        searchString: "World"
+      }
+      """
+    When 300 milliseconds pass
+    Then the pixel at 85, 30 of the window is not "#ffffff"
+    And the pixel at 26, 57 of the window is "#ffffff"
+    When the property "searchString" of "v" is set to "Second"
+    And 300 milliseconds pass
+    Then the pixel at 85, 30 of the window is "#ffffff"
+    And the pixel at 26, 57 of the window is not "#ffffff"
+
   @api-QtQuick.Pdf.PdfPageView.selectAll @api-QtQuick.Pdf.PdfPageView.selectedText @api-QtQuick.Pdf.PdfPageView.copySelectionToClipboard
   @api-QtQuick.Pdf.PdfScrollablePageView.selectAll @api-QtQuick.Pdf.PdfScrollablePageView.selectedText @api-QtQuick.Pdf.PdfScrollablePageView.copySelectionToClipboard
   Scenario Outline: A <view> selects all of the page it shows
