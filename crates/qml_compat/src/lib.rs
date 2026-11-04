@@ -18,6 +18,7 @@
 //! Files that name one another are lowered together or not at all
 //! ([`group`]): what one sets on another is then called the same in both.
 
+mod arrange;
 mod group;
 
 use std::ops::Range;
@@ -120,6 +121,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         source,
         ui,
         quick,
+        layouts: None,
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
@@ -176,6 +178,8 @@ struct Pass<'s> {
     source: &'s str,
     ui: &'static qt_types::Module,
     quick: &'static qt_types::Module,
+    /// QtQuick.Layouts, when the file imports it.
+    layouts: Option<&'static qt_types::Module>,
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, String)>,
@@ -188,6 +192,7 @@ impl<'s> Pass<'s> {
     /// Whether the file imports `QtQuick` and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let mut quick = None;
+        let mut layouts = None;
         for import in &document.imports {
             let at = import.span.start as usize;
             let QmlImportSource::Module(name) = &import.source else {
@@ -200,6 +205,12 @@ impl<'s> Pass<'s> {
             match uri.as_str() {
                 "QtQuick" => quick = Some(import.span),
                 "QtQml" => {}
+                // Its line layouts are lowered to Ljós's arrangement
+                // ([`arrange`]); its other types keep the file.
+                "QtQuick.Layouts" if import.alias.is_none() => {
+                    self.layouts = qt_types::module("QtQuick.Layouts");
+                    layouts = Some(import.span);
+                }
                 // A module that builds on QtQuick names its types, and those
                 // are Qt's until Ljós has its own (docs/DIALECT.md).
                 other => {
@@ -213,6 +224,10 @@ impl<'s> Pass<'s> {
         let Some(span) = quick else {
             return Ok(false);
         };
+        if let Some(span) = layouts {
+            // `Ljos.Ui` has `Layout`; the line stays, empty.
+            self.change(span.start as usize..span.end as usize, "");
+        }
         // On the import's line, so every line stays where it was.
         self.change(
             span.start as usize..span.end as usize,
@@ -307,6 +322,12 @@ impl<'s> Pass<'s> {
     /// The type `name` is in this file: Qt's (and then one Ljos.Ui has),
     /// an inline component, or a file of the project.
     fn named_type(&self, name: &str, at: usize, depth: usize) -> Result<Ty, Kept> {
+        if let Some(ty) = self.layouts.and_then(|m| m.type_named(name)) {
+            return match name {
+                "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
+                _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
+            };
+        }
         if let Some(ty) = self.quick.type_named(name) {
             if ty.module.starts_with("QtQml") {
                 return Ok(Ty::Exact(ty));
@@ -341,6 +362,12 @@ impl<'s> Pass<'s> {
     /// on `scope` (itself, or for a group the object it is a group of) and
     /// then on the file's root, `root`.
     fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty) -> Step {
+        if let Ty::Exact(t) = ty
+            && let Some(shape) = arrange::Shape::of(t)
+        {
+            let changes = arrange::arrange(self.source, object, shape, self)?;
+            self.changes.extend(changes);
+        }
         let scope = match ty {
             Ty::Plain => root,
             other => other,
@@ -607,6 +634,14 @@ impl<'s> Pass<'s> {
             Some(kept) => Err(kept),
             None => Ok(()),
         }
+    }
+}
+
+impl arrange::Types for Pass<'_> {
+    fn qt_type(&self, name: &str) -> Option<&'static Type> {
+        self.quick
+            .type_named(name)
+            .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
     }
 }
 

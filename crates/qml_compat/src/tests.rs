@@ -142,7 +142,8 @@ fn what_the_pass_cannot_type_keeps_the_file() {
             .contains("whose type is not known")
     );
     assert!(
-        kept_for("import QtQuick\nimport QtQuick.Layouts\nItem { }\n").contains("QtQuick.Layouts")
+        kept_for("import QtQuick\nimport QtQuick.Controls\nItem { }\n")
+            .contains("QtQuick.Controls")
     );
     assert!(kept_for("import QtQuick as Q\nQ.Item { }\n").contains("under a name"));
     assert!(
@@ -199,7 +200,8 @@ fn files_that_name_one_another_are_lowered_together() {
         ("app/Button".to_string(), alone(button)),
         (
             "app/Main".to_string(),
-            alone("import QtQuick\nColumn { Button { color: \"blue\" } }\n"),
+            // Kept: `Flow` is not in Ljos.Ui.
+            alone("import QtQuick\nFlow { Button { color: \"blue\" } }\n"),
         ),
         ("other/Lone".to_string(), alone(button)),
     ]);
@@ -287,4 +289,130 @@ fn qml_text_made_while_the_file_runs_keeps_it() {
         kept_for("import QtQuick\nItem { function f() { Qt.createQmlObject(\"import QtQuick; Rectangle {}\", this) } }\n")
             .contains("QML text")
     );
+}
+
+const LAYOUTS: &str = "import QtQuick\nimport QtQuick.Layouts\n";
+
+/// What a `RowLayout` does by default is written out: its spacing, and a
+/// child centred across the row.
+#[test]
+fn a_row_layout_is_a_row_with_its_defaults_written_out() {
+    let text = lowered(&format!(
+        "{LAYOUTS}RowLayout {{\n    width: 200\n    Rectangle {{ implicitWidth: 20; implicitHeight: 10 }}\n    \
+         Rectangle {{ Layout.fillWidth: true; Layout.alignment: Qt.AlignTop }}\n    \
+         Item {{ Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight }}\n}}\n"
+    ));
+    assert_eq!(
+        text,
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\nRow { spacing: 5;\n    width: 200\n    \
+         Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
+         Rectangle { Layout.fillWidth: true; Layout.alignment: Qt.AlignTop }\n    \
+         Item { Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }\n}\n"
+    );
+}
+
+#[test]
+fn a_column_layout_counts_an_empty_child_and_keeps_its_spacing() {
+    let text = lowered(&format!(
+        "{LAYOUTS}ColumnLayout {{ spacing: 2; Item {{ width: 10 }} Rectangle {{ width: 10; height: 4 }} }}\n"
+    ));
+    assert!(
+        text.ends_with(
+            "Column { spacing: 2; Item { Layout.fillWidth: false; width: 10 } Rectangle { width: 10; height: 4 } }\n"
+        ),
+        "{text}"
+    );
+}
+
+/// Each way a line layout and Ljós's arrangement would place a child
+/// differently keeps the file, and says which.
+#[test]
+fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
+    for (body, why) in [
+        (
+            "RowLayout { Text { text: \"a\"; width: 80 } }",
+            "`width` of a `Text` in a `RowLayout`",
+        ),
+        (
+            "RowLayout { Item { implicitWidth: 8; width: 80 } }",
+            "`width` of a `Item`",
+        ),
+        (
+            "RowLayout { Text { text: \"a\" } }",
+            "implicit width of a `Text` may be a fraction",
+        ),
+        (
+            "RowLayout { Item { implicitWidth: 2.5 } }",
+            "`implicitWidth` is not a whole number",
+        ),
+        (
+            "RowLayout { width: 100; Item { implicitWidth: 8 } }",
+            "spreads the room",
+        ),
+        (
+            "ColumnLayout { anchors.fill: parent; Item { implicitHeight: 8 } }",
+            "give a child `Layout.fillHeight: true`",
+        ),
+        (
+            "ColumnLayout { RowLayout { } }",
+            "a `RowLayout` in a `ColumnLayout` fills it",
+        ),
+        (
+            "RowLayout { Item { anchors.top: parent.top } }",
+            "`anchors.top` on a child",
+        ),
+        ("RowLayout { uniformCellSizes: true }", "`uniformCellSizes`"),
+        (
+            "RowLayout { Item { Layout.alignment: Qt.AlignBaseline } }",
+            "`Qt.AlignBaseline`",
+        ),
+        (
+            "RowLayout { Item { Layout.alignment: a } }",
+            "not one the pass can read",
+        ),
+        ("RowLayout { Swatch { } }", "a file of the project"),
+        ("GridLayout { }", "`GridLayout` is not in Ljos.Ui"),
+        ("StackLayout { }", "`StackLayout` is not in Ljos.Ui"),
+    ] {
+        let reason = kept_for(&format!("{LAYOUTS}{body}\n"));
+        assert!(reason.contains(why), "{body}: {reason}");
+    }
+}
+
+#[test]
+fn a_positioner_is_lowered_as_it_is_written() {
+    let source =
+        "import QtQuick\nColumn { spacing: 4; Rectangle { width: 6; height: 4 } Swatch { } }\n";
+    assert!(
+        lowered(source)
+            .ends_with("Column { spacing: 4; Rectangle { width: 6; height: 4 } Swatch { } }\n")
+    );
+}
+
+#[test]
+fn where_a_positioner_and_the_arrangement_disagree_the_file_is_kept() {
+    for (body, why) in [
+        (
+            "Row { Item { Layout.fillWidth: true } }",
+            "`Layout.fillWidth` is ignored by Qt's `Row` and would be honoured by Ljós's",
+        ),
+        ("Row { Item { y: 4 } }", "leaves a child's `y` to it"),
+        ("Column { Item { x: 4 } }", "leaves a child's `x` to it"),
+        (
+            "Row { Item { anchors.fill: parent } }",
+            "`anchors.fill` on a child",
+        ),
+        (
+            "Row { add: Transition { } }",
+            "`add` is a member of Qt's `Row`",
+        ),
+        (
+            "Column { Text { text: Positioner.index } }",
+            "it uses `Positioner`",
+        ),
+        ("Row { Repeater { model: 2; Item { y: 1 } } }", "`y`"),
+    ] {
+        let reason = kept_for(&format!("import QtQuick\n{body}\n"));
+        assert!(reason.contains(why), "{body}: {reason}");
+    }
 }
