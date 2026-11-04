@@ -98,10 +98,10 @@ fn compile_alone<O: TypeOracle>(
     );
     let mut compiler = Compiler::new(project, key, source, lines, types, &tree);
     compiler.diagnostics = diagnostics;
-    // A file the compat pass lowered is Qt's QML, which the checker's
-    // rules are not for: it is checked when `ljos migrate` makes it Ljós's.
-    compiler.dialect = check::is_dialect(&parsed.document)
-        && !matches!(project.lowering(key), Some(qml_compat::Outcome::Lowered(_)));
+    // A file the compat pass lowered says its scripts are JavaScript, and
+    // so does one `ljos migrate` wrote: the same text compiles the same.
+    compiler.dialect =
+        check::is_dialect(&parsed.document) && !check::scripts_are_javascript(&parsed.document);
     if let Some(context) = translator(&parsed.document) {
         compiler.context = context.to_string();
     }
@@ -444,7 +444,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     self.def_mut(at).signals.push(declaration);
                 }
                 QmlMember::Function(function) => {
-                    self.check(|checker| {
+                    self.check(&[], |checker| {
                         checker.visit_function(function, oxc_syntax::scope::ScopeFlags::Function);
                     });
                     self.method(owner, function);
@@ -969,18 +969,24 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         value: &QmlBindingValue<'a>,
         may_handle: bool,
     ) {
+        let signal = handled(&name).filter(|_| may_handle);
+        // A handler's script is given the signal's arguments by name, and
+        // they hide the properties they share a name with.
+        let given = signal
+            .as_ref()
+            .and_then(|signal| self.signal_args(owner, &slot, signal))
+            .unwrap_or_default();
         match value {
             QmlBindingValue::Expression(expression) => {
-                self.check(|checker| checker.visit_expression(expression));
+                self.check(&given, |checker| checker.visit_expression(expression));
             }
             QmlBindingValue::Statement(statement) => {
-                self.check(|checker| checker.visit_statement(statement));
+                self.check(&given, |checker| checker.visit_statement(statement));
             }
             QmlBindingValue::Object(_) | QmlBindingValue::Objects(_) => {}
         }
         let at = self.place[owner];
         let name_span = self.span(name_span);
-        let signal = handled(&name).filter(|_| may_handle);
         let target = self.describe(owner, &slot, &name);
         match value {
             QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) if signal.is_some() => {
