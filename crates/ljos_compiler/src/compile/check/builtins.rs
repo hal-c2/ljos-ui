@@ -21,6 +21,7 @@ pub(super) fn global(name: &str) -> Option<Global> {
         "qsTr" => Global::QsTr,
         "qsTrId" => Global::QsTrId,
         "Map" => Global::Map,
+        "Array" => Global::Array,
         _ => return None,
     })
 }
@@ -79,6 +80,7 @@ pub(super) fn global_member(arena: &mut Arena, global: Global, name: &str) -> Op
             let found = CONSOLE.iter().find(|known| **known == name)?;
             Some(method(arena, found))
         }
+        Global::Array => (name == "isArray").then(|| method(arena, "isArray")),
         Global::Qt | Global::QsTr | Global::QsTrId | Global::Map => None,
     }
 }
@@ -127,7 +129,7 @@ pub(super) fn global_call(arena: &mut Arena, global: Global) -> Option<Sig> {
             None,
             Ty::STRING,
         ),
-        Global::Math | Global::Console | Global::Qt | Global::Map => return None,
+        Global::Math | Global::Console | Global::Qt | Global::Map | Global::Array => return None,
     })
 }
 
@@ -258,6 +260,10 @@ pub(super) fn method_sig(arena: &mut Arena, receiver: Ty, method: Method) -> Opt
         }
         Method::Static(Global::String, _) => sig(vec![], Some(Ty::NUMBER), Ty::STRING),
         Method::Static(Global::Console, _) => sig(vec![], Some(Ty::UNKNOWN), Ty::VOID),
+        // What it narrows its argument to is the checker's (`facts`).
+        Method::Static(Global::Array, "isArray") => {
+            sig(vec![param("value", Ty::UNKNOWN)], None, Ty::BOOLEAN)
+        }
         Method::Static(..) => return None,
         Method::Primitive(name) => {
             let string = |name: &str| param(name, Ty::STRING);
