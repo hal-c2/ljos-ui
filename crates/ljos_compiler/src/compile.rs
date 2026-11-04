@@ -107,8 +107,13 @@ fn compile_alone<O: TypeOracle>(
     }
     compiler.collect_enums(&parsed.document.root, None);
     compiler.object(&parsed.document.root, None);
+    // A module is Ljós code whichever file imports it, so it is checked
+    // for a file in Qt's QML too, whose own scripts are not.
+    let modules = check::modules(&allocator, project, key, &parsed.document);
     if compiler.dialect {
-        check::document(&mut compiler, &parsed.document);
+        check::document(&mut compiler, &parsed.document, &modules);
+    } else if !modules.is_empty() {
+        check::modules_only(&mut compiler, &modules);
     }
     Ok(compiler.finish(&parsed.document))
 }
@@ -213,6 +218,8 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     dialect: bool,
     /// The file imports `Ljos.Ui`, whatever its scripts are.
     ljos_ui: bool,
+    /// The TypeScript modules the file reaches, checked.
+    modules: Vec<crate::CheckedModule>,
 }
 
 impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
@@ -277,6 +284,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             warned: HashSet::new(),
             dialect: false,
             ljos_ui: false,
+            modules: Vec::new(),
         }
     }
 
@@ -2064,6 +2072,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         Compiled {
             file,
             diagnostics: self.diagnostics,
+            modules: self.modules,
         }
     }
 }

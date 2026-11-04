@@ -106,6 +106,9 @@ pub(crate) enum Kind {
     Type(u32),
     /// What a file imports `as` the name.
     Namespace(Box<str>),
+    /// A TypeScript module as a value, by its key: what a file's `import
+    /// "filter.ts" as Logic` and a module's `import * as` name.
+    Module(Box<str>),
     /// A TypeScript object type. Its fields are in the order written.
     Record(Box<[Field]>),
     Array {
@@ -425,6 +428,7 @@ impl Arena {
                 .join(" | "),
             Kind::Object(o) | Kind::Type(o) => object(*o),
             Kind::Namespace(name) => name.to_string(),
+            Kind::Module(key) => format!("typeof import(\"./{key}\")"),
             Kind::Record(fields) => {
                 let fields: Vec<String> = fields
                     .iter()
@@ -509,6 +513,7 @@ impl Arena {
                 Kind::Object(o) => article(&object(*o)),
                 Kind::Type(o) => format!("the type {}", object(*o)),
                 Kind::Namespace(name) => format!("the namespace {name}"),
+                Kind::Module(key) => format!("the module {key}"),
                 Kind::Record(_) => "an object".into(),
                 Kind::Array { .. } => article(&self.display(*part, object)),
                 Kind::Map { .. } => "a Map".into(),

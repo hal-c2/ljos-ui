@@ -59,8 +59,7 @@ pub(crate) fn erase(key: &str, source: &str) -> Erased {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type()).parse();
     if let Some(error) = parsed.diagnostics.first() {
-        let offset = error.labels.first().map_or(0, |label| label.offset());
-        let at = u32::try_from(offset).unwrap_or(0);
+        let at = error.labels.first().map_or(0, |label| label.offset());
         return Erased {
             text: source.to_string(),
             faults: vec![Fault {
