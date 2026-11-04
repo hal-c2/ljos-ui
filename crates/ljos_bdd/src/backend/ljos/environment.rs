@@ -32,6 +32,16 @@ impl Environment for LjosBackend {
         Ok(())
     }
 
+    fn qt_qml_lowered(&mut self) -> Result<()> {
+        if self.live.is_some() {
+            return Err(failed(
+                "the files are lowered to the Ljós API before the QML is given",
+            ));
+        }
+        self.lowered = true;
+        Ok(())
+    }
+
     fn aot_check(&mut self, on: bool) -> Result<()> {
         self.aot_check = Some(on);
         if let Some(live) = &self.live {
