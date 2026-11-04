@@ -24,6 +24,7 @@ use crate::dialogs::{DialogService, NoSystemDialogs};
 use crate::drop::{DragOutService, DropAction, ExternalDrag};
 use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
 use crate::icon::Icon;
+use crate::menu_bar::{MenuBarService, RecordedMenuBar};
 use crate::open_url::{OpenUrlService, RecordedUrls};
 use crate::paths::PathEnv;
 use crate::permissions::{PermissionService, UngatedPermissions};
@@ -236,6 +237,7 @@ pub struct Platform {
     local_file_read: Cell<bool>,
     open_url: RefCell<Rc<dyn OpenUrlService>>,
     badge: RefCell<Rc<dyn BadgeService>>,
+    menu_bar: RefCell<Rc<dyn MenuBarService>>,
     sensors: RefCell<Rc<dyn SensorService>>,
     badge_number: Cell<u32>,
     env: RefCell<Rc<PathEnv>>,
@@ -300,6 +302,7 @@ impl Default for Platform {
             ),
             open_url: RefCell::new(Rc::new(RecordedUrls::default())),
             badge: RefCell::new(Rc::new(RecordedBadge::default())),
+            menu_bar: RefCell::new(Rc::new(RecordedMenuBar::default())),
             sensors: RefCell::new(Rc::new(NoSensors)),
             badge_number: Cell::new(0),
             env: RefCell::new(Rc::new(PathEnv::for_process())),
@@ -619,6 +622,19 @@ impl Platform {
         if count != 0 {
             service.show(count);
         }
+    }
+
+    /// What shows the system's menu bar. Until a host installs one it is a
+    /// [`RecordedMenuBar`] that says the system has none, and a `MenuBar`
+    /// is in its window.
+    pub fn menu_bar(&self) -> Rc<dyn MenuBarService> {
+        Rc::clone(&self.menu_bar.borrow())
+    }
+
+    /// Installs what shows the system's menu bar. A `MenuBar` asks when it
+    /// is made, so a host installs it before the QML is loaded.
+    pub fn set_menu_bar(&self, service: Rc<dyn MenuBarService>) {
+        *self.menu_bar.borrow_mut() = service;
     }
 
     /// Calls `hook` with each window the host opens for the application,
