@@ -93,6 +93,24 @@ Feature: Checking the scripts of a file written in Ljós's API
         1 files, 0 errors, 0 warnings
         """
 
+    Scenario: `!` takes a boolean, as a condition does
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property int clicks: 0
+          property bool opened: !clicks
+          property bool closed: !opened
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:34: error: `!` needs a boolean, and `clicks` is a number: compare it [ts-condition-boolean]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
   Rule: The checker knows the type of every value a script makes
 
     Scenario: A local takes the type of what it starts as
@@ -374,6 +392,23 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 1 errors
         """
 
+    Scenario: What the test of `?:` reads has a type too
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Rectangle {
+          fill: area.hovered ? "#eeeeee" : "#ffffff"
+          PointerArea { id: area; hoverEnabled: true }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:3:22: error: `hovered` has no type: a PointerArea has no member of that name [ts-no-any]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: An object spread into another gives its members, and what follows wins
       Given the file "Gauge.qml":
         """qml
@@ -536,6 +571,39 @@ Feature: Checking the scripts of a file written in Ljós's API
         Item {
           property real level: 0
           function first(xs: readonly number[]): void { const n = xs[0]; if (n !== undefined) { level = n } level = xs[1] ?? 0 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A member of what may be undefined, and a call of it, are reported
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function first(xs: readonly string[], done?: () => void): void { level = xs[0].length; done() }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:84: error: `xs[0]` may be undefined, as an index may be past the end: check it first [ts-index-undefined]
+        Gauge.qml:4:98: error: `done` may be undefined: compare it with `undefined` first [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: What may be undefined, checked first, may be read and called
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          function first(xs: readonly string[], done?: () => void): void { const x = xs[0]; if (x !== undefined) { level = x.length } if (done !== undefined) { done() } done?.() }
         }
         """
       When the files are checked
