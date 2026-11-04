@@ -866,6 +866,30 @@ pub trait Platform: Backend {
         Err(BackendError::NotImplemented("a position the system is at"))
     }
 
+    /// The system has a menu bar of its own, as macOS has. Said before the
+    /// QML.
+    fn system_menu_bar(&mut self) -> Result<()> {
+        Err(BackendError::NotImplemented("a menu bar of the system's"))
+    }
+
+    /// The menu bar the system shows; `None` if it shows none of the
+    /// application's.
+    fn system_menu_bar_shown(&mut self) -> Result<Option<ljos_platform::SystemBar>> {
+        Err(BackendError::NotImplemented("a menu bar of the system's"))
+    }
+
+    /// The user chooses the item at `path` (menu titles, then the item's
+    /// text) in the system's menu bar.
+    fn choose_in_system_menu_bar(&mut self, _path: &[String]) -> Result<()> {
+        Err(BackendError::NotImplemented("a menu bar of the system's"))
+    }
+
+    /// The user chooses `text` ("Quit", "About") in the system's
+    /// application menu.
+    fn choose_in_application_menu(&mut self, _text: &str) -> Result<()> {
+        Err(BackendError::NotImplemented("a menu bar of the system's"))
+    }
+
     /// The URLs the application asked the system to open, in order.
     fn opened_urls(&mut self) -> Result<Vec<String>> {
         Err(BackendError::NotImplemented("the system's opener of URLs"))

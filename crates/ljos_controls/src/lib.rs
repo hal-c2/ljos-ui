@@ -55,6 +55,7 @@ mod style;
 mod style_font;
 mod swipe_delegate;
 mod swipe_view;
+pub mod system_menu;
 mod tab_bar;
 mod text_area;
 mod text_control;

@@ -371,7 +371,7 @@ fn state_of(engine: &Engine, menu: ObjectId) -> Option<Rc<MenuState>> {
 }
 
 /// The items of a menu, in order.
-fn items(engine: &Engine, menu: ObjectId) -> Vec<ObjectId> {
+pub(crate) fn items(engine: &Engine, menu: ObjectId) -> Vec<ObjectId> {
     state_of(engine, menu).map_or_else(Vec::new, |s| {
         s.entries
             .borrow()
@@ -401,7 +401,7 @@ pub(crate) fn place_of_item(engine: &Engine, item: ObjectId) -> Option<(usize, u
     Some((at + 1, choices.len()))
 }
 
-fn sub_menu_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+pub(crate) fn sub_menu_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     if !is_a::<MenuItem>(engine, item) {
         return None;
     }
@@ -410,7 +410,7 @@ fn sub_menu_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
         .filter(|m| is_a::<Menu>(engine, *m))
 }
 
-fn action_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+pub(crate) fn action_of(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     if !is_a::<AbstractButton>(engine, item) {
         return None;
     }
