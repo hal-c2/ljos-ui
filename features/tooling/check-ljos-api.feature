@@ -12,7 +12,9 @@ Feature: Checking the scripts of a file written in Ljós's API
   subset of TypeScript Ljós's API is written in. A value goes only where
   its type does, a condition is a boolean, there is no `null`, `==` or
   `var`, and each is an error before anything runs. A file in Qt's QML
-  is not held to them.
+  is not held to them, and neither is one that says its scripts are
+  still JavaScript: `ljos migrate` writes that, and a file is typed by
+  taking it out.
 
   Rule: A script of a file in Ljós's API is held to the subset
 
@@ -71,6 +73,26 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 4 errors
         """
 
+    Scenario: A name a script declares is the script's, not the property it shadows
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          property string mode: ""
+          signal moved(open: bool)
+          property real open: 0
+          function choose(level: bool) { if (level) { mode = "full" } }
+          function count() { let mode = 0; mode = 1; return mode }
+          onMoved: if (open) { level = 1 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
   Rule: A file in Qt's QML is not held to it
 
     Scenario: The same script in Qt's QML has nothing to report
@@ -86,5 +108,40 @@ Feature: Checking the scripts of a file written in Ljós's API
       When the files are checked
       Then the check reports:
         """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A file whose scripts are still JavaScript is not held to it
+      Given the file "Gauge.qml":
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        Item {
+          property real level: 0
+          property bool empty: level == 0
+          function clear() { var was = level; if (level) { level = 0 } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A file migrated from Qt's QML compiles as it did
+      Given the file "Gauge.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          property real level: 0
+          property bool empty: level == 0
+          color: level == 0 ? "red" : "green"
+          function clear() { var was = level; if (level) { level = null } }
+        }
+        """
+      When the files are migrated and checked
+      Then the check reports:
+        """
+        lowered Gauge.qml (2 edits)
+        1 files, 1 lowered, 0 kept
         1 files, 0 errors, 0 warnings
         """

@@ -254,6 +254,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the tests are run with the import path "dir"` | the same, with a directory of test-only modules given to the runner (`-import`) |
 | `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
 | `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
+| `When the files are migrated and checked` | `ljos migrate --write` over the files given with `Given the file`, then `ljos check` of what it wrote; the report is what each said, in order (`@ljos-only`) |
 | `When the files are checked with statistics` | the same with `--stats`: the tiers of the expressions, how many would be compiled ahead of time, and where each of the rest is and why it runs dynamically (`@ljos-only`) |
 | `When the user chooses "path" in the system dialog` | the user picks a file or folder in the dialog the system shows (`@ljos-only`: the oracle cannot answer a dialog the system shows) |
 | `When the user chooses the files "path, path" in the system dialog` | the user picks several files, named with `", "` between them (`@ljos-only`) |

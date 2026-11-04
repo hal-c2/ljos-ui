@@ -2,6 +2,8 @@
 //! (`Ljos.Ui`), with the edits `--compat=lower` makes as a file loads
 //! (docs/DIALECT.md, docs/adr/0004-compat-lowering-before-the-ir.md). The
 //! two are one pass, so a migrated file is the file a lowered run compiled.
+//! Its import line says `pragma Scripts: JavaScript`, so its scripts are not
+//! held to the checker's rules until a person takes the pragma out.
 //!
 //! | To | What |
 //! |---|---|

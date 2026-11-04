@@ -40,6 +40,9 @@ pub struct TestRun {
     pub check: bool,
     /// With `check`: `--stats`, the coverage tables after what it finds.
     pub stats: bool,
+    /// With `check`: `ljos migrate --write` first, and what it says before
+    /// what the check says, so a scenario sees a migrated file compile.
+    pub migrate: bool,
     /// The `TZ` the runner starts with; UTC when `None`.
     pub time_zone: Option<String>,
 }
@@ -262,7 +265,7 @@ fn qt_runner() -> String {
 /// it is in the report.
 pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     if run.check {
-        return check_ljos(files, run.stats);
+        return check_ljos(files, run);
     }
     let staged = Staged::new(files)?;
     let json = staged.root.join("report.json");
@@ -301,15 +304,21 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
 /// Reads the files as one project with `ljos check` and gives all it says:
 /// what it finds, then its count, then its verdict when there are errors,
 /// in the order a terminal shows them.
-fn check_ljos(files: &[QmlFile], stats: bool) -> Result<TestReport> {
+fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     let staged = Staged::new(files)?;
     // What is found goes to the error stream and the count to the output:
-    // one pipe for both keeps them in the order they were written.
+    // one pipe for both keeps them in the order they were written. A
+    // migration that fails stops before the check, as a script would.
+    let script = if run.migrate {
+        r#"l=$0; d=$1; shift; "$l" migrate --write "$d" 2>&1 && exec "$l" check "$@" "$d" 2>&1"#
+    } else {
+        r#"l=$0; d=$1; shift; exec "$l" check "$@" "$d" 2>&1"#
+    };
     let out = Command::new("sh")
-        .args(["-c", r#"exec "$0" check "$@" 2>&1"#])
+        .args(["-c", script])
         .arg(ljos_bin()?)
-        .args(stats.then_some("--stats"))
         .arg(&staged.suite)
+        .args(run.stats.then_some("--stats"))
         .stdin(Stdio::null())
         .output()
         .map_err(|e| failed(format!("cannot start `ljos check`: {e}")))?;

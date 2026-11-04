@@ -73,6 +73,17 @@ fn files_checked(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+// `ljos migrate --write`, then `ljos check`: what a migrated project
+// compiles to, after what the migration said it did.
+#[when("the files are migrated and checked")]
+fn files_migrated_checked(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        migrate: true,
+        ..TestRun::default()
+    })
+}
+
 // `ljos check --stats`: the coverage tables after what it finds.
 #[when("the files are checked with statistics")]
 fn files_checked_stats(w: &mut LjosWorld) -> StepResult {
