@@ -34,6 +34,8 @@ pub use tools::{InspectorAccess, InspectorAddress, InspectorOptions};
 
 #[cfg(target_os = "macos")]
 mod appkit_drag;
+#[cfg(target_os = "macos")]
+mod appkit_drag_out;
 mod badge;
 mod cpu;
 mod desktop;
@@ -69,6 +71,8 @@ mod test_bus;
 mod wayland_drag;
 #[cfg(target_os = "windows")]
 mod win32_drag;
+#[cfg(target_os = "windows")]
+mod win32_drag_out;
 mod window_spec;
 mod x11_drag;
 

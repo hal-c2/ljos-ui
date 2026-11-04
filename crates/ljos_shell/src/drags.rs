@@ -5,9 +5,10 @@
 //! and Windows (`win32_drag`) it takes files alone, with no position and no
 //! answer for the source.
 //!
-//! Drags out of the application go to the window system the same way,
-//! where the shell carries them ([`DragOut`]): on Wayland and X11. On
-//! macOS and Windows they stay in the window.
+//! Drags out of the application go to the window system the same way
+//! ([`DragOut`]): a `wl_data_source` on Wayland, an XDND source on X11, an
+//! `NSDraggingSession` on macOS (`appkit_drag_out`) and `DoDragDrop` on
+//! Windows (`win32_drag_out`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -63,9 +64,7 @@ pub(crate) enum DragStep {
         answer: Answer,
     },
     /// Not a step of a drag in: the drag out of the application ended,
-    /// which wakes the loop to settle it ([`DragOut::settle`]). macOS and
-    /// Windows have no drags out yet.
-    #[cfg_attr(any(target_os = "macos", target_os = "windows"), allow(dead_code))]
+    /// which wakes the loop to settle it ([`DragOut::settle`]).
     OutEnded,
 }
 
@@ -154,9 +153,10 @@ impl Drags {
         match self {
             Self::Wayland(drags) => drags.start_out(data, actions),
             Self::X11(drags) => drags.start_out(data, actions),
-            // Drags out stay in the window there.
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            _ => false,
+            #[cfg(target_os = "macos")]
+            Self::AppKit(drags) => drags.out.start(data, actions),
+            #[cfg(target_os = "windows")]
+            Self::Win32(drags) => drags.out.start(data, actions),
         }
     }
 
@@ -164,8 +164,10 @@ impl Drags {
         match self {
             Self::Wayland(drags) => drags.cancel_out(),
             Self::X11(drags) => drags.cancel_out(),
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            _ => {}
+            #[cfg(target_os = "macos")]
+            Self::AppKit(drags) => drags.out.cancel(),
+            #[cfg(target_os = "windows")]
+            Self::Win32(drags) => drags.out.cancel(),
         }
     }
 
@@ -173,8 +175,10 @@ impl Drags {
         match self {
             Self::Wayland(drags) => drags.out_ended(),
             Self::X11(drags) => drags.out_ended(),
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            _ => None,
+            #[cfg(target_os = "macos")]
+            Self::AppKit(drags) => drags.out.ended(),
+            #[cfg(target_os = "windows")]
+            Self::Win32(drags) => drags.out.ended(),
         }
     }
 }

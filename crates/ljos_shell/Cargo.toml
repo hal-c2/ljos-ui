@@ -68,11 +68,12 @@ blocking.workspace = true
 # The application's badge: the Dock tile. The workspace's accessibility
 # display options and their change notification. Drags from other
 # applications (src/appkit_drag.rs): the destination's methods on the
-# content view, and the dragging pasteboard.
+# content view, and the dragging pasteboard. Drags out of the application
+# (src/appkit_drag_out.rs): a dragging session and its source.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
-objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility", "NSDragging", "NSPasteboard", "NSPasteboardItem", "NSView"] }
-objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2", "NSArray", "NSData", "NSGeometry"] }
+objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSGraphicsContext", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSView", "NSWindow"] }
+objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2", "NSArray", "NSData", "NSGeometry", "NSProcessInfo"] }
 block2.workspace = true
 
 # What the system prefers: system parameters, the Accessibility key, and a
@@ -89,7 +90,9 @@ windows-sys = { workspace = true, features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 # Drags from other applications (src/win32_drag.rs): an `IDropTarget` in
-# place of winit's, and the source's `IDataObject`.
+# place of winit's, and the source's `IDataObject`. Drags out of the
+# application (src/win32_drag_out.rs): `DoDragDrop` with an `IDataObject`
+# and `IDropSource` of the shell's.
 windows = { workspace = true, features = [
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
