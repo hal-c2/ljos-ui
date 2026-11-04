@@ -1903,22 +1903,34 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             self.check_assign(name, written, &word, given, init.span());
                             written
                         }
-                        None if binding == Binding::Const => {
-                            if self.fresh(init)
-                                && let BindingPattern::BindingIdentifier(id) = &declarator.id
-                            {
-                                self.bind_pattern(&declarator.id, given, binding);
-                                if let Some(local) = self.local(id.name.as_str()) {
-                                    self.fresh.push(local.id);
+                        None => {
+                            // As TypeScript, only a literal written here
+                            // widens: a variable given a value of a literal
+                            // type keeps it.
+                            let mut written = Vec::new();
+                            let all = self.fresh(init, &mut written);
+                            if binding == Binding::Const {
+                                if (all || !written.is_empty())
+                                    && let BindingPattern::BindingIdentifier(id) = &declarator.id
+                                {
+                                    let fresh = if all {
+                                        given
+                                    } else {
+                                        self.arena.union(written)
+                                    };
+                                    self.bind_pattern(&declarator.id, given, binding);
+                                    if let Some(local) = self.local(id.name.as_str()) {
+                                        self.fresh.push((local.id, fresh));
+                                    }
+                                    continue;
                                 }
-                                continue;
+                                given
+                            } else if all {
+                                self.arena.widen(given)
+                            } else {
+                                self.arena.widen_parts(given, &written)
                             }
-                            given
                         }
-                        // As TypeScript, only a literal written here widens:
-                        // a variable given a value of a literal type keeps it.
-                        None if self.fresh(init) => self.arena.widen(given),
-                        None => given,
                     }
                 }
                 None => match written {
@@ -1934,28 +1946,38 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
-    /// Whether `e` gives a literal written in it, which a variable widens
-    /// (TypeScript's fresh literal types): a literal, a template, either side
-    /// of `?:` or a logical operator, an object or array literal, or a
-    /// `const` given one of these.
-    fn fresh(&self, e: &Expression<'a>) -> bool {
+    /// The literal types `e` gives that are written in it, which a variable
+    /// widens (TypeScript's fresh literal types), into `written`: a
+    /// literal, either side of `?:` or a logical operator, or a `const`
+    /// given one. True where all of `e`'s type widens: an object or array
+    /// literal, a template.
+    fn fresh(&mut self, e: &Expression<'a>, written: &mut Vec<Ty>) -> bool {
         match e.without_parentheses() {
-            Expression::StringLiteral(_)
-            | Expression::NumericLiteral(_)
-            | Expression::BooleanLiteral(_)
-            | Expression::TemplateLiteral(_)
+            Expression::StringLiteral(s) => written.push(self.arena.str(s.value.as_str())),
+            Expression::NumericLiteral(n) => written.push(self.arena.num(n.value)),
+            Expression::BooleanLiteral(b) => written.push(self.arena.boolean(b.value)),
+            Expression::TemplateLiteral(_)
             | Expression::ObjectExpression(_)
-            | Expression::ArrayExpression(_) => true,
-            Expression::UnaryExpression(unary) => self.fresh(&unary.argument),
+            | Expression::ArrayExpression(_)
+            | Expression::UnaryExpression(_) => return true,
             Expression::ConditionalExpression(c) => {
-                self.fresh(&c.consequent) || self.fresh(&c.alternate)
+                let yes = self.fresh(&c.consequent, written);
+                return self.fresh(&c.alternate, written) || yes;
             }
-            Expression::LogicalExpression(l) => self.fresh(&l.left) || self.fresh(&l.right),
-            Expression::Identifier(id) => self
-                .local(id.name.as_str())
-                .is_some_and(|local| self.fresh.contains(&local.id)),
-            _ => false,
+            Expression::LogicalExpression(l) => {
+                let left = self.fresh(&l.left, written);
+                return self.fresh(&l.right, written) || left;
+            }
+            Expression::Identifier(id) => {
+                if let Some(local) = self.local(id.name.as_str())
+                    && let Some((_, fresh)) = self.fresh.iter().find(|(f, _)| *f == local.id)
+                {
+                    written.extend(self.arena.members(*fresh));
+                }
+            }
+            _ => {}
         }
+        false
     }
 
     /// Walks a statement; whether what follows it is reached.
