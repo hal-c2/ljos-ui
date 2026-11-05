@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Build ljos with QtWebEngine (CEF) and its helper beside it; CEF is fetched once into $CEF_PATH (default <target>/cef)"
+#MISE description="Build ljos with QtWebEngine (CEF) and its helper beside it (on macOS, in ljos.app); CEF is fetched once into $CEF_PATH (default <target>/cef)"
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 target="${CARGO_TARGET_DIR:-$PWD/target}"
@@ -9,7 +9,18 @@ target="${CARGO_TARGET_DIR:-$PWD/target}"
 # every clean, so it gets a place of its own.
 export CEF_PATH="${CEF_PATH:-$target/cef}"
 # The helper is a separate binary CEF starts its renderer, GPU and utility
-# processes from; `ljos` looks for it beside itself.
-cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper
-cargo build --quiet -p ljos_cli --features webengine --bin ljos
-echo "built $target/debug/ljos with QtWebEngine (CEF from $CEF_PATH)"
+# processes from; `ljos` looks for it beside itself (on macOS the bundler
+# puts both in ljos.app). One build of all three: two builds resolve the
+# crates they share with different features, and each rebuilt what the
+# other had built, every time.
+cargo build --quiet -p ljos_webengine --bin ljos-webengine-helper --bin ljos-webengine-bundle \
+  -p ljos_cli --bin ljos --features ljos_webengine/cef,ljos_cli/webengine
+if [ "$(uname -s)" = Darwin ]; then
+  # On macOS CEF is a framework inside an application bundle, with helper
+  # applications it starts its processes from: ljos.app, run from inside.
+  # The framework is linked, not copied, as this bundle stays here.
+  app=$("$target/debug/ljos-webengine-bundle" "$target/debug/ljos" --link-framework)
+  echo "built $app/Contents/MacOS/ljos with QtWebEngine (CEF from $CEF_PATH)"
+else
+  echo "built $target/debug/ljos with QtWebEngine (CEF from $CEF_PATH)"
+fi
