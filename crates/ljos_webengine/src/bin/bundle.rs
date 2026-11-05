@@ -6,18 +6,18 @@
 //! - `--helper <path>`: `ljos-webengine-helper`; by default beside the
 //!   executable.
 //! - `--framework <path>`: CEF's `Chromium Embedded Framework.framework`;
-//!   by default the one under `$CEF_PATH`.
+//!   by default the one under `$CEF_PATH`, if there is only one.
 //! - `--out <dir>`: where the bundle is made; by default beside the
 //!   executable.
 //! - `--id <identifier>`: `CFBundleIdentifier`; by default
-//!   `org.ljos.<name>`.
+//!   `org.ljos.<name>`, with what an identifier may not have as `-`.
 //! - `--link-framework`: link the framework rather than copy it, for a
 //!   bundle that stays on this machine (a build's).
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use ljos_webengine::mac_bundle::{Bundle, FRAMEWORK};
+use ljos_webengine::mac_bundle::{Bundle, FRAMEWORK, default_identifier, framework_under};
 
 fn main() -> ExitCode {
     match run(std::env::args().skip(1).collect()) {
@@ -54,15 +54,19 @@ fn run(args: Vec<String>) -> Result<PathBuf, String> {
     let helper = helper.unwrap_or_else(|| beside.join("ljos-webengine-helper"));
     let framework = match framework {
         Some(f) => f,
-        None => under_cef_path()
-            .ok_or_else(|| format!("no {FRAMEWORK} under $CEF_PATH; give it with --framework"))?,
+        None => {
+            let root = std::env::var_os("CEF_PATH").ok_or_else(|| {
+                format!("no $CEF_PATH to find {FRAMEWORK} in; give it with --framework")
+            })?;
+            framework_under(Path::new(&root)).map_err(|e| format!("{e} with --framework"))?
+        }
     };
     let name = exe
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or("the executable has no name")?
         .to_owned();
-    let id = id.unwrap_or_else(|| format!("org.ljos.{name}"));
+    let id = id.unwrap_or_else(|| default_identifier(&name));
     Bundle {
         executable: &exe,
         helper: &helper,
@@ -73,25 +77,4 @@ fn run(args: Vec<String>) -> Result<PathBuf, String> {
     }
     .make()
     .map_err(|e| e.to_string())
-}
-
-/// The framework of the CEF distribution the `cef` crate unpacked into
-/// `$CEF_PATH` (`<version>/cef_macos_<arch>/`), or one at its top.
-fn under_cef_path() -> Option<PathBuf> {
-    let root = PathBuf::from(std::env::var_os("CEF_PATH")?);
-    let mut dirs = vec![root];
-    for _ in 0..3 {
-        let mut next = Vec::new();
-        for d in dirs {
-            let fw = d.join(FRAMEWORK);
-            if fw.is_dir() {
-                return Some(fw);
-            }
-            if let Ok(entries) = std::fs::read_dir(&d) {
-                next.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
-            }
-        }
-        dirs = next;
-    }
-    None
 }

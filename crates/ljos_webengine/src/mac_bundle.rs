@@ -44,6 +44,10 @@ pub enum BundleError {
     Missing(PathBuf),
     #[error("{0}: {1}")]
     Io(PathBuf, io::Error),
+    #[error("no {FRAMEWORK} under {0}")]
+    NoFramework(PathBuf),
+    #[error("more than one {FRAMEWORK}: {}; name one", .0.iter().map(|p| p.display().to_string()).collect::<Vec<_>>().join(", "))]
+    Frameworks(Vec<PathBuf>),
 }
 
 /// What to bundle and where.
@@ -238,6 +242,65 @@ fn plist(name: &str, identifier: &str, helper: bool) -> String {
     )
 }
 
+/// The one framework of a CEF distribution under `root`, as the `cef`
+/// crate unpacks one into `$CEF_PATH` (`<version>/cef_macos_<arch>/`), or
+/// at its top. A bump of the crate leaves the old version's there too, and
+/// one whose API does not match fails only when it runs, so with more than
+/// one this does not choose.
+pub fn framework_under(root: &Path) -> Result<PathBuf, BundleError> {
+    let mut found = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    for _ in 0..3 {
+        let mut next = Vec::new();
+        for d in dirs {
+            let fw = d.join(FRAMEWORK);
+            if fw.is_dir() {
+                found.push(fw);
+            } else if let Ok(entries) = fs::read_dir(&d) {
+                next.extend(entries.flatten().map(|e| e.path()).filter(|p| p.is_dir()));
+            }
+        }
+        dirs = next;
+    }
+    match found.len() {
+        0 => Err(BundleError::NoFramework(root.to_path_buf())),
+        1 => Ok(found.remove(0)),
+        _ => {
+            found.sort();
+            Err(BundleError::Frameworks(found))
+        }
+    }
+}
+
+/// `org.ljos.<name>`, with what an identifier may not have (anything but
+/// letters, digits, `-` and `.`) as `-`.
+pub fn default_identifier(name: &str) -> String {
+    let name: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    format!("org.ljos.{name}")
+}
+
+/// The framework's library that the helper at `helper` loads, from
+/// `../../..` of itself: there only when it runs inside a bundle's
+/// Frameworks (`<Name> Helper.app/Contents/MacOS/<Name> Helper`).
+pub fn framework_of_helper(helper: &Path) -> Option<PathBuf> {
+    let library = helper
+        .parent()?
+        .join("../../..")
+        .join(FRAMEWORK)
+        .join("Chromium Embedded Framework");
+    let library = fs::canonicalize(library).ok()?;
+    library.is_file().then_some(library)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,6 +366,56 @@ mod tests {
             fs::read(fw_in.join("Resources/resources.pak")).unwrap(),
             b"pak"
         );
+    }
+
+    /// A bump of the `cef` crate leaves the old version's distribution
+    /// under `$CEF_PATH`; which one to bundle is not to be guessed.
+    #[test]
+    fn two_frameworks_under_cef_path_are_not_chosen_between() {
+        let dir = tempfile::tempdir().unwrap();
+        for v in ["155.0.1", "156.0.15"] {
+            fs::create_dir_all(dir.path().join(v).join("cef_macos_aarch64").join(FRAMEWORK))
+                .unwrap();
+        }
+        match framework_under(dir.path()) {
+            Err(BundleError::Frameworks(both)) => assert_eq!(both.len(), 2),
+            other => panic!("chose {other:?}"),
+        }
+        fs::remove_dir_all(dir.path().join("155.0.1")).unwrap();
+        assert_eq!(
+            framework_under(dir.path()).unwrap(),
+            dir.path()
+                .join("156.0.15/cef_macos_aarch64")
+                .join(FRAMEWORK)
+        );
+    }
+
+    /// `CFBundleIdentifier` takes letters, digits, `-` and `.` only.
+    #[test]
+    fn a_default_identifier_has_only_what_an_identifier_may_have() {
+        assert_eq!(default_identifier("My App"), "org.ljos.My-App");
+        assert_eq!(default_identifier("my_app"), "org.ljos.my-app");
+        assert_eq!(default_identifier("ljos"), "org.ljos.ljos");
+    }
+
+    /// The helper loads the framework from `../../..` of itself, which is
+    /// there only inside a bundle's Frameworks.
+    #[test]
+    fn a_helper_finds_the_framework_only_inside_a_bundle() {
+        let dir = tempfile::tempdir().unwrap();
+        let loose = dir.path().join("ljos-webengine-helper");
+        fs::write(&loose, b"helper").unwrap();
+        assert_eq!(framework_of_helper(&loose), None);
+        let frameworks = dir.path().join("demo.app/Contents/Frameworks");
+        let binary = frameworks
+            .join(FRAMEWORK)
+            .join("Chromium Embedded Framework");
+        fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        fs::write(&binary, b"fw").unwrap();
+        let helper = frameworks.join("demo Helper.app/Contents/MacOS/demo Helper");
+        fs::create_dir_all(helper.parent().unwrap()).unwrap();
+        fs::write(&helper, b"helper").unwrap();
+        assert_eq!(framework_of_helper(&helper), Some(binary));
     }
 
     #[test]

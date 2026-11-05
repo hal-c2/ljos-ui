@@ -19,7 +19,15 @@ if [ "$(uname -s)" = Darwin ]; then
   # On macOS CEF is a framework inside an application bundle, with helper
   # applications it starts its processes from: ljos.app, run from inside.
   # The framework is linked, not copied, as this bundle stays here.
-  app=$("$target/debug/ljos-webengine-bundle" "$target/debug/ljos" --link-framework)
+  # The framework of the CEF version the cef crate is built against: an
+  # older one stays under CEF_PATH after a bump.
+  cef_version=$(awk '$0 == "name = \"cef\"" { getline; print }' Cargo.lock | sed -E 's/.*\+([^"]+)".*/\1/')
+  arch=$(uname -m)
+  [ "$arch" = arm64 ] && arch=aarch64
+  framework="$CEF_PATH/$cef_version/cef_macos_$arch/Chromium Embedded Framework.framework"
+  pick=()
+  [ -d "$framework" ] && pick=(--framework "$framework")
+  app=$("$target/debug/ljos-webengine-bundle" "$target/debug/ljos" --link-framework ${pick[@]+"${pick[@]}"})
   echo "built $app/Contents/MacOS/ljos with QtWebEngine (CEF from $CEF_PATH)"
 else
   echo "built $target/debug/ljos with QtWebEngine (CEF from $CEF_PATH)"
