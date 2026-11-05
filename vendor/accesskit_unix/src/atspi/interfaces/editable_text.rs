@@ -6,6 +6,8 @@
 use accesskit_atspi_common::PlatformNode;
 use zbus::{fdo, interface};
 
+use crate::util::settle;
+
 fn unsupported() -> fdo::Error {
     fdo::Error::NotSupported("editing operation is not supported".into())
 }
@@ -24,16 +26,28 @@ impl EditableTextInterface {
 
 #[interface(name = "org.a11y.atspi.EditableText")]
 impl EditableTextInterface {
-    fn set_text_contents(&self, new_contents: &str) -> fdo::Result<bool> {
-        self.0
+    async fn set_text_contents(&self, new_contents: &str) -> fdo::Result<bool> {
+        let change = self.0.value_change().map_err(self.map_error())?;
+        let done = self
+            .0
             .set_text_contents(new_contents)
-            .map_err(self.map_error())
+            .map_err(self.map_error())?;
+        if done && !change.holds_text(new_contents) {
+            settle(change).await;
+        }
+        Ok(done)
     }
 
-    fn insert_text(&self, position: i32, text: &str, length: i32) -> fdo::Result<bool> {
-        self.0
+    async fn insert_text(&self, position: i32, text: &str, length: i32) -> fdo::Result<bool> {
+        let change = self.0.value_change().map_err(self.map_error())?;
+        let done = self
+            .0
             .insert_text(position, text, length)
-            .map_err(self.map_error())
+            .map_err(self.map_error())?;
+        if done && !text.is_empty() && length != 0 {
+            settle(change).await;
+        }
+        Ok(done)
     }
 
     fn copy_text(&self, _start_pos: i32, _end_pos: i32) -> fdo::Result<()> {
