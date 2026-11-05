@@ -4,4 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 (($#)) || { echo "usage: mise run webengine:run <file.qml> [ljos run args…]" >&2; exit 2; }
 mise-tasks/webengine/build >&2
-exec "${CARGO_TARGET_DIR:-$PWD/target}/debug/ljos" run "$@"
+target="${CARGO_TARGET_DIR:-$PWD/target}"
+if [ "$(uname -s)" = Darwin ]; then
+  # The bundle webengine:build made (see there).
+  exec "$target/debug/ljos.app/Contents/MacOS/ljos" run "$@"
+fi
+exec "$target/debug/ljos" run "$@"
