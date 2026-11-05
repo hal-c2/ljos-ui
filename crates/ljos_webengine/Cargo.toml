@@ -19,6 +19,12 @@ name = "ljos-webengine-helper"
 path = "src/bin/helper.rs"
 required-features = ["cef"]
 
+# Makes the application bundle CEF needs on macOS around an executable
+# (src/mac_bundle.rs); plain files, so it builds without CEF.
+[[bin]]
+name = "ljos-webengine-bundle"
+path = "src/bin/bundle.rs"
+
 [dependencies]
 ljos_engine = { path = "../ljos_engine" }
 ljos_controls = { path = "../ljos_controls" }
@@ -26,10 +32,12 @@ ljos_platform = { path = "../ljos_platform" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_render = { path = "../ljos_render", default-features = false }
 serde_json.workspace = true
+thiserror.workspace = true
 cef = { workspace = true, optional = true }
 
 [dev-dependencies]
 ljos_compiler = { path = "../ljos_compiler" }
+tempfile.workspace = true
 
 [lints]
 workspace = true

@@ -37,6 +37,7 @@ mod backend;
 mod cef;
 mod errors;
 mod input;
+pub mod mac_bundle;
 mod types;
 mod view;
 
