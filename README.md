@@ -23,6 +23,17 @@ mise run test
 mise run features
 ```
 
+### QtWebEngine
+
+`import QtWebEngine` is an opt-in cargo feature (`webengine`) that shows pages through the Chromium Embedded Framework. The first build downloads CEF (about 1.5 GB unpacked) into `$CEF_PATH`, by default `target/cef`:
+
+```sh
+mise run webengine:build                               # ljos with QtWebEngine, and its helper
+mise run webengine:run examples/webbrowser/Main.qml    # a browser in one window
+```
+
+`docs/ARCHITECTURE.md` section 7.9 has the details.
+
 ## Licence
 
 MIT

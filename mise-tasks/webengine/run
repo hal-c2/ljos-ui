@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+#MISE description="Run a QML file with QtWebEngine: webengine:run <file.qml> [ljos run args…] (try examples/webbrowser/Main.qml)"
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+(($#)) || { echo "usage: mise run webengine:run <file.qml> [ljos run args…]" >&2; exit 2; }
+mise-tasks/webengine/build >&2
+exec "${CARGO_TARGET_DIR:-$PWD/target}/debug/ljos" run "$@"

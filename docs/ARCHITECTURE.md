@@ -789,6 +789,8 @@ QtQuick3D, to the Qt 6 documentation and how `qml6` behaves (`features/quick3d/`
 
 **Where it finds things.**
 - CEF's runtime (`libcef.so`, the `.pak` files, `icudtl.dat`, the V8 snapshot, the locales) is where the loaded `libcef.so` is, or in `LJOS_CEF_DIR`, or beside the executable. On Linux the binaries are linked with an `$ORIGIN` rpath, so an application ships `libcef.so` beside itself. A build gets CEF through the `cef` crate's `CEF_PATH`, which is downloaded once, outside the repository.
+
+**Building it.** `mise run webengine:build` builds `ljos` with the feature and the helper beside it, and `mise run webengine:run <file.qml>` runs a file with them (`examples/webbrowser/Main.qml` is a browser in one window). The `cef` crate downloads CEF's minimal distribution (about 1.5 GB unpacked) the first time, into `CEF_PATH`, which the tasks default to `<target>/cef`; point `CEF_PATH` somewhere outside `target` to keep it across `cargo clean`. The same defaults apply to `LJOS_CLI_CARGO_FEATURES=webengine mise run desktop:cua <file.qml>` (off-screen) and `LJOS_BDD_CARGO_FEATURES=webengine mise run features:run <files>` (the `@chromium` scenarios). Linux CI builds none of it.
 - The helper is beside the executable (or one directory up, for a test in `deps/`), or in `LJOS_WEBENGINE_HELPER`.
 - A profile keeps its data under the user's data directory, in `<app>/ljos-webengine`, or in `LJOS_WEBENGINE_ROOT`. A second running copy of the application uses a directory of its own under the temporary one, and says so; the default profile is off the record, as Qt's is.
 - `LJOS_WEBENGINE_CHROMIUM_FLAGS` hands Chromium switches (`--ozone-platform=headless`, say). The application's own arguments never reach Chromium.

@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+#MISE description="Build ljos with QtWebEngine (CEF) and its helper beside it; CEF is fetched once into $CEF_PATH (default <target>/cef)"
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+target="${CARGO_TARGET_DIR:-$PWD/target}"
+# The cef crate downloads CEF's minimal distribution (about 1.5 GB unpacked)
+# into CEF_PATH when it isn't there yet, and copies the runtime beside the
+# binaries. Left unset it would land in OUT_DIR and be fetched again after
+# every clean, so it gets a place of its own.
+export CEF_PATH="${CEF_PATH:-$target/cef}"
+# The helper is a separate binary CEF starts its renderer, GPU and utility
+# processes from; `ljos` looks for it beside itself.
+cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper
+cargo build --quiet -p ljos_cli --features webengine --bin ljos
+echo "built $target/debug/ljos with QtWebEngine (CEF from $CEF_PATH)"

@@ -224,7 +224,9 @@ start() {
   if [ -n "${LJOS_CLI_CARGO_FEATURES:-}" ]; then
     features=(--features "$LJOS_CLI_CARGO_FEATURES")
     case ",$LJOS_CLI_CARGO_FEATURES," in
-      *,webengine,*) cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
+      *,webengine,*)
+        export CEF_PATH="${CEF_PATH:-$target/cef}"
+        cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
     esac
   fi
   cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli "${features[@]}"
