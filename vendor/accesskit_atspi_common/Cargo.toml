@@ -9,10 +9,14 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 
+# Ljós's copy of accesskit_atspi_common 0.21.0 (see ../ACCESSKIT.md).
+# Changed from the published manifest: the package name, `description`
+# and `publish`. The library keeps its name, `accesskit_atspi_common`.
+
 [package]
 edition = "2024"
 rust-version = "1.87"
-name = "accesskit_atspi_common"
+name = "ljos_accesskit_atspi_common"
 version = "0.21.0"
 authors = ["The AccessKit contributors"]
 build = false
@@ -21,7 +25,8 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "AccessKit UI accessibility infrastructure: core AT-SPI translation layer"
+description = "Ljós's fork of accesskit_atspi_common, the AccessKit UI accessibility infrastructure: core AT-SPI translation layer"
+publish = false
 readme = "README.md"
 keywords = [
     "gui",

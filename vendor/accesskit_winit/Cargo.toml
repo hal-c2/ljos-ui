@@ -9,10 +9,15 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 
+# Ljós's copy of accesskit_winit 0.34.1 (see ../ACCESSKIT.md). Changed
+# from the published manifest: the package name, `description`,
+# `publish` and the path of accesskit_unix. The library keeps its name,
+# `accesskit_winit`.
+
 [package]
 edition = "2024"
 rust-version = "1.87"
-name = "accesskit_winit"
+name = "ljos_accesskit_winit"
 version = "0.34.1"
 authors = ["The AccessKit contributors"]
 build = false
@@ -22,7 +27,8 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "AccessKit UI accessibility infrastructure: winit adapter"
+description = "Ljós's fork of accesskit_winit, the AccessKit UI accessibility infrastructure: winit adapter"
+publish = false
 readme = "README.md"
 keywords = [
     "gui",
@@ -88,6 +94,8 @@ default-features = false
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies.accesskit_unix]
 version = "0.24.0"
+path = "../accesskit_unix"
+package = "ljos_accesskit_unix"
 optional = true
 default-features = false
 

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+#MISE description="Diff the vendored AccessKit adapters (accesskit_winit, accesskit_unix, accesskit_atspi_common) against the crates.io releases they are based on"
+set -euo pipefail
+# The patches vendor/ACCESSKIT.md lists, against the published sources: the
+# diff to offer upstream.
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+status=0
+for crate in accesskit_atspi_common accesskit_unix accesskit_winit; do
+  version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "vendor/$crate/Cargo.toml" | head -n 1)
+  curl -sSfL "https://static.crates.io/crates/$crate/$crate-$version.crate" | tar -xz -C "$work"
+  # The licences and AUTHORS come from the repository; the crates do not carry them.
+  # diff exits 1 when there are differences, which there always are.
+  diff -ru -x Cargo.toml.orig -x .cargo_vcs_info.json -x Cargo.lock -x 'LICENSE*' -x AUTHORS -x rustfmt.toml \
+    "$work/$crate-$version" "vendor/$crate" "$@" | sed "s|$work/||" || [ "${PIPESTATUS[0]}" -eq 1 ] || status=1
+done
+exit "$status"
