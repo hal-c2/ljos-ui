@@ -1253,6 +1253,73 @@ impl PlatformNode {
         })
     }
 
+    /// Inserts `text` at character `position`, as `EditableText.InsertText`
+    /// asks: `length` is the number of characters of `text` to insert, or
+    /// all of it when negative or past its end. A position below zero or
+    /// past the end of the text is its end.
+    pub fn insert_text(&self, position: i32, text: &str, length: i32) -> Result<bool> {
+        let text = match usize::try_from(length) {
+            Ok(length) => match text.char_indices().nth(length) {
+                Some((end, _)) => &text[..end],
+                None => text,
+            },
+            Err(_) => text,
+        };
+        self.resolve_with_context(|node, tree, context| {
+            if node.is_read_only() {
+                return Ok(false);
+            }
+            let (target_node, target_tree) =
+                tree.state().locate_node(self.id).ok_or(Error::Defunct)?;
+            if node.supports_text_ranges()
+                && node.supports_action(Action::SetTextSelection, &filter)
+                && node.supports_action(Action::ReplaceSelectedText, &filter)
+            {
+                // The caret goes to the position, and the text replaces the
+                // empty selection there: what typing at that place does.
+                let at = text_position_from_offset(&node, position)
+                    .unwrap_or_else(|| node.document_range().end());
+                context.do_action(ActionRequest {
+                    action: Action::SetTextSelection,
+                    target_tree,
+                    target_node,
+                    data: Some(ActionData::SetTextSelection(
+                        at.to_degenerate_range().to_text_selection(),
+                    )),
+                });
+                context.do_action(ActionRequest {
+                    action: Action::ReplaceSelectedText,
+                    target_tree,
+                    target_node,
+                    data: Some(ActionData::Value(text.into())),
+                });
+                return Ok(true);
+            }
+            // A node with a value but no text runs takes the whole new value.
+            let Some(value) = node.value() else {
+                return Ok(false);
+            };
+            if !node.supports_action(Action::SetValue, &filter) {
+                return Ok(false);
+            }
+            let at = usize::try_from(position)
+                .ok()
+                .and_then(|position| value.char_indices().nth(position))
+                .map_or(value.len(), |(at, _)| at);
+            let mut new_value = String::with_capacity(value.len() + text.len());
+            new_value.push_str(&value[..at]);
+            new_value.push_str(text);
+            new_value.push_str(&value[at..]);
+            context.do_action(ActionRequest {
+                action: Action::SetValue,
+                target_tree,
+                target_node,
+                data: Some(ActionData::Value(new_value.into())),
+            });
+            Ok(true)
+        })
+    }
+
     pub fn n_anchors(&self) -> Result<i32> {
         self.resolve(|node| if node.url().is_some() { Ok(1) } else { Ok(0) })
     }
@@ -2087,7 +2154,8 @@ mod tests {
     use super::{PlatformNode, PlatformRoot};
     use crate::{Adapter, AdapterCallback, AppContext, Event, InterfaceSet, WindowBounds};
     use accesskit::{
-        ActionHandler, ActionRequest, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate,
+        Action, ActionData, ActionHandler, ActionRequest, Node, NodeId, Role, TextPosition,
+        TextSelection, TreeId, TreeInfo, TreeUpdate,
     };
     use accesskit_consumer::FullNodeId;
     use std::sync::{Arc, Mutex};
@@ -2112,11 +2180,13 @@ mod tests {
     const WINDOW: NodeId = NodeId(0);
     const TARGET: NodeId = NodeId(1);
 
-    fn tree(target: Node) -> TreeUpdate {
+    fn tree(target: Node, below: Vec<(NodeId, Node)>) -> TreeUpdate {
         let mut window = Node::new(Role::Window);
         window.set_children(vec![TARGET]);
+        let mut nodes = vec![(WINDOW, window), (TARGET, target)];
+        nodes.extend(below);
         TreeUpdate {
-            nodes: vec![(WINDOW, window), (TARGET, target)],
+            nodes,
             tree: Some(TreeInfo::new(WINDOW)),
             tree_id: TreeId::ROOT,
             focus: WINDOW,
@@ -2131,12 +2201,16 @@ mod tests {
 
     impl Harness {
         fn new(target: Node) -> Self {
+            Self::with_below(target, Vec::new())
+        }
+
+        fn with_below(target: Node, below: Vec<(NodeId, Node)>) -> Self {
             let app_context = AppContext::new(None);
             let actions = CapturingActionHandler::default();
             let adapter = Adapter::new(
                 &app_context,
                 NoOpCallback,
-                tree(target),
+                tree(target, below),
                 false,
                 WindowBounds::default(),
                 actions.clone(),
@@ -2180,6 +2254,110 @@ mod tests {
         described.set_role_description("toggle");
         let harness = Harness::new(described);
         assert_eq!(harness.target().localized_role_name().unwrap(), "toggle");
+        assert!(harness.actions().is_empty());
+    }
+
+    const RUN: NodeId = NodeId(2);
+
+    /// A text field holding `value` in one run, which takes the selection
+    /// and the replacement of it.
+    fn field(value: &str) -> Harness {
+        let mut field = Node::new(Role::TextInput);
+        field.set_value(value);
+        field.set_children(vec![RUN]);
+        field.add_action(Action::SetTextSelection);
+        field.add_action(Action::ReplaceSelectedText);
+        field.add_action(Action::SetValue);
+        let mut run = Node::new(Role::TextRun);
+        run.set_value(value);
+        run.set_character_lengths(value.chars().map(|c| c.len_utf8() as u8).collect::<Vec<_>>());
+        Harness::with_below(field, vec![(RUN, run)])
+    }
+
+    fn caret_at(character_index: usize) -> ActionData {
+        let at = TextPosition {
+            node: RUN,
+            character_index,
+        };
+        ActionData::SetTextSelection(TextSelection {
+            anchor: at,
+            focus: at,
+        })
+    }
+
+    fn summary(actions: &[ActionRequest]) -> Vec<(Action, Option<ActionData>)> {
+        actions
+            .iter()
+            .map(|request| {
+                assert_eq!(request.target_node, TARGET);
+                (request.action, request.data.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn insert_text_types_at_the_position() {
+        let harness = field("hello");
+        assert!(harness.target().insert_text(2, "XY", -1).unwrap());
+        assert_eq!(
+            summary(&harness.actions()),
+            vec![
+                (Action::SetTextSelection, Some(caret_at(2))),
+                (
+                    Action::ReplaceSelectedText,
+                    Some(ActionData::Value("XY".into()))
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn insert_text_past_the_end_or_below_zero_types_at_the_end() {
+        for position in [-1, 5, 99] {
+            let harness = field("hello");
+            assert!(harness.target().insert_text(position, "!", -1).unwrap());
+            assert_eq!(
+                summary(&harness.actions())[0],
+                (Action::SetTextSelection, Some(caret_at(5))),
+                "position {position}"
+            );
+        }
+    }
+
+    #[test]
+    fn insert_text_takes_length_characters_of_the_text() {
+        let harness = field("");
+        assert!(harness.target().insert_text(0, "\u{e9}t\u{e9}", 2).unwrap());
+        assert_eq!(
+            summary(&harness.actions())[1],
+            (
+                Action::ReplaceSelectedText,
+                Some(ActionData::Value("\u{e9}t".into()))
+            )
+        );
+    }
+
+    #[test]
+    fn insert_text_into_a_value_without_runs_sets_the_spliced_value() {
+        let mut node = Node::new(Role::TextInput);
+        node.set_value("h\u{e9}llo");
+        node.add_action(Action::SetValue);
+        let harness = Harness::new(node);
+        assert!(harness.target().insert_text(2, "-", -1).unwrap());
+        assert_eq!(
+            summary(&harness.actions()),
+            vec![(Action::SetValue, Some(ActionData::Value("h\u{e9}-llo".into())))]
+        );
+    }
+
+    #[test]
+    fn insert_text_into_a_read_only_field_does_nothing() {
+        let mut node = Node::new(Role::TextInput);
+        node.set_value("hello");
+        node.set_read_only();
+        node.add_action(Action::SetValue);
+        let harness = Harness::new(node);
+        assert!(!harness.target().insert_text(0, "x", -1).unwrap());
         assert!(harness.actions().is_empty());
     }
 }
