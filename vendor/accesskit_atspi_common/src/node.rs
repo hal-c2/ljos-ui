@@ -995,8 +995,22 @@ impl PlatformNode {
         })
     }
 
+    pub fn role_name(&self) -> Result<String> {
+        self.resolve(|node| {
+            let wrapper = NodeWrapper(&node);
+            Ok(wrapper.role().name().to_string())
+        })
+    }
+
     pub fn localized_role_name(&self) -> Result<String> {
-        self.resolve(|node| Ok(node.role_description().unwrap_or_default().to_string()))
+        self.resolve(|node| {
+            Ok(match node.role_description() {
+                Some(description) => description.to_string(),
+                // AT-SPI has no localized names of its own roles; ATs read
+                // the role's own name here, as they do from GTK and Qt.
+                None => NodeWrapper(&node).role().name().to_string(),
+            })
+        })
     }
 
     pub fn state(&self) -> StateSet {
@@ -1847,6 +1861,10 @@ impl PlatformRoot {
         AtspiRole::Application
     }
 
+    pub fn role_name(&self) -> String {
+        self.role().name().to_string()
+    }
+
     pub fn index_in_parent(&self) -> i32 {
         -1
     }
@@ -2062,4 +2080,106 @@ pub struct CacheNode {
     pub description: String,
     pub role: AtspiRole,
     pub states: StateSet,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PlatformNode, PlatformRoot};
+    use crate::{Adapter, AdapterCallback, AppContext, Event, InterfaceSet, WindowBounds};
+    use accesskit::{
+        ActionHandler, ActionRequest, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate,
+    };
+    use accesskit_consumer::FullNodeId;
+    use std::sync::{Arc, Mutex};
+
+    struct NoOpCallback;
+
+    impl AdapterCallback for NoOpCallback {
+        fn register_interfaces(&self, _: &Adapter, _: FullNodeId, _: InterfaceSet) {}
+        fn unregister_interfaces(&self, _: &Adapter, _: FullNodeId, _: InterfaceSet) {}
+        fn emit_event(&self, _: &Adapter, _: Event) {}
+    }
+
+    #[derive(Clone, Default)]
+    struct CapturingActionHandler(Arc<Mutex<Vec<ActionRequest>>>);
+
+    impl ActionHandler for CapturingActionHandler {
+        fn do_action(&mut self, request: ActionRequest) {
+            self.0.lock().unwrap().push(request);
+        }
+    }
+
+    const WINDOW: NodeId = NodeId(0);
+    const TARGET: NodeId = NodeId(1);
+
+    fn tree(target: Node) -> TreeUpdate {
+        let mut window = Node::new(Role::Window);
+        window.set_children(vec![TARGET]);
+        TreeUpdate {
+            nodes: vec![(WINDOW, window), (TARGET, target)],
+            tree: Some(TreeInfo::new(WINDOW)),
+            tree_id: TreeId::ROOT,
+            focus: WINDOW,
+        }
+    }
+
+    struct Harness {
+        app_context: Arc<std::sync::RwLock<AppContext>>,
+        adapter: Adapter,
+        actions: CapturingActionHandler,
+    }
+
+    impl Harness {
+        fn new(target: Node) -> Self {
+            let app_context = AppContext::new(None);
+            let actions = CapturingActionHandler::default();
+            let adapter = Adapter::new(
+                &app_context,
+                NoOpCallback,
+                tree(target),
+                false,
+                WindowBounds::default(),
+                actions.clone(),
+            );
+            Self {
+                app_context,
+                adapter,
+                actions,
+            }
+        }
+
+        fn target(&self) -> PlatformNode {
+            let window = self.adapter.platform_node(self.adapter.root_id());
+            let id = window.child_at_index(0).unwrap().unwrap();
+            self.adapter.platform_node(id)
+        }
+
+        fn root(&self) -> PlatformRoot {
+            PlatformRoot::new(&self.app_context)
+        }
+
+        fn actions(&self) -> Vec<ActionRequest> {
+            std::mem::take(&mut *self.actions.0.lock().unwrap())
+        }
+    }
+
+    #[test]
+    fn role_name_is_the_atspi_name_of_the_role() {
+        let harness = Harness::new(Node::new(Role::TextInput));
+        assert_eq!(harness.target().role_name().unwrap(), "entry");
+        let harness = Harness::new(Node::new(Role::Button));
+        assert_eq!(harness.target().role_name().unwrap(), "button");
+        assert_eq!(harness.root().role_name(), "application");
+    }
+
+    #[test]
+    fn localized_role_name_falls_back_to_the_role_name() {
+        let harness = Harness::new(Node::new(Role::Button));
+        assert_eq!(harness.target().localized_role_name().unwrap(), "button");
+        let mut described = Node::new(Role::Button);
+        described.set_role_description("toggle");
+        let harness = Harness::new(described);
+        assert_eq!(harness.target().localized_role_name().unwrap(), "toggle");
+        assert!(harness.actions().is_empty());
+    }
 }
