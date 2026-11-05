@@ -44,6 +44,8 @@ pub const HELPER: &str = if cfg!(windows) {
 struct Layout {
     runtime: PathBuf,
     helper: PathBuf,
+    /// On macOS: the application bundle and the framework in it.
+    bundle: Option<(PathBuf, PathBuf)>,
 }
 
 fn layout() -> &'static Result<Layout, String> {
@@ -52,14 +54,10 @@ fn layout() -> &'static Result<Layout, String> {
 }
 
 fn find_layout() -> Result<Layout, String> {
-    if cfg!(target_os = "macos") {
-        return Err(
-            "on macOS CEF needs an application bundle with helper apps, \
-                    which Ljós does not make yet"
-                .to_owned(),
-        );
-    }
     let exe = std::env::current_exe().map_err(|e| format!("no executable path: {e}"))?;
+    if cfg!(target_os = "macos") {
+        return mac_layout(&exe);
+    }
     let exe_dir = exe.parent().map(Path::to_path_buf).unwrap_or_default();
     let runtime = std::env::var_os("LJOS_CEF_DIR")
         .map(PathBuf::from)
@@ -92,7 +90,66 @@ fn find_layout() -> Result<Layout, String> {
     if !helper.is_file() {
         return Err(format!("the helper {} is not there", helper.display()));
     }
-    Ok(Layout { runtime, helper })
+    Ok(Layout {
+        runtime,
+        helper,
+        bundle: None,
+    })
+}
+
+/// On macOS CEF is a framework inside the application's bundle, and its
+/// processes start from the bundle's helper applications
+/// (`crate::mac_bundle`): all of it is found from the executable.
+fn mac_layout(exe: &Path) -> Result<Layout, String> {
+    use crate::mac_bundle::{bundle_of, framework_of, helper_executable};
+    let bundle = bundle_of(exe).ok_or_else(|| {
+        format!(
+            "on macOS CEF runs from an application bundle with helper apps, and {} is not in \
+             one: make one with `ljos-webengine-bundle {}` (or `mise run webengine:build`) \
+             and run the executable inside it",
+            exe.display(),
+            exe.display()
+        )
+    })?;
+    let framework = framework_of(exe).filter(|f| f.is_dir()).ok_or_else(|| {
+        format!(
+            "{} has no CEF framework in Contents/Frameworks",
+            bundle.display()
+        )
+    })?;
+    let helper = std::env::var_os("LJOS_WEBENGINE_HELPER")
+        .map(PathBuf::from)
+        .or_else(|| helper_executable(exe))
+        .filter(|h| h.is_file())
+        .ok_or_else(|| format!("{} has no helper application", bundle.display()))?;
+    Ok(Layout {
+        runtime: framework.join("Resources"),
+        helper,
+        bundle: Some((bundle, framework)),
+    })
+}
+
+/// Loads CEF's framework from the bundle, once: on macOS it is not linked
+/// but loaded at run time, before CEF is called.
+#[cfg(target_os = "macos")]
+fn load_framework() -> Result<(), String> {
+    static LOADED: OnceLock<bool> = OnceLock::new();
+    let loaded = *LOADED.get_or_init(|| {
+        let Ok(exe) = std::env::current_exe() else {
+            return false;
+        };
+        let loader = ::cef::library_loader::LibraryLoader::new(&exe, false);
+        let loaded = loader.load();
+        // It unloads the framework when dropped; CEF stays for the
+        // process.
+        std::mem::forget(loader);
+        loaded
+    });
+    if loaded {
+        Ok(())
+    } else {
+        Err("CEF's framework in the application bundle did not load".to_owned())
+    }
 }
 
 /// The directory of the libcef this process loaded, which has CEF's
@@ -426,6 +483,8 @@ fn ozone_platform(words: &[String]) -> Option<&'static str> {
 
 fn initialize_cef(e: &Engine) -> Result<Global, String> {
     let layout = layout().as_ref().map_err(Clone::clone)?;
+    #[cfg(target_os = "macos")]
+    load_framework()?;
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     pump_into(e);
 
@@ -469,6 +528,18 @@ fn initialize_cef(e: &Engine) -> Result<Global, String> {
         root_cache_path: path_string(&root),
         resources_dir_path: path_string(&layout.runtime),
         locales_dir_path: path_string(&layout.runtime.join("locales")),
+        // On macOS the resources are the framework's own, which CEF finds
+        // from these.
+        framework_dir_path: layout
+            .bundle
+            .as_ref()
+            .map(|(_, framework)| path_string(framework))
+            .unwrap_or_default(),
+        main_bundle_path: layout
+            .bundle
+            .as_ref()
+            .map(|(bundle, _)| path_string(bundle))
+            .unwrap_or_default(),
         log_file: path_string(&root.join("cef.log")),
         log_severity: LogSeverity::from(sys::cef_log_severity_t::LOGSEVERITY_ERROR),
         ..Default::default()
