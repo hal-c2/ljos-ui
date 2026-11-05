@@ -9,10 +9,15 @@
 # will likely look very different (and much more reasonable).
 # See Cargo.toml.orig for the original contents.
 
+# Ljós's copy of accesskit_unix 0.24.0 (see ../ACCESSKIT.md). Changed
+# from the published manifest: the package name, `description`,
+# `publish` and the path of accesskit_atspi_common. The library keeps
+# its name, `accesskit_unix`.
+
 [package]
 edition = "2024"
 rust-version = "1.87"
-name = "accesskit_unix"
+name = "ljos_accesskit_unix"
 version = "0.24.0"
 authors = ["The AccessKit contributors"]
 build = false
@@ -21,7 +26,8 @@ autobins = false
 autoexamples = false
 autotests = false
 autobenches = false
-description = "AccessKit UI accessibility infrastructure: Linux adapter"
+description = "Ljós's fork of accesskit_unix, the AccessKit UI accessibility infrastructure: Linux adapter"
+publish = false
 readme = "README.md"
 keywords = [
     "gui",
@@ -54,6 +60,8 @@ version = "0.25.1"
 
 [dependencies.accesskit_atspi_common]
 version = "0.21.0"
+path = "../accesskit_atspi_common"
+package = "ljos_accesskit_atspi_common"
 
 [dependencies.async-channel]
 version = "2.1.1"

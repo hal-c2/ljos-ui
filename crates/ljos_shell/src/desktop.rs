@@ -25,7 +25,6 @@ use std::time::{Duration, Instant};
 
 use egui::ViewportId;
 use egui::accesskit::{TreeId, Uuid};
-use egui_winit::accesskit_winit;
 use egui_winit::winit::event::WindowEvent as RawEvent;
 use egui_winit::winit::event_loop::EventLoopProxy;
 use ljos_controls::{
@@ -976,12 +975,16 @@ impl<M: Send + 'static> Desktop<M> {
         state.set_clipboard_shortcuts(false);
         // While the window is unseen: the adapter has to be there before
         // the platform asks about the window.
-        state.init_accesskit(host.event_loop(), &window, host.proxy().clone());
+        let accesskit = accesskit_winit::Adapter::with_event_loop_proxy(
+            host.event_loop(),
+            &window,
+            host.proxy().clone(),
+        );
         // Before the first picture, so that what the application does to the
         // platform's window is there when it is first seen.
         ljos_platform::Platform::of(engine).native_window_opened(engine, slot.window, &*window);
         slot.forget_platform();
-        slot.surface = Some(Surface::new(id, window, state));
+        slot.surface = Some(Surface::new(id, window, state, accesskit));
         slot.told_state = Some(attrs.state);
         slot.told_icons = icons;
         note_size(slot, engine, sys, false);
@@ -1313,13 +1316,11 @@ impl<M: Send + 'static> Desktop<M> {
             }
             let view = view_of_mut(&mut slot.view, app);
             let updates = view.graft_updates(root, &mut slot.tree_told);
-            if let Some(adapter) = surface.state.accesskit.as_mut()
-                && (updates.grafted.is_some() || slot.sent_root.as_ref() != Some(&updates.root))
-            {
+            if updates.grafted.is_some() || slot.sent_root.as_ref() != Some(&updates.root) {
                 slot.sent_root = Some(updates.root.clone());
-                adapter.update_if_active(|| updates.root);
+                surface.accesskit.update_if_active(|| updates.root);
                 if let Some(grafted) = updates.grafted {
-                    adapter.update_if_active(|| grafted);
+                    surface.accesskit.update_if_active(|| grafted);
                 }
             }
             if updates.again {
@@ -1618,10 +1619,8 @@ impl<M: Send + 'static> Desktop<M> {
             // trees has no focus to release, and must not hear of one
             // before it hears of them.
             let view = view_of_mut(&mut slot.view, &mut self.app);
-            if let Some(release) = view.release_graft_focus()
-                && let Some(adapter) = surface.state.accesskit.as_mut()
-            {
-                adapter.update_if_active(|| release);
+            if let Some(release) = view.release_graft_focus() {
+                surface.accesskit.update_if_active(|| release);
                 slot.sent_root = None;
                 self.repaints.request(slot.key, Instant::now());
             }
@@ -1639,6 +1638,9 @@ impl<M: Send + 'static> Desktop<M> {
             if let Some(text) = text.filter(|t| !t.is_empty()) {
                 ljos_quick::Clipboard::of(&engine).set_text(&engine, &text.replace("\r\n", "\n"));
             }
+        }
+        if let Some(raw) = raw {
+            surface.accesskit.process_event(&surface.window, raw);
         }
         if let Some(raw) = raw
             && surface.state.on_window_event(&surface.window, raw).repaint
@@ -2418,7 +2420,13 @@ fn hear_accessibility(slot: &mut Slot, event: accesskit_winit::WindowEvent) -> b
         }
         accesskit_winit::WindowEvent::ActionRequested(request) => {
             if let Some(surface) = slot.surface.as_mut() {
-                surface.state.on_accesskit_action_request(request);
+                // egui hands it to the widget it is for, or the scene to
+                // its item, in the next pass.
+                surface
+                    .state
+                    .egui_input_mut()
+                    .events
+                    .push(egui::Event::AccessKitActionRequest(request));
             }
         }
         accesskit_winit::WindowEvent::AccessibilityDeactivated => {

@@ -3890,6 +3890,47 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_accesskit_atspi_common"
+version = "0.21.0"
+dependencies = [
+ "accesskit",
+ "accesskit_consumer",
+ "atspi-common",
+ "phf 0.14.0",
+ "serde",
+ "zvariant",
+]
+
+[[package]]
+name = "ljos_accesskit_unix"
+version = "0.24.0"
+dependencies = [
+ "accesskit",
+ "async-channel",
+ "async-executor",
+ "async-task",
+ "atspi",
+ "futures-lite",
+ "futures-util",
+ "ljos_accesskit_atspi_common",
+ "serde",
+ "zbus",
+]
+
+[[package]]
+name = "ljos_accesskit_winit"
+version = "0.34.1"
+dependencies = [
+ "accesskit",
+ "accesskit_ios",
+ "accesskit_macos",
+ "accesskit_windows",
+ "ljos_accesskit_unix",
+ "raw-window-handle",
+ "winit",
+]
+
+[[package]]
 name = "ljos_aot"
 version = "0.0.0"
 dependencies = [
@@ -4756,6 +4797,7 @@ dependencies = [
  "ljos",
  "ljos_3d",
  "ljos_a11y",
+ "ljos_accesskit_winit",
  "ljos_compiler",
  "ljos_controls",
  "ljos_dev",

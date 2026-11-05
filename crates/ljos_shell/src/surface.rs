@@ -718,9 +718,12 @@ fn wgpu_painter(
 pub(crate) struct Surface {
     pub(crate) id: WindowId,
     pub(crate) window: Arc<Window>,
-    /// egui's side of the window: input, the input method, the clipboard
-    /// and the AccessKit adapter.
+    /// egui's side of the window: input, the input method and the
+    /// clipboard.
     pub(crate) state: egui_winit::State,
+    /// What an assistive technology talks to; told every window event
+    /// before egui is.
+    pub(crate) accesskit: accesskit_winit::Adapter,
     pub(crate) info: egui::ViewportInfo,
     /// Opened unseen; shown once there is a picture in it.
     pub(crate) shown: bool,
@@ -738,11 +741,17 @@ impl std::fmt::Debug for Surface {
 }
 
 impl Surface {
-    pub(crate) fn new(id: WindowId, window: Arc<Window>, state: egui_winit::State) -> Self {
+    pub(crate) fn new(
+        id: WindowId,
+        window: Arc<Window>,
+        state: egui_winit::State,
+        accesskit: accesskit_winit::Adapter,
+    ) -> Self {
         Self {
             id,
             window,
             state,
+            accesskit,
             info: egui::ViewportInfo::default(),
             shown: false,
             px: None,

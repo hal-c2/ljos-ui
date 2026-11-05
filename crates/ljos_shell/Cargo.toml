@@ -33,8 +33,11 @@ egui.workspace = true
 # ljos_host, egui's input translation and its painters. Not in the
 # workspace pins; the versions are egui's. wgpu draws where there is no
 # EGL, or where GL cannot be had (LJOS_PAINTER=wgpu asks for it).
-# Not its clipboard: the platform's is the system's (see desktop.rs).
-egui-winit = { version = "0.37.0", default-features = false, features = ["accesskit", "links", "wayland", "x11"] }
+# Not its clipboard: the platform's is the system's (see desktop.rs). Not
+# its AccessKit adapter either: egui-winit's is the published one, and the
+# shell holds the fork (vendor/ACCESSKIT.md) itself.
+egui-winit = { version = "0.37.0", default-features = false, features = ["links", "wayland", "x11"] }
+accesskit_winit.workspace = true
 egui-wgpu = { version = "0.37.0", features = ["winit", "wayland", "x11"] }
 # A window drawn on the processor shares its pixels with the window system
 # (src/cpu.rs); the system's libraries are loaded when one is.

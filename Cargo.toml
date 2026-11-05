@@ -62,6 +62,11 @@ glow = "0.17.0"
 glutin = { version = "0.32.3", default-features = false, features = ["egl", "wayland", "x11"] }
 # Must match egui's accesskit: its types do not interoperate across minor versions.
 accesskit = "0.25.0"
+# AccessKit's winit adapter, the version egui-winit 0.37 brings, over the
+# AT-SPI adapter with the fixes vendor/ACCESSKIT.md lists until AccessKit
+# takes them. Packages of their own reached by path, so a dependent of Ljós
+# needs no `[patch]`; the code still says `accesskit_winit`.
+accesskit_winit = { package = "ljos_accesskit_winit", version = "0.34.1", path = "vendor/accesskit_winit" }
 vello_cpu = "0.3"
 # ljos_3d's renderer (QtQuick3D). The version egui-wgpu 0.37 is built on, so
 # the 3D pass draws with the device egui already has; without wgpu's default
