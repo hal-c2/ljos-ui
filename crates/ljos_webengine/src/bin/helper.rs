@@ -13,6 +13,15 @@ fn main() {
     #[cfg(target_os = "macos")]
     let _framework = {
         let exe = std::env::current_exe().expect("the helper's path");
+        // The loader takes for granted that the framework is there.
+        if ljos_webengine::mac_bundle::framework_of_helper(&exe).is_none() {
+            eprintln!(
+                "ljos-webengine-helper: {} is not a helper application of a bundle with CEF's \
+                 framework (make one with ljos-webengine-bundle)",
+                exe.display()
+            );
+            std::process::exit(1);
+        }
         let loader = cef::library_loader::LibraryLoader::new(&exe, true);
         if !loader.load() {
             eprintln!("ljos-webengine-helper: CEF's framework did not load");
