@@ -8,7 +8,7 @@ use accesskit_consumer::Tree;
 use std::fmt::{Debug, Formatter};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-use crate::WindowBounds;
+use crate::{WindowBounds, settle::Updates};
 
 /// This is an implementation detail of `accesskit_unix`, required for robust
 /// state transitions with minimal overhead.
@@ -37,6 +37,7 @@ pub(crate) struct Context {
     pub(crate) tree: RwLock<Tree>,
     pub(crate) action_handler: Arc<dyn ActionHandlerNoMut + Send + Sync>,
     pub(crate) root_window_bounds: RwLock<WindowBounds>,
+    pub(crate) updates: Updates,
 }
 
 impl Debug for Context {
@@ -62,6 +63,7 @@ impl Context {
             tree: RwLock::new(tree),
             action_handler,
             root_window_bounds: RwLock::new(root_window_bounds),
+            updates: Updates::default(),
         })
     }
 

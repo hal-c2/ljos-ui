@@ -535,6 +535,7 @@ impl Adapter {
         let mut tree = self.context.tree.write().unwrap();
         tree.update_and_process_changes(update, &mut handler);
         drop(tree);
+        self.context.updates.notify();
         handler.emit_selection_changed();
     }
 
@@ -614,6 +615,9 @@ impl Drop for Adapter {
         // implementation on context, because AppContext owns a second
         // strong reference to Context, and we need that to be released.
         self.context.write_app_context().remove_adapter(self.id);
+        // What waits on this adapter's nodes would wait for an update that
+        // cannot come.
+        self.context.updates.close();
     }
 }
 

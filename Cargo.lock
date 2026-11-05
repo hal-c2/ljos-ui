@@ -3908,6 +3908,7 @@ dependencies = [
  "accesskit",
  "async-channel",
  "async-executor",
+ "async-io",
  "async-task",
  "atspi",
  "futures-lite",

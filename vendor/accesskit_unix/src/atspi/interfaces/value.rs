@@ -6,6 +6,8 @@
 use accesskit_atspi_common::PlatformNode;
 use zbus::{fdo, interface};
 
+use crate::util::settle;
+
 pub(crate) struct ValueInterface {
     node: PlatformNode,
 }
@@ -43,7 +45,14 @@ impl ValueInterface {
     }
 
     #[zbus(property)]
-    fn set_current_value(&mut self, value: f64) -> fdo::Result<()> {
-        self.node.set_current_value(value).map_err(self.map_error())
+    async fn set_current_value(&self, value: f64) -> fdo::Result<()> {
+        let change = self.node.value_change().map_err(self.map_error())?;
+        self.node
+            .set_current_value(value)
+            .map_err(self.map_error())?;
+        if !change.holds_number(value) {
+            settle(change).await;
+        }
+        Ok(())
     }
 }

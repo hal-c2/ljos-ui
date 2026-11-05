@@ -12,6 +12,7 @@ mod events;
 mod filters;
 mod node;
 mod rect;
+mod settle;
 #[cfg(feature = "simplified-api")]
 pub mod simplified;
 mod text_attributes;
@@ -30,4 +31,5 @@ pub use error::*;
 pub use events::*;
 pub use node::{CacheNode, NodeIdOrRoot, PlatformNode, PlatformRoot};
 pub use rect::*;
+pub use settle::ValueChange;
 pub use util::WindowBounds;

@@ -27,6 +27,7 @@ use crate::{
     Action as AtspiAction, DocumentEvent, Error, ObjectEvent, Property, Rect as AtspiRect, Result,
     adapter::Adapter,
     context::{AppContext, Context},
+    settle::{Held, ValueChange},
     filters::filter,
     text_attributes::ATTRIBUTE_GETTERS,
     util::*,
@@ -1236,6 +1237,17 @@ impl PlatformNode {
         Ok(true)
     }
 
+    /// What the node holds now, to wait for an action to change it.
+    pub fn value_change(&self) -> Result<ValueChange> {
+        self.resolve(|node| {
+            Ok(ValueChange::new(
+                self.context.clone(),
+                self.id,
+                Held::of(&node),
+            ))
+        })
+    }
+
     pub fn set_text_contents(&self, value: &str) -> Result<bool> {
         self.resolve_with_context(|node, tree, context| {
             if node.is_read_only() {
@@ -2359,5 +2371,164 @@ mod tests {
         let harness = Harness::new(node);
         assert!(!harness.target().insert_text(0, "x", -1).unwrap());
         assert!(harness.actions().is_empty());
+    }
+
+    /// A waker that records that it was woken.
+    #[derive(Default)]
+    struct Flag(std::sync::atomic::AtomicBool);
+
+    impl std::task::Wake for Flag {
+        fn wake(self: Arc<Self>) {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl Flag {
+        fn take(&self) -> bool {
+            self.0.swap(false, std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    fn poll(change: &mut crate::ValueChange, flag: &Arc<Flag>) -> bool {
+        use std::future::Future;
+        let waker = std::task::Waker::from(Arc::clone(flag));
+        let mut cx = std::task::Context::from_waker(&waker);
+        std::pin::Pin::new(change).poll(&mut cx).is_ready()
+    }
+
+    fn slider(value: f64) -> Node {
+        let mut node = Node::new(Role::Slider);
+        node.set_numeric_value(value);
+        node
+    }
+
+    fn update(target: Node) -> TreeUpdate {
+        TreeUpdate {
+            nodes: vec![(TARGET, target)],
+            tree: None,
+            tree_id: TreeId::ROOT,
+            focus: WINDOW,
+        }
+    }
+
+    #[test]
+    fn a_value_change_resolves_when_an_update_changes_the_value() {
+        let mut harness = Harness::new(slider(20.0));
+        let mut change = harness.target().value_change().unwrap();
+        let flag = Arc::new(Flag::default());
+        assert!(!poll(&mut change, &flag));
+        harness.adapter.update(update(slider(70.0)));
+        assert!(flag.take(), "the update wakes what waits");
+        assert!(poll(&mut change, &flag));
+    }
+
+    #[test]
+    fn a_value_change_resolves_when_an_update_changes_the_text() {
+        let mut harness = Harness::new({
+            let mut node = Node::new(Role::TextInput);
+            node.set_value("hello");
+            node
+        });
+        let mut change = harness.target().value_change().unwrap();
+        let flag = Arc::new(Flag::default());
+        assert!(!poll(&mut change, &flag));
+        let mut typed = Node::new(Role::TextInput);
+        typed.set_value("hello world");
+        harness.adapter.update(update(typed));
+        assert!(flag.take());
+        assert!(poll(&mut change, &flag));
+    }
+
+    #[test]
+    fn a_value_change_waits_through_an_update_that_keeps_the_value() {
+        let mut harness = Harness::new(slider(20.0));
+        let mut change = harness.target().value_change().unwrap();
+        let flag = Arc::new(Flag::default());
+        assert!(!poll(&mut change, &flag));
+        let mut same = slider(20.0);
+        same.set_label("Zoom");
+        harness.adapter.update(update(same));
+        assert!(flag.take());
+        assert!(!poll(&mut change, &flag), "the value is what it was");
+        harness.adapter.update(update(slider(70.0)));
+        assert!(flag.take());
+        assert!(poll(&mut change, &flag));
+    }
+
+    #[test]
+    fn a_value_change_resolves_when_its_node_or_adapter_goes() {
+        let mut harness = Harness::new(slider(20.0));
+        let mut change = harness.target().value_change().unwrap();
+        let flag = Arc::new(Flag::default());
+        assert!(!poll(&mut change, &flag));
+        harness.adapter.update(TreeUpdate {
+            nodes: vec![(WINDOW, Node::new(Role::Window))],
+            tree: None,
+            tree_id: TreeId::ROOT,
+            focus: WINDOW,
+        });
+        assert!(flag.take());
+        assert!(poll(&mut change, &flag), "the node is gone");
+
+        let harness = Harness::new(slider(20.0));
+        let mut change = harness.target().value_change().unwrap();
+        assert!(!poll(&mut change, &flag));
+        drop(harness);
+        assert!(flag.take());
+        assert!(poll(&mut change, &flag), "the adapter is gone");
+    }
+
+    #[test]
+    fn a_value_change_knows_what_the_node_holds() {
+        let harness = Harness::new({
+            let mut node = Node::new(Role::TextInput);
+            node.set_value("hello");
+            node
+        });
+        let change = harness.target().value_change().unwrap();
+        assert!(change.holds_text("hello"));
+        assert!(!change.holds_text("hello world"));
+        let harness = Harness::new(slider(20.0));
+        let change = harness.target().value_change().unwrap();
+        assert!(change.holds_number(20.0));
+        assert!(!change.holds_number(70.0));
+    }
+
+    #[test]
+    fn a_dropped_value_change_leaves_no_waker() {
+        let harness = Harness::new(slider(20.0));
+        let mut change = harness.target().value_change().unwrap();
+        let watch = harness.target().value_change().unwrap();
+        let flag = Arc::new(Flag::default());
+        assert!(!poll(&mut change, &flag));
+        assert_eq!(watch.waiting(), 1);
+        drop(change);
+        assert_eq!(watch.waiting(), 0, "a call that timed out keeps no task alive");
+    }
+
+    #[test]
+    fn a_value_change_sees_the_runs_of_a_multiline_input_without_a_value() {
+        fn notes(text: &str) -> (Node, Node) {
+            let mut field = Node::new(Role::MultilineTextInput);
+            field.set_children(vec![RUN]);
+            let mut run = Node::new(Role::TextRun);
+            run.set_value(text);
+            run.set_character_lengths(text.chars().map(|c| c.len_utf8() as u8).collect::<Vec<_>>());
+            (field, run)
+        }
+        let (field, run) = notes("hello");
+        let mut harness = Harness::with_below(field, vec![(RUN, run)]);
+        let mut change = harness.target().value_change().unwrap();
+        let flag = Arc::new(Flag::default());
+        assert!(!poll(&mut change, &flag));
+        let (_, run) = notes("hello world");
+        harness.adapter.update(TreeUpdate {
+            nodes: vec![(RUN, run)],
+            tree: None,
+            tree_id: TreeId::ROOT,
+            focus: WINDOW,
+        });
+        assert!(flag.take());
+        assert!(poll(&mut change, &flag), "the text of the runs changed");
     }
 }
