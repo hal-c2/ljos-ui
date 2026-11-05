@@ -30,8 +30,10 @@ impl EditableTextInterface {
             .map_err(self.map_error())
     }
 
-    fn insert_text(&self, _position: i32, _text: &str, _length: i32) -> fdo::Result<bool> {
-        Err(unsupported())
+    fn insert_text(&self, position: i32, text: &str, length: i32) -> fdo::Result<bool> {
+        self.0
+            .insert_text(position, text, length)
+            .map_err(self.map_error())
     }
 
     fn copy_text(&self, _start_pos: i32, _end_pos: i32) -> fdo::Result<()> {

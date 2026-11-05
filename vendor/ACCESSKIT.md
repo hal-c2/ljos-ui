@@ -21,6 +21,7 @@ The gaps showed when a computer-use driver drove a Ljós app over AT-SPI, off-sc
 
 | Gap | Change |
 |---|---|
+| `EditableText.InsertText` answered "not supported", so a tool that types into a field by its element set the whole text instead and lost what was there. | `PlatformNode::insert_text` (atspi-common) puts the caret at the position and replaces the empty selection with the text (`SetTextSelection`, then `ReplaceSelectedText`); a node with a value and no text runs gets the value with the text spliced in (`SetValue`). `length` counts characters, as AT-SPI says; a position past the end or below zero is the end. |
 | `Accessible.GetRoleName` was missing (`UnknownMethod`), so a tool that reads roles by name read none. | `PlatformNode::role_name` / `PlatformRoot::role_name` give the AT-SPI role's own name (`"entry"`, `"button"`, `"application"`, from atspi-common's `Role::name`); `GetLocalizedRoleName` falls back to it when the node has no role description. |
 
 ## Rebase policy
