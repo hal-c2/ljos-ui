@@ -21,6 +21,7 @@ The gaps showed when a computer-use driver drove a Ljós app over AT-SPI, off-sc
 
 | Gap | Change |
 |---|---|
+| `Accessible.GetRoleName` was missing (`UnknownMethod`), so a tool that reads roles by name read none. | `PlatformNode::role_name` / `PlatformRoot::role_name` give the AT-SPI role's own name (`"entry"`, `"button"`, `"application"`, from atspi-common's `Role::name`); `GetLocalizedRoleName` falls back to it when the node has no role description. |
 
 ## Rebase policy
 

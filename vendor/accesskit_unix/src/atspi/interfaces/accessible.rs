@@ -122,6 +122,10 @@ impl NodeAccessibleInterface {
         self.node.role().map_err(self.map_error())
     }
 
+    fn get_role_name(&self) -> fdo::Result<String> {
+        self.node.role_name().map_err(self.map_error())
+    }
+
     fn get_localized_role_name(&self) -> fdo::Result<String> {
         self.node.localized_role_name().map_err(self.map_error())
     }
@@ -230,6 +234,14 @@ impl RootAccessibleInterface {
 
     fn get_role(&self) -> Role {
         self.root.role()
+    }
+
+    fn get_role_name(&self) -> String {
+        self.root.role_name()
+    }
+
+    fn get_localized_role_name(&self) -> String {
+        self.root.role_name()
     }
 
     fn get_state(&self) -> StateSet {
