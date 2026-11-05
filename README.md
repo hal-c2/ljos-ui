@@ -32,6 +32,8 @@ mise run webengine:build                               # ljos with QtWebEngine, 
 mise run webengine:run examples/webbrowser/Main.qml    # a browser in one window
 ```
 
+On macOS CEF runs from an application bundle with helper applications, so `webengine:build` also makes `target/debug/ljos.app` and `webengine:run` runs `ljos` from inside it. To ship an application of your own that shows web pages on macOS, bundle its executable the same way: `ljos-webengine-bundle <executable>` (built with `cargo build -p ljos_webengine --bin ljos-webengine-bundle`) makes `<Name>.app` with CEF's framework and the helper applications, copying the framework so the bundle stands on its own.
+
 `docs/ARCHITECTURE.md` section 7.9 has the details.
 
 ## Licence
