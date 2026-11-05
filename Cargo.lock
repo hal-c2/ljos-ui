@@ -4917,6 +4917,8 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
