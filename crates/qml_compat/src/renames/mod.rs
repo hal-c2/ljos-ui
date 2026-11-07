@@ -2,7 +2,10 @@
 //! the API.
 //!
 //! The rule: a lane adds rows only to its own area's file. A new area is a
-//! new file plus one line in [`AREAS`]. A Qt type's member renames live in
+//! new file here, in `src/tests/` and in `docs/dialect/status/`, plus one
+//! line in [`AREAS`] (the test
+//! `renames::every_area_has_renames_tests_and_status` holds the three lists
+//! equal). A Qt type's member renames live in
 //! exactly one area, and an old type name is renamed in one area only, so a
 //! type has one slice of member renames and one new name (the test
 //! `renames::one_area_per_type` holds them to it).
@@ -14,9 +17,12 @@ mod gestures;
 mod layout;
 mod loader;
 mod models;
+mod natives;
 mod shapes;
 mod states;
 mod text;
+mod tools;
+mod types;
 mod ui;
 mod window;
 
@@ -44,6 +50,9 @@ const AREAS: &[&Area] = &[
     &controls::AREA,
     &states::AREA,
     &dialogs::AREA,
+    &natives::AREA,
+    &tools::AREA,
+    &types::AREA,
 ];
 
 /// The Qt types Ljós calls by another name. Every other type of the slice is
@@ -64,6 +73,37 @@ mod tests {
     use std::collections::HashSet;
 
     use super::*;
+
+    /// The file stems of `dir` with `ext`, but for the shared ones.
+    fn areas_in(dir: &std::path::Path, ext: &str, shared: &[&str]) -> Vec<String> {
+        let mut areas: Vec<String> = std::fs::read_dir(dir)
+            .unwrap_or_else(|e| panic!("{}: {e}", dir.display()))
+            .map(|entry| entry.expect("a directory entry").path())
+            .filter(|path| path.extension().is_some_and(|e| e == ext))
+            .filter_map(|path| Some(path.file_stem()?.to_str()?.to_owned()))
+            .filter(|stem| !shared.contains(&stem.as_str()))
+            .collect();
+        areas.sort();
+        areas
+    }
+
+    // A lane starting an area finds its renames, tests and status files
+    // already there, so no two lanes make the same file in their first PRs.
+    #[test]
+    fn every_area_has_renames_tests_and_status() {
+        let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let renames = areas_in(&crate_dir.join("src/renames"), "rs", &["mod"]);
+        // `groups` tests how a project's files lower together, which is
+        // the pass's own, not an area's.
+        let tests = areas_in(&crate_dir.join("src/tests"), "rs", &["mod", "groups"]);
+        let status = areas_in(&crate_dir.join("../../docs/dialect/status"), "md", &[]);
+        assert_eq!(renames, tests, "src/renames and src/tests name other areas");
+        assert_eq!(
+            renames, status,
+            "src/renames and docs/dialect/status name other areas"
+        );
+        assert_eq!(renames.len(), AREAS.len(), "a renames file is not in AREAS");
+    }
 
     #[test]
     fn one_area_per_type() {
