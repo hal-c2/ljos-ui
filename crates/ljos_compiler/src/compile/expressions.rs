@@ -154,6 +154,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             if free.name == "qsTr" && matches!(r.resolved, Resolved::Global { .. }) {
                 self.translates = true;
             }
+            // A global of a name `Ljos.Core` gives, in a file that imports
+            // it, is that one: no global of QML's or JavaScript's has it.
+            if matches!(r.resolved, Resolved::Global { .. })
+                && qml_front::names::CORE_GLOBALS.contains(&free.name.as_str())
+                && self.types.imports(qml_front::names::CORE)
+            {
+                self.cores.insert(free.name.clone());
+            }
             if !refs.contains(&r) {
                 refs.push(r);
             }
@@ -674,7 +682,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 }
                 Plan {
                     resolved: Resolved::Global {
-                        is_qml: *global == Global::Qml,
+                        is_qml: *global != Global::Js,
                     },
                     param: None,
                     rewrite: None,
