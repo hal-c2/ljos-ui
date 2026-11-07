@@ -324,6 +324,12 @@ impl std::fmt::Debug for Keyed {
 }
 
 impl KeyedSource {
+    /// The view shows rows it matches by key: it was given a `key` and a
+    /// list.
+    pub fn is_keyed(&self) -> bool {
+        self.held.borrow().is_some()
+    }
+
     /// What `value` is to the view `view` given `key` and `delegate`. With
     /// `remake` the rows shown are not kept, as when the view moved.
     pub fn model(

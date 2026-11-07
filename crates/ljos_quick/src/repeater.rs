@@ -26,7 +26,7 @@ use ljos_engine::{
     PropIndex, QmlObject, RemovalOrder, Value, WriteKind, qml_impl,
 };
 
-use crate::animation::{Passage, Transition, run_passage};
+use crate::animation::{Passage, Transition, run_passage_beside};
 
 use crate::item::{Item, is_item};
 use crate::tree;
@@ -47,11 +47,13 @@ pub struct Repeater {
     /// items of the rows it names again.
     #[qml(notify)]
     pub key: String,
-    /// Played on the item of a row the model gained once the Repeater has
-    /// its items.
+    /// Played on the item of a row the list gained once the Repeater has
+    /// its items, when it is keyed: a model it does not key has no row
+    /// that is new.
     #[qml(notify, object = "Transition")]
     pub enter: Option<ObjectId>,
-    /// Played on the item of a row the model lost, which goes when it ends.
+    /// Played on the item of a row the list lost, when it is keyed; the
+    /// item goes when it ends.
     #[qml(notify, object = "Transition")]
     pub exit: Option<ObjectId>,
     #[qml(skip)]
@@ -104,8 +106,16 @@ struct Host {
 }
 
 impl Host {
-    /// The Repeater's `enter` or `exit`, when it is a `Transition`.
+    /// The Repeater's `enter` or `exit`, when it is a `Transition` and the
+    /// Repeater is keyed: only a row of a key is the same row from one
+    /// list to the next, so only then is an item new or gone.
     fn transition(&self, e: &Engine, p: PropIndex) -> Option<ObjectId> {
+        let keyed = e
+            .with::<Repeater, _>(self.me, |r| r.keyed.is_keyed())
+            .unwrap_or(false);
+        if !keyed {
+            return None;
+        }
         e.untrack(|| e.read(self.me, p))
             .as_object()
             .filter(|t| e.with::<Transition, _>(*t, |_| ()).is_ok())
@@ -156,7 +166,7 @@ impl DelegateHost for Host {
             return;
         }
         if let Some(t) = self.transition(e, Repeater::ENTER.index) {
-            run_passage(e, t, object, Passage::Enter, |_| {});
+            run_passage_beside(e, t, object, Passage::Enter, |_| {});
         }
     }
 
@@ -168,7 +178,7 @@ impl DelegateHost for Host {
             return false;
         }
         let done = Cell::new(Some(done));
-        run_passage(e, t, object, Passage::Exit, move |e| {
+        run_passage_beside(e, t, object, Passage::Exit, move |e| {
             if let Some(done) = done.take() {
                 done(e);
             }

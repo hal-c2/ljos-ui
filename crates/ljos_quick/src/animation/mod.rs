@@ -48,7 +48,8 @@ pub use controller::AnimationController;
 pub use frame::FrameAnimation;
 pub use timeline::{between, curve_of};
 pub use transition::{
-    Passage, Transition, run_passage, run_transition, run_transition_to, stop_transition,
+    Passage, Transition, run_passage, run_passage_beside, run_transition, run_transition_to,
+    stop_transition,
 };
 pub use types::{
     AnchorAnimation, Animation, Animator, ColorAnimation, Easing, EasingGroup, NumberAnimation,

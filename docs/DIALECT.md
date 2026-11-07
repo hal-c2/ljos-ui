@@ -712,6 +712,11 @@ Qt has none of them. `Ljos.Ui`'s `ListView` is a face of Qt's that calls
 DECISION: an `exit` runs only on a row the list removed. A new model, a
 new delegate, or the view's end destroys every delegate at once.
 
+DECISION: a `Repeater` plays `enter` and `exit` only while it is keyed:
+given a `key` and a list. The insert or removal of a model it does not
+key has no row that the dialect promises is the same one, so its items
+come and go at once.
+
 DECISION: the pass renames `add` and `remove` of a `ListView` as
 properties only: `lm.remove(0)` is a call and stays, since every member
 the pass renames is a property.
@@ -1003,7 +1008,9 @@ construction.
   passes. A keyed `Repeater`'s `enter` runs on
   the item of a row inserted once it has made its first items, and its
   `exit` on the item of a row removed, which stays, out of `count`, until
-  the transition ends. `Ljos.Ui`'s `ListView` calls Qt's `add` and
+  the transition ends. Each item has its own run of the transition, so
+  rows that come or go in one change each play it to the end; ended on
+  the way, an `exit` still lets its item go. `Ljos.Ui`'s `ListView` calls Qt's `add` and
   `remove` `enter` and `exit`. The scenarios of `enter` and `exit` in a
   Ljós file wait for `Transition` in `Ljos.Ui`.
 - **Clock** is one timer per resolution, scheduled by its readers. A
