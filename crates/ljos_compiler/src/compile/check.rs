@@ -1209,7 +1209,6 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
 
     // Assignability.
 
-    /// Whether a value of type `source` may go where `target` is wanted.
     /// Whether `a` and `b` are strings written out that share none: a
     /// `state` of the names declared compared with one that is not.
     ///
@@ -1232,6 +1231,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 .any(|part| self.arena.parts(b).contains(part))
     }
 
+    /// Whether a value of type `source` may go where `target` is wanted.
     fn takes(&self, target: Ty, source: Ty) -> bool {
         self.takes_as(target, source, true)
     }
