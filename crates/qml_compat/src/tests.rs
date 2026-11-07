@@ -732,3 +732,27 @@ fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
         Outcome::Lowered(_)
     ));
 }
+
+#[test]
+fn the_dialogs_with_the_controls_of_another_style_keep_the_file_for_the_style() {
+    let Outcome::Kept(kept) = in_style(
+        "import QtQuick\nimport QtQuick.Controls\nimport QtQuick.Dialogs\nItem { FileDialog { } }\n",
+        "Fusion",
+    ) else {
+        panic!("lowered in Fusion");
+    };
+    assert_eq!(
+        kept.reason,
+        "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic"
+    );
+}
+
+#[test]
+fn the_dialogs_imported_before_the_controls_carry_the_import_of_ljos_controls() {
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport QtQuick.Dialogs\nimport QtQuick.Controls.Basic\nLabel { }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\n\nLabel { }\n"
+    );
+}
