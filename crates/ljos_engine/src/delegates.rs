@@ -407,8 +407,9 @@ impl Shared {
             return;
         };
         let for_setup = s.clone();
+        let ljos = engine.written_in_ljos_ui(component);
         let setup = move |e: &Engine, root: ObjectId, ctx: ContextId| {
-            for_setup.setup_row(e, id, root, ctx);
+            for_setup.setup_row(e, id, root, ctx, ljos);
         };
         if !asynchronous {
             let r = engine.create_delegate(component, Some(s.owner), setup);
@@ -442,7 +443,7 @@ impl Shared {
     }
 
     /// Gives a delegate that was just allocated its row.
-    fn setup_row(&self, engine: &Engine, id: u64, root: ObjectId, ctx: ContextId) {
+    fn setup_row(&self, engine: &Engine, id: u64, root: ObjectId, ctx: ContextId, ljos: bool) {
         let found = {
             let st = self.state.borrow();
             st.position(id).and_then(|i| {
@@ -453,7 +454,7 @@ impl Shared {
         let Some((index, model, before)) = found else {
             return;
         };
-        if let Some(data) = give_row(engine, &self.plans, &model, index, root, ctx, false) {
+        if let Some(data) = give_row(engine, &self.plans, &model, index, root, ctx, false, ljos) {
             let mut st = self.state.borrow_mut();
             if let Some(i) = st.position(id) {
                 st.rows[i].data = Some(data);
@@ -688,6 +689,9 @@ pub(crate) struct RowPlan {
     /// Whether every required property is fed straight from the model and
     /// nothing reads the row any other way: then no row object is made.
     direct: bool,
+    /// Whether a required property is fed `modelData`, which a model
+    /// without a value of its own for a row gives as the row object.
+    feeds_model_data: bool,
 }
 
 struct Required {
@@ -731,11 +735,15 @@ impl RowPlan {
             .collect();
         let direct =
             !required.is_empty() && !roles_in_context && required.iter().all(|r| r.feed.is_some());
+        let feeds_model_data = required
+            .iter()
+            .any(|r| matches!(r.feed, Some(Feed::ModelData)));
         Self {
             root,
             shape,
             required,
             direct,
+            feeds_model_data,
         }
     }
 
@@ -874,7 +882,10 @@ fn feed(engine: &Engine, root: ObjectId, p: PropIndex, v: Value) {
 
 /// Gives the delegate `root`, just allocated in context `ctx`, row
 /// `index` of `model`: its required properties, or a row object as its
-/// context object or for them to bind to.
+/// context object or for them to bind to. A delegate written in Ljós's API
+/// (`ljos`) reads a row with no value of its own as its `modelData`
+/// (docs/DIALECT.md §4.8); in Qt only a required `modelData` does.
+#[allow(clippy::too_many_arguments)]
 fn give_row(
     engine: &Engine,
     plans: &RowPlans,
@@ -883,10 +894,14 @@ fn give_row(
     root: ObjectId,
     ctx: ContextId,
     roles_in_context: bool,
+    ljos: bool,
 ) -> Option<Given> {
     engine.reload_note_row(root, index);
     let plan = plans.get(engine.meta_of(root)?, model, roles_in_context);
-    if plan.direct && model.row_object(index).is_none() {
+    // A row with no `modelData` of its own is given as its row object,
+    // which only the row object path makes.
+    let row_is_model_data = plan.feeds_model_data && model.model_data(engine, index).is_none();
+    if plan.direct && model.row_object(index).is_none() && !row_is_model_data {
         for r in &plan.required {
             if let Some(f) = r.feed {
                 let v = match plan.value(engine, model, index, f) {
@@ -904,7 +919,13 @@ fn give_row(
     }
     // Owned by the delegate: it lives exactly as long.
     let data = engine
-        .make_row(model, &plan.shape, index, Some(root))
+        .make_row(
+            model,
+            &plan.shape,
+            index,
+            Some(root),
+            ljos || plan.feeds_model_data,
+        )
         .ok()?;
     if plan.required.is_empty() || roles_in_context {
         engine.set_context_object(ctx, Some(data.id));
@@ -994,7 +1015,7 @@ fn refresh_row(
         }
     }
     if let Some(p) = d.shape.model_data {
-        let v = model.model_data(engine, i).unwrap_or_default();
+        let v = d.model_data(engine, model, i);
         let _ = engine.write_internal(d.id, p, v, WriteKind::Imperative);
     }
 }
@@ -1018,7 +1039,7 @@ fn reshape_row(
         }
     }
     if let Some(p) = shape.model_data {
-        let v = model.model_data(engine, i).unwrap_or_default();
+        let v = old.model_data(engine, model, i);
         let _ = engine.write_internal(old.id, p, v, WriteKind::Imperative);
     }
     engine.set_write_hook(old.id, Some(row_hook(model.clone(), shape.clone(), old.id)));
@@ -1459,8 +1480,9 @@ impl ViewDelegates {
             id
         };
         let for_setup = s.clone();
+        let ljos = engine.written_in_ljos_ui(component);
         let setup = move |e: &Engine, root: ObjectId, ctx: ContextId| {
-            for_setup.setup(e, id, root, ctx);
+            for_setup.setup(e, id, root, ctx, ljos);
         };
         match urgency {
             Urgency::Now => {
@@ -1669,7 +1691,7 @@ impl ViewShared {
     }
 
     /// Gives a delegate that was just allocated its row.
-    fn setup(&self, engine: &Engine, id: u64, root: ObjectId, ctx: ContextId) {
+    fn setup(&self, engine: &Engine, id: u64, root: ObjectId, ctx: ContextId, ljos: bool) {
         let found = {
             let st = self.state.borrow();
             let held = st.live.iter().find(|h| h.id == id);
@@ -1686,6 +1708,7 @@ impl ViewShared {
             root,
             ctx,
             self.host.roles_in_context(),
+            ljos,
         );
         {
             let mut st = self.state.borrow_mut();

@@ -1317,6 +1317,19 @@ impl Engine {
         Ok(fresh)
     }
 
+    /// Whether the template of `component` is written in a file of Ljós's
+    /// API (`import Ljos.Ui`).
+    pub(crate) fn written_in_ljos_ui(&self, component: ObjectId) -> bool {
+        self.with::<Component, _>(component, |c| {
+            c.template.as_ref().is_some_and(|t| {
+                t.file.ir.imports.iter().any(
+                    |i| matches!(&i.source, ljos_ir::ImportSource::Module(m) if m == "Ljos.Ui"),
+                )
+            })
+        })
+        .unwrap_or(false)
+    }
+
     /// The entries of a JS object (`createObject`'s properties); none for
     /// any other value.
     pub fn js_object_entries(&self, v: &Value) -> Vec<(String, Value)> {
