@@ -368,7 +368,11 @@ alone, must be one of its imports: the checker says
 `` `QtObject` is not a type of anything the file imports `` and
 TypeScript cannot find the name. A value type (`font`, `point`) may be
 written by any file, and a dotted name is a namespace's or an enum's,
-which this rule does not judge. `ljos types --dts` declares
+which this rule does not judge. A type of the project's own (a
+component declared inline, a file beside it, a type of one of the
+project's modules) is found as it is in Qt's QML; the declarations do
+not describe it, so TypeScript is given `unknown` for it and the checker
+types it. `ljos types --dts` declares
 the whole API, `Ljos.Ui` and `Ljos.Core` together.
 
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
