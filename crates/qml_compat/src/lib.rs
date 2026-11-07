@@ -27,7 +27,7 @@ mod rows;
 use std::{cell::RefCell, collections::HashMap, ops::Range};
 
 use oxc_ast::ast::{
-    BindingIdentifier, ComputedMemberExpression, Expression, IdentifierReference,
+    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -1088,6 +1088,7 @@ impl<'s> Pass<'s> {
             kept: None,
             declared: Vec::new(),
             row: RowEdits::default(),
+            called: Vec::new(),
         };
         walk(&mut script);
         script.row_done();
@@ -1322,6 +1323,9 @@ struct Script<'p, 's> {
     /// The locals it declares that a delegate's row has names of.
     declared: Vec<String>,
     row: RowEdits,
+    /// Where the names that are called start: a called name is a method,
+    /// and every member Ljós renames is a property (`model.remove(0)`).
+    called: Vec<u32>,
 }
 
 impl Script<'_, '_> {
@@ -1543,6 +1547,15 @@ impl Script<'_, '_> {
 }
 
 impl<'a> Visit<'a> for Script<'_, '_> {
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        match it.callee.without_parentheses() {
+            Expression::StaticMemberExpression(m) => self.called.push(m.property.span.start),
+            Expression::Identifier(id) => self.called.push(id.span.start),
+            _ => {}
+        }
+        walk::walk_call_expression(self, it);
+    }
+
     fn visit_static_member_expression(&mut self, it: &StaticMemberExpression<'a>) {
         if let Expression::Identifier(object) = &it.object
             && object.name == "model"
@@ -1571,7 +1584,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.property.span.start,
             );
         }
-        if is_renamed_member(name) {
+        if is_renamed_member(name) && !self.called.contains(&it.property.span.start) {
             let on = self.ty(&it.object);
             match self.pass.member(name, on) {
                 Rename::To(new) => {
@@ -1641,7 +1654,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
             return;
         }
-        if !is_renamed_member(name) || self.pass.id(name).is_some() {
+        if !is_renamed_member(name)
+            || self.pass.id(name).is_some()
+            || self.called.contains(&it.span.start)
+        {
             return;
         }
         // An unqualified member: the scope object's, else the root's.
