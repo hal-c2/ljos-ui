@@ -732,6 +732,30 @@ mod tests {
     }
 
     #[test]
+    fn a_component_ljos_ui_reaches_is_declared_by_its_class() {
+        let component = qt_types::module("QtQml")
+            .and_then(|m| m.type_named("Component"))
+            .expect("QtQml's Component");
+        let class = sanitized(component.class);
+        assert_ne!(class, "Component");
+        // A file of `Ljos.Ui` alone reaches it through a view's delegate.
+        let declarations = Api::of(API).expect("Ljos.Ui").declarations();
+        assert!(!declarations.contains("interface Component<"));
+        assert!(
+            declarations.contains(&format!("\ninterface {class}<T = ")),
+            "{class} is not declared"
+        );
+        assert!(
+            declarations.contains(&format!("    delegate: {class};\n")),
+            "a delegate is not a {class}"
+        );
+        // Beside `Ljos.Core`, it goes by its name.
+        let declarations = Api::new().expect("Ljos.Ui").declarations();
+        assert!(declarations.contains("\ninterface Component<T = QtObject>"));
+        assert!(declarations.contains("    delegate: Component;\n"));
+    }
+
+    #[test]
     fn the_declarations_are_written_the_same_each_time() {
         let once = Api::new().expect("Ljos.Ui").declarations();
         let again = Api::new().expect("Ljos.Ui").declarations();
