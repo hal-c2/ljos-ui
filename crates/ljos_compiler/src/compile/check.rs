@@ -559,9 +559,18 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         }
         if oracle.has_method(ty, name) {
             // DECISION: the oracle has no types for a native method's
-            // arguments and result: it takes and gives what the checker
-            // lets by.
-            let ty = self.loose();
+            // arguments: it takes what the checker lets by. It gives what
+            // the table says it does (`Screen.points` a number), else
+            // `unknown`.
+            let ret = oracle
+                .method_returns(ty, name)
+                .and_then(|written| primitive(&written))
+                .unwrap_or(Ty::UNKNOWN);
+            let ty = self.arena.function(Sig {
+                params: Box::new([]),
+                rest: Some(Ty::UNKNOWN),
+                ret,
+            });
             return Some(Own { ty, written: None });
         }
         None

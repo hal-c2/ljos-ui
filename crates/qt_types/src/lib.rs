@@ -74,6 +74,7 @@
 //!         signal clicked mouse:QQuickMouseEvent   the arguments by name, `_` for one
 //!                                       without, each with `:` and its type when known
 //!         method forceActiveFocus
+//!         method points returns:real    what it gives, when the table says
 //! ```
 //!
 //! A class is what a type is registered from: in Qt's table the C++ class, in
@@ -352,6 +353,10 @@ pub struct Type {
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
     pub methods: Vec<&'static str>,
+    /// What a method of [`Type::methods`] gives, by name, when the table
+    /// says: Ljós's own table does for a method that gives a `bool`, a
+    /// number or a string; Qt's never does.
+    pub method_returns: Vec<(&'static str, &'static str)>,
     default_property: Option<&'static str>,
     prototype: Option<usize>,
     extension: Option<usize>,
@@ -455,6 +460,23 @@ impl Type {
             .is_some()
     }
 
+    /// What the method `name` gives, as the table writes a type (`real`),
+    /// when it says: from the nearest type that has a method of that name.
+    pub fn method_returns(&'static self, name: &str) -> Option<&'static str> {
+        self.method_returns_in(table(), name)
+    }
+
+    fn method_returns_in(&'static self, table: &'static Table, name: &str) -> Option<&'static str> {
+        self.find_in(table, false, &|ty| {
+            ty.methods.contains(&name).then(|| {
+                ty.method_returns
+                    .iter()
+                    .find_map(|(method, returns)| (*method == name).then_some(*returns))
+            })
+        })
+        .flatten()
+    }
+
     /// The enum key `Type.key` names: `Text.Raised`, `Qt.AlignLeft`.
     pub fn enum_value(&'static self, key: &str) -> Option<EnumValue> {
         self.find(true, &|ty| {
@@ -507,13 +529,24 @@ impl Type {
     /// The first thing `get` finds in the type, its extension or what it
     /// inherits, in the order QML looks.
     fn find<T>(&'static self, enums: bool, get: &impl Fn(&'static Type) -> Option<T>) -> Option<T> {
+        self.find_in(table(), enums, get)
+    }
+
+    /// [`find`](Self::find) in `table`, which a test may write itself.
+    fn find_in<T>(
+        &'static self,
+        table: &'static Table,
+        enums: bool,
+        get: &impl Fn(&'static Type) -> Option<T>,
+    ) -> Option<T> {
         let extension = || {
-            let extension = &table().types[self.extension?];
-            (enums || !self.extension_is_namespace).then(|| extension.find(enums, get))?
+            let extension = &table.types[self.extension?];
+            (enums || !self.extension_is_namespace).then(|| extension.find_in(table, enums, get))?
         };
+        let prototype = || Some(&table.types[self.prototype?]);
         get(self)
             .or_else(extension)
-            .or_else(|| self.prototype()?.find(enums, get))
+            .or_else(|| prototype()?.find_in(table, enums, get))
     }
 }
 
@@ -823,6 +856,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     properties: Vec::new(),
                     signals: Vec::new(),
                     methods: Vec::new(),
+                    method_returns: Vec::new(),
                     default_property: None,
                     prototype: None,
                     extension: None,
@@ -914,7 +948,13 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                             parameter_types,
                         });
                     }
-                    "method" => ty.methods.push(word()),
+                    "method" => {
+                        let name = word();
+                        ty.methods.push(name);
+                        if let Some(returns) = words.find_map(|w| w.strip_prefix("returns:")) {
+                            ty.method_returns.push((name, returns));
+                        }
+                    }
                     _ => {}
                 }
             }

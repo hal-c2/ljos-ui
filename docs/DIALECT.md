@@ -214,7 +214,15 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 - `Rectangle` with `fill`, a face of Qt Quick's `Rectangle`;
 - `PointerArea`, a face of `MouseArea`;
 - `Item`, `Text`, `State`, `PropertyChanges` and the font enums, exported
-  as they are.
+  as they are;
+- what says in Qt Quick the one thing it says in Ljós (§4.14, "none"),
+  exported as it is: `Image`, `Flickable`, `Window` and `Screen` (with
+  `Screen.points`, §4.3), `TextInput` and its validators, `TextEdit`,
+  `TextMetrics`, `FontMetrics`, `Shortcut`, `DropArea`, and the attached
+  `Keys` (with its `KeyEvent`) and `Accessible`. DECISION: a `Window`
+  keeps `color`: it is what is behind the window's items, not a fill, and
+  Qt's `Window` is no `Rectangle`. `Window` and `Screen` come from
+  `ljos_controls`, which builds them, into the same module.
 
 It is described in `crates/qt_types/src/ljos.txt`, so `ljos check` and the
 lowering know it with no Qt installed.
@@ -235,7 +243,7 @@ ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
-| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72); arrives with `Screen` in M1 | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
+| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (the screen's logical DPI, exact, over 72: a host may report a fractional DPI, as Qt allows); with no screen yet, the platform's own points (72 or 96 to the inch). Built with `Screen` (M1) | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
 | `Qt.binding` | a `Binding` object, or a state | declarative | |
 | `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
 | `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
@@ -882,6 +890,7 @@ construction.
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
 | attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical |
 | `Flickable` | `Flickable` | none |
+| `Image`, `Window`, `Screen`, `TextInput`, `TextEdit`, `TextMetrics`, `FontMetrics`, `Shortcut`, attached `Keys` and `Accessible` | the same | none; a `QtQuick.Window` import leaves its line empty, since its types are `QtQuick`'s |
 | `ListModel` of constants | `list<T>` | mechanical, with a generated row type |
 | `ListModel` edited | `ListModel` | none |
 | `XmlListModel`, `FolderListModel` | `XmlModel` (decoder), `FolderModel` | mechanical |
@@ -1009,8 +1018,10 @@ are declared so), functions and enums. It reads them from:
   cycle closes.
 
 What it cannot type is an error (`ts-no-any`), at the place the type is
-missing, with what gives it one. A method the type table names without
-types takes and gives `unknown`. It lets by, without a type, a model's
+missing, with what gives it one. A method the type table names takes
+anything, and gives what the table says it does: Ljós's own table says it
+for a method that gives a `bool`, a number or a string (`method points
+returns:real`), and gives `unknown` for any other; Qt's table never says. It lets by, without a type, a model's
 role, a member only the running program knows, and an alias (whose type is
 its target's).
 
@@ -1060,8 +1071,10 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   and `id.member` where the target's type is known;
 - `property var` / `variant` → `property unknown`.
 
-A `QtQml` import stays. Any other module import (`QtQuick.Controls`, an
-aliased `QtQuick`) keeps the file.
+A `QtQml` import stays. `QtQuick.Layouts` and `QtQuick.Window` leave their
+lines empty, since `Ljos.Ui` has what they name. Any other module import
+(`QtQuick.Controls`, an aliased `QtQuick` or `QtQuick.Window`) keeps the
+file.
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
@@ -1359,7 +1372,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `Image`, `Flickable`, `Window`, `Screen` with `Screen.points`, `TextInput`, `TextEdit`, `TextMetrics`, `FontMetrics`, `Shortcut`, `DropArea`, attached `Keys` and `Accessible` (§4.2), and `QtQuick.Window` lowered. Remaining: `Behavior` and animations, `ListView`, `Repeater`, `Loader` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |

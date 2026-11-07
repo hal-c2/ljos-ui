@@ -100,6 +100,28 @@ impl ScreenAttached {
         };
         (turns(&b) - turns(&a)).rem_euclid(4) * 90
     }
+
+    /// Pixels for `points` points on the object's screen: its logical dots
+    /// per inch over 72 (docs/DIALECT.md §4.3), the size Qt gives a
+    /// `font.pointSize`. Tracked, so that a binding follows the item to a
+    /// screen of another density; where no screen says, the platform's.
+    #[qml(invokable, name = "points")]
+    fn points(cx: &Cx, points: Value) -> f64 {
+        let points = points.to_number();
+        let per_mm = cx
+            .engine
+            .read(cx.this, ScreenAttached::LOGICAL_PIXEL_DENSITY.index)
+            .to_number();
+        if !(per_mm.is_finite() && per_mm > 0.0) {
+            return ljos_runtime::points_to_pixels(points);
+        }
+        // The screen's logical dots per inch, exact: a host may report a
+        // fractional one, as Qt allows. Only the noise of going through
+        // millimetres is taken off, so a 96 is 96 and not a float's
+        // neighbour of it.
+        let per_inch = (per_mm * 25.4 * 1e6).round() / 1e6;
+        points * per_inch / 72.0
+    }
 }
 
 /// The window `obj` is shown in, itself included. Tracked, so that a
@@ -240,4 +262,33 @@ pub(super) fn register(engine: &Engine) {
         }
         true
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ljos_engine::WriteKind;
+
+    /// A screen that reports a fractional dpi gives points at that dpi, not
+    /// at the whole number nearest it.
+    #[test]
+    fn points_follow_a_fractional_dpi() {
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        let screen = e.create_native(ScreenAttached::default(), None).unwrap();
+        e.write_internal(
+            screen,
+            ScreenAttached::LOGICAL_PIXEL_DENSITY.index,
+            Value::Real(120.5 / 25.4),
+            WriteKind::Initial,
+        )
+        .unwrap();
+        let points = |n: f64| {
+            e.invoke_by_name(screen, "points", &[Value::Real(n)])
+                .unwrap()
+                .to_number()
+        };
+        assert_eq!(points(12.0), 12.0 * 120.5 / 72.0);
+        assert_eq!(points(72.0), 120.5);
+    }
 }

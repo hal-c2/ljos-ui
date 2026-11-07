@@ -156,13 +156,14 @@ pub fn register(engine: &Engine) {
         ComboBox, ItemDelegate, ContextMenu,
     ]));
     // Replaces the attached-only `Window` of `ljos_quick` with one that can
-    // also be a root; the attached properties are the same type.
-    for uri in ["QtQuick", "QtQuick.Window"] {
-        engine.register_type(
-            uri,
-            Version::new(2, 15),
-            MetaRef::Static(Window::static_meta()),
-        );
+    // also be a root; the attached properties are the same type. Ljós's API
+    // has it as it is (docs/DIALECT.md §4.14).
+    for (uri, version) in [
+        ("QtQuick", Version::new(2, 15)),
+        ("QtQuick.Window", Version::new(2, 15)),
+        (ljos_quick::ljos_ui::MODULE, Version::new(1, 0)),
+    ] {
+        engine.register_type(uri, version, MetaRef::Static(Window::static_meta()));
     }
     // A file that imports `QtQuick.Window` has what `QtQuick` has.
     engine.register_import("QtQuick.Window", "QtQuick");
