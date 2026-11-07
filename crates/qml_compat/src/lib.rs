@@ -20,6 +20,7 @@
 
 mod arrange;
 mod bindings;
+mod gesture;
 mod given;
 mod group;
 mod qt_members;
@@ -27,7 +28,11 @@ mod renames;
 mod rows;
 mod tables;
 
-use std::{cell::RefCell, collections::HashMap, ops::Range};
+use std::{
+    cell::RefCell,
+    collections::{HashMap, HashSet},
+    ops::Range,
+};
 
 use bindings::{Bindings, Node};
 use oxc_ast::ast::{
@@ -309,6 +314,7 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         ids: Vec::new(),
         inline: Vec::new(),
         qualifiers: Vec::new(),
+        read: HashSet::new(),
         changes: Vec::new(),
         listed: Vec::new(),
         imports_models: false,
@@ -462,6 +468,9 @@ struct Pass<'s> {
     /// The names the file imports under (`import "box.js" as Box`), which
     /// Qt and Ljós find before a type of an import.
     qualifiers: Vec<String>,
+    /// Every name the file's scripts read unqualified, or a binding's name
+    /// starts with.
+    read: HashSet<String>,
     changes: Vec<Change>,
     /// The `ListModel`s with ids, and the rows they give.
     listed: Vec<(String, Rows)>,
@@ -688,6 +697,9 @@ impl<'s> Pass<'s> {
             });
         }
         self.collect(&document.root);
+        let mut names = gesture::Names::default();
+        names.object(&document.root);
+        self.read = names.0;
         let by_id = given::by_id(
             &document.root,
             &|o| self.is_view(o),
@@ -1297,9 +1309,12 @@ impl<'s> Pass<'s> {
         } else {
             None
         };
-        for member in &object.members {
+        for (index, member) in object.members.iter().enumerate() {
             match member {
                 QmlMember::Object(child) if self.is_table(child) => {}
+                QmlMember::Object(child) if let Some(plan) = self.gestures(object, ty, index) => {
+                    self.make_gestures(child, plan, root)?;
+                }
                 QmlMember::Object(child) => {
                     if prefix.is_some() {
                         return Err(self.no(
@@ -1544,6 +1559,57 @@ impl<'s> Pass<'s> {
             };
             bare().any(|at| (span.start..span.end).contains(&at))
         })
+    }
+
+    /// The gestures the `index`th member of `parent` is, where it is a
+    /// `MouseArea` that fills it ([`gesture`]).
+    fn gestures(&self, parent: &QmlObject<'_>, ty: Ty, index: usize) -> Option<gesture::Plan> {
+        let Ty::Exact(parent_ty) = ty else {
+            return None;
+        };
+        let qt_type = |name: &str| arrange::Types::qt_type(self, name);
+        let is_id = |name: &str| self.id(name).is_some();
+        let file = gesture::File {
+            source: self.source,
+            quick: self.quick,
+            ui: self.ui,
+            qt_type: &qt_type,
+            is_id: &is_id,
+            read: &self.read,
+        };
+        gesture::plan(&file, parent, parent_ty, index)
+    }
+
+    /// Lowers `area` as a `MouseArea` is, then makes it the gestures of
+    /// `plan`.
+    fn make_gestures(&mut self, area: &QmlObject<'_>, plan: gesture::Plan, root: Ty) -> Step {
+        let before = self.changes.len();
+        let ty = self.object_type(area)?;
+        self.object(area, ty, root, false)?;
+        let made = self.changes.split_off(before);
+        let hover: Vec<String> = plan
+            .hover
+            .iter()
+            .map(|range| gesture::lowered_text(self.source, range, &made))
+            .collect();
+        self.changes.extend(made);
+        // Collecting the ids renamed the area's type already.
+        self.changes.retain(|c| {
+            !plan
+                .replace
+                .iter()
+                .any(|(r, _)| gesture::within(&c.range, r))
+        });
+        for (range, text) in plan.replace {
+            self.change(range, text);
+        }
+        if !hover.is_empty() {
+            self.change(
+                plan.end..plan.end,
+                format!(" Hover {{ {} }}", hover.join("; ")),
+            );
+        }
+        Ok(())
     }
 
     /// What a `PropertyChanges` or `Connections` acts on.
