@@ -1569,8 +1569,12 @@ The description is what the checker reads (`ljostypes.json`, §4.4). A
 lowered run passes its oracle's (`ljos_compiler::OracleNatives`), so a
 file is lowered against the types it is checked against. `ljos migrate`
 reads the file `--types` names, else the `ljostypes.json` of the first
-directory it is given. A module of the toolkit's table is never the
-program's, whatever it registers in it. A type the file names that is
+path it is given, and no other. A module of the toolkit's table is never
+the program's, whatever it registers in it. Of the imports that have a
+type's name, the last is the one it is, as the loader takes the last: a
+program's `Text` imported after `QtQuick`, or its `Button` after
+`QtQuick.Controls`, is the program's, its members keep their names, and a
+type Ljós renames keeps its name; imported before them, Qt's is. A type the file names that is
 neither Qt's, nor a file of the project, nor in the description keeps the
 file.
 
@@ -1784,11 +1788,12 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   rows the script does not declare.
 - `--types` names the description of the program's own types, as
   `ljos run --types` does. Without it, migrate reads the `ljostypes.json`
-  of the first directory given that has one; for a file, that is the
-  file's directory (§6.1).
+  of the first path given, if it has one; for a file, that is the file's
+  directory. The other paths are not looked in (§6.1).
 - Exit status 0 means every file was read. 2 means a file could not be
   read or written, or the description could not be read; in that case
-  nothing is migrated.
+  nothing is migrated, and the error names the description with its
+  directory.
 - The edits are text replacements at known spans, which keeps every line
   and comment. M3 moves them onto `qml_edit`'s lossless CST edits (ADR
   0003 part 4), so Studio and migrate share one edit engine, and an edit

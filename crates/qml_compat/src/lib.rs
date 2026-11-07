@@ -299,7 +299,7 @@ enum Import {
     /// `QtQuick.Shapes`.
     Shapes,
     /// A module of the program's own types ([`Natives`]).
-    Native,
+    Native(String),
     Module(String),
     Dir(String),
 }
@@ -311,7 +311,7 @@ impl Import {
             | Import::Qml
             | Import::Controls { .. }
             | Import::Shapes
-            | Import::Native => None,
+            | Import::Native(_) => None,
             Import::Module(uri) => Some(Imported::Module(uri)),
             Import::Dir(path) => Some(Imported::Dir(path)),
         }
@@ -704,7 +704,7 @@ impl<'s> Pass<'s> {
                 other if self.natives.is_some_and(|n| n.has_module(other)) => {
                     if import.alias.is_none() {
                         self.native_modules.push(other.to_owned());
-                        self.imports.push(Import::Native);
+                        self.imports.push(Import::Native(other.to_owned()));
                     }
                 }
                 other => match self.locals.module(other) {
@@ -983,7 +983,7 @@ impl<'s> Pass<'s> {
             return Ok(Ty::Plain);
         }
         let at = object.type_name.span;
-        if let Some(new) = renamed_type(name) {
+        if let Some(new) = self.renamed_type(name) {
             self.change(at.start as usize..at.end as usize, new);
         }
         self.named_type(name, at.start as usize, 0)
@@ -992,15 +992,18 @@ impl<'s> Pass<'s> {
     /// The type `name` is in this file: Qt's (and then one Ljos.Ui has),
     /// an inline component, or a file of the project.
     fn named_type(&self, name: &str, at: usize, depth: usize) -> Result<Ty, Kept> {
-        // Of an import after Qt's that has the name too, the type is that
-        // import's, as the loader takes the last.
+        // Of an import after Qt's that has the name too, the project's
+        // files' or the program's own types', the type is that import's, as
+        // the loader takes the last.
         let imported = self.imported_root(name);
-        let project = imported.as_ref().map(|(at, _)| *at);
+        let native = self.native_type(name);
+        let project = imported
+            .as_ref()
+            .map(|(at, _)| *at)
+            .max(native.map(|(at, _)| at));
         let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
-        let shadowed_native = matches!(
-            (project, last(&|i| matches!(i, Import::Native))),
-            (Some(p), Some(n)) if p > n
-        );
+        let shadowed_native =
+            matches!((&imported, native), (Some((at, _)), Some((n, _))) if *at > n);
         if let Some(ty) = self.layouts.and_then(|m| m.type_named(name))
             && !self.project_first(
                 name,
@@ -1084,7 +1087,19 @@ impl<'s> Pass<'s> {
                 None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(ty) = self.native_type(name).filter(|_| !shadowed_native) {
+        if let Some((native_at, ty)) = native.filter(|_| !shadowed_native) {
+            // A Ljós module whose line comes after the program's import
+            // is found first in the lowered file.
+            if let Some((module, line)) = self.ljos_module_with(name)
+                && !matches!(line, Some(line) if native_at > line)
+            {
+                return Err(self.no(
+                    format!(
+                        "`{name}` is one of the program's own types, and {module}, which the lowered file imports, has a `{name}` that would be found first"
+                    ),
+                    at,
+                ));
+            }
             return Ok(Ty::Native(ty, true));
         }
         if depth > 16 {
@@ -1137,12 +1152,38 @@ impl<'s> Pass<'s> {
         }
     }
 
-    /// The program's own type `name`, of a module the file imports.
-    fn native_type(&self, name: &str) -> Option<Native> {
+    /// The program's own type `name`, of the last module the file imports
+    /// that has it, with where that import is among [`imports`](Self::imports).
+    fn native_type(&self, name: &str) -> Option<(usize, Native)> {
         let natives = self.natives?;
-        self.native_modules
+        self.imports
             .iter()
-            .find_map(|uri| natives.module_type(uri, name))
+            .enumerate()
+            .rev()
+            .find_map(|(at, import)| match import {
+                Import::Native(uri) => natives.module_type(uri, name).map(|ty| (at, ty)),
+                _ => None,
+            })
+    }
+
+    /// Whether an import at `own_at`, of the project's files or the
+    /// program's own types, comes after the last of Qt's imports that `qt`
+    /// picks, so that a name both have is its.
+    fn shadowed(&self, own_at: Option<usize>, qt: impl Fn(&Import) -> bool) -> bool {
+        let qt = self.imports.iter().rposition(qt);
+        matches!((own_at, qt), (Some(own), Some(qt)) if own > qt)
+    }
+
+    /// What Ljós calls the type `name`, where that is Qt's and Ljós calls
+    /// it otherwise: a type of the same name imported after QtQuick is
+    /// not Qt's, and keeps its name.
+    fn renamed_type(&self, name: &str) -> Option<&'static str> {
+        let new = renamed_type(name)?;
+        let own_at = self
+            .imported_root(name)
+            .map(|(at, _)| at)
+            .max(self.native_type(name).map(|(at, _)| at));
+        (!self.shadowed(own_at, |i| matches!(i, Import::Qt { layouts: false }))).then_some(new)
     }
 
     /// The toolkit type of Qt's table the native type `ty` is built on.
@@ -1270,16 +1311,27 @@ impl<'s> Pass<'s> {
         at: usize,
     ) -> Result<bool, Kept> {
         let after = |line: Option<usize>| matches!((project, line), (Some(p), Some(l)) if p > l);
+        // The import is of the program's own types or of the project's
+        // files.
+        let native = matches!(
+            project.and_then(|p| self.imports.get(p)),
+            Some(Import::Native(_))
+        );
+        let (what, whose) = if native {
+            ("one of the program's own types", "the program's")
+        } else {
+            ("a file of the project", "the project's")
+        };
         match (after(qt), after(line)) {
             (true, false) => Err(self.no(
                 format!(
-                    "`{name}` is a file of the project, and {module}, which the lowered file imports, has a `{name}` that would be found first"
+                    "`{name}` is {what}, and {module}, which the lowered file imports, has a `{name}` that would be found first"
                 ),
                 at,
             )),
             (false, true) => Err(self.no(
                 format!(
-                    "`{name}` is Qt's, but in the lowered file the project's `{name}`, imported after the line {module} takes, would be found first"
+                    "`{name}` is Qt's, but in the lowered file {whose} `{name}`, imported after the line {module} takes, would be found first"
                 ),
                 at,
             )),
@@ -1542,7 +1594,7 @@ impl<'s> Pass<'s> {
             return Ok(());
         }
         let at = type_name.name.span;
-        if let Some(new) = renamed_type(name) {
+        if let Some(new) = self.renamed_type(name) {
             self.change(at.start as usize..at.end as usize, new);
         }
         self.named_type(name, at.start as usize, 0).map(|_| ())
@@ -2569,7 +2621,9 @@ impl Script<'_, '_> {
                 .type_named("Item")
                 .map_or(Ty::Unknown, Ty::Derived);
         }
-        if let Some(ty) = self.pass.native_type(name)
+        // Read only where no later import has a type of the name.
+        if self.pass.native_type(name).is_some()
+            && let Ok(Ty::Native(ty, _)) = self.pass.named_type(name, 0, 0)
             && self.pass.natives.is_some_and(|n| n.is_singleton(ty))
         {
             return Ty::Native(ty, true);
@@ -2945,7 +2999,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 // file what it means in Qt's, whatever type has its name.
                 return;
             }
-            if let Some(new) = renamed_type(name) {
+            if let Some(new) = self.pass.renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
             } else if (self.pass.quick.type_named(name).is_some()

@@ -17,7 +17,8 @@ Feature: Lowering a file that imports the program's own types
   name, its singletons' members are typed through what they hold, and a
   member of the toolkit type it is built on is that type's. A name Ljós
   renames there keeps the file, as the program's type has it under Qt's
-  name. A type the description lacks keeps the file too.
+  name. A type the description lacks keeps the file too. Of the imports
+  that have a type's name, the last is the one it is.
 
   Background:
     Given the file "ljostypes.json":
@@ -248,6 +249,66 @@ Feature: Lowering a file that imports the program's own types
         """
         kept ./Main.qml:5:5: `Gauge` is neither a file beside it nor a type of `Studio.Kit` as the program describes it
         1 files, 0 lowered, 1 kept
+        """
+
+  Rule: Of the imports that have a type's name, the last is the one it is
+
+    Scenario: A type of the program's own module named as a Qt type is the program's when it is imported after QtQuick
+      Given the file "own/ljostypes.json":
+        """json
+        {"format": 2, "modules": [{"uri": "Studio.Print", "versions": ["1.0"], "types": [
+          {"name": "Text", "since": "1.0", "base": "QtObject", "baseModule": "QtQml",
+           "creatable": true, "defaultProperty": null, "attached": null, "signals": [], "methods": [],
+           "properties": [
+             {"name": "text", "type": "string", "kind": "value", "readonly": false, "final": true,
+              "required": false, "constant": false, "group": false, "notify": "textChanged"}]}]}]}
+        """
+      And the file "own/After.qml":
+        """qml
+        import QtQuick
+        import Studio.Print
+
+        Rectangle {
+            color: "#204080"
+            Text { text: color }
+        }
+        """
+      And the file "own/Before.qml":
+        """qml
+        import Studio.Print
+        import QtQuick
+
+        Rectangle {
+            color: "#204080"
+            Text { text: color }
+        }
+        """
+      When the author runs "ljos migrate --write own"
+      Then the command prints:
+        """
+        lowered own/After.qml (3 edits)
+        lowered own/Before.qml (2 edits)
+        2 files, 2 lowered, 0 kept
+        """
+      And the file "own/After.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        import Studio.Print
+
+        Rectangle {
+            fill: "#204080"
+            Text { text: fill }
+        }
+        """
+      And the file "own/Before.qml" is:
+        """qml
+        import Studio.Print
+        pragma Scripts: JavaScript; import Ljos.Ui
+
+        Rectangle {
+            fill: "#204080"
+            Text { text: color }
+        }
         """
 
   Rule: A lowered run reads the description the checker reads
