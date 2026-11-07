@@ -37,6 +37,7 @@ use qml_front::{
 use qml_syntax::{
     GetSpan, Span,
     ast::{QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject},
+    js::Expression,
 };
 
 use super::Compiler;
@@ -153,6 +154,22 @@ enum Obj<T> {
     Component(Key),
     /// The object of this file's tree, by its index.
     Instance(usize),
+}
+
+/// The string `object` binds `name` to: `Some(None)` when it is bound to
+/// something other than a string written out.
+fn string_binding<'a>(object: &QmlObject<'a>, name: &str) -> Option<Option<(&'a str, Span)>> {
+    object.members.iter().find_map(|member| match member {
+        QmlMember::Binding(binding) if binding.name.as_simple() == Some(name) => {
+            Some(match &binding.value {
+                QmlBindingValue::Expression(Expression::StringLiteral(text)) => {
+                    Some((text.value.as_str(), text.span))
+                }
+                _ => None,
+            })
+        }
+        _ => None,
+    })
 }
 
 /// What a name a script declares is bound to.
@@ -736,6 +753,69 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 QmlMember::Enum(_) => {}
             }
         }
+        if let Some(index) = index
+            && !is_group(object)
+        {
+            self.declare_states(object, index);
+        }
+    }
+
+    /// Gives an object whose `states` the file writes a `state` of the
+    /// names they are given, and the empty one: the only values it takes
+    /// (docs/DIALECT.md §4.9). An `extend` that names another is reported.
+    ///
+    /// DECISION: a state named by an expression leaves `state` a string,
+    /// and so does an object whose states are declared in another file:
+    /// what they are is known only as it runs, or there.
+    fn declare_states(&mut self, object: &QmlObject<'a>, index: usize) {
+        let Some(value) = object.members.iter().find_map(|member| match member {
+            QmlMember::Binding(binding) if binding.name.as_simple() == Some("states") => {
+                Some(&binding.value)
+            }
+            _ => None,
+        }) else {
+            return;
+        };
+        let states: &[QmlObject<'a>] = match value {
+            QmlBindingValue::Object(state) => std::slice::from_ref(state),
+            QmlBindingValue::Objects(states) => states,
+            QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => return,
+        };
+        let mut names = vec![""];
+        for state in states {
+            if state.type_name.as_simple() != Some("State") {
+                return;
+            }
+            match string_binding(state, "name") {
+                Some(Some((name, _))) => names.push(name),
+                Some(None) => return,
+                // A state without a name applies by its `when`.
+                None => {}
+            }
+        }
+        let parts: Vec<Ty> = names.iter().map(|name| self.arena.str(name)).collect();
+        let ty = self.arena.union(parts);
+        for state in states {
+            if let Some(Some((extend, span))) = string_binding(state, "extend")
+                && !names.contains(&extend)
+            {
+                let given = self.arena.str(extend);
+                let display = |ty| self.arena.display(ty, &|o| self.obj_name(o));
+                let (given, all) = (display(given), display(ty));
+                self.report(
+                    Code::TsAssignType,
+                    format!("`extend` names `{given}`, and the states are `{all}`"),
+                    span,
+                );
+            }
+        }
+        self.own.insert(
+            (index, "state"),
+            Own {
+                ty,
+                written: Some("string".into()),
+            },
+        );
     }
 
     fn declare_value(&mut self, value: &QmlBindingValue<'a>, owner: Option<usize>) {
@@ -1137,6 +1217,28 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     // Assignability.
 
     /// Whether a value of type `source` may go where `target` is wanted.
+    /// Whether `a` and `b` are strings written out that share none: a
+    /// `state` of the names declared compared with one that is not.
+    ///
+    /// DECISION: only literal strings are said never to be equal, as
+    /// TypeScript says of types with no overlap; the rest is let by.
+    fn never_equal(&self, a: Ty, b: Ty) -> bool {
+        let strings = |ty: Ty| {
+            let parts = self.arena.parts(ty);
+            !parts.is_empty()
+                && parts
+                    .iter()
+                    .all(|part| matches!(self.arena.kind(*part), Kind::Str(_)))
+        };
+        strings(a)
+            && strings(b)
+            && !self
+                .arena
+                .parts(a)
+                .iter()
+                .any(|part| self.arena.parts(b).contains(part))
+    }
+
     fn takes(&self, target: Ty, source: Ty) -> bool {
         self.takes_as(target, source, true)
     }
