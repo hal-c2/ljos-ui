@@ -57,17 +57,20 @@ impl<O: TypeOracle> OnDemand<O> {
     /// that is not there or does not compile stops the run before a window
     /// opens, as anything else stops only what makes an object of it.
     /// Each module of `aliases` is imported from its directory (`ljos run
-    /// --alias`).
+    /// --alias`). With `lower`, each file in Qt's QML is lowered as it is
+    /// read (`ljos run --compat lower`).
     pub(crate) fn open(
         dir: &Path,
         entry: &str,
         aliases: &Aliases,
         oracle: O,
+        lower: bool,
         say: Say,
     ) -> anyhow::Result<Self> {
         let mounts = ljos_compiler::alias::mounts(&[dir.to_owned()], aliases);
         let mut project = Project::open_aliased(dir, aliases, &mounts, oracle)
             .with_context(|| format!("{}", dir.display()))?;
+        project.set_compat(lower);
         project.reach(entry);
         if project.source(entry).is_none() {
             anyhow::bail!("{entry}.qml is not in {}", dir.display());
