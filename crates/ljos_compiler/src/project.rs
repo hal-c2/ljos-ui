@@ -284,7 +284,13 @@ impl<O: TypeOracle> Project<O> {
     /// them. `ljos migrate` asks this of a file, and lowers it with its
     /// group as a run does (`qml_compat::group`).
     pub fn compat_alone(&self, key: &str, text: &str) -> qml_compat::Alone {
-        let locals = Locals { project: self, key };
+        // The program's own types, as the checker has them.
+        let natives = crate::OracleNatives::new(&self.oracle);
+        let locals = Locals {
+            project: self,
+            key,
+            natives: &natives,
+        };
         // The file's name names the module of its constant tables' rows.
         let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
         let mut outcome = qml_compat::lower_as(text, stem, &locals);
@@ -1265,12 +1271,17 @@ fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item =
 }
 
 /// What the compat pass is told of the project around the file `key`.
-struct Locals<'p, O> {
+struct Locals<'p, O: TypeOracle> {
     project: &'p Project<O>,
     key: &'p str,
+    natives: &'p crate::OracleNatives<'p, O>,
 }
 
 impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
+    fn natives(&self) -> Option<&dyn qml_compat::Natives> {
+        Some(self.natives)
+    }
+
     fn controls_style(&self) -> Option<&str> {
         // No style chosen is Basic, as in Qt 6.
         Some(

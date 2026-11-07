@@ -317,6 +317,7 @@ fn a_type_of_the_project_imported_after_the_controls_is_the_projects() {
         &Styled {
             locals: &Project,
             style: CONTROLS_STYLE,
+            natives: None,
         },
     ) {
         Outcome::Lowered(lowered) => lowered.text,

@@ -337,7 +337,7 @@ fn entry(file: &Path) -> anyhow::Result<(PathBuf, String)> {
 
 /// The file a run reads its native types from: the one named, else the
 /// project directory's if it has one.
-fn types_file(named: Option<&Path>, dir: &Path) -> Option<(PathBuf, String)> {
+pub(crate) fn types_file(named: Option<&Path>, dir: &Path) -> Option<(PathBuf, String)> {
     if let Some(named) = named {
         return Some((named.to_owned(), named.display().to_string()));
     }
@@ -346,7 +346,9 @@ fn types_file(named: Option<&Path>, dir: &Path) -> Option<(PathBuf, String)> {
 }
 
 /// What `file` says, and the name to call it by when saying anything of it.
-fn read_types(file: Option<(PathBuf, String)>) -> anyhow::Result<Option<(TypeDump, String)>> {
+pub(crate) fn read_types(
+    file: Option<(PathBuf, String)>,
+) -> anyhow::Result<Option<(TypeDump, String)>> {
     let Some((path, label)) = file else {
         return Ok(None);
     };
@@ -380,7 +382,7 @@ fn stand_in(engine: &Engine, types: Option<&(TypeDump, String)>) -> Result<(), S
 
 /// What the compiler is told of the dump's types: they are checked as a
 /// build that has the application's Rust checks them.
-fn oracle_for_types((dump, label): &(TypeDump, String)) -> anyhow::Result<EngineOracle> {
+pub(crate) fn oracle_for_types((dump, label): &(TypeDump, String)) -> anyhow::Result<EngineOracle> {
     let engine = Engine::new();
     ljos_quick::register(&engine);
     ljos_controls::register(&engine);
