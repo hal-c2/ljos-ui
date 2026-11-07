@@ -21,6 +21,23 @@ pub const API: &str = "Ljos.Ui";
 /// The modules of Ljós's API: the items, and what is not an item.
 pub const MODULES: &[&str] = &[API, "Ljos.Core"];
 
+/// The modules of Ljós's API `source` imports, by their own names, in the
+/// order of [`MODULES`].
+pub fn modules_of(source: &str) -> Vec<&'static str> {
+    let allocator = qml_syntax::Allocator::default();
+    let parsed = qml_syntax::parse(&allocator, source);
+    MODULES
+        .iter()
+        .copied()
+        .filter(|uri| {
+            parsed.document.imports.iter().any(|import| {
+                import.alias.is_none()
+                    && matches!(&import.source, qml_syntax::ast::QmlImportSource::Module(name) if name.to_string() == *uri)
+            })
+        })
+        .collect()
+}
+
 /// Names of QML (and of the C++ classes Qt's table calls them by) that are a
 /// TypeScript primitive.
 const PRIMITIVES: &[(&str, &str)] = &[
@@ -264,6 +281,14 @@ impl Api {
             return Some(ts.to_string());
         }
         if let Some(ty) = self.named(name)
+            && let Some(found) = self.object_type(ty)
+        {
+            return Some(found);
+        }
+        // A type the file cannot name is still declared where what it does
+        // import reaches it: the `QtObject` a `PointerArea` gives a handler in
+        // a file of `Ljos.Ui` alone.
+        if let Some(ty) = self.types.iter().find(|ty| self.names[ty.class] == name)
             && let Some(found) = self.object_type(ty)
         {
             return Some(found);

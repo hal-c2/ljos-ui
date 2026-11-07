@@ -105,13 +105,7 @@ pub fn check_project(
     let Some(checker) = checker.or_else(Checker::find) else {
         return Ok(Outcome::Skipped);
     };
-    let api = Api::new().ok_or(TsError::NoApi(dts::API))?;
     let scratch = Scratch::new()?;
-    let declarations = scratch.path().join(DECLARATIONS);
-    std::fs::write(&declarations, api.declarations()).map_err(|source| TsError::Io {
-        path: declarations.clone(),
-        source,
-    })?;
     let mut scripts: Vec<String> = Vec::new();
     for (key, text) in project.scripts() {
         if !crate::script::module::is_module(key) || !within(key) {
@@ -127,15 +121,42 @@ pub fn check_project(
         std::fs::write(&path, text).map_err(|source| TsError::Io { path, source })?;
         scripts.push(key.to_owned());
     }
+    // A file sees the modules of Ljós's API it imports and no others, so
+    // the files that import the same ones are given to TypeScript together,
+    // with declarations of those alone.
+    let mut sets: Vec<Set> = Vec::new();
     let mut modules = Vec::new();
     let mut keys: Vec<&str> = project.files().collect();
     keys.sort_unstable();
     for key in keys {
+        let imported = project.source(key).map(dts::modules_of).unwrap_or_default();
+        if !imported.contains(&dts::API) {
+            continue;
+        }
+        let set = match sets.iter().position(|set| set.modules == imported) {
+            Some(set) => set,
+            None => {
+                let api = Api::of_all(&imported).ok_or(TsError::NoApi(dts::API))?;
+                let declarations = match sets.len() {
+                    0 => DECLARATIONS.to_owned(),
+                    n => format!("ljos{n}.d.ts"),
+                };
+                let path = scratch.path().join(&declarations);
+                std::fs::write(&path, api.declarations())
+                    .map_err(|source| TsError::Io { path, source })?;
+                sets.push(Set {
+                    modules: imported,
+                    api,
+                    declarations,
+                });
+                sets.len() - 1
+            }
+        };
         let Some(extracted) = extract(
             project,
-            &api,
+            &sets[set].api,
             key,
-            &format!("./{DECLARATIONS}"),
+            &format!("./{}", sets[set].declarations),
             &format!("./{MODULES}"),
         ) else {
             continue;
@@ -143,7 +164,7 @@ pub fn check_project(
         let name = format!("f{}.ts", modules.len());
         let path = scratch.path().join(&name);
         std::fs::write(&path, &extracted.text).map_err(|source| TsError::Io { path, source })?;
-        modules.push((name, key.to_owned(), extracted));
+        modules.push((name, key.to_owned(), extracted, set));
     }
     if modules.is_empty() {
         return Ok(Outcome::Checked {
@@ -151,44 +172,53 @@ pub fn check_project(
             findings: Vec::new(),
         });
     }
-    let names: Vec<String> = modules.iter().map(|(name, _, _)| name.clone()).collect();
-    let said = checker.check(scratch.path(), &names)?;
     let mut findings: Vec<Finding> = Vec::new();
     let mut elsewhere: Vec<String> = Vec::new();
-    for said in said {
-        // A module is its own text, so what TypeScript says of it is at its
-        // own lines.
-        if let Some(key) = said
-            .file
-            .strip_prefix(MODULES)
-            .and_then(|rest| rest.strip_prefix('/'))
-            .filter(|key| scripts.iter().any(|s| s == key))
-        {
+    for set in 0..sets.len() {
+        let names: Vec<String> = modules
+            .iter()
+            .filter(|(_, _, _, s)| *s == set)
+            .map(|(name, _, _, _)| name.clone())
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        for said in checker.check(scratch.path(), &names)? {
+            // A module is its own text, so what TypeScript says of it is at
+            // its own lines.
+            if let Some(key) = said
+                .file
+                .strip_prefix(MODULES)
+                .and_then(|rest| rest.strip_prefix('/'))
+                .filter(|key| scripts.iter().any(|s| s == key))
+            {
+                findings.push(Finding {
+                    key: key.to_owned(),
+                    line: said.line,
+                    column: said.column,
+                    code: said.code,
+                    message: said.message,
+                });
+                continue;
+            }
+            let Some((_, key, extracted, _)) =
+                modules.iter().find(|(name, _, _, _)| *name == said.file)
+            else {
+                elsewhere.push(format!(
+                    "{}:{}:{}: {} [{}]",
+                    said.file, said.line, said.column, said.message, said.code
+                ));
+                continue;
+            };
+            let (line, column) = extracted.position(said.line, said.column).unwrap_or((1, 1));
             findings.push(Finding {
-                key: key.to_owned(),
-                line: said.line,
-                column: said.column,
+                key: key.clone(),
+                line,
+                column,
                 code: said.code,
                 message: said.message,
             });
-            continue;
         }
-        let Some((_, key, extracted)) = modules.iter().find(|(name, _, _)| *name == said.file)
-        else {
-            elsewhere.push(format!(
-                "{}:{}:{}: {} [{}]",
-                said.file, said.line, said.column, said.message, said.code
-            ));
-            continue;
-        };
-        let (line, column) = extracted.position(said.line, said.column).unwrap_or((1, 1));
-        findings.push(Finding {
-            key: key.clone(),
-            line,
-            column,
-            code: said.code,
-            message: said.message,
-        });
     }
     if !elsewhere.is_empty() {
         return Err(TsError::Declarations {
@@ -198,9 +228,17 @@ pub fn check_project(
     findings.sort_by(|a, b| (&a.key, a.line, a.column).cmp(&(&b.key, b.line, b.column)));
     findings.dedup();
     Ok(Outcome::Checked {
-        files: modules.into_iter().map(|(_, key, _)| key).collect(),
+        files: modules.into_iter().map(|(_, key, _, _)| key).collect(),
         findings,
     })
+}
+
+/// The files that import the same modules of Ljós's API, and the
+/// declarations they are given.
+struct Set {
+    modules: Vec<&'static str>,
+    api: Api,
+    declarations: String,
 }
 
 /// Whether a script's key stays inside the project, so that it can be
