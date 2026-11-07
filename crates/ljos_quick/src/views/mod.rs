@@ -202,6 +202,10 @@ pub struct ItemView {
     pub model: Value,
     #[qml(notify, object = "Component")]
     pub delegate: Option<ObjectId>,
+    /// The field of a row of a list that names it: a new list keeps the
+    /// delegates of the rows it names again (docs/DIALECT.md §4.15).
+    #[qml(notify)]
+    pub key: String,
     #[qml(notify, readonly)]
     pub count: i32,
     #[qml(notify)]
@@ -279,6 +283,7 @@ impl Default for ItemView {
             flickable: Flickable::default(),
             model: Value::Undefined,
             delegate: None,
+            key: String::new(),
             count: 0,
             current_index: -1,
             current_item: None,
@@ -610,19 +615,27 @@ fn start(cx: &Cx, grid: bool) -> Result<(), EngineError> {
     *st.delegates.borrow_mut() = Some(delegates.clone());
 
     // A new model or delegate: every row is made again. A model equal
-    // to the one shown is not new (qml6).
+    // to the one shown is not new (qml6), and a keyed view brings the rows
+    // it shows to a new list in place.
     let source = st.clone();
     let seen = ljos_engine::ModelSeen::default();
+    let keyed = ljos_engine::KeyedSource::default();
     e.effect_in(me, move |e| {
         let model = e.get(me, ItemView::MODEL).unwrap_or_default();
         let delegate = e.get(me, ItemView::DELEGATE).ok().flatten();
+        let key = e.get(me, ItemView::KEY).unwrap_or_default();
         let generation = e.track_model(&model);
         e.untrack(|| {
-            if !seen.fresh(e, &model, models::rest(delegate, generation, [])) {
+            let rest = models::rest(delegate, generation, [Value::from(key.as_str())]);
+            if !seen.fresh(e, &model, rest) {
                 return;
             }
-            let model =
-                models::model_of(e, &model).unwrap_or_else(|| e.model_from_value(&model, Some(me)));
+            let model = match keyed.model(e, &key, &model, delegate, Some(me), false) {
+                ljos_engine::Keyed::Updated => return,
+                ljos_engine::Keyed::New(rows) => rows,
+                ljos_engine::Keyed::No => models::model_of(e, &model)
+                    .unwrap_or_else(|| e.model_from_value(&model, Some(me))),
+            };
             changes::forget(e, me, &source);
             delegates.set_source(e, Some(model), delegate);
             pass::bump(e, &source);

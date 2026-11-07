@@ -26,7 +26,7 @@ mod rows;
 use std::ops::Range;
 
 use oxc_ast::ast::{
-    BindingIdentifier, ComputedMemberExpression, Expression, IdentifierReference,
+    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -67,7 +67,12 @@ pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
 
 /// Per Qt type (and what derives from it), the members Ljós calls by another
 /// name. A property's change signal and its handler follow its name.
-pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
+/// Every one is a property: a member that is called is a method, and not
+/// one of these.
+pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[
+    ("Rectangle", &[("color", "fill")]),
+    ("ListView", &[("add", "enter"), ("remove", "exit")]),
+];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -838,6 +843,7 @@ impl<'s> Pass<'s> {
             kept: None,
             declared: Vec::new(),
             row: RowEdits::default(),
+            called: Vec::new(),
         };
         walk(&mut script);
         script.row_done();
@@ -1078,6 +1084,9 @@ struct Script<'p, 's> {
     /// The locals it declares that a delegate's row has names of.
     declared: Vec<String>,
     row: RowEdits,
+    /// Where the names that are called start: a called name is a method,
+    /// and every member Ljós renames is a property (`model.remove(0)`).
+    called: Vec<u32>,
 }
 
 impl Script<'_, '_> {
@@ -1284,6 +1293,15 @@ impl Script<'_, '_> {
 }
 
 impl<'a> Visit<'a> for Script<'_, '_> {
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        match it.callee.without_parentheses() {
+            Expression::StaticMemberExpression(m) => self.called.push(m.property.span.start),
+            Expression::Identifier(id) => self.called.push(id.span.start),
+            _ => {}
+        }
+        walk::walk_call_expression(self, it);
+    }
+
     fn visit_static_member_expression(&mut self, it: &StaticMemberExpression<'a>) {
         if let Expression::Identifier(object) = &it.object
             && object.name == "model"
@@ -1312,7 +1330,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.property.span.start,
             );
         }
-        if is_renamed_member(name) {
+        if is_renamed_member(name) && !self.called.contains(&it.property.span.start) {
             let on = self.ty(&it.object);
             match self.pass.member(name, on) {
                 Rename::To(new) => {
@@ -1378,7 +1396,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
             return;
         }
-        if !is_renamed_member(name) || self.pass.id(name).is_some() {
+        if !is_renamed_member(name)
+            || self.pass.id(name).is_some()
+            || self.called.contains(&it.span.start)
+        {
             return;
         }
         // An unqualified member: the scope object's, else the root's.
@@ -1404,8 +1425,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             self.declared.push(it.name.to_string());
         }
         // A local of a renamed name hides the member; renaming its uses
-        // would rename the local's.
-        if is_renamed_member(&it.name) {
+        // would rename the local's. Only where the member is what the name
+        // could read: on an object that is no ListView, `remove` is free.
+        let hides = |on: Ty| !matches!(self.pass.member(&it.name, on), Rename::Keep);
+        if is_renamed_member(&it.name) && (hides(self.scope) || hides(self.root)) {
             self.keep(
                 format!(
                     "a local is called `{}`, as a member Ljós renames is",

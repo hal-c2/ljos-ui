@@ -78,6 +78,8 @@ mod lookups;
 mod made_on_read;
 pub use made_on_read::{BindOnRead, MakeOnRead};
 mod journal;
+mod keyed;
+pub use keyed::{Keyed, KeyedRows, KeyedSource};
 mod made_when_reached;
 mod member_aliases;
 mod memory;

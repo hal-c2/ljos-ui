@@ -688,6 +688,28 @@ DECISION: a duplicate `key` is a check error in a constant list. At run
 time rows that share a key are matched in order (the second row with key
 `k` keeps the delegate the second one had), and the view logs it once.
 
+DECISION: keys are compared with their type: the key `1` and the key
+`"1"` are two keys. A row that has no field of the key's name has the key
+`undefined`, which rows without it share.
+
+DECISION: `key`, `enter` and `exit` are on the native `Repeater` and
+`ItemView`, so a Qt file that sets them runs them too, as an extension;
+Qt has none of them. `Ljos.Ui`'s `ListView` is a face of Qt's that calls
+`add` and `remove` `enter` and `exit`; the attached `ListView.onAdd` and
+`ListView.onRemove` keep their names.
+
+DECISION: an `exit` runs only on a row the list removed. A new model, a
+new delegate, or the view's end destroys every delegate at once.
+
+DECISION: a `Repeater` plays `enter` and `exit` only while it is keyed:
+given a `key` and a list. The insert or removal of a model it does not
+key has no row that the dialect promises is the same one, so its items
+come and go at once.
+
+DECISION: the pass renames `add` and `remove` of a `ListView` as
+properties only: `lm.remove(0)` is a call and stays, since every member
+the pass renames is a property.
+
 ### 4.9 States
 
 **What apps say.** "In this condition it looks like this", and sometimes
@@ -961,7 +983,23 @@ construction.
 - **Gestures** are recognisers on one pointer stream, attached to an item's
   hit test. They have no items and no geometry.
 - **Keyed views** diff a list by key. `enter`/`exit` live on the view, which
-  keeps an exiting delegate until its transition ends.
+  keeps an exiting delegate until its transition ends. Built
+  (`features/views/keyed-views.feature`): a `Repeater` or `ListView` given
+  a `key` holds its rows as a model of its own
+  (`crates/ljos_engine/src/keyed.rs`), and a new list is told to it as the
+  rows removed, moved, inserted and changed, so a row that stays keeps its
+  delegate and reads its new fields. The rows of a longest run already in
+  the new order stay where they are and only the others are moved, so a
+  row taken from the front to the end is one move, not one per row it
+  passes. A keyed `Repeater`'s `enter` runs on
+  the item of a row inserted once it has made its first items, and its
+  `exit` on the item of a row removed, which stays, out of `count`, until
+  the transition ends. Each item has its own run of the transition, so
+  rows that come or go in one change each play it to the end; ended on
+  the way, an `exit` still lets its item go. A row removed on its way
+  in ends its `enter` where it is and plays its `exit`. `Ljos.Ui`'s `ListView` calls Qt's `add` and
+  `remove` `enter` and `exit`. The scenarios of `enter` and `exit` in a
+  Ljós file wait for `Transition` in `Ljos.Ui`.
 - **Clock** is one timer per resolution, scheduled by its readers. A
   reader whose only effect is drawing does not count while it is hidden;
   a handler, a `when:` or a non-visual object always counts, so a hidden
@@ -1115,6 +1153,12 @@ has not taken yet. That includes a type, a member, a dynamic name (a string
 built at run time and used as a member), or a script that reaches
 something it cannot follow. A kept file is not an error: it runs as
 written, on the same runtime.
+
+DECISION: a local or a method with the name of a member Ljós renames
+(`color`, `add`, `remove`) keeps the file only where that member is what
+the name could read: in an object, or a file whose root, of a type that
+renames it or may be one. `function remove(i)` on an `Item` is the
+`Item`'s own and is lowered as it is.
 
 `locals` tells the pass what the root type of a file beside it is, so
 `Button { color: "blue" }` on a `Button.qml` whose root is a `Rectangle` is
@@ -1415,7 +1459,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `Repeater`, `ListView` and `ListView.*` in `Ljos.Ui`; `ListModel`, `ListElement` and `Instantiator` in `Ljos.Models`; `model.<role>` and `QtQml.Models` lowered (§4.8). Remaining: `Image`, `Behavior` and animations, `Flickable`, `Loader`, `Window`, `Screen`, the budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `Repeater`, `ListView` and `ListView.*` in `Ljos.Ui`; `ListModel`, `ListElement` and `Instantiator` in `Ljos.Models`; `model.<role>` and `QtQml.Models` lowered (§4.8); a `Repeater`'s and a `ListView`'s `key`, a `Repeater`'s `enter` and `exit`, and `ListView`'s `add` and `remove` called `enter` and `exit` (§4.15). Remaining: `Image`, `Behavior` and animations, `Flickable`, `Loader`, `Window`, `Screen`, the budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |

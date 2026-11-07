@@ -83,6 +83,19 @@ impl Rig {
             .to_string()
     }
 
+    fn flag_of(&self, o: ObjectId, prop: &str) -> bool {
+        get(&self.e, o, prop).to_boolean()
+    }
+
+    /// The item a Repeater named "repeater" made for row `i`.
+    fn item_at(&self, i: i32) -> ObjectId {
+        self.e
+            .invoke_by_name(self.obj("repeater"), "itemAt", &[Value::Int(i)])
+            .ok()
+            .and_then(|v| v.as_object())
+            .unwrap_or_else(|| panic!("no item {i}"))
+    }
+
     fn frame(&mut self) {
         let out = self.s.frame(&self.e, self.clock.now());
         self.wake = out.next_wake;
@@ -800,4 +813,177 @@ fn restarts_and_ends_among_many_runs_leave_each_run_once() {
     rig.run_until(ms(200));
     assert_eq!(rig.num("box", "x"), 50.0);
     assert_eq!(running_animation_count(&rig.e), 40);
+}
+
+const KEYED: &str = r#"import QtQuick
+Item {
+  id: root; objectName: "root"
+  property var rows: [{ id: "a" }]
+  Repeater {
+    objectName: "repeater"
+    model: root.rows; key: "id"
+    enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 200 } }
+    exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 200 } }
+    Item { objectName: modelData.id; width: 20; height: 20 }
+  }
+}
+"#;
+
+fn rows(ids: &[&str]) -> Value {
+    Value::list(
+        ids.iter()
+            .map(|id| Value::map([("id", Value::from(*id))]))
+            .collect(),
+    )
+}
+
+#[test]
+fn rows_that_leave_at_once_each_exit_and_go() {
+    let mut rig = Rig::new(KEYED);
+    rig.set("root", "rows", rows(&["a", "b", "c"]));
+    rig.run_until(ms(400));
+    rig.set("root", "rows", rows(&["c"]));
+    rig.run_until(ms(800));
+    assert_eq!(rig.num("repeater", "count"), 1.0);
+    let children = list(&rig.e, rig.root, "children");
+    assert_eq!(children.len(), 2, "the Repeater and c: {children:?}");
+    assert!(rig.idle());
+}
+
+#[test]
+fn rows_that_come_at_once_each_enter_to_the_end() {
+    let mut rig = Rig::new(KEYED);
+    rig.set("root", "rows", rows(&["a", "b", "c"]));
+    rig.run_until(ms(400));
+    for i in 1..3 {
+        let item = rig.item_at(i);
+        assert_eq!(num(&rig.e, item, "opacity"), 1.0, "item {i}");
+    }
+    assert!(rig.idle());
+}
+
+#[test]
+fn exits_ended_on_the_way_still_let_their_items_go() {
+    let mut rig = Rig::new(KEYED);
+    rig.set("root", "rows", rows(&["a", "b", "c"]));
+    rig.run_until(ms(400));
+    rig.set("root", "rows", rows(&["c"]));
+    rig.run_until(ms(450));
+    assert_eq!(list(&rig.e, rig.root, "children").len(), 4);
+    let exit = get(&rig.e, rig.obj("repeater"), "exit")
+        .as_object()
+        .expect("an exit");
+    assert!(rig.flag_of(exit, "running"));
+    ljos_quick::stop_transition(&rig.e, exit);
+    rig.frames_now();
+    assert_eq!(list(&rig.e, rig.root, "children").len(), 2);
+    assert!(!rig.flag_of(exit, "running"));
+}
+
+fn passages(rig: &Rig) -> (ObjectId, ObjectId) {
+    let of = |name| {
+        get(&rig.e, rig.obj("repeater"), name)
+            .as_object()
+            .expect("a transition")
+    };
+    (of("enter"), of("exit"))
+}
+
+#[test]
+fn a_row_that_leaves_on_its_way_in_ends_its_enter_and_goes() {
+    let mut rig = Rig::new(KEYED);
+    let (enter, exit) = passages(&rig);
+    rig.set("root", "rows", rows(&["a", "b"]));
+    rig.run_until(ms(50));
+    assert!(rig.flag_of(enter, "running"));
+    rig.set("root", "rows", rows(&["a"]));
+    rig.run_until(ms(2000));
+    assert!(!rig.flag_of(enter, "running"), "b's enter is over");
+    assert!(!rig.flag_of(exit, "running"));
+    assert_eq!(rig.num("repeater", "count"), 1.0);
+    let children = list(&rig.e, rig.root, "children");
+    assert_eq!(children.len(), 2, "the Repeater and a: {children:?}");
+    assert!(rig.idle());
+}
+
+#[test]
+fn stopping_the_enter_of_a_row_on_its_way_out_lets_it_go() {
+    let mut rig = Rig::new(KEYED);
+    let (enter, exit) = passages(&rig);
+    rig.set("root", "rows", rows(&["a", "b"]));
+    rig.run_until(ms(50));
+    rig.set("root", "rows", rows(&["a"]));
+    rig.run_until(ms(100));
+    assert!(rig.flag_of(exit, "running"));
+    ljos_quick::stop_transition(&rig.e, enter);
+    rig.run_until(ms(2000));
+    let children = list(&rig.e, rig.root, "children");
+    assert_eq!(children.len(), 2, "b's exit ran to its end: {children:?}");
+    assert!(!rig.flag_of(exit, "running"));
+    assert!(rig.idle());
+}
+
+#[test]
+fn with_reduced_motion_rows_that_leave_at_once_each_fade_and_go() {
+    let mut rig = Rig::new(
+        r#"import QtQuick
+Item {
+  id: root; objectName: "root"
+  property var rows: [{ id: "a" }, { id: "b" }, { id: "c" }]
+  Repeater {
+    objectName: "repeater"
+    model: root.rows; key: "id"
+    exit: Transition { NumberAnimation { property: "x"; to: 100; duration: 200 } }
+    Item { objectName: modelData.id; width: 20; height: 20 }
+  }
+}
+"#,
+    );
+    ljos_quick::update_system_prefs(&rig.e, |p| p.reduced_motion = true);
+    let items: Vec<ObjectId> = (0..2).map(|i| rig.item_at(i)).collect();
+    rig.set("root", "rows", rows(&["c"]));
+    rig.run_until(ms(rig.clock.now().as_micros() / 1000 + 50));
+    for &item in &items {
+        let o = num(&rig.e, item, "opacity");
+        assert!(o < 1.0 && o > 0.0, "{o} is not on the way out");
+        assert_eq!(num(&rig.e, item, "x"), 0.0, "it fades where it is");
+    }
+    rig.run_until(ms(rig.clock.now().as_micros() / 1000 + 1000));
+    assert_eq!(list(&rig.e, rig.root, "children").len(), 2);
+    assert!(rig.idle());
+}
+
+#[test]
+fn a_repeater_without_a_key_lets_rows_in_and_out_without_passages() {
+    let mut rig = Rig::new(
+        r#"import QtQuick
+Item {
+  id: root; objectName: "root"
+  ListModel { id: lm; objectName: "lm"; ListElement { name: "a" } ListElement { name: "b" } }
+  Repeater {
+    objectName: "repeater"
+    model: lm
+    enter: Transition { objectName: "enter"; NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 200 } }
+    exit: Transition { objectName: "exit"; NumberAnimation { property: "opacity"; to: 0; duration: 200 } }
+    Item { width: 20; height: 20 }
+  }
+}
+"#,
+    );
+    rig.e
+        .invoke_by_name(
+            rig.obj("lm"),
+            "append",
+            &[Value::map([("name", Value::from("c"))])],
+        )
+        .expect("append");
+    rig.frames_now();
+    assert!(!rig.flag("enter", "running"));
+    assert_eq!(num(&rig.e, rig.item_at(2), "opacity"), 1.0);
+    rig.e
+        .invoke_by_name(rig.obj("lm"), "remove", &[Value::Int(0)])
+        .expect("remove");
+    rig.frames_now();
+    assert!(!rig.flag("exit", "running"));
+    assert_eq!(list(&rig.e, rig.root, "children").len(), 3);
 }
