@@ -775,7 +775,8 @@ impl Value {
                     // stays and wins.
                     "pointSize" if f.pixel_size > 0 => {}
                     "pointSize" => f.point_size = n,
-                    "pixelSize" => {
+                    // `size` is Ljós's name for the pixel size.
+                    "pixelSize" | "size" => {
                         f.pixel_size = crate::number::to_int32(n);
                         if f.pixel_size > 0 {
                             f.point_size = -1.0;
@@ -1394,5 +1395,18 @@ mod tests {
             .with_member(&TypeTag::Font, "pointSize", &Value::Real(20.0))
             .unwrap();
         assert_eq!(size(&pt), (20.0, -1, 20.0, 26));
+    }
+
+    #[test]
+    fn a_font_s_size_is_its_pixel_size() {
+        let font = Value::Font(Arc::new(Font::default()));
+        let sized = font
+            .with_member(&TypeTag::Font, "size", &Value::Int(24))
+            .unwrap();
+        assert_eq!(sized.member("pixelSize"), Some(Value::Real(24.0)));
+        let pixels = font
+            .with_member(&TypeTag::Font, "pixelSize", &Value::Int(24))
+            .unwrap();
+        assert_eq!(pixels.member("size"), Some(Value::Real(24.0)));
     }
 }
