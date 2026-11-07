@@ -1010,7 +1010,8 @@ construction.
   `exit` on the item of a row removed, which stays, out of `count`, until
   the transition ends. Each item has its own run of the transition, so
   rows that come or go in one change each play it to the end; ended on
-  the way, an `exit` still lets its item go. `Ljos.Ui`'s `ListView` calls Qt's `add` and
+  the way, an `exit` still lets its item go. A row removed on its way
+  in ends its `enter` where it is and plays its `exit`. `Ljos.Ui`'s `ListView` calls Qt's `add` and
   `remove` `enter` and `exit`. The scenarios of `enter` and `exit` in a
   Ljós file wait for `Transition` in `Ljos.Ui`.
 - **Clock** is one timer per resolution, scheduled by its readers. A
