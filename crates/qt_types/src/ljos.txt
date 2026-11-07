@@ -109,6 +109,15 @@ module Ljos.Blocks
 		signal delegateChanged
 		signal countChanged
 
+module Ljos.Core
+	import QtQml.Models
+	Binding QtQml.Binding
+	Component QtQml.Component
+	Connections QtQml.Connections
+	Locale QtQml.Locale
+	QtObject QtQml.QtObject
+	Timer QtQml.Timer
+
 module Ljos.Design
 	Colors Ljos/Design/Colors.qml
 	EnterTransition Ljos/Design/EnterTransition.qml
@@ -528,7 +537,6 @@ module Ljos.Models
 		method clear
 
 module Ljos.Ui
-	import QtQml
 	Box Ljos.Ui.Box
 	Column Ljos.Ui.Column
 	Font QtQuick.Font

@@ -1,7 +1,7 @@
 // expect: reject-type 11 TS2322
 // Shape: a Connections handler that stores its number argument in a string.
 // After corpus/qtdoc/examples/demos/lightningviewer/LightningViewerModule/MapLayersDrawer.qml:92.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     id: drawer
     property string said: ""

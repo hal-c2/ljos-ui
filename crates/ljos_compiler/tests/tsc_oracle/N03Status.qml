@@ -1,6 +1,6 @@
 // expect: accept
 // Note 11 §3.3: a label for each status, one case per member.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     property string shown: ""
     function statusLabel(status: "todo" | "doing" | "blocked" | "done"): string {

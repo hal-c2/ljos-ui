@@ -1,6 +1,6 @@
 // expect: accept
 // Note 11 §3.9: a list model kept in step with a list, a Map for the index.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     property list<string> shown: []
     ListModel { id: cards }

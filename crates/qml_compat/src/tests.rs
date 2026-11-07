@@ -44,10 +44,50 @@ fn the_renames_are_what_ljos_ui_has() {
 }
 
 #[test]
-fn a_file_without_qtquick_is_unchanged() {
+fn a_file_without_qt_imports_is_unchanged() {
+    assert_eq!(lower("Item { }\n", &no_locals), Outcome::Unchanged);
+}
+
+#[test]
+fn a_file_of_qtqml_alone_imports_ljos_core() {
     assert_eq!(
-        lower("import QtQml\nQtObject { }\n", &no_locals),
-        Outcome::Unchanged
+        lowered("import QtQml\nQtObject { }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Core\nQtObject { }\n"
+    );
+}
+
+#[test]
+fn a_type_of_qtqml_brings_ljos_core_onto_the_import_line() {
+    assert_eq!(
+        lowered("import QtQuick\nItem { Timer { } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem { Timer { } }\n"
+    );
+    // An attached object of one is naming it too.
+    assert_eq!(
+        lowered("import QtQuick\nItem { Component.onCompleted: {} }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { Component.onCompleted: {} }\n"
+    );
+    // `Qt` is a global, of every file.
+    assert_eq!(
+        lowered("import QtQuick\nItem { x: Qt.platform.os.length }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { x: Qt.platform.os.length }\n"
+    );
+}
+
+#[test]
+fn an_import_of_qtqml_beside_qtquick_becomes_ljos_core() {
+    assert_eq!(
+        lowered("import QtQuick\nimport QtQml\nItem { }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Core\nItem { }\n"
+    );
+}
+
+#[test]
+fn a_model_of_qtqml_is_had_from_ljos_core_until_ljos_models_has_it() {
+    assert_eq!(
+        lowered("import QtQuick\nItem { ListModel { } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem { ListModel { } }\n"
     );
 }
 
