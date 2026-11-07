@@ -905,20 +905,36 @@ impl<'s> Pass<'s> {
 
     /// Whether `name` is QtQuick.Layouts' type here, not the type of an
     /// import after it that has the name too (see [`Self::named_type`]).
-    fn of_layouts(&self, name: &str, at: usize) -> bool {
-        self.layouts.and_then(|m| m.type_named(name)).is_some()
-            && match self.named_type(name, at, 0) {
-                Ok(Ty::Exact(t)) => t.module == "QtQuick.Layouts",
-                Ok(_) => false,
-                // Qt's, of a type Ljos.Layout has not yet.
-                Err(_) => true,
-            }
+    /// Such an import's type, built on one the pass cannot lower yet,
+    /// keeps the file.
+    fn of_layouts(&self, name: &str, at: usize) -> Result<bool, Kept> {
+        if self.layouts.and_then(|m| m.type_named(name)).is_none() {
+            return Ok(false);
+        }
+        match self.named_type(name, at, 0) {
+            Ok(Ty::Exact(t)) => Ok(t.module == "QtQuick.Layouts"),
+            Ok(_) => Ok(false),
+            Err(kept) if self.after_qt(&self.imported_root(name), true) => Err(kept),
+            // Qt's, of a type Ljos.Layout has not yet.
+            Err(_) => Ok(true),
+        }
+    }
+
+    /// Whether `imported`, where an import of the project brings the name,
+    /// comes after the last import of Qt's QtQuick.Layouts (`layouts`) or
+    /// of QtQuick: the loader then takes the import's type.
+    fn after_qt(&self, imported: &Option<(usize, Root)>, layouts: bool) -> bool {
+        let qt = self
+            .imports
+            .iter()
+            .rposition(|i| matches!(i, Import::Qt { layouts: l } if *l == layouts));
+        matches!((imported, qt), (Some((at, _)), Some(qt)) if *at > qt)
     }
 
     /// Keeps a file that names a type of QtQuick.Layouts whose attached
     /// object Ljos.Layout has not: only `Layout`'s is there.
     fn attached_layout(&self, name: &str, at: usize) -> Step {
-        if name != "Layout" && self.of_layouts(name, at) {
+        if name != "Layout" && self.of_layouts(name, at)? {
             return Err(self.no(
                 format!("`{name}`'s attached properties are not in {LAYOUT} yet"),
                 at,
@@ -3122,13 +3138,18 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 self.keep(kept.reason, it.span.start);
-            } else if name == "GridLayout"
-                && self.pass.of_layouts(name, it.span.start as usize)
-                && let Some(new) = renamed_layout(name)
-            {
-                // Its enumerations: `GridLayout.TopToBottom` is `Grid`'s.
-                self.pass
-                    .change(it.span.start as usize..it.span.end as usize, new);
+            } else if name == "GridLayout" {
+                match self.pass.of_layouts(name, it.span.start as usize) {
+                    // Its enumerations: `GridLayout.TopToBottom` is `Grid`'s.
+                    Ok(true) => {
+                        if let Some(new) = renamed_layout(name) {
+                            self.pass
+                                .change(it.span.start as usize..it.span.end as usize, new);
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(kept) => self.keep(kept.reason, it.span.start),
+                }
             } else if let Err(kept) = self.pass.attached_layout(name, it.span.start as usize) {
                 self.keep(kept.reason, it.span.start);
             } else if self.pass.ljos_module_with(name).is_some()

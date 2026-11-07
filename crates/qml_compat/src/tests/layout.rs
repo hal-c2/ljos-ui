@@ -447,8 +447,9 @@ fn where_a_grid_positioner_and_ljos_grid_disagree_the_file_is_kept() {
     ));
 }
 
-/// A directory `parts` with a `GridLayout` of its own, an `Item`.
-struct OwnGrid;
+/// A directory `parts` with a `GridLayout` of its own, built on the type
+/// given.
+struct OwnGrid(&'static str);
 
 impl Locals for OwnGrid {
     fn root(&self, _: &str) -> Option<Root> {
@@ -456,7 +457,7 @@ impl Locals for OwnGrid {
     }
 
     fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
-        matches!((from, name), (Imported::Dir("parts"), "GridLayout")).then(|| root_of("Item", &[]))
+        matches!((from, name), (Imported::Dir("parts"), "GridLayout")).then(|| root_of(self.0, &[]))
     }
 }
 
@@ -466,7 +467,7 @@ impl Locals for OwnGrid {
 fn a_grid_layout_of_an_import_after_qt_is_the_imports_in_a_script_too() {
     let source = "import QtQuick\nimport QtQuick.Layouts\nimport \"parts\"\n\
                   Item { GridLayout { } property var f: GridLayout.TopToBottom }\n";
-    match lower(source, &OwnGrid) {
+    match lower(source, &OwnGrid("Item")) {
         Outcome::Lowered(lowered) => {
             assert!(lowered.text.contains("GridLayout { }"), "{}", lowered.text);
             assert!(
@@ -476,5 +477,20 @@ fn a_grid_layout_of_an_import_after_qt_is_the_imports_in_a_script_too() {
             );
         }
         other => panic!("not lowered: {other:?}"),
+    }
+}
+
+/// A `GridLayout` of an import after QtQuick.Layouts built on a type
+/// Ljos.Ui has not yet keeps the file, though only a script names it:
+/// `GridLayout.TopToBottom` is not `Grid`'s there either.
+#[test]
+fn a_grid_layout_of_an_import_built_on_what_is_not_lowered_keeps_the_file() {
+    let source = "import QtQuick\nimport QtQuick.Layouts\nimport \"parts\"\n\
+                  Item { property var f: GridLayout.TopToBottom }\n";
+    match lower(source, &OwnGrid("PathView")) {
+        Outcome::Kept(kept) => {
+            assert!(kept.reason.contains("PathView"), "{}", kept.reason);
+        }
+        other => panic!("not kept: {other:?}"),
     }
 }
