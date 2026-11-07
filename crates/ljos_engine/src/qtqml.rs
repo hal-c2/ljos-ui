@@ -704,6 +704,13 @@ pub(crate) fn register(engine: &Engine) {
         crate::sort_filter::RoleSorter,
         crate::sort_filter::StringSorter
     ]));
+    // Ljós's own API (docs/DIALECT.md §4.8) has the models a view is
+    // given as they are, beside `JsonListModel`.
+    engine.register_module(crate::module!("Ljos.Models" 1.0 => [
+        crate::listmodel::ListModel,
+        crate::listmodel::ListElement,
+        crate::instantiator::Instantiator
+    ]));
     engine.register_module(crate::module!("Qt.labs.qmlmodels" 1.0 => [
         crate::chooser::DelegateChooser,
         crate::chooser::DelegateChoice,
