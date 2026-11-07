@@ -649,9 +649,21 @@ where Qt's views reset when a model is replaced.
 **Lowering.**
 
 - A `ListModel` of constant `ListElement`s that nothing edits → a typed
-  list. The row type is written into a `.ts` module beside the file, and
-  each delegate's required properties become `modelData.<field>`. A
-  ListModel that is edited stays a ListModel.
+  list. Built (`features/models/ljos-constant-rows.feature`). One with an
+  id, a child of the file's root, becomes `readonly property
+  list<Rows.<Id>Row> <id>: [...]` (a trailing `Model` dropped from the
+  name), and one written in a view's `model:` becomes `readonly property
+  list<Rows.<ViewId>Row> rows: [...]; model: rows` in that view (`Row`
+  where the view has no id). The row types are written to `<File>.rows.ts`
+  beside the file, imported `as Rows`, each field `readonly`. An element
+  that leaves a role out is given that role's default as Qt reads it
+  (`""`, `0`, `false`), and a delegate's `required` properties stay, since
+  a list's objects give them as a model's roles do. The `id:` line stays,
+  empty, so the lowered file keeps its lines. A ListModel stays one where
+  a script could edit it or read it as a model: its id is read other than
+  as a view's `model:`, a value is not a literal (`qsTr`), a delegate
+  reads a role by its bare name, writes one, or reads `model`, or the file
+  has other local types, inline components or a `Loader`.
 - `model.<role>` → `modelData.<role>` where the file shows a model of
   several roles; `model.index` → `index` and `model.modelData` →
   `modelData` in any delegate the file shows. A delegate is one written
@@ -667,10 +679,11 @@ where Qt's views reset when a model is replaced.
 
 DECISION: typed lists with keys are the default, and ListModel is for
 shared, edited lists. A ListModel's row type is its `row:`, or else the
-union of its `ListElement`s' roles, each optional where an element leaves
-it out (Qt reads a missing role as `undefined`). A delegate that reads an
-optional role has to say what it does without it. A constant table whose
-elements differ lowers to a typed list with those optional fields.
+union of its `ListElement`s' roles. Qt reads a role an element leaves out
+as its type's default (`""`, `0`, `false`; checked on Qt 6.11), not
+`undefined`, so a constant table whose elements differ lowers to a typed
+list whose every field is set, the missing ones to that default, and no
+field is optional.
 
 DECISION: a delegate's `modelData` is its row. Of an array or a count it
 is the element, of a model of one role that role's value, and of a model
@@ -961,7 +974,7 @@ construction.
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
 | attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical |
 | `Flickable` | `Flickable` | none |
-| `ListModel` of constants | `list<T>` | mechanical, with a generated row type |
+| `ListModel` of constants | `list<T>` | mechanical, with a generated row type in `<File>.rows.ts` (§4.8). Built |
 | `ListModel` edited | `ListModel` | none |
 | `XmlListModel`, `FolderListModel` | `XmlModel` (decoder), `FolderModel` | mechanical |
 | `model.<role>` | `modelData.<role>` | mechanical |
@@ -1412,6 +1425,12 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   two steps, and only the first is mechanical.
 - Without `--write` it says what it would do. With `--write` it writes in
   place.
+- A file whose constant ListModels became typed lists gets their row types
+  in `<File>.rows.ts` beside it (§4.8), said as `would write` or `wrote`
+  under the file's line. Where that module exists with other text, the file
+  is not written and migrate says why, so a hand-written module is never
+  overwritten. A compat run (`--compat lower`) holds the module in the
+  project the same way, unless the project has a script of that path.
 - Exit status 0 means every file was read, and 2 means a file could not be
   read or written.
 - The edits are text replacements at known spans, which keeps every line
