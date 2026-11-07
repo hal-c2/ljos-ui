@@ -628,6 +628,8 @@ fn ljos_controls_has_what_qt_controls_have() {
         "Popup",
         "ScrollBar",
         "ScrollView",
+        "TextArea",
+        "TextField",
         "ToolTip",
     ] {
         assert!(ljos.type_named(name).is_some(), "{name}");

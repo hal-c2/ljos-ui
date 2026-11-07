@@ -24,6 +24,8 @@ const DRAWN: &[&str] = &[
     "Popup",
     "ScrollBar",
     "ScrollView",
+    "TextArea",
+    "TextField",
     "ToolTip",
 ];
 
