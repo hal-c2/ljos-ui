@@ -226,6 +226,8 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 
 - `Rectangle` with `fill`, a face of Qt Quick's `Rectangle`;
 - `PointerArea`, a face of `MouseArea`;
+- `Tap` and `Hover`, faces of `TapHandler` and `HoverHandler` (§4.7), and
+  `PointerDevice` as it is;
 - `Item`, `Text`, `State`, `PropertyChanges` and the font enums, exported
   as they are;
 - `Repeater` and `ListView` with its attached `ListView.*`, exported as
@@ -630,8 +632,27 @@ MouseArea.
 - `hoverEnabled` + `containsMouse` → `Hover` + `hover.hovered`.
 - `drag.target` → `Drag`.
 - `*Handler` → the gesture of the same kind, with members renamed.
+  Built: `TapHandler` → `Tap` and `HoverHandler` → `Hover`. What a handler
+  accepts is what the gesture takes, named as a pointer event names what
+  it carries: `acceptedButtons` → `buttons`, `acceptedModifiers` →
+  `modifiers`, `acceptedDevices` → `devices`, `acceptedPointerTypes` →
+  `pointerTypes`, with their change signals and handlers. An enum read
+  through the handler's name follows it (`TapHandler.WithinBounds` →
+  `Tap.WithinBounds`), and `PointerDevice` is in `Ljos.Ui` as it is.
+  Such a member read off an object the pass cannot type (a `QtObject`
+  property) keeps the file, as `color` read off an `Item` does.
 - A MouseArea with children, a geometry of its own, or `mouse.accepted`
   keeps its file as a `PointerArea` (phase 1's face) until M3.
+
+DECISION: `grabPermissions` and `PointerHandler`'s enum keep the file
+until `takeOver` is built: Qt's flags say more than the one boolean, so
+there is no one-for-one lowering. `cursorShape` keeps its name, which
+`PointerArea` shares, and `gesturePolicy` its name and keys.
+
+DECISION: a gesture is a face of its handler, so a member a base of the
+handler declares (`HoverHandler`'s `acceptedDevices` is `PointerHandler`'s)
+is renamed on the face too, and the face is described with that base's
+members as its own: a description names each member once.
 
 DECISION: Qt's attached `Drag` (drag and drop, 7 uses in 3 files) is not
 the `Drag` gesture. It becomes `DragSource` and `DropArea` in `Ljos.Ui`,
@@ -1029,7 +1050,7 @@ construction.
 | `anchors.*` on a layout child | `Layout.alignment`/margins | DECISION: kept (Qt overrides them at run time, so their effect is unclear) |
 | `MouseArea` filling its parent, no children | `Tap`/`Hover`/`Drag` | mechanical (43 of 45); kept when an interactive sibling is declared before it or it sets `z` (§4.7) |
 | other `MouseArea` | `PointerArea` | mechanical (phase 1), gestures M3 |
-| `*Handler` | `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress` | mechanical, by member |
+| `*Handler` | `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress` | mechanical, by member (§4.7); `Tap` and `Hover` built |
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
 | attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical |
 | `Flickable` | `Flickable` | none |
@@ -1731,7 +1752,7 @@ PR: a lane puts its corpus counts in its PR body.
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); the gestures, for the `*Handler`s (§4.7); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
