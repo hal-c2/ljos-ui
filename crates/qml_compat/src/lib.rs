@@ -936,10 +936,27 @@ impl<'s> Pass<'s> {
         } else {
             None
         };
+        // Ljós's API names a change's object in the change: `target: box;
+        // width: 30` is `box.width: 30`.
+        let prefix = if is_changes {
+            self.through_id(object)
+        } else {
+            None
+        };
         for member in &object.members {
             match member {
                 QmlMember::Object(child) if self.is_table(child) => {}
                 QmlMember::Object(child) => {
+                    if prefix.is_some() {
+                        return Err(self.no(
+                            format!(
+                                "`{} {{ … }}` is set through the target of a `PropertyChanges`, \
+                                 which Ljós's API names in each change",
+                                child.type_name
+                            ),
+                            child.type_name.span.start as usize,
+                        ));
+                    }
                     let child_ty = self.object_type(child)?;
                     let child_root = if matches!(child_ty, Ty::Plain) {
                         scope
@@ -952,7 +969,13 @@ impl<'s> Pass<'s> {
                     }
                     self.object(child, child_ty, child_root, made)?;
                 }
-                QmlMember::Binding(binding) => self.binding(binding, ty, scope, root, target)?,
+                QmlMember::Binding(binding) => {
+                    let made = self.changes.len();
+                    self.binding(binding, ty, scope, root, target)?;
+                    if let Some(id) = &prefix {
+                        self.prefix(binding, id, made)?;
+                    }
+                }
                 QmlMember::Property(property) => {
                     let name = property.name.name.as_str();
                     if renames_on(scope)
@@ -1021,6 +1044,68 @@ impl<'s> Pass<'s> {
         }
         // Without a target, a `Connections` is on its parent.
         Ty::Unknown
+    }
+
+    /// The id a `PropertyChanges`'s `target` names, with the target taken
+    /// out; none when it has no target, or one that is not an id.
+    ///
+    /// DECISION: a target that is not an id (a property, `parent`, a path)
+    /// stays a target. The id form has no spelling for it, and Ljos.Ui's
+    /// `PropertyChanges` still has `target`, so the file is lowered as
+    /// before rather than kept.
+    fn through_id(&mut self, object: &QmlObject<'_>) -> Option<String> {
+        let binding = object.members.iter().find_map(|member| match member {
+            QmlMember::Binding(binding) if binding.name.as_simple() == Some("target") => {
+                Some(binding)
+            }
+            _ => None,
+        })?;
+        let QmlBindingValue::Expression(Expression::Identifier(id)) = &binding.value else {
+            return None;
+        };
+        self.id(&id.name)?;
+        let id = id.name.to_string();
+        let range = member_extent(
+            self.source,
+            binding.span.start as usize,
+            binding.span.end as usize,
+        );
+        self.change(range, "");
+        Some(id)
+    }
+
+    /// Writes the id of a `PropertyChanges`'s target into a change of it:
+    /// `width: 30` is `box.width: 30`, `onClicked` `box.onClicked`. What
+    /// the pass renamed of it since `made` is renamed under the id too.
+    fn prefix(&mut self, binding: &QmlBinding<'_>, id: &str, made: usize) -> Step {
+        let name = &binding.name;
+        let first = name.parts[0];
+        if matches!(first, "target" | "explicit" | "restoreEntryValues" | "id") {
+            return Ok(());
+        }
+        if first.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Err(self.no(
+                format!(
+                    "`{name}` is set through the target of a `PropertyChanges`, which Ljós's \
+                     API names in each change"
+                ),
+                name.span.start as usize,
+            ));
+        }
+        if name.parts.len() > 1 && self.id(first).is_some() {
+            // Already through an id: `target: a; b.width: 3`.
+            return Ok(());
+        }
+        let span = name.span.start as usize..name.span.end as usize;
+        let start = span.start;
+        match self.changes[made..]
+            .iter_mut()
+            .find(|c| c.range.start == start)
+        {
+            Some(renamed) => renamed.replacement = format!("{id}.{}", renamed.replacement),
+            None => self.change(start..start, format!("{id}.")),
+        }
+        Ok(())
     }
 
     fn binding(
@@ -1414,6 +1499,27 @@ fn could_be_renaming(ty: &'static Type) -> bool {
                     false
                 })
         })
+}
+
+/// What of the text a member from `start` to `end` takes, with the `;`
+/// after it and the blanks after that; on a line of its own, the line but
+/// its line break, so that every other line stays where it was.
+fn member_extent(source: &str, start: usize, end: usize) -> Range<usize> {
+    let bytes = source.as_bytes();
+    let blanks = |mut at: usize| {
+        while bytes.get(at).is_some_and(|b| matches!(b, b' ' | b'\t')) {
+            at += 1;
+        }
+        at
+    };
+    let mut after = blanks(end);
+    if bytes.get(after) == Some(&b';') {
+        after = blanks(after + 1);
+    }
+    let line = source[..start].rfind('\n').map_or(0, |at| at + 1);
+    let alone = source[line..start].trim().is_empty()
+        && matches!(bytes.get(after), None | Some(b'\n' | b'\r'));
+    if alone { line..after } else { start..after }
 }
 
 /// Where the `index`th part of a dotted name is in the text.

@@ -105,11 +105,19 @@ fn the_corpus_button_is_lowered_line_for_line() {
     assert_eq!(text.matches("color: button.textColor").count(), 1);
     assert!(text.contains("    PointerArea {\n"));
     assert!(!text.contains("MouseArea"));
-    // Nothing else moved.
+    // The states name their objects in each change, not as a target.
+    assert!(!text.contains("target:"));
+    assert_eq!(text.matches("buttonRect.fill: ").count(), 2);
+    assert_eq!(text.matches("buttonRect.border.color: ").count(), 2);
+    assert_eq!(text.matches("buttonText.color: ").count(), 2);
+    // Nothing else moved; a target's line is left empty.
     for (a, b) in source.lines().zip(text.lines()) {
         if a != b {
             assert!(
-                a.contains("import QtQuick") || a.contains("color:") || a.contains("MouseArea"),
+                a.contains("import QtQuick")
+                    || a.contains("color:")
+                    || a.contains("MouseArea")
+                    || (a.contains("target:") && b.is_empty()),
                 "{a:?} became {b:?}"
             );
         }
