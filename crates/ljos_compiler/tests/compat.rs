@@ -161,3 +161,30 @@ fn a_selectors_variant_is_lowered_in_the_place_of_its_file_and_gives_it_back() {
     project.remove("+Material/Button");
     assert_eq!(project.source("Button"), Some(BUTTON));
 }
+
+#[test]
+fn a_style_chosen_while_lowering_lowers_the_controls_again() {
+    use qml_front::project::ControlsStyle;
+    let style = |name: &str| {
+        Some(ControlsStyle {
+            name: name.to_owned(),
+            fallback: None,
+        })
+    };
+    const MAIN: &str = "import QtQuick\nimport QtQuick.Controls\nLabel { text: \"Ready\" }\n";
+    let mut project = Project::new(Runtime::new());
+    project.add("Main", MAIN);
+    project.set_controls_style(style("Basic"));
+    project.set_compat(true);
+    assert!(lowered(&project, "Main"), "{:?}", project.lowering("Main"));
+    let main = project.source("Main").expect("Main");
+    assert!(main.contains("import Ljos.Controls"), "{main}");
+
+    // `import QtQuick.Controls` is Fusion now, which Ljos.Controls is not.
+    project.set_controls_style(style("Fusion"));
+    let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
+        panic!("Main is kept: {:?}", project.lowering("Main"));
+    };
+    assert!(kept.reason.contains("Fusion"), "{}", kept.reason);
+    assert_eq!(project.source("Main"), Some(MAIN));
+}
