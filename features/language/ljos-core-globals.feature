@@ -230,3 +230,50 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
           delegate: Item { property point at: Qt.point(1, 0) }
         }
         """
+
+    @ljos-only @headless
+    Scenario: A member whose Ljós name a directory imported by path may have stays Qt's
+      Given the file "qml/App.qml":
+        """qml
+        import QtQuick
+        Item { property string platform: "mine" }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import "qml"
+        Item {
+          property string os: Qt.platform.os
+          property point at: Qt.point(3, 4)
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        import "qml"
+        Item {
+          property string os: Qt.platform.os
+          property point at: point(3, 4)
+        }
+        """
+
+    @ljos-only @headless
+    Scenario: Qt.resolvedUrl given the object to resolve against stays Qt's
+      Given the file "Icons.qml":
+        """qml
+        import QtQuick
+        Item {
+          property url plain: Qt.resolvedUrl("a.png")
+          property url placed: Qt.resolvedUrl("b.png", this)
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Icons.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        Item {
+          property url plain: url("a.png")
+          property url placed: Qt.resolvedUrl("b.png", this)
+        }
+        """
