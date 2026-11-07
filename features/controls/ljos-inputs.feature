@@ -241,6 +241,18 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
         1 files, 1 lowered, 0 kept
         """
 
+    @ljos-only
+    Scenario: A lowered check box is still partly checked
+      Given Qt QML is lowered to the Ljós API
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        CheckBox { objectName: "some"; tristate: true; checkState: Qt.PartiallyChecked; text: "Some" }
+        """
+      Then the property "checkState" of "some" is 1
+      And the property "checked" of "some" is false
+
     @ljos-only @headless
     Scenario: A form of inputs in Ljós's API has nothing to report
       Given the file "Form.qml":
