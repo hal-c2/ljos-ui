@@ -188,7 +188,7 @@ Feature: Qt's QML lowered to Ljós's API
     # not named would stay Qt's while the named one is renamed to match it lowered: none of the group
     # is written, and the command says which file to name too.
     @ljos-only @headless
-    Scenario: A file named alone is not written without the module files it is lowered with
+    Scenario: A file named alone is not written without the files it is lowered with
       Given the file "app/Gauges/qmldir":
         """
         module Gauges
@@ -223,6 +223,17 @@ Feature: Qt's QML lowered to Ljós's API
         would lower app/Gauges/Dial.qml (2 edits)
         would lower app/Main.qml (2 edits)
         2 files, 2 lowered, 0 kept
+        """
+      When the author runs "ljos migrate --write app/Gauges/Dial.qml"
+      Then the command prints:
+        """
+        kept app/Gauges/Dial.qml:1:1: it is used with `Main.qml`, which is kept: it is not named: name it too
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "app/Gauges/Dial.qml" is:
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
         """
 
     @ljos-only @headless

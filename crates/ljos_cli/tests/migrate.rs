@@ -215,3 +215,46 @@ fn without_a_style_the_controls_are_those_of_the_environment() {
         "kept app/Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic\n1 files, 0 lowered, 1 kept\n"
     );
 }
+
+/// A module file named alone is of the project that imports its module: the
+/// directory its `qmldir` is found from, not its own. So a file there that
+/// names it and was not named keeps it, as when the importer alone is named.
+#[test]
+fn a_module_file_named_alone_is_read_with_the_files_that_import_it() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Gauges/qmldir",
+        "module Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "app/Gauges/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "app/Main.qml", main);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/Gauges/Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept app/Gauges/Dial.qml:1:1: "), "{out}");
+    assert!(out.contains("name it too"), "{out}");
+    assert!(out.ends_with("1 files, 0 lowered, 1 kept\n"), "{out}");
+    assert_eq!(read(dir.path(), "app/Gauges/Dial.qml"), BUTTON);
+    assert_eq!(read(dir.path(), "app/Main.qml"), main);
+
+    // A dotted module's import path is as many directories up as it has parts.
+    write(
+        dir.path(),
+        "lib/Ui/Gauges/qmldir",
+        "module Ui.Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "lib/Ui/Gauges/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport Ui.Gauges\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "lib/Main.qml", main);
+    let (status, out, err) = ljos(
+        dir.path(),
+        &["migrate", "--write", "lib/Ui/Gauges/Dial.qml"],
+    );
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(
+        out.starts_with("kept lib/Ui/Gauges/Dial.qml:1:1: "),
+        "{out}"
+    );
+    assert_eq!(read(dir.path(), "lib/Ui/Gauges/Dial.qml"), BUTTON);
+}
