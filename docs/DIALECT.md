@@ -1462,7 +1462,7 @@ compat pass lowers a file only when every control it names is there.
 |---|---|---|
 | K1 | `Label`, `AbstractButton`, `Button`, attached `ToolTip`, `ScrollBar` (and its attached form), `ScrollView`, `Popup` | built |
 | K2 | `TextField`, `TextArea` | built |
-| K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | |
+| K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | built |
 | K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
 | K5 | `FileDialog`, `FolderDialog` (`QtQuick.Dialogs`') | built |
 
@@ -1523,6 +1523,11 @@ another object (`save.ToolTip.text`). Read on the object itself
 a text field's `echoMode: TextInput.Password` and its `validator:` lower
 with the file, and in a file in Ljós's API the a11y rule's
 `Accessible.name` remedy checks.
+
+Not yet: an `ItemDelegate`'s `implicitHeight` is 40 in Ljós and 42 in
+Qt. Qt's is its line of text (18) plus 24 of padding; Ljós's line is
+shorter, so the background's 40 is the larger. It is the same in a lowered
+file and in the file as written, so lowering does not change it.
 
 ## 5. The checker
 
