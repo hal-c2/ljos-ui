@@ -98,6 +98,9 @@ pub struct Project<O> {
     written: BTreeMap<String, String>,
     alone: BTreeMap<String, qml_compat::Alone>,
     lowered: BTreeMap<String, qml_compat::Outcome>,
+    /// Per lowered file, the scripts the pass wrote beside it: the row
+    /// types of its constant `ListModel`s (docs/DIALECT.md §4.8).
+    generated: BTreeMap<String, Vec<String>>,
 }
 
 /// A project's tree as a program loads it: the modules are known from the
@@ -145,6 +148,7 @@ impl<O: TypeOracle> Project<O> {
             written: BTreeMap::new(),
             alone: BTreeMap::new(),
             lowered: BTreeMap::new(),
+            generated: BTreeMap::new(),
         }
     }
 
@@ -225,6 +229,9 @@ impl<O: TypeOracle> Project<O> {
             }
             self.alone.clear();
             self.lowered.clear();
+            for path in std::mem::take(&mut self.generated).into_values().flatten() {
+                self.drop_script(&path);
+            }
             return;
         }
         let keys: Vec<String> = self.sources.keys().cloned().collect();
@@ -259,7 +266,24 @@ impl<O: TypeOracle> Project<O> {
         let Some(text) = self.written.get(key) else {
             return;
         };
-        let outcome = qml_compat::lower(text, &|name: &str| self.root_beside(key, name));
+        let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
+        let locals = |name: &str| self.root_beside(key, name);
+        let mut outcome = qml_compat::lower_as(text, stem, &locals);
+        // A script of the rows module's path that the pass did not write is
+        // the project's, and does not declare the rows the lowered file
+        // imports: the file is kept, as `ljos migrate` keeps it.
+        if let qml_compat::Outcome::Lowered(lowered) = &outcome
+            && !lowered.modules.is_empty()
+            && !self.owns_rows(key)
+        {
+            outcome = qml_compat::Outcome::Kept(qml_compat::Kept {
+                reason: format!(
+                    "`{}` is a script of the project's, not the module of this file's rows",
+                    Self::rows_path(key)
+                ),
+                at: 0,
+            });
+        }
         let references = qml_compat::references(text);
         self.alone.insert(
             key.to_string(),
@@ -268,6 +292,46 @@ impl<O: TypeOracle> Project<O> {
                 references,
             },
         );
+    }
+
+    /// The path of the module of the file `key`'s rows, from the root.
+    fn rows_path(key: &str) -> String {
+        match key.rsplit_once('/') {
+            Some((dir, stem)) => format!("{dir}/{}", qml_compat::rows_module(stem)),
+            None => qml_compat::rows_module(key),
+        }
+    }
+
+    /// Whether the pass may give the file `key` its rows module: no script
+    /// is at its path, or the one there is the pass's.
+    fn owns_rows(&self, key: &str) -> bool {
+        let path = Self::rows_path(key);
+        !self.scripts.contains_key(&path)
+            || self
+                .generated
+                .get(key)
+                .is_some_and(|wrote| wrote.contains(&path))
+    }
+
+    /// Lowers again the files whose rows module is at `path`, a script the
+    /// project was given or lost.
+    fn rows_changed(&mut self, path: &str) {
+        if !self.compat {
+            return;
+        }
+        let keys: Vec<String> = self
+            .alone
+            .keys()
+            .filter(|key| Self::rows_path(key) == path)
+            .cloned()
+            .collect();
+        if keys.is_empty() {
+            return;
+        }
+        for key in &keys {
+            self.lower_alone(key);
+        }
+        self.settle_compat();
     }
 
     /// Gives the front end each file as its group is lowered, where that
@@ -280,12 +344,50 @@ impl<O: TypeOracle> Project<O> {
                     self.written.get(&key).cloned()
                 }
             };
+            self.settle_modules(&key, &outcome);
             if let Some(text) = text
                 && self.sources.get(&key) != Some(&text)
             {
                 self.put_text(&key, text);
             }
             self.lowered.insert(key, outcome);
+        }
+    }
+
+    /// Gives the project the modules `outcome` of the file `key` imports
+    /// that the pass wrote, and forgets those it wrote before and does not
+    /// now. A script of that path the project has already is the
+    /// project's, and stays.
+    fn settle_modules(&mut self, key: &str, outcome: &qml_compat::Outcome) {
+        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
+        let modules: Vec<(String, String)> = match outcome {
+            qml_compat::Outcome::Lowered(lowered) => lowered
+                .modules
+                .iter()
+                .map(|(name, text)| {
+                    let path = dir.map_or_else(|| name.clone(), |dir| format!("{dir}/{name}"));
+                    (path, text.clone())
+                })
+                .collect(),
+            qml_compat::Outcome::Unchanged | qml_compat::Outcome::Kept(_) => Vec::new(),
+        };
+        let before = self.generated.remove(key).unwrap_or_default();
+        for path in &before {
+            if !modules.iter().any(|(p, _)| p == path) {
+                self.drop_script(path);
+            }
+        }
+        let mut wrote = Vec::new();
+        for (path, text) in modules {
+            if before.contains(&path) || !self.scripts.contains_key(&path) {
+                if self.scripts.get(&path) != Some(&text) {
+                    self.put_script(&path, text);
+                }
+                wrote.push(path);
+            }
+        }
+        if !wrote.is_empty() {
+            self.generated.insert(key.to_string(), wrote);
         }
     }
 
@@ -375,8 +477,16 @@ impl<O: TypeOracle> Project<O> {
 
     /// Adds the JavaScript file at `path` (from the root, with its suffix).
     /// A QML file that imports it by path is compiled with it.
+    /// A script of the path of a lowered file's rows module takes that
+    /// module's place, and the file's tables stay ListModels.
     pub fn add_script(&mut self, path: &str, source: impl Into<String>) {
-        self.scripts.insert(path.to_string(), source.into());
+        self.disown(path);
+        self.put_script(path, source.into());
+        self.rows_changed(path);
+    }
+
+    fn put_script(&mut self, path: &str, source: String) {
+        self.scripts.insert(path.to_string(), source);
         self.callable.get_mut().clear();
     }
 
@@ -412,8 +522,23 @@ impl<O: TypeOracle> Project<O> {
             .collect()
     }
 
-    /// Forgets the JavaScript file at `path`.
+    /// Forgets the JavaScript file at `path`. A lowered file whose rows
+    /// module is at that path is lowered again, and given it.
     pub fn remove_script(&mut self, path: &str) {
+        self.disown(path);
+        self.drop_script(path);
+        self.rows_changed(path);
+    }
+
+    /// Forgets that the pass wrote the script at `path`.
+    fn disown(&mut self, path: &str) {
+        for wrote in self.generated.values_mut() {
+            wrote.retain(|p| p != path);
+        }
+        self.generated.retain(|_, wrote| !wrote.is_empty());
+    }
+
+    fn drop_script(&mut self, path: &str) {
         if self.scripts.remove(path).is_some() {
             self.callable.get_mut().clear();
         }
@@ -442,6 +567,9 @@ impl<O: TypeOracle> Project<O> {
         self.paths.remove(key);
         if self.alone.remove(key).is_some() {
             self.lowered.remove(key);
+            for path in self.generated.remove(key).unwrap_or_default() {
+                self.drop_script(&path);
+            }
             self.lower_naming(key);
             self.settle_compat();
         }

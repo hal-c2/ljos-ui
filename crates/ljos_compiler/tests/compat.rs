@@ -161,3 +161,41 @@ fn a_selectors_variant_is_lowered_in_the_place_of_its_file_and_gives_it_back() {
     project.remove("+Material/Button");
     assert_eq!(project.source("Button"), Some(BUTTON));
 }
+
+const TABLE: &str = "import QtQuick\nItem {\n    ListModel { id: zones; ListElement { city: \"Oslo\"; shift: 1 } }\n    Repeater { model: zones; Text { text: model.city } }\n}\n";
+const OWN: &str = "export const shift = 1;\n";
+
+/// A constant table is lowered with its rows in a module beside the file.
+/// Where the project has a script of that path of its own, the file is
+/// kept as written, as `ljos migrate` keeps it: its lowered text would
+/// import rows the script does not declare.
+#[test]
+fn a_script_of_the_rows_module_s_path_keeps_the_file_and_is_the_project_s() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Main", TABLE);
+    project.add_script("Main.rows.ts", OWN);
+    project.set_compat(true);
+    let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
+        panic!("Main is kept: {:?}", project.lowering("Main"));
+    };
+    assert!(kept.reason.contains("`Main.rows.ts`"), "{}", kept.reason);
+    assert_eq!(project.source("Main"), Some(TABLE));
+    assert_eq!(project.script("Main.rows.ts"), Some(OWN));
+
+    // Its script gone, the file is lowered with its rows; one added again
+    // takes the module's place, and the file is kept again.
+    project.remove_script("Main.rows.ts");
+    let main = project.source("Main").expect("Main");
+    assert!(main.contains("list<Rows.ZonesRow>"), "{main}");
+    assert!(
+        project
+            .script("Main.rows.ts")
+            .is_some_and(|rows| rows.contains("ZonesRow"))
+    );
+    project.add_script("Main.rows.ts", OWN);
+    assert!(matches!(project.lowering("Main"), Some(Outcome::Kept(_))));
+    assert_eq!(project.source("Main"), Some(TABLE));
+    assert_eq!(project.script("Main.rows.ts"), Some(OWN));
+    project.set_compat(false);
+    assert_eq!(project.script("Main.rows.ts"), Some(OWN));
+}

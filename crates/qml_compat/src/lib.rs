@@ -22,6 +22,7 @@ mod arrange;
 mod given;
 mod group;
 mod rows;
+mod tables;
 
 use std::ops::Range;
 
@@ -90,6 +91,10 @@ pub struct Lowered {
     pub text: String,
     /// In order, not overlapping, none across a line break.
     pub changes: Vec<Change>,
+    /// The modules the lowered text imports that the pass writes, each
+    /// with its name beside the file (`Main.rows.ts`) and its text: the row
+    /// types of its constant `ListModel`s (docs/DIALECT.md §4.8).
+    pub modules: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,8 +138,21 @@ pub fn no_locals(_: &str) -> Option<Root> {
     None
 }
 
-/// `source` in Ljós's API, or why it stays as it is.
+/// `source` in Ljós's API, or why it stays as it is. Its constant
+/// `ListModel`s stay as they are: what writes them as lists writes a module
+/// beside the file, and names it for the file ([`lower_as`]).
 pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
+    lower_file(source, None, locals)
+}
+
+/// [`lower`] for the file `stem.qml`, whose constant `ListModel`s are
+/// written as typed lists with their row types in the module
+/// `stem.rows.ts` beside it ([`Lowered::modules`]).
+pub fn lower_as(source: &str, stem: &str, locals: &dyn Locals) -> Outcome {
+    lower_file(source, Some(stem), locals)
+}
+
+fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome {
     let allocator = Allocator::default();
     let parsed = qml_syntax::parse(&allocator, source);
     if !parsed.is_ok() {
@@ -166,6 +184,8 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         loose: false,
         scope_owns: Owns::NONE,
         root_owns: Owns::NONE,
+        stem,
+        tables: Vec::new(),
     };
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
@@ -178,10 +198,26 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
             if !again.is_ok() {
                 return kept("the lowered text does not parse", 0);
             }
-            Outcome::Lowered(Lowered { text, changes })
+            let modules = match (stem, pass.tables.is_empty()) {
+                (Some(stem), false) => vec![(
+                    rows_module(stem),
+                    tables::module(&format!("{stem}.qml"), &pass.tables),
+                )],
+                _ => Vec::new(),
+            };
+            Outcome::Lowered(Lowered {
+                text,
+                changes,
+                modules,
+            })
         }
         Err(kept) => Outcome::Kept(kept),
     }
+}
+
+/// The module of the row types of the file `stem.qml`.
+pub fn rows_module(stem: &str) -> String {
+    format!("{stem}.rows.ts")
 }
 
 /// The root object of `source`: what a file of the project is, for
@@ -241,8 +277,8 @@ struct Pass<'s> {
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
-    /// The `ListModel`s with ids, and the roles their `ListElement`s give.
-    listed: Vec<(String, Vec<String>)>,
+    /// The `ListModel`s with ids, and the rows they give.
+    listed: Vec<(String, Rows)>,
     /// Whether the file imports `QtQml.Models`, which is lowered to
     /// `Ljos.Models`.
     imports_models: bool,
@@ -264,6 +300,11 @@ struct Pass<'s> {
     scope_owns: Owns,
     /// What the root of the file, or of the inline component, has.
     root_owns: Owns,
+    /// The file's name without `.qml`, when the pass may write a module
+    /// beside it.
+    stem: Option<&'s str>,
+    /// Its constant `ListModel`s, written as lists.
+    tables: Vec<tables::Table>,
 }
 
 type Step = Result<(), Kept>;
@@ -320,11 +361,22 @@ impl<'s> Pass<'s> {
             // `Ljos.Ui` has `Layout`; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
         }
+        if self.stem.is_some() {
+            let quick = self.quick;
+            self.tables = tables::tables(self.source, &document.root, &|name| {
+                quick.type_named(name).is_some()
+            });
+        }
         self.collect(&document.root);
-        let by_id = given::by_id(&document.root, &|o| self.is_view(o), &self.listed)
-            .into_iter()
-            .filter(|(id, _)| matches!(self.id(id), Some(Ty::Exact(t)) if t.name == "Component"))
-            .collect();
+        let by_id = given::by_id(
+            &document.root,
+            &|o| self.is_view(o),
+            &self.listed,
+            &self.table_starts(),
+        )
+        .into_iter()
+        .filter(|(id, _)| matches!(self.id(id), Some(Ty::Exact(t)) if t.name == "Component"))
+        .collect();
         self.by_id = by_id;
         let root = self.object_type(&document.root)?;
         self.root_owns = self.owns(&document.root, root);
@@ -335,10 +387,22 @@ impl<'s> Pass<'s> {
         } else {
             String::new()
         };
+        let rows = match (self.stem, self.tables.is_empty()) {
+            (Some(stem), false) => {
+                format!("; import \"{}\" as {}", rows_module(stem), tables::ALIAS)
+            }
+            _ => String::new(),
+        };
         self.change(
             span.start as usize..span.end as usize,
-            format!("{JAVASCRIPT}; import {MODULE}{models}"),
+            format!("{JAVASCRIPT}; import {MODULE}{models}{rows}"),
         );
+        let edits: Vec<Change> = self
+            .tables
+            .iter()
+            .flat_map(|t| t.changes.iter().cloned())
+            .collect();
+        self.changes.extend(edits);
         Ok(true)
     }
 
@@ -384,11 +448,19 @@ impl<'s> Pass<'s> {
                         self.collect_value(value);
                     }
                 }
+                QmlMember::Object(child) if self.is_table(child) => {
+                    // A list of objects, which is not looked into.
+                    if let Some(id) = object_id(child) {
+                        self.ids.push((id.clone(), Ty::Plain));
+                        self.listed.push((id, Rows::Roles));
+                    }
+                }
                 QmlMember::Object(child) => {
                     if child.type_name.as_simple() == Some("ListModel")
                         && let Some(id) = object_id(child)
                     {
-                        self.listed.push((id, rows::listed_roles(child)));
+                        let rows = rows::of_roles(rows::listed_roles(child), true);
+                        self.listed.push((id, rows));
                     }
                     self.collect(child);
                 }
@@ -404,10 +476,21 @@ impl<'s> Pass<'s> {
 
     fn collect_value(&mut self, value: &QmlBindingValue<'_>) {
         match value {
+            QmlBindingValue::Object(object) if self.is_table(object) => {}
             QmlBindingValue::Object(object) => self.collect(object),
             QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.collect(o)),
             QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => {}
         }
+    }
+
+    /// Whether `object` is a constant `ListModel` the pass writes as a list.
+    fn is_table(&self, object: &QmlObject<'_>) -> bool {
+        self.tables.iter().any(|t| t.at == object.span.start)
+    }
+
+    /// Where the tables written as lists start.
+    fn table_starts(&self) -> Vec<u32> {
+        self.tables.iter().map(|t| t.at).collect()
     }
 
     fn id(&self, name: &str) -> Option<Ty> {
@@ -551,7 +634,7 @@ impl<'s> Pass<'s> {
         if let Ty::Exact(t) | Ty::Derived(t) = ty
             && gives_rows(t)
         {
-            self.view_rows = Some(rows::of_view(object, &self.listed));
+            self.view_rows = Some(rows::of_view(object, &self.listed, &self.table_starts()));
         }
         let delegates_inside = match ty {
             Ty::Exact(t) | Ty::Derived(t) => {
@@ -581,6 +664,7 @@ impl<'s> Pass<'s> {
         };
         for member in &object.members {
             match member {
+                QmlMember::Object(child) if self.is_table(child) => {}
                 QmlMember::Object(child) => {
                     let child_ty = self.object_type(child)?;
                     let child_root = if matches!(child_ty, Ty::Plain) {
@@ -715,6 +799,11 @@ impl<'s> Pass<'s> {
             && matches!(ty, Ty::Exact(t) | Ty::Derived(t) if t.property("delegate").is_some())
         {
             self.given = Some(self.view_rows.clone().unwrap_or(Rows::Unknown));
+        }
+        if let QmlBindingValue::Object(object) = &binding.value
+            && self.is_table(object)
+        {
+            return Ok(());
         }
         self.value(&binding.value, scope, root)
     }

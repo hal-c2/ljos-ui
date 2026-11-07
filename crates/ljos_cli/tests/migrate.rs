@@ -150,3 +150,25 @@ fn a_file_it_cannot_read_or_write_is_status_2_and_the_rest_are_still_done() {
     assert!(out.contains("lowered app/Swatch.qml (2 edits)"), "{out}");
     assert!(read(dir.path(), "app/Swatch.qml").contains("import Ljos.Ui"));
 }
+
+/// A module of the path migrate would write the rows to that is there
+/// already with other bytes, readable or not, is never overwritten, and
+/// the file that would import it is not written either.
+#[test]
+fn a_rows_module_there_already_is_not_overwritten() {
+    const TABLE: &str = "import QtQuick\nItem {\n    ListModel { id: zones; ListElement { city: \"Oslo\"; shift: 1 } }\n    Repeater { model: zones; Text { text: model.city } }\n}\n";
+    let not_text: &[u8] = &[0xff, 0xfe, 0x00, b'x'];
+    for there in [b"export const x = 1;\n".as_slice(), not_text] {
+        let dir = tempfile::tempdir().unwrap();
+        write(dir.path(), "app/Main.qml", TABLE);
+        std::fs::write(dir.path().join("app/Main.rows.ts"), there).unwrap();
+        let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+        assert_ne!(status, 0, "{out}{err}");
+        assert!(err.contains("app/Main.rows.ts: is there already"), "{err}");
+        assert_eq!(
+            std::fs::read(dir.path().join("app/Main.rows.ts")).unwrap(),
+            there
+        );
+        assert_eq!(read(dir.path(), "app/Main.qml"), TABLE);
+    }
+}
