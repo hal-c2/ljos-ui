@@ -8,7 +8,7 @@
 //! | To | What |
 //! |---|---|
 //! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
-//! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file, or a description of the program's types that could not be read |
+//! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file, or a description of the program's types that could not be read (one found beside the files is named with its directory) |
 //!
 //! A file's constant `ListModel`s are written as typed lists, with their
 //! row types in `<File>.rows.ts` beside it (docs/DIALECT.md §4.8). A file
@@ -63,8 +63,8 @@ pub struct Migrate {
     style: Option<String>,
     /// The program's own types, as `ljos run --types` reads them: a file
     /// that imports a module of them is lowered against them. Without it,
-    /// the `ljostypes.json` of the first directory given (of a file, its
-    /// own) that has one.
+    /// the `ljostypes.json` of the first path given (of a file, its
+    /// directory), if it has one; the other paths are not looked in.
     #[arg(long, value_name = "FILE")]
     types: Option<PathBuf>,
 }
@@ -457,12 +457,14 @@ fn absolute(path: &Path) -> PathBuf {
 
 impl Migrate {
     /// What the checker is told of the program's own types, where they
-    /// are described.
+    /// are described: the file `--types` names, else the `ljostypes.json`
+    /// of the first path given (of a file, its directory). The other paths
+    /// are not looked in, so which description a file is lowered against
+    /// does not depend on what the paths after the first hold.
     fn oracle(&self) -> anyhow::Result<Option<ljos::dev::EngineOracle>> {
-        let named = self.types.as_deref();
-        let file = match named {
-            Some(_) => crate::run::types_file(named, Path::new(".")),
-            None => self.paths.iter().find_map(|path| {
+        let file = match self.types.as_deref() {
+            Some(named) => crate::run::types_file(Some(named), Path::new(".")),
+            None => self.paths.first().and_then(|path| {
                 let dir = if path.is_dir() {
                     path.as_path()
                 } else {
@@ -473,7 +475,10 @@ impl Migrate {
                 } else {
                     dir
                 };
+                // Named with its directory, as it was not named by the
+                // person running the command.
                 crate::run::types_file(None, dir)
+                    .map(|(found, _)| (found.clone(), found.display().to_string()))
             }),
         };
         crate::run::read_types(file)?
