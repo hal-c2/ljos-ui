@@ -26,6 +26,8 @@ mod types;
 mod ui;
 mod window;
 
+pub use text::FONT_RENAMES;
+
 /// The renames of one area.
 struct Area {
     /// The Qt types Ljós calls by another name: (Qt's name, Ljós's).
