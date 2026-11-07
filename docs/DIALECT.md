@@ -643,8 +643,8 @@ where Qt's views reset when a model is replaced.
   ListModel that is edited stays a ListModel.
 - `model.<role>` → `modelData.<role>` where the file shows a model of
   several roles; `model.index` → `index` and `model.modelData` →
-  `modelData` always. Where the file does not show the model, the file is
-  kept, with the role to declare `required`.
+  `modelData` in a delegate the file shows. Where the file shows no view,
+  or not the model, the file is kept, with the name to declare `required`.
 - `import QtQml.Models` → `import Ljos.Models`. A lowered file that makes a
   `ListModel`, `ListElement` or `Instantiator` gets `import Ljos.Models`.
 - `XmlListModel` → `XmlModel` with a generated decoder.
@@ -669,6 +669,11 @@ pass writes `modelData.<role>` only where `modelData` is that row: a
 A ListModel of one role with an id is not known to stay one, since a
 script may `append` rows of other roles, so `model.<role>` of it keeps
 the file.
+
+DECISION: outside a delegate the file shows, nothing of a row is
+guessed. A file that reads `model.index` or `model.modelData` with no view
+around it is a delegate only if what makes it makes it one, so it is kept
+as a role read there is, not lowered to `index` or `modelData`.
 
 DECISION: a name the file declares is the file's own. A `property var
 model` (a delegate's `required property var model` too), or a script's

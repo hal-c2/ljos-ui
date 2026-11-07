@@ -1165,8 +1165,13 @@ impl Script<'_, '_> {
         self.row.read.get_or_insert(at);
         let what = format!("model.{member}");
         match (member, rows) {
-            ("index", _) => self.row_write(it.span, "index", &what),
-            ("modelData", _) => self.row_write(it.span, "modelData", &what),
+            ("index", Some(_)) => self.row_write(it.span, "index", &what),
+            ("modelData", Some(_)) => self.row_write(it.span, "modelData", &what),
+            // No view is shown, so what the row is is not known either.
+            ("index", None) => self.row_keep(self.unshown(&what, "the row", "int index"), at),
+            ("modelData", None) => {
+                self.row_keep(self.unshown(&what, "the row", "var modelData"), at);
+            }
             (_, Some(Rows::Roles)) => self.row_write(it.object.span(), "modelData", &what),
             (_, Some(Rows::OneRole(role))) if role == member => {
                 self.row_write(it.span, "modelData", &what);
@@ -1188,10 +1193,18 @@ impl Script<'_, '_> {
                 at,
             ),
             (_, None) => self.row_keep(
-                format!("`{what}` reads a role of the row of a view the file is not shown in; give the root `required property var {member}`"),
+                self.unshown(&what, "a role of the row", &format!("var {member}")),
                 at,
             ),
         }
+    }
+
+    /// Why `what`, which reads `part` of a row where the file shows no
+    /// view, keeps the file, and what to declare in its place.
+    fn unshown(&self, what: &str, part: &str, declare: &str) -> String {
+        format!(
+            "`{what}` reads {part} of a view the file is not shown in; give the root `required property {declare}`"
+        )
     }
 
     /// The script is read: what it wrote of the row is the file's, unless
