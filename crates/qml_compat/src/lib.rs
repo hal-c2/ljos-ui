@@ -220,6 +220,9 @@ enum Import {
     Qt {
         layouts: bool,
     },
+    /// `QtQml`, whose types a later import of the project shadows as it
+    /// shadows `QtQuick`'s.
+    Qml,
     /// `QtQuick.Controls` or one of its styles' modules.
     Controls,
     /// `QtQuick.Shapes`.
@@ -231,7 +234,7 @@ enum Import {
 impl Import {
     fn imported(&self) -> Option<Imported<'_>> {
         match self {
-            Import::Qt { .. } | Import::Controls | Import::Shapes => None,
+            Import::Qt { .. } | Import::Qml | Import::Controls | Import::Shapes => None,
             Import::Module(uri) => Some(Imported::Module(uri)),
             Import::Dir(path) => Some(Imported::Dir(path)),
         }
@@ -483,7 +486,10 @@ impl<'s> Pass<'s> {
                     quick = Some(import.span);
                     self.imports.push(Import::Qt { layouts: false });
                 }
-                "QtQml" => qml = Some(import.span),
+                "QtQml" => {
+                    qml = Some(import.span);
+                    self.imports.push(Import::Qml);
+                }
                 // Its models are `Ljos.Models`'.
                 "QtQml.Models" => {
                     self.imports_models = true;
@@ -776,15 +782,24 @@ impl<'s> Pass<'s> {
         // Of an import after Qt's that has the name too, the type is that
         // import's, as the loader takes the last.
         let imported = self.imported_root(name);
+        let after =
+            |qt: Option<usize>| matches!((&imported, qt), (Some((at, _)), Some(qt)) if *at > qt);
         let shadowed = |layouts: bool| {
-            let qt = self
-                .imports
-                .iter()
-                .rposition(|i| matches!(i, Import::Qt { layouts: l } if *l == layouts));
-            matches!((&imported, qt), (Some((at, _)), Some(qt)) if *at > qt)
+            after(
+                self.imports
+                    .iter()
+                    .rposition(|i| matches!(i, Import::Qt { layouts: l } if *l == layouts)),
+            )
         };
         let shadowed_layout = shadowed(true);
         let shadowed_quick = shadowed(false);
+        // `QtQuick` brings `QtQml`'s types too: they are shadowed by what
+        // is imported after the last of the two.
+        let shadowed_qml = after(
+            self.imports
+                .iter()
+                .rposition(|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
+        );
         let controls_at = self
             .imports
             .iter()
@@ -824,11 +839,20 @@ impl<'s> Pass<'s> {
             .and_then(|m| m.type_named(name))
         {
             return match self.ui.type_named(name) {
-                Some(_) => Ok(Ty::Exact(ty)),
+                Some(_) => {
+                    self.uis.set(true);
+                    Ok(Ty::Exact(ty))
+                }
                 None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(ty) = self.quick.type_named(name).filter(|_| !shadowed_quick) {
+        if let Some(ty) = self.quick.type_named(name).filter(|ty| {
+            !if ty.module.starts_with("QtQml") {
+                shadowed_qml
+            } else {
+                shadowed_quick
+            }
+        }) {
             if ty.module.starts_with("QtQml") {
                 if MODELS.contains(&name) {
                     self.makes_models.set(true);

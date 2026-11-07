@@ -126,8 +126,8 @@ fn a_module_of_the_project_is_of_the_group_of_the_files_that_import_it() {
 }
 
 /// A project with a module `Gauges` of QML files (`Dial`, a `Rectangle`;
-/// `Palette`, a singleton `QtObject`; `Text` and `Label`, types of its own
-/// of Qt's names), a native module `Sensors`, and a directory `parts` with `Swatch`.
+/// `Palette`, a singleton `QtObject`; `Text`, `Label` and `Timer`, types of
+/// its own of Qt's names), a native module `Sensors`, and a directory `parts` with `Swatch`.
 struct Project;
 
 impl Locals for Project {
@@ -149,6 +149,7 @@ impl Locals for Project {
             (Imported::Module("Gauges"), "Palette") => Some(root_of("QtObject", &[])),
             (Imported::Module("Gauges"), "Text") => Some(root_of("Rectangle", &[])),
             (Imported::Module("Gauges"), "Label") => Some(root_of("Rectangle", &[])),
+            (Imported::Module("Gauges"), "Timer") => Some(root_of("Rectangle", &[])),
             (Imported::Dir("parts"), "Swatch") => Some(root_of("Rectangle", &[])),
             _ => None,
         }
@@ -205,6 +206,27 @@ fn a_type_of_the_project_imported_after_qt_is_the_projects() {
     let text =
         lowered_in_project("import Gauges\nimport QtQuick\nItem { Text { color: \"red\" } }\n");
     assert!(text.contains("Text { color: \"red\" }"), "{text}");
+}
+
+#[test]
+fn a_type_of_the_project_imported_after_qtqml_is_the_projects() {
+    // `Timer` of `Gauges` is a Rectangle: its `color` is a fill, in a file
+    // of QtQml alone as beside QtQuick.
+    for qt in ["import QtQml", "import QtQuick\nimport QtQml"] {
+        let text = lowered_in_project(&format!(
+            "{qt}\nimport Gauges\nItem {{ Timer {{ color: \"red\" }} }}\n"
+        ));
+        assert!(text.contains("Timer { fill: \"red\" }"), "{text}");
+    }
+    // Imported before QtQml, the name is QtQml's `Timer`, whose members
+    // keep their names.
+    for qt in [
+        "import Gauges\nimport QtQml",
+        "import QtQuick\nimport Gauges\nimport QtQml",
+    ] {
+        let text = lowered_in_project(&format!("{qt}\nItem {{ Timer {{ color: \"red\" }} }}\n"));
+        assert!(text.contains("Timer { color: \"red\" }"), "{text}");
+    }
 }
 
 #[test]
