@@ -1302,7 +1302,12 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 - Each directory named is read as a project, as a run reads it, so a
   module of the project and a directory imported by path are files to the
   files that import them. A file named alone is of the project of its
-  directory. Give it an application's directory, not a tree of several:
+  directory (a bare `Main.qml`, of the directory the command runs in).
+  When its group holds a file that was not named, none of the group is
+  written: the named file is kept, saying which file to name too
+  (``it is used with `Gauges/Dial.qml`, which is kept: it is not named:
+  name it too``), so a file is never renamed to match one that stays Qt's.
+  Give it an application's directory, not a tree of several:
   the group's directory rule (§6.2) ties one application's module to
   another's directory of the same name.
 - A lowered file says its scripts are still Qt's JavaScript:
