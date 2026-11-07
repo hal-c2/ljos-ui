@@ -7,6 +7,7 @@ Built:
 - `ljos run --compat keep|lower` without `--watch` (a watched run refuses `lower`: its saves are recompiled as written)
 - `Repeater`, `ListView` and `ListView.*` in `Ljos.Ui` (§4.8)
 - a `Repeater`'s and a `ListView`'s `key`, a `Repeater`'s `enter` and `exit`, and `ListView`'s `add` and `remove` called `enter` and `exit` (§4.15)
+- `Image`, `Flickable`, `TextInput` and its validators, `TextEdit`, `TextMetrics`, `FontMetrics`, `Shortcut`, `DropArea`, `Keys` and `Accessible` in `Ljos.Ui`, as they are (§4.14)
 
 Remaining:
 
