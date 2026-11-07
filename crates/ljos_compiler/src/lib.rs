@@ -33,7 +33,7 @@ pub mod ts;
 pub use alias::{Alias, AliasError, Aliases, Mount};
 pub use compile::compile_file;
 pub use dump::dump;
-pub use project::{Project, resource_dirs, resources, skipped_dir};
+pub use project::{Project, described_in, resource_dirs, resources, skipped_dir};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 pub use style::{controls_style, controls_style_on, platform_style};
 

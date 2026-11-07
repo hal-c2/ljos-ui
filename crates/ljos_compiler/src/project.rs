@@ -1062,7 +1062,7 @@ fn described(dir: &Path, names: &[String]) -> (Vec<Module>, Vec<(String, PathBuf
 }
 
 /// The modules the `qmldir` and `CMakeLists.txt` of `dir` describe.
-pub(crate) fn described_in(dir: &Path) -> Vec<Module> {
+pub fn described_in(dir: &Path) -> Vec<Module> {
     let names: Vec<String> = std::fs::read_dir(dir)
         .map(|read| {
             read.flatten()
