@@ -683,8 +683,9 @@ impl Arrange<'_, '_> {
         }
         let says_layout = own.iter().any(|(n, _)| n.starts_with("Layout."));
         if !self.shape.vertical() {
-            // Qt's `RowLayout` centres a child across the row unless it says
-            // otherwise; Ljós's `Row` puts it at the top.
+            // Qt's `RowLayout` and `GridLayout` centre a child across its row
+            // unless it says otherwise; Ljós's `Row` and `Grid` put it at the
+            // top.
             match bindings(child)
                 .into_iter()
                 .find(|(n, _)| n == "Layout.alignment")
@@ -786,21 +787,24 @@ impl Arrange<'_, '_> {
                 binding.span.start as usize,
             ));
         };
+        let qt = self.shape.qt();
+        let ljos = self.shape.ljos();
         let span = e.span();
         let flags = flags(e)
             .filter(|_| !self.source[span.start as usize..span.end as usize].contains('\n'));
         let Some(flags) = flags else {
             return Err(self.keep(
-                "`Layout.alignment` is not one the pass can read, and `RowLayout` centres a \
-                 child that says nothing of how it is aligned across the row, where Ljós's \
-                 `Row` puts it at the top"
-                    .into(),
+                format!(
+                    "`Layout.alignment` is not one the pass can read, and `{qt}` centres a \
+                     child that says nothing of how it is aligned across the row, where Ljós's \
+                     `{ljos}` puts it at the top"
+                ),
                 span.start as usize,
             ));
         };
         if flags.contains(&"AlignBaseline") {
             return Err(self.keep(
-                "`Qt.AlignBaseline` is not in Ljós's `Row` yet".into(),
+                format!("`Qt.AlignBaseline` is not in Ljós's `{ljos}` yet"),
                 span.start as usize,
             ));
         }
