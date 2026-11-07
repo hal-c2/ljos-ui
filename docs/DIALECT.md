@@ -360,7 +360,8 @@ What is built (`features/language/ts-modules.feature`):
   does. What TypeScript says of a module is said at the module's lines.
   The generated `.d.ts` of `ljos types` stays the API's: a module's types
   reach TypeScript through the module itself.
-- A type predicate (`x is T`) parses, and is typed as a boolean.
+- A type predicate (`v is T`) and an assertion function (`asserts v is T`)
+  are typed, not read as a boolean; what they narrow is below.
 
 The other direction is generated. Each QML component and native type has a
 `.d.ts` declaration, so a TS module can take `Card` or `ListView` as a
@@ -369,9 +370,49 @@ reads (§10, `ljos types --dts`), so `tsc` and an editor see what the
 checker sees.
 
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
-boundary through a declared decoder (note 11 §3.7). The decoder's result is
-the only cast the checker allows. `rssnews` shows this at the network
-boundary:
+boundary as `unknown` and is decoded (note 11 §3.7). A decoder narrows;
+nothing casts: `as T` stays an error everywhere (`ts-no-cast`), a decoder's
+result included. A decoder is user code, a type guard or an assertion
+function a module exports, written without casts:
+
+```ts
+export interface Row { tag: string; count: number }
+export function isRow(v: unknown): v is Row {
+    return typeof v === "object" && v !== null && "tag" in v && typeof v.tag === "string"
+        && "count" in v && typeof v.count === "number"
+}
+export function row(v: unknown): asserts v is Row { if (!isRow(v)) { throw new Error("not a row") } }
+```
+
+What is built (`features/language/decoders.feature`, and the tsc oracle's
+`D*` and `B*` cases, which hold the checker to what TypeScript 5 narrows):
+
+- The doors. `JSON.parse(text)` gives `unknown` (TypeScript's lib says
+  `any`), as do `property unknown` and a native property the type table
+  declares `var`. A member read on `unknown` is `ts-no-any`, and says
+  which narrowing would give it a type.
+- Narrowing `unknown`, in a file's scripts and in modules alike:
+  `typeof v === "object" && v !== null` gives `object`, in either order
+  and after an early `return`; `v !== null` alone gives `{} | undefined`;
+  `"tag" in v` on an object gives `v.tag: unknown`, which `typeof v.tag`
+  narrows; `Array.isArray(v)` gives `unknown[]` (TypeScript's
+  `any[]` would let `v[0].x` by). `instanceof` is not in the subset, as
+  `class` is not (`ts-forbidden`).
+- A type guard narrows in `if`, `&&`, `?:`, `!` and after an early
+  `return`, and `.filter(isRow)` gives `readonly Row[]`. Its body returns
+  a boolean, and it narrows only to what its parameter can be. An
+  assertion function narrows what follows its call statement. As in
+  TypeScript (TS2775), it narrows only when every name in the call is
+  declared with a written type: a module's export or a `const` whose
+  type is written, not a function the component declares, which is
+  reached through QML's scope.
+- A JavaScript file is reached through the declarations beside it
+  (`ts-boundary`, §5.1).
+
+It costs nothing at run time: the checker reads the narrowing, and the
+decoder runs as the code it is. `XmlModel`'s generated decoder (M1, M5)
+and the tier-1 opcodes the types allow (M4) are not built. `rssnews`
+shows a decoder at the network boundary:
 
 ```qml
 // Qt (rssnews/Main.qml)                                       // Ljós
@@ -1117,7 +1158,7 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-condition-boolean` | `if`, `while`, `for`, `?:` and `!` take a boolean, with no truthiness. |
 | ✓ `ts-no-var` | No `var`. |
 | ✓ `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
-| ✓ `ts-no-cast` | No `as` except to a declared decoder's result. No `!`. |
+| ✓ `ts-no-cast` | No `as`: a decoder narrows; nothing casts (§4.4). No `!`. |
 | ✓ `ts-switch-exhaustive` | A `switch` on a union covers every case. |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
@@ -1154,7 +1195,9 @@ Not built yet, though the rules above cover them:
   reported, as the type table gives the checker no readonly flag (the
   `.d.ts` of `ljos types` has one);
 - `PointerArea`'s handlers give their event as `QtObject` in the type
-  table, so reading `event.x` is `ts-no-any` until the table types it.
+  table, so reading `event.x` is `ts-no-any` until the table types it;
+- a hot reload keeps the declarations the session started with: an
+  edited `.d.ts` is read when the app starts again.
 
 ### 5.2 How it says them
 
@@ -1209,8 +1252,9 @@ its target's).
 How it holds the other rules:
 
 - `ts-no-cast`: `as T`, `<T>x` and `x!` are errors, at the `as`, the
-  `<T>` or the `!`. `as const` asserts nothing and is allowed. Until
-  decoders (M4), no cast is a decoder's result.
+  `<T>` or the `!`. `as const` asserts nothing and is allowed. A
+  decoder's result is no exception: a decoder narrows, and nothing
+  casts (§4.4).
 - `ts-switch-exhaustive`: a `switch` with no `default` on a union of
   literals (strings, numbers, booleans, `undefined`) names the cases it
   leaves out. A switch on a wider type, or on a QML enum, whose keys Qt
@@ -1327,7 +1371,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
-| `property var` whose type is not known | Kept until M4 decoders |
+| `property var` whose type is not known | Kept. A person types it, or makes it `property unknown` and decodes it (§4.4) |
 
 ### 6.4 Coverage today
 
@@ -1696,8 +1740,14 @@ bindings and states without a rule.
 
 **Q7: the compat-JS ↔ TS boundary.**
 
-- A Ljós file may call a compat `.js` module only through a `.d.ts`
-  declaration, which may be a decoder (`ts-boundary`).
+- A Ljós file, or a TS module, may call a compat `.js` module only
+  through the declarations beside it, as TypeScript finds them
+  (`calc.d.ts` beside `calc.js`, `calc.d.mts` beside `calc.mjs`).
+  What has no fixed shape is declared `unknown` there, and a decoder
+  narrows it. With none, each use is `ts-boundary`, and the fix names the
+  file to write (§5.1). DECISION: no `.d.ts` is generated for a `.js`:
+  what it gives is what its author knows, and inferring it would be the
+  `any` the subset refuses.
 - A compat file may call Ljós TS freely. It is erased to JS and has no
   runtime checks to break.
 - At run time both are the same tier 2 (TS is erased), so the boundary is
@@ -1736,7 +1786,12 @@ bindings and states without a rule.
   and native types reach TS as generated `.d.ts`.
 - DECISION: properties and models stay writable in handlers, and only
   values are readonly (Q6).
-- DECISION: compat JS is called from TS only through declarations (Q7).
+- DECISION: compat JS is called from TS only through declarations (Q7),
+  the `.d.ts` beside the `.js`, which a person writes.
+- DECISION (§4.4): a decoder narrows; nothing casts. A decoder is a type
+  guard or an assertion function, user code with no runtime check of the
+  checker's, and `unknown` narrows as TypeScript 5 narrows it, which the
+  tsc oracle holds the checker to.
 - DECISION: phase 2 builds modules before globals: `Ljos.Layout` and
   the kept-for `Ljos.Ui` types (M1) before `Ljos.Core` (M2). Module imports
   keep 364 of 462 kept example files, and `Qt.*` keeps none.
