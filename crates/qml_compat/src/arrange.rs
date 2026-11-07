@@ -216,10 +216,15 @@ impl Arrange<'_, '_> {
         let qt = self.shape.qt();
         for (name, binding) in bindings(object) {
             if POSITIONER_ONLY.contains(&name.as_str()) {
-                return Err(self.keep(
-                    format!("`{name}` is a member of Qt's `{qt}` that Ljós's has not"),
-                    binding.span.start as usize,
-                ));
+                // Ljós's `Flow` is Qt's, and has them.
+                let why = if self.shape == Shape::Flow {
+                    format!(
+                        "`{name}` keeps a `Flow` as Qt's until the Box rules reach a wrapping line"
+                    )
+                } else {
+                    format!("`{name}` is a member of Qt's `{qt}` that Ljós's has not")
+                };
+                return Err(self.keep(why, binding.span.start as usize));
             }
         }
         for name in POSITIONER_ONLY_NAMES {
@@ -401,12 +406,19 @@ impl Arrange<'_, '_> {
                 }
             }
         }
-        if rows.is_none()
-            && columns.is_none()
-            && let Some(at) = after_brace(self.source, object)
-        {
-            // Qt's `Grid` has four columns unless told; Ljós's is one line.
-            self.insert(at, " columns: 4;");
+        // Qt's `Grid` has four columns unless told, and a count of 0 tells
+        // it nothing (qml6); Ljós's is one line.
+        if rows.is_none() && columns.is_none() {
+            if let Some(b) = find("columns")
+                && let QmlBindingValue::Expression(Expression::NumericLiteral(zero)) = &b.value
+            {
+                self.changes.push(Change {
+                    range: zero.span.start as usize..zero.span.end as usize,
+                    replacement: "4".into(),
+                });
+            } else if let Some(at) = after_brace(self.source, object) {
+                self.insert(at, " columns: 4;");
+            }
         }
         Ok(())
     }
