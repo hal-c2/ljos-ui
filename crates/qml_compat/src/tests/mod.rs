@@ -8,9 +8,12 @@ mod groups;
 mod layout;
 mod loader;
 mod models;
+mod natives;
 mod shapes;
 mod states;
 mod text;
+mod tools;
+mod types;
 mod ui;
 mod window;
 
