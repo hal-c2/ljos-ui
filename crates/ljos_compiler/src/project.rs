@@ -259,7 +259,17 @@ impl<O: TypeOracle> Project<O> {
         let Some(text) = self.written.get(key) else {
             return;
         };
-        let outcome = qml_compat::lower(text, &|name: &str| self.root_beside(key, name));
+        // No style chosen is Basic, as in Qt 6.
+        let style = self
+            .front
+            .controls_style()
+            .map_or(qml_compat::CONTROLS_STYLE, |style| style.name.as_str());
+        let locals = |name: &str| self.root_beside(key, name);
+        let styled = qml_compat::Styled {
+            locals: &locals,
+            style,
+        };
+        let outcome = qml_compat::lower(text, &styled);
         let references = qml_compat::references(text);
         self.alone.insert(
             key.to_string(),
@@ -551,6 +561,14 @@ impl<O: TypeOracle> Project<O> {
     /// compiled from now on.
     pub fn set_controls_style(&mut self, style: Option<ControlsStyle>) {
         self.front.set_controls_style(style);
+        // What `import QtQuick.Controls` lowers to depends on it.
+        if self.compat {
+            let keys: Vec<String> = self.written.keys().cloned().collect();
+            for key in &keys {
+                self.lower_alone(key);
+            }
+            self.settle_compat();
+        }
         self.settle_all();
     }
 
