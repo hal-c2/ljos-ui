@@ -224,6 +224,10 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     quiet: u32,
     locals: Vec<Local<'a>>,
     next_local: u32,
+    /// The `let`s and `const`s declared with no written type, by id:
+    /// TypeScript narrows by an assertion only through names that have one
+    /// (TS2775).
+    inferred: Vec<u32>,
     facts: Vec<Fact<'a>>,
     /// The facts below it were found outside the function being walked:
     /// only those of a `const` hold inside it.
@@ -260,6 +264,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             quiet: 0,
             locals: Vec::new(),
             next_local: 0,
+            inferred: Vec::new(),
             facts: Vec::new(),
             floor: 0,
             assigned: Vec::new(),
@@ -1174,6 +1179,10 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 | Kind::Method(..),
             ) => true,
             (Kind::Undefined | Kind::Void, Kind::Undefined | Kind::Void) => true,
+            (Kind::NonNullish, source) => !matches!(
+                source,
+                Kind::Unknown | Kind::Null | Kind::Undefined | Kind::Void
+            ),
             (Kind::Enum { object, name }, Kind::Key { key, .. }) => {
                 self.has_key(*object, name, key)
             }

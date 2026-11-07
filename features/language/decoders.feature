@@ -72,6 +72,35 @@ Feature: Decoders: what is unknown is narrowed before it is used
         ljos: 4 errors
         """
 
+    Scenario: Null ruled out first, or by an early return, still lets typeof narrow to an object
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function first(v: unknown): string {
+            if (v !== null && typeof v === "object" && "tag" in v && typeof v.tag === "string") { return v.tag }
+            return ""
+          }
+          function early(v: unknown): string {
+            if (v === null) { return "" }
+            if (typeof v === "object" && "tag" in v && typeof v.tag === "string") { return v.tag }
+            return ""
+          }
+          function bare(v: unknown): real {
+            if (v !== null) { return v.size }
+            return 0
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:13:38: error: `v` may be undefined: compare it with `undefined` first [ts-assign-type]
+        Show.qml:13:40: error: `size` has no type: `v` is unknown: narrow it first (`typeof v === "object" && v !== null && "size" in v`), or decode it with a type guard [ts-no-any]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
     Scenario: instanceof is not in the subset
       Given the file "Show.qml":
         """qml
@@ -214,6 +243,32 @@ Feature: Decoders: what is unknown is narrowed before it is used
         bad.ts:2:45: error: `v is number` narrows `v`, a string, to what it cannot be: a number [ts-assign-type]
         3 files, 5 errors, 0 warnings
         ljos: 5 errors
+        """
+
+    Scenario: An assertion function the component declares narrows nothing, as TypeScript says
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "row.ts" as Rows
+        Item {
+          property real shown: 0
+          function check(v: unknown): asserts v is number { if (typeof v !== "number") { throw new Error("no") } }
+          function own(v: unknown): void { check(v); shown = v }
+          function nested(v: unknown): void {
+            function local(w: unknown): asserts w is number { if (typeof w !== "number") { throw new Error("no") } }
+            local(v)
+            shown = v
+          }
+          function imported(v: unknown): void { Rows.row(v); shown = v.count }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:6:44: error: `check` asserts, and TypeScript narrows by an assertion only through names declared with a type, which `check` is not (TS2775): move it into a TypeScript module the file imports [ts-assign-type]
+        Show.qml:6:62: error: `shown` is a real; this gives it an unknown value [ts-assign-type]
+        2 files, 2 errors, 0 warnings
+        ljos: 2 errors
         """
 
     Scenario: A handler decodes what it is given with a guard and an assertion

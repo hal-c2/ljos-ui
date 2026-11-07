@@ -29,6 +29,10 @@ impl Ty {
     /// `null`, only as narrowing finds it: the subset has no `null` to
     /// write, but `typeof v === "object"` is true of it.
     pub(crate) const NULL: Ty = Ty(12);
+    /// TypeScript's `{}`: an unknown value known to be neither `null` nor
+    /// `undefined`, as `v !== null` leaves it with `undefined` beside it.
+    /// Nothing can be read off it, but `typeof` still narrows it.
+    pub(crate) const NON_NULLISH: Ty = Ty(13);
 }
 
 /// A built-in global of TYPES.md.
@@ -118,6 +122,8 @@ pub(crate) enum Kind {
     /// TypeScript's `object`.
     NonPrimitive,
     Null,
+    /// TypeScript's `{}`.
+    NonNullish,
     /// A number literal type, by its bits.
     Num(u64),
     Str(Box<str>),
@@ -192,6 +198,7 @@ impl Arena {
             Kind::Bool(false),
             Kind::NonPrimitive,
             Kind::Null,
+            Kind::NonNullish,
         ] {
             arena.intern(kind);
         }
@@ -277,6 +284,16 @@ impl Arena {
             return Ty::UNKNOWN;
         }
         flat.retain(|ty| *ty != Ty::NEVER);
+        // `{}` holds every value but `null` and `undefined`, and with both
+        // of them it is `unknown` again.
+        if flat.contains(&Ty::NON_NULLISH) {
+            flat.retain(|ty| matches!(*ty, Ty::NON_NULLISH | Ty::NULL | Ty::UNDEFINED | Ty::VOID));
+            if flat.contains(&Ty::NULL)
+                && (flat.contains(&Ty::UNDEFINED) || flat.contains(&Ty::VOID))
+            {
+                return Ty::UNKNOWN;
+            }
+        }
         if flat.contains(&Ty::TRUE) && flat.contains(&Ty::FALSE) {
             flat.push(Ty::BOOLEAN);
         }
@@ -451,6 +468,7 @@ impl Arena {
             Kind::Bool(b) => b.to_string(),
             Kind::NonPrimitive => "object".into(),
             Kind::Null => "null".into(),
+            Kind::NonNullish => "{}".into(),
             Kind::Num(bits) => number_text(f64::from_bits(*bits)),
             Kind::Str(s) => format!("\"{s}\""),
             Kind::Union(parts) => parts
@@ -548,6 +566,7 @@ impl Arena {
                 Kind::Color => "a color".into(),
                 Kind::NonPrimitive => "an object".into(),
                 Kind::Null => "null".into(),
+                Kind::NonNullish => "an unknown value that is not null or undefined".into(),
                 Kind::Object(o) => article(&object(*o)),
                 Kind::Type(o) => format!("the type {}", object(*o)),
                 Kind::Namespace(name) => format!("the namespace {name}"),
