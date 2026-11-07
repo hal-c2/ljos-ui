@@ -21,6 +21,7 @@ fn root_of(type_name: &str, bindings: &[&str]) -> Root {
     Root {
         type_name: type_name.to_string(),
         bindings: bindings.iter().map(ToString::to_string).collect(),
+        declares: Vec::new(),
     }
 }
 
