@@ -997,7 +997,10 @@ construction.
   a `key` holds its rows as a model of its own
   (`crates/ljos_engine/src/keyed.rs`), and a new list is told to it as the
   rows removed, moved, inserted and changed, so a row that stays keeps its
-  delegate and reads its new fields. A keyed `Repeater`'s `enter` runs on
+  delegate and reads its new fields. The rows of a longest run already in
+  the new order stay where they are and only the others are moved, so a
+  row taken from the front to the end is one move, not one per row it
+  passes. A keyed `Repeater`'s `enter` runs on
   the item of a row inserted once it has made its first items, and its
   `exit` on the item of a row removed, which stays, out of `count`, until
   the transition ends. `Ljos.Ui`'s `ListView` calls Qt's `add` and
