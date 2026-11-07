@@ -191,6 +191,72 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit reports "layout-stacked-scrims" at line 6
 
+    Scenario: A popup whose page scrolls deep inside its layouts
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            RowLayout {
+              anchors.fill: parent
+              ColumnLayout {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                StackLayout {
+                  Layout.fillWidth: true; Layout.fillHeight: true
+                  Item {
+                    implicitWidth: page.implicitWidth
+                    implicitHeight: page.implicitHeight
+                    Flickable {
+                      id: page
+                      anchors.fill: parent
+                      clip: true
+                      implicitWidth: 280
+                      implicitHeight: contentHeight
+                      contentHeight: 600
+                      Label { text: "A long page" }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-popup-fit"
+
+    Scenario: A popup whose content asks for more than it has and does not scroll
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            RowLayout {
+              anchors.fill: parent
+              ColumnLayout {
+                Layout.fillWidth: true; Layout.fillHeight: true
+                StackLayout {
+                  Layout.fillWidth: true; Layout.fillHeight: true
+                  Item { implicitWidth: 280; implicitHeight: 600 }
+                }
+              }
+            }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
     Scenario: A split handle that draws nothing
       Given the QML:
         """qml
