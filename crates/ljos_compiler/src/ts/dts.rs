@@ -152,6 +152,9 @@ pub struct Api {
     exported: HashMap<&'static str, &'static Type>,
     /// `Qt`, whose enums `Qt::Alignment` names.
     qt: Option<&'static Type>,
+    /// Whether the modules are or bring `Ljos.Core`, whose globals are then
+    /// declared.
+    core: bool,
 }
 
 impl Api {
@@ -173,7 +176,18 @@ impl Api {
         for uri in modules {
             qt_types::module(uri)?;
         }
-        let (mut exported, mut roots) = exports(modules);
+        let (mut exported, mut roots, seen) = exports(modules);
+        let core = seen.contains(CORE);
+        if core {
+            // What `Ljos.Core`'s makers make: QtQml's values, and QtQuick's
+            // vectors and `quaternion`.
+            let modules = ["QtQml", "QtQuick"].map(qt_types::module);
+            roots.extend(
+                CORE_VALUES
+                    .iter()
+                    .filter_map(|name| modules.iter().flatten().find_map(|m| m.type_named(name))),
+            );
+        }
         // `Qt` is a global of every file, whichever modules it imports.
         if let Some(qt) = qt_types::module("QtQml").and_then(|m| m.type_named("Qt"))
             && !exported.contains_key(qt.name)
@@ -196,7 +210,7 @@ impl Api {
         }
         // A primitive is no interface.
         reached.retain(|_, ty| !(ty.is_value && primitive(ty.name).is_some()) && !is_date(ty.name));
-        let (elsewhere, _) = exports(MODULES);
+        let (elsewhere, ..) = exports(MODULES);
         let mut by_name: HashMap<&str, Vec<&'static Type>> = HashMap::new();
         for ty in reached.values() {
             by_name.entry(ty.name).or_default().push(ty);
@@ -229,6 +243,7 @@ impl Api {
             types,
             exported,
             qt,
+            core,
         })
     }
 
@@ -392,6 +407,9 @@ impl Api {
         let mut out = String::new();
         out.push_str(HEADER);
         out.push_str(PRELUDE);
+        if self.core {
+            out.push_str(CORE_PRELUDE);
+        }
         for ty in &self.types {
             self.write_type(&mut out, ty);
         }
@@ -582,6 +600,60 @@ interface String {
 }
 ";
 
+const CORE: &str = "Ljos.Core";
+
+/// The value types `Ljos.Core`'s makers make.
+const CORE_VALUES: &[&str] = &[
+    "point",
+    "size",
+    "rect",
+    "vector2d",
+    "vector3d",
+    "vector4d",
+    "quaternion",
+];
+
+/// What `Ljos.Core` gives a file that imports it in place of Qt's `Qt`
+/// (docs/DIALECT.md §4.3). TypeScript reads `color` as `string`, so a
+/// colour's own members are declared on `String`; the checker holds them
+/// to colours.
+const CORE_PRELUDE: &str = "
+declare function later(f: (...args: readonly unknown[]) => unknown, ...args: readonly unknown[]): void;
+declare function point(x: number, y: number): point;
+declare function size(width: number, height: number): size;
+declare function rect(x: number, y: number, width: number, height: number): rect;
+declare function vector2d(x: number, y: number): vector2d;
+declare function vector3d(x: number, y: number, z: number): vector3d;
+declare function vector4d(x: number, y: number, z: number, w: number): vector4d;
+declare function quaternion(scalar: number, x: number, y: number, z: number): quaternion;
+declare function rgba(r: number, g: number, b: number, a?: number): color;
+declare function hsla(h: number, s: number, l: number, a?: number): color;
+declare function hsva(h: number, s: number, v: number, a?: number): color;
+/** The address `url` names, from the file that asks. */
+declare function url(url: string): url;
+declare const App: {
+    readonly platform: { readonly os: string; readonly pluginName: string };
+    openUrlExternally(url: url): boolean;
+    quit(): void;
+};
+
+interface String {
+    /** A colour's: its channels, from 0 to 1. */
+    readonly r: number;
+    readonly g: number;
+    readonly b: number;
+    readonly a: number;
+    /** A colour's: the same colour, darker by `factor` (2 by default). */
+    darker(factor?: number): color;
+    /** A colour's: the same colour, lighter by `factor` (1.5 by default). */
+    lighter(factor?: number): color;
+    /** A colour's: the same colour with the alpha `alpha`. */
+    alpha(alpha: number): color;
+    /** A colour's: `tint` over it. */
+    tint(tint: color): color;
+}
+";
+
 fn is_word(name: &str) -> bool {
     let mut chars = name.chars();
     chars
@@ -590,10 +662,15 @@ fn is_word(name: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
 }
 
-/// A class as a TypeScript name: `QtQuick.Anchors` is `QtQuick_Anchors`.
+type Exports<'a> = (
+    HashMap<&'static str, &'static Type>,
+    Vec<&'static Type>,
+    HashSet<&'a str>,
+);
+
 /// The names `modules` export, with what they import always, first
-/// module's first, and the types they name.
-fn exports(modules: &[&str]) -> (HashMap<&'static str, &'static Type>, Vec<&'static Type>) {
+/// module's first; the types they name; and the modules reached.
+fn exports<'a>(modules: &[&'a str]) -> Exports<'a> {
     // Popped from the end: the first module's names come first.
     let mut uris: Vec<&str> = modules.iter().rev().copied().collect();
     let mut seen = HashSet::new();
@@ -625,9 +702,10 @@ fn exports(modules: &[&str]) -> (HashMap<&'static str, &'static Type>, Vec<&'sta
                 .map(|import| import.module),
         );
     }
-    (exported, roots)
+    (exported, roots, seen)
 }
 
+/// A class as a TypeScript name: `QtQuick.Anchors` is `QtQuick_Anchors`.
 fn sanitized(class: &str) -> String {
     class
         .chars()
@@ -701,6 +779,11 @@ mod tests {
         let declarations = api.declarations();
         assert!(declarations.contains("\ninterface Timer extends QtObject {"));
         assert!(declarations.contains("\ndeclare namespace Qt {"));
+        assert!(declarations.contains("\ndeclare function later("));
+        assert!(declarations.contains("\ninterface vector3d {"));
+        assert!(declarations.contains("\ndeclare const App: {"));
+        let ui = Api::of("Ljos.Ui").expect("the table has Ljos.Ui");
+        assert!(!ui.declarations().contains("declare function later("));
         // A file of `Ljos.Ui` alone has neither.
         assert!(Api::of(API).expect("Ljos.Ui").named("Timer").is_none());
     }

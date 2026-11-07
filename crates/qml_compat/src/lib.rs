@@ -20,11 +20,12 @@
 
 mod arrange;
 mod group;
+mod qt_members;
 
 use std::ops::Range;
 
 use oxc_ast::ast::{
-    BindingIdentifier, ComputedMemberExpression, Expression, IdentifierReference,
+    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -98,6 +99,9 @@ pub struct Root {
     /// The names it binds, with those of its groups (`anchors.left` for
     /// `anchors { left: … }`): what it says of how it is placed.
     pub bindings: Vec<String>,
+    /// The properties, functions and signals it declares: names in sight
+    /// of a file built on it.
+    pub declares: Vec<String>,
 }
 
 /// What the pass needs to know of the files beside this one: for a type a
@@ -147,6 +151,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ids: Vec::new(),
         inline: Vec::new(),
         changes: Vec::new(),
+        members: qt_members::Members::default(),
     };
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
@@ -179,6 +184,18 @@ impl Root {
         Root {
             type_name: object.type_name.to_string(),
             bindings: arrange::binding_names(object),
+            declares: object
+                .members
+                .iter()
+                .filter_map(|member| match member {
+                    QmlMember::Property(property) => Some(property.name.name.to_string()),
+                    QmlMember::Function(function) => {
+                        function.id.as_ref().map(|id| id.name.to_string())
+                    }
+                    QmlMember::Signal(signal) => Some(signal.name.name.to_string()),
+                    _ => None,
+                })
+                .collect(),
         }
     }
 }
@@ -221,6 +238,8 @@ struct Pass<'s> {
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
+    /// The members of `Qt` that `Ljos.Core` has under its own names.
+    members: qt_members::Members,
 }
 
 type Step = Result<(), Kept>;
@@ -233,8 +252,14 @@ impl<'s> Pass<'s> {
         let mut layouts = None;
         for import in &document.imports {
             let at = import.span.start as usize;
-            let QmlImportSource::Module(name) = &import.source else {
-                continue;
+            let name = match &import.source {
+                QmlImportSource::Module(name) => name,
+                QmlImportSource::Path(path) => {
+                    if import.alias.is_none() && !group::is_script(path) {
+                        self.members.imports_by_path();
+                    }
+                    continue;
+                }
             };
             let uri = name.to_string();
             if import.alias.is_some() && (uri == "QtQuick" || uri == "QtQml") {
@@ -269,6 +294,11 @@ impl<'s> Pass<'s> {
         self.collect(&document.root);
         let root = self.object_type(&document.root)?;
         self.object(&document.root, root, root, true)?;
+        let members = std::mem::take(&mut self.members);
+        for (range, name) in members.settle(self.source, |name| self.locals.root(name).is_some()) {
+            self.change(range, name);
+            self.cores.set(true);
+        }
         // On the import's line, so every line stays where it was. What
         // imported `QtQml` imports `Ljos.Core` in its place; what has it
         // from `QtQuick` imports it beside `Ljos.Ui` when it names one of
@@ -409,9 +439,12 @@ impl<'s> Pass<'s> {
             .inline
             .iter()
             .find(|(n, _)| n == name)
-            .map(|(_, root)| root.type_name.clone())
-            .or_else(|| self.locals.root(name).map(|r| r.type_name));
-        match root {
+            .map(|(_, root)| root.clone())
+            .or_else(|| self.locals.root(name));
+        if let Some(root) = &root {
+            self.members.declared_beside(&root.declares);
+        }
+        match root.map(|root| root.type_name) {
             Some(root) if root != name => match self.named_type(&root, at, depth + 1)? {
                 // What it declares is not in the table: its members are
                 // known by the type it is built on, as far as that goes.
@@ -443,6 +476,33 @@ impl<'s> Pass<'s> {
     /// an inline component or of a `Component`, or an object given as a
     /// value (a `Loader` sizes its `sourceComponent`'s).
     fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty, a_root: bool) -> Step {
+        match ty {
+            Ty::Exact(t) | Ty::Derived(t) => {
+                self.members.object_type(Some(t));
+                // The lowered file's object is Ljós's, whose members are
+                // in sight there.
+                let ljos = renamed_type(t.name).unwrap_or(t.name);
+                if let Some(t) = self
+                    .ui
+                    .type_named(ljos)
+                    .or_else(|| self.core.type_named(ljos))
+                {
+                    self.members.object_type(Some(t));
+                }
+                // A delegate's model gives it roles, which come before
+                // anything else in sight.
+                if t.default_property() == Some("delegate")
+                    && object
+                        .members
+                        .iter()
+                        .any(|m| matches!(m, QmlMember::Object(_)))
+                {
+                    self.members.delegate();
+                }
+            }
+            Ty::Unknown => self.members.object_type(None),
+            Ty::Plain => {}
+        }
         if let Ty::Exact(t) = ty
             && let Some(shape) = arrange::Shape::of(t)
         {
@@ -475,9 +535,16 @@ impl<'s> Pass<'s> {
                     let made = matches!(ty, Ty::Exact(t) if t.name == "Component");
                     self.object(child, child_ty, child_root, made)?;
                 }
-                QmlMember::Binding(binding) => self.binding(binding, ty, scope, root, target)?,
+                QmlMember::Binding(binding) => {
+                    if binding.name.as_simple() == Some("delegate") {
+                        self.members.delegate();
+                    }
+                    self.binding(binding, ty, scope, root, target)?
+                }
                 QmlMember::Property(property) => {
                     let name = property.name.name.as_str();
+                    self.members
+                        .typed(property.span.start as usize..property.name.span.start as usize);
                     if renames_on(scope)
                         .is_some_and(|r| r.iter().any(|(o, n)| *o == name || *n == name))
                     {
@@ -947,8 +1014,32 @@ impl Script<'_, '_> {
 }
 
 impl<'a> Visit<'a> for Script<'_, '_> {
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of ctx's
+        // component; `url` takes one argument, so that call stays Qt's.
+        if let Expression::StaticMemberExpression(callee) = &it.callee
+            && matches!(&callee.object, Expression::Identifier(qt) if qt.name == "Qt")
+            && callee.property.name == "resolvedUrl"
+            && it.arguments.len() > 1
+        {
+            for argument in &it.arguments {
+                self.visit_argument(argument);
+            }
+            return;
+        }
+        walk::walk_call_expression(self, it);
+    }
+
     fn visit_static_member_expression(&mut self, it: &StaticMemberExpression<'a>) {
         let name = it.property.name.as_str();
+        if let Expression::Identifier(qt) = &it.object
+            && qt.name == "Qt"
+        {
+            let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
+            self.pass
+                .members
+                .qt(span(qt.span), name, span(it.property.span));
+        }
         if name == "createQmlObject" {
             // The text is compiled when the script runs, as written.
             self.keep(

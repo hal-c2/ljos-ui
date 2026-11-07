@@ -12,7 +12,8 @@
 //! 5. the components around it, each by its ids, its root and what it is
 //!    given, the nearest first,
 //! 6. a type or namespace the file imports (capitalised names),
-//! 7. what QML and JavaScript put in every scope.
+//! 7. what QML and JavaScript put in every scope,
+//! 8. what `Ljos.Core` gives a file that imports it: [`CORE_GLOBALS`].
 //!
 //! `pragma ComponentBehavior: Bound` changes the order: the ids of every
 //! component around come before any property, and a delegate is given
@@ -58,6 +59,9 @@ pub enum Global {
     Qml,
     /// `Math`, `JSON`, `undefined`: JavaScript's own.
     Js,
+    /// `later`, `point`, `App`: what `Ljos.Core` gives a file that imports
+    /// it, after everything else in sight.
+    Core,
 }
 
 /// Where a name is found.
@@ -109,7 +113,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
             self.unbound(name, offset)
         };
         if resolution.target.is_none() && resolution.roles.is_empty() {
-            resolution.target = global(name).map(Target::Global);
+            resolution.target = global(name).or_else(|| self.core(name)).map(Target::Global);
         }
         resolution.aimed = aimed;
         if resolution.target.is_none() && resolution.roles.is_empty() && aimed.is_none() {
@@ -255,9 +259,39 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
         if let Some(source) = self.types.namespace(name) {
             return Some(Target::Namespace(source.clone()));
         }
-        self.types.find(&[name]).map(Target::Type)
+        self.types
+            .find(&[name])
+            .map(Target::Type)
+            .or_else(|| self.core(name).map(Target::Global))
+    }
+
+    /// `name` as what `Ljos.Core` gives, when the file imports it itself.
+    fn core(&self, name: &str) -> Option<Global> {
+        (CORE_GLOBALS.contains(&name) && self.types.imports(CORE)).then_some(Global::Core)
     }
 }
+
+/// The module whose globals are [`CORE_GLOBALS`].
+pub const CORE: &str = "Ljos.Core";
+
+/// What `Ljos.Core` gives a file that imports it in place of the members of
+/// Qt's `Qt` (docs/DIALECT.md §4.3). A file that does not import it has
+/// none of them, and a name in sight of the same name is that name.
+pub const CORE_GLOBALS: &[&str] = &[
+    "later",
+    "point",
+    "size",
+    "rect",
+    "vector2d",
+    "vector3d",
+    "vector4d",
+    "quaternion",
+    "rgba",
+    "hsla",
+    "hsva",
+    "url",
+    "App",
+];
 
 /// Which global `name` is, if it is one.
 pub fn global(name: &str) -> Option<Global> {
