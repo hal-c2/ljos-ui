@@ -38,6 +38,7 @@ mod header_view;
 mod icon_label;
 mod inherit;
 mod label;
+pub mod ljos;
 mod menu;
 mod menu_bar;
 mod page_indicator;
@@ -277,6 +278,8 @@ pub fn register(engine: &Engine) {
             }
         }
     }
+    // Ljós's own API: the controls of its slice, as Basic draws them.
+    ljos::register(engine, styles.get(BASIC).map_or(&[][..], Vec::as_slice));
     // The parts a style draws with, for controls that customise it.
     for (uri, directory) in [
         ("QtQuick.Controls.Basic.impl", BASIC),
