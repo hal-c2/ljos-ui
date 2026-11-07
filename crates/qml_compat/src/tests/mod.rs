@@ -168,7 +168,10 @@ fn a_type_outside_the_slice_keeps_the_file_whatever_it_is_on() {
 #[test]
 fn what_the_pass_cannot_type_keeps_the_file() {
     assert!(kept_for("import QtQuick\nItem { width: parent.color.r }\n").contains("`.color`"));
-    assert!(kept_for("import QtQuick\nItem { Image { } }\n").contains("`Image` is not in Ljos.Ui"));
+    assert!(
+        kept_for("import QtQuick\nItem { PathView { } }\n")
+            .contains("`PathView` is not in Ljos.Ui")
+    );
     assert!(
         kept_for("import QtQuick\nItem { MyThing { color: \"red\" } }\n")
             .contains("whose type is not known")

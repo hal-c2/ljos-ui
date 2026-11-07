@@ -117,7 +117,7 @@ pub struct Lowered {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Kept {
-    /// What of the file the pass cannot lower: "`Image` is not in Ljos.Ui
+    /// What of the file the pass cannot lower: "`PathView` is not in Ljos.Ui
     /// yet".
     pub reason: String,
     /// Where, as a byte offset into the file.
@@ -607,6 +607,7 @@ impl<'s> Pass<'s> {
             .iter()
             .filter_map(|import| import.alias.as_ref().map(|alias| alias.name.to_string()))
             .collect();
+        let mut emptied = Vec::new();
         for import in &document.imports {
             let at = import.span.start as usize;
             let name = match &import.source {
@@ -664,6 +665,8 @@ impl<'s> Pass<'s> {
                     shapes = Some(import.span);
                     self.imports.push(Import::Shapes);
                 }
+                // Its types are QtQuick's, and `Ljos.Ui` has them.
+                "QtQuick.Window" if import.alias.is_none() => emptied.push(import.span),
                 // Ljós's controls are Basic's; `QtQuick.Controls` is the
                 // style the program starts with, which may be another.
                 "QtQuick.Controls" if self.locals.controls_style() != Some(CONTROLS_STYLE) => {
@@ -751,8 +754,9 @@ impl<'s> Pass<'s> {
         if self.core_line.is_none() {
             self.core_line = self.ui_line;
         }
-        for span in [layouts, shapes].into_iter().flatten() {
-            // `Ljos.Ui` has `Layout` and the shapes; the line stays, empty.
+        // `Ljos.Ui` has `Layout`, the shapes and what the others name;
+        // each line stays, empty.
+        for span in [layouts, shapes].into_iter().flatten().chain(emptied) {
             self.change(span.start as usize..span.end as usize, "");
         }
         for (i, span) in controls.into_iter().enumerate() {

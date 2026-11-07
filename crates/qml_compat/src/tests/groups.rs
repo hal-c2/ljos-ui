@@ -63,7 +63,7 @@ fn files_that_name_one_another_are_lowered_together() {
 #[test]
 fn a_file_reached_by_address_or_directory_is_of_the_group() {
     let lowers = "import QtQuick\nRectangle { color: \"red\" }\n";
-    let kept = "import QtQuick\nImage { }\n";
+    let kept = "import QtQuick\nPathView { }\n";
     for (main, other) in [
         (
             "import QtQuick\nLoader { source: \"../parts/Part.qml\" }\n",
