@@ -541,13 +541,16 @@ module Ljos.Ui
 	Box Ljos.Ui.Box
 	Column Ljos.Ui.Column
 	Font QtQuick.Font
+	Hover Ljos.Ui.Hover
 	Item QtQuick.Item
 	Layout QtQuick.Layouts.Layout
 	PointerArea Ljos.Ui.PointerArea
+	PointerDevice QtQuick.PointerDevice
 	PropertyChanges QtQuick.PropertyChanges
 	Rectangle Ljos.Ui.Rectangle
 	Row Ljos.Ui.Row
 	State QtQuick.State
+	Tap Ljos.Ui.Tap
 	Text QtQuick.Text
 	type Ljos.Ui.Box Box
 		prototype Ljos.Ui.Arrangement
@@ -556,6 +559,44 @@ module Ljos.Ui
 		signal directionChanged
 	type Ljos.Ui.Column Column
 		prototype Ljos.Ui.Arrangement
+	type Ljos.Ui.Hover Hover
+		prototype QtQml.QtObject named
+		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		prop enabled QtQml.bool named
+		prop active QtQml.bool named readonly
+		prop target QtQml.QtObject named pointer
+		prop parent QtQml.QtObject named pointer
+		prop grabPermissions GrabPermissions
+		prop margin QtQml.real named
+		prop dragThreshold QtQml.int named reset
+		prop cursorShape Qt::CursorShape reset
+		prop devices DeviceTypes
+		prop pointerTypes PointerTypes
+		prop buttons Qt::MouseButtons
+		prop modifiers Qt::KeyboardModifiers
+		prop point Ljos.Ui.HandlerPoint pointer readonly
+		prop hovered QtQml.bool named readonly
+		prop blocking QtQml.bool named
+		signal enabledChanged
+		signal activeChanged
+		signal targetChanged
+		signal parentChanged
+		signal marginChanged
+		signal dragThresholdChanged
+		signal cursorShapeChanged
+		signal devicesChanged
+		signal pointerTypesChanged
+		signal buttonsChanged
+		signal modifiersChanged
+		signal grabChanged transition:int point:var
+		signal canceled point:var
+		signal hoveredChanged
+		signal blockingChanged
+		signal pointChanged
 	type Ljos.Ui.PointerArea PointerArea
 		prototype QtQuick.Item named
 		prop hoverEnabled QtQml.bool named
@@ -609,6 +650,53 @@ module Ljos.Ui
 		signal bottomRightRadiusChanged
 	type Ljos.Ui.Row Row
 		prototype Ljos.Ui.Arrangement
+	type Ljos.Ui.Tap Tap
+		prototype QtQml.QtObject named
+		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
+		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		prop enabled QtQml.bool named
+		prop pressed QtQml.bool named readonly
+		prop tapCount QtQml.int named readonly
+		prop gesturePolicy GesturePolicy
+		prop buttons Qt::MouseButtons
+		prop parent QtQml.QtObject named pointer readonly
+		prop point Ljos.Ui.HandlerPoint pointer readonly
+		prop target QtQml.QtObject named pointer
+		prop margin QtQml.real named
+		prop dragThreshold QtQml.int named reset
+		prop grabPermissions GrabPermissions
+		prop devices DeviceTypes
+		prop pointerTypes PointerTypes
+		prop modifiers Qt::KeyboardModifiers
+		prop cursorShape Qt::CursorShape reset
+		prop longPressThreshold QtQml.real named reset
+		prop timeHeld QtQml.real named readonly
+		signal enabledChanged
+		signal pressedChanged
+		signal tapCountChanged
+		signal gesturePolicyChanged
+		signal buttonsChanged
+		signal parentChanged
+		signal targetChanged
+		signal marginChanged
+		signal dragThresholdChanged
+		signal devicesChanged
+		signal pointerTypesChanged
+		signal modifiersChanged
+		signal cursorShapeChanged
+		signal longPressThresholdChanged
+		signal timeHeldChanged
+		signal pointChanged
+		signal tapped eventPoint:var _:int
+		signal singleTapped eventPoint:var _:int
+		signal doubleTapped eventPoint:var _:int
+		signal canceled point:var
+		signal longPressed
+		signal grabChanged transition:int point:var
 	type Ljos.Ui.Arrangement Arrangement
 		prototype QtQuick.Layouts.Layout named
 		is uncreatable
@@ -626,6 +714,26 @@ module Ljos.Ui
 		signal topPaddingChanged
 		signal bottomPaddingChanged
 		signal layoutDirectionChanged
+	type Ljos.Ui.HandlerPoint HandlerPoint
+		is uncreatable
+		prop position QtQml.point named readonly
+		prop scenePosition QtQml.point named readonly
+		prop pressPosition QtQml.point named readonly
+		prop scenePressPosition QtQml.point named readonly
+		prop pressedButtons Qt::MouseButtons readonly
+		prop id QtQml.int named readonly
+		prop velocity QtQuick.vector2d named readonly
+		prop device QtQml.var named readonly
+		prop modifiers Qt::KeyboardModifiers readonly
+		signal positionChanged
+		signal scenePositionChanged
+		signal pressPositionChanged
+		signal scenePressPositionChanged
+		signal pressedButtonsChanged
+		signal idChanged
+		signal velocityChanged
+		signal deviceChanged
+		signal modifiersChanged
 	type Ljos.Ui.RectangleBorder RectangleBorder
 		is uncreatable
 		prop width QtQml.real named
