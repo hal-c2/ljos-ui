@@ -263,3 +263,32 @@ pub(super) fn register(engine: &Engine) {
         true
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ljos_engine::WriteKind;
+
+    /// A screen that reports a fractional dpi gives points at that dpi, not
+    /// at the whole number nearest it.
+    #[test]
+    fn points_follow_a_fractional_dpi() {
+        let e = Engine::new();
+        ljos_quick::register(&e);
+        let screen = e.create_native(ScreenAttached::default(), None).unwrap();
+        e.write_internal(
+            screen,
+            ScreenAttached::LOGICAL_PIXEL_DENSITY.index,
+            Value::Real(120.5 / 25.4),
+            WriteKind::Initial,
+        )
+        .unwrap();
+        let points = |n: f64| {
+            e.invoke_by_name(screen, "points", &[Value::Real(n)])
+                .unwrap()
+                .to_number()
+        };
+        assert_eq!(points(12.0), 12.0 * 120.5 / 72.0);
+        assert_eq!(points(72.0), 120.5);
+    }
+}
