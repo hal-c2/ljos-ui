@@ -661,9 +661,11 @@ where Qt's views reset when a model is replaced.
   a list's objects give them as a model's roles do. The `id:` line stays,
   empty, so the lowered file keeps its lines. A ListModel stays one where
   a script could edit it or read it as a model: its id is read other than
-  as a view's `model:`, a value is not a literal (`qsTr`), a delegate
-  reads a role by its bare name, writes one, or reads `model`, or the file
-  has other local types, inline components or a `Loader`.
+  as a view's `model:`, a view's model is read off it anywhere in the file
+  (`list.model.count`, `ListView.view.model`), a value is not a literal
+  (`qsTr`), the view has sections (`section.property` or `section { … }`),
+  a delegate reads a role by its bare name, writes one, or reads `model`,
+  or the file has other local types, inline components or a `Loader`.
 - `model.<role>` → `modelData.<role>` where the file shows a model of
   several roles; `model.index` → `index` and `model.modelData` →
   `modelData` in any delegate the file shows. A delegate is one written
@@ -1442,10 +1444,13 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   place.
 - A file whose constant ListModels became typed lists gets their row types
   in `<File>.rows.ts` beside it (§4.8), said as `would write` or `wrote`
-  under the file's line. Where that module exists with other text, the file
-  is not written and migrate says why, so a hand-written module is never
-  overwritten. A compat run (`--compat lower`) holds the module in the
-  project the same way, unless the project has a script of that path.
+  under the file's line. Where that module is there with other bytes, or
+  cannot be read, the file is not written and migrate says why, so a
+  hand-written module is never overwritten. A compat run (`--compat
+  lower`) holds the module in the project the same way. Where the project
+  has a script of that path of its own, the script stays, and the file is
+  lowered with its tables left ListModels, so it never imports rows the
+  script does not declare.
 - Exit status 0 means every file was read, and 2 means a file could not be
   read or written.
 - The edits are text replacements at known spans, which keeps every line
