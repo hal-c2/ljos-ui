@@ -7,8 +7,13 @@
 //!
 //! | To | What |
 //! |---|---|
-//! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
-//! | stderr | `<file>: <error>` for a file that could not be read or written |
+//! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
+//! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file |
+//!
+//! A file's constant `ListModel`s are written as typed lists, with their
+//! row types in `<File>.rows.ts` beside it (docs/DIALECT.md §4.8). A file
+//! of that name that is not that module is left as it is, and so is the
+//! file that would import it.
 //!
 //! A file is lowered with the files it names and that name it (`qml_compat::group`). When that
 //! group holds a file that was not named, none of it is written: the named file is kept, saying
@@ -170,17 +175,21 @@ impl Migrate {
             let root = &roots[at];
             let mut one = match &projects[at] {
                 Some(project) => project.compat_alone(&key_in(root, &absolute(file)), text),
-                None => qml_compat::Alone {
-                    outcome: qml_compat::lower(
-                        text,
-                        &qml_compat::Styled {
-                            locals: &|_: &str| None,
-                            style: &style,
-                        },
-                    ),
-                    references: qml_compat::references(text),
-                    uses: Vec::new(),
-                },
+                None => {
+                    let locals = qml_compat::Styled {
+                        locals: &|_: &str| None,
+                        style: &style,
+                    };
+                    let outcome = match file.file_stem() {
+                        Some(stem) => qml_compat::lower_as(text, &stem.to_string_lossy(), &locals),
+                        None => qml_compat::lower(text, &locals),
+                    };
+                    qml_compat::Alone {
+                        outcome,
+                        references: qml_compat::references(text),
+                        uses: Vec::new(),
+                    }
+                }
             };
             // The project's keys are from its root; these are the paths.
             for used in &mut one.uses {
@@ -259,6 +268,23 @@ impl Migrate {
                     outln!("kept {}:{line}:{column}: {}", file.display(), why.reason);
                 }
                 Outcome::Lowered(done) => {
+                    let dir = file.parent().unwrap_or(Path::new("."));
+                    let modules: Vec<(PathBuf, &String)> = done
+                        .modules
+                        .iter()
+                        .map(|(name, text)| (dir.join(name), text))
+                        .collect();
+                    if let Some((path, _)) = modules.iter().find(|(path, text)| {
+                        std::fs::read_to_string(path).is_ok_and(|there| there != **text)
+                    }) {
+                        eprintln!(
+                            "{}: is there already, and is not the module {} would import; neither is written",
+                            path.display(),
+                            file.display()
+                        );
+                        failed = true;
+                        continue;
+                    }
                     lowered += 1;
                     let edits = done.changes.len();
                     if self.write {
@@ -268,8 +294,19 @@ impl Migrate {
                             continue;
                         }
                         outln!("lowered {} ({edits} edits)", file.display());
+                        for (path, text) in &modules {
+                            if let Err(e) = std::fs::write(path, text) {
+                                eprintln!("{}: {e}", path.display());
+                                failed = true;
+                                continue;
+                            }
+                            outln!("wrote {}", path.display());
+                        }
                     } else {
                         outln!("would lower {} ({edits} edits)", file.display());
+                        for (path, _) in &modules {
+                            outln!("would write {}", path.display());
+                        }
                     }
                 }
             }
