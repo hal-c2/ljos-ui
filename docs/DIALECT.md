@@ -206,8 +206,8 @@ These are `QtQml`'s types, exported from it too, so a lowered file makes
 the same objects. A file of Ljós's API imports it beside `Ljos.Ui`, and
 `Ljos.Ui` no longer imports `QtQml`: a file that names `Timer` without
 importing `Ljos.Core` is told `` `Timer` is not a type of anything the
-file imports ``. `Ljos.Core` brings `QtQml.Models` until `Ljos.Models`
-has the models. `Qt` stays a global of every file, as in Qt's QML, until
+file imports ``. The models are `Ljos.Models`' (§4.8), which a lowered
+file imports for them; `Ljos.Core` still brings `QtQml.Models`. `Qt` stays a global of every file, as in Qt's QML, until
 its members are lowered by member (§4.3).
 
 DECISION: the types keep their names. `Object` for `QtObject` would hide
@@ -1854,7 +1854,8 @@ bindings and states without a rule.
   the kept-for `Ljos.Ui` types (M1) before `Ljos.Core` (M2). Module imports
   keep 364 of 462 kept example files, and `Qt.*` keeps none.
 - DECISION (§4.1): `Ljos.Core` exports `QtQml`'s types under their own
-  names, and brings `QtQml.Models` until `Ljos.Models` has them. `Qt` is a
+  names, and brings `QtQml.Models`; a lowered file has the models from
+  `Ljos.Models`. `Qt` is a
   global of every file. `Ljos.Ui` imports nothing.
 - DECISION: the edits are text replacements at spans that keep every line,
   and they move onto `qml_edit` in M3.

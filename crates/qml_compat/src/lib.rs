@@ -895,9 +895,9 @@ impl<'s> Pass<'s> {
         found
     }
 
-    /// `name`, a type of `QtQml`'s, as `Ljos.Core` has it (with the models
-    /// it brings, until `Ljos.Models` has them). `Qt` is a global of every
-    /// file, as it is in Qt's QML.
+    /// `name`, a type of `QtQml`'s, as `Ljos.Core` has it; the models are
+    /// [`MODELS_MODULE`]'s, and found before this. `Qt` is a global of
+    /// every file, as it is in Qt's QML.
     fn core_type(&self, name: &str, ty: &'static Type, at: usize) -> Result<Ty, Kept> {
         if name == "Qt" {
             return Ok(Ty::Exact(ty));
