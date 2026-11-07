@@ -115,8 +115,10 @@ impl ScreenAttached {
         if !(per_mm.is_finite() && per_mm > 0.0) {
             return ljos_runtime::points_to_pixels(points);
         }
-        // The density is a whole number of dots per inch over 25.4; taken
-        // back to the inch, a 96 is 96 and not a float's neighbour of it.
+        // The screen's logical dots per inch, exact: a host may report a
+        // fractional one, as Qt allows. Only the noise of going through
+        // millimetres is taken off, so a 96 is 96 and not a float's
+        // neighbour of it.
         let per_inch = (per_mm * 25.4 * 1e6).round() / 1e6;
         points * per_inch / 72.0
     }
