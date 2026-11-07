@@ -268,14 +268,22 @@ impl<O: TypeOracle> Project<O> {
         };
         let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
         let locals = |name: &str| self.root_beside(key, name);
+        let mut outcome = qml_compat::lower_as(text, stem, &locals);
         // A script of the rows module's path that the pass did not write is
-        // the project's, and does not declare the rows: the file's tables
-        // stay ListModels, as `ljos migrate` will not write over it either.
-        let outcome = if self.owns_rows(key) {
-            qml_compat::lower_as(text, stem, &locals)
-        } else {
-            qml_compat::lower(text, &locals)
-        };
+        // the project's, and does not declare the rows the lowered file
+        // imports: the file is kept, as `ljos migrate` keeps it.
+        if let qml_compat::Outcome::Lowered(lowered) = &outcome
+            && !lowered.modules.is_empty()
+            && !self.owns_rows(key)
+        {
+            outcome = qml_compat::Outcome::Kept(qml_compat::Kept {
+                reason: format!(
+                    "`{}` is a script of the project's, not the module of this file's rows",
+                    Self::rows_path(key)
+                ),
+                at: 0,
+            });
+        }
         let references = qml_compat::references(text);
         self.alone.insert(
             key.to_string(),
