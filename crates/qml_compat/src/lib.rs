@@ -1467,7 +1467,9 @@ impl<'s> Pass<'s> {
         // The Loader's `source` is then empty: whatever reads it, or hears
         // it change, would be told otherwise.
         let reads = object_id(object).is_some_and(|id| {
-            names_member(self.source, id, "source") || names_member(self.source, id, "setSource")
+            ["source", "setSource", "sourceChanged"]
+                .iter()
+                .any(|member| names_member(self.source, id, member))
         }) || object.members.iter().any(|member| {
             matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("onSourceChanged"))
         }) || object_id(object).is_some_and(|id| {
@@ -1484,22 +1486,21 @@ impl<'s> Pass<'s> {
         // Qt's `sourceComponent` stays empty beside a `source`; lowered, it
         // is the component, and whatever reads it or hears it change would
         // be told so.
-        let reads_component = object_id(object)
-            .is_some_and(|id| names_member(self.source, id, "sourceComponent"))
-            || object.members.iter().any(|member| {
-                matches!(member, QmlMember::Binding(b)
+        let reads_component = object_id(object).is_some_and(|id| {
+            names_member(self.source, id, "sourceComponent")
+                || names_member(self.source, id, "sourceComponentChanged")
+        }) || object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b)
                     if b.name.as_simple() == Some("onSourceComponentChanged"))
+        }) || object_id(object).is_some_and(|id| {
+            self.aimed.iter().any(|(at, name)| {
+                at == id
+                    && matches!(
+                        name.as_str(),
+                        "sourceComponent" | "onSourceComponentChanged"
+                    )
             })
-            || object_id(object).is_some_and(|id| {
-                self.aimed.iter().any(|(at, name)| {
-                    at == id
-                        && matches!(
-                            name.as_str(),
-                            "sourceComponent" | "onSourceComponentChanged"
-                        )
-                })
-            })
-            || self.reads_unqualified(object, Bare::Component);
+        }) || self.reads_unqualified(object, Bare::Component);
         if reads_component {
             return Err(self.no(
                 "a `Loader`'s `sourceComponent` is read or heard, and lowered it is not empty"
@@ -2067,9 +2068,9 @@ fn is_type_name(name: &str) -> bool {
 /// Which of a Loader's members a script names unqualified.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Bare {
-    /// `source` or `setSource`.
+    /// `source`, `setSource` or the `sourceChanged` signal.
     Source,
-    /// `sourceComponent`.
+    /// `sourceComponent` or the `sourceComponentChanged` signal.
     Component,
 }
 
@@ -2109,8 +2110,8 @@ impl BareSources {
 impl<'a> Visit<'a> for BareSources {
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
         let kind = match it.name.as_str() {
-            "source" | "setSource" => Bare::Source,
-            "sourceComponent" => Bare::Component,
+            "source" | "setSource" | "sourceChanged" => Bare::Source,
+            "sourceComponent" | "sourceComponentChanged" => Bare::Component,
             _ => return,
         };
         self.0.push((it.span.start, kind));
