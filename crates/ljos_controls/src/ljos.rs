@@ -4,11 +4,13 @@
 //! the compat pass can lower a file of Qt's that uses it. Each is the
 //! Basic style's control as `QtQuick.Controls` has it, the same file under
 //! the same name: a file in Ljós's API and the Qt file it was lowered from
-//! make the same objects, drawn the same. What the module has decides what
+//! make the same objects, drawn the same. `FileDialog` and `FolderDialog`
+//! are `QtQuick.Dialogs`' own types under a second name. What the module has decides what
 //! the pass lowers (`qml_compat`, through `ljos.txt`), so a control added
 //! here is one a file of Qt's may now be lowered with.
 
 use ljos_engine::{Engine, MetaRef, QmlType, Version};
+use ljos_platform::{FileDialog, FolderDialog};
 
 use crate::AbstractButton;
 use crate::style::BASIC;
@@ -35,6 +37,11 @@ pub(crate) fn register(engine: &Engine, basic: &[String]) {
         version,
         MetaRef::Static(AbstractButton::static_meta()),
     );
+    // QtQuick.Dialogs' own, as they are: the system's dialog when it has
+    // one, else the one ljos_platform draws.
+    for meta in [FileDialog::static_meta(), FolderDialog::static_meta()] {
+        engine.register_type(MODULE, version, MetaRef::Static(meta));
+    }
     for name in DRAWN {
         if !basic.iter().any(|n| n == name) {
             // The style's build said why; `register` warns of it.
