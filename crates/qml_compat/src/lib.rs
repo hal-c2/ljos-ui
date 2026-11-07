@@ -186,6 +186,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
+        qualifiers: Vec::new(),
         changes: Vec::new(),
     };
     match pass.document(&parsed.document) {
@@ -257,6 +258,9 @@ struct Pass<'s> {
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
+    /// The names the file imports under (`import "box.js" as Box`), which
+    /// Qt and Ljós find before a type of an import.
+    qualifiers: Vec<String>,
     changes: Vec<Change>,
 }
 
@@ -276,6 +280,11 @@ impl<'s> Pass<'s> {
         let mut quick = None;
         let mut layouts = None;
         let mut controls = Vec::new();
+        self.qualifiers = document
+            .imports
+            .iter()
+            .filter_map(|import| import.alias.as_ref().map(|alias| alias.name.to_string()))
+            .collect();
         for import in &document.imports {
             let at = import.span.start as usize;
             let QmlImportSource::Module(name) = &import.source else {
@@ -1052,6 +1061,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
         let name = it.name.as_str();
         if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            if self.pass.qualifiers.iter().any(|q| q == name) {
+                // The file's own: it means in the lowered file what it
+                // means in Qt's, whatever type has its name.
+                return;
+            }
             if let Some(new) = renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);

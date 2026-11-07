@@ -756,3 +756,29 @@ fn the_dialogs_imported_before_the_controls_carry_the_import_of_ljos_controls() 
         "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\n\nLabel { }\n"
     );
 }
+
+#[test]
+fn an_import_qualifier_read_in_a_script_is_the_files_own() {
+    // Qt and Ljós alike find a qualifier before a type of an import, so
+    // `Box` stays the script's, not Ljos.Ui's `Box`.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport \"box.js\" as Box\nItem { property int d: Box.helper() }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport \"box.js\" as Box\nItem { property int d: Box.helper() }\n"
+    );
+    // Named as a type Ljós renames, or one Ljos.Ui has not taken, the
+    // qualifier is neither renamed nor a reason to keep the file.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport \"area.js\" as MouseArea\nItem { property int d: MouseArea.helper() }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport \"area.js\" as MouseArea\nItem { property int d: MouseArea.helper() }\n"
+    );
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport \"paint.js\" as Canvas\nItem { property int d: Canvas.helper() }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport \"paint.js\" as Canvas\nItem { property int d: Canvas.helper() }\n"
+    );
+}
