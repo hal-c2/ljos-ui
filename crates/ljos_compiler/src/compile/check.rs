@@ -418,6 +418,42 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         Ty::ERROR
     }
 
+    /// Reports the type the file writes at `span`, unless something it
+    /// imports names it or it is a value type (`font`, `point`) that every
+    /// file may write. A type the file is only handed, a signal's argument,
+    /// is not the file's to name, and goes through [`written`](Self::written)
+    /// alone.
+    fn check_written(&mut self, written: &str, types: &Types<'_, O>, span: Span) {
+        let one = written
+            .strip_prefix("list<")
+            .and_then(|rest| rest.strip_suffix('>'))
+            .unwrap_or(written);
+        // A dotted name is a namespace's or an enum's (`Text.HAlignment`),
+        // which this does not judge.
+        let name = plain(one);
+        if one.contains('.')
+            || primitive(name).is_some()
+            || matches!(name, "var" | "variant" | "date" | "alias")
+        {
+            return;
+        }
+        if types.find(&[one]).is_some() {
+            return;
+        }
+        let oracle = self.c.types.oracle;
+        let is_value = ["QtQuick", "QtQml"]
+            .iter()
+            .filter_map(|module| oracle.module_type(module, name))
+            .any(|ty| oracle.is_value(ty));
+        if !is_value {
+            self.report(
+                Code::UnknownType,
+                qml_front::unknown_type(oracle, one),
+                span,
+            );
+        }
+    }
+
     /// What `name` is on the object `index` of the file's tree.
     fn instance_member(&mut self, index: usize, name: &str) -> Option<Own> {
         if let Some(own) = self.own.get(&(index, name)) {
@@ -680,6 +716,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                             }
                         } else {
                             let types = self.c.types;
+                            self.check_written(&written, &types, type_name.name.span);
                             self.written(&written, type_name.is_list, &types)
                         };
                         let written = super::declared_name(&written, type_name.is_list);
@@ -707,7 +744,11 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                                 Some(t) => match self.module_type(&t.name.parts, t.name.span) {
                                     Some(ty) if t.is_list => self.arena.array(ty, true),
                                     Some(ty) => ty,
-                                    None => self.written(&t.name.to_string(), t.is_list, &types),
+                                    None => {
+                                        let written = t.name.to_string();
+                                        self.check_written(&written, &types, t.name.span);
+                                        self.written(&written, t.is_list, &types)
+                                    }
                                 },
                                 None => self.untyped(
                                     name,

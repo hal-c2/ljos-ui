@@ -76,7 +76,21 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
       When the files are checked with TypeScript
       Then TypeScript reports the lines:
         """
-        Pad.qml:4:33: error: Type 'QtObject' is not assignable to type 'string'. [TS2322]
+        Pad.qml:4:33: error: Type 'QtQml_QtObject' is not assignable to type 'string'. [TS2322]
+        """
+
+    Scenario: A type a file writes is one of the modules it imports, for TypeScript too
+      Given the file "Holder.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property QtObject held
+        }
+        """
+      When the files are checked with TypeScript
+      Then TypeScript reports the lines:
+        """
+        Holder.qml:3:11: error: Cannot find name 'QtObject'. Did you mean 'Object'? [TS2552]
         """
 
   Rule: A file in Qt's QML is not given to TypeScript

@@ -276,7 +276,7 @@ impl<'a> Writer<'_, 'a, '_> {
             "unknown".to_string()
         } else {
             self.api
-                .ts_type(&name, None)
+                .written_type(&name)
                 .unwrap_or_else(|| "never".to_string())
         };
         if ty.is_list {
