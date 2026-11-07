@@ -30,9 +30,28 @@ fn the_renames_are_what_ljos_ui_has() {
         assert!(ui.type_named(new).is_some(), "{new}");
         assert!(ui.type_named(old).is_none(), "{old}");
     }
-    for (ty, renames) in MEMBER_RENAMES {
-        let ty = ui.type_named(ty).expect("a renaming type");
-        for (old, new) in *renames {
+    // Each type Ljos.Ui has of a Qt type that renames members, by the name
+    // it has there; every entry of the table is some such type's.
+    let quick = qt_types::module("QtQuick").expect("QtQuick is described");
+    let names = MEMBER_RENAMES.iter().map(|(name, _)| (*name, *name));
+    let mut seen = Vec::new();
+    for (qt, name) in TYPE_RENAMES.iter().copied().chain(names) {
+        let (Some(qt), Some(ty)) = (quick.type_named(qt), ui.type_named(name)) else {
+            continue;
+        };
+        let Some(renames) = renames_of(qt) else {
+            continue;
+        };
+        // The entry that renames for it: its own, or its nearest ancestor's.
+        let mut at = Some(qt);
+        while let Some(ty) = at {
+            if MEMBER_RENAMES.iter().any(|(name, _)| *name == ty.name) {
+                seen.push(ty.name);
+                break;
+            }
+            at = ty.prototype();
+        }
+        for (old, new) in renames {
             assert!(ty.property(new).is_some(), "{}.{new}", ty.name);
             assert!(ty.property(old).is_none(), "{}.{old}", ty.name);
             assert!(
@@ -40,6 +59,9 @@ fn the_renames_are_what_ljos_ui_has() {
                 "{new}Changed"
             );
         }
+    }
+    for (name, _) in MEMBER_RENAMES {
+        assert!(seen.contains(name), "no type of Ljos.Ui is a {name}");
     }
 }
 
@@ -506,4 +528,63 @@ fn where_a_positioner_and_the_arrangement_disagree_the_file_is_kept() {
         let reason = kept_for(&format!("import QtQuick\n{body}\n"));
         assert!(reason.contains(why), "{body}: {reason}");
     }
+}
+
+#[test]
+fn handlers_are_lowered_to_gestures_by_member() {
+    let source = "import QtQuick\n\
+Rectangle {\n\
+    color: hover.hovered ? \"red\" : \"blue\"\n\
+    HoverHandler { id: hover; acceptedDevices: PointerDevice.Mouse; onAcceptedDevicesChanged: {} }\n\
+    TapHandler {\n\
+        id: tap\n\
+        acceptedButtons: Qt.RightButton; acceptedModifiers: Qt.ControlModifier\n\
+        gesturePolicy: TapHandler.WithinBounds\n\
+        onTapped: console.log(tap.acceptedButtons, hover.acceptedPointerTypes)\n\
+    }\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Rectangle {\n\
+    fill: hover.hovered ? \"red\" : \"blue\"\n\
+    Hover { id: hover; devices: PointerDevice.Mouse; onDevicesChanged: {} }\n\
+    Tap {\n\
+        id: tap\n\
+        buttons: Qt.RightButton; modifiers: Qt.ControlModifier\n\
+        gesturePolicy: Tap.WithinBounds\n\
+        onTapped: console.log(tap.buttons, hover.pointerTypes)\n\
+    }\n\
+}\n"
+    );
+}
+
+#[test]
+fn a_member_a_gesture_renames_read_off_any_object_keeps_the_file() {
+    // A QtObject may be a handler, as an Item may be a Rectangle.
+    let source = "import QtQuick\n\
+Item {\n\
+    property QtObject handler\n\
+    property int buttons: handler.acceptedButtons\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`.acceptedButtons` is read off something whose type is not known"
+    );
+    // A Timer may not be one.
+    assert!(matches!(
+        lower(
+            "import QtQuick\nItem { Timer { id: t }\n    property var b: t.acceptedButtons }\n",
+            &no_locals
+        ),
+        Outcome::Lowered(_)
+    ));
+    // What an Item may be does not rename what only a handler does.
+    assert!(matches!(
+        lower(
+            "import QtQuick\nItem { property int b: parent.acceptedButtons }\n",
+            &no_locals
+        ),
+        Outcome::Lowered(_)
+    ));
 }
