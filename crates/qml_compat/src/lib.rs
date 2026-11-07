@@ -39,7 +39,7 @@ use qml_syntax::{
     Allocator,
     ast::{
         QmlBinding, QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject,
-        QmlQualifiedName,
+        QmlQualifiedName, QmlTypeName,
     },
 };
 use qt_types::Type;
@@ -1034,12 +1034,14 @@ impl<'s> Pass<'s> {
                             property.span.start as usize,
                         ));
                     }
-                    if let Some(type_name) = &property.type_name
-                        && let Some(simple) = type_name.name.as_simple()
-                        && matches!(simple, "var" | "variant")
-                    {
-                        let span = type_name.name.span;
-                        self.change(span.start as usize..span.end as usize, "unknown");
+                    if let Some(type_name) = &property.type_name {
+                        if let Some(simple) = type_name.name.as_simple()
+                            && matches!(simple, "var" | "variant")
+                        {
+                            let span = type_name.name.span;
+                            self.change(span.start as usize..span.end as usize, "unknown");
+                        }
+                        self.written_type(type_name)?;
                     }
                     if let Some(value) = &property.value {
                         self.value(value, scope, root)?;
@@ -1070,10 +1072,36 @@ impl<'s> Pass<'s> {
                     self.object(&component.object, ty, ty, true)?;
                     (self.delegate, self.root_owns, self.loose) = (delegate, root_owns, loose);
                 }
-                QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+                QmlMember::Signal(signal) => {
+                    for param in &signal.params {
+                        if let Some(type_name) = &param.type_name {
+                            self.written_type(type_name)?;
+                        }
+                    }
+                }
+                QmlMember::Enum(_) => {}
             }
         }
         Ok(())
+    }
+
+    /// A type the file writes, a property's or a signal argument's, is one
+    /// it names as much as one it makes: renamed as one is, and had from
+    /// the module that has it (`property QtObject o` imports `Ljos.Core`).
+    /// A value type (`int`, `font`) and a dotted name, an enum's or a
+    /// module's, are not types of either module.
+    fn written_type(&mut self, type_name: &QmlTypeName<'_>) -> Result<(), Kept> {
+        let Some(name) = type_name.name.as_simple() else {
+            return Ok(());
+        };
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Ok(());
+        }
+        let at = type_name.name.span;
+        if let Some(new) = renamed_type(name) {
+            self.change(at.start as usize..at.end as usize, new);
+        }
+        self.named_type(name, at.start as usize, 0).map(|_| ())
     }
 
     /// What a `PropertyChanges` or `Connections` acts on.
