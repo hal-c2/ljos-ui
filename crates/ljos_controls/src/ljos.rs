@@ -22,7 +22,12 @@ pub const MODULE: &str = "Ljos.Controls";
 /// The controls the module has that the Basic style draws.
 const DRAWN: &[&str] = &[
     "Button",
+    "Dialog",
+    "ItemDelegate",
     "Label",
+    "Menu",
+    "MenuItem",
+    "MenuSeparator",
     "Popup",
     "ScrollBar",
     "ScrollView",
