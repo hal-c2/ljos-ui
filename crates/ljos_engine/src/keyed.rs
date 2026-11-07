@@ -134,24 +134,7 @@ impl KeyedRows {
             }
             // Where in `new` each kept row goes, in the order shown.
             let mut place: Vec<usize> = target.into_iter().flatten().collect();
-            for i in 0..place.len() {
-                let Some(m) = (i..place.len()).min_by_key(|&m| place[m]) else {
-                    break;
-                };
-                if m == i {
-                    continue;
-                }
-                place[i..=m].rotate_right(1);
-                self.rows.borrow_mut()[i..=m].rotate_right(1);
-                self.change(
-                    engine,
-                    ModelChange::RowsMoved {
-                        from: m,
-                        to: i,
-                        count: 1,
-                    },
-                );
-            }
+            self.reorder(engine, &mut place);
             // The kept rows are in the new order now, so a row of a new
             // key goes at its place in `new`: every row before it is there.
             let mut kept = place.iter().peekable();
@@ -194,9 +177,75 @@ impl KeyedRows {
         });
     }
 
+    /// Brings the kept rows into the order of `place` with the fewest
+    /// moves: the rows of a longest increasing run of `place` stay where
+    /// they are, and each other row is moved, in the order of where it
+    /// goes, to just before the first row in place that goes after it.
+    fn reorder(&self, engine: &Engine, place: &mut Vec<usize>) {
+        if place.is_sorted() {
+            return;
+        }
+        let mut settled = vec![false; place.iter().max().map_or(0, |m| m + 1)];
+        let stay = increasing(place);
+        let mut moving = Vec::new();
+        for (i, &p) in place.iter().enumerate() {
+            if stay[i] {
+                settled[p] = true;
+            } else {
+                moving.push(p);
+            }
+        }
+        moving.sort_unstable();
+        for p in moving {
+            let Some(from) = place.iter().position(|&q| q == p) else {
+                continue;
+            };
+            place.remove(from);
+            let to = place
+                .iter()
+                .position(|&q| settled[q] && q > p)
+                .unwrap_or(place.len());
+            place.insert(to, p);
+            settled[p] = true;
+            {
+                let mut rows = self.rows.borrow_mut();
+                let row = rows.remove(from);
+                rows.insert(to, row);
+            }
+            if from != to {
+                self.change(engine, ModelChange::RowsMoved { from, to, count: 1 });
+            }
+        }
+    }
+
     fn change(&self, engine: &Engine, change: ModelChange) {
         self.listeners.emit(engine, &change);
     }
+}
+
+/// Which items of `xs` make a longest strictly increasing run of it, found
+/// by patience sorting in O(n log n).
+fn increasing(xs: &[usize]) -> Vec<bool> {
+    // The index of the last item of the best run of each length so far,
+    // and each item's item before it in its run.
+    let mut ends: Vec<usize> = Vec::new();
+    let mut before: Vec<Option<usize>> = vec![None; xs.len()];
+    for (i, &x) in xs.iter().enumerate() {
+        let at = ends.partition_point(|&e| xs[e] < x);
+        before[i] = at.checked_sub(1).map(|a| ends[a]);
+        if at == ends.len() {
+            ends.push(i);
+        } else {
+            ends[at] = i;
+        }
+    }
+    let mut stay = vec![false; xs.len()];
+    let mut at = ends.last().copied();
+    while let Some(i) = at {
+        stay[i] = true;
+        at = before[i];
+    }
+    stay
 }
 
 impl ItemModel for KeyedRows {
@@ -310,5 +359,112 @@ impl KeyedSource {
             delegate,
         });
         Keyed::New(made)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rows(ids: &[&str]) -> Vec<Value> {
+        ids.iter()
+            .map(|id| Value::map([("id", Value::from(*id))]))
+            .collect()
+    }
+
+    /// The moves a view hears when the rows `from` are given as `to`, and
+    /// the keys shown after.
+    fn moves(from: &[&str], to: &[&str]) -> (usize, Vec<String>) {
+        let engine = Engine::new();
+        let shown = KeyedRows::new(&engine, "id", rows(from), None);
+        let moved = Rc::new(Cell::new(0));
+        let heard = moved.clone();
+        shown.subscribe(Rc::new(move |_, change| {
+            if matches!(change, ModelChange::RowsMoved { .. }) {
+                heard.set(heard.get() + 1);
+            }
+        }));
+        shown.update(&engine, rows(to));
+        let keys = shown
+            .rows
+            .borrow()
+            .iter()
+            .map(|r| r.key[1..].to_string())
+            .collect();
+        (moved.get(), keys)
+    }
+
+    #[test]
+    fn a_row_moved_from_the_front_to_the_end_is_one_move() {
+        let to = ["b", "c", "d", "e", "a"];
+        assert_eq!(
+            moves(&["a", "b", "c", "d", "e"], &to),
+            (1, to.map(String::from).to_vec())
+        );
+    }
+
+    #[test]
+    fn a_reversed_list_is_one_move_fewer_than_its_rows() {
+        let to = ["e", "d", "c", "b", "a"];
+        assert_eq!(
+            moves(&["a", "b", "c", "d", "e"], &to),
+            (4, to.map(String::from).to_vec())
+        );
+    }
+
+    #[test]
+    fn rows_in_their_order_are_not_moved() {
+        let to = ["a", "x", "c", "e"];
+        assert_eq!(
+            moves(&["a", "b", "c", "d", "e"], &to),
+            (0, to.map(String::from).to_vec())
+        );
+    }
+
+    #[test]
+    fn rows_kept_removed_and_new_end_in_the_new_order() {
+        let to = ["f", "d", "a", "g", "e", "b"];
+        assert_eq!(
+            moves(&["a", "b", "c", "d", "e"], &to),
+            (2, to.map(String::from).to_vec())
+        );
+    }
+
+    #[test]
+    fn every_order_of_five_rows_is_reached_in_the_fewest_moves() {
+        fn orders(of: Vec<&'static str>) -> Vec<Vec<&'static str>> {
+            if of.len() <= 1 {
+                return vec![of];
+            }
+            let mut all = Vec::new();
+            for i in 0..of.len() {
+                let mut rest = of.clone();
+                let first = rest.remove(i);
+                for mut o in orders(rest) {
+                    o.insert(0, first);
+                    all.push(o);
+                }
+            }
+            all
+        }
+        let from = ["a", "b", "c", "d", "e"];
+        for to in orders(from.to_vec()) {
+            // The longest run of rows already in order, counted plainly.
+            let place: Vec<usize> = from
+                .iter()
+                .map(|k| to.iter().position(|t| t == k).unwrap())
+                .collect();
+            let mut best = vec![1; place.len()];
+            for i in 0..place.len() {
+                for j in 0..i {
+                    if place[j] < place[i] {
+                        best[i] = best[i].max(best[j] + 1);
+                    }
+                }
+            }
+            let fewest = place.len() - best.iter().max().unwrap();
+            let want: Vec<String> = to.iter().map(|t| t.to_string()).collect();
+            assert_eq!(moves(&from, &to), (fewest, want), "{to:?}");
+        }
     }
 }
