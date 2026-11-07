@@ -963,8 +963,11 @@ looks for them: `calc.d.ts` beside `calc.js`, `calc.d.mts` beside
 `calc.mjs`. They are read as a module is, and held to the same rules:
 what they leave untyped is `ts-no-any`, and a name they do not export is
 `unknown-member`. `ljos check --tsc` gives TypeScript the declarations
-too. With none, each `Calc.x` a file reads, and each name a module
-imports, is `ts-boundary`, and the fix names the file to write. What has
+too. With none, each name a file reads of it, however it reads it
+(`Calc.x`, `Calc["x"]`, `const { x } = Calc`), and each name a module
+imports, is `ts-boundary`, and the fix names the file to write. A
+`.d.ts` with no JavaScript file of its own beside it is read by no
+loader. What has
 no fixed shape is declared `unknown`, for a decoder to narrow (§4.4). A
 file in Qt's QML calling the same JavaScript file is compat code, and is
 not checked.
