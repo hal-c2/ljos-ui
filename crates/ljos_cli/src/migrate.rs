@@ -15,8 +15,9 @@
 //! which file to name too, as the one would be renamed to match the other lowered while the other
 //! stays Qt's. A file is read with the project of its directory, or, in a module's directory, of
 //! the directory the module is imported from. The files of a group that were not named are looked
-//! for below those projects and below the directory the command runs in: a file that imports one
-//! named from anywhere else is not seen.
+//! for below those projects, each read with its project, and below the directory the command
+//! runs in, where only a file that imports a named file's directory (by its path or its module) is
+//! read: a file that imports one named from anywhere else is not seen.
 //!
 //! | Status | Means |
 //! |---|---|
@@ -91,23 +92,38 @@ impl Migrate {
             }
         }
         // Where the files a group may hold that were not named are looked
-        // for: below each root of a file named, and below the directory
-        // the command runs in, where the files that import a directory by
-        // its path are. Each is read with the project it is of.
+        // for: below each root of a file named, each read with that root's
+        // project, as a module on its import path is a file to every file
+        // below it.
         let named = roots.len();
         let mut unnamed: Vec<(PathBuf, usize)> = Vec::new();
-        let mut around: Vec<PathBuf> = roots.clone();
-        around.extend(std::env::current_dir().ok().map(|dir| absolute(&dir)));
         let mut seen = BTreeSet::new();
-        for dir in around {
+        for (at, root) in roots.iter().enumerate() {
             let mut below = Vec::new();
             // A file that cannot be read is said where it is named.
-            let _ = files_below(&dir, is_qml, &mut below);
+            let _ = files_below(root, is_qml, &mut below);
             for file in below {
-                if seen.insert(file.clone()) {
-                    let root = root_of(file.parent().unwrap_or(&file));
-                    unnamed.push((file, at_of(root, &mut roots)));
+                if seen.insert(absolute(&file)) {
+                    unnamed.push((file, at));
                 }
+            }
+        }
+        // And below the directory the command runs in, where the files that
+        // import a directory by its path are, unless a root already holds
+        // it. Only a file whose imports name a named file's directory is
+        // read, all with the one project of that directory.
+        if let Some(here) = std::env::current_dir().ok().map(|dir| absolute(&dir))
+            && !roots.iter().any(|root| here.starts_with(root))
+        {
+            let mut below = Vec::new();
+            let _ = files_below(&here, is_qml, &mut below);
+            let importers = importers(
+                &files,
+                below.into_iter().filter(|f| !seen.contains(&absolute(f))),
+            );
+            if !importers.is_empty() {
+                let at = at_of(root_of(&here), &mut roots);
+                unnamed.extend(importers.into_iter().map(|file| (file, at)));
             }
         }
         // A project loaded starts with the style a program started here
@@ -262,6 +278,42 @@ impl Migrate {
     }
 }
 
+/// The files of `candidates` whose imports name the directory of a file of
+/// `named`: by its path (`import "parts"`), or by the module its `qmldir`
+/// says it is (`import Gauges`). The others are not read further, so a
+/// tree around the files named costs a parse of each file, not a project.
+fn importers(
+    named: &[(PathBuf, usize)],
+    candidates: impl Iterator<Item = PathBuf>,
+) -> Vec<PathBuf> {
+    let dirs: BTreeSet<PathBuf> = named
+        .iter()
+        .filter_map(|(file, _)| absolute(file).parent().map(Path::to_owned))
+        .collect();
+    let modules: BTreeSet<String> = dirs
+        .iter()
+        .filter_map(|dir| {
+            let text = std::fs::read_to_string(dir.join("qmldir")).ok()?;
+            Some(qml_front::discover::qmldir(&text)?.uri)
+        })
+        .collect();
+    candidates
+        .filter(|file| {
+            let Ok(text) = std::fs::read_to_string(file) else {
+                return false;
+            };
+            let found = qml_compat::references(&text);
+            let beside = absolute(file);
+            let beside = beside.parent().unwrap_or(Path::new("/"));
+            found
+                .dirs
+                .iter()
+                .any(|dir| dirs.contains(&absolute(&beside.join(dir))))
+                || found.modules.iter().any(|module| modules.contains(module))
+        })
+        .collect()
+}
+
 /// The project `dir`'s files are of: the directory a module in `dir` is
 /// imported from, when its `qmldir` names one whose parts are the
 /// directories it is in (`lib/Ui/Gauges` holding `module Ui.Gauges` is
@@ -333,4 +385,35 @@ fn line_column(text: &str, at: usize) -> (usize, usize) {
     let line = before.matches('\n').count() + 1;
     let start = before.rfind('\n').map_or(0, |i| i + 1);
     (line, before[start..].chars().count() + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Below the directory the command runs in, only a file that imports a
+    /// named file's directory is read: by its path or by its module.
+    #[test]
+    fn only_a_file_that_imports_a_named_directory_is_an_importer() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str, text: &str| {
+            let path = dir.path().join(name);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        at("lib/Gauges/qmldir", "module Gauges\nDial 1.0 Dial.qml\n");
+        let dial = at("lib/Gauges/Dial.qml", "import QtQuick\nRectangle {}\n");
+        let by_path = at(
+            "a/Main.qml",
+            "import QtQuick\nimport \"../lib/Gauges\"\nItem {}\n",
+        );
+        let by_module = at("b/Main.qml", "import QtQuick\nimport Gauges\nItem {}\n");
+        let other = at("c/Main.qml", "import QtQuick\nimport \"parts\"\nItem {}\n");
+        let found = importers(
+            &[(dial, 0)],
+            [by_path.clone(), by_module.clone(), other].into_iter(),
+        );
+        assert_eq!(found, [by_path, by_module]);
+    }
 }
