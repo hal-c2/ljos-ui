@@ -150,3 +150,43 @@ fn a_file_it_cannot_read_or_write_is_status_2_and_the_rest_are_still_done() {
     assert!(out.contains("lowered app/Swatch.qml (2 edits)"), "{out}");
     assert!(read(dir.path(), "app/Swatch.qml").contains("import Ljos.Ui"));
 }
+
+// `import QtQuick.Controls` is the style the program starts with.
+const CONTROLS: &str = "import QtQuick\nimport QtQuick.Controls\nLabel { text: \"Ready\" }\n";
+
+/// `ljos migrate` with no `--style`, in an environment that chooses
+/// `style`: what a program started there would get.
+fn migrate_in_style(dir: &Path, style: &str) -> (i32, String, String) {
+    let out = Command::new(env!("CARGO_BIN_EXE_ljos"))
+        .current_dir(dir)
+        .args(["migrate", "app"])
+        .env("QT_QUICK_CONTROLS_STYLE", style)
+        .env_remove("QT_QUICK_CONTROLS_CONF")
+        .output()
+        .expect("ljos runs");
+    (
+        out.status.code().expect("ljos exits"),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+        String::from_utf8_lossy(&out.stderr).into_owned(),
+    )
+}
+
+#[test]
+fn without_a_style_the_controls_are_those_of_the_environment() {
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "app/Main.qml", CONTROLS);
+
+    let (status, out, err) = migrate_in_style(dir.path(), "Basic");
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(
+        out,
+        "would lower app/Main.qml (2 edits)\n1 files, 1 lowered, 0 kept\n"
+    );
+
+    let (status, out, err) = migrate_in_style(dir.path(), "Fusion");
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(
+        out,
+        "kept app/Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic\n1 files, 0 lowered, 1 kept\n"
+    );
+}
