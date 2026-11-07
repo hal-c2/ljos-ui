@@ -95,6 +95,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Core
         import Ljos.Models
         Item {
           ListModel {
@@ -156,6 +157,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Core
         import Ljos.Models
         Item {
           id: root; objectName: "root"
@@ -261,7 +263,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
         import Ljos.Models
         Item {
           Instantiator { model: ['a', 'b']; QtObject { objectName: modelData } }
@@ -345,7 +347,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
         Item {
           width: 120; height: 60
           ListModel {
