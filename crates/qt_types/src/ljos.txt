@@ -118,6 +118,8 @@ module Ljos.Controls
 	Popup QtQuick/Controls/Basic/Popup.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 
 module Ljos.Core
