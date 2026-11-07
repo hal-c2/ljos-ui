@@ -181,3 +181,15 @@ fn qt_resolved_url_given_a_spread_stays_qt_s() {
          Item { property url c: Qt.resolvedUrl(...[\"c.png\", this]) }\n"
     );
 }
+
+#[test]
+fn qt_resolved_url_not_called_with_one_argument_stays_qt_s() {
+    // `.call`, `.apply` and the bare function may pass a context `url` drops.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { property url c: Qt.resolvedUrl.call(null, \"c.png\", this); property url d: Qt.resolvedUrl.apply(null, [\"d.png\", this]); property var f: Qt.resolvedUrl }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+         Item { property url c: Qt.resolvedUrl.call(null, \"c.png\", this); property url d: Qt.resolvedUrl.apply(null, [\"d.png\", this]); property unknown f: Qt.resolvedUrl }\n"
+    );
+}

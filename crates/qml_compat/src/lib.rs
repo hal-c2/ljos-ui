@@ -1107,17 +1107,21 @@ impl Script<'_, '_> {
 impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
         // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of ctx's
-        // component; `url` takes one argument, so that call stays Qt's. A
-        // spread may carry the context too.
+        // component, and `url` takes one argument. So `Qt.resolvedUrl` is
+        // `url` only as the callee of a call given one plain argument; a
+        // spread, `.call`, `.apply` or the bare function may carry a context,
+        // so every other use stays Qt's.
         if let Expression::StaticMemberExpression(callee) = &it.callee
-            && matches!(&callee.object, Expression::Identifier(qt) if qt.name == "Qt")
+            && let Expression::Identifier(qt) = &callee.object
+            && qt.name == "Qt"
             && callee.property.name == "resolvedUrl"
-            && (it.arguments.len() > 1 || it.arguments.iter().any(|a| a.is_spread()))
+            && let [argument] = it.arguments.as_slice()
+            && !argument.is_spread()
         {
-            for argument in &it.arguments {
-                self.visit_argument(argument);
-            }
-            return;
+            let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
+            self.pass
+                .members
+                .qt(span(qt.span), "resolvedUrl", span(callee.property.span));
         }
         walk::walk_call_expression(self, it);
     }
@@ -1126,6 +1130,8 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         let name = it.property.name.as_str();
         if let Expression::Identifier(qt) = &it.object
             && qt.name == "Qt"
+            // Lowered only where it is called; see visit_call_expression.
+            && name != "resolvedUrl"
         {
             let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
             self.pass
