@@ -50,6 +50,36 @@ fn pointer_area() -> &'static MetaObject {
     })
 }
 
+/// What the views have of `ItemView`, with `add` and `remove` called
+/// `enter` and `exit`: the passages of a delegate into the view and out of
+/// it, as `Repeater` has them (docs/DIALECT.md §4.15), where `add` reads
+/// as a method of a list. It is no type a file names.
+fn item_view() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("ItemView")
+            .module(MODULE)
+            .face(crate::views::ItemView::static_meta())
+            .rename("add", "enter")
+            .rename("remove", "exit")
+            .build()
+    })
+}
+
+/// `ListView`, over [`item_view`].
+fn list_view() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("ListView")
+            .module(MODULE)
+            .face(ListView::static_meta())
+            .face_over(MetaRef::Static(item_view()))
+            .rename("add", "enter")
+            .rename("remove", "exit")
+            .build()
+    })
+}
+
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
     // `Row`, `Column` and `Box` are the one arrangement
@@ -58,10 +88,10 @@ pub(crate) fn register(engine: &Engine) {
     // what they attach to a delegate (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
-        Repeater, ListView,
+        Repeater,
     ]));
     let version = Version::new(1, 0);
-    for face in [rectangle, pointer_area] {
+    for face in [rectangle, pointer_area, list_view] {
         engine.register_type(MODULE, version, MetaRef::Static(face()));
     }
     // `Component`, `Timer` and the `Qt` namespace, until the module that
@@ -132,7 +162,6 @@ mod tests {
         let engine = engine();
         for (module, name, native) in [
             (MODULE, "Repeater", Repeater::static_meta()),
-            (MODULE, "ListView", ListView::static_meta()),
             (
                 "Ljos.Models",
                 "ListModel",
@@ -154,5 +183,25 @@ mod tests {
         }
         // A model is not an item, and a view not a model.
         assert!(engine.lookup_type("Ljos.Models", "ListView").is_none());
+    }
+
+    #[test]
+    fn list_view_calls_its_passages_enter_and_exit() {
+        let engine = engine();
+        let face = engine.lookup_type(MODULE, "ListView").expect("registered");
+        let native = ListView::static_meta();
+        assert!(face.inherits(native));
+        assert_eq!(face.property_index("enter"), native.property_index("add"));
+        assert_eq!(face.property_index("exit"), native.property_index("remove"));
+        assert_eq!(face.property_index("add"), None);
+        assert_eq!(face.property_index("remove"), None);
+        assert!(face.signal_index("enterChanged").is_some());
+        // What a file reads of the type is the native's.
+        assert!(face.enum_key("Horizontal").is_some());
+        assert_eq!(face.property_index("key"), native.property_index("key"));
+        assert_eq!(
+            face.property_index("addDisplaced"),
+            native.property_index("addDisplaced")
+        );
     }
 }
