@@ -314,6 +314,48 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         }
         """
 
+    # A `Component` a view names by id is its delegate as if it were written
+    # in the view's `delegate:`, when nothing else in the file names it.
+    @ljos-only @headless
+    Scenario: A delegate given by id reads the rows of the view it is given to
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          width: 120; height: 60
+          ListModel {
+            id: zones
+            ListElement { shade: "#c03030"; wide: 30 }
+            ListElement { shade: "#3030c0"; wide: 50 }
+          }
+          Component { id: bar; Rectangle { width: model.wide; height: 20; color: model.shade } }
+          ListView { width: 120; height: 60; orientation: ListView.Horizontal; model: zones; delegate: bar }
+        }
+        """
+      When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (4 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        Item {
+          width: 120; height: 60
+          ListModel {
+            id: zones
+            ListElement { shade: "#c03030"; wide: 30 }
+            ListElement { shade: "#3030c0"; wide: 50 }
+          }
+          Component { id: bar; Rectangle { width: modelData.wide; height: 20; fill: modelData.shade } }
+          ListView { width: 120; height: 60; orientation: ListView.Horizontal; model: zones; delegate: bar }
+        }
+        """
+
     @ljos-only @headless
     Scenario: A property called model is the file's own, not a row
       Given the file "Main.qml":

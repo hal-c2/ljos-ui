@@ -621,6 +621,39 @@ fn a_file_outside_any_delegate_reads_nothing_of_a_row() {
 }
 
 #[test]
+fn a_component_a_view_is_given_by_id_is_its_delegate() {
+    let text = lowered(&with_zones(
+        "Component { id: d; Text { text: model.city + model.index } }\n  ListView { model: zones; delegate: d }",
+    ));
+    assert!(
+        text.contains("Component { id: d; Text { text: modelData.city + index } }"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_component_given_by_id_and_named_elsewhere_is_no_known_delegate() {
+    let reason = kept_for(&with_zones(
+        "Component { id: d; Text { text: model.city } }\n  ListView { model: zones; delegate: d }\n  property Component other: d",
+    ));
+    assert!(
+        reason.contains("the `Component` it is in is not written in the `delegate:` of, or given to by id alone; give the Component's root `required property var city`"),
+        "{reason}"
+    );
+}
+
+#[test]
+fn a_component_given_by_id_to_views_of_other_rows_reads_no_role() {
+    let reason = kept_for(&with_zones(
+        "Component { id: d; Text { text: model.city } }\n  ListView { model: zones; delegate: d }\n  ListView { model: 3; delegate: d }",
+    ));
+    assert!(
+        reason.contains("a model the file does not show"),
+        "{reason}"
+    );
+}
+
+#[test]
 fn a_listed_model_with_an_id_and_one_role_may_be_given_more() {
     let reason = kept_for(
         "import QtQuick\nItem {\n  ListModel { id: m; ListElement { city: \"a\" } }\n  Repeater { model: m; Text { text: model.city } }\n}\n",

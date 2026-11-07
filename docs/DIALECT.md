@@ -643,8 +643,12 @@ where Qt's views reset when a model is replaced.
   ListModel that is edited stays a ListModel.
 - `model.<role>` → `modelData.<role>` where the file shows a model of
   several roles; `model.index` → `index` and `model.modelData` →
-  `modelData` in a delegate the file shows. Where the file shows no view,
-  or not the model, the file is kept, with the name to declare `required`.
+  `modelData` in any delegate the file shows. A delegate is one written
+  in a view's `delegate:` (or its default property), or a `Component` a
+  view is given by id (`delegate: row`) that nothing else in the file
+  names; one named elsewhere too may be made of other rows. Where the file
+  shows no view, or not the model, the file is kept, with the name to
+  declare `required`.
 - `import QtQml.Models` → `import Ljos.Models`. A lowered file that makes a
   `ListModel`, `ListElement` or `Instantiator` gets `import Ljos.Models`.
 - `XmlListModel` → `XmlModel` with a generated decoder.
