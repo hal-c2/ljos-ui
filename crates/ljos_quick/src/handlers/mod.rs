@@ -695,6 +695,16 @@ pub(crate) fn source_of(device: &Value) -> PointerSource {
 /// whatever reads two of its values never sees half a point, and says so
 /// with `<group>Changed` when anything changed.
 pub(crate) fn put_point(engine: &Engine, h: ObjectId, group: &str, v: &PointValues) -> bool {
+    let changed = write_point(engine, h, group, v);
+    if changed {
+        emit(engine, h, &format!("{group}Changed"), &[]);
+    }
+    changed
+}
+
+/// [`put_point`] without the change signal, for a handler that says its
+/// point changed after other signals that read it.
+pub(crate) fn write_point(engine: &Engine, h: ObjectId, group: &str, v: &PointValues) -> bool {
     let index = |name: &str| engine.property_index(h, &format!("{group}.{name}")).ok();
     let values = [
         ("position", point_value(v.position)),
@@ -707,7 +717,7 @@ pub(crate) fn put_point(engine: &Engine, h: ObjectId, group: &str, v: &PointValu
         ("device", device_value(v.source)),
         ("modifiers", Value::Int(v.modifiers)),
     ];
-    let changed = engine.batch(|| {
+    engine.batch(|| {
         let mut changed = false;
         for (name, value) in values {
             if let Some(p) = index(name) {
@@ -715,11 +725,7 @@ pub(crate) fn put_point(engine: &Engine, h: ObjectId, group: &str, v: &PointValu
             }
         }
         changed
-    });
-    if changed {
-        emit(engine, h, &format!("{group}Changed"), &[]);
-    }
-    changed
+    })
 }
 
 /// The scene position a handler's point group shows.
