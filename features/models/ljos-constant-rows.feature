@@ -33,19 +33,16 @@ Feature: A ListModel of constants is a typed list
             ListElement { city: "Tokyo"; shift: 9 }
           }
           ListView {
-            width: 200; height: 60
-            model: zones
+            width: 200; height: 60; model: zones
             delegate: Item {
-              objectName: "r" + index
-              width: 200; height: 20
+              objectName: "r" + index; width: 200; height: 20
               property string shown: model.city + "/" + model.shift + "/" + model.home
             }
           }
           Repeater {
             model: zones
             Item {
-              required property string city
-              required property real shift
+              required property string city; required property real shift
               required property int index
               objectName: "c" + index
               property string shown: city + shift
@@ -78,19 +75,16 @@ Feature: A ListModel of constants is a typed list
             { city: "Tokyo", shift: 9, home: false }
           ]
           ListView {
-            width: 200; height: 60
-            model: zones
+            width: 200; height: 60; model: zones
             delegate: Item {
-              objectName: "r" + index
-              width: 200; height: 20
+              objectName: "r" + index; width: 200; height: 20
               property string shown: modelData.city + "/" + modelData.shift + "/" + modelData.home
             }
           }
           Repeater {
             model: zones
             Item {
-              required property string city
-              required property real shift
+              required property string city; required property real shift
               required property int index
               objectName: "c" + index
               property string shown: city + shift
