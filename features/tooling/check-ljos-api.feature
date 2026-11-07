@@ -355,6 +355,23 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 3 errors
         """
 
+    Scenario: An attached object read off an item is of the type attached
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          Rectangle { id: card }
+          function show() { card.DragSource.active = true; console.log(card.DragSource.nope) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:88: error: `nope` has no type: a DragAttached has no member of that name [ts-no-any]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: A handler's parameters, and a callback's, take their types from where they go
       Given the file "Gauge.qml":
         """qml
