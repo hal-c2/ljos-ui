@@ -543,15 +543,37 @@ module Ljos.Ui
 	import QtQml
 	Box Ljos.Ui.Box
 	Column Ljos.Ui.Column
+	ConicalGradient QtQuick.Shapes.ConicalGradient
 	Font QtQuick.Font
+	Gradient QtQuick.Gradient
+	GradientStop QtQuick.GradientStop
 	Item QtQuick.Item
 	Layout QtQuick.Layouts.Layout
+	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
+	Path QtQuick.Path
+	PathAngleArc QtQuick.PathAngleArc
+	PathArc QtQuick.PathArc
+	PathAttribute QtQuick.PathAttribute
+	PathCubic QtQuick.PathCubic
+	PathCurve QtQuick.PathCurve
+	PathLine QtQuick.PathLine
+	PathMove QtQuick.PathMove
+	PathMultiline QtQuick.PathMultiline
+	PathPercent QtQuick.PathPercent
+	PathPolyline QtQuick.PathPolyline
+	PathQuad QtQuick.PathQuad
+	PathRectangle QtQuick.PathRectangle
+	PathSvg QtQuick.PathSvg
 	PointerArea Ljos.Ui.PointerArea
 	PropertyChanges QtQuick.PropertyChanges
+	RadialGradient QtQuick.Shapes.RadialGradient
 	Rectangle Ljos.Ui.Rectangle
 	Repeater QtQuick.Repeater
 	Row Ljos.Ui.Row
+	Shape QtQuick.Shapes.Shape
+	ShapeGradient QtQuick.Shapes.ShapeGradient
+	ShapePath QtQuick.Shapes.ShapePath
 	State QtQuick.State
 	Text QtQuick.Text
 	type Ljos.Ui.Box Box
