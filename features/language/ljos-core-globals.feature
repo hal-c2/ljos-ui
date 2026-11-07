@@ -1,0 +1,232 @@
+# Sources:
+#   docs/DIALECT.md (§4.3 globals, §6 the compat pass)
+#   https://doc.qt.io/qt-6/qml-qtqml-qt.html
+#   https://doc.qt.io/qt-6/qml-color.html
+# Verified on Qt 6.11.2 (qml6, offscreen).
+# What Qt's QML has from the `Qt` global, Ljós's API has from `Ljos.Core`: constructors of the value
+# types and of colours, a colour's own methods, `later`, `url` and `App`. The file as written in Qt's
+# QML is the oracle, and the same file in Ljós's API, and the file lowered, are held to its numbers.
+# The sum is 3 + 4 + 5 + 6 + 3 + 3. The call that comes later doubles what the handler set.
+
+Feature: Ljos.Core: what Qt's QML has from the Qt global
+  A file in Qt's QML makes a point with `Qt.point`, a colour with
+  `Qt.rgba`, and asks `Qt.platform` what it runs on. A file in Ljós's API
+  has the same from `Ljos.Core`, which it imports: `point(…)`,
+  `rgba(…)`, a colour's own `darker`, `later(…)`, `url(…)` and
+  `App.platform`. A file that does not import `Ljos.Core` has none of
+  them, and a property of the same name is the property.
+
+  Rule: Ljos.Core makes what Qt makes
+
+    @qt-parity
+    Scenario: Values, colours, a later call and the platform, as written in Qt's QML
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property point p: Qt.point(3, 4)
+          property size s: Qt.size(5, 6)
+          property rect r: Qt.rect(1, 2, 3, 4)
+          property vector3d v: Qt.vector3d(1, 2, 3)
+          property real sum: p.x + p.y + s.width + s.height + r.width + v.z
+          property color c: Qt.rgba(0.8, 0.4, 0.2, 1)
+          property color dark: Qt.darker(c, 2)
+          property color mixed: Qt.tint(c, Qt.rgba(0, 0, 1, 0.5))
+          property real faint: Qt.alpha(c, 0.5).a
+          property bool knowsOs: Qt.platform.os.length > 0
+          property bool beside: Qt.resolvedUrl("a.png").toString().endsWith("/a.png")
+          property int calls: 0
+          Component.onCompleted: { Qt.callLater(() => calls = calls * 2); calls = 5 }
+        }
+        """
+      Then the property "sum" of "root" is 24
+      And the property "dark" of "root" is "#66331a"
+      And the property "mixed" of "root" is "#663399"
+      And the property "faint" of "root" is within 0.001 of 0.5
+      And the property "knowsOs" of "root" is true
+      And the property "beside" of "root" is true
+      When 50 milliseconds pass
+      Then the property "calls" of "root" is 10
+
+    @ljos-only
+    Scenario: The same file in Ljós's API has them from Ljos.Core
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          property point p: point(3, 4)
+          property size s: size(5, 6)
+          property rect r: rect(1, 2, 3, 4)
+          property vector3d v: vector3d(1, 2, 3)
+          property real sum: p.x + p.y + s.width + s.height + r.width + v.z
+          property color c: rgba(0.8, 0.4, 0.2, 1)
+          property color dark: c.darker(2)
+          property color mixed: c.tint(rgba(0, 0, 1, 0.5))
+          property real faint: c.alpha(0.5).a
+          property bool knowsOs: App.platform.os.length > 0
+          property bool beside: url("a.png").toString().endsWith("/a.png")
+          property int calls: 0
+          Component.onCompleted: { later(() => calls = calls * 2); calls = 5 }
+        }
+        """
+      Then the property "sum" of "root" is 24
+      And the property "dark" of "root" is "#66331a"
+      And the property "mixed" of "root" is "#663399"
+      And the property "faint" of "root" is within 0.001 of 0.5
+      And the property "knowsOs" of "root" is true
+      And the property "beside" of "root" is true
+      When 50 milliseconds pass
+      Then the property "calls" of "root" is 10
+
+    @ljos-only @headless
+    Scenario: A file in Ljós's API that does not import Ljos.Core has no later
+      Given the file "Tick.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property int calls: 0
+          function tick() { later(() => calls += 1) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Tick.qml:4:29: error: `later` has no type: it is not in scope [ts-no-any]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    @ljos-only
+    Scenario: A property of the same name is the property, not Ljos.Core's
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          property int size: 3
+          property int twice: size * 2
+          property real across: rect(0, 0, 7, 1).width
+        }
+        """
+      Then the property "twice" of "root" is 6
+      And the property "across" of "root" is 7
+
+  Rule: Qt's members are lowered to Ljos.Core's
+
+    @ljos-only
+    Scenario: The file as written in Qt's QML, lowered, holds the same numbers
+      Given Qt QML is lowered to the Ljós API
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property point p: Qt.point(3, 4)
+          property size s: Qt.size(5, 6)
+          property rect r: Qt.rect(1, 2, 3, 4)
+          property vector3d v: Qt.vector3d(1, 2, 3)
+          property real sum: p.x + p.y + s.width + s.height + r.width + v.z
+          property color c: Qt.rgba(0.8, 0.4, 0.2, 1)
+          property color dark: Qt.darker(c, 2)
+          property color mixed: Qt.tint(c, Qt.rgba(0, 0, 1, 0.5))
+          property real faint: Qt.alpha(c, 0.5).a
+          property bool knowsOs: Qt.platform.os.length > 0
+          property bool beside: Qt.resolvedUrl("a.png").toString().endsWith("/a.png")
+          property int calls: 0
+          Component.onCompleted: { Qt.callLater(() => calls = calls * 2); calls = 5 }
+        }
+        """
+      Then the property "sum" of "root" is 24
+      And the property "dark" of "root" is "#66331a"
+      And the property "mixed" of "root" is "#663399"
+      And the property "faint" of "root" is within 0.001 of 0.5
+      And the property "knowsOs" of "root" is true
+      And the property "beside" of "root" is true
+      When 50 milliseconds pass
+      Then the property "calls" of "root" is 10
+
+    @ljos-only @headless
+    Scenario: A file that names Qt's makers is migrated to Ljos.Core's
+      Given the file "Badge.qml":
+        """qml
+        import QtQuick
+        Item {
+          property point at: Qt.point(3, 4)
+          property vector3d v: Qt.vector3d(1, 2, 3)
+          property color tone: Qt.rgba(0.8, 0.4, 0.2, 1)
+          property color shade: Qt.darker(tone, 2)
+          property string os: Qt.platform.os
+          property url icon: Qt.resolvedUrl("badge.png")
+          property int calls: 0
+          Component.onCompleted: Qt.callLater(() => calls += 1)
+          function open(link) { Qt.openUrlExternally(link) }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Badge.qml (8 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Badge.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        Item {
+          property point at: point(3, 4)
+          property vector3d v: vector3d(1, 2, 3)
+          property color tone: rgba(0.8, 0.4, 0.2, 1)
+          property color shade: Qt.darker(tone, 2)
+          property string os: App.platform.os
+          property url icon: url("badge.png")
+          property int calls: 0
+          Component.onCompleted: later(() => calls += 1)
+          function open(link) { App.openUrlExternally(link) }
+        }
+        """
+
+    @ljos-only @headless
+    Scenario: A member whose Ljós name the file uses for something else stays Qt's
+      Given the file "Frame.qml":
+        """qml
+        import QtQuick
+        Item {
+          property size size: Qt.size(5, 6)
+          property point at: Qt.point(3, 4)
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Frame.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        Item {
+          property size size: Qt.size(5, 6)
+          property point at: point(3, 4)
+        }
+        """
+
+    @ljos-only @headless
+    Scenario: A file with a delegate keeps Qt's members, which a role could hide
+      Given the file "List.qml":
+        """qml
+        import QtQuick
+        Item { property Component delegate }
+        """
+      And the file "Dots.qml":
+        """qml
+        import QtQuick
+        List {
+          delegate: Item { property point at: Qt.point(1, 0) }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Dots.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        List {
+          delegate: Item { property point at: Qt.point(1, 0) }
+        }
+        """
