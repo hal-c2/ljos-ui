@@ -95,3 +95,44 @@ Feature: Qt's QML lowered to Ljós's API
         """
       Then the property "color" of "swatch" is "#336699"
       And the pixel at 20, 20 of the window is "#336699"
+
+  Rule: `ljos run --compat lower` runs an application lowered, to be driven
+
+    # As `ljos render --compat lower` renders it: the files are lowered as they
+    # load, and the program the lowered files make is the one that runs.
+    @ljos-only @headless
+    Scenario: A lowered application runs and takes a click
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item { width: 100; height: 60; Button { objectName: "button"; anchors.fill: parent } }
+        """
+      When the author starts "ljos run Main.qml --headless --compat lower --mcp=inspect,input,eval"
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#face", "source": "String(fill)"}
+        """
+      Then the answer's "/value" is "#2060c0"
+      When the agent calls the tool "app_click" with:
+        """json
+        {"target": "#button"}
+        """
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#button", "source": "clicks"}
+        """
+      Then the answer's "/value" is 1
+
+    @ljos-only @headless
+    Scenario: An application run as written keeps Qt's names
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item { width: 100; height: 60; Button { objectName: "button"; anchors.fill: parent } }
+        """
+      When the author starts "ljos run Main.qml --headless --compat keep --mcp=inspect,eval"
+      And the agent calls the tool "app_eval" with:
+        """json
+        {"target": "#face", "source": "String(color)"}
+        """
+      Then the answer's "/value" is "#2060c0"
