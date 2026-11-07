@@ -640,7 +640,7 @@ measures both with budget cases.
   explicit size with no `preferred*` and an implicit size not statically 0.
   That child is the case where the rules differ, and its file is kept, with
   that reason.
-- `GridLayout` → `Grid`, kept when a child sets an explicit size with no
+- `GridLayout` → `Grid` (not built yet; it keeps its file today), kept when a child sets an explicit size with no
   `preferred*` and an implicit size not statically 0, as `RowLayout` is.
 - `Grid` → `Grid`, kept when a child has `Layout.*`, as `Row` is, and where
   Qt's positioner and Ljós's `Grid` place children apart (below).
@@ -1283,7 +1283,7 @@ construction.
 |---|---|---|
 | `Row`, `Column` | `Row`, `Column` (a Box) | mechanical; kept when a child has `Layout.*` (§4.6) |
 | `RowLayout`, `ColumnLayout` | `Row`, `Column` | mechanical; kept when an explicit size meets a non-zero implicit size |
-| `GridLayout`, `Grid` | `Grid` | mechanical; kept as `RowLayout` and `Row` are, and where Qt's `Grid` places apart (§4.6) |
+| `GridLayout`, `Grid` | `Grid` | `Grid`: mechanical; kept as `Row` is, and where Qt's `Grid` places apart (§4.6). `GridLayout`: not built yet, and kept |
 | `StackLayout` | `Pages` | mechanical |
 | `Flow` | `Flow` | mechanical; kept for a `Layout.*` or anchored child, or a transition |
 | `LayoutItemProxy` | a Box whose `direction` is bound | DECISION: kept; a person merges the layouts |
