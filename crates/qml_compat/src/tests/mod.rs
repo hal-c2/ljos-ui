@@ -109,43 +109,17 @@ fn corpus_file(path: &str) -> Option<String> {
     text
 }
 
+/// The corpus button sizes its text in points, which has no Ljós name until
+/// `Screen` is in `Ljos.Ui`; the file is kept, and says where.
 #[test]
-fn the_corpus_button_is_lowered_line_for_line() {
+fn the_corpus_button_is_kept_for_its_point_size() {
     let Some(source) = corpus_file("examples/demos/hangman/qml/SimpleButton.qml") else {
         return;
     };
-    let source = source.as_str();
-    let text = lowered(source);
-    assert_eq!(text.lines().count(), source.lines().count());
-    assert!(text.contains("pragma Scripts: JavaScript; import Ljos.Ui\n"));
-    assert!(!text.contains("import QtQuick"));
-    // The rectangle's colour is its fill, in the binding and in the states;
-    // the text's colour and the border's are colours still.
-    assert!(text.contains("        fill: buttonColor\n"));
-    assert!(text.contains("            color: textColor\n"));
-    assert_eq!(text.matches("fill: button.buttonColor").count(), 1);
-    assert_eq!(text.matches("fill: \"transparent\"").count(), 1);
-    assert_eq!(text.matches("border.color:").count(), 2);
-    assert_eq!(text.matches("color: button.textColor").count(), 1);
-    assert!(text.contains("    PointerArea {\n"));
-    assert!(!text.contains("MouseArea"));
-    // The states name their objects in each change, not as a target.
-    assert!(!text.contains("target:"));
-    assert_eq!(text.matches("buttonRect.fill: ").count(), 2);
-    assert_eq!(text.matches("buttonRect.border.color: ").count(), 2);
-    assert_eq!(text.matches("buttonText.color: ").count(), 2);
-    // Nothing else moved; a target's line is left empty.
-    for (a, b) in source.lines().zip(text.lines()) {
-        if a != b {
-            assert!(
-                a.contains("import QtQuick")
-                    || a.contains("color:")
-                    || a.contains("MouseArea")
-                    || (a.contains("target:") && b.is_empty()),
-                "{a:?} became {b:?}"
-            );
-        }
-    }
+    assert_eq!(
+        kept_for(&source),
+        format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}")
+    );
 }
 
 #[test]
