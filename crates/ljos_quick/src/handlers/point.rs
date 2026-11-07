@@ -9,7 +9,9 @@
 use ljos_engine::{Cx, Engine, EngineError, ObjectId, QmlObject, Vector2d, qml_impl};
 use ljos_render::kurbo;
 
-use super::{PointValues, PointerHandler, emit, put, put_point, set_active, vector_value};
+use super::{
+    PointValues, PointerHandler, emit, put, put_point, set_active, vector_value, write_point,
+};
 use crate::input::{HandlerPoint, PointerEvent};
 
 /// `PointHandler` (QtQuick).
@@ -46,9 +48,14 @@ fn translate(engine: &Engine, h: ObjectId, d: kurbo::Vec2) {
 }
 
 pub(super) fn pressed(engine: &Engine, h: ObjectId, ev: &PointerEvent) {
+    // The point is the press's by the time it becomes active, as in Qt,
+    // though it says so after.
+    let changed = write_point(engine, h, "point", &PointValues::of(engine, h, ev, ev.pos));
     set_active(engine, h, true);
     translate(engine, h, kurbo::Vec2::ZERO);
-    put_point(engine, h, "point", &PointValues::of(engine, h, ev, ev.pos));
+    if changed {
+        emit(engine, h, "pointChanged", &[]);
+    }
 }
 
 pub(super) fn moved(engine: &Engine, h: ObjectId, ev: &PointerEvent, press: kurbo::Point) {
