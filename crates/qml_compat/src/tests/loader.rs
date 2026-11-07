@@ -103,6 +103,9 @@ fn a_loader_whose_source_is_read_where_the_pass_does_not_follow_keeps_the_file()
         "Loader { source: \"Page.qml\"; Item { width: source.length } }",
         // So is the root of an inline component.
         "Item { component P: Loader { source: \"Page.qml\"; Item { width: source.length } } }",
+        // Its change signal, connected in a script.
+        "Item { Loader { id: l; source: \"Page.qml\" } Component.onCompleted: l.sourceChanged.connect(f); function f() { } }",
+        "Loader { source: \"Page.qml\"; Component.onCompleted: sourceChanged.connect(f); function f() { } }",
     ] {
         match lower(&format!("import QtQuick\n{source}\n"), &page) {
             Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
@@ -146,6 +149,8 @@ fn a_loader_whose_component_is_read_keeps_the_file() {
         "Loader { source: \"Page.qml\"; onLoaded: console.log(sourceComponent) }",
         "Item { Loader { id: l; source: \"Page.qml\" } property bool b: l.sourceComponent !== null }",
         "Item { Loader { id: l; source: \"Page.qml\" } Connections { target: l; function onSourceComponentChanged() { } } }",
+        "Item { Loader { id: l; source: \"Page.qml\" } Component.onCompleted: l.sourceComponentChanged.connect(f); function f() { } }",
+        "Loader { source: \"Page.qml\"; Component.onCompleted: sourceComponentChanged.connect(f); function f() { } }",
     ] {
         match lower(&format!("import QtQuick\n{source}\n"), &page) {
             Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
