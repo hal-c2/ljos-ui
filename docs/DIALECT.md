@@ -1454,7 +1454,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `ljos run --compat keep\|lower` without `--watch` (a watched run refuses `lower`: its saves are recompiled as written). Remaining: `--watch` with `lower`, then the rest | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
@@ -1511,7 +1511,8 @@ bindings and states without a rule.
   that name one another. Grouping is conservative.
 - DECISION: `Qt.createQmlObject` keeps its file until M5.
 - DECISION: phase 1 exposes compat on `ljos render --compat keep|lower` and
-  `ljos migrate`. `ljos run --compat` is M1. The default is `keep`.
+  `ljos migrate`. `ljos run --compat` is M1 (built without `--watch`). The
+  default is `keep`.
 - DECISION: no Qt corpus file is copied into the repository. Tests read the
   corpus at run time and skip when it is absent. Features use fixtures
   written for them, and the spike copies into scratch.
@@ -1581,7 +1582,8 @@ bindings and states without a rule.
 
 M1, in this order, from §6.4's evidence:
 
-1. `ljos run --compat`, so a lowered app can be driven, not only rendered;
+1. `ljos run --compat`, so a lowered app can be driven, not only rendered
+   (built, without `--watch`);
 2. `Ljos.Layout`. `QtQuick.Layouts` keeps 46 example files, and `Row` and
    `Column` keep more by group;
 3. the `Ljos.Ui` types the corpus keeps for: `Image`, `Behavior` and the
