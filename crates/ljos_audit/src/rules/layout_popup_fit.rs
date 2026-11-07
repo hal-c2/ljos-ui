@@ -20,14 +20,22 @@ use crate::cx::{
     Cx, is_a, is_scroller, number, overhang, overhang_words, scene_rect, shown_items, slack, trim,
 };
 
-/// Whether the content, or an item near its top, scrolls.
+/// Whether the content, or an item anywhere inside it, scrolls. A page
+/// may sit as deep as the app's layouts put it (a row, a column, a
+/// loader, a stack of pages), and what it asks for is then its content
+/// height, which it scrolls through.
 fn content_scrolls(engine: &Engine, content: ObjectId) -> bool {
-    let mut level = vec![content];
-    for _ in 0..3 {
-        if level.iter().any(|o| is_scroller(engine, *o)) {
+    let mut stack = vec![content];
+    let mut seen = 0;
+    while let Some(o) = stack.pop() {
+        seen += 1;
+        if seen > crate::cx::DEPTH {
+            return false;
+        }
+        if is_scroller(engine, o) {
             return true;
         }
-        level = level.iter().flat_map(|o| child_items(engine, *o)).collect();
+        stack.extend(child_items(engine, o));
     }
     false
 }
