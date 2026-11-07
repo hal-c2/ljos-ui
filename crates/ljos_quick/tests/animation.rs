@@ -880,6 +880,49 @@ fn exits_ended_on_the_way_still_let_their_items_go() {
     assert!(!rig.flag_of(exit, "running"));
 }
 
+fn passages(rig: &Rig) -> (ObjectId, ObjectId) {
+    let of = |name| {
+        get(&rig.e, rig.obj("repeater"), name)
+            .as_object()
+            .expect("a transition")
+    };
+    (of("enter"), of("exit"))
+}
+
+#[test]
+fn a_row_that_leaves_on_its_way_in_ends_its_enter_and_goes() {
+    let mut rig = Rig::new(KEYED);
+    let (enter, exit) = passages(&rig);
+    rig.set("root", "rows", rows(&["a", "b"]));
+    rig.run_until(ms(50));
+    assert!(rig.flag_of(enter, "running"));
+    rig.set("root", "rows", rows(&["a"]));
+    rig.run_until(ms(2000));
+    assert!(!rig.flag_of(enter, "running"), "b's enter is over");
+    assert!(!rig.flag_of(exit, "running"));
+    assert_eq!(rig.num("repeater", "count"), 1.0);
+    let children = list(&rig.e, rig.root, "children");
+    assert_eq!(children.len(), 2, "the Repeater and a: {children:?}");
+    assert!(rig.idle());
+}
+
+#[test]
+fn stopping_the_enter_of_a_row_on_its_way_out_lets_it_go() {
+    let mut rig = Rig::new(KEYED);
+    let (enter, exit) = passages(&rig);
+    rig.set("root", "rows", rows(&["a", "b"]));
+    rig.run_until(ms(50));
+    rig.set("root", "rows", rows(&["a"]));
+    rig.run_until(ms(100));
+    assert!(rig.flag_of(exit, "running"));
+    ljos_quick::stop_transition(&rig.e, enter);
+    rig.run_until(ms(2000));
+    let children = list(&rig.e, rig.root, "children");
+    assert_eq!(children.len(), 2, "b's exit ran to its end: {children:?}");
+    assert!(!rig.flag_of(exit, "running"));
+    assert!(rig.idle());
+}
+
 #[test]
 fn with_reduced_motion_rows_that_leave_at_once_each_fade_and_go() {
     let mut rig = Rig::new(
