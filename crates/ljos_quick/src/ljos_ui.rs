@@ -46,6 +46,23 @@ fn rectangle() -> &'static MetaObject {
     })
 }
 
+/// `Text`, with its alignment, wrapping and format called `align`, `wrap`
+/// and `format`; `elide` keeps its name, and so does `color`, which is the
+/// glyphs' (docs/DIALECT.md §4.13). Its font is the one font value, whose
+/// pixel size is also `size`.
+fn text() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("Text")
+            .module(MODULE)
+            .face(Text::static_meta())
+            .rename("horizontalAlignment", "align")
+            .rename("wrapMode", "wrap")
+            .rename("textFormat", "format")
+            .build()
+    })
+}
+
 /// `MouseArea`, called `PointerArea`: it takes a pen and a finger as it
 /// takes a mouse, and the old name says only the one.
 fn pointer_area() -> &'static MetaObject {
@@ -175,7 +192,7 @@ pub(crate) fn register(engine: &Engine) {
     // What arranges children is `Ljos.Layout`'s (ljos_layout.rs). The views
     // are Qt's, with what they attach to a delegate (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
-        Item, Text, State, PropertyChanges, FontEnums, Repeater, PointerDevice, DropArea,
+        Item, State, PropertyChanges, FontEnums, Repeater, PointerDevice, DropArea,
     ]));
     // Qt's shapes, as they are (docs/DIALECT.md §4.14): `QtQuick.Shapes`'
     // types, the elements of a `Path` (which Qt has in `QtQuick`), and the
@@ -200,6 +217,7 @@ pub(crate) fn register(engine: &Engine) {
     let version = Version::new(1, 0);
     for face in [
         rectangle,
+        text,
         pointer_area,
         list_view,
         tap,
@@ -379,10 +397,10 @@ mod tests {
     #[test]
     fn a_kept_type_is_the_same_description() {
         let engine = engine();
-        let text = engine.lookup_type(MODULE, "Text").expect("registered");
+        let item = engine.lookup_type(MODULE, "Item").expect("registered");
         assert!(MetaRef::ptr_eq(
-            &text,
-            &MetaRef::Static(Text::static_meta())
+            &item,
+            &MetaRef::Static(Item::static_meta())
         ));
     }
 
@@ -432,5 +450,24 @@ mod tests {
             face.property_index("addDisplaced"),
             native.property_index("addDisplaced")
         );
+    }
+
+    #[test]
+    fn a_text_s_alignment_wrapping_and_format_are_renamed() {
+        let engine = engine();
+        let face = engine.lookup_type(MODULE, "Text").expect("registered");
+        let native = Text::static_meta();
+        for (old, new) in [
+            ("horizontalAlignment", "align"),
+            ("wrapMode", "wrap"),
+            ("textFormat", "format"),
+        ] {
+            assert_eq!(face.property_index(new), native.property_index(old));
+            assert_eq!(face.property_index(old), None, "{old}");
+            assert!(face.signal_index(&format!("{new}Changed")).is_some());
+        }
+        for kept in ["elide", "color", "font", "verticalAlignment"] {
+            assert_eq!(face.property_index(kept), native.property_index(kept));
+        }
     }
 }
