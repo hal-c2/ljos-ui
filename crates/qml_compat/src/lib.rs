@@ -213,6 +213,8 @@ enum Import {
     },
     /// `QtQuick.Controls` or one of its styles' modules.
     Controls,
+    /// `QtQuick.Shapes`.
+    Shapes,
     Module(String),
     Dir(String),
 }
@@ -220,7 +222,7 @@ enum Import {
 impl Import {
     fn imported(&self) -> Option<Imported<'_>> {
         match self {
-            Import::Qt { .. } | Import::Controls => None,
+            Import::Qt { .. } | Import::Controls | Import::Shapes => None,
             Import::Module(uri) => Some(Imported::Module(uri)),
             Import::Dir(path) => Some(Imported::Dir(path)),
         }
@@ -252,6 +254,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         quick,
         layouts: None,
         controls: None,
+        shapes: None,
         locals,
         imports: Vec::new(),
         imported: RefCell::default(),
@@ -341,6 +344,8 @@ struct Pass<'s> {
     layouts: Option<&'static qt_types::Module>,
     /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
     controls: Option<Controls>,
+    /// QtQuick.Shapes, when the file imports it.
+    shapes: Option<&'static qt_types::Module>,
     locals: &'s dyn Locals,
     /// The imports that name types, in the order written: the last that
     /// has a name is the one it is.
@@ -391,6 +396,7 @@ impl<'s> Pass<'s> {
         let mut quick = None;
         let mut layouts = None;
         let mut controls = Vec::new();
+        let mut shapes = None;
         for import in &document.imports {
             let at = import.span.start as usize;
             let name = match &import.source {
@@ -406,8 +412,10 @@ impl<'s> Pass<'s> {
             };
             let uri = name.to_string();
             if import.alias.is_some()
-                && (matches!(uri.as_str(), "QtQuick" | "QtQml" | "QtQml.Models")
-                    || QT_CONTROLS.contains(&uri.as_str()))
+                && (matches!(
+                    uri.as_str(),
+                    "QtQuick" | "QtQml" | "QtQml.Models" | "QtQuick.Shapes"
+                ) || QT_CONTROLS.contains(&uri.as_str()))
             {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
@@ -433,6 +441,12 @@ impl<'s> Pass<'s> {
                     self.layouts = qt_types::module("QtQuick.Layouts");
                     layouts = Some(import.span);
                     self.imports.push(Import::Qt { layouts: true });
+                }
+                // `Ljos.Ui` has its types as they are.
+                "QtQuick.Shapes" => {
+                    self.shapes = qt_types::module("QtQuick.Shapes");
+                    shapes = Some(import.span);
+                    self.imports.push(Import::Shapes);
                 }
                 // Ljós's controls are Basic's; `QtQuick.Controls` is the
                 // style the program starts with, which may be another.
@@ -491,8 +505,8 @@ impl<'s> Pass<'s> {
         let Some(span) = quick else {
             return Ok(false);
         };
-        if let Some(span) = layouts {
-            // `Ljos.Ui` has `Layout`; the line stays, empty.
+        for span in [layouts, shapes].into_iter().flatten() {
+            // `Ljos.Ui` has `Layout` and the shapes; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
         }
         for (i, span) in controls.into_iter().enumerate() {
@@ -644,6 +658,11 @@ impl<'s> Pass<'s> {
             .rposition(|i| matches!(i, Import::Controls));
         let shadowed_controls =
             matches!((&imported, controls_at), (Some((at, _)), Some(c)) if *at > c);
+        let shapes_at = self
+            .imports
+            .iter()
+            .rposition(|i| matches!(i, Import::Shapes));
+        let shadowed_shapes = matches!((&imported, shapes_at), (Some((at, _)), Some(s)) if *at > s);
         if let Some(ty) = self
             .layouts
             .filter(|_| !shadowed_layout)
@@ -661,6 +680,16 @@ impl<'s> Pass<'s> {
             return match controls.ljos.type_named(name) {
                 Some(_) => Ok(Ty::Exact(ty)),
                 None => Err(self.no(format!("`{name}` is not in {CONTROLS} yet"), at)),
+            };
+        }
+        if let Some(ty) = self
+            .shapes
+            .filter(|_| !shadowed_shapes)
+            .and_then(|m| m.type_named(name))
+        {
+            return match self.ui.type_named(name) {
+                Some(_) => Ok(Ty::Exact(ty)),
+                None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
         if let Some(ty) = self.quick.type_named(name).filter(|_| !shadowed_quick) {
@@ -1195,6 +1224,7 @@ impl arrange::Types for Pass<'_> {
             .type_named(name)
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
             .or_else(|| self.controls.and_then(|c| c.qt.type_named(name)))
+            .or_else(|| self.shapes.and_then(|m| m.type_named(name)))
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -1647,7 +1677,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 || self
                     .pass
                     .controls
-                    .is_some_and(|c| c.qt.type_named(name).is_some()))
+                    .is_some_and(|c| c.qt.type_named(name).is_some())
+                || self
+                    .pass
+                    .shapes
+                    .is_some_and(|m| m.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 self.keep(kept.reason, it.span.start);
