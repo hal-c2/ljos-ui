@@ -9,14 +9,15 @@ Feature: Lowering a file that imports the program's own types
   A program that registers types from Rust describes them in
   `ljostypes.json`, and the compat pass reads that description as it
   reads Qt's: `ljos migrate` takes the file named by `--types`, else the
-  one in the first directory it is given, and a lowered run takes the one
-  the checker does. A file that imports a module the description has is
-  lowered with its import as written, beside `import Ljos.Ui`. Its types
-  are typed as Qt's are: a member a native type declares keeps its name,
-  its singletons' members are typed through what they hold, and a member
-  of the toolkit type it is built on is that type's. A name Ljós renames
-  there keeps the file, as the program's type has it under Qt's name. A
-  type the description lacks keeps the file too.
+  one in the first directory it is given (of a file, its own), and a
+  lowered run takes the one the checker does. One it cannot read stops it
+  before it writes anything. A file that imports a module the description
+  has is lowered with its import as written, beside `import Ljos.Ui`. Its
+  types are typed as Qt's are: a member a native type declares keeps its
+  name, its singletons' members are typed through what they hold, and a
+  member of the toolkit type it is built on is that type's. A name Ljós
+  renames there keeps the file, as the program's type has it under Qt's
+  name. A type the description lacks keeps the file too.
 
   Background:
     Given the file "ljostypes.json":
@@ -126,6 +127,76 @@ Feature: Lowering a file that imports the program's own types
         """
         would lower plain/Main.qml (1 edits)
         1 files, 1 lowered, 0 kept
+        """
+
+    Scenario: Only the first path given is looked in for a description
+      Given the file "plain/Main.qml":
+        """qml
+        import QtQuick
+        import Studio.Kit
+        Item { width: Look.spacing }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import Studio.Kit
+        Item { height: Look.spacing }
+        """
+      When the author runs "ljos migrate plain Main.qml"
+      Then the command prints:
+        """
+        kept Main.qml:2:1: it imports `Studio.Kit`, which is not lowered yet
+        kept plain/Main.qml:2:1: it imports `Studio.Kit`, which is not lowered yet
+        2 files, 0 lowered, 2 kept
+        """
+      When the author runs "ljos migrate Main.qml plain"
+      Then the command prints:
+        """
+        would lower Main.qml (1 edits)
+        would lower plain/Main.qml (1 edits)
+        2 files, 2 lowered, 0 kept
+        """
+
+  Rule: A description that cannot be read stops the command before any file is written
+
+    Scenario: A description named by `--types` that is not there exits 2 and writes nothing
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Rectangle { color: "#204080" }
+        """
+      When the author runs "ljos migrate --write --types missing.json ."
+      Then the command prints:
+        """
+        missing.json: No such file or directory (os error 2)
+        """
+      And the command exits with status 2
+      And the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Rectangle { color: "#204080" }
+        """
+
+    Scenario: A description found beside the files that is not JSON exits 2, naming its directory, and writes nothing
+      Given the file "broken/ljostypes.json":
+        """json
+        {"format": 2, "modules": [
+        """
+      And the file "broken/Main.qml":
+        """qml
+        import QtQuick
+        Rectangle { color: "#204080" }
+        """
+      When the author runs "ljos migrate --write broken"
+      Then the command prints:
+        """
+        broken/ljostypes.json: EOF while parsing a list at line 2 column 0
+        """
+      And the command exits with status 2
+      And the file "broken/Main.qml" is:
+        """qml
+        import QtQuick
+        Rectangle { color: "#204080" }
         """
 
   Rule: A native type's members are what the description and its toolkit base say
