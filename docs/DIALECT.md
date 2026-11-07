@@ -180,10 +180,10 @@ are quoted side by side below:
 
 | Module | Holds | Replaces |
 |---|---|---|
-| `Ljos.Ui` | items, visuals, gestures, states, text, images | `QtQuick` |
+| `Ljos.Ui` | items, visuals, gestures, states, text, images; the views (`Repeater`, `ListView`) | `QtQuick` |
 | `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
 | `Ljos.Controls` | the controls, built on `Ljos.Design` roles; today Basic's (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic` |
-| `Ljos.Models` | `ListModel`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
+| `Ljos.Models` | `ListModel`, `ListElement`, `Instantiator`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
 | `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
 | `Ljos.Platform` | `StandardPaths`, `FolderDialog`, `FileDialog`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
@@ -193,6 +193,11 @@ DECISION: the module set is `Ljos.*`, one module per concern, named in the
 singular. `Ljos.Ui` is the first and the only one phase 1 builds. It
 imports `QtQml` for `Component`, `Timer` and the `Qt` namespace until
 `Ljos.Core` exists.
+
+DECISION: the views are `Ljos.Ui`'s, as they are `QtQuick`'s, and the
+models are `Ljos.Models`'. A view's keys and its `enter`/`exit` are the
+view's (§4.15), so `Ljos.Models` holds no view. `Ljos.Models` is
+registered by the engine, so a file of models needs no items.
 
 ### 4.2 Names: the rename rule and phase 1's slice
 
@@ -214,7 +219,16 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 - `Rectangle` with `fill`, a face of Qt Quick's `Rectangle`;
 - `PointerArea`, a face of `MouseArea`;
 - `Item`, `Text`, `State`, `PropertyChanges` and the font enums, exported
+  as they are;
+- `Repeater` and `ListView` with its attached `ListView.*`, exported as
+  they are (§4.8);
+- in `Ljos.Models`, `ListModel`, `ListElement` and `Instantiator`, exported
   as they are.
+
+DECISION: `ListView.view` (and `GridView.view`) is a `Flickable` to the
+checker. One attached type serves every view and their common base has
+no name a file can say, so a typed file reads `ListView.view.width`
+directly and a member of `ListView` alone through a typed property.
 
 It is described in `crates/qt_types/src/ljos.txt`, so `ljos check` and the
 lowering know it with no Qt installed.
@@ -627,7 +641,12 @@ where Qt's views reset when a model is replaced.
   list. The row type is written into a `.ts` module beside the file, and
   each delegate's required properties become `modelData.<field>`. A
   ListModel that is edited stays a ListModel.
-- `model.<role>` → `modelData.<role>`.
+- `model.<role>` → `modelData.<role>` where the file shows a model of
+  several roles; `model.index` → `index` and `model.modelData` →
+  `modelData` always. Where the file does not show the model, the file is
+  kept, with the role to declare `required`.
+- `import QtQml.Models` → `import Ljos.Models`. A lowered file that makes a
+  `ListModel`, `ListElement` or `Instantiator` gets `import Ljos.Models`.
 - `XmlListModel` → `XmlModel` with a generated decoder.
 - `FolderListModel` → `FolderModel`.
 
@@ -637,6 +656,24 @@ union of its `ListElement`s' roles, each optional where an element leaves
 it out (Qt reads a missing role as `undefined`). A delegate that reads an
 optional role has to say what it does without it. A constant table whose
 elements differ lowers to a typed list with those optional fields.
+
+DECISION: a delegate's `modelData` is its row. Of an array or a count it
+is the element, of a model of one role that role's value, and of a model
+of several roles the row object itself, and a role written through it
+(`modelData.shift = 1`) is written to the model. A delegate written in
+Ljós's API reads it so whether or not it declares it `required`; Qt gives
+the row only to a required `modelData`, leaves the context's undefined
+and refuses writes to it, and a delegate of a Qt file keeps that. The
+pass writes `modelData.<role>` only where `modelData` is that row: a
+`ListModel` of several roles written in the file, given inline or by id.
+A ListModel of one role with an id is not known to stay one, since a
+script may `append` rows of other roles, so `model.<role>` of it keeps
+the file.
+
+DECISION: a name the file declares is the file's own. A `property var
+model` (a delegate's `required property var model` too), or a script's
+`model`, `index` or `modelData` in a delegate that reads the row, is not
+the row: the file is kept where a rename would read it instead.
 
 DECISION: a duplicate `key` is a check error in a constant list. At run
 time rows that share a key are matched in order (the second row with key

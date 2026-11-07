@@ -4,7 +4,7 @@ Part of `Ljos.Models`, milestone M1 in [DIALECT.md §13](../../DIALECT.md#13-mil
 
 Built:
 
-- Nothing built yet.
+- `ListModel`, `ListElement` and `Instantiator` in `Ljos.Models`; `model.<role>` and `QtQml.Models` lowered (§4.8)
 
 Remaining:
 
