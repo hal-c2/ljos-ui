@@ -351,6 +351,27 @@ fn a_grid_layout_is_a_grid_with_its_defaults_written_out() {
     );
 }
 
+/// A top-to-bottom `GridLayout` counts its rows, the count along its flow,
+/// as Ljós's `Grid` does; its `flow` names `Grid`'s enumeration.
+#[test]
+fn a_top_to_bottom_grid_layout_is_a_grid_of_its_rows() {
+    let text = lowered(&format!(
+        "{LAYOUTS}Item {{ GridLayout {{ flow: GridLayout.TopToBottom; rows: 2\n    \
+         Rectangle {{ implicitWidth: 20; implicitHeight: 10 }}\n    \
+         Rectangle {{ implicitWidth: 30; implicitHeight: 20 }}\n    \
+         Rectangle {{ implicitWidth: 10; implicitHeight: 10 }} }} }}\n"
+    ));
+    assert!(
+        text.ends_with(
+            "Item { Grid { columnSpacing: 5; rowSpacing: 5; flow: Grid.TopToBottom; rows: 2\n    \
+             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
+             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 30; implicitHeight: 20 }\n    \
+             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 10; implicitHeight: 10 } } }\n"
+        ),
+        "{text}"
+    );
+}
+
 /// A `StackLayout` is `Pages`, with what it says as it says it.
 #[test]
 fn a_stack_layout_is_pages() {
