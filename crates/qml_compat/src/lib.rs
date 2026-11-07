@@ -28,6 +28,7 @@ use oxc_ast::ast::{
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
+use oxc_span::Span;
 use oxc_syntax::scope::ScopeFlags;
 use qml_edit::Change;
 use qml_syntax::{
@@ -56,7 +57,12 @@ pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
 
 /// Per Qt type (and what derives from it), the members Ljós calls by another
 /// name. A property's change signal and its handler follow its name.
-pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
+pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[
+    ("Rectangle", &[("color", "fill")]),
+    // A `source` naming a file beside this one is `component` too, written
+    // by [`Pass::loader_source`].
+    ("Loader", &[("sourceComponent", "component")]),
+];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -137,7 +143,14 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ids: Vec::new(),
         inline: Vec::new(),
         changes: Vec::new(),
+        root_at: parsed.document.root.span.start,
+        inline_roots: Vec::new(),
+        bare_sources: Vec::new(),
+        aimed: Vec::new(),
     };
+    let mut bare = BareSources(Vec::new());
+    bare.object(&parsed.document.root);
+    pass.bare_sources = bare.0;
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
         Ok(true) => {
@@ -204,6 +217,16 @@ struct Pass<'s> {
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
+    /// Where the file's root object starts.
+    root_at: u32,
+    /// The root object of each inline component, which is the scope of
+    /// the scripts in it as the file's root is of the file's.
+    inline_roots: Vec<Span>,
+    /// Where a script names a Loader's member unqualified (`source`,
+    /// `setSource`, `sourceComponent`): a Loader's, when it is in reach.
+    bare_sources: Vec<(u32, Bare)>,
+    /// What objects aimed at an id (`target: loader`) set or handle there.
+    aimed: Vec<(String, String)>,
 }
 
 type Step = Result<(), Kept>;
@@ -272,6 +295,27 @@ impl<'s> Pass<'s> {
 
     /// The ids and inline components, before anything refers to them.
     fn collect(&mut self, object: &QmlObject<'_>) {
+        let aimed_at = object.members.iter().find_map(|member| match member {
+            QmlMember::Binding(QmlBinding {
+                name,
+                value: QmlBindingValue::Expression(Expression::Identifier(id)),
+                ..
+            }) if name.as_simple() == Some("target") => Some(id.name.to_string()),
+            _ => None,
+        });
+        if let Some(id) = aimed_at {
+            for member in &object.members {
+                let name = match member {
+                    QmlMember::Binding(binding) => binding.name.parts[0].to_string(),
+                    QmlMember::Function(function) => match &function.id {
+                        Some(name) => name.name.to_string(),
+                        None => continue,
+                    },
+                    _ => continue,
+                };
+                self.aimed.push((id.clone(), name));
+            }
+        }
         for member in &object.members {
             match member {
                 QmlMember::Binding(binding) => {
@@ -293,6 +337,7 @@ impl<'s> Pass<'s> {
                 QmlMember::InlineComponent(component) => {
                     self.inline
                         .push((component.name.name.to_string(), Root::of(&component.object)));
+                    self.inline_roots.push(component.object.span);
                     self.collect(&component.object);
                 }
                 QmlMember::Signal(_) | QmlMember::Function(_) | QmlMember::Enum(_) => {}
@@ -398,6 +443,9 @@ impl<'s> Pass<'s> {
         }
         let is_changes = matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges");
         let is_connections = matches!(ty, Ty::Exact(t) if t.name == "Connections");
+        if matches!(ty, Ty::Exact(t) | Ty::Derived(t) if is_loader(t)) {
+            self.loader_source(object)?;
+        }
         let target = if is_changes || is_connections {
             Some(self.target(object))
         } else {
@@ -461,6 +509,136 @@ impl<'s> Pass<'s> {
             }
         }
         Ok(())
+    }
+
+    /// `source: "Page.qml"` on a Loader is `component: Page` (DIALECT
+    /// §4.11): the file is a type of the project, and a component of it is
+    /// what the Loader made of the string. Anything else a `source` says is
+    /// only known when it runs, so the file is kept.
+    fn loader_source(&mut self, object: &QmlObject<'_>) -> Step {
+        let Some(binding) = object.members.iter().find_map(|member| match member {
+            QmlMember::Binding(binding) if binding.name.as_simple() == Some("source") => {
+                Some(binding)
+            }
+            _ => None,
+        }) else {
+            return Ok(());
+        };
+        let at = binding.name.span.start as usize;
+        let QmlBindingValue::Expression(Expression::StringLiteral(url)) = &binding.value else {
+            return Err(self.no(
+                "a `Loader`'s `source` is made as it runs, so what it loads is not known".into(),
+                at,
+            ));
+        };
+        let file = url.value.as_str();
+        let name = file
+            .strip_prefix("./")
+            .unwrap_or(file)
+            .strip_suffix(".qml")
+            .filter(|name| !name.is_empty() && !name.contains(['/', '\\', ':']));
+        let Some(name) = name.filter(|name| self.locals.root(name).is_some()) else {
+            return Err(self.no(
+                format!("a `Loader`'s `source` is \"{file}\", which is not a file beside this one"),
+                at,
+            ));
+        };
+        // Written where a component goes, the name is read as a type only
+        // if it is one: `page` would be an id, `my-page` a subtraction.
+        if !is_type_name(name) {
+            return Err(self.no(
+                format!("a `Loader`'s `source` is \"{file}\", whose name is not a type's"),
+                at,
+            ));
+        }
+        if object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("sourceComponent"))
+        }) {
+            return Err(self.no(
+                "a `Loader` is given both a `source` and a `sourceComponent`".into(),
+                at,
+            ));
+        }
+        // The Loader's `source` is then empty: whatever reads it, or hears
+        // it change, would be told otherwise.
+        let reads = object_id(object).is_some_and(|id| {
+            ["source", "setSource", "sourceChanged"]
+                .iter()
+                .any(|member| names_member(self.source, id, member))
+        }) || object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("onSourceChanged"))
+        }) || object_id(object).is_some_and(|id| {
+            self.aimed
+                .iter()
+                .any(|(at, name)| at == id && matches!(name.as_str(), "source" | "onSourceChanged"))
+        }) || self.reads_unqualified(object, Bare::Source);
+        if reads {
+            return Err(self.no(
+                "a `Loader`'s `source` is read or set as well as written".into(),
+                at,
+            ));
+        }
+        // Qt's `sourceComponent` stays empty beside a `source`; lowered, it
+        // is the component, and whatever reads it or hears it change would
+        // be told so.
+        let reads_component = object_id(object).is_some_and(|id| {
+            names_member(self.source, id, "sourceComponent")
+                || names_member(self.source, id, "sourceComponentChanged")
+        }) || object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b)
+                    if b.name.as_simple() == Some("onSourceComponentChanged"))
+        }) || object_id(object).is_some_and(|id| {
+            self.aimed.iter().any(|(at, name)| {
+                at == id
+                    && matches!(
+                        name.as_str(),
+                        "sourceComponent" | "onSourceComponentChanged"
+                    )
+            })
+        }) || self.reads_unqualified(object, Bare::Component);
+        if reads_component {
+            return Err(self.no(
+                "a `Loader`'s `sourceComponent` is read or heard, and lowered it is not empty"
+                    .into(),
+                at,
+            ));
+        }
+        let span = binding.name.span;
+        self.change(span.start as usize..span.end as usize, "component");
+        self.change(url.span.start as usize..url.span.end as usize, name);
+        Ok(())
+    }
+
+    /// Whether a script of the Loader's own, or anywhere in its scope when
+    /// it is the root of the file or of an inline component, names a
+    /// member of `kind` unqualified. One in a child is the child's own,
+    /// unless the child has none and the Loader is a root; the pass keeps
+    /// the file then too.
+    fn reads_unqualified(&self, object: &QmlObject<'_>, kind: Bare) -> bool {
+        let bare = || {
+            self.bare_sources
+                .iter()
+                .filter(move |(_, k)| *k == kind)
+                .map(|(at, _)| *at)
+        };
+        if object.span.start == self.root_at {
+            return bare().next().is_some();
+        }
+        if self.inline_roots.contains(&object.span) {
+            return bare().any(|at| (object.span.start..object.span.end).contains(&at));
+        }
+        object.members.iter().any(|member| {
+            let span = match member {
+                QmlMember::Binding(binding) => match binding.value {
+                    QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => binding.span,
+                    _ => return false,
+                },
+                QmlMember::Function(function) => function.span,
+                QmlMember::Property(property) if property.value.is_some() => property.span,
+                _ => return false,
+            };
+            bare().any(|at| (span.start..span.end).contains(&at))
+        })
     }
 
     /// What a `PropertyChanges` or `Connections` acts on.
@@ -720,6 +898,98 @@ fn lookup_rename(renames: &[(&str, &str)], name: &str) -> Option<String> {
         // The change signal follows the property.
         let signal = name.strip_suffix("Changed")?;
         (signal == *old).then(|| format!("{new}Changed"))
+    })
+}
+
+/// Whether `text` has `id.member` as whole names: `l.source` is not in
+/// `l.sourceComponent` or `pool.source`.
+fn names_member(text: &str, id: &str, member: &str) -> bool {
+    let word = |c: char| c.is_ascii_alphanumeric() || c == '_' || c == '$';
+    let needle = format!("{id}.{member}");
+    text.match_indices(&needle)
+        .any(|(at, _)| !text[..at].ends_with(word) && !text[at + needle.len()..].starts_with(word))
+}
+
+/// A QML type's name: an ASCII capital, then letters, digits and `_`.
+fn is_type_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_uppercase())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Which of a Loader's members a script names unqualified.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Bare {
+    /// `source`, `setSource` or the `sourceChanged` signal.
+    Source,
+    /// `sourceComponent` or the `sourceComponentChanged` signal.
+    Component,
+}
+
+/// Where the scripts of a file name a Loader's members unqualified.
+struct BareSources(Vec<(u32, Bare)>);
+
+impl BareSources {
+    fn object(&mut self, object: &QmlObject<'_>) {
+        for member in &object.members {
+            match member {
+                QmlMember::Binding(binding) => self.value(&binding.value),
+                QmlMember::Property(property) => {
+                    if let Some(value) = &property.value {
+                        self.value(value);
+                    }
+                }
+                QmlMember::Function(function) => {
+                    self.visit_function(function, ScopeFlags::Function);
+                }
+                QmlMember::Object(child) => self.object(child),
+                QmlMember::InlineComponent(component) => self.object(&component.object),
+                QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+            }
+        }
+    }
+
+    fn value(&mut self, value: &QmlBindingValue<'_>) {
+        match value {
+            QmlBindingValue::Expression(expression) => self.visit_expression(expression),
+            QmlBindingValue::Statement(statement) => self.visit_statement(statement),
+            QmlBindingValue::Object(object) => self.object(object),
+            QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.object(o)),
+        }
+    }
+}
+
+impl<'a> Visit<'a> for BareSources {
+    fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
+        let kind = match it.name.as_str() {
+            "source" | "setSource" | "sourceChanged" => Bare::Source,
+            "sourceComponent" | "sourceComponentChanged" => Bare::Component,
+            _ => return,
+        };
+        self.0.push((it.span.start, kind));
+    }
+}
+
+/// Whether `ty` is, or is built on, a `Loader`.
+fn is_loader(ty: &'static Type) -> bool {
+    let mut at = Some(ty);
+    while let Some(ty) = at {
+        if ty.name == "Loader" {
+            return true;
+        }
+        at = ty.prototype();
+    }
+    false
+}
+
+/// The `id` an object gives itself.
+fn object_id<'a>(object: &QmlObject<'a>) -> Option<&'a str> {
+    object.members.iter().find_map(|member| match member {
+        QmlMember::Binding(QmlBinding {
+            name,
+            value: QmlBindingValue::Expression(Expression::Identifier(id)),
+            ..
+        }) if name.as_simple() == Some("id") => Some(id.name.as_str()),
+        _ => None,
     })
 }
 

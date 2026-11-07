@@ -10,6 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use ljos_ir::*;
+use oxc_allocator::ArenaVec;
 use qml_front::{
     Special, TypeOracle,
     names::{self, Names, Resolution, Target},
@@ -20,7 +21,8 @@ use qml_front::{
 use qml_syntax::{
     Allocator, GetSpan, Span,
     ast::{
-        QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject, QmlPropertyDeclaration,
+        QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject,
+        QmlPropertyDeclaration, QmlQualifiedName,
     },
     js::{Expression, Function, ObjectPropertyKind, PropertyKind, UnaryOperator},
 };
@@ -72,7 +74,7 @@ fn compile_alone<O: TypeOracle>(
     };
     let lines = Lines::new(source);
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    let mut parsed = qml_syntax::parse(&allocator, source);
     let mut diagnostics: Vec<Diagnostic> = parsed
         .diagnostics
         .iter()
@@ -89,8 +91,18 @@ fn compile_alone<O: TypeOracle>(
         return Err(diagnostics);
     }
     let types = Types::new(&project.front, &project.oracle, key);
+    let ljos_ui = check::is_dialect(&parsed.document);
     let mut errors = Vec::new();
-    let tree = Tree::analyze(&parsed.document, types, &mut errors);
+    let mut tree = Tree::analyze(&parsed.document, types, &mut errors);
+    if ljos_ui && !tree.named_templates.is_empty() {
+        // `component: Page` is a template of a `Page` with nothing in it, so
+        // it is written as one and the file is read again.
+        let named = std::mem::take(&mut tree.named_templates);
+        drop(tree);
+        name_templates_in(&allocator, &mut parsed.document, &named);
+        errors.clear();
+        tree = Tree::analyze(&parsed.document, types, &mut errors);
+    }
     diagnostics.extend(
         errors
             .into_iter()
@@ -100,7 +112,7 @@ fn compile_alone<O: TypeOracle>(
     compiler.diagnostics = diagnostics;
     // A file the compat pass lowered says its scripts are JavaScript, and
     // so does one `ljos migrate` wrote: the same text compiles the same.
-    compiler.ljos_ui = check::is_dialect(&parsed.document);
+    compiler.ljos_ui = ljos_ui;
     compiler.dialect = compiler.ljos_ui && !check::scripts_are_javascript(&parsed.document);
     if let Some(context) = translator(&parsed.document) {
         compiler.context = context.to_string();
@@ -116,6 +128,87 @@ fn compile_alone<O: TypeOracle>(
         check::modules_only(&mut compiler, &modules);
     }
     Ok(compiler.finish(&parsed.document))
+}
+
+/// Whether `document` is written in Ljós's API: it imports `Ljos.Ui`.
+pub fn is_ljos_ui(document: &QmlDocument<'_>) -> bool {
+    check::is_dialect(document)
+}
+
+/// Writes each binding of `named` (`component: Page`), the spans a
+/// `Tree` of a Ljos.Ui file gives as its `named_templates`, as the object
+/// it stands for (`component: Page {}`). Whatever reads such a file as
+/// the compiler does analyses it again after this, so TypeScript and the
+/// checker see a template, not a name with no value.
+pub fn name_templates_in<'a>(
+    allocator: &'a Allocator,
+    document: &mut QmlDocument<'a>,
+    named: &[Span],
+) {
+    name_templates(allocator, &mut document.root, named);
+}
+
+/// Writes each binding of `named` (`component: Page`) as the object it
+/// stands for (`component: Page {}`), in `object` and what is in it.
+fn name_templates<'a>(allocator: &'a Allocator, object: &mut QmlObject<'a>, named: &[Span]) {
+    for member in object.members.iter_mut() {
+        let (span, value) = match member {
+            QmlMember::Object(child) => {
+                name_templates(allocator, child, named);
+                continue;
+            }
+            QmlMember::InlineComponent(inline) => {
+                name_templates(allocator, &mut inline.object, named);
+                continue;
+            }
+            QmlMember::Binding(binding) => (binding.span, &mut binding.value),
+            QmlMember::Property(QmlPropertyDeclaration {
+                span,
+                value: Some(value),
+                ..
+            }) => (*span, value),
+            _ => continue,
+        };
+        match value {
+            QmlBindingValue::Object(child) => name_templates(allocator, child, named),
+            QmlBindingValue::Objects(children) => {
+                for child in children.iter_mut() {
+                    name_templates(allocator, child, named);
+                }
+            }
+            QmlBindingValue::Expression(expression) if named.contains(&span) => {
+                let expression_span = expression.span();
+                let Some(path) = dotted(expression) else {
+                    continue;
+                };
+                let mut parts = ArenaVec::new_in(&allocator);
+                parts.extend(path);
+                *value = QmlBindingValue::Object(QmlObject {
+                    span: expression_span,
+                    type_name: QmlQualifiedName {
+                        span: expression_span,
+                        parts,
+                    },
+                    on: None,
+                    members: ArenaVec::new_in(&allocator),
+                });
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The names of `a.B.C`, as the source has them.
+fn dotted<'a>(expression: &Expression<'a>) -> Option<Vec<&'a str>> {
+    match expression {
+        Expression::Identifier(id) => Some(vec![id.name.as_str()]),
+        Expression::StaticMemberExpression(member) => {
+            let mut path = dotted(&member.object)?;
+            path.push(member.property.name.as_str());
+            Some(path)
+        }
+        _ => None,
+    }
 }
 
 /// Byte offsets to lines and columns.
