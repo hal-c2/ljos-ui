@@ -19,8 +19,10 @@
 //! ([`group`]): what one sets on another is then called the same in both.
 
 mod arrange;
+mod gesture;
 mod group;
 
+use std::collections::HashSet;
 use std::ops::Range;
 
 use oxc_ast::ast::{
@@ -168,6 +170,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
+        read: HashSet::new(),
         changes: Vec::new(),
         declared: Vec::new(),
     };
@@ -236,6 +239,9 @@ struct Pass<'s> {
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
+    /// Every name the file's scripts read unqualified, or a binding's name
+    /// starts with.
+    read: HashSet<String>,
     changes: Vec<Change>,
     /// What the scope object declares: an unqualified name it declares is
     /// its own, before the root's.
@@ -290,6 +296,9 @@ impl<'s> Pass<'s> {
             format!("{JAVASCRIPT}; import {MODULE}"),
         );
         self.collect(&document.root);
+        let mut names = gesture::Names::default();
+        names.object(&document.root);
+        self.read = names.0;
         let root = self.object_type(&document.root)?;
         self.object(&document.root, root, root, true)?;
         Ok(true)
@@ -442,8 +451,11 @@ impl<'s> Pass<'s> {
         } else {
             None
         };
-        for member in &object.members {
+        for (index, member) in object.members.iter().enumerate() {
             match member {
+                QmlMember::Object(child) if let Some(plan) = self.gestures(object, ty, index) => {
+                    self.make_gestures(child, plan, root)?;
+                }
                 QmlMember::Object(child) => {
                     let child_ty = self.object_type(child)?;
                     let child_root = if matches!(child_ty, Ty::Plain) {
@@ -501,6 +513,57 @@ impl<'s> Pass<'s> {
         }
         if let Some(outer) = outer {
             self.declared = outer;
+        }
+        Ok(())
+    }
+
+    /// The gestures the `index`th member of `parent` is, where it is a
+    /// `MouseArea` that fills it ([`gesture`]).
+    fn gestures(&self, parent: &QmlObject<'_>, ty: Ty, index: usize) -> Option<gesture::Plan> {
+        let Ty::Exact(parent_ty) = ty else {
+            return None;
+        };
+        let qt_type = |name: &str| arrange::Types::qt_type(self, name);
+        let is_id = |name: &str| self.id(name).is_some();
+        let file = gesture::File {
+            source: self.source,
+            quick: self.quick,
+            ui: self.ui,
+            qt_type: &qt_type,
+            is_id: &is_id,
+            read: &self.read,
+        };
+        gesture::plan(&file, parent, parent_ty, index)
+    }
+
+    /// Lowers `area` as a `MouseArea` is, then makes it the gestures of
+    /// `plan`.
+    fn make_gestures(&mut self, area: &QmlObject<'_>, plan: gesture::Plan, root: Ty) -> Step {
+        let before = self.changes.len();
+        let ty = self.object_type(area)?;
+        self.object(area, ty, root, false)?;
+        let made = self.changes.split_off(before);
+        let hover: Vec<String> = plan
+            .hover
+            .iter()
+            .map(|range| gesture::lowered_text(self.source, range, &made))
+            .collect();
+        self.changes.extend(made);
+        // Collecting the ids renamed the area's type already.
+        self.changes.retain(|c| {
+            !plan
+                .replace
+                .iter()
+                .any(|(r, _)| gesture::within(&c.range, r))
+        });
+        for (range, text) in plan.replace {
+            self.change(range, text);
+        }
+        if !hover.is_empty() {
+            self.change(
+                plan.end..plan.end,
+                format!(" Hover {{ {} }}", hover.join("; ")),
+            );
         }
         Ok(())
     }
