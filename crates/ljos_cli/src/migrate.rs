@@ -109,9 +109,16 @@ impl Migrate {
                         .iter()
                         .map(|(name, text)| (dir.join(name), text))
                         .collect();
-                    if let Some((path, _)) = modules.iter().find(|(path, text)| {
-                        std::fs::read_to_string(path).is_ok_and(|there| there != **text)
-                    }) {
+                    // Only a module that is not there is free to write: one
+                    // that cannot be read is someone's too.
+                    if let Some((path, _)) =
+                        modules
+                            .iter()
+                            .find(|(path, text)| match std::fs::read(path) {
+                                Ok(there) => there != text.as_bytes(),
+                                Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+                            })
+                    {
                         eprintln!(
                             "{}: is there already, and is not the module {} would import; neither is written",
                             path.display(),
