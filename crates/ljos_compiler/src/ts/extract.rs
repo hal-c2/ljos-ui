@@ -31,7 +31,7 @@ use qml_syntax::{
     js::{Expression, Function},
 };
 
-use super::dts::Api;
+use super::dts::{Api, Written};
 use crate::{
     Project,
     js::{self, Form},
@@ -258,15 +258,19 @@ impl<'a> Writer<'_, 'a, '_> {
             "unknown".to_string()
         } else {
             match self.api.written_type(&name) {
-                // Written as it is so that TypeScript cannot find it, as the
-                // checker cannot. A type the file finds and the declarations
-                // do not have (one of the project's own: a component
-                // declared inline, a file beside it, a type of a module of
-                // the project's) is the checker's to type.
-                Some(bare) if bare == name && self.names.types.find(&[&name]).is_some() => {
-                    "unknown".to_string()
+                Some(Written::Declared(ts)) => ts,
+                // A type the declarations do not have but the file finds is
+                // one of the project's own (a component declared inline, a
+                // file beside it, a type of one of the project's modules),
+                // the checker's to type. Nothing else finds it: written as
+                // it is, TypeScript cannot either.
+                Some(Written::Unnamed(word)) => {
+                    if self.names.types.find(&[&word]).is_some() {
+                        "unknown".to_string()
+                    } else {
+                        word
+                    }
                 }
-                Some(written) => written,
                 None => "never".to_string(),
             }
         };

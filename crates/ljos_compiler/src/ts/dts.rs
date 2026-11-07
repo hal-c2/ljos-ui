@@ -38,6 +38,18 @@ pub fn modules_of(source: &str) -> Vec<&'static str> {
         .collect()
 }
 
+/// What [`Api::written_type`] makes of a type a file writes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Written {
+    /// The declarations' type for it.
+    Declared(String),
+    /// A word the declarations do not have. Written as it is, TypeScript
+    /// cannot find it, as the checker cannot find a type nothing the file
+    /// imports names; a type of the project's own, which the checker does
+    /// find, is the caller's to write `unknown`.
+    Unnamed(String),
+}
+
 /// Names of QML (and of the C++ classes Qt's table calls them by) that are a
 /// TypeScript primitive.
 const PRIMITIVES: &[(&str, &str)] = &[
@@ -255,27 +267,25 @@ impl Api {
         )
     }
 
-    /// The TypeScript type of a declaration the file writes as `name`. A
-    /// word that nothing the file imports names is written as it is, so
-    /// TypeScript says it cannot find it, as the checker does; a value type
-    /// every file may write (`font`) stays `unknown`. None for a date. The
-    /// declarations have none of a project's own types, so the caller, which
-    /// can find those, writes them `unknown`.
-    pub fn written_type(&self, name: &str) -> Option<String> {
+    /// The TypeScript type of a declaration the file writes as `name`: the
+    /// declarations' type for it, or [`Written::Unnamed`] for a word they do
+    /// not have, or `unknown` for a value type every file may write (`font`).
+    /// None for a date.
+    pub fn written_type(&self, name: &str) -> Option<Written> {
         if is_date(name) {
             return None;
         }
         if let Some(found) = self.resolved(name, None) {
-            return Some(found);
+            return Some(Written::Declared(found));
         }
         let is_value = ["QtQuick", "QtQml"]
             .iter()
             .filter_map(|uri| qt_types::module(uri)?.type_named(name))
             .any(|ty| ty.is_value);
         if is_word(name) && !is_value {
-            return Some(name.to_string());
+            return Some(Written::Unnamed(name.to_string()));
         }
-        Some("unknown".to_string())
+        Some(Written::Declared("unknown".to_string()))
     }
 
     fn resolved(&self, name: &str, owner: Option<&'static Type>) -> Option<String> {
