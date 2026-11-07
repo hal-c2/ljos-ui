@@ -94,7 +94,8 @@ pub use animation::{
     set_animation_frame_period, start_animation, stop_animation,
 };
 pub use animation::{
-    Passage, Transition, run_passage, run_transition, run_transition_to, stop_transition,
+    Passage, Transition, run_passage, run_passage_beside, run_transition, run_transition_to,
+    stop_transition,
 };
 pub use animation::{QuaternionAnimation, Vector3dAnimation};
 pub use application_palette::{ApplicationPalette, application_palette, set_application_palette};
