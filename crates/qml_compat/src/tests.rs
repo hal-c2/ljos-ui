@@ -673,3 +673,62 @@ fn a_dialog_ljos_controls_has_not_taken_or_the_dialogs_under_a_name_keep_the_fil
         "it imports `QtQuick.Dialogs` under a name"
     );
 }
+
+/// A Qt file finds a name its imports lack among the files beside it. The
+/// lowered file imports Ljós's modules instead, and an import is found
+/// before the files beside it: a name one of those has and the Qt imports
+/// had not would be Ljós's type, not the project's.
+#[test]
+fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
+    let only =
+        |file: &'static str| move |name: &str| (name == file).then(|| root_of("Rectangle", &[]));
+    let kept = |source: &str, file: &'static str| match lower(source, &only(file)) {
+        Outcome::Kept(kept) => kept.reason,
+        other => panic!("lowered: {other:?}"),
+    };
+    assert_eq!(
+        kept(
+            "import QtQuick\nimport QtQuick.Dialogs\nItem { Button { } FileDialog { } }\n",
+            "Button"
+        ),
+        "`Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first"
+    );
+    assert_eq!(
+        kept(
+            "import QtQuick\nimport QtQuick.Controls.Basic\nItem { Label { } FileDialog { } }\n",
+            "FileDialog"
+        ),
+        "`FileDialog` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `FileDialog` that would be found first"
+    );
+    // Ljos.Ui has names QtQuick has not (`Box`, `PointerArea`), so the
+    // module every lowered file imports can shadow a file too.
+    assert_eq!(
+        kept("import QtQuick\nItem { Box { } }\n", "Box"),
+        "`Box` is a file of the project, and Ljos.Ui, which the lowered file imports, has a `Box` that would be found first"
+    );
+    // Read in a script, as an enum of the project's file, the same.
+    assert_eq!(
+        kept("import QtQuick\nItem { property int d: Box.Row }\n", "Box"),
+        "`Box` is a file of the project, and Ljos.Ui, which the lowered file imports, has a `Box` that would be found first"
+    );
+    // A name the file does not import at all, which a Qt file finds in the
+    // context, is shadowed as well.
+    assert_eq!(
+        kept_for("import QtQuick\nItem { property var d: PointerArea }\n"),
+        "`PointerArea` is not a type of the modules the file imports, and Ljos.Ui, which the lowered file imports, has a `PointerArea` that would be found first"
+    );
+    // A name no module the lowered file imports has is still the project's.
+    assert!(matches!(
+        lower(
+            "import QtQuick\nimport QtQuick.Dialogs\nItem { Card { } }\n",
+            &only("Card")
+        ),
+        Outcome::Lowered(_)
+    ));
+    // Without the controls, Ljos.Controls is not imported, and its `Button`
+    // shadows nothing.
+    assert!(matches!(
+        lower("import QtQuick\nItem { Button { } }\n", &only("Button")),
+        Outcome::Lowered(_)
+    ));
+}

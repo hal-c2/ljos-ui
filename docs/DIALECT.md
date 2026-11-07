@@ -984,7 +984,9 @@ line when the file imports no other controls, and an empty line when it
 does. `ColorDialog`, `FontDialog` and `MessageDialog`, and their enums
 (`MessageDialog.Ok`), keep the file with "`ColorDialog` is not in
 Ljos.Controls yet"; the dialogs under a name (`as D`) keep it as an aliased
-controls import does.
+controls import does. Since the lowered file imports `Ljos.Controls`, a file of
+the project named as one of its types (`Button.qml` beside a file of
+dialogs) keeps the file (§6.3).
 
 DECISION: the dialogs come into `Ljos.Controls` as they are, not into a
 module of their own; Qt's names stay, since §4.14 renames none of them.
@@ -1195,6 +1197,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
 | `property var` whose type is not known | Kept until M4 decoders |
+| A name the file's Qt imports lack (a file of the project, or one the context gives) that a Ljós module the lowered file imports has (`Box.qml` beside a file, which `Ljos.Ui` would shadow; `Button.qml` beside one that imports `QtQuick.Dialogs`, which `Ljos.Controls` would) | Kept for good. An import is found before the files beside it, so lowering would change the type; renaming the project's file is the author's call |
 
 ### 6.4 Coverage today
 

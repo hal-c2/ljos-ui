@@ -477,6 +477,25 @@ impl<'s> Pass<'s> {
         if depth > 16 {
             return Ok(Ty::Unknown);
         }
+        let inline = self.inline.iter().any(|(n, _)| n == name);
+        // Past the first step the name is another file's, found among its
+        // own imports, which this file's do not say.
+        if depth == 0
+            && !inline
+            && let Some(module) = self.ljos_module_with(name)
+        {
+            let what = if self.locals.root(name).is_some() {
+                "is a file of the project"
+            } else {
+                "is not a type of the modules the file imports"
+            };
+            return Err(self.no(
+                format!(
+                    "`{name}` {what}, and {module}, which the lowered file imports, has a `{name}` that would be found first"
+                ),
+                at,
+            ));
+        }
         let root = self
             .inline
             .iter()
@@ -492,6 +511,18 @@ impl<'s> Pass<'s> {
             },
             _ => Ok(Ty::Unknown),
         }
+    }
+
+    /// The Ljós module the lowered file imports that has `name`, for a name
+    /// no Qt module the file imports has. A Qt file finds such a name among
+    /// the files beside it, but an import is found before those, so the
+    /// lowered file would make Ljós's type instead.
+    fn ljos_module_with(&self, name: &str) -> Option<&'static str> {
+        if self.ui.type_named(name).is_some() {
+            return Some(MODULE);
+        }
+        let controls = self.controls.or(self.dialogs)?;
+        controls.ljos.type_named(name).map(|_| CONTROLS)
     }
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up
@@ -1031,6 +1062,12 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                     .any(|c| c.qt.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
+                self.keep(kept.reason, it.span.start);
+            } else if self.pass.ljos_module_with(name).is_some()
+                && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
+            {
+                // A name the Qt imports lack, read in a script, is the
+                // project's or the context's; lowered, it would be Ljós's.
                 self.keep(kept.reason, it.span.start);
             }
             return;
