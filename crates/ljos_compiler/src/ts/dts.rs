@@ -18,8 +18,9 @@ use qt_types::{Enum, ImportKind, Property, Type};
 /// The module the dialect is written against.
 pub const API: &str = "Ljos.Ui";
 
-/// The modules of Ljós's API: the items, and what is not an item.
-pub const MODULES: &[&str] = &[API, "Ljos.Core"];
+/// The modules of Ljós's API: the items, what is not an item, and what
+/// arranges items.
+pub const MODULES: &[&str] = &[API, "Ljos.Core", "Ljos.Layout"];
 
 /// The modules of Ljós's API `source` imports, by their own names, in the
 /// order of [`MODULES`]. An import under an alias counts: the file sees the

@@ -193,8 +193,8 @@ pub enum Code {
     /// The checker: a JavaScript file reached with no declarations beside
     /// it.
     TsBoundary,
-    /// An anchor on a child of `Ljos.Ui`'s `Row`, `Column` or `Box`, which
-    /// places the child itself.
+    /// An anchor on a child of `Ljos.Layout`'s `Row`, `Column`, `Box`,
+    /// `Grid` or `Flow`, which places the child itself.
     LayoutAnchored,
 }
 

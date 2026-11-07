@@ -1360,18 +1360,22 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         }
     }
 
-    /// The name of `Ljos.Ui`'s `Row`, `Column` or `Box` the object is, in
-    /// a file that imports it.
+    /// The name of `Ljos.Layout`'s `Row`, `Column`, `Box`, `Grid` or
+    /// `Flow` the object is, in a file of Ljós's API.
     fn arrangement(&self, index: usize) -> Option<String> {
         if !self.ljos_ui {
             return None;
         }
         match self.object_type(index) {
             TypeRef::Native { module, name }
-                if module == check::MODULE && matches!(name.as_str(), "Row" | "Column" | "Box") =>
+                if module == check::LAYOUT
+                    && matches!(name.as_str(), "Row" | "Column" | "Box" | "Grid") =>
             {
                 Some(name)
             }
+            // Ljós's `Flow` is Qt's, and a file of Ljós's API has it from
+            // `Ljos.Layout` only.
+            TypeRef::Native { module, name } if module == "QtQuick" && name == "Flow" => Some(name),
             _ => None,
         }
     }

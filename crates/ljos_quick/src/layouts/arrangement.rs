@@ -1,9 +1,11 @@
-//! `Ljos.Ui`'s one arrangement: `Row`, `Column` and `Box` (docs/DIALECT.md).
+//! `Ljos.Layout`'s one arrangement: `Row`, `Column`, `Box` and `Grid`
+//! (docs/DIALECT.md).
 //!
-//! One native in the place of Qt's positioners and line layouts. A `Box`
+//! One native in the place of Qt's positioners and layouts. A `Box`
 //! lays its children out along its `direction`; a `Row` and a `Column`
-//! are a box whose direction is fixed. It measures and arranges as the
-//! layouts of this module do, with one size rule per axis:
+//! are a box whose direction is fixed; a `Grid` lays them out in cells.
+//! It measures and arranges as the layouts of this module do, with one
+//! size rule per axis:
 //!
 //! - an axis a child says nothing about through `Layout.` (no fill, no
 //!   preferred, smallest or largest size) is the child's own: the box
@@ -27,6 +29,7 @@ use super::{Attached, H, Hint, Layout, Plan, V, show_own_minimum, state};
 use crate::enums::{EnumTable, align, layout_direction};
 use crate::item::{Item, is_a, is_unset, num, write_computed, write_placed};
 use crate::mirroring::mirrored;
+use crate::positioners::flow;
 
 /// `Box.direction`.
 pub mod direction {
@@ -34,10 +37,10 @@ pub mod direction {
     pub const COLUMN: i32 = 1;
 }
 
-/// What `Row`, `Column` and `Box` of `Ljos.Ui` have alike; not made by
-/// itself.
+/// What `Row`, `Column`, `Box` and `Grid` of `Ljos.Layout` have alike;
+/// not made by itself.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "Ljos.Ui", name = "Arrangement", extends = Layout, uncreatable)]
+#[qml(module = "Ljos.Layout", name = "Arrangement", extends = Layout, uncreatable)]
 pub struct Arrangement {
     #[qml(base)]
     pub layout: Layout,
@@ -60,31 +63,123 @@ pub struct Arrangement {
     pub layout_direction: i32,
 }
 
-/// `Row` (Ljos.Ui): children side by side.
+/// `Row` (Ljos.Layout): children side by side.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "Ljos.Ui", name = "Row", extends = Arrangement)]
+#[qml(module = "Ljos.Layout", name = "Row", extends = Arrangement)]
 pub struct BoxRow {
     #[qml(base)]
     pub arrangement: Arrangement,
 }
 
-/// `Column` (Ljos.Ui): children one under another.
+/// `Column` (Ljos.Layout): children one under another.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "Ljos.Ui", name = "Column", extends = Arrangement)]
+#[qml(module = "Ljos.Layout", name = "Column", extends = Arrangement)]
 pub struct BoxColumn {
     #[qml(base)]
     pub arrangement: Arrangement,
 }
 
-/// `Box` (Ljos.Ui): a row or a column, as `direction` says; it can turn.
+/// `Box` (Ljos.Layout): a row or a column, as `direction` says; it can turn.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "Ljos.Ui", name = "Box", extends = Arrangement, enums = box_enums)]
+#[qml(module = "Ljos.Layout", name = "Box", extends = Arrangement, enums = box_enums)]
 pub struct LjosBox {
     #[qml(base)]
     pub arrangement: Arrangement,
     /// [`direction`].
     #[qml(notify, enumeration = "Direction")]
     pub direction: i32,
+}
+
+/// `Grid` (Ljos.Layout): children in cells, along the `flow`. A column is
+/// as wide as what its children ask for, a row as tall; a child says which
+/// cell it takes, and how many, through `Layout.row`, `Layout.column` and
+/// the spans.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "Ljos.Layout", name = "Grid", extends = Arrangement, enums = grid_enums)]
+pub struct LjosGrid {
+    #[qml(base)]
+    pub arrangement: Arrangement,
+    /// How many cells a row has. Unset (0) with `rows` unset too: as many
+    /// as there are children, one row; with `rows` set: as many as the
+    /// children need in that many rows.
+    #[qml(notify)]
+    pub columns: i32,
+    /// How many cells a column has, as `columns` says of a row.
+    #[qml(notify)]
+    pub rows: i32,
+    /// Between two columns; `spacing` until it is given.
+    #[qml(notify, reset = ljos_engine::Reset::Follow(spacing))]
+    pub column_spacing: f64,
+    /// Between two rows; `spacing` until it is given.
+    #[qml(notify, reset = ljos_engine::Reset::Follow(spacing))]
+    pub row_spacing: f64,
+    /// [`crate::positioners::flow`]: across a row first, or down a column.
+    #[qml(notify, enumeration = "Flow")]
+    pub flow: i32,
+}
+
+fn grid_enums() -> EnumTable {
+    vec![(
+        "Flow",
+        vec![
+            ("LeftToRight", i64::from(flow::LEFT_TO_RIGHT)),
+            ("TopToBottom", i64::from(flow::TOP_TO_BOTTOM)),
+        ],
+    )]
+}
+
+fn spacing(engine: &Engine, obj: ObjectId, _gap: PropIndex) -> Value {
+    engine.read(obj, Arrangement::SPACING.index)
+}
+
+/// What a grid reads of itself, besides what every arrangement does.
+pub(super) fn grid_props() -> [PropIndex; 5] {
+    [
+        LjosGrid::COLUMNS.index,
+        LjosGrid::ROWS.index,
+        LjosGrid::COLUMN_SPACING.index,
+        LjosGrid::ROW_SPACING.index,
+        LjosGrid::FLOW.index,
+    ]
+}
+
+/// A grid's spacing between columns, then between rows.
+pub(super) fn grid_spacing(e: &Engine, obj: ObjectId) -> [f64; 2] {
+    let all = num(e, obj, Arrangement::SPACING.index);
+    let gap = |p: PropIndex| {
+        if is_unset(e, obj, p) {
+            all
+        } else {
+            num(e, obj, p)
+        }
+    };
+    [
+        gap(LjosGrid::COLUMN_SPACING.index),
+        gap(LjosGrid::ROW_SPACING.index),
+    ]
+}
+
+/// How many rows and columns a grid of `count` children has, as far as it
+/// limits them, and whether it fills columns first. A count it is given
+/// bounds its line; given the other one only, it is what the children
+/// need in that many lines.
+pub(super) fn grid_limits(
+    e: &Engine,
+    obj: ObjectId,
+    count: usize,
+) -> (Option<usize>, Option<usize>, bool) {
+    let given = |p: PropIndex| {
+        usize::try_from(num(e, obj, p) as i64)
+            .ok()
+            .filter(|n| *n > 0)
+    };
+    let top_to_bottom = num(e, obj, LjosGrid::FLOW.index) as i32 == flow::TOP_TO_BOTTOM;
+    let (rows, columns) = match (given(LjosGrid::ROWS.index), given(LjosGrid::COLUMNS.index)) {
+        (Some(r), None) if !top_to_bottom => (Some(r), Some(count.div_ceil(r).max(1))),
+        (None, Some(c)) if top_to_bottom => (Some(count.div_ceil(c).max(1)), Some(c)),
+        other => other,
+    };
+    (rows, columns, top_to_bottom)
 }
 
 fn box_enums() -> EnumTable {
@@ -238,28 +333,20 @@ fn fit(start: f64, end: f64, before: f64, after: f64, hint: &Hint, align: Align)
     (at, size)
 }
 
-/// The geometry of every child of a box `width` by `height`.
-pub(super) fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f64; 4])> {
-    let main = usize::from(plan.vertical);
-    let cross = 1 - main;
-    let size = [width, height];
-    let pad = plan.pad;
-    let (lead, trail) = ([pad[0], pad[1]], [pad[2], pad[3]]);
-    let content = |axis: usize| (size[axis] - lead[axis] - trail[axis]).max(0.0);
-    let tracks: &[Track] = &plan.tracks[main];
-    let spacing = plan.spacing[main];
+/// Where each of `tracks` starts and ends in `content` along an axis.
+fn lines(tracks: &[Track], spacing: f64, content: f64) -> Vec<(f64, f64)> {
     let used = tracks.iter().filter(|t| t.used).count();
     let most: f64 = tracks.iter().filter(|t| t.used).map(|t| t.max).sum::<f64>()
         + spacing * used.saturating_sub(1) as f64;
     // Room nobody can take is left at the end, not shared out.
-    let sizes = distribute(tracks, spacing, content(main).min(most));
+    let sizes = distribute(tracks, spacing, content.min(most));
     // Room shared out is shared in whole pixels, as Qt's layouts share it;
     // a line of children that keep their sizes is placed as they ask.
     let shared = tracks
         .iter()
         .zip(&sizes)
         .any(|(t, s)| t.used && *s != t.pref);
-    let lines: Vec<(f64, f64)> = if shared {
+    if shared {
         edges(tracks, &sizes, spacing)
     } else {
         let mut at = 0.0;
@@ -274,7 +361,61 @@ pub(super) fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f
                 line
             })
             .collect()
+    }
+}
+
+/// The geometry of every child of a grid `width` by `height`: each axis
+/// as a box's line, a child across the cells it spans.
+pub(super) fn compute_cells(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f64; 4])> {
+    let size = [width, height];
+    let pad = plan.pad;
+    let (lead, trail) = ([pad[0], pad[1]], [pad[2], pad[3]]);
+    let content = |axis: usize| (size[axis] - lead[axis] - trail[axis]).max(0.0);
+    let edges = [H, V].map(|axis| lines(&plan.tracks[axis], plan.spacing[axis], content(axis)));
+    // From the first to the last track the child covers that has a size:
+    // the others under a span take no room.
+    let cover = |axis: usize, start: usize, len: usize| {
+        let mut used = (start..start + len)
+            .filter(|i| plan.tracks[axis].get(*i).is_some_and(|t| t.used))
+            .filter_map(|i| edges[axis].get(i));
+        let first = used.next().copied().unwrap_or((0.0, 0.0));
+        let last = used.next_back().copied().unwrap_or(first);
+        (first.0, last.1)
     };
+    plan.cells
+        .iter()
+        .map(|c| {
+            let mut g = [0.0; 4];
+            for axis in [H, V] {
+                let (start, len) = if axis == H {
+                    (c.slot.column, c.slot.column_span)
+                } else {
+                    (c.slot.row, c.slot.row_span)
+                };
+                let (mut s0, mut s1) = cover(axis, start, len);
+                let rtl = plan.rtl && axis == H;
+                if rtl {
+                    (s0, s1) = (content(H) - s1, content(H) - s0);
+                }
+                let (b, a) = (c.margins[axis], c.margins[axis + 2]);
+                let (at, length) = fit(s0, s1, b, a, &c.hint[axis], align_of(c.align, axis, rtl));
+                g[axis] = lead[axis] + at;
+                g[2 + axis] = length;
+            }
+            (c.item, g)
+        })
+        .collect()
+}
+
+/// The geometry of every child of a box `width` by `height`.
+pub(super) fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f64; 4])> {
+    let main = usize::from(plan.vertical);
+    let cross = 1 - main;
+    let size = [width, height];
+    let pad = plan.pad;
+    let (lead, trail) = ([pad[0], pad[1]], [pad[2], pad[3]]);
+    let content = |axis: usize| (size[axis] - lead[axis] - trail[axis]).max(0.0);
+    let lines = lines(&plan.tracks[main], plan.spacing[main], content(main));
     let rtl = plan.rtl && main == H;
     plan.cells
         .iter()
