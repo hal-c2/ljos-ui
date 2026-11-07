@@ -73,6 +73,23 @@ Feature: A Loader shows a component, named as a type
       And the property "width" of "loader" is 40
       And the pixel at 20, 15 of the window is "#336699"
 
+    # A type written where a component goes is the component of that type for TypeScript too
+    # (features/tooling/check-typescript.feature): it is not a value of the script's.
+    @ljos-only @headless
+    Scenario: TypeScript reads a type given as a component as the checker does
+      Given the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          id: root
+          property Component shown: Page
+          Loader { component: Page }
+          Loader { component: root.shown }
+        }
+        """
+      When the files are checked with TypeScript
+      Then TypeScript reports nothing
+
     @qt-parity
     Scenario: A Qt Loader's sourceComponent is changed for another
       Given the QML:

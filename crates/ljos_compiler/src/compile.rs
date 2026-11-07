@@ -99,7 +99,7 @@ fn compile_alone<O: TypeOracle>(
         // it is written as one and the file is read again.
         let named = std::mem::take(&mut tree.named_templates);
         drop(tree);
-        name_templates(&allocator, &mut parsed.document.root, &named);
+        name_templates_in(&allocator, &mut parsed.document, &named);
         errors.clear();
         tree = Tree::analyze(&parsed.document, types, &mut errors);
     }
@@ -128,6 +128,24 @@ fn compile_alone<O: TypeOracle>(
         check::modules_only(&mut compiler, &modules);
     }
     Ok(compiler.finish(&parsed.document))
+}
+
+/// Whether `document` is written in Ljós's API: it imports `Ljos.Ui`.
+pub fn is_ljos_ui(document: &QmlDocument<'_>) -> bool {
+    check::is_dialect(document)
+}
+
+/// Writes each binding of `named` (`component: Page`), the spans a
+/// `Tree` of a Ljos.Ui file gives as its `named_templates`, as the object
+/// it stands for (`component: Page {}`). Whatever reads such a file as
+/// the compiler does analyses it again after this, so TypeScript and the
+/// checker see a template, not a name with no value.
+pub fn name_templates_in<'a>(
+    allocator: &'a Allocator,
+    document: &mut QmlDocument<'a>,
+    named: &[Span],
+) {
+    name_templates(allocator, &mut document.root, named);
 }
 
 /// Writes each binding of `named` (`component: Page`) as the object it
