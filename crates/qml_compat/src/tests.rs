@@ -567,4 +567,68 @@ fn a_loader_whose_source_is_not_a_file_beside_it_keeps_the_file() {
             "{source}"
         );
     }
+    // A file beside it whose name is no type's: written as it is, it would
+    // be an id, a subtraction or a member read.
+    let any = |_: &str| Some(root_of("Rectangle", &[]));
+    for file in ["page.qml", "my-page.qml", "Page.ui.qml"] {
+        let source = format!("import QtQuick\nLoader {{ source: \"{file}\" }}\n");
+        let Outcome::Kept(kept) = lower(&source, &any) else {
+            panic!("{file} lowered");
+        };
+        assert_eq!(
+            kept.reason,
+            format!("a `Loader`'s `source` is \"{file}\", whose name is not a type's"),
+        );
+    }
+}
+
+/// What reads or sets a Loader's `source` other than its own binding would
+/// be told it is empty once the Loader is given a component.
+#[test]
+fn a_loader_whose_source_is_read_where_the_pass_does_not_follow_keeps_the_file() {
+    let read = "a `Loader`'s `source` is read or set as well as written";
+    for source in [
+        // Its own handler, unqualified.
+        "Loader { source: \"Page.qml\"; onStatusChanged: console.warn(source) }",
+        "Loader { source: \"Page.qml\"; Component.onCompleted: setSource(\"Page.qml\", {}) }",
+        "Loader { source: \"Page.qml\"; function again() { setSource(\"Page.qml\") } }",
+        // Another object aimed at it.
+        "Item { Loader { id: l; source: \"Page.qml\" } Connections { target: l; function onSourceChanged() { } } }",
+        "Item { Loader { id: l; source: \"Page.qml\" } Connections { target: l; onSourceChanged: { } } }",
+        "Item { id: root; Loader { id: l; source: \"Page.qml\" } states: State { name: \"o\"; PropertyChanges { target: l; source: \"Page.qml\" } } }",
+        "Item { id: root; Loader { id: l; source: \"Page.qml\" } states: State { name: \"o\"; PropertyChanges { l.source: \"Page.qml\" } } }",
+        // A Loader that is the root: an unqualified `source` anywhere may be its.
+        "Loader { source: \"Page.qml\"; Item { width: source.length } }",
+    ] {
+        match lower(&format!("import QtQuick\n{source}\n"), &page) {
+            Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
+            other => panic!("{source}: {other:?}"),
+        }
+    }
+    // A child's own `source` is its own.
+    let Outcome::Lowered(done) = lower(
+        "import QtQuick\nItem {\n  Loader { source: \"Page.qml\"; Item { property string source; width: source.length } }\n}\n",
+        &page,
+    ) else {
+        panic!("not lowered");
+    };
+    assert!(
+        done.text.contains("Loader { component: Page;"),
+        "{}",
+        done.text
+    );
+}
+
+#[test]
+fn a_loader_given_both_a_source_and_a_component_keeps_the_file() {
+    match lower(
+        "import QtQuick\nItem {\n  Loader { source: \"Page.qml\"; sourceComponent: c }\n  Component { id: c; Item { } }\n}\n",
+        &page,
+    ) {
+        Outcome::Kept(kept) => assert_eq!(
+            kept.reason,
+            "a `Loader` is given both a `source` and a `sourceComponent`"
+        ),
+        other => panic!("{other:?}"),
+    }
 }
