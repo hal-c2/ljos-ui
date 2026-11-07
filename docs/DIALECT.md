@@ -180,10 +180,10 @@ are quoted side by side below:
 
 | Module | Holds | Replaces |
 |---|---|---|
-| `Ljos.Ui` | items, visuals, gestures, states, text, images | `QtQuick` |
+| `Ljos.Ui` | items, visuals, gestures, states, text, images; the views (`Repeater`, `ListView`) | `QtQuick` |
 | `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
 | `Ljos.Controls` | the controls, built on `Ljos.Design` roles | `QtQuick.Controls` |
-| `Ljos.Models` | `ListModel`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
+| `Ljos.Models` | `ListModel`, `ListElement`, `Instantiator`, `XmlModel`, `FolderModel`, `TreeModel` | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
 | `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
 | `Ljos.Platform` | `StandardPaths`, `FolderDialog`, `FileDialog`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
@@ -193,6 +193,11 @@ DECISION: the module set is `Ljos.*`, one module per concern, named in the
 singular. `Ljos.Ui` is the first and the only one phase 1 builds. It
 imports `QtQml` for `Component`, `Timer` and the `Qt` namespace until
 `Ljos.Core` exists.
+
+DECISION: the views are `Ljos.Ui`'s, as they are `QtQuick`'s, and the
+models are `Ljos.Models`'. A view's keys and its `enter`/`exit` are the
+view's (§4.15), so `Ljos.Models` holds no view. `Ljos.Models` is
+registered by the engine, so a file of models needs no items.
 
 ### 4.2 Names: the rename rule and phase 1's slice
 
@@ -214,7 +219,16 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 - `Rectangle` with `fill`, a face of Qt Quick's `Rectangle`;
 - `PointerArea`, a face of `MouseArea`;
 - `Item`, `Text`, `State`, `PropertyChanges` and the font enums, exported
+  as they are;
+- `Repeater` and `ListView` with its attached `ListView.*`, exported as
+  they are (§4.8);
+- in `Ljos.Models`, `ListModel`, `ListElement` and `Instantiator`, exported
   as they are.
+
+DECISION: `ListView.view` (and `GridView.view`) is a `Flickable` to the
+checker. One attached type serves every view and their common base has
+no name a file can say, so a typed file reads `ListView.view.width`
+directly and a member of `ListView` alone through a typed property.
 
 It is described in `crates/qt_types/src/ljos.txt`, so `ljos check` and the
 lowering know it with no Qt installed.
@@ -627,7 +641,16 @@ where Qt's views reset when a model is replaced.
   list. The row type is written into a `.ts` module beside the file, and
   each delegate's required properties become `modelData.<field>`. A
   ListModel that is edited stays a ListModel.
-- `model.<role>` → `modelData.<role>`.
+- `model.<role>` → `modelData.<role>` where the file shows a model of
+  several roles; `model.index` → `index` and `model.modelData` →
+  `modelData` in any delegate the file shows. A delegate is one written
+  in a view's `delegate:` (or its default property), or a `Component` a
+  view is given by id (`delegate: row`) that nothing else in the file
+  names; one named elsewhere too may be made of other rows. Where the file
+  shows no view, or not the model, the file is kept, with the name to
+  declare `required`.
+- `import QtQml.Models` → `import Ljos.Models`. A lowered file that makes a
+  `ListModel`, `ListElement` or `Instantiator` gets `import Ljos.Models`.
 - `XmlListModel` → `XmlModel` with a generated decoder.
 - `FolderListModel` → `FolderModel`.
 
@@ -637,6 +660,29 @@ union of its `ListElement`s' roles, each optional where an element leaves
 it out (Qt reads a missing role as `undefined`). A delegate that reads an
 optional role has to say what it does without it. A constant table whose
 elements differ lowers to a typed list with those optional fields.
+
+DECISION: a delegate's `modelData` is its row. Of an array or a count it
+is the element, of a model of one role that role's value, and of a model
+of several roles the row object itself, and a role written through it
+(`modelData.shift = 1`) is written to the model. A delegate written in
+Ljós's API reads it so whether or not it declares it `required`; Qt gives
+the row only to a required `modelData`, leaves the context's undefined
+and refuses writes to it, and a delegate of a Qt file keeps that. The
+pass writes `modelData.<role>` only where `modelData` is that row: a
+`ListModel` of several roles written in the file, given inline or by id.
+A ListModel of one role with an id is not known to stay one, since a
+script may `append` rows of other roles, so `model.<role>` of it keeps
+the file.
+
+DECISION: outside a delegate the file shows, nothing of a row is
+guessed. A file that reads `model.index` or `model.modelData` with no view
+around it is a delegate only if what makes it makes it one, so it is kept
+as a role read there is, not lowered to `index` or `modelData`.
+
+DECISION: a name the file declares is the file's own. A `property var
+model` (a delegate's `required property var model` too), or a script's
+`model`, `index` or `modelData` in a delegate that reads the row, is not
+the row: the file is kept where a rename would read it instead.
 
 DECISION: a duplicate `key` is a check error in a constant list. At run
 time rows that share a key are matched in order (the second row with key
@@ -1111,26 +1157,36 @@ run as written, and the cost of a missed tie is a wrong program.
 
 ### 6.4 Coverage today
 
-`ljos migrate` over the corpus, with group lowering:
+`ljos migrate` over each project of the corpus (each
+`corpus/qtdoc/examples/*/*` directory, and `corpus/qtdoc/doc` as one), with
+group lowering:
 
 ```
-corpus/qtdoc/examples:  495 files, 23 lowered, 462 kept
-corpus/qtdoc (all):     524 files, 29 lowered, 485 kept
+corpus/qtdoc/examples:  495 files, 13 lowered, 472 kept
+corpus/qtdoc/doc:        28 files, 11 lowered, 17 kept
 ```
 
-Before grouping, 75 example files lowered. 52 of those set a Qt name on, or
-were used by, a file that was kept. Coverage is low on purpose, because the
-slice is three types. Kept files run as before, so low coverage costs
+Over the whole of `corpus/qtdoc` at once, no file is lowered: modules
+group (§6.2), and a module is any directory whose path ends in its name,
+so one demo's `import content` joins every demo's `content/` into one
+group, which a `QtQuick3D` file keeps. Projects are migrated one at a time,
+so the counts are per project. Coverage is low on purpose: the slice is a
+few types and the layouts. Kept files run as before, so low coverage costs
 nothing.
 
-Why the 462 example files are kept:
+Why the 472 example files are kept:
 
 | Reason | Files |
 |---|---:|
-| a module import: `QtQuick.Controls` (102), `QtQuick3D` (89), `QtQuick.Controls.Basic` (62), `QtQuick.Layouts` (46), `QtQuick.Templates` (15), `QtQuick.Controls.Fusion` (13), `QtQuick.Particles` (12), `QtCore` (9), … | 364 |
-| a file of its group is kept | 52 |
-| a type not in `Ljos.Ui` yet: `Image` (10), `Screen` (5), `Behavior` (5), `ListView` (4), `Window` (3), … | 44 |
-| a member read off something whose type is not known | 2 |
+| a module import: `QtQuick.Controls` (89), `QtQuick3D` (86), `QtQuick.Controls.Basic` (43), `QtQuick.Templates` (15), `QtQuick.Controls.Fusion` (15), `QtQuick.Particles` (12), a module of the project (`Thermostat`, `content`, …) (25), … | 340 |
+| a file of its group is kept | 64 |
+| a type not in `Ljos.Ui` yet: `Image` (17), `Screen` (6), `Behavior` (5), `GridLayout` (4), `Window` (4), … | 52 |
+| a layout the pass cannot show would place the same | 12 |
+| a member read off, or set on, something whose type is not known | 4 |
+
+`ListView`, `Repeater` and `Instantiator` keep no file now, and nor does
+`model.<role>`: the corpus's role reads are of models the file shows, or
+of files that are kept for other reasons.
 
 `Qt.*` keeps no file today: `Ljos.Ui` imports `QtQml`, so the namespace is
 still there. Modules, not globals, decide coverage. Phase 2 starts with
@@ -1359,7 +1415,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `Repeater`, `ListView` and `ListView.*` in `Ljos.Ui`; `ListModel`, `ListElement` and `Instantiator` in `Ljos.Models`; `model.<role>` and `QtQml.Models` lowered (§4.8). Remaining: `Image`, `Behavior` and animations, `Flickable`, `Loader`, `Window`, `Screen`, the budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |

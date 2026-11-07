@@ -771,3 +771,59 @@ Item {
     h.engine.process_deferred_deletes();
     assert_eq!(text(&h, root, "log"), " -a ~a -b ~b");
 }
+
+/// A ListModel of several roles, its rows made by an Instantiator under
+/// `imports`; each row's object says what its delegate's `modelData` is.
+fn rows_of_several_roles(imports: &str) -> String {
+    format!(
+        r#"{imports}
+Item {{
+  ListModel {{
+    id: zones
+    ListElement {{ city: "Reykjavík"; shift: 0 }}
+    ListElement {{ city: "Tokyo"; shift: 9 }}
+  }}
+  Instantiator {{
+    model: zones
+    QtObject {{
+      objectName: "z" + index
+      property bool isRow: modelData === model
+      property bool isUndefined: modelData === undefined
+    }}
+  }}
+}}
+"#
+    )
+}
+
+/// docs/DIALECT.md §4.8: a delegate written in Ljós's API reads its row as
+/// `modelData` without declaring it required; one of a Qt file keeps Qt's
+/// undefined (features/models/delegate-context.feature).
+#[test]
+fn a_delegate_of_ljos_ui_reads_its_row_as_model_data_and_one_of_qt_does_not() {
+    let h = engine();
+    h.engine
+        .register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [support::Item]));
+    let ljos = h.load(&rows_of_several_roles(
+        "pragma Scripts: JavaScript\nimport Ljos.Ui\nimport QtQml.Models",
+    ));
+    let row = h.find(ljos, "z1");
+    assert_eq!(
+        h.get(row, "isRow"),
+        Value::Bool(true),
+        "Ljós: modelData is the row"
+    );
+    assert_eq!(h.get(row, "isUndefined"), Value::Bool(false));
+
+    let h = engine();
+    let qt = h.load(&rows_of_several_roles(
+        "import QtQuick\nimport QtQml.Models",
+    ));
+    let row = h.find(qt, "z1");
+    assert_eq!(h.get(row, "isRow"), Value::Bool(false));
+    assert_eq!(
+        h.get(row, "isUndefined"),
+        Value::Bool(true),
+        "Qt: modelData stays undefined without `required`"
+    );
+}

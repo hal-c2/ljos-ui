@@ -451,7 +451,10 @@ impl Default for GridView {
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "ItemViewAttached")]
 pub struct ViewAttached {
-    #[qml(notify, readonly)]
+    /// The view, which a typed file reads a flickable's members off:
+    /// `ListView.view.width`. One type attaches to every view, and
+    /// `ItemView` has no name a file can say, so it is `Flickable`.
+    #[qml(notify, readonly, object = "Flickable")]
     pub view: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub is_current_item: bool,

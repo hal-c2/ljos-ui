@@ -19,7 +19,9 @@
 //! ([`group`]): what one sets on another is then called the same in both.
 
 mod arrange;
+mod given;
 mod group;
+mod rows;
 
 use std::ops::Range;
 
@@ -28,6 +30,7 @@ use oxc_ast::ast::{
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
+use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
 use qml_edit::Change;
 use qml_syntax::{
@@ -38,11 +41,19 @@ use qml_syntax::{
     },
 };
 use qt_types::Type;
+use rows::{Delegate, Owns, Rows};
 
 pub use group::{Alone, References, group, references};
 
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
+
+/// The module of Ljós's models, which a lowered file imports when it makes
+/// one of [`MODELS`].
+pub const MODELS_MODULE: &str = "Ljos.Models";
+
+/// The types of `QtQml.Models` that are `Ljos.Models`' as they are.
+pub const MODELS: &[&str] = &["ListModel", "ListElement", "Instantiator"];
 
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
@@ -94,6 +105,9 @@ pub struct Root {
     /// The names it binds, with those of its groups (`anchors.left` for
     /// `anchors { left: … }`): what it says of how it is placed.
     pub bindings: Vec<String>,
+    /// The properties it declares: a `model` it declares is its own, not a
+    /// delegate's row.
+    pub properties: Vec<String>,
 }
 
 /// What the pass needs to know of the files beside this one: for a type a
@@ -137,6 +151,16 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ids: Vec::new(),
         inline: Vec::new(),
         changes: Vec::new(),
+        listed: Vec::new(),
+        imports_models: false,
+        makes_models: std::cell::Cell::new(false),
+        given: None,
+        view_rows: None,
+        delegate: None,
+        by_id: Vec::new(),
+        loose: false,
+        scope_owns: Owns::NONE,
+        root_owns: Owns::NONE,
     };
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
@@ -169,6 +193,14 @@ impl Root {
         Root {
             type_name: object.type_name.to_string(),
             bindings: arrange::binding_names(object),
+            properties: object
+                .members
+                .iter()
+                .filter_map(|member| match member {
+                    QmlMember::Property(property) => Some(property.name.name.to_string()),
+                    _ => None,
+                })
+                .collect(),
         }
     }
 }
@@ -204,6 +236,29 @@ struct Pass<'s> {
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
+    /// The `ListModel`s with ids, and the roles their `ListElement`s give.
+    listed: Vec<(String, Vec<String>)>,
+    /// Whether the file imports `QtQml.Models`, which is lowered to
+    /// `Ljos.Models`.
+    imports_models: bool,
+    /// Whether it makes one of [`MODELS`].
+    makes_models: std::cell::Cell<bool>,
+    /// The rows of the view whose delegate the next object is.
+    given: Option<Rows>,
+    /// The rows of the view the pass is in, which a `DelegateChoice` or a
+    /// `Component` hands its delegate.
+    view_rows: Option<Rows>,
+    /// The delegate the pass is in.
+    delegate: Option<Delegate>,
+    /// The `Component`s views are given by id alone, and those views' rows.
+    by_id: Vec<(String, Rows)>,
+    /// Whether the pass is in a `Component` that is no view's delegate the
+    /// file shows.
+    loose: bool,
+    /// What the object whose members an unqualified name is first has.
+    scope_owns: Owns,
+    /// What the root of the file, or of the inline component, has.
+    root_owns: Owns,
 }
 
 type Step = Result<(), Kept>;
@@ -219,12 +274,24 @@ impl<'s> Pass<'s> {
                 continue;
             };
             let uri = name.to_string();
-            if import.alias.is_some() && (uri == "QtQuick" || uri == "QtQml") {
+            if import.alias.is_some()
+                && matches!(uri.as_str(), "QtQuick" | "QtQml" | "QtQml.Models")
+            {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
             match uri.as_str() {
                 "QtQuick" => quick = Some(import.span),
                 "QtQml" => {}
+                // Its models are `Ljos.Models`'; its other types are found
+                // through `Ljos.Ui`'s import of `QtQml`, as they were.
+                "QtQml.Models" => {
+                    self.imports_models = true;
+                    let span = import.span;
+                    self.change(
+                        span.start as usize..span.end as usize,
+                        format!("import {MODELS_MODULE}"),
+                    );
+                }
                 // Its line layouts are lowered to Ljós's arrangement
                 // ([`arrange`]); its other types keep the file.
                 "QtQuick.Layouts" if import.alias.is_none() => {
@@ -248,15 +315,38 @@ impl<'s> Pass<'s> {
             // `Ljos.Ui` has `Layout`; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
         }
+        self.collect(&document.root);
+        let by_id = given::by_id(&document.root, &|o| self.is_view(o), &self.listed)
+            .into_iter()
+            .filter(|(id, _)| matches!(self.id(id), Some(Ty::Exact(t)) if t.name == "Component"))
+            .collect();
+        self.by_id = by_id;
+        let root = self.object_type(&document.root)?;
+        self.root_owns = self.owns(&document.root, root);
+        self.object(&document.root, root, root, true)?;
         // On the import's line, so every line stays where it was.
+        let models = if self.makes_models.get() && !self.imports_models {
+            format!("; import {MODELS_MODULE}")
+        } else {
+            String::new()
+        };
         self.change(
             span.start as usize..span.end as usize,
-            format!("{JAVASCRIPT}; import {MODULE}"),
+            format!("{JAVASCRIPT}; import {MODULE}{models}"),
         );
-        self.collect(&document.root);
-        let root = self.object_type(&document.root)?;
-        self.object(&document.root, root, root, true)?;
         Ok(true)
+    }
+
+    /// Whether `object` is of a type that shows a model with a delegate.
+    fn is_view(&self, object: &QmlObject<'_>) -> bool {
+        let Some(name) = object.type_name.as_simple() else {
+            return false;
+        };
+        matches!(
+            self.named_type(name, 0, 0),
+            Ok(Ty::Exact(t) | Ty::Derived(t))
+                if t.property("model").is_some() && t.property("delegate").is_some()
+        )
     }
 
     fn no(&self, reason: String, at: usize) -> Kept {
@@ -289,7 +379,14 @@ impl<'s> Pass<'s> {
                         self.collect_value(value);
                     }
                 }
-                QmlMember::Object(child) => self.collect(child),
+                QmlMember::Object(child) => {
+                    if child.type_name.as_simple() == Some("ListModel")
+                        && let Some(id) = object_id(child)
+                    {
+                        self.listed.push((id, rows::listed_roles(child)));
+                    }
+                    self.collect(child);
+                }
                 QmlMember::InlineComponent(component) => {
                     self.inline
                         .push((component.name.name.to_string(), Root::of(&component.object)));
@@ -348,6 +445,9 @@ impl<'s> Pass<'s> {
         }
         if let Some(ty) = self.quick.type_named(name) {
             if ty.module.starts_with("QtQml") {
+                if MODELS.contains(&name) {
+                    self.makes_models.set(true);
+                }
                 return Ok(Ty::Exact(ty));
             }
             let new = renamed_type(name).unwrap_or(name);
@@ -383,6 +483,77 @@ impl<'s> Pass<'s> {
     /// an inline component or of a `Component`, or an object given as a
     /// value (a `Loader` sizes its `sourceComponent`'s).
     fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty, a_root: bool) -> Step {
+        // A `Component` a view is given by id is its delegate as if it
+        // were written in the view's `delegate:`.
+        let given = self.given.take().or_else(|| match ty {
+            Ty::Exact(t) if t.name == "Component" => {
+                let id = object_id(object)?;
+                let (_, rows) = self.by_id.iter().find(|(given, _)| *given == id)?;
+                Some(rows.clone())
+            }
+            _ => None,
+        });
+        let saved = (
+            self.delegate.clone(),
+            self.scope_owns,
+            self.view_rows.clone(),
+            self.root_owns,
+            self.loose,
+        );
+        let done = self.object_in(object, ty, root, a_root, given);
+        (
+            self.delegate,
+            self.scope_owns,
+            self.view_rows,
+            self.root_owns,
+            self.loose,
+        ) = saved;
+        done
+    }
+
+    /// [`Self::object`], given the rows of the view it is a delegate of.
+    fn object_in(
+        &mut self,
+        object: &QmlObject<'_>,
+        ty: Ty,
+        root: Ty,
+        a_root: bool,
+        given: Option<Rows>,
+    ) -> Step {
+        let named = |names: &[&str]| matches!(ty, Ty::Exact(t) if names.contains(&t.name));
+        // What hands a delegate on rather than being it.
+        let carrier = given.is_some() && named(&["Component", "DelegateChooser", "DelegateChoice"]);
+        if given.is_none() && named(&["Component"]) {
+            self.loose = true;
+        }
+        let owns = self.owns(object, ty);
+        match given {
+            Some(rows) if carrier => self.view_rows = Some(rows),
+            Some(rows) => self.delegate = Some(Delegate { rows, owns }),
+            // A component made in the delegate: its root hides the row too.
+            None if a_root => {
+                if let Some(d) = &mut self.delegate {
+                    d.owns = d.owns.or(owns);
+                }
+            }
+            None => {}
+        }
+        if !matches!(ty, Ty::Plain) {
+            self.scope_owns = owns;
+        }
+        let gives_rows =
+            |t: &'static Type| t.property("model").is_some() && t.property("delegate").is_some();
+        if let Ty::Exact(t) | Ty::Derived(t) = ty
+            && gives_rows(t)
+        {
+            self.view_rows = Some(rows::of_view(object, &self.listed));
+        }
+        let delegates_inside = match ty {
+            Ty::Exact(t) | Ty::Derived(t) => {
+                t.default_property() == Some("delegate") || (carrier && t.name == "Component")
+            }
+            _ => false,
+        };
         if let Ty::Exact(t) = ty
             && let Some(shape) = arrange::Shape::of(t)
         {
@@ -413,6 +584,9 @@ impl<'s> Pass<'s> {
                         root
                     };
                     let made = matches!(ty, Ty::Exact(t) if t.name == "Component");
+                    if delegates_inside && !matches!(child_ty, Ty::Plain) {
+                        self.given = Some(self.view_rows.clone().unwrap_or(Rows::Unknown));
+                    }
                     self.object(child, child_ty, child_root, made)?;
                 }
                 QmlMember::Binding(binding) => self.binding(binding, ty, scope, root, target)?,
@@ -455,7 +629,12 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::InlineComponent(component) => {
                     let ty = self.object_type(&component.object)?;
+                    // Its own file, as far as names go.
+                    let (delegate, root_owns) = (self.delegate.take(), self.root_owns);
+                    let loose = std::mem::take(&mut self.loose);
+                    self.root_owns = self.owns(&component.object, ty);
                     self.object(&component.object, ty, ty, true)?;
+                    (self.delegate, self.root_owns, self.loose) = (delegate, root_owns, loose);
                 }
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
@@ -524,6 +703,13 @@ impl<'s> Pass<'s> {
         {
             // `PropertyChanges { rect.color: ... }`.
             self.part(name, 1, id)?;
+        }
+        if name.parts.len() == 1
+            && first == "delegate"
+            && matches!(binding.value, QmlBindingValue::Object(_))
+            && matches!(ty, Ty::Exact(t) | Ty::Derived(t) if t.property("delegate").is_some())
+        {
+            self.given = Some(self.view_rows.clone().unwrap_or(Rows::Unknown));
         }
         self.value(&binding.value, scope, root)
     }
@@ -650,13 +836,106 @@ impl<'s> Pass<'s> {
             scope,
             root,
             kept: None,
+            declared: Vec::new(),
+            row: RowEdits::default(),
         };
         walk(&mut script);
+        script.row_done();
         match script.kept {
             Some(kept) => Err(kept),
             None => Ok(()),
         }
     }
+
+    /// Whether `object`, of type `ty`, has `model`, `modelData` and
+    /// `index`: declared, or as members of its type.
+    fn owns(&self, object: &QmlObject<'_>, ty: Ty) -> Owns {
+        let one = |name: &str| -> Option<bool> {
+            let declared = object
+                .members
+                .iter()
+                .any(|m| matches!(m, QmlMember::Property(p) if p.name.name.as_str() == name));
+            if declared {
+                return Some(true);
+            }
+            match ty {
+                Ty::Exact(t) => Some(t.property(name).is_some()),
+                Ty::Plain => Some(false),
+                Ty::Derived(_) | Ty::Unknown => object
+                    .type_name
+                    .as_simple()
+                    .and_then(|n| self.type_declares(n, name, 0)),
+            }
+        };
+        Owns {
+            model: one("model"),
+            model_data: one("modelData"),
+            index: one("index"),
+        }
+    }
+
+    /// Whether the type `name` has the property `member`: Qt's, or one a
+    /// file of the project or an inline component declares.
+    fn type_declares(&self, name: &str, member: &str, depth: usize) -> Option<bool> {
+        use arrange::Types;
+        if let Some(t) = self.qt_type(name) {
+            return Some(t.property(member).is_some());
+        }
+        if depth > 16 {
+            return None;
+        }
+        let root = self
+            .inline
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, root)| root.clone())
+            .or_else(|| self.locals.root(name))?;
+        if root.properties.iter().any(|p| p == member) {
+            return Some(true);
+        }
+        if root.type_name == name {
+            return None;
+        }
+        self.type_declares(&root.type_name, member, depth + 1)
+    }
+}
+
+/// The id an object binds.
+fn object_id(object: &QmlObject<'_>) -> Option<String> {
+    object.members.iter().find_map(|member| match member {
+        QmlMember::Binding(binding) if binding.name.as_simple() == Some("id") => {
+            match &binding.value {
+                QmlBindingValue::Expression(Expression::Identifier(id)) => {
+                    Some(id.name.to_string())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    })
+}
+
+/// What a script writes of a delegate's row, held until the script is
+/// read whole: a local it declares later may be what a name is.
+#[derive(Default)]
+struct RowEdits {
+    changes: Vec<Change>,
+    kept: Option<Kept>,
+    /// Where it read `model` as the row.
+    read: Option<u32>,
+    /// The names the edits write: `index`, `modelData`.
+    wrote: Vec<&'static str>,
+}
+
+/// What `model` names where a script is.
+enum Model {
+    /// A member of an object, or an id: the file's own.
+    Own,
+    /// The row of a delegate of a view of these rows; `None` for the row
+    /// of a view the file is not shown in.
+    Row(Option<Rows>),
+    /// An object here may have it.
+    Unsure,
 }
 
 impl arrange::Types for Pass<'_> {
@@ -796,6 +1075,9 @@ struct Script<'p, 's> {
     /// The file's root object, whose members it is next.
     root: Ty,
     kept: Option<Kept>,
+    /// The locals it declares that a delegate's row has names of.
+    declared: Vec<String>,
+    row: RowEdits,
 }
 
 impl Script<'_, '_> {
@@ -858,8 +1140,170 @@ impl Script<'_, '_> {
     }
 }
 
+impl Script<'_, '_> {
+    /// What `model` is here.
+    fn model(&self) -> Model {
+        if self.pass.id("model").is_some() {
+            return Model::Own;
+        }
+        let behind = self
+            .pass
+            .delegate
+            .as_ref()
+            .map_or(self.pass.root_owns, |d| d.owns);
+        match (self.pass.scope_owns.model, behind.model) {
+            (Some(true), _) | (Some(false), Some(true)) => Model::Own,
+            (None, _) | (_, None) => Model::Unsure,
+            (Some(false), Some(false)) => {
+                Model::Row(self.pass.delegate.as_ref().map(|d| d.rows.clone()))
+            }
+        }
+    }
+
+    /// Whether `name`, read unqualified here, is the row's.
+    fn free(&self, name: &str) -> bool {
+        let behind = self
+            .pass
+            .delegate
+            .as_ref()
+            .map_or(self.pass.root_owns, |d| d.owns);
+        self.pass.id(name).is_none()
+            && self.pass.scope_owns.get(name) == Some(false)
+            && behind.get(name) == Some(false)
+    }
+
+    fn row_keep(&mut self, reason: String, at: u32) {
+        if self.row.kept.is_none() {
+            self.row.kept = Some(Kept {
+                reason,
+                at: at as usize,
+            });
+        }
+    }
+
+    /// Writes `span` as `name`, which a delegate's row gives, unless
+    /// something here has a member of that name.
+    fn row_write(&mut self, span: oxc_span::Span, name: &'static str, what: &str) {
+        if self.free(name) {
+            self.row.changes.push(Change {
+                range: span.start as usize..span.end as usize,
+                replacement: name.to_string(),
+            });
+            self.row.wrote.push(name);
+        } else {
+            self.row_keep(
+                format!("`{what}` would be `{name}`, which an object here has a member of"),
+                span.start,
+            );
+        }
+    }
+
+    /// `model.<member>`, where `model` is the row of a delegate of `rows`.
+    fn row_member(&mut self, it: &StaticMemberExpression<'_>, rows: Option<Rows>) {
+        let member = it.property.name.as_str();
+        let at = it.span.start;
+        self.row.read.get_or_insert(at);
+        let what = format!("model.{member}");
+        match (member, rows) {
+            ("index", Some(_)) => self.row_write(it.span, "index", &what),
+            ("modelData", Some(_)) => self.row_write(it.span, "modelData", &what),
+            // No view is shown, so what the row is is not known either.
+            ("index", None) => self.row_keep(self.unshown(&what, "the row", "int index"), at),
+            ("modelData", None) => {
+                self.row_keep(self.unshown(&what, "the row", "var modelData"), at);
+            }
+            (_, Some(Rows::Roles)) => self.row_write(it.object.span(), "modelData", &what),
+            (_, Some(Rows::OneRole(role))) if role == member => {
+                self.row_write(it.span, "modelData", &what);
+            }
+            (_, Some(Rows::OneRole(_))) => self.row_keep(
+                format!("`{what}` reads a role the model does not have, which is `undefined`; take it out"),
+                at,
+            ),
+            (_, Some(Rows::Objects)) => self.row_keep(
+                format!("`{what}` reads a role of an array, which gives none; read `modelData.{member}`, the element's"),
+                at,
+            ),
+            (_, Some(Rows::Values)) => self.row_keep(
+                format!("`{what}` reads a role of a model of values, which gives none; take it out"),
+                at,
+            ),
+            (_, Some(Rows::Unknown)) => self.row_keep(
+                format!("`{what}` reads a role of a model the file does not show, which `modelData.{member}` reads only of a model of several roles; give the delegate `required property var {member}`"),
+                at,
+            ),
+            (_, None) => self.row_keep(
+                self.unshown(&what, "a role of the row", &format!("var {member}")),
+                at,
+            ),
+        }
+    }
+
+    /// Why `what`, which reads `part` of a row where the file shows no
+    /// view, keeps the file, and what to declare in its place.
+    fn unshown(&self, what: &str, part: &str, declare: &str) -> String {
+        if self.pass.loose {
+            format!(
+                "`{what}` reads {part} of a view the `Component` it is in is not written in the `delegate:` of, or given to by id alone; give the Component's root `required property {declare}`"
+            )
+        } else {
+            format!(
+                "`{what}` reads {part} of a view the file is not shown in; give the root `required property {declare}`"
+            )
+        }
+    }
+
+    /// The script is read: what it wrote of the row is the file's, unless
+    /// a local it declares has a name of the row.
+    fn row_done(&mut self) {
+        let row = std::mem::take(&mut self.row);
+        if let Some(at) = row.read
+            && self.declared.iter().any(|d| d == "model")
+        {
+            self.keep(
+                "a local is called `model`, as a delegate's row is".into(),
+                at,
+            );
+            return;
+        }
+        for name in &row.wrote {
+            if self.declared.iter().any(|d| d == name) {
+                let at = row.changes.first().map_or(0, |c| c.range.start as u32);
+                self.keep(
+                    format!("a local is called `{name}`, as the row's `{name}` is"),
+                    at,
+                );
+                return;
+            }
+        }
+        if let Some(kept) = row.kept {
+            self.keep(kept.reason, kept.at as u32);
+        }
+        self.pass.changes.extend(row.changes);
+    }
+}
+
 impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_static_member_expression(&mut self, it: &StaticMemberExpression<'a>) {
+        if let Expression::Identifier(object) = &it.object
+            && object.name == "model"
+        {
+            match self.model() {
+                Model::Own => {}
+                Model::Unsure => {
+                    let reason = format!(
+                        "`model.{}` may read a member of an object whose type is not known",
+                        it.property.name
+                    );
+                    self.row_keep(reason, it.span.start);
+                    return;
+                }
+                Model::Row(rows) => {
+                    self.row_member(it, rows);
+                    return;
+                }
+            }
+        }
         let name = it.property.name.as_str();
         if name == "createQmlObject" {
             // The text is compiled when the script runs, as written.
@@ -900,6 +1344,29 @@ impl<'a> Visit<'a> for Script<'_, '_> {
 
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
         let name = it.name.as_str();
+        if name == "model" {
+            match self.model() {
+                Model::Own => {}
+                Model::Unsure => {
+                    self.row_keep(
+                        "`model` may be a member of an object whose type is not known".into(),
+                        it.span.start,
+                    );
+                }
+                Model::Row(Some(Rows::Roles)) => {
+                    self.row.read.get_or_insert(it.span.start);
+                    self.row_write(it.span, "modelData", "model");
+                }
+                Model::Row(_) => {
+                    self.row.read.get_or_insert(it.span.start);
+                    self.row_keep(
+                        "`model` is the row of a model whose roles the file does not show; read the roles it needs by name".into(),
+                        it.span.start,
+                    );
+                }
+            }
+            return;
+        }
         if name.starts_with(|c: char| c.is_ascii_uppercase()) {
             if let Some(new) = renamed_type(name) {
                 self.pass
@@ -933,6 +1400,9 @@ impl<'a> Visit<'a> for Script<'_, '_> {
     }
 
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
+        if matches!(it.name.as_str(), "model" | "modelData" | "index") {
+            self.declared.push(it.name.to_string());
+        }
         // A local of a renamed name hides the member; renaming its uses
         // would rename the local's.
         if is_renamed_member(&it.name) {
