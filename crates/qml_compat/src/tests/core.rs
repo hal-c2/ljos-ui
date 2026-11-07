@@ -57,3 +57,14 @@ fn a_file_of_qtqml_that_names_a_type_of_ljos_ui_imports_it_too() {
         "{text}"
     );
 }
+
+/// Only Qt's table has a type of `QtQml` that `Ljos.Core` has not: Ljós's
+/// own describes no more of `QtQml` than `Ljos.Core` brings.
+#[test]
+fn a_type_of_qtqml_that_ljos_core_has_not_keeps_the_file() {
+    if !qt_types::has_qt_table() {
+        return;
+    }
+    let reason = kept_for("import QtQml\nLoggingCategory { name: \"a\" }\n");
+    assert_eq!(reason, "`LoggingCategory` is not in Ljos.Core yet");
+}
