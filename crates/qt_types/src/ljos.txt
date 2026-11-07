@@ -517,6 +517,7 @@ module Ljos.Layout
 	Flow QtQuick.Flow
 	Grid Ljos.Layout.Grid
 	Layout QtQuick.Layouts.Layout
+	Pages Ljos.Layout.Pages
 	Row Ljos.Layout.Row
 	type Ljos.Layout.Box Box
 		prototype Ljos.Layout.Arrangement
@@ -538,6 +539,12 @@ module Ljos.Layout
 		signal columnSpacingChanged
 		signal rowSpacingChanged
 		signal flowChanged
+	type Ljos.Layout.Pages Pages
+		prototype QtQuick.Layouts.Layout named
+		prop currentIndex QtQml.int named
+		prop count QtQml.int named readonly
+		signal currentIndexChanged
+		signal countChanged
 	type Ljos.Layout.Row Row
 		prototype Ljos.Layout.Arrangement
 	type Ljos.Layout.Arrangement Arrangement
