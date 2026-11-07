@@ -585,6 +585,10 @@ fn a_font_the_names_cannot_say_keeps_the_file() {
             "not known",
         ),
         (
+            "import QtQuick\nItem {\n    property alias face: label.font\n    Text { id: label }\n    Component.onCompleted: face.pixelSize = 40\n}\n",
+            "not known",
+        ),
+        (
             "import QtQuick\nItem { Text { id: t } Component.onCompleted: t.font[\"pixelSize\"] = 3 }\n",
             "renames",
         ),

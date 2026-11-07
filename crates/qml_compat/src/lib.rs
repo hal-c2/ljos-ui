@@ -222,8 +222,9 @@ struct Pass<'s> {
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
-    /// The properties the file declares as a `font`, a `var` or a
-    /// `variant`: what a script may hold a font in.
+    /// The properties the file declares as a `font`, a `var`, a `variant`
+    /// or an `alias` (`property alias face: label.font`): what a script may
+    /// hold a font in.
     fonts: Vec<String>,
     changes: Vec<Change>,
 }
@@ -308,7 +309,10 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Property(property) => {
                     if let Some(type_name) = &property.type_name
-                        && matches!(type_name.name.as_simple(), Some("font" | "var" | "variant"))
+                        && matches!(
+                            type_name.name.as_simple(),
+                            Some("font" | "var" | "variant" | "alias")
+                        )
                     {
                         self.fonts.push(property.name.name.to_string());
                     }
@@ -1057,8 +1061,8 @@ impl Script<'_, '_> {
     }
 
     /// Whether `expression`, whose type the pass does not know, may be a
-    /// font: a member called `font`, or a property the file declares as one
-    /// or as a `var`. What a function is given or a local holds is not
+    /// font: a member called `font`, or a property the file declares as one,
+    /// as a `var` or as an `alias`. What a function is given or a local holds is not
     /// followed (docs/DIALECT.md §4.13).
     fn could_be_font(&self, expression: &Expression<'_>) -> bool {
         match expression {
