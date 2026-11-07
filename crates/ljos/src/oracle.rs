@@ -723,3 +723,30 @@ impl TypeOracle for EngineOracle {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A native type's description has no type for what a method gives, so
+    /// the checker is told nothing and the call is `unknown`.
+    #[test]
+    fn a_native_method_gives_what_no_table_says() {
+        let counter = NativeType {
+            module: "Example".into(),
+            name: "Counter".into(),
+            methods: vec!["total".into()],
+            checked: true,
+            ..NativeType::default()
+        };
+        let oracle = EngineOracle {
+            natives: Arc::from(vec![counter]),
+        };
+        let ty = oracle
+            .module_type("Example", "Counter")
+            .expect("the native type");
+        assert_eq!(ty, EngineType::Native(0));
+        assert!(oracle.has_method(ty, "total"));
+        assert_eq!(oracle.method_returns(ty, "total"), None);
+    }
+}

@@ -14,6 +14,8 @@ struct Ty {
     properties: Vec<(&'static str, &'static str, Option<&'static str>)>,
     signals: Vec<(&'static str, Vec<&'static str>)>,
     methods: Vec<&'static str>,
+    /// a method, and the type it gives as the table writes one
+    returns: Vec<(&'static str, &'static str)>,
     default: Option<&'static str>,
     attached: Option<&'static str>,
     enums: Vec<(&'static str, Vec<(&'static str, i64)>)>,
@@ -34,7 +36,7 @@ impl Runtime {
     pub fn new() -> Self {
         let p = |name, ty| (name, ty, None);
         let g = |name, ty, value| (name, ty, Some(value));
-        let types = vec![
+        let mut types = vec![
             Ty {
                 name: "QtObject",
                 module: "QtQml",
@@ -222,6 +224,25 @@ impl Runtime {
                 ..Ty::default()
             },
         ];
+        types.extend([
+            // Ljós's own module: a type whose methods say what they give,
+            // and one under it that redeclares a method without saying.
+            Ty {
+                name: "Gauge",
+                module: "Ljos.Ui",
+                prototype: Some("Item"),
+                methods: vec!["level", "label", "spin"],
+                returns: vec![("level", "real"), ("label", "string")],
+                ..Ty::default()
+            },
+            Ty {
+                name: "Dial",
+                module: "Ljos.Ui",
+                prototype: Some("Gauge"),
+                methods: vec!["label"],
+                ..Ty::default()
+            },
+        ]);
         Runtime { types }
     }
 
@@ -258,6 +279,7 @@ impl TypeOracle for Runtime {
         // QtQuick comes with QtQml, as Qt's does.
         let modules: &[&str] = match uri {
             "QtQuick" => &["QtQuick", "QtQml"],
+            "Ljos.Ui" => &["Ljos.Ui", "QtQuick", "QtQml"],
             uri => &[uri][..],
         };
         self.types
@@ -300,6 +322,14 @@ impl TypeOracle for Runtime {
 
     fn has_method(&self, ty: usize, name: &str) -> bool {
         self.chain(ty).any(|ty| ty.methods.contains(&name))
+    }
+
+    fn method_returns(&self, ty: usize, name: &str) -> Option<String> {
+        // From the nearest type that has the method, as Ljós's table is read.
+        self.chain(ty)
+            .find(|ty| ty.methods.contains(&name))
+            .and_then(|ty| ty.returns.iter().find(|(m, _)| *m == name))
+            .map(|(_, returns)| returns.to_string())
     }
 
     fn default_property(&self, ty: usize) -> Option<&str> {
