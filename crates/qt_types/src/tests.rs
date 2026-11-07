@@ -956,6 +956,51 @@ fn without_qt_s_table_the_own_one_is_everything() {
     assert_eq!(empty.type_named("Shared", "Thing", &mut Vec::new()), None);
 }
 
+/// An own module that exports, under its own name, a type of a module Qt's
+/// table describes too: `Ljos.Ui`'s `Item` is `QtQuick.Item`.
+const EXPORTS_ANOTHERS: &str = "\
+module Shared
+\tThing Shared.Thing
+\tOther Shared.Other
+\ttype Shared.Thing Thing
+\ttype Shared.Other Other
+module Mine
+\tThing Shared.Thing
+\tOther Shared.Other
+";
+
+#[test]
+fn an_own_module_exports_what_the_type_it_names_is_in_either_build() {
+    let find = |table: &Table, name: &str| {
+        class_of(table, table.type_named("Mine", name, &mut Vec::new()))
+    };
+    let beside = read(QT, EXPORTS_ANOTHERS);
+    // Beside Qt's table, the type Qt's has of that name.
+    assert_eq!(find(&beside, "Thing"), Some("QThing"));
+    // One Qt's module does not have is not made up.
+    assert_eq!(find(&beside, "Other"), None);
+    let alone = read("", EXPORTS_ANOTHERS);
+    assert_eq!(find(&alone, "Thing"), Some("Shared.Thing"));
+    assert_eq!(find(&alone, "Other"), Some("Shared.Other"));
+}
+
+/// What the compat pass lowers a file to has its `Item` in either build:
+/// beside Qt's table it is Qt's, so the file is read as Qt reads it.
+#[test]
+fn ljos_ui_has_an_item_in_either_build() {
+    let item = module("Ljos.Ui").unwrap().type_named("Item").unwrap();
+    let class = if has_qt_table() {
+        "QQuickItem"
+    } else {
+        "QtQuick.Item"
+    };
+    assert_eq!(item.class, class);
+    let button = module("Ljos.Controls")
+        .unwrap()
+        .type_named("AbstractButton");
+    assert!(button.is_some());
+}
+
 /// A table in which a module describes its types by QML names.
 const NAMED: &str = "\
 module Deep
