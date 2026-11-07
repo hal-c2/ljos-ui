@@ -365,3 +365,34 @@ fn a_mouse_area_a_tap_would_not_be_stays_a_pointer_area() {
         );
     }
 }
+/// Only an item has Qt's attached `Drag`. A key of that name on anything
+/// else is the object's own, and is not renamed.
+#[test]
+fn a_drag_read_off_what_is_no_item_is_not_the_attached_drag() {
+    // A JavaScript object's key: what the object is is not known.
+    let source = "import QtQuick\n\
+Item {\n\
+    function speed() { var config = { Drag: { speed: 2 } }; return config.Drag.speed }\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`.Drag` is read off something whose type is not known, and only an item's is Qt's attached `Drag`"
+    );
+    // An object that is no item.
+    assert_eq!(
+        kept_for("import QtQuick\nItem { Timer { id: tick }\n    property var d: tick.Drag }\n"),
+        "`.Drag` is read off a `Timer`, which is no item, and only an item's is Qt's attached `Drag`"
+    );
+    // A value has no attached objects: the key stays as written.
+    assert_eq!(
+        lowered("import QtQuick\nItem { property var d: \"x\".Drag }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { property unknown d: \"x\".Drag }\n"
+    );
+    // An item, named by its id or as `parent`, has it.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { id: card\n    Item { property bool a: card.Drag.active || parent.Drag.active }\n}\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { id: card\n    Item { property bool a: card.DragSource.active || parent.DragSource.active }\n}\n"
+    );
+}
