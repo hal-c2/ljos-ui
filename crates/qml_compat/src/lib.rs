@@ -1346,6 +1346,20 @@ enum Rename {
     Unknown,
 }
 
+/// Of the renames `on` has, the one whose new name is `name` (or its change
+/// signal's), where `on`'s Qt type has no `name` of its own: once lowered,
+/// `name` unqualified is that member, where in Qt it is found further out.
+fn captured(on: Ty, name: &str) -> Option<(&'static Type, &'static str)> {
+    let (Ty::Exact(ty) | Ty::Derived(ty)) = on else {
+        return None;
+    };
+    let (old, _) = renames_of(ty)?
+        .iter()
+        .find(|(_, new)| name == *new || name.strip_suffix("Changed") == Some(*new))?;
+    let own = ty.property(name).is_some() || ty.signal(name).is_some() || ty.has_method(name);
+    (!own).then_some((ty, *old))
+}
+
 fn renamed_type(name: &str) -> Option<&'static str> {
     type_renames()
         .find(|(old, _)| *old == name)
@@ -1772,10 +1786,22 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
             return;
         }
-        if !is_renamed_member(name)
-            || self.pass.id(name).is_some()
-            || self.called.contains(&it.span.start)
-        {
+        // An id is found before the scope's members, in Qt as once lowered.
+        if self.pass.id(name).is_some() {
+            return;
+        }
+        if let Some((ty, old)) = captured(self.scope, name) {
+            let new = renamed_type(ty.name).unwrap_or(ty.name);
+            self.keep(
+                format!(
+                    "`{name}` would be the `{new}`'s own once lowered (Qt's `{old}`), not what it names in Qt"
+                ),
+                it.span.start,
+            );
+            return;
+        }
+        // A called name is a method, which no type renames as a property.
+        if !is_renamed_member(name) || self.called.contains(&it.span.start) {
             return;
         }
         // An unqualified member: the scope object's, else the root's.
