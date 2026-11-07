@@ -36,6 +36,85 @@ fn a_column_layout_counts_an_empty_child_and_keeps_its_spacing() {
     );
 }
 
+/// A `GridLayout` is a `Grid` with Qt's gaps written out, and each child
+/// centred in its row; a name of it in a script is `Grid`'s.
+#[test]
+fn a_grid_layout_is_a_grid_with_its_defaults_written_out() {
+    let text = lowered(&format!(
+        "{LAYOUTS}Item {{ GridLayout {{ columns: 2; rowSpacing: 1; flow: GridLayout.LeftToRight\n    \
+         Rectangle {{ implicitWidth: 20; implicitHeight: 10 }}\n    \
+         Item {{ Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight }} }} }}\n"
+    ));
+    assert!(
+        text.ends_with(
+            "Item { Grid { columnSpacing: 5; columns: 2; rowSpacing: 1; flow: Grid.LeftToRight\n    \
+             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
+             Item { Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter } } }\n"
+        ),
+        "{text}"
+    );
+}
+
+/// A `StackLayout` is `Pages`, with what it says as it says it.
+#[test]
+fn a_stack_layout_is_pages() {
+    let text = lowered(&format!(
+        "{LAYOUTS}Item {{ StackLayout {{ currentIndex: 1; Item {{ }} Item {{ }} }} }}\n"
+    ));
+    assert!(
+        text.ends_with("Item { Pages { currentIndex: 1; Item { } Item { } } }\n"),
+        "{text}"
+    );
+}
+
+/// What a `GridLayout` or `StackLayout` says that the pass cannot yet
+/// carry over keeps the file, and says which.
+#[test]
+fn where_a_grid_layout_or_stack_layout_disagrees_the_file_is_kept() {
+    for (body, why) in [
+        (
+            "GridLayout { rows: 2 }",
+            "`rows` of a `GridLayout` is ignored",
+        ),
+        (
+            "GridLayout { flow: GridLayout.TopToBottom; columns: 2 }",
+            "`columns` of a `GridLayout` is ignored along a top-to-bottom flow",
+        ),
+        ("GridLayout { flow: f }", "`flow`"),
+        (
+            "GridLayout { layoutDirection: Qt.RightToLeft }",
+            "`layoutDirection`",
+        ),
+        (
+            "GridLayout { uniformCellWidths: true }",
+            "`uniformCellWidths`",
+        ),
+        (
+            "GridLayout { Item { Layout.columnSpan: 2 } }",
+            "`Layout.columnSpan` puts a child",
+        ),
+        (
+            "Item { GridLayout { width: 100; Item { implicitWidth: 10 } } }",
+            "spreads the room no child fills",
+        ),
+        (
+            "RowLayout { Item { Layout.fillWidth: true } StackLayout { } }",
+            "fills it and is bounded by its children",
+        ),
+        (
+            "StackLayout { Item { visible: StackLayout.isCurrentItem } }",
+            "`StackLayout`'s attached properties are not in Ljos.Layout yet",
+        ),
+        (
+            "StackLayout { Item { StackLayout.onIsCurrentItemChanged: {} } }",
+            "`StackLayout`'s attached properties",
+        ),
+    ] {
+        let reason = kept_for(&format!("{LAYOUTS}{body}\n"));
+        assert!(reason.contains(why), "{body}: {reason}");
+    }
+}
+
 /// Each way a line layout and Ljós's arrangement would place a child
 /// differently keeps the file, and says which.
 #[test]
@@ -83,8 +162,6 @@ fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
             "not one the pass can read",
         ),
         ("RowLayout { Swatch { } }", "a file of the project"),
-        ("GridLayout { }", "`GridLayout` is not in Ljos.Layout"),
-        ("StackLayout { }", "`StackLayout` is not in Ljos.Layout"),
     ] {
         let reason = kept_for(&format!("{LAYOUTS}{body}\n"));
         assert!(reason.contains(why), "{body}: {reason}");
