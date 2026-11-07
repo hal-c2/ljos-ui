@@ -617,6 +617,8 @@ fn compile(
     for (name, source) in files {
         if is_script(name) {
             project.add_script(name, source.as_str());
+        } else if ljos_compiler::is_declarations(name) {
+            project.add_declarations(name, source.as_str());
         } else if qmldir_of(name).is_none() {
             project.add(key_of(name), source.as_str());
         }
@@ -630,10 +632,9 @@ fn compile(
     // Once every file is in: files that name one another lower together.
     project.set_compat(lowered);
     let mut out = MapSource::new();
-    for name in files
-        .keys()
-        .filter(|name| qmldir_of(name).is_none() && !is_script(name))
-    {
+    for name in files.keys().filter(|name| {
+        qmldir_of(name).is_none() && !is_script(name) && !ljos_compiler::is_declarations(name)
+    }) {
         // A file that does not compile stops nothing until an object of
         // it is made, which is then told why.
         let key = key_of(name);
