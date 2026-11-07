@@ -1149,10 +1149,12 @@ How it holds the other rules:
 is to a name of the Ljós API, and the text keeps every line. The edits are:
 
 - an import, `QtQuick` → `Ljos.Ui`, and `QtQml` → `Ljos.Core`. A file
-  that has `QtQml` from `QtQuick` and names one of its types (`Timer`, or
-  `Component.onCompleted`) gets `; import Ljos.Core` on the import's line.
-  A file of `QtQml` alone is lowered to `Ljos.Core` alone;
-- a type, `MouseArea` → `PointerArea`;
+  that has `QtQml` from `QtQuick` and names one of its types (`Timer`,
+  `Component.onCompleted`, or a type it writes: `property QtObject o`,
+  `signal picked(QtObject o)`) gets `; import Ljos.Core` on the import's
+  line. A file of `QtQml` alone is lowered to `Ljos.Core` alone;
+- a type, `MouseArea` → `PointerArea`, made or written
+  (`property MouseArea area`);
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
   `Connections` on a known target, a value source's target (`… on color`),
   and `id.member` where the target's type is known;
