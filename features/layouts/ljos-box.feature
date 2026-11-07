@@ -4,7 +4,7 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-layouts-layout.html
 #   https://doc.qt.io/qt-6/qml-qtquick-row.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# `Ljos.Ui`'s `Row`, `Column` and `Box` are Ljós's own: one arrangement in the place of Qt's
+# `Ljos.Layout`'s `Row`, `Column` and `Box` are Ljós's own: one arrangement in the place of Qt's
 # positioners and layouts. Where its rule and RowLayout's agree the RowLayout as written is the
 # oracle, and the Ljós file is held to its numbers. The turning box is calqlatr's shape (a display
 # that fills over a pad that keeps its size, corpus/qtdoc/examples/demos/calqlatr/Main.qml), written
@@ -51,6 +51,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Row {
           objectName: "row"
           width: 400
@@ -102,6 +103,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Row {
           width: 100
           Rectangle { objectName: "a"; Layout.fillWidth: true; implicitHeight: 10 }
@@ -129,6 +131,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Row {
           objectName: "row"
           width: 400
@@ -149,6 +152,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Row {
           objectName: "row"
           width: 400
@@ -173,6 +177,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Row {
           objectName: "row"
           width: 300
@@ -199,6 +204,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Box {
           objectName: "box"
           property bool wide: false
@@ -227,6 +233,7 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Given the file "Bar.qml":
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         Row {
           Rectangle { anchors.left: parent.left; width: 10; height: 10 }
           Item { width: 10; height: 10; anchors { verticalCenter: parent.verticalCenter } }
@@ -236,8 +243,8 @@ Feature: Ljós's one arrangement: Row, Column and Box
       When the files are checked
       Then the check reports:
         """
-        Bar.qml:3:23: error: `anchors.left` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
-        Bar.qml:4:51: error: `anchors.verticalCenter` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
+        Bar.qml:4:23: error: `anchors.left` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
+        Bar.qml:5:51: error: `anchors.verticalCenter` on a child of a `Row` is overridden by it; use `Layout.alignment` or move it out of the Row [layout-anchored]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
         """

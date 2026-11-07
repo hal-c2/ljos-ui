@@ -38,6 +38,7 @@ mod item_picture;
 pub mod keys;
 mod layer;
 mod layouts;
+mod ljos_layout;
 mod ljos_ui;
 mod loader;
 mod long_press;
@@ -143,7 +144,7 @@ pub use layer::{
 };
 pub use layouts::{
     Arrangement, BoxColumn, BoxRow, ColumnLayout, GridLayout, Layout, LayoutAttached,
-    LayoutItemProxy, LjosBox, RowLayout, StackLayout, layout_runs,
+    LayoutItemProxy, LjosBox, LjosGrid, RowLayout, StackLayout, layout_runs,
 };
 pub use ljos_a11y::{ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs};
 pub use loader::Loader;
@@ -247,6 +248,7 @@ pub fn register(engine: &Engine) {
     states::register(engine);
     font_enums::register(engine);
     ljos_ui::register(engine);
+    ljos_layout::register(engine);
     // What a scene shows of an item goes with it, and a child made in
     // slices is shown once it is whole.
     engine.on_destroyed(scene::destroyed);

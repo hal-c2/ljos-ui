@@ -17,9 +17,7 @@ use std::sync::OnceLock;
 use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
 use crate::font_enums::FontEnums;
-use crate::{
-    BoxColumn, BoxRow, Item, Layout, LjosBox, MouseArea, PropertyChanges, Rectangle, State, Text,
-};
+use crate::{Item, MouseArea, PropertyChanges, Rectangle, State, Text};
 
 /// The module's name, as a file imports it.
 pub const MODULE: &str = "Ljos.Ui";
@@ -51,11 +49,9 @@ fn pointer_area() -> &'static MetaObject {
 
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
-    // `Row`, `Column` and `Box` are the one arrangement
-    // (layouts/arrangement.rs); a child asks it for a size with the
-    // `Layout` it is given, as in Qt's layouts.
+    // What arranges children is `Ljos.Layout`'s (ljos_layout.rs).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
-        Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
+        Item, Text, State, PropertyChanges, FontEnums,
     ]));
     let version = Version::new(1, 0);
     for face in [rectangle, pointer_area] {

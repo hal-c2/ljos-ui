@@ -18,6 +18,9 @@ use qt_types::{Enum, ImportKind, Property, Type};
 /// The module the dialect is written against.
 pub const API: &str = "Ljos.Ui";
 
+/// The modules of Ljós's API: the items, and what arranges them.
+pub const MODULES: &[&str] = &[API, "Ljos.Layout"];
+
 /// Names of QML (and of the C++ classes Qt's table calls them by) that are a
 /// TypeScript primitive.
 const PRIMITIVES: &[(&str, &str)] = &[
@@ -135,17 +138,26 @@ pub struct Api {
 }
 
 impl Api {
-    /// The API of `Ljos.Ui`: its types, those of the modules it imports and
-    /// every type one of them reaches through what it inherits, holds or
-    /// attaches. None when the table has no such module.
+    /// The API of Ljós's [`MODULES`]: their types, those of the modules
+    /// they import and every type one of them reaches through what it
+    /// inherits, holds or attaches. None when the table has no such module.
     pub fn new() -> Option<Self> {
-        Self::of(API)
+        Self::of_all(MODULES)
     }
 
     /// The API a file that imports `uri` is written against.
     pub fn of(uri: &str) -> Option<Self> {
-        qt_types::module(uri)?;
-        let mut uris = vec![uri];
+        Self::of_all(&[uri])
+    }
+
+    /// The API a file that imports every one of `modules` is written
+    /// against.
+    pub fn of_all(modules: &[&str]) -> Option<Self> {
+        for uri in modules {
+            qt_types::module(uri)?;
+        }
+        // Popped from the end: the first module's names come first.
+        let mut uris: Vec<&str> = modules.iter().rev().copied().collect();
         let mut seen = HashSet::new();
         let mut exported: HashMap<&'static str, &'static Type> = HashMap::new();
         let mut roots = Vec::new();

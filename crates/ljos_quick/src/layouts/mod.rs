@@ -23,7 +23,7 @@ mod distribute;
 mod place;
 mod proxy;
 
-pub use arrangement::{Arrangement, BoxColumn, BoxRow, LjosBox};
+pub use arrangement::{Arrangement, BoxColumn, BoxRow, LjosBox, LjosGrid};
 pub use proxy::LayoutItemProxy;
 
 use std::collections::HashMap;
@@ -455,7 +455,8 @@ fn show_own_minimum(e: &Engine, obj: ObjectId, hints: &[Total; 2]) -> Result<(),
     Ok(())
 }
 
-/// The four layouts, and `Ljos.Ui`'s one arrangement.
+/// The four layouts, and `Ljos.Layout`'s one arrangement: a line, or a
+/// grid of cells.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Row,
@@ -463,6 +464,15 @@ enum Kind {
     Grid,
     Stack,
     Box,
+    Cells,
+}
+
+impl Kind {
+    /// Whether children are sized by the one rule: a child keeps its own
+    /// size along an axis it says nothing about through `Layout`.
+    fn one_rule(self) -> bool {
+        matches!(self, Kind::Box | Kind::Cells)
+    }
 }
 
 fn kind(engine: &Engine, obj: ObjectId) -> Option<Kind> {
@@ -476,6 +486,8 @@ fn kind(engine: &Engine, obj: ObjectId) -> Option<Kind> {
         Some(Kind::Grid)
     } else if is_a::<StackLayout>(engine, obj) {
         Some(Kind::Stack)
+    } else if is_a::<LjosGrid>(engine, obj) {
+        Some(Kind::Cells)
     } else if is_a::<Arrangement>(engine, obj) {
         Some(Kind::Box)
     } else {
@@ -648,7 +660,7 @@ pub(crate) fn read_inputs(e: &Engine, obj: ObjectId) {
         e.read(c, Item::IMPLICIT_WIDTH.index);
         e.read(c, Item::IMPLICIT_HEIGHT.index);
         let a = read_attached(e, c);
-        if kind == Kind::Box {
+        if kind.one_rule() {
             sized |= e.existing_attached_object(c, &attacher()).is_some();
             for (axis, p) in [(H, Item::WIDTH.index), (V, Item::HEIGHT.index)] {
                 if !arrangement::managed(&a, axis) {
@@ -665,7 +677,7 @@ pub(crate) fn read_inputs(e: &Engine, obj: ObjectId) {
 
 fn own_props(kind: Kind) -> &'static [PropIndex] {
     use std::sync::OnceLock;
-    static PROPS: OnceLock<[Vec<PropIndex>; 5]> = OnceLock::new();
+    static PROPS: OnceLock<[Vec<PropIndex>; 6]> = OnceLock::new();
     let all = PROPS.get_or_init(|| {
         [
             vec![
@@ -690,6 +702,10 @@ fn own_props(kind: Kind) -> &'static [PropIndex] {
             ],
             vec![StackLayout::CURRENT_INDEX.index],
             arrangement::own_props().to_vec(),
+            arrangement::own_props()
+                .into_iter()
+                .chain(arrangement::grid_props())
+                .collect(),
         ]
     });
     match kind {
@@ -698,6 +714,7 @@ fn own_props(kind: Kind) -> &'static [PropIndex] {
         Kind::Grid => &all[2],
         Kind::Stack => &all[3],
         Kind::Box => &all[4],
+        Kind::Cells => &all[5],
     }
 }
 
@@ -764,6 +781,11 @@ fn settings(e: &Engine, obj: ObjectId, kind: Kind) -> Settings {
             spacing: [0.0; 2],
             uniform: [false; 2],
             direction: None,
+        },
+        Kind::Cells => Settings {
+            spacing: arrangement::grid_spacing(e, obj),
+            uniform: [false; 2],
+            direction: Some(Arrangement::LAYOUT_DIRECTION.index),
         },
         Kind::Box => {
             let spacing = num(e, obj, Arrangement::SPACING.index);
@@ -851,7 +873,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
             .iter()
             .zip(visible)
             .filter_map(|(c, v)| v.then_some(*c))
-            .filter(|c| kind != Kind::Box || !arrangement::skipped(e, *c))
+            .filter(|c| !kind.one_rule() || !arrangement::skipped(e, *c))
             .collect()
     };
     if kind == Kind::Box
@@ -871,7 +893,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         let first = *seen.entry(*c).or_insert_with(|| {
             let size = |p: PropIndex, horizontal: bool| {
                 // A box remembers only a size the child's file gave it.
-                if kind == Kind::Box && size_follows_implicit(e, *c, horizontal) {
+                if kind.one_rule() && size_follows_implicit(e, *c, horizontal) {
                     f64::NAN
                 } else {
                     num(e, *c, p)
@@ -912,7 +934,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
                 row_span: 1,
                 column_span: 1,
             },
-            hint: if kind == Kind::Box {
+            hint: if kind.one_rule() {
                 let current = [
                     num(e, *c, Item::WIDTH.index),
                     num(e, *c, Item::HEIGHT.index),
@@ -961,6 +983,15 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
                 top_to_bottom,
             );
             for (c, slot) in cells.iter_mut().zip(slots) {
+                c.slot = slot;
+            }
+        }
+        Kind::Cells => {
+            let (rows, columns, top_to_bottom) = arrangement::grid_limits(e, obj, wants.len());
+            for (c, slot) in cells
+                .iter_mut()
+                .zip(place(&wants, rows, columns, top_to_bottom))
+            {
                 c.slot = slot;
             }
         }
@@ -1026,12 +1057,12 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         let hints = [total(&t[H], set.spacing[H]), total(&t[V], set.spacing[V])];
         (t, hints)
     };
-    let (vertical, pad) = if kind == Kind::Box {
-        (arrangement::vertical(e, obj), arrangement::paddings(e, obj))
-    } else {
-        (false, [0.0; 4])
+    let (vertical, pad) = match kind {
+        Kind::Box => (arrangement::vertical(e, obj), arrangement::paddings(e, obj)),
+        Kind::Cells => (false, arrangement::paddings(e, obj)),
+        _ => (false, [0.0; 4]),
     };
-    let hints = if kind == Kind::Box {
+    let hints = if kind.one_rule() {
         arrangement::with_padding(hints, pad)
     } else {
         hints
@@ -1209,6 +1240,9 @@ fn fit(start: f64, end: f64, before: f64, after: f64, hint: &Hint, align: Align)
 fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, Geometry)> {
     if plan.kind == Kind::Box {
         return arrangement::compute(plan, width, height);
+    }
+    if plan.kind == Kind::Cells {
+        return arrangement::compute_cells(plan, width, height);
     }
     if plan.kind == Kind::Stack {
         // Only the page that shows is sized; the others keep what they
