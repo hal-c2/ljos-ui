@@ -211,7 +211,7 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
                 (Outcome::Lowered(_), Some((other, why))) => Outcome::Kept(Kept {
                     reason: format!(
                         "it is used with `{}.qml`, which is kept: {}",
-                        other.rsplit('/').next().unwrap_or(other),
+                        from_dir_of(key, other),
                         why.reason
                     ),
                     at: 0,
@@ -221,6 +221,18 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
             (key.clone(), outcome)
         })
         .collect()
+}
+
+/// `other` as a path from the directory of `key`: `Gauges/Dial` below it,
+/// and its name otherwise, as beside it.
+fn from_dir_of<'k>(key: &str, other: &'k str) -> &'k str {
+    let below = match key.rsplit_once('/') {
+        Some((dir, _)) => other
+            .strip_prefix(dir)
+            .and_then(|rest| rest.strip_prefix('/')),
+        None => Some(other),
+    };
+    below.unwrap_or_else(|| other.rsplit('/').next().unwrap_or(other))
 }
 
 fn join(dir: &str, name: &str) -> String {
