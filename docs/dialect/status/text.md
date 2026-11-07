@@ -4,8 +4,10 @@ Part of `Ljos.Ui`, milestone M1 in [DIALECT.md §13](../../DIALECT.md#13-milesto
 
 Built:
 
-- Nothing built yet.
+- `Text`'s `align`, `wrap` and `format`, and a font's `size` and `weight`
+  (§4.13).
 
 Remaining:
 
-- All that §13 lists for this area.
+- `TextInput`'s and `TextEdit`'s renames, once those types are in
+  `Ljos.Ui`.
