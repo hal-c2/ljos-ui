@@ -140,6 +140,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ui,
         core,
         cores: std::cell::Cell::new(false),
+        uis: std::cell::Cell::new(false),
         quick,
         layouts: None,
         locals,
@@ -210,6 +211,9 @@ struct Pass<'s> {
     /// Whether the file names a type of `Ljos.Core`, which it imports
     /// then.
     cores: std::cell::Cell<bool>,
+    /// Whether the file names a type of `Ljos.Ui`: a file that imports
+    /// `QtQml` and not `QtQuick` imports it then too.
+    uis: std::cell::Cell<bool>,
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
@@ -282,7 +286,14 @@ impl<'s> Pass<'s> {
                 }
                 self.change(span(quick), import);
             }
-            (None, Some(qml)) => self.change(span(qml), format!("{JAVASCRIPT}; import {CORE}")),
+            (None, Some(qml)) => {
+                let ui = if self.uis.get() {
+                    format!("; import {MODULE}")
+                } else {
+                    String::new()
+                };
+                self.change(span(qml), format!("{JAVASCRIPT}{ui}; import {CORE}"));
+            }
             (None, None) => unreachable!("returned above"),
         }
         Ok(true)
@@ -371,7 +382,10 @@ impl<'s> Pass<'s> {
     fn named_type(&self, name: &str, at: usize, depth: usize) -> Result<Ty, Kept> {
         if let Some(ty) = self.layouts.and_then(|m| m.type_named(name)) {
             return match name {
-                "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
+                "RowLayout" | "ColumnLayout" | "Layout" => {
+                    self.uis.set(true);
+                    Ok(Ty::Exact(ty))
+                }
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
@@ -381,7 +395,10 @@ impl<'s> Pass<'s> {
             }
             let new = renamed_type(name).unwrap_or(name);
             return match self.ui.type_named(new) {
-                Some(_) => Ok(Ty::Exact(ty)),
+                Some(_) => {
+                    self.uis.set(true);
+                    Ok(Ty::Exact(ty))
+                }
                 None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
