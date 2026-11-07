@@ -16,10 +16,12 @@ use qml_syntax::{
     Allocator, GetSpan, Span,
     ast::{QmlDocument, QmlImportSource},
     js::{
-        Declaration, ImportDeclarationSpecifier, ImportOrExportKind, Program, Statement,
-        VariableDeclarationKind,
+        BindingPattern, Declaration, ImportDeclarationSpecifier, ImportOrExportKind, Program,
+        Statement, VariableDeclarationKind,
     },
 };
+
+use oxc_span::SourceType;
 
 use super::ty::{Kind, Ty};
 use super::{Binding, Checker};
@@ -37,6 +39,9 @@ pub(in crate::compile) struct Module<'a> {
     /// erase. A module that does not parse has its syntax error here, alone.
     faults: Vec<Fault>,
     broken: bool,
+    /// The declarations of a JavaScript file (`calc.d.ts`): types alone,
+    /// with nothing that runs.
+    declarations: bool,
 }
 
 /// What a module gives its importers: the names it exports, as values and
@@ -70,13 +75,30 @@ fn relative(path: &str) -> bool {
     path.starts_with("./") || path.starts_with("../")
 }
 
+/// The key of the module an import at `path`, relative to `directory`,
+/// reaches: a TypeScript module, or the declarations of a JavaScript file,
+/// whether or not the project has them.
+fn reached(directory: &str, path: &str) -> Option<String> {
+    if !relative(path) {
+        return None;
+    }
+    let key = project::join(directory, path);
+    if erase::is_module(path) {
+        Some(key)
+    } else {
+        erase::declarations_of(&key)
+    }
+}
+
 /// The modules `document`, the file at `key`, reaches: those it imports,
-/// then those they import, each once.
+/// then those they import, each once. A file in Ljós's API, `dialect`,
+/// reaches the JavaScript files it imports through their declarations too.
 pub(in crate::compile) fn modules<'a, O: TypeOracle>(
     allocator: &'a Allocator,
     project: &'a Project<O>,
     key: &str,
     document: &QmlDocument<'a>,
+    dialect: bool,
 ) -> Vec<Module<'a>> {
     let mut keys: Vec<String> = Vec::new();
     // The scripts the file imports, and those they import: a module one
@@ -87,6 +109,13 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
             && project::is_script(path)
         {
             let key = project.front().import_dir(key, path);
+            if dialect
+                && let Some(declarations) = erase::declarations_of(&key)
+                && project.declaration(&declarations).is_some()
+                && !keys.contains(&declarations)
+            {
+                keys.push(declarations);
+            }
             let list = if erase::is_module(path) {
                 &mut keys
             } else {
@@ -122,12 +151,28 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
     while next < keys.len() {
         let key = keys[next].clone();
         next += 1;
-        let Some(source) = project.script(&key) else {
+        let declarations = !erase::is_module(&key);
+        let source = if declarations {
+            project.declaration(&key)
+        } else {
+            project.script(&key)
+        };
+        let Some(source) = source else {
             continue;
         };
-        let parsed = oxc_parser::Parser::new(allocator, source, erase::source_type()).parse();
+        let source_type = if declarations {
+            SourceType::d_ts()
+        } else {
+            erase::source_type()
+        };
+        let parsed = oxc_parser::Parser::new(allocator, source, source_type).parse();
         let broken = !parsed.diagnostics.is_empty();
-        let faults = erase::erase(&key, source).faults;
+        // Declarations run nothing, so there is nothing to erase.
+        let faults = if declarations {
+            Vec::new()
+        } else {
+            erase::erase(&key, source).faults
+        };
         let directory = project::directory(&key);
         for statement in &parsed.program.body {
             let path = match statement {
@@ -135,11 +180,11 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
                 Statement::ExportFromDeclaration(export) => export.source.value.as_str(),
                 _ => continue,
             };
-            if relative(path) && erase::is_module(path) {
-                let key = project::join(directory, path);
-                if !keys.contains(&key) {
-                    keys.push(key);
-                }
+            if let Some(key) = reached(directory, path)
+                && (erase::is_module(&key) || project.declaration(&key).is_some())
+                && !keys.contains(&key)
+            {
+                keys.push(key);
             }
         }
         modules.push(Module {
@@ -148,6 +193,7 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
             program: parsed.program,
             faults,
             broken,
+            declarations,
         });
     }
     modules
@@ -196,11 +242,51 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         let Some(Target::Namespace(Source::Path(path))) = self.c.lookup(name, at)?.target else {
             return None;
         };
-        if !erase::is_module(&path) {
-            return None;
-        }
         let key = self.c.project.front().import_dir(self.c.key, &path);
-        self.module_at(&key)
+        if erase::is_module(&path) {
+            self.module_at(&key)
+        } else {
+            self.module_at(&erase::declarations_of(&key)?)
+        }
+    }
+
+    /// The JavaScript file at `key` as a value: the module its
+    /// declarations are, or, with none beside it, a value whose members
+    /// are each `ts-boundary`.
+    pub(super) fn javascript_value(&mut self, key: &str) -> Ty {
+        let Some(declarations) = erase::declarations_of(key) else {
+            return Ty::ERROR;
+        };
+        if !self.reaches(&declarations) {
+            return self.arena.intern(Kind::Script(key.into()));
+        }
+        match self.module_at(&declarations) {
+            Some(index) => self.module_value(index),
+            // DECISION: declarations being read, reached again through a
+            // cycle, are let by, as a module is.
+            None => Ty::ERROR,
+        }
+    }
+
+    /// Whether the file reaches a module at `key`.
+    fn reaches(&self, key: &str) -> bool {
+        self.modules.iter().any(|m| m.key == key)
+    }
+
+    /// Reports `name`, read off the JavaScript file at `key`, which has no
+    /// declarations, at `span`.
+    pub(super) fn boundary(&mut self, key: &str, name: &str, span: Span) {
+        let declarations = erase::declarations_of(key).unwrap_or_default();
+        let declarations = declarations.rsplit('/').next().unwrap_or_default();
+        self.report(
+            Code::TsBoundary,
+            format!(
+                "`{name}` of {key} has no type: {key} has no declarations; write {declarations} \
+                 beside it, declaring `{name}` (and what has no fixed shape as `unknown`, for a \
+                 decoder to narrow)"
+            ),
+            span,
+        );
     }
 
     /// The module a name of the script names: a module's `import * as`,
@@ -338,9 +424,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         for statement in body {
             if let Statement::ImportDeclaration(import) = statement {
                 let path = import.source.value.as_str();
-                let from = (relative(path) && erase::is_module(path))
-                    .then(|| project::join(directory, path))
-                    .and_then(|key| self.module_at(&key));
+                let reached = reached(directory, path);
+                if let Some(script) = self.bare_javascript(directory, path, reached.as_deref()) {
+                    for specifier in import.specifiers.iter().flatten() {
+                        self.import_bare(specifier, &script);
+                    }
+                    continue;
+                }
+                let from = reached.and_then(|key| self.module_at(&key));
                 let types_only = import.import_kind == ImportOrExportKind::Type;
                 for specifier in import.specifiers.iter().flatten() {
                     self.import_specifier(specifier, from, types_only);
@@ -354,7 +445,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             };
             if let Some(declaration) = declaration {
                 self.bind_ahead(declaration);
+                if module.declarations {
+                    self.bind_declared(declaration);
+                }
             }
+        }
+        // Declarations run nothing: what they say is bound above.
+        if module.declarations {
+            return self.exports(module);
         }
         for statement in body {
             match statement {
@@ -406,6 +504,83 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                     self.bind(local, value.unwrap_or(Ty::ERROR), Binding::Const);
                 }
             }
+        }
+    }
+
+    /// The key of the JavaScript file a module's import at `path` names,
+    /// when the file reaches no declarations of it: `reached` is where
+    /// they would be.
+    fn bare_javascript(
+        &self,
+        directory: &str,
+        path: &str,
+        reached: Option<&str>,
+    ) -> Option<String> {
+        if !relative(path)
+            || !erase::is_javascript(path)
+            || reached.is_some_and(|k| self.reaches(k))
+        {
+            return None;
+        }
+        Some(project::join(directory, path))
+    }
+
+    /// Binds what a module imports from the JavaScript file `script`, which
+    /// has no declarations: a namespace whose members are each
+    /// `ts-boundary`, and a name it picks is `ts-boundary` where it picks
+    /// it.
+    fn import_bare(&mut self, specifier: &ImportDeclarationSpecifier<'a>, script: &str) {
+        match specifier {
+            ImportDeclarationSpecifier::ImportNamespaceSpecifier(it) => {
+                let ty = self.arena.intern(Kind::Script(script.into()));
+                self.bind(it.local.name.as_str(), ty, Binding::Const);
+            }
+            ImportDeclarationSpecifier::ImportDefaultSpecifier(it) => {
+                self.boundary(script, "default", it.local.span);
+                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Const);
+            }
+            ImportDeclarationSpecifier::ImportSpecifier(it) => {
+                self.boundary(script, it.imported.name().as_str(), it.imported.span());
+                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Const);
+            }
+        }
+    }
+
+    /// Binds what a declaration of a JavaScript file's declarations says
+    /// is there: a `const` or `let` of the type written. What it leaves
+    /// untyped is `any` to TypeScript, so it is `ts-no-any` here.
+    fn bind_declared(&mut self, declaration: &Declaration<'a>) {
+        match declaration {
+            Declaration::VariableDeclaration(declaration) => {
+                for declarator in &declaration.declarations {
+                    let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                        continue;
+                    };
+                    let ty = match &declarator.type_annotation {
+                        Some(annotation) => self.annot(&annotation.type_annotation),
+                        None => {
+                            self.untyped(id.name.as_str(), "write its type", id.span);
+                            Ty::ERROR
+                        }
+                    };
+                    self.bind(id.name.as_str(), ty, Binding::Const);
+                }
+            }
+            Declaration::FunctionDeclaration(function) => {
+                for param in &function.params.items {
+                    if param.type_annotation.is_none() {
+                        let name = param.pattern.span();
+                        let text = self.text(name).to_string();
+                        self.untyped(&text, "write its type", name);
+                    }
+                }
+                if function.return_type.is_none()
+                    && let Some(id) = &function.id
+                {
+                    self.untyped(id.name.as_str(), "write the type it returns", id.span);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -483,9 +658,16 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 }
                 Statement::ExportFromDeclaration(export) => {
                     let path = export.source.value.as_str();
-                    let from = (relative(path) && erase::is_module(path))
-                        .then(|| project::join(directory, path))
-                        .and_then(|key| self.module_at(&key));
+                    let reached = reached(directory, path);
+                    if let Some(script) = self.bare_javascript(directory, path, reached.as_deref())
+                    {
+                        for specifier in &export.specifiers {
+                            let name = specifier.local.name();
+                            self.boundary(&script, name.as_str(), specifier.local.span());
+                        }
+                        continue;
+                    }
+                    let from = reached.and_then(|key| self.module_at(&key));
                     let Some(from) = from else { continue };
                     for specifier in &export.specifiers {
                         let local = specifier.local.name();

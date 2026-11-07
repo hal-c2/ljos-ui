@@ -365,3 +365,161 @@ Feature: Decoders: what is unknown is narrowed before it is used
       Then the property "good" of "root" is "one"
       And the property "other" of "root" is "untitled"
       And the property "broken" of "root" is "unreadable"
+
+  Rule: A JavaScript file is reached through the declarations beside it
+
+    Background:
+      Given the file "lib.js":
+        """js
+        function add(a, b) { return a + b }
+        var unit = "cm"
+        """
+      And the file "lib.d.ts":
+        """ts
+        export declare function add(a: number, b: number): number;
+        export declare const unit: string;
+        """
+      And the file "util.js":
+        """js
+        function add(a, b) { return a + b }
+        var unit = "cm"
+        """
+
+    Scenario: A JavaScript file with declarations is typed by them, and one without is ts-boundary at each use
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "lib.js" as Lib
+        import "util.js" as Util
+        Item {
+          property real total: 0
+          property string label: ""
+          function right(): void { total = Lib.add(1, 2); label = Lib.unit }
+          function wrong(): void { total = Lib.add("1", 2); label = Lib.add(1, 2); total = Lib.sub(1, 2) }
+          function bare(): void { total = Util.add(1, 2); label = Util.unit }
+        }
+        """
+      And the file "Old.qml":
+        """qml
+        import QtQuick
+        import "util.js" as Util
+        Item {
+          property real total: Util.add(1, 2)
+          function bare() { total = Util.add("1") + Util.unit }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:8:52: error: `a` is a number; this gives it a string [ts-assign-type]
+        Show.qml:8:69: error: `label` is a string; this gives it a number [ts-assign-type]
+        Show.qml:8:96: error: `sub` is not exported by lib.d.ts: it exports `add` and `unit` [unknown-member]
+        Show.qml:9:48: error: `add` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `add` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        Show.qml:9:72: error: `unit` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `unit` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        3 files, 5 errors, 0 warnings
+        ljos: 5 errors
+        """
+
+    Scenario: Taken apart or read in brackets, a JavaScript file without declarations is ts-boundary too
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "util.js" as Util
+        Item {
+          property real total: 0
+          function parts(): void { const { add } = Util; total = add(1, 2) }
+          function brackets(): void { total = Util["add"](1, 2) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:5:44: error: `add` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `add` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        Show.qml:6:52: error: `add` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `add` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: An ECMAScript module is typed by the .d.mts beside it
+      Given the file "esm.mjs":
+        """js
+        export function add(a, b) { return a + b }
+        """
+      And the file "esm.d.mts":
+        """ts
+        export declare function add(a: number, b: number): number;
+        """
+      And the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "esm.mjs" as Esm
+        Item {
+          property real total: 0
+          function right(): void { total = Esm.add(1, 2) }
+          function wrong(): void { total = Esm.add("1", 2) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:6:52: error: `a` is a number; this gives it a string [ts-assign-type]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: A TypeScript module reaches a JavaScript file by the same rule
+      Given the file "steps.ts":
+        """ts
+        import { add } from "./lib.js"
+        import { add as plus } from "./util.js"
+        export function twice(n: number): string { return add(n, n) }
+        export function more(n: number): number { return plus(n, 1) }
+        """
+      And the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "steps.ts" as Steps
+        Item {
+          property string label: Steps.twice(2)
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        steps.ts:2:18: error: `add` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `add` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        steps.ts:3:59: error: this function returns a string; this gives it a number [ts-assign-type]
+        3 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: TypeScript reads the declarations of a JavaScript file as the checker does
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "lib.js" as Lib
+        Item {
+          property real total: 0
+          function wrong(): void { total = Lib.add("1", 2) }
+        }
+        """
+      When the files are checked with TypeScript
+      Then TypeScript reports the lines:
+        """
+        Show.qml:5:52: error: Argument of type 'string' is not assignable to parameter of type 'number'. [TS2345]
+        """
+
+    Scenario: A handler calls a JavaScript file through its declarations, and it runs as it did
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import "lib.js" as Lib
+        Item {
+          objectName: "root"
+          property real total: 0
+          property string label: ""
+          function show(): void { total = Lib.add(1, 2); label = Lib.unit }
+        }
+        """
+      When the method "show" of "root" is called
+      Then the property "total" of "root" is 3
+      And the property "label" of "root" is "cm"

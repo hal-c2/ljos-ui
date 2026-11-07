@@ -65,7 +65,9 @@ pub struct Finding {
 impl std::fmt::Display for Finding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // A TypeScript module's key is its file's name; a QML file's is not.
-        let suffix = if crate::script::module::is_module(&self.key) {
+        let suffix = if crate::script::module::is_module(&self.key)
+            || crate::script::module::is_declarations(&self.key)
+        {
             ""
         } else {
             ".qml"
@@ -125,6 +127,35 @@ pub fn check_project(
             })?;
         }
         std::fs::write(&path, text).map_err(|source| TsError::Io { path, source })?;
+        scripts.push(key.to_owned());
+    }
+    // A JavaScript file with declarations beside it is given with them,
+    // and is told where they are (`@ts-self-types`, which `deno` reads; `tsc`
+    // finds them beside it itself). One without is not given: what reaches
+    // it is the checker's to say (`ts-boundary`).
+    for (key, text) in project.declarations() {
+        let Some(script) = project
+            .scripts()
+            .map(|(script, _)| script)
+            .find(|script| crate::script::module::declarations_of(script).as_deref() == Some(key))
+        else {
+            continue;
+        };
+        if !within(key) {
+            continue;
+        }
+        let name = key.rsplit('/').next().unwrap_or(key);
+        let told = format!("// @ts-self-types=\"./{name}\"\n");
+        for (key, text) in [(key, text.to_owned()), (script, told)] {
+            let path = scratch.path().join(MODULES).join(key);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|source| TsError::Io {
+                    path: parent.to_owned(),
+                    source,
+                })?;
+            }
+            std::fs::write(&path, text).map_err(|source| TsError::Io { path, source })?;
+        }
         scripts.push(key.to_owned());
     }
     let mut modules = Vec::new();

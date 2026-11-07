@@ -243,9 +243,12 @@ fn add_beside(
         return;
     };
     project.add_place(dir, prefix);
-    for entry in read.flatten() {
-        let path = entry.path();
-        let name = entry.file_name().to_string_lossy().into_owned();
+    let names: Vec<String> = read
+        .flatten()
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
+    for name in &names {
+        let path = dir.join(name);
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
@@ -255,8 +258,15 @@ fn add_beside(
                 project.add(&key, text);
                 urls.insert(key, ljos_engine::file_url(&path));
             }
-        } else if qml_front::project::is_script(&name) {
+        } else if qml_front::project::is_script(name) {
             project.add_script(&format!("{prefix}/{name}"), text);
+        }
+    }
+    // As the project loaders read them: a `.d.ts` with no JavaScript file
+    // of its own beside it types nothing here either.
+    for name in ljos_compiler::declared_beside(&names) {
+        if let Ok(text) = std::fs::read_to_string(dir.join(name)) {
+            project.add_declarations(&format!("{prefix}/{name}"), text);
         }
     }
 }
@@ -322,4 +332,31 @@ pub(crate) fn text_errors<'a>(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_directory_beside_a_text_reads_only_the_declarations_of_its_javascript() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        for (name, text) in [
+            ("calc.js", "function add(a, b) { return a + b }\n"),
+            (
+                "calc.d.ts",
+                "export declare function add(a: number, b: number): number;\n",
+            ),
+            ("lone.d.ts", "export declare const n: number;\n"),
+            ("calc.d.mts", "export declare const m: number;\n"),
+        ] {
+            std::fs::write(dir.path().join(name), text).expect("write");
+        }
+        let mut project = Project::new(EngineOracle::from_engine(&Engine::new()));
+        let mut urls = HashMap::new();
+        add_beside(&mut project, &mut urls, dir.path(), "outside");
+        let mut read: Vec<&str> = project.declarations().map(|(path, _)| path).collect();
+        read.sort_unstable();
+        assert_eq!(read, ["outside/calc.d.ts"]);
+    }
 }

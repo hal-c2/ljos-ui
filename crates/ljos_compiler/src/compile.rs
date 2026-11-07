@@ -109,7 +109,7 @@ fn compile_alone<O: TypeOracle>(
     compiler.object(&parsed.document.root, None);
     // A module is Ljós code whichever file imports it, so it is checked
     // for a file in Qt's QML too, whose own scripts are not.
-    let modules = check::modules(&allocator, project, key, &parsed.document);
+    let modules = check::modules(&allocator, project, key, &parsed.document, compiler.dialect);
     if compiler.dialect {
         check::document(&mut compiler, &parsed.document, &modules);
     } else if !modules.is_empty() {

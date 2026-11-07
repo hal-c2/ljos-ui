@@ -609,31 +609,11 @@ fn compile(
     style: Option<&ControlsStyle>,
     lowered: bool,
 ) -> Result<MapSource> {
-    let mut project = Project::new(oracle());
-    // A scenario's files have the URLs of files at the root of the disk
-    // (`file:///Main.qml`), so that is where a `file:` URL leads.
-    project.add_place(std::path::Path::new("/"), "");
-    project.set_controls_style(style.cloned());
-    for (name, source) in files {
-        if is_script(name) {
-            project.add_script(name, source.as_str());
-        } else if qmldir_of(name).is_none() {
-            project.add(key_of(name), source.as_str());
-        }
-    }
-    // After the files, which are what a module's lines name.
-    for (name, source) in files {
-        if let Some(dir) = qmldir_of(name) {
-            project.add_qmldir(dir, source);
-        }
-    }
-    // Once every file is in: files that name one another lower together.
-    project.set_compat(lowered);
+    let project = project_of(files, style, lowered);
     let mut out = MapSource::new();
-    for name in files
-        .keys()
-        .filter(|name| qmldir_of(name).is_none() && !is_script(name))
-    {
+    for name in files.keys().filter(|name| {
+        qmldir_of(name).is_none() && !is_script(name) && !ljos_compiler::is_declarations(name)
+    }) {
         // A file that does not compile stops nothing until an object of
         // it is made, which is then told why.
         let key = key_of(name);
@@ -644,6 +624,43 @@ fn compile(
         }
     }
     Ok(out)
+}
+
+/// A scenario's files as the project a loader reads from disk.
+fn project_of(
+    files: &BTreeMap<String, String>,
+    style: Option<&ControlsStyle>,
+    lowered: bool,
+) -> Project<ljos::dev::EngineOracle> {
+    let mut project = Project::new(oracle());
+    // A scenario's files have the URLs of files at the root of the disk
+    // (`file:///Main.qml`), so that is where a `file:` URL leads.
+    project.add_place(std::path::Path::new("/"), "");
+    project.set_controls_style(style.cloned());
+    for (name, source) in files {
+        if is_script(name) {
+            project.add_script(name, source.as_str());
+        } else if ljos_compiler::is_declarations(name) {
+            // Read below, as a loader reads them from disk.
+        } else if qmldir_of(name).is_none() {
+            project.add(key_of(name), source.as_str());
+        }
+    }
+    // Only the declarations beside a JavaScript file of theirs, as the
+    // loaders read them: a lone `.d.ts` types nothing.
+    let names: Vec<String> = files.keys().cloned().collect();
+    for name in ljos_compiler::declared_beside(&names) {
+        project.add_declarations(name, files[name].as_str());
+    }
+    // After the files, which are what a module's lines name.
+    for (name, source) in files {
+        if let Some(dir) = qmldir_of(name) {
+            project.add_qmldir(dir, source);
+        }
+    }
+    // Once every file is in: files that name one another lower together.
+    project.set_compat(lowered);
+    project
 }
 
 impl Live {
@@ -1959,6 +1976,28 @@ Item {
         );
         b.call("root", "work", &[]).unwrap();
         assert_eq!(b.get("root", "done").unwrap(), json!(true));
+    }
+
+    #[test]
+    fn a_scenario_reads_only_the_declarations_beside_its_javascript() {
+        let files: BTreeMap<String, String> = [
+            ("Main.qml", "import QtQuick\nItem {}\n"),
+            ("logic/calc.js", "function add(a, b) { return a + b }\n"),
+            (
+                "logic/calc.d.ts",
+                "export declare function add(a: number, b: number): number;\n",
+            ),
+            ("logic/lone.d.ts", "export declare const n: number;\n"),
+            ("calc.d.ts", "export declare const m: number;\n"),
+            ("logic/calc.d.mts", "export declare const k: number;\n"),
+        ]
+        .into_iter()
+        .map(|(name, text)| (name.to_owned(), text.to_owned()))
+        .collect();
+        let project = project_of(&files, None, false);
+        let mut read: Vec<&str> = project.declarations().map(|(path, _)| path).collect();
+        read.sort_unstable();
+        assert_eq!(read, ["logic/calc.d.ts"]);
     }
 
     #[test]

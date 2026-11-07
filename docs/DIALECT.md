@@ -950,12 +950,27 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
 | ✓ `ts-variance` | Method parameters are contravariant, and mutable arrays are invariant. |
 | ✓ `ts-forbidden` | No `class`, `this` outside QML's scope object, prototypes, `delete`, `for…in`, `with`, `eval`, or `arguments`. |
-| `ts-boundary` | A compat `.js` module is called only through a `.d.ts` declaration (Q7, §14). |
+| ✓ `ts-boundary` | A compat `.js` module is called only through a `.d.ts` declaration (Q7, §14). |
 
 The names a TypeScript module exports are held to two more: `unknown-member`
 for a value it does not export (`Logic.total`), and `unknown-type` for a
-type it does not (`property Logic.Rows`). `ts-boundary` waits for the
-decoders (M4, T3b).
+type it does not (`property Logic.Rows`).
+
+A JavaScript file a file in Ljós's API imports (`import "calc.js" as
+Calc`), or a TypeScript module imports (`import { add } from
+"./calc.js"`), is typed by the declarations beside it, as TypeScript
+looks for them: `calc.d.ts` beside `calc.js`, `calc.d.mts` beside
+`calc.mjs`. They are read as a module is, and held to the same rules:
+what they leave untyped is `ts-no-any`, and a name they do not export is
+`unknown-member`. `ljos check --tsc` gives TypeScript the declarations
+too. With none, each name a file reads of it, however it reads it
+(`Calc.x`, `Calc["x"]`, `const { x } = Calc`), and each name a module
+imports, is `ts-boundary`, and the fix names the file to write. A
+`.d.ts` with no JavaScript file of its own beside it is read by no
+loader. What has
+no fixed shape is declared `unknown`, for a decoder to narrow (§4.4). A
+file in Qt's QML calling the same JavaScript file is compat code, and is
+not checked.
 
 Not built yet, though the rules above cover them:
 

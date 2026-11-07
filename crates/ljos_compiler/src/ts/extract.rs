@@ -140,6 +140,24 @@ pub fn extract(
             let line = format!("import * as {} from \"{modules}/{module}\";", name.name);
             imports.push((line, writer.origin(import.span.start)));
             writer.namespaces.push(name.name.to_string());
+        } else if let QmlImportSource::Path(path) = &import.source
+            && crate::script::module::is_javascript(path)
+            && let Some(name) = &import.alias
+        {
+            // A JavaScript file is TypeScript's through its declarations.
+            // DECISION: one without is `any` to TypeScript, as an untyped
+            // import is where it is allowed; the subset refuses each use
+            // (`ts-boundary`), so TypeScript need not.
+            let script = project.front.import_dir(key, path);
+            let declared = crate::script::module::declarations_of(&script)
+                .is_some_and(|d| project.declaration(&d).is_some());
+            let line = if declared {
+                writer.namespaces.push(name.name.to_string());
+                format!("import * as {} from \"{modules}/{script}\";", name.name)
+            } else {
+                format!("declare const {}: any;", name.name)
+            };
+            imports.push((line, writer.origin(import.span.start)));
         }
     }
     writer.collect_signals(&parsed.document.root);
