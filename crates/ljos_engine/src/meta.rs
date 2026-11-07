@@ -429,6 +429,9 @@ pub struct MetaObject {
     pub plain_object: bool,
     /// The type is its base under other names ([`MetaBuilder::face`]).
     face: bool,
+    /// How many of the faced type's own bases a face describes as its own,
+    /// for a member of theirs it renames ([`MetaBuilder::rename`]).
+    face_depth: u8,
     /// Declared a functional block. Boxed: nearly no type is one.
     pub block: Option<Box<BlockInfo>>,
     lookup: OnceLock<Lookup>,
@@ -592,7 +595,13 @@ impl MetaObject {
     /// members are the face's own under their new names.
     pub fn prototype(&self) -> Option<&MetaRef> {
         match self.face_of() {
-            Some(of) => of.base.as_ref(),
+            Some(of) => {
+                let mut at = of.base.as_ref();
+                for _ in 0..self.face_depth {
+                    at = at?.base.as_ref();
+                }
+                at
+            }
             None => self.base.as_ref(),
         }
     }
@@ -978,6 +987,7 @@ impl MetaBuilder {
                 required_at: Vec::new(),
                 plain_object: false,
                 face: false,
+                face_depth: 0,
                 block: None,
                 lookup: OnceLock::new(),
                 classes: RwLock::new(Vec::new()),
@@ -1452,9 +1462,23 @@ impl MetaBuilder {
     /// Calls the member `old` of a [face](Self::face) `new`: a property,
     /// with its change signal, a signal or a method. Panics when the type
     /// has no member `old`, which is a mistake in the module's source.
+    ///
+    /// A member a base of the faced type declares is renamed too, and the
+    /// face then describes that base's members as its own, its prototype
+    /// being the base's: a description has the member under one name only.
     #[inline(never)]
     pub fn rename(mut self, old: &str, new: &str) -> Self {
         assert!(self.meta.face, "{}: only a face renames", self.meta.name);
+        let m = &self.meta;
+        let property = m.properties.iter().rposition(|p| p.name == old);
+        let signal = m.signals.iter().rposition(|s| s.name == old);
+        let method = m.methods.iter().rposition(|f| f.name == old);
+        match (property, signal, method) {
+            (Some(i), ..) => self.own_from(|o| i as u32 >= o.property_offset),
+            (None, Some(i), _) => self.own_from(|o| i as u32 >= o.signal_offset),
+            (None, None, Some(i)) => self.own_from(|o| i as u32 >= o.method_offset),
+            (None, None, None) => {}
+        }
         let m = &mut self.meta;
         if let Some(i) = m.properties.iter().rposition(|p| p.name == old) {
             let p = Arc::make_mut(&mut m.properties[i]);
@@ -1474,6 +1498,32 @@ impl MetaBuilder {
             panic!("{} has no member `{old}` to call `{new}`", m.name);
         }
         self
+    }
+
+    /// Takes as the face's own members those of the nearest of the faced
+    /// type and its bases whose own members `holds` says a renamed one is.
+    fn own_from(&mut self, holds: impl Fn(&MetaObject) -> bool) {
+        let mut depth = 0u8;
+        let mut level = self.meta.base.clone();
+        while let Some(at) = level {
+            let m = &mut self.meta;
+            if depth > m.face_depth {
+                // Where a `required` member of the base is declared is the
+                // face's to say now.
+                m.required_at.extend(at.required_at.iter().cloned());
+            }
+            if holds(&at) {
+                if depth > m.face_depth {
+                    m.face_depth = depth;
+                    m.property_offset = at.property_offset;
+                    m.signal_offset = at.signal_offset;
+                    m.method_offset = at.method_offset;
+                }
+                return;
+            }
+            depth += 1;
+            level = at.base.clone();
+        }
     }
 
     /// Not creatable from QML, even if a base is.
