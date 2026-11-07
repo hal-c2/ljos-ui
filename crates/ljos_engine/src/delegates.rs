@@ -64,6 +64,15 @@ pub trait DelegateHost {
         let _ = (engine, object);
     }
 
+    /// The delegate `object` of a row the model removed may play its way
+    /// out before it goes (a view's `exit`, docs/DIALECT.md §4.15). A host
+    /// that plays it returns true and calls `done` when it has ended; until
+    /// then the delegate is out of [`Delegates::objects`] but alive.
+    fn exits(&self, engine: &Engine, object: ObjectId, done: Box<dyn FnOnce(&Engine)>) -> bool {
+        let _ = (engine, object, done);
+        false
+    }
+
     /// Rows changed places; [`Delegates::objects`] has the new order.
     fn moved(&self, engine: &Engine) {
         let _ = engine;
@@ -369,23 +378,54 @@ impl Shared {
         self.reindex(engine, first, n);
         self.host.count_changed(engine, n);
         for row in gone {
-            self.dispose(engine, first, row);
+            self.end(engine, first, row, true);
         }
     }
 
     /// Ends a row that is already out of the list.
     fn dispose(&self, engine: &Engine, index: usize, row: Row) {
+        self.end(engine, index, row, false);
+    }
+
+    /// Ends a row that is out of the list; one the model removed may play
+    /// its way out first ([`DelegateHost::exits`]).
+    fn end(&self, engine: &Engine, index: usize, row: Row, may_exit: bool) {
         if let Some(h) = &row.pending {
             h.cancel();
         }
-        if let Some(obj) = row.object {
-            self.host.removed(engine, index, obj);
-            // `Component.onDestruction` runs now, before the next row
-            // goes, as in Qt. The object itself goes later: the handler
-            // that removed the row may be the delegate's own.
+        let Some(obj) = row.object else {
+            return;
+        };
+        self.host.removed(engine, index, obj);
+        let host = self.host.clone();
+        // `Component.onDestruction` runs when the row goes, before the next
+        // row goes, as in Qt. The object itself goes later: the handler
+        // that removed the row may be the delegate's own.
+        let go = move |engine: &Engine| {
+            if !engine.is_alive(obj) {
+                return;
+            }
             engine.tell_destruction(obj, false);
-            self.host.released(engine, obj);
+            host.released(engine, obj);
             engine.destroy(obj);
+        };
+        if !may_exit {
+            go(engine);
+            return;
+        }
+        // Run at once when the host plays nothing, or when it calls `done`
+        // before `exits` returns.
+        let once = Rc::new(Cell::new(Some(Box::new(go) as Box<dyn FnOnce(&Engine)>)));
+        let later = once.clone();
+        let done = Box::new(move |engine: &Engine| {
+            if let Some(go) = later.take() {
+                go(engine);
+            }
+        });
+        if !self.host.exits(engine, obj, done)
+            && let Some(go) = once.take()
+        {
+            go(engine);
         }
     }
 
