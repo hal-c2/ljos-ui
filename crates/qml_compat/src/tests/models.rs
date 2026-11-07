@@ -170,3 +170,28 @@ fn qtqml_models_under_a_name_keeps_the_file() {
     let reason = kept_for("import QtQuick\nimport QtQml.Models as M\nItem { }\n");
     assert!(reason.contains("`QtQml.Models` under a name"), "{reason}");
 }
+
+/// A local or a method called as a member Ljós renames is kept only where
+/// the member could be what the name reads: here no object is a ListView.
+#[test]
+fn a_name_ljos_renames_on_another_type_is_free_for_a_local() {
+    let source = "import QtQuick\nItem {\n  ListModel { id: lm }\n  function remove(i) { lm.remove(i) }\n  function f() { let add = 1; return add }\n}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models\nItem {\n  ListModel { id: lm }\n  function remove(i) { lm.remove(i) }\n  function f() { let add = 1; return add }\n}\n"
+    );
+}
+
+#[test]
+fn a_local_of_a_name_the_scope_renames_keeps_the_file() {
+    assert!(
+        kept_for("import QtQuick\nListView { function f() { let add = 1; return add } }\n")
+            .contains("a local is called `add`")
+    );
+    assert!(
+        kept_for(
+            "import QtQuick\nItem { ListView { function f() { let remove = 1; return remove } } }\n"
+        )
+        .contains("a local is called `remove`")
+    );
+}

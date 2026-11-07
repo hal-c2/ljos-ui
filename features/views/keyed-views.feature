@@ -260,3 +260,30 @@ Feature: Keyed views
           delegate: Item { width: 200; height: 20; Component.onCompleted: if (index === 0) lm.remove(0) }
         }
         """
+
+    @ljos-only @headless
+    Scenario: An Item's own remove() is no ListView's, and the file is lowered
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          ListModel { id: lm; ListElement { name: "a" } }
+          function remove(i) { lm.remove(i) }
+          Component.onCompleted: remove(0)
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (1 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        Item {
+          ListModel { id: lm; ListElement { name: "a" } }
+          function remove(i) { lm.remove(i) }
+          Component.onCompleted: remove(0)
+        }
+        """

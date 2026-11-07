@@ -1683,8 +1683,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             self.declared.push(it.name.to_string());
         }
         // A local of a renamed name hides the member; renaming its uses
-        // would rename the local's.
-        if is_renamed_member(&it.name) {
+        // would rename the local's. Only where the member is what the name
+        // could read: on an object that is no ListView, `remove` is free.
+        let hides = |on: Ty| !matches!(self.pass.member(&it.name, on), Rename::Keep);
+        if is_renamed_member(&it.name) && (hides(self.scope) || hides(self.root)) {
             self.keep(
                 format!(
                     "a local is called `{}`, as a member Ljós renames is",
