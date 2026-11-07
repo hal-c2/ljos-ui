@@ -182,3 +182,13 @@ fn qt_resolved_url_given_a_context_stays_qt_s() {
          Item { property url a: url(\"a.png\"); property url b: Qt.resolvedUrl(\"b.png\", this) }\n"
     );
 }
+
+#[test]
+fn qt_resolved_url_given_a_spread_stays_qt_s() {
+    // A spread may carry the context too, so it counts as more than one.
+    assert_eq!(
+        lowered("import QtQuick\nItem { property url c: Qt.resolvedUrl(...[\"c.png\", this]) }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+         Item { property url c: Qt.resolvedUrl(...[\"c.png\", this]) }\n"
+    );
+}

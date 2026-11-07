@@ -2224,11 +2224,12 @@ impl Script<'_, '_> {
 impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
         // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of ctx's
-        // component; `url` takes one argument, so that call stays Qt's.
+        // component; `url` takes one argument, so that call stays Qt's. A
+        // spread may carry the context too.
         if let Expression::StaticMemberExpression(callee) = &it.callee
             && matches!(&callee.object, Expression::Identifier(qt) if qt.name == "Qt")
             && callee.property.name == "resolvedUrl"
-            && it.arguments.len() > 1
+            && (it.arguments.len() > 1 || it.arguments.iter().any(|a| a.is_spread()))
         {
             for argument in &it.arguments {
                 self.visit_argument(argument);
