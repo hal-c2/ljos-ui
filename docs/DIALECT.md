@@ -794,11 +794,16 @@ of Ljós's API, a type named where a component goes — `component: Page`,
 `property Component shown: Page` — is a component of that type, as
 `Page {}` written there is. The compat pass writes
 `source: "Page.qml"` (or `"./Page.qml"`) as `component: Page` when
-`Page.qml` is beside the file. It keeps the file when the string is made
-as it runs (`page + ".qml"`, `Qt.resolvedUrl(…)`), names a file elsewhere
-(`"pages/Page.qml"`, `qrc:`), or when the Loader's `source` is also read,
-set or handled (`loader.source`, `setSource`, `onSourceChanged`): after
-lowering it is empty.
+`Page.qml` is beside the file and `Page` is a type's name (a capital,
+then letters, digits or `_`; not `page.qml`, `my-page.qml` or
+`Page.ui.qml`). It keeps the file when the string is made as it runs
+(`page + ".qml"`, `Qt.resolvedUrl(…)`), names a file elsewhere
+(`"pages/Page.qml"`, `qrc:`), when the Loader is given a `sourceComponent`
+too, or when its `source` is also read, set or handled (`loader.source`,
+`setSource`, `onSourceChanged`, a bare `source` in its own bindings, a
+`Connections` or `PropertyChanges` aimed at it): after lowering it is
+empty. `ljos check --tsc` and the authoring tools read `component: Page`
+as the compiler does.
 
 DECISION: `Ljos.Ui`'s `Loader` keeps `source` beside `component`. A face
 renames members and cannot leave one out, and `setSource` is how a file
