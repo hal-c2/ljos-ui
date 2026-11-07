@@ -24,9 +24,11 @@ use crate::shapes::{
     PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
 };
 use crate::{
-    BoxColumn, BoxRow, Drag, DragHandler, DropArea, Gradient, GradientStop, HoverHandler, Item,
-    Layout, ListView, LjosBox, Loader, MouseArea, PointHandler, PropertyChanges, Rectangle,
-    Repeater, State, TapHandler, Text, WheelHandler,
+    Accessible, BoxColumn, BoxRow, DoubleValidator, Drag, DragHandler, DropArea, Flickable,
+    FontMetrics, Gradient, GradientStop, HoverHandler, Image, IntValidator, Item, Layout, ListView,
+    LjosBox, Loader, MouseArea, PointHandler, PropertyChanges, Rectangle,
+    RegularExpressionValidator, Repeater, State, TapHandler, Text, TextEdit, TextInput,
+    TextMetrics, WheelHandler, focus, keys,
 };
 
 /// The module's name, as a file imports it.
@@ -188,6 +190,16 @@ pub(crate) fn register(engine: &Engine) {
         Path, PathMove, PathLine, PathQuad, PathCubic, PathArc, PathAngleArc,
         PathCurve, PathSvg, PathPolyline, PathMultiline, PathRectangle,
         PathAttribute, PathPercent,
+    ]));
+    // What says the one thing it says in Qt Quick, under the same name
+    // (docs/DIALECT.md §4.14, "none" in its Lowering column). `Window` is
+    // attached only here; `ljos_controls` gives the one that is a root,
+    // and `Screen` with it.
+    engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
+        Image, Flickable, focus::Window,
+        TextInput, TextEdit, IntValidator, DoubleValidator, RegularExpressionValidator,
+        TextMetrics, FontMetrics,
+        keys::Keys, keys::KeyEventObject, keys::Shortcut, Accessible,
     ]));
     let version = Version::new(1, 0);
     for face in [

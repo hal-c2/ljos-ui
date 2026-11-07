@@ -281,7 +281,7 @@ fn the_files_a_module_import_brings_are_of_the_group() {
         ("app/Main".to_string(), importer),
         (
             "src/qml/Dial".to_string(),
-            alone("import QtQuick\nImage { }\n"),
+            alone("import QtQuick\nPathView { }\n"),
         ),
     ]);
     let outcomes = group(&files);
