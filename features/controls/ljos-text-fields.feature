@@ -211,6 +211,21 @@ Feature: Ljós's controls: text fields
         """
 
     @ljos-only @headless
+    Scenario: A text field's echo mode named by TextInput keeps the file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        TextField { echoMode: TextInput.Password }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:3:23: `TextInput` is not in Ljos.Ui yet
+        1 files, 0 lowered, 1 kept
+        """
+
+    @ljos-only @headless
     Scenario: A file of text fields in Ljós's API has nothing to report
       Given the file "Form.qml":
         """qml
