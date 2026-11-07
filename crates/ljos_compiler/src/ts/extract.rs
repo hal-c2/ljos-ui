@@ -257,9 +257,18 @@ impl<'a> Writer<'_, 'a, '_> {
         } else if name == "alias" {
             "unknown".to_string()
         } else {
-            self.api
-                .written_type(&name)
-                .unwrap_or_else(|| "never".to_string())
+            match self.api.written_type(&name) {
+                // Written as it is so that TypeScript cannot find it, as the
+                // checker cannot. A type the file finds and the declarations
+                // do not have (one of the project's own: a component
+                // declared inline, a file beside it, a type of a module of
+                // the project's) is the checker's to type.
+                Some(bare) if bare == name && self.names.types.find(&[&name]).is_some() => {
+                    "unknown".to_string()
+                }
+                Some(written) => written,
+                None => "never".to_string(),
+            }
         };
         if ty.is_list {
             format!("readonly {mapped}[]")
