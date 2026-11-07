@@ -702,3 +702,105 @@ fn a_local_of_a_name_the_scope_renames_keeps_the_file() {
         .contains("a local is called `remove`")
     );
 }
+
+fn lowered_as(source: &str) -> Lowered {
+    match lower_as(source, "Main", &no_locals) {
+        Outcome::Lowered(lowered) => lowered,
+        other => panic!("not lowered: {other:?}"),
+    }
+}
+
+#[test]
+fn a_constant_table_with_an_id_is_a_typed_list_with_its_rows_beside_it() {
+    let done = lowered_as(
+        "import QtQuick\nItem {\n    ListModel {\n        id: fruitModel\n        ListElement { name: \"Apple\"; cost: -2.5 }\n        ListElement { name: \"Pear\"; cost: 3; ripe: true; }\n    }\n    Repeater { model: fruitModel; Text { text: model.name + model.cost } }\n}\n",
+    );
+    assert_eq!(
+        done.text,
+        "pragma Scripts: JavaScript; import Ljos.Ui; import \"Main.rows.ts\" as Rows\nItem {\n    readonly property list<Rows.FruitRow> fruitModel: [\n\n        { name: \"Apple\", cost: -2.5, ripe: false },\n        { name: \"Pear\", cost: 3, ripe: true }\n    ]\n    Repeater { model: fruitModel; Text { text: modelData.name + modelData.cost } }\n}\n"
+    );
+    assert_eq!(
+        done.modules,
+        vec![(
+            "Main.rows.ts".to_string(),
+            "// The rows of the constant ListModels of Main.qml (docs/DIALECT.md §4.8).\nexport interface FruitRow {\n  readonly name: string;\n  readonly cost: number;\n  readonly ripe: boolean;\n}\n".to_string()
+        )]
+    );
+    // Without the file's name there is no module to name, and the table
+    // stays a ListModel.
+    assert!(lowered(
+        "import QtQuick\nItem {\n    ListModel { id: m; ListElement { a: 1; b: 2 } }\n    Repeater { model: m; Text { text: model.a } }\n}\n"
+    )
+    .contains("ListModel"));
+}
+
+#[test]
+fn a_table_of_one_role_written_in_a_view_is_a_list_of_objects() {
+    // Of a list of objects `modelData` is the row, not the one role's value.
+    let done = lowered_as(
+        "import QtQuick\nItem {\n    ListView {\n        id: cities\n        model: ListModel {\n            ListElement { city: \"Oslo\" }\n            ListElement { city: \"Rome\" }\n        }\n        delegate: Text { text: model.city }\n    }\n    ListView { model: ListModel { ListElement { city: \"Oslo\" } }\n        delegate: Text { text: model.city } }\n}\n",
+    );
+    assert!(
+        done.text.contains("        readonly property list<Rows.CitiesRow> rows: [\n            { city: \"Oslo\" },\n            { city: \"Rome\" }\n        ]; model: rows\n"),
+        "{}",
+        done.text
+    );
+    assert!(
+        done.text
+            .contains("list<Rows.Row> rows: [ { city: \"Oslo\" } ]; model: rows"),
+        "{}",
+        done.text
+    );
+    assert_eq!(
+        done.text.matches("text: modelData.city").count(),
+        2,
+        "{}",
+        done.text
+    );
+    assert!(!done.text.contains("Ljos.Models"), "{}", done.text);
+}
+
+#[test]
+fn a_table_the_list_could_be_told_from_stays_a_list_model() {
+    for source in [
+        // A value made as the file runs, a nested list, and roles of two types.
+        "Repeater { model: ListModel { ListElement { a: qsTr(\"x\"); b: 1 } } Text { text: model.a } }",
+        "Repeater { model: ListModel { ListElement { a: 1; b: [ ListElement { c: 1 } ] } } Text { text: model.a } }",
+        "Repeater { model: ListModel { ListElement { a: 1; b: 1 } ListElement { a: \"1\"; b: 1 } } Text { text: model.a } }",
+        // A view's sections, and a delegate given by id.
+        "ListView { section.property: \"a\"; model: ListModel { ListElement { a: 1; b: 1 } } delegate: Text { text: model.a } }",
+        // The model read off its view, and a name `rows` the file reads.
+        "Repeater { id: r; model: ListModel { ListElement { a: 1; b: 1 } } Text { text: model.a + r.model.count } }",
+        "Repeater { property int rows: 2; model: ListModel { ListElement { a: 1; b: 1 } } Text { text: model.a + rows } }",
+        // `model` read whole, and a nested view.
+        "Repeater { model: ListModel { ListElement { a: 1; b: 1 } } Text { text: JSON.stringify(model) } }",
+        "Repeater { model: ListModel { ListElement { a: 1; b: 1 } } Item { Repeater { model: 2; Text {} } } }",
+        // Of one role, `modelData` is the role's value.
+        "Repeater { model: ListModel { ListElement { a: 1 } } Text { text: modelData } }",
+    ] {
+        let text = lowered_as(&format!("import QtQuick\nItem {{\n    {source}\n}}\n")).text;
+        assert!(text.contains("ListModel"), "{source}: {text}");
+        assert!(!text.contains("Rows"), "{source}: {text}");
+    }
+    for source in [
+        // The id read but as a view's model, a member of that name, a file
+        // the id may be reached from, and a name `Rows` of the file's own.
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a + m.count } }",
+        "property int m: 2\n    ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a } }",
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a } }\n    Loader {}",
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a + Rows.x } }",
+    ] {
+        match lower_as(
+            &format!("import QtQuick\nItem {{\n    {source}\n}}\n"),
+            "Main",
+            &no_locals,
+        ) {
+            Outcome::Lowered(done) => {
+                assert!(done.text.contains("ListModel"), "{source}: {}", done.text);
+                assert!(done.modules.is_empty(), "{source}");
+            }
+            Outcome::Kept(_) => {}
+            Outcome::Unchanged => panic!("{source}"),
+        }
+    }
+}

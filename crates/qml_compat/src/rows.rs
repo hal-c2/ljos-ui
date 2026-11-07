@@ -63,8 +63,10 @@ pub(crate) fn of_roles(mut roles: Vec<String>, has_id: bool) -> Rows {
 }
 
 /// What the `model:` binding of the view `view` gives, with `listed` the
-/// ListModels of the file that have ids and the roles they list.
-pub(crate) fn of_view(view: &QmlObject<'_>, listed: &[(String, Vec<String>)]) -> Rows {
+/// ListModels of the file that have ids and their rows, and `tables` where
+/// the ListModels written as lists of objects start: the rows of those are
+/// objects with the roles as members, read as a model of several roles is.
+pub(crate) fn of_view(view: &QmlObject<'_>, listed: &[(String, Rows)], tables: &[u32]) -> Rows {
     let value = view.members.iter().find_map(|member| match member {
         QmlMember::Binding(binding) if binding.name.as_simple() == Some("model") => {
             Some(&binding.value)
@@ -73,6 +75,7 @@ pub(crate) fn of_view(view: &QmlObject<'_>, listed: &[(String, Vec<String>)]) ->
     });
     match value {
         Some(QmlBindingValue::Expression(expression)) => of_expression(expression, listed),
+        Some(QmlBindingValue::Object(object)) if tables.contains(&object.span.start) => Rows::Roles,
         Some(QmlBindingValue::Object(object))
             if object.type_name.as_simple() == Some("ListModel") =>
         {
@@ -85,7 +88,7 @@ pub(crate) fn of_view(view: &QmlObject<'_>, listed: &[(String, Vec<String>)]) ->
     }
 }
 
-fn of_expression(expression: &Expression<'_>, listed: &[(String, Vec<String>)]) -> Rows {
+fn of_expression(expression: &Expression<'_>, listed: &[(String, Rows)]) -> Rows {
     match expression {
         Expression::NumericLiteral(_) => Rows::Values,
         Expression::ParenthesizedExpression(inner) => of_expression(&inner.expression, listed),
@@ -120,7 +123,7 @@ fn of_expression(expression: &Expression<'_>, listed: &[(String, Vec<String>)]) 
         Expression::Identifier(id) => listed
             .iter()
             .find(|(name, _)| *name == id.name.as_str())
-            .map_or(Rows::Unknown, |(_, roles)| of_roles(roles.clone(), true)),
+            .map_or(Rows::Unknown, |(_, rows)| rows.clone()),
         _ => Rows::Unknown,
     }
 }
