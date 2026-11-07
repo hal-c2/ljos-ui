@@ -3,6 +3,7 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-shapes-shape.html
 #   https://doc.qt.io/qt-6/qml-qtquick-shapes-shapepath.html
 #   https://doc.qt.io/qt-6/qml-qtquick-pathsvg.html
+#   https://doc.qt.io/qt-6/qml-qtquick-gradient.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # The Qt file is `@qt-parity`. `Ljos.Ui` is Ljós's, so the same shapes written in it, and lowering a file
 # to it, are `@ljos-only`.
@@ -144,4 +145,66 @@ Feature: Shapes in Ljós's API
         """
         kept ./Main.qml:2:1: it imports `QtQuick.Shapes` under a name
         1 files, 0 lowered, 1 kept
+        """
+
+  Rule: A rectangle's gradient is lowered with it, as the shapes' is
+
+    # Gradient and GradientStop came into Ljos.Ui for the shapes, so a plain
+    # rectangle filled with one lowers too: its `color` becomes `fill`, and
+    # the gradient, its stops' `color` and its orientation stay as written.
+    @ljos-only @headless
+    Scenario: ljos migrate lowers a rectangle filled with a gradient, which draws the same
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          width: 120; height: 60
+          Rectangle {
+            width: 60; height: 60; color: "white"
+            gradient: Gradient {
+              GradientStop { position: 0; color: "#336699" }
+              GradientStop { position: 1; color: "#99ccff" }
+            }
+          }
+          Rectangle {
+            x: 60; width: 60; height: 60; color: "black"
+            gradient: Gradient {
+              orientation: Gradient.Horizontal
+              GradientStop { position: 0; color: "red" }
+              GradientStop { position: 1; color: "yellow" }
+            }
+          }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        would lower ./Main.qml (3 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate --write ."
+      Then the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        Item {
+          width: 120; height: 60
+          Rectangle {
+            width: 60; height: 60; fill: "white"
+            gradient: Gradient {
+              GradientStop { position: 0; color: "#336699" }
+              GradientStop { position: 1; color: "#99ccff" }
+            }
+          }
+          Rectangle {
+            x: 60; width: 60; height: 60; fill: "black"
+            gradient: Gradient {
+              orientation: Gradient.Horizontal
+              GradientStop { position: 0; color: "red" }
+              GradientStop { position: 1; color: "yellow" }
+            }
+          }
+        }
         """
