@@ -292,21 +292,37 @@ impl Migrate {
                         failed = true;
                         continue;
                     }
+                    // One there already is the module to the byte: it stays
+                    // as it is, untouched.
+                    let modules: Vec<(PathBuf, &String)> = modules
+                        .into_iter()
+                        .filter(|(path, _)| !path.exists())
+                        .collect();
                     lowered += 1;
                     let edits = done.changes.len();
                     if self.write {
+                        // The modules first: one that fails to be written
+                        // leaves the file as it was, never a file that
+                        // imports a module that is not there.
+                        let mut wrote = Vec::new();
+                        for (path, text) in &modules {
+                            if let Err(e) = std::fs::write(path, text) {
+                                eprintln!("{}: {e}", path.display());
+                                failed = true;
+                                break;
+                            }
+                            wrote.push(path);
+                        }
+                        if wrote.len() < modules.len() {
+                            continue;
+                        }
                         if let Err(e) = std::fs::write(file, &done.text) {
                             eprintln!("{}: {e}", file.display());
                             failed = true;
                             continue;
                         }
                         outln!("lowered {} ({edits} edits)", file.display());
-                        for (path, text) in &modules {
-                            if let Err(e) = std::fs::write(path, text) {
-                                eprintln!("{}: {e}", path.display());
-                                failed = true;
-                                continue;
-                            }
+                        for path in wrote {
                             outln!("wrote {}", path.display());
                         }
                     } else {

@@ -388,3 +388,26 @@ fn a_rows_module_there_already_is_not_overwritten() {
         assert_eq!(read(dir.path(), "app/Main.qml"), TABLE);
     }
 }
+
+/// A file put back to its Qt text beside the rows module migrate wrote for
+/// it (`git checkout` of the file leaves the module, untracked) is lowered
+/// again as it was the first time, and the module, the one it would
+/// write, is left as it is: not written again.
+#[test]
+fn a_file_put_back_beside_its_rows_module_is_lowered_again() {
+    const TABLE: &str = "import QtQuick\nItem {\n    ListModel { id: zones; ListElement { city: \"Oslo\"; shift: 1 } }\n    Repeater { model: zones; Text { text: model.city } }\n}\n";
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "app/Main.qml", TABLE);
+    let (status, first, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{first}{err}");
+    assert!(first.contains("wrote app/Main.rows.ts"), "{first}");
+    let main = read(dir.path(), "app/Main.qml");
+    let rows = read(dir.path(), "app/Main.rows.ts");
+
+    write(dir.path(), "app/Main.qml", TABLE);
+    let (status, again, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{again}{err}");
+    assert_eq!(again, first.replace("wrote app/Main.rows.ts\n", ""));
+    assert_eq!(read(dir.path(), "app/Main.qml"), main);
+    assert_eq!(read(dir.path(), "app/Main.rows.ts"), rows);
+}
