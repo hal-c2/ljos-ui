@@ -190,9 +190,23 @@ are quoted side by side below:
 | `Ljos.Blocks` | functional blocks and shells (ADR 0003) | (Ljós's own, already built) |
 
 DECISION: the module set is `Ljos.*`, one module per concern, named in the
-singular. `Ljos.Ui` is the first and the only one phase 1 builds. It
-imports `QtQml` for `Component`, `Timer` and the `Qt` namespace until
-`Ljos.Core` exists.
+singular. `Ljos.Ui` was the first, and phase 1 built only it.
+
+`Ljos.Core` (M2) holds what a file says that is not an item: `QtObject`,
+`Timer`, `Component`, `Connections`, `Binding` and `Locale`'s enums.
+These are `QtQml`'s types, exported from it too, so a lowered file makes
+the same objects. A file of Ljós's API imports it beside `Ljos.Ui`, and
+`Ljos.Ui` no longer imports `QtQml`: a file that names `Timer` without
+importing `Ljos.Core` is told `` `Timer` is not a type of anything the
+file imports ``. `Ljos.Core` brings `QtQml.Models` until `Ljos.Models`
+has the models. `Qt` stays a global of every file, as in Qt's QML, until
+its members are lowered by member (§4.3).
+
+DECISION: the types keep their names. `Object` for `QtObject` would hide
+JavaScript's `Object` in a script; the rename stays open (§18). The
+value-type constructors (`point(x, y)`) come with the lowering of
+`Qt.point` and the others, since a constructor and the global it replaces
+must say the same thing.
 
 ### 4.2 Names: the rename rule and phase 1's slice
 
@@ -341,7 +355,25 @@ The other direction is generated. Each QML component and native type has a
 `.d.ts` declaration, so a TS module can take `Card` or `ListView` as a
 parameter type. The declarations come from the same table `ljos check`
 reads (§10, `ljos types --dts`), so `tsc` and an editor see what the
-checker sees.
+checker sees. `ljos check --tsc` gives each file the declarations of the
+modules of Ljós's API it imports, and nothing else: a file of `Ljos.Ui`
+alone has no `Timer` or `Component.Ready`, in TypeScript as in the
+checker. Files that import the same modules share one declarations file
+and one run of `tsc`. A type such a file cannot name but is handed,
+the `QtObject` a `PointerArea` gives a handler, is still declared,
+because what the file imports reaches it, but under its class
+(`QtQml_QtObject`) when another module of the API exports its name. A
+type the file writes, `property QtObject o` in a file of `Ljos.Ui`
+alone, must be one of its imports: the checker says
+`` `QtObject` is not a type of anything the file imports `` and
+TypeScript cannot find the name. A value type (`font`, `point`) may be
+written by any file, and a dotted name is a namespace's or an enum's,
+which this rule does not judge. A type of the project's own (a
+component declared inline, a file beside it, a type of one of the
+project's modules) is found as it is in Qt's QML; the declarations do
+not describe it, so TypeScript is given `unknown` for it and the checker
+types it. `ljos types --dts` declares
+the whole API, `Ljos.Ui` and `Ljos.Core` together.
 
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
 boundary through a declared decoder (note 11 §3.7). The decoder's result is
@@ -1120,17 +1152,23 @@ How it holds the other rules:
 `qml_compat::lower(text, locals)` parses the file and walks it. Each edit
 is to a name of the Ljós API, and the text keeps every line. The edits are:
 
-- an import, `QtQuick` → `Ljos.Ui`;
-- a type, `MouseArea` → `PointerArea`;
+- an import, `QtQuick` → `Ljos.Ui`, and `QtQml` → `Ljos.Core`. A file
+  that has `QtQml` from `QtQuick` and names one of its types (`Timer`,
+  `Component.onCompleted`, or a type it writes: `property QtObject o`,
+  `signal picked(QtObject o)`) gets `; import Ljos.Core` on the import's
+  line. A file of `QtQml` alone is lowered to `Ljos.Core` alone;
+- a type, `MouseArea` → `PointerArea`, made or written
+  (`property MouseArea area`);
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
   `Connections` on a known target, a value source's target (`… on color`),
   and `id.member` where the target's type is known;
 - `property var` / `variant` → `property unknown`.
 
-A `QtQml` import stays. `QtQuick.Layouts` and the controls
-(`QtQuick.Controls.Basic`, and `QtQuick.Controls` where the program starts
-with Basic) are lowered (§4.6, §4.16). Any other module import
-(`QtQuick.Controls.Material`, an aliased `QtQuick`) keeps the file.
+`QtQuick.Layouts`, the controls (`QtQuick.Controls.Basic`, and
+`QtQuick.Controls` where the program starts with Basic) and `QtQml` are
+lowered (§4.6, §4.16). Any other module import
+(`QtQuick.Controls.Material`, an aliased `QtQuick` or `QtQml`) keeps the
+file.
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
@@ -1560,6 +1598,9 @@ bindings and states without a rule.
 - DECISION: phase 2 builds modules before globals: `Ljos.Layout` and
   the kept-for `Ljos.Ui` types (M1) before `Ljos.Core` (M2). Module imports
   keep 364 of 462 kept example files, and `Qt.*` keeps none.
+- DECISION (§4.1): `Ljos.Core` exports `QtQml`'s types under their own
+  names, and brings `QtQml.Models` until `Ljos.Models` has them. `Qt` is a
+  global of every file. `Ljos.Ui` imports nothing.
 - DECISION: the edits are text replacements at spans that keep every line,
   and they move onto `qml_edit` in M3.
 - DECISION (§4.6): one arrangement, the Box, with one size rule per axis:
@@ -1642,4 +1683,5 @@ choice is the project lead's.
 | Translated text (§4.13) | (a) `qsTr` with `.arg` counts checked; (b) also a tagged template ``tr`…` ``; (c) only the template | (a) now, (b) later: (a) lowers with no edit, and (b) is sugar over the same catalogue |
 | Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
 | States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
+| `QtObject`'s name (§4.1) | (a) keep `QtObject`; (b) `Object`, which hides JavaScript's `Object` in a script; (c) another word | (a) until a name is chosen: the lowering is one type rename either way |
 | Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |

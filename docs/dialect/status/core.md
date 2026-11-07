@@ -4,8 +4,10 @@ Milestone M2 in [DIALECT.md §13](../../DIALECT.md#13-milestones). Written only 
 
 Built:
 
-- Nothing built yet.
+- `Ljos.Core` with `QtObject`, `Timer`, `Component`, `Connections`,
+  `Binding` and `Locale` (§4.1).
+- `QtQml` lowered to it; `Ljos.Ui`'s `QtQml` import dropped.
 
 Remaining:
 
-- All that §13 lists for this area.
+- `Qt.*` by member, the value-type constructors, `App`, `later`.

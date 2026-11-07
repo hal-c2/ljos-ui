@@ -31,7 +31,7 @@ use qml_syntax::{
     js::{Expression, Function},
 };
 
-use super::dts::Api;
+use super::dts::{Api, Written};
 use crate::{
     Project,
     js::{self, Form},
@@ -257,9 +257,22 @@ impl<'a> Writer<'_, 'a, '_> {
         } else if name == "alias" {
             "unknown".to_string()
         } else {
-            self.api
-                .ts_type(&name, None)
-                .unwrap_or_else(|| "never".to_string())
+            match self.api.written_type(&name) {
+                Some(Written::Declared(ts)) => ts,
+                // A type the declarations do not have but the file finds is
+                // one of the project's own (a component declared inline, a
+                // file beside it, a type of one of the project's modules),
+                // the checker's to type. Nothing else finds it: written as
+                // it is, TypeScript cannot either.
+                Some(Written::Unnamed(word)) => {
+                    if self.names.types.find(&[&word]).is_some() {
+                        "unknown".to_string()
+                    } else {
+                        word
+                    }
+                }
+                None => "never".to_string(),
+            }
         };
         if ty.is_list {
             format!("readonly {mapped}[]")

@@ -18,6 +18,38 @@ use qt_types::{Enum, ImportKind, Property, Type};
 /// The module the dialect is written against.
 pub const API: &str = "Ljos.Ui";
 
+/// The modules of Ljós's API: the items, and what is not an item.
+pub const MODULES: &[&str] = &[API, "Ljos.Core"];
+
+/// The modules of Ljós's API `source` imports, by their own names, in the
+/// order of [`MODULES`]. An import under an alias counts: the file sees the
+/// module, as the checker's `is_dialect` does.
+pub fn modules_of(source: &str) -> Vec<&'static str> {
+    let allocator = qml_syntax::Allocator::default();
+    let parsed = qml_syntax::parse(&allocator, source);
+    MODULES
+        .iter()
+        .copied()
+        .filter(|uri| {
+            parsed.document.imports.iter().any(|import| {
+                matches!(&import.source, qml_syntax::ast::QmlImportSource::Module(name) if name.to_string() == *uri)
+            })
+        })
+        .collect()
+}
+
+/// What [`Api::written_type`] makes of a type a file writes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Written {
+    /// The declarations' type for it.
+    Declared(String),
+    /// A word the declarations do not have. Written as it is, TypeScript
+    /// cannot find it, as the checker cannot find a type nothing the file
+    /// imports names; a type of the project's own, which the checker does
+    /// find, is the caller's to write `unknown`.
+    Unnamed(String),
+}
+
 /// Names of QML (and of the C++ classes Qt's table calls them by) that are a
 /// TypeScript primitive.
 const PRIMITIVES: &[(&str, &str)] = &[
@@ -135,45 +167,31 @@ pub struct Api {
 }
 
 impl Api {
-    /// The API of `Ljos.Ui`: its types, those of the modules it imports and
-    /// every type one of them reaches through what it inherits, holds or
-    /// attaches. None when the table has no such module.
+    /// The API of Ljós's [`MODULES`]: their types, those of the modules
+    /// they import and every type one of them reaches through what it
+    /// inherits, holds or attaches. None when the table has no such module.
     pub fn new() -> Option<Self> {
-        Self::of(API)
+        Self::of_all(MODULES)
     }
 
     /// The API a file that imports `uri` is written against.
     pub fn of(uri: &str) -> Option<Self> {
-        qt_types::module(uri)?;
-        let mut uris = vec![uri];
-        let mut seen = HashSet::new();
-        let mut exported: HashMap<&'static str, &'static Type> = HashMap::new();
-        let mut roots = Vec::new();
-        while let Some(uri) = uris.pop() {
-            if !seen.insert(uri) {
-                continue;
-            }
-            let Some(module) = qt_types::module(uri) else {
-                continue;
-            };
-            for name in qt_types::native_types(uri)
-                .into_iter()
-                .chain(qt_types::written_types(uri))
-                .flatten()
-            {
-                if let Some(ty) = module.type_named(name) {
-                    // The module's own names come before those it imports.
-                    exported.entry(name).or_insert(ty);
-                    roots.push(ty);
-                }
-            }
-            uris.extend(
-                module
-                    .imports
-                    .iter()
-                    .filter(|import| import.kind == ImportKind::Always)
-                    .map(|import| import.module),
-            );
+        Self::of_all(&[uri])
+    }
+
+    /// The API a file that imports every one of `modules` is written
+    /// against.
+    pub fn of_all(modules: &[&str]) -> Option<Self> {
+        for uri in modules {
+            qt_types::module(uri)?;
+        }
+        let (mut exported, mut roots) = exports(modules);
+        // `Qt` is a global of every file, whichever modules it imports.
+        if let Some(qt) = qt_types::module("QtQml").and_then(|m| m.type_named("Qt"))
+            && !exported.contains_key(qt.name)
+        {
+            exported.insert(qt.name, qt);
+            roots.push(qt);
         }
         let mut reached: BTreeMap<&'static str, &'static Type> = BTreeMap::new();
         let mut todo = roots;
@@ -190,6 +208,7 @@ impl Api {
         }
         // A primitive is no interface.
         reached.retain(|_, ty| !(ty.is_value && primitive(ty.name).is_some()) && !is_date(ty.name));
+        let (elsewhere, _) = exports(MODULES);
         let mut by_name: HashMap<&str, Vec<&'static Type>> = HashMap::new();
         for ty in reached.values() {
             by_name.entry(ty.name).or_default().push(ty);
@@ -198,7 +217,13 @@ impl Api {
             .values()
             .map(|ty| {
                 let claimed = exported.get(ty.name).is_some_and(|e| e.class == ty.class);
-                let alone = by_name[ty.name].len() == 1 && !exported.contains_key(ty.name);
+                // A type another module of the API exports is named only by
+                // a file that imports that module: here it goes by its class,
+                // so a file that writes `QtObject` without `Ljos.Core` is told
+                // TypeScript cannot find it, as the checker tells it.
+                let alone = by_name[ty.name].len() == 1
+                    && !exported.contains_key(ty.name)
+                    && !elsewhere.contains_key(ty.name);
                 let name = if !ty.name.is_empty() && is_word(ty.name) && (claimed || alone) {
                     ty.name.to_string()
                 } else {
@@ -236,6 +261,34 @@ impl Api {
         if is_date(name) {
             return None;
         }
+        Some(
+            self.resolved(name, owner)
+                .unwrap_or_else(|| "unknown".to_string()),
+        )
+    }
+
+    /// The TypeScript type of a declaration the file writes as `name`: the
+    /// declarations' type for it, or [`Written::Unnamed`] for a word they do
+    /// not have, or `unknown` for a value type every file may write (`font`).
+    /// None for a date.
+    pub fn written_type(&self, name: &str) -> Option<Written> {
+        if is_date(name) {
+            return None;
+        }
+        if let Some(found) = self.resolved(name, None) {
+            return Some(Written::Declared(found));
+        }
+        let is_value = ["QtQuick", "QtQml"]
+            .iter()
+            .filter_map(|uri| qt_types::module(uri)?.type_named(name))
+            .any(|ty| ty.is_value);
+        if is_word(name) && !is_value {
+            return Some(Written::Unnamed(name.to_string()));
+        }
+        Some(Written::Declared("unknown".to_string()))
+    }
+
+    fn resolved(&self, name: &str, owner: Option<&'static Type>) -> Option<String> {
         if let Some(ty) = qt_types::type_of_class(name)
             && let Some(found) = self.object_type(ty)
         {
@@ -249,10 +302,17 @@ impl Api {
         {
             return Some(found);
         }
-        if let Some(found) = self.enum_type(name, owner) {
+        // A type handed to the file that it cannot name is still declared
+        // where what it does import reaches it: the `QtObject` a
+        // `PointerArea` gives a handler in a file of `Ljos.Ui` alone. A type
+        // the file writes (no `owner`) is one it names, or none.
+        if owner.is_some()
+            && let Some(ty) = self.types.iter().find(|ty| ty.name == name)
+            && let Some(found) = self.object_type(ty)
+        {
             return Some(found);
         }
-        Some("unknown".to_string())
+        self.enum_type(name, owner)
     }
 
     fn object_type(&self, ty: &'static Type) -> Option<String> {
@@ -541,6 +601,43 @@ fn is_word(name: &str) -> bool {
 }
 
 /// A class as a TypeScript name: `QtQuick.Anchors` is `QtQuick_Anchors`.
+/// The names `modules` export, with what they import always, first
+/// module's first, and the types they name.
+fn exports(modules: &[&str]) -> (HashMap<&'static str, &'static Type>, Vec<&'static Type>) {
+    // Popped from the end: the first module's names come first.
+    let mut uris: Vec<&str> = modules.iter().rev().copied().collect();
+    let mut seen = HashSet::new();
+    let mut exported: HashMap<&'static str, &'static Type> = HashMap::new();
+    let mut roots = Vec::new();
+    while let Some(uri) = uris.pop() {
+        if !seen.insert(uri) {
+            continue;
+        }
+        let Some(module) = qt_types::module(uri) else {
+            continue;
+        };
+        for name in qt_types::native_types(uri)
+            .into_iter()
+            .chain(qt_types::written_types(uri))
+            .flatten()
+        {
+            if let Some(ty) = module.type_named(name) {
+                // The module's own names come before those it imports.
+                exported.entry(name).or_insert(ty);
+                roots.push(ty);
+            }
+        }
+        uris.extend(
+            module
+                .imports
+                .iter()
+                .filter(|import| import.kind == ImportKind::Always)
+                .map(|import| import.module),
+        );
+    }
+    (exported, roots)
+}
+
 fn sanitized(class: &str) -> String {
     class
         .chars()
@@ -605,6 +702,17 @@ mod tests {
             excerpt,
             "/** QtQml.point */\ninterface point {\n    readonly x: number;\n    readonly y: number;\n}"
         );
+    }
+
+    #[test]
+    fn ljos_core_and_the_qt_global_are_declared() {
+        let api = Api::new().expect("Ljos.Ui");
+        assert_eq!(api.named("Timer").map(|t| t.module), Some("QtQml"));
+        let declarations = api.declarations();
+        assert!(declarations.contains("\ninterface Timer extends QtObject {"));
+        assert!(declarations.contains("\ndeclare namespace Qt {"));
+        // A file of `Ljos.Ui` alone has neither.
+        assert!(Api::of(API).expect("Ljos.Ui").named("Timer").is_none());
     }
 
     #[test]

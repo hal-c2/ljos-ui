@@ -1,7 +1,7 @@
 // expect: reject-subset ts-loose-equality
 // Shape: rows taken out of a model, the end found with `==`.
 // After corpus/qtdoc/examples/demos/calqlatr/content/Display.qml:84.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     ListModel { id: history }
     function trimAll(): void {

@@ -1,7 +1,7 @@
 // expect: accept
 // Shape: a repeating timer counts its steps and stops itself.
 // After corpus/qtdoc/examples/demos/android/splashscreen/quick/Splash.qml:46.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     property real progress: 0
     Timer {

@@ -35,7 +35,7 @@ use qml_syntax::{
     Allocator,
     ast::{
         QmlBinding, QmlBindingValue, QmlDocument, QmlImportSource, QmlMember, QmlObject,
-        QmlQualifiedName,
+        QmlQualifiedName, QmlTypeName,
     },
 };
 use qt_types::Type;
@@ -58,6 +58,10 @@ pub const QT_CONTROLS: &[&str] = &["QtQuick.Controls", "QtQuick.Controls.Basic"]
 
 /// The style [`CONTROLS`] draws.
 pub const CONTROLS_STYLE: &str = "Basic";
+
+/// The module a lowered file imports too when it names what is not an
+/// item: a `Timer`, a `Connections`, a `Component`.
+pub const CORE: &str = "Ljos.Core";
 
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
@@ -164,12 +168,18 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
     let Some(ui) = qt_types::module(MODULE) else {
         return kept("this build has no description of Ljos.Ui", 0);
     };
+    let Some(core) = qt_types::module(CORE) else {
+        return kept("this build has no description of Ljos.Core", 0);
+    };
     let Some(quick) = qt_types::module("QtQuick") else {
         return kept("this build has no description of QtQuick", 0);
     };
     let mut pass = Pass {
         source,
         ui,
+        core,
+        cores: std::cell::Cell::new(false),
+        uis: std::cell::Cell::new(false),
         quick,
         layouts: None,
         controls: None,
@@ -237,6 +247,13 @@ enum Ty {
 struct Pass<'s> {
     source: &'s str,
     ui: &'static qt_types::Module,
+    core: &'static qt_types::Module,
+    /// Whether the file names a type of `Ljos.Core`, which it imports
+    /// then.
+    cores: std::cell::Cell<bool>,
+    /// Whether the file names a type of `Ljos.Ui`: a file that imports
+    /// `QtQml` and not `QtQuick` imports it then too.
+    uis: std::cell::Cell<bool>,
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
@@ -262,6 +279,7 @@ impl<'s> Pass<'s> {
     /// Whether the file imports `QtQuick` and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let mut quick = None;
+        let mut qml = None;
         let mut layouts = None;
         let mut controls = Vec::new();
         for import in &document.imports {
@@ -277,7 +295,7 @@ impl<'s> Pass<'s> {
             }
             match uri.as_str() {
                 "QtQuick" => quick = Some(import.span),
-                "QtQml" => {}
+                "QtQml" => qml = Some(import.span),
                 // Its line layouts are lowered to Ljós's arrangement
                 // ([`arrange`]); its other types keep the file.
                 "QtQuick.Layouts" if import.alias.is_none() => {
@@ -317,9 +335,9 @@ impl<'s> Pass<'s> {
                 }
             }
         }
-        let Some(span) = quick else {
+        if quick.is_none() && qml.is_none() {
             return Ok(false);
-        };
+        }
         if let Some(span) = layouts {
             // `Ljos.Ui` has `Layout`; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
@@ -333,14 +351,36 @@ impl<'s> Pass<'s> {
             };
             self.change(span.start as usize..span.end as usize, import);
         }
-        // On the import's line, so every line stays where it was.
-        self.change(
-            span.start as usize..span.end as usize,
-            format!("{JAVASCRIPT}; import {MODULE}"),
-        );
         self.collect(&document.root);
         let root = self.object_type(&document.root)?;
         self.object(&document.root, root, root, true)?;
+        // On the import's line, so every line stays where it was. What
+        // imported `QtQml` imports `Ljos.Core` in its place; what has it
+        // from `QtQuick` imports it beside `Ljos.Ui` when it names one of
+        // its types.
+        let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
+        match (quick, qml) {
+            (Some(quick), Some(qml)) => {
+                self.change(span(quick), format!("{JAVASCRIPT}; import {MODULE}"));
+                self.change(span(qml), format!("import {CORE}"));
+            }
+            (Some(quick), None) => {
+                let mut import = format!("{JAVASCRIPT}; import {MODULE}");
+                if self.cores.get() {
+                    import.push_str(&format!("; import {CORE}"));
+                }
+                self.change(span(quick), import);
+            }
+            (None, Some(qml)) => {
+                let ui = if self.uis.get() {
+                    format!("; import {MODULE}")
+                } else {
+                    String::new()
+                };
+                self.change(span(qml), format!("{JAVASCRIPT}{ui}; import {CORE}"));
+            }
+            (None, None) => unreachable!("returned above"),
+        }
         Ok(true)
     }
 
@@ -427,7 +467,10 @@ impl<'s> Pass<'s> {
     fn named_type(&self, name: &str, at: usize, depth: usize) -> Result<Ty, Kept> {
         if let Some(ty) = self.layouts.and_then(|m| m.type_named(name)) {
             return match name {
-                "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
+                "RowLayout" | "ColumnLayout" | "Layout" => {
+                    self.uis.set(true);
+                    Ok(Ty::Exact(ty))
+                }
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
@@ -441,11 +484,14 @@ impl<'s> Pass<'s> {
         }
         if let Some(ty) = self.quick.type_named(name) {
             if ty.module.starts_with("QtQml") {
-                return Ok(Ty::Exact(ty));
+                return self.core_type(name, ty, at);
             }
             let new = renamed_type(name).unwrap_or(name);
             return match self.ui.type_named(new) {
-                Some(_) => Ok(Ty::Exact(ty)),
+                Some(_) => {
+                    self.uis.set(true);
+                    Ok(Ty::Exact(ty))
+                }
                 None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
@@ -467,6 +513,20 @@ impl<'s> Pass<'s> {
             },
             _ => Ok(Ty::Unknown),
         }
+    }
+
+    /// `name`, a type of `QtQml`'s, as `Ljos.Core` has it (with the models
+    /// it brings, until `Ljos.Models` has them). `Qt` is a global of every
+    /// file, as it is in Qt's QML.
+    fn core_type(&self, name: &str, ty: &'static Type, at: usize) -> Result<Ty, Kept> {
+        if name == "Qt" {
+            return Ok(Ty::Exact(ty));
+        }
+        if self.core.type_named(name).is_some() {
+            self.cores.set(true);
+            return Ok(Ty::Exact(ty));
+        }
+        Err(self.no(format!("`{name}` is not in {CORE} yet"), at))
     }
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up
@@ -519,12 +579,14 @@ impl<'s> Pass<'s> {
                             property.span.start as usize,
                         ));
                     }
-                    if let Some(type_name) = &property.type_name
-                        && let Some(simple) = type_name.name.as_simple()
-                        && matches!(simple, "var" | "variant")
-                    {
-                        let span = type_name.name.span;
-                        self.change(span.start as usize..span.end as usize, "unknown");
+                    if let Some(type_name) = &property.type_name {
+                        if let Some(simple) = type_name.name.as_simple()
+                            && matches!(simple, "var" | "variant")
+                        {
+                            let span = type_name.name.span;
+                            self.change(span.start as usize..span.end as usize, "unknown");
+                        }
+                        self.written_type(type_name)?;
                     }
                     if let Some(value) = &property.value {
                         self.value(value, scope, root)?;
@@ -550,10 +612,36 @@ impl<'s> Pass<'s> {
                     let ty = self.object_type(&component.object)?;
                     self.object(&component.object, ty, ty, true)?;
                 }
-                QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+                QmlMember::Signal(signal) => {
+                    for param in &signal.params {
+                        if let Some(type_name) = &param.type_name {
+                            self.written_type(type_name)?;
+                        }
+                    }
+                }
+                QmlMember::Enum(_) => {}
             }
         }
         Ok(())
+    }
+
+    /// A type the file writes, a property's or a signal argument's, is one
+    /// it names as much as one it makes: renamed as one is, and had from
+    /// the module that has it (`property QtObject o` imports `Ljos.Core`).
+    /// A value type (`int`, `font`) and a dotted name, an enum's or a
+    /// module's, are not types of either module.
+    fn written_type(&mut self, type_name: &QmlTypeName<'_>) -> Result<(), Kept> {
+        let Some(name) = type_name.name.as_simple() else {
+            return Ok(());
+        };
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return Ok(());
+        }
+        let at = type_name.name.span;
+        if let Some(new) = renamed_type(name) {
+            self.change(at.start as usize..at.end as usize, new);
+        }
+        self.named_type(name, at.start as usize, 0).map(|_| ())
     }
 
     /// What a `PropertyChanges` or `Connections` acts on.
