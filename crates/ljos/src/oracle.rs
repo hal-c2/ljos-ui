@@ -505,6 +505,13 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    fn toolkit_base(&self, ty: EngineType) -> Option<EngineType> {
+        match ty {
+            EngineType::Qt(_) => None,
+            EngineType::Native(i) => self.native(i).toolkit.map(EngineType::Qt),
+        }
+    }
+
     fn signal_types(&self, ty: EngineType, name: &str) -> Option<Vec<String>> {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.signal_types(ty, name),

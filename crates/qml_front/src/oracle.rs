@@ -190,6 +190,14 @@ pub trait TypeOracle {
         None
     }
 
+    /// The type of the table a native type is built on, whose members it
+    /// has under the table's names (an application's `Item` subclass
+    /// extends `Item`). None for a type of the table, and where the oracle
+    /// does not know.
+    fn toolkit_base(&self, _ty: Self::Type) -> Option<Self::Type> {
+        None
+    }
+
     /// The type of each argument of the signal, as the table writes it, in
     /// the order of [`signal`](Self::signal)'s names. None where the table
     /// has no types for it.

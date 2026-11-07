@@ -265,9 +265,12 @@ impl<O: TypeOracle> Project<O> {
             .controls_style()
             .map_or(qml_compat::CONTROLS_STYLE, |style| style.name.as_str());
         let locals = |name: &str| self.root_beside(key, name);
+        // The program's own types, as the checker has them.
+        let natives = crate::OracleNatives::new(&self.oracle);
         let styled = qml_compat::Styled {
             locals: &locals,
             style,
+            natives: Some(&natives),
         };
         let outcome = qml_compat::lower(text, &styled);
         let references = qml_compat::references(text);
