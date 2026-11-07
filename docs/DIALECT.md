@@ -1320,6 +1320,30 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 - **API ledger.** `crates/qt_types/src/ljos.txt` is regenerated and
   committed with each API change (`own_types`).
 
+### 10.1 Working on the dialect in parallel
+
+Lanes build areas side by side, and each PR touches only its own area's
+files, so that one merging does not put the others in conflict:
+
+- **Renames** go only in your area's
+  `crates/qml_compat/src/renames/<area>.rs`. A new area is a new file and
+  one line in `AREAS` (`renames/mod.rs`). A Qt type's member renames live
+  in one area, and a type is renamed in one area; a unit test holds both.
+- **Tests** go only in `crates/qml_compat/src/tests/<area>.rs`. Shared
+  helpers stay in `tests/mod.rs`.
+- **Pass logic** for an area goes in its own module, as `arrange.rs` does
+  for layouts, with one call line in `lib.rs`.
+- **Status** goes only in `docs/dialect/status/<area>.md`. The Status line
+  at the top of this file and §6.4's numbers are the track lead's, after
+  merges; a lane puts its corpus counts in its PR body.
+- **`crates/qt_types/src/ljos.txt` is generated.** On a conflict, take
+  either side and regenerate it with
+  `LJOS_OWN_TYPES=write cargo test -p ljos_cli --test own_types`; never
+  merge it by hand.
+- **A PR is done when it can merge**: `gh pr view N --json
+  mergeable,mergeStateStatus` says `MERGEABLE` and `CLEAN`, not when it is
+  pushed.
+
 ## 11. Performance budget
 
 | Where | Budget | Phase 1 |
@@ -1452,14 +1476,22 @@ on the Qt backend (10 steps).
 
 ## 13. Milestones
 
+Each area's status, what is built and what remains, is in
+`docs/dialect/status/<area>.md` ([ui](dialect/status/ui.md),
+[layout](dialect/status/layout.md), [types](dialect/status/types.md),
+[controls](dialect/status/controls.md) and the rest), written only by the
+lane building that area. The Status line at the top of this file and the
+numbers in §6.4 are updated by the track lead after merges, never by a lane
+PR: a lane puts its corpus counts in its PR body.
+
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `ljos run --compat keep\|lower` without `--watch` (a watched run refuses `lower`: its saves are recompiled as written). Remaining: `--watch` with `lower`, then the rest | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
-| **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
+| **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
-| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K2–K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
+| **M6** Controls | `Ljos.Controls` and styles | Controls corpus lowered; qml6 parity on its features |
 
 ## 14. Answers to note 11's open questions
 
