@@ -1448,9 +1448,9 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   cannot be read, the file is not written and migrate says why, so a
   hand-written module is never overwritten. A compat run (`--compat
   lower`) holds the module in the project the same way. Where the project
-  has a script of that path of its own, the script stays, and the file is
-  lowered with its tables left ListModels, so it never imports rows the
-  script does not declare.
+  has a script of that path of its own, the script stays and the file is
+  kept as written, as migrate keeps it, since its lowered text would import
+  rows the script does not declare.
 - Exit status 0 means every file was read, and 2 means a file could not be
   read or written.
 - The edits are text replacements at known spans, which keeps every line
