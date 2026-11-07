@@ -100,6 +100,9 @@ pub struct Project<O> {
     written: BTreeMap<String, String>,
     alone: BTreeMap<String, qml_compat::Alone>,
     lowered: BTreeMap<String, qml_compat::Outcome>,
+    /// Per lowered file, the scripts the pass wrote beside it: the row
+    /// types of its constant `ListModel`s (docs/DIALECT.md §4.8).
+    generated: BTreeMap<String, Vec<String>>,
 }
 
 /// A project's tree as a program loads it: the modules are known from the
@@ -148,6 +151,7 @@ impl<O: TypeOracle> Project<O> {
             written: BTreeMap::new(),
             alone: BTreeMap::new(),
             lowered: BTreeMap::new(),
+            generated: BTreeMap::new(),
         }
     }
 
@@ -228,6 +232,9 @@ impl<O: TypeOracle> Project<O> {
             }
             self.alone.clear();
             self.lowered.clear();
+            for path in std::mem::take(&mut self.generated).into_values().flatten() {
+                self.remove_script(&path);
+            }
             return;
         }
         let keys: Vec<String> = self.sources.keys().cloned().collect();
@@ -273,6 +280,8 @@ impl<O: TypeOracle> Project<O> {
     /// group as a run does (`qml_compat::group`).
     pub fn compat_alone(&self, key: &str, text: &str) -> qml_compat::Alone {
         let locals = Locals { project: self, key };
+        // The file's name names the module of its constant tables' rows.
+        let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
         let references = qml_compat::references(text);
         let uses = references
             .modules
@@ -281,7 +290,7 @@ impl<O: TypeOracle> Project<O> {
             .map(str::to_owned)
             .collect();
         qml_compat::Alone {
-            outcome: qml_compat::lower(text, &locals),
+            outcome: qml_compat::lower_as(text, stem, &locals),
             references,
             uses,
         }
@@ -331,12 +340,50 @@ impl<O: TypeOracle> Project<O> {
                     self.written.get(&key).cloned()
                 }
             };
+            self.settle_modules(&key, &outcome);
             if let Some(text) = text
                 && self.sources.get(&key) != Some(&text)
             {
                 self.put_text(&key, text);
             }
             self.lowered.insert(key, outcome);
+        }
+    }
+
+    /// Gives the project the modules `outcome` of the file `key` imports
+    /// that the pass wrote, and forgets those it wrote before and does not
+    /// now. A script of that path the project has already is the
+    /// project's, and stays.
+    fn settle_modules(&mut self, key: &str, outcome: &qml_compat::Outcome) {
+        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
+        let modules: Vec<(String, String)> = match outcome {
+            qml_compat::Outcome::Lowered(lowered) => lowered
+                .modules
+                .iter()
+                .map(|(name, text)| {
+                    let path = dir.map_or_else(|| name.clone(), |dir| format!("{dir}/{name}"));
+                    (path, text.clone())
+                })
+                .collect(),
+            qml_compat::Outcome::Unchanged | qml_compat::Outcome::Kept(_) => Vec::new(),
+        };
+        let before = self.generated.remove(key).unwrap_or_default();
+        for path in &before {
+            if !modules.iter().any(|(p, _)| p == path) {
+                self.remove_script(path);
+            }
+        }
+        let mut wrote = Vec::new();
+        for (path, text) in modules {
+            if before.contains(&path) || !self.scripts.contains_key(&path) {
+                if self.scripts.get(&path) != Some(&text) {
+                    self.add_script(&path, text);
+                }
+                wrote.push(path);
+            }
+        }
+        if !wrote.is_empty() {
+            self.generated.insert(key.to_string(), wrote);
         }
     }
 
@@ -493,6 +540,9 @@ impl<O: TypeOracle> Project<O> {
         self.paths.remove(key);
         if self.alone.remove(key).is_some() {
             self.lowered.remove(key);
+            for path in self.generated.remove(key).unwrap_or_default() {
+                self.remove_script(&path);
+            }
             self.lower_naming(key);
             self.settle_compat();
         }
