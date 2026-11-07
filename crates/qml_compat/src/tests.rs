@@ -624,7 +624,12 @@ fn ljos_controls_has_what_qt_controls_have() {
     for name in [
         "AbstractButton",
         "Button",
+        "Dialog",
+        "ItemDelegate",
         "Label",
+        "Menu",
+        "MenuItem",
+        "MenuSeparator",
         "Popup",
         "ScrollBar",
         "ScrollView",
