@@ -409,8 +409,157 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 self.javascript_value(&key)
             }
             Some(Target::Namespace(_)) => self.arena.intern(Kind::Namespace(name.into())),
+            Some(Target::Global(qml_front::names::Global::Core)) => self.core_global(name),
             _ => Ty::ERROR,
         }
+    }
+
+    /// What `Ljos.Core` gives a file that imports it, by name
+    /// (docs/DIALECT.md §4.3).
+    fn core_global(&mut self, name: &str) -> Ty {
+        let numbers = |names: &[&str]| -> Vec<Param> {
+            names
+                .iter()
+                .map(|name| Param {
+                    name: (*name).into(),
+                    ty: Ty::NUMBER,
+                    optional: false,
+                    written: None,
+                })
+                .collect()
+        };
+        let made = |checker: &mut Self, params: Vec<Param>, ret: Ty| {
+            checker.arena.function(Sig {
+                params: params.into_boxed_slice(),
+                rest: None,
+                ret,
+            })
+        };
+        let value = |checker: &mut Self, ty: &str| {
+            let oracle = checker.c.types.oracle;
+            // The vectors and `quaternion` are QtQuick's value types.
+            match oracle
+                .module_type("QtQml", ty)
+                .or_else(|| oracle.module_type("QtQuick", ty))
+            {
+                Some(ty) => checker.object_ty(&qml_front::types::Kind::Builtin(ty)),
+                None => Ty::ERROR,
+            }
+        };
+        let colour = |checker: &mut Self, names: &[&str]| {
+            let mut params = numbers(names);
+            params.push(Param {
+                name: "a".into(),
+                ty: Ty::NUMBER,
+                optional: true,
+                written: None,
+            });
+            made(checker, params, Ty::COLOR)
+        };
+        match name {
+            "later" => self.arena.function(Sig {
+                params: Box::new([Param {
+                    name: "f".into(),
+                    ty: Ty::UNKNOWN,
+                    optional: false,
+                    written: None,
+                }]),
+                rest: Some(Ty::UNKNOWN),
+                ret: Ty::VOID,
+            }),
+            "point" | "vector2d" => {
+                let ret = value(self, name);
+                made(self, numbers(&["x", "y"]), ret)
+            }
+            "size" => {
+                let ret = value(self, name);
+                made(self, numbers(&["width", "height"]), ret)
+            }
+            "rect" => {
+                let ret = value(self, name);
+                made(self, numbers(&["x", "y", "width", "height"]), ret)
+            }
+            "vector3d" => {
+                let ret = value(self, name);
+                made(self, numbers(&["x", "y", "z"]), ret)
+            }
+            "vector4d" => {
+                let ret = value(self, name);
+                made(self, numbers(&["x", "y", "z", "w"]), ret)
+            }
+            "quaternion" => {
+                let ret = value(self, name);
+                made(self, numbers(&["scalar", "x", "y", "z"]), ret)
+            }
+            "rgba" => colour(self, &["r", "g", "b"]),
+            "hsla" => colour(self, &["h", "s", "l"]),
+            "hsva" => colour(self, &["h", "s", "v"]),
+            "url" => made(
+                self,
+                vec![Param {
+                    name: "url".into(),
+                    ty: Ty::STRING,
+                    optional: false,
+                    written: None,
+                }],
+                Ty::STRING,
+            ),
+            "App" => {
+                let field = |name: &str, ty: Ty| Field {
+                    name: name.into(),
+                    ty,
+                    optional: false,
+                    readonly: true,
+                };
+                let platform = self.arena.intern(Kind::Record(Box::new([
+                    field("os", Ty::STRING),
+                    field("pluginName", Ty::STRING),
+                ])));
+                let open = made(
+                    self,
+                    vec![Param {
+                        name: "url".into(),
+                        ty: Ty::STRING,
+                        optional: false,
+                        written: None,
+                    }],
+                    Ty::BOOLEAN,
+                );
+                let quit = made(self, Vec::new(), Ty::VOID);
+                self.arena.intern(Kind::Record(Box::new([
+                    field("openUrlExternally", open),
+                    field("platform", platform),
+                    field("quit", quit),
+                ])))
+            }
+            _ => Ty::ERROR,
+        }
+    }
+
+    /// What a colour has of its own: its channels, and the methods that
+    /// make another colour from it.
+    fn color_member(&mut self, name: &str) -> Option<Ty> {
+        let colour_of = |checker: &mut Self, param: &str, ty: Ty, optional: bool| {
+            checker.arena.function(Sig {
+                params: Box::new([Param {
+                    name: param.into(),
+                    ty,
+                    optional,
+                    written: None,
+                }]),
+                rest: None,
+                ret: Ty::COLOR,
+            })
+        };
+        Some(match name {
+            "r" | "g" | "b" | "a" | "hsvHue" | "hsvSaturation" | "hsvValue" | "hslHue"
+            | "hslSaturation" | "hslLightness" => Ty::NUMBER,
+            "valid" => Ty::BOOLEAN,
+            "darker" | "lighter" => colour_of(self, "factor", Ty::NUMBER, true),
+            "alpha" => colour_of(self, "alpha", Ty::NUMBER, false),
+            "tint" => colour_of(self, "tint", Ty::COLOR, false),
+            _ => return None,
+        })
     }
 
     // Members.
@@ -564,7 +713,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             Kind::Array { .. } => builtins::array_member(&mut self.arena, part, name),
             Kind::Map { .. } => builtins::map_member(&mut self.arena, part, name),
-            Kind::String | Kind::Str(_) | Kind::Color => {
+            Kind::Color => self
+                .color_member(name)
+                .or_else(|| builtins::primitive_member(&mut self.arena, part, P::String, name)),
+            Kind::String | Kind::Str(_) => {
                 builtins::primitive_member(&mut self.arena, part, P::String, name)
             }
             Kind::Number | Kind::Num(_) => {

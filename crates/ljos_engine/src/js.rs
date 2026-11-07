@@ -2615,6 +2615,26 @@ const PRELUDE: &str = r##"
   };
   Object.defineProperty(g, "Qt", { value: Qt, writable: true, configurable: true });
 
+  // What `Ljos.Core` gives a file that imports it (docs/DIALECT.md §4.3).
+  // Not globals: the compiled file takes the ones it names from here, so a
+  // file that does not import `Ljos.Core` has none of them. `App` reads
+  // `Qt` when asked, which the platform fills in after this.
+  const App = Object.freeze({
+    get platform() { return g.Qt.platform; },
+    openUrlExternally(url) { return g.Qt.openUrlExternally(url); },
+    quit() { g.Qt.quit(); },
+  });
+  Object.defineProperty(g, "__ljos_core", {
+    value: Object.freeze({
+      later: Qt.callLater,
+      point: Qt.point, size: Qt.size, rect: Qt.rect,
+      vector2d: Qt.vector2d, vector3d: Qt.vector3d, vector4d: Qt.vector4d,
+      quaternion: Qt.quaternion,
+      rgba, hsla, hsva,
+      App,
+    }),
+  });
+
   // JSON.stringify as Qt's: a QObject is written with the properties a
   // for-in sees, in its order, its signals and methods aside; walking into
   // an object it is already inside throws, unless the replacer keeps the

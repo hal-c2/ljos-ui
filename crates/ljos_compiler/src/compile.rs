@@ -206,6 +206,9 @@ struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     /// Whether a script of the file calls `qsTr`, which then needs the
     /// context at run time.
     translates: bool,
+    /// What of `Ljos.Core`'s the file's scripts name (`later`, `point`),
+    /// which the module takes from the runtime.
+    cores: std::collections::BTreeSet<String>,
     /// The type a property is declared with, by object and name.
     declared: HashMap<(usize, String), String>,
     /// The enums of the file's components: inline name, enum, keys.
@@ -278,6 +281,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             diagnostics: Vec::new(),
             context: stem(key).to_string(),
             translates: false,
+            cores: std::collections::BTreeSet::new(),
             declared: HashMap::new(),
             enums: Vec::new(),
             qt,
@@ -2003,6 +2007,27 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             source.push_str(&code);
             functions.push(function);
         }
+        if !self.cores.is_empty() {
+            // What `Ljos.Core` gives is not a global: the module takes what
+            // it names from the runtime, so a file that does not import it
+            // has none of it. `url` is the file's own, as `Qt.resolvedUrl`
+            // is. At the end, so no line moves.
+            let given: Vec<&str> = self
+                .cores
+                .iter()
+                .map(String::as_str)
+                .filter(|name| *name != "url")
+                .collect();
+            if !given.is_empty() {
+                source.push_str(&format!(
+                    "\nconst {{ {} }} = globalThis.{CORE};\n",
+                    given.join(", ")
+                ));
+            }
+            if self.cores.contains("url") {
+                source.push_str("\nconst url = (u) => Qt.resolvedUrl(u);\n");
+            }
+        }
         if MAKERS.iter().any(|maker| source.contains(maker)) {
             // What a script makes by address is addressed from its own
             // file, which only the running program can place: the module
@@ -2252,6 +2277,9 @@ const AT: &str = "__ljos_at";
 /// The runtime's maker of a module's `Qt`: `(url) => Qt`.
 const QT_AT: &str = "__ljos_qt";
 
+/// The runtime's object of what `Ljos.Core` gives a file that imports it.
+const CORE: &str = "__ljos_core";
+
 /// The runtime's maker of a file's `qsTr`: `(context) => qsTr`.
 const TR_IN: &str = "__ljos_qsTr";
 
@@ -2259,8 +2287,9 @@ const TR_IN: &str = "__ljos_qsTr";
 /// one scope: a module's export ([`AT`]) shadows a global of the same name
 /// ([`PLACE`]) in that module alone, so two of them alike would break only
 /// the files that use both.
-const HELPERS: [&str; 11] = [
+const HELPERS: [&str; 12] = [
     VALUE_AT, VALUE_IN, VALUE_HELD, PLACE, NAMED, KNOWN, ATTACHED, SINGLETON, AT, QT_AT, TR_IN,
+    CORE,
 ];
 
 const _: () = assert!(
