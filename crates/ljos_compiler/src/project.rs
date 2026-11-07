@@ -79,6 +79,8 @@ pub struct Project<O> {
     /// The modules told to the front end that are built with C++, with its
     /// files: where a name nothing here has may have been meant to come from.
     native: BTreeMap<String, Vec<String>>,
+    /// Every module told to the front end, with QML types or none.
+    described: BTreeSet<String>,
     /// Names only the context an instance is made in has at run time. Known
     /// once every file is in.
     dynamic: OnceCell<HashSet<String>>,
@@ -137,6 +139,7 @@ impl<O: TypeOracle> Project<O> {
             scripts: BTreeMap::new(),
             oracle,
             native: BTreeMap::new(),
+            described: BTreeSet::new(),
             dynamic: OnceCell::new(),
             callable: RefCell::new(HashMap::new()),
             summarising: Cell::new(false),
@@ -259,15 +262,63 @@ impl<O: TypeOracle> Project<O> {
         let Some(text) = self.written.get(key) else {
             return;
         };
-        let outcome = qml_compat::lower(text, &|name: &str| self.root_beside(key, name));
+        let alone = self.compat_alone(key, text);
+        self.alone.insert(key.to_string(), alone);
+    }
+
+    /// What the compat pass makes of `text` as the file `key` of this
+    /// project, alone: its types are the files beside it, and those of the
+    /// project's modules and directories it imports, as the front end finds
+    /// them. `ljos migrate` asks this of a file, and lowers it with its
+    /// group as a run does (`qml_compat::group`).
+    pub fn compat_alone(&self, key: &str, text: &str) -> qml_compat::Alone {
+        let locals = Locals { project: self, key };
         let references = qml_compat::references(text);
-        self.alone.insert(
-            key.to_string(),
-            qml_compat::Alone {
-                outcome,
-                references,
-            },
-        );
+        let uses = references
+            .modules
+            .iter()
+            .flat_map(|uri| self.front.module_files(uri))
+            .map(str::to_owned)
+            .collect();
+        qml_compat::Alone {
+            outcome: qml_compat::lower(text, &locals),
+            references,
+            uses,
+        }
+    }
+
+    /// Lowers again, alone, each file that imports the module `uri`, which
+    /// was told to the front end after they came in: a project opened reads
+    /// a module as a file reaches it. Whether there was one; the caller
+    /// settles the groups once for all it tells.
+    fn lower_importing(&mut self, uri: &str) -> bool {
+        if !self.compat {
+            return false;
+        }
+        let importing: Vec<String> = self
+            .alone
+            .iter()
+            .filter(|(_, alone)| alone.references.modules.iter().any(|m| m == uri))
+            .map(|(key, _)| key.clone())
+            .collect();
+        for key in &importing {
+            self.lower_alone(key);
+        }
+        !importing.is_empty()
+    }
+
+    /// The root object of the file `file` (a key), from its text if it is
+    /// in, else from the disk.
+    fn root_of(&self, file: &str) -> Option<qml_compat::Root> {
+        if let Some(text) = self.written(file) {
+            return qml_compat::root(text);
+        }
+        let path = match (self.paths.get(file), &self.tree) {
+            (Some(path), _) => path.clone(),
+            (None, Some(tree)) => tree.root.join(format!("{file}.qml")),
+            (None, None) => return None,
+        };
+        qml_compat::root(&std::fs::read_to_string(path).ok()?)
     }
 
     /// Gives the front end each file as its group is lowered, where that
@@ -460,8 +511,10 @@ impl<O: TypeOracle> Project<O> {
     /// module says nothing a file needs to be told, as the files of a
     /// directory are its types already. Add the files it names first.
     pub fn add_qmldir(&mut self, dir: &str, text: &str) {
-        if let Some(module) = discover::qmldir(text) {
-            self.add_module(dir, &module);
+        if let Some(module) = discover::qmldir(text)
+            && self.add_module(dir, &module)
+        {
+            self.settle_compat();
         }
     }
 
@@ -482,11 +535,15 @@ impl<O: TypeOracle> Project<O> {
         (!notes.is_empty()).then(|| notes.join("; "))
     }
 
-    fn add_module(&mut self, dir: &str, module: &Module) {
+    /// Tells the front end the module `module` of the directory `dir`;
+    /// whether a file lowered before it was lowered again, so that its
+    /// group is to settle.
+    fn add_module(&mut self, dir: &str, module: &Module) -> bool {
         if !module.native.is_empty() {
             self.native
                 .insert(module.uri.clone(), module.native.clone());
         }
+        self.described.insert(module.uri.clone());
         for ty in &module.types {
             let file = join(dir, &ty.path);
             let file = file.strip_suffix(".qml").unwrap_or(&file);
@@ -494,6 +551,7 @@ impl<O: TypeOracle> Project<O> {
                 self.add_type(&module.uri, &ty.name, file);
             }
         }
+        self.lower_importing(&module.uri)
     }
 
     /// Every `.qml` file under `root`, and the modules its `qmldir` and
@@ -533,6 +591,8 @@ impl<O: TypeOracle> Project<O> {
         // Every file is in first: a module of one root may name a file
         // another root has.
         for ((dir, _, module), counted) in found.iter().zip(counted(&found, aliases)) {
+            // Compat is off while a project loads, so nothing is lowered
+            // again.
             if counted {
                 project.add_module(dir, module);
             }
@@ -792,15 +852,19 @@ impl<O: TypeOracle> Project<O> {
                 }
             }
         }
+        let mut lowered_again = false;
         for i in wanted {
             // A module of the URI that an import does not see is read, as
             // its directory is, but its types are not the URI's.
             if tree.counted[i] && tree.told.insert(i) {
                 let (dir, module) = &tree.modules[i];
-                self.add_module(dir, module);
+                lowered_again |= self.add_module(dir, module);
             }
         }
         self.tree = Some(tree);
+        if lowered_again {
+            self.settle_compat();
+        }
         read
     }
 
@@ -1020,6 +1084,49 @@ fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item =
 /// (a module of native code, whose build names only its sources) has
 /// nothing for an import to find, and hides nothing. With no such
 /// directory every description counts.
+/// What the compat pass is told of the project around the file `key`.
+struct Locals<'p, O> {
+    project: &'p Project<O>,
+    key: &'p str,
+}
+
+impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
+    fn root(&self, name: &str) -> Option<qml_compat::Root> {
+        self.project.root_beside(self.key, name).or_else(|| {
+            // A type of a module the file is a type of, wherever the
+            // module's files are, as the front end sees it.
+            let front = &self.project.front;
+            front
+                .modules_of(self.key)
+                .iter()
+                .find_map(|uri| front.module_type(uri, name))
+                .and_then(|file| self.project.root_of(file))
+        })
+    }
+
+    fn module(&self, uri: &str) -> Option<qml_compat::ProjectModule> {
+        if self.project.front.has_module(uri) {
+            Some(qml_compat::ProjectModule::Files)
+        } else if self.project.described.contains(uri) {
+            Some(qml_compat::ProjectModule::Native)
+        } else {
+            None
+        }
+    }
+
+    fn imported(&self, from: qml_compat::Imported<'_>, name: &str) -> Option<qml_compat::Root> {
+        let file = match from {
+            qml_compat::Imported::Module(uri) => {
+                self.project.front.module_type(uri, name)?.to_owned()
+            }
+            qml_compat::Imported::Dir(path) => {
+                join(&self.project.front.import_dir(self.key, path), name)
+            }
+        };
+        self.project.root_of(&file)
+    }
+}
+
 fn counted(found: &[(String, PathBuf, Module)], aliases: &Aliases) -> Vec<bool> {
     let home = |uri: &str| uri.replace('.', "/");
     let at_home: HashSet<&str> = found

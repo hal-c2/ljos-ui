@@ -13,7 +13,7 @@
 //! | Status | Means |
 //! |---|---|
 //! | 0 | Every file was read (a kept file is not a failure: it runs as written). |
-//! | 2 | A file could not be read or written; the others were still handled. |
+//! | 2 | A file could not be read or written, or a directory read as a project; the others were still handled. |
 
 use std::{
     collections::BTreeMap,
@@ -21,8 +21,11 @@ use std::{
 };
 
 use clap::Args;
+use ljos::dev::EngineOracle;
+use ljos_compiler::Project;
 use qml_compat::Outcome;
 
+use crate::render::oracle_for_modules;
 use crate::stdout::outln;
 use crate::walk::{files_below, is_qml};
 
@@ -42,22 +45,48 @@ impl Migrate {
     /// The exit status.
     pub fn run(self) -> u8 {
         let (mut lowered, mut kept, mut failed) = (0, 0, false);
-        let mut files = Vec::new();
+        // Each file with the project it is of: the directory named, or the
+        // directory of a file named, read as a lowered run reads it, so
+        // the modules and directories a file imports are files to it.
+        let mut files: Vec<(PathBuf, usize)> = Vec::new();
+        let mut roots: Vec<PathBuf> = Vec::new();
         for path in &self.paths {
+            let root = if path.is_dir() {
+                path.clone()
+            } else {
+                path.parent().unwrap_or(Path::new(".")).to_owned()
+            };
+            let at = roots.iter().position(|r| *r == root).unwrap_or_else(|| {
+                roots.push(root);
+                roots.len() - 1
+            });
             if path.is_dir() {
-                if let Err(e) = files_below(path, is_qml, &mut files) {
+                let mut below = Vec::new();
+                if let Err(e) = files_below(path, is_qml, &mut below) {
                     eprintln!("{}: {e}", path.display());
                     failed = true;
                 }
+                files.extend(below.into_iter().map(|file| (file, at)));
             } else {
-                files.push(path.clone());
+                files.push((path.clone(), at));
             }
         }
+        let projects: Vec<Option<Project<EngineOracle>>> = roots
+            .iter()
+            .map(|root| match Project::load(root, oracle_for_modules()) {
+                Ok(project) => Some(project),
+                Err(e) => {
+                    eprintln!("{}: {e}", root.display());
+                    failed = true;
+                    None
+                }
+            })
+            .collect();
         // Every file first: files that name one another are lowered
         // together, as a lowered run lowers them (`qml_compat::group`).
         let mut alone = BTreeMap::new();
         let mut texts = BTreeMap::new();
-        for file in &files {
+        for (file, at) in &files {
             let text = match std::fs::read_to_string(file) {
                 Ok(text) => text,
                 Err(e) => {
@@ -66,21 +95,21 @@ impl Migrate {
                     continue;
                 }
             };
-            // A type the file names that a file beside it is: what that
-            // file's root object.
-            let dir = file.parent().unwrap_or(Path::new("."));
-            let locals = |name: &str| {
-                let beside = std::fs::read_to_string(dir.join(format!("{name}.qml"))).ok()?;
-                qml_compat::root(&beside)
-            };
-            let key = key_of(file);
-            alone.insert(
-                key.clone(),
-                qml_compat::Alone {
-                    outcome: qml_compat::lower(&text, &locals),
+            let root = &roots[*at];
+            let mut one = match &projects[*at] {
+                Some(project) => project.compat_alone(&key_in(root, file), &text),
+                None => qml_compat::Alone {
+                    outcome: qml_compat::lower(&text, &|_: &str| None),
                     references: qml_compat::references(&text),
+                    uses: Vec::new(),
                 },
-            );
+            };
+            // The project's keys are from its root; these are the paths.
+            for used in &mut one.uses {
+                *used = key_of(&root.join(format!("{used}.qml")));
+            }
+            let key = key_of(file);
+            alone.insert(key.clone(), one);
             texts.insert(key, (file, text));
         }
         for (key, outcome) in qml_compat::group(&alone) {
@@ -126,6 +155,18 @@ fn key_of(file: &Path) -> String {
     joined
         .strip_prefix("//")
         .map_or(joined.clone(), |rest| format!("/{rest}"))
+}
+
+/// The key of `file` in the project under `root`: its path from there
+/// without `.qml`, with `/` between the parts.
+fn key_in(root: &Path, file: &Path) -> String {
+    let path = file.strip_prefix(root).unwrap_or(file).with_extension("");
+    let parts: Vec<String> = path
+        .components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.join("/")
 }
 
 /// The 1-based line and column (in characters) of byte `at` of `text`.

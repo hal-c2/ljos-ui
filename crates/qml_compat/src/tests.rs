@@ -196,6 +196,7 @@ fn alone(source: &str) -> Alone {
     Alone {
         outcome: lower(source, &locals),
         references: references(source),
+        uses: Vec::new(),
     }
 }
 
@@ -505,5 +506,154 @@ fn where_a_positioner_and_the_arrangement_disagree_the_file_is_kept() {
     ] {
         let reason = kept_for(&format!("import QtQuick\n{body}\n"));
         assert!(reason.contains(why), "{body}: {reason}");
+    }
+}
+
+/// A project with a module `Gauges` of QML files (`Dial`, a `Rectangle`;
+/// `Palette`, a singleton `QtObject`; `Text`, a type of its own of Qt's
+/// name), a native module `Sensors`, and a directory `parts` with `Swatch`.
+struct Project;
+
+impl Locals for Project {
+    fn root(&self, _: &str) -> Option<Root> {
+        None
+    }
+
+    fn module(&self, uri: &str) -> Option<ProjectModule> {
+        match uri {
+            "Gauges" => Some(ProjectModule::Files),
+            "Sensors" => Some(ProjectModule::Native),
+            _ => None,
+        }
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        match (from, name) {
+            (Imported::Module("Gauges"), "Dial") => Some(root_of("Rectangle", &[])),
+            (Imported::Module("Gauges"), "Palette") => Some(root_of("QtObject", &[])),
+            (Imported::Module("Gauges"), "Text") => Some(root_of("Rectangle", &[])),
+            (Imported::Dir("parts"), "Swatch") => Some(root_of("Rectangle", &[])),
+            _ => None,
+        }
+    }
+}
+
+fn lowered_in_project(source: &str) -> String {
+    match lower(source, &Project) {
+        Outcome::Lowered(lowered) => lowered.text,
+        other => panic!("not lowered: {other:?}"),
+    }
+}
+
+#[test]
+fn a_module_of_the_project_is_lowered_and_its_types_are_their_roots() {
+    let text = lowered_in_project(
+        "import QtQuick\nimport Gauges\nItem { Dial { id: d; color: \"red\" } Rectangle { color: d.color } }\n",
+    );
+    assert_eq!(
+        text,
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Gauges\n\
+         Item { Dial { id: d; fill: \"red\" } Rectangle { fill: d.fill } }\n"
+    );
+}
+
+#[test]
+fn a_directory_imported_by_path_has_its_types_by_their_roots() {
+    let text = lowered_in_project(
+        "import QtQuick\nimport \"parts\"\nItem { Swatch { color: \"red\" } }\n",
+    );
+    assert!(text.contains("Swatch { fill: \"red\" }"), "{text}");
+    // A script imported by path is no directory of types.
+    let text = lowered_in_project(
+        "import QtQuick\nimport \"lib.js\" as Lib\nItem { Rectangle { color: Lib.tint } }\n",
+    );
+    assert!(text.contains("fill: Lib.tint"), "{text}");
+}
+
+#[test]
+fn a_singleton_of_the_project_is_read_as_its_root() {
+    // A `QtObject` has no `fill`: its `color` is its own.
+    let text =
+        lowered_in_project("import QtQuick\nimport Gauges\nRectangle { color: Palette.color }\n");
+    assert!(text.contains("fill: Palette.color"), "{text}");
+}
+
+#[test]
+fn a_type_of_the_project_imported_after_qt_is_the_projects() {
+    // `Text` of `Gauges` is a Rectangle: its `color` is a fill.
+    let text =
+        lowered_in_project("import QtQuick\nimport Gauges\nItem { Text { color: \"red\" } }\n");
+    assert!(text.contains("Text { fill: \"red\" }"), "{text}");
+    // Imported before Qt's, the name is Qt's `Text`.
+    let text =
+        lowered_in_project("import Gauges\nimport QtQuick\nItem { Text { color: \"red\" } }\n");
+    assert!(text.contains("Text { color: \"red\" }"), "{text}");
+}
+
+#[test]
+fn a_module_the_project_does_not_have_as_files_keeps_the_file() {
+    let kept = |source: &str| match lower(source, &Project) {
+        Outcome::Kept(kept) => (kept.reason, kept.at),
+        other => panic!("lowered: {other:?}"),
+    };
+    assert_eq!(
+        kept("import QtQuick\nimport Sensors\nItem { }\n"),
+        (
+            "it imports `Sensors`, a module of the project whose types are native: they are not lowered"
+                .to_string(),
+            15
+        )
+    );
+    assert_eq!(
+        kept("import QtQuick\nimport Elsewhere\nItem { }\n").0,
+        "it imports `Elsewhere`, which is not lowered yet"
+    );
+    assert_eq!(
+        kept("import QtQuick\nimport Gauges as G\nItem { G.Dial { } }\n").0,
+        "it imports `Gauges` under a name"
+    );
+}
+
+/// The project's loader says which files a module's import brings: they
+/// are of the importer's group wherever they are.
+#[test]
+fn the_files_a_module_import_brings_are_of_the_group() {
+    let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"red\" } }\n";
+    let importer = Alone {
+        outcome: lower(main, &Project),
+        references: references(main),
+        uses: vec!["src/qml/Dial".to_string()],
+    };
+    assert!(matches!(importer.outcome, Outcome::Lowered(_)));
+    let files = std::collections::BTreeMap::from([
+        ("app/Main".to_string(), importer),
+        (
+            "src/qml/Dial".to_string(),
+            alone("import QtQuick\nImage { }\n"),
+        ),
+    ]);
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Main"] else {
+        panic!("{:?}", outcomes["app/Main"]);
+    };
+    assert!(
+        kept.reason.contains("`Dial.qml`, which is kept"),
+        "{}",
+        kept.reason
+    );
+}
+
+#[test]
+fn a_singleton_beside_the_file_is_read_as_its_root() {
+    let tones = "pragma Singleton\nimport QtQml\nQtObject { property color color: \"#30a050\" }\n";
+    assert_eq!(
+        crate::root(tones).map(|root| root.type_name).as_deref(),
+        Some("QtObject")
+    );
+    let locals = |name: &str| (name == "Tones").then(|| crate::root(tones)).flatten();
+    let source = "import QtQuick\nRectangle {\n  Rectangle { color: Tones.color }\n}\n";
+    match lower(source, &locals) {
+        Outcome::Lowered(lowered) => assert!(lowered.text.contains("fill: Tones.color")),
+        other => panic!("not lowered: {other:?}"),
     }
 }
