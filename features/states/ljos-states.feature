@@ -1,0 +1,234 @@
+# Sources:
+#   docs/DIALECT.md §4.9 (states in Ljós's API)
+#   https://doc.qt.io/qt-6/qml-qtquick-propertychanges.html
+#   https://doc.qt.io/qt-6/qml-qtquick-state.html
+#   https://www.typescriptlang.org/docs/handbook/2/everyday-types.html#literal-types
+# Verified on Qt 6.11.2 (qml6, offscreen).
+# Qt's QML says what a state changes in two ways: `PropertyChanges { target: box; width: 30 }` and
+# `PropertyChanges { box.width: 30 }`. Both run on Qt, and the file that writes them side by side is
+# `@qt-parity`. Ljós's API has only the second, and lowering a file to it is Ljós's: those scenarios,
+# and the checker's, are `@ljos-only`.
+
+Feature: States in Ljós's API
+  A state says what its objects look like while it holds, each change
+  named by the object's id: `PropertyChanges { box.width: 30 }`. A file
+  in Qt's QML that names the object once, as a `target`, is lowered to
+  that form. The names a file gives its states are the only values its
+  `state` takes: a script that sets or compares another, or a state that
+  extends one, is a check error before anything runs.
+
+  Rule: A change written through a target is the change written through the id
+
+    @qt-parity
+    Scenario: A target's changes and an id's changes do the same
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 100; height: 60
+          property bool lit: false
+          Rectangle { id: left; objectName: "left"; width: 50; height: 60; color: "#2060c0" }
+          Rectangle { id: right; objectName: "right"; x: 50; width: 50; height: 60; color: "#2060c0" }
+          states: State {
+            name: "lit"; when: root.lit
+            PropertyChanges { target: left; color: "#ffffff"; anchors.leftMargin: 4; width: 40 }
+            PropertyChanges { right.color: "#ffffff"; right.anchors.leftMargin: 4; right.width: 40 }
+          }
+        }
+        """
+      When the property "lit" of "root" is set to true
+      Then the property "state" of "root" is "lit"
+      And the property "width" of "left" is 40
+      And the property "width" of "right" is 40
+      And the pixel at 20, 30 of the window is "#ffffff"
+      And the pixel at 70, 30 of the window is "#ffffff"
+      When the property "lit" of "root" is set to false
+      Then the property "width" of "left" is 50
+      And the property "width" of "right" is 50
+      And the pixel at 20, 30 of the window is "#2060c0"
+      And the pixel at 70, 30 of the window is "#2060c0"
+
+    @ljos-only
+    Scenario: Lowered, a target's changes are written through its id
+      Given Qt QML is lowered to the Ljós API
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 100; height: 60
+          property bool lit: false
+          Rectangle { id: left; objectName: "left"; width: 50; height: 60; color: "#2060c0" }
+          Rectangle { id: right; objectName: "right"; x: 50; width: 50; height: 60; color: "#2060c0" }
+          states: State {
+            name: "lit"; when: root.lit
+            PropertyChanges { target: left; color: "#ffffff"; anchors.leftMargin: 4; width: 40 }
+            PropertyChanges { right.color: "#ffffff"; right.anchors.leftMargin: 4; right.width: 40 }
+          }
+        }
+        """
+      Then the property "fill" of "left" is "#2060c0"
+      When the property "lit" of "root" is set to true
+      Then the property "state" of "root" is "lit"
+      And the property "fill" of "left" is "#ffffff"
+      And the property "width" of "left" is 40
+      And the property "width" of "right" is 40
+      And the pixel at 20, 30 of the window is "#ffffff"
+      And the pixel at 70, 30 of the window is "#ffffff"
+      When the property "lit" of "root" is set to false
+      Then the property "fill" of "left" is "#2060c0"
+      And the property "width" of "left" is 50
+      And the pixel at 20, 30 of the window is "#2060c0"
+
+    @ljos-only @headless
+    Scenario: ljos migrate writes a target's changes through its id
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          Rectangle { id: face; color: "#2060c0" }
+          states: [
+            State { name: "lit"; PropertyChanges { target: face; color: "#ffffff"; border.width: 2 } },
+            State {
+              name: "dim"
+              PropertyChanges {
+                target: face
+                explicit: true
+                color: "#202020"
+                onColorChanged: root.seen()
+              }
+            }
+          ]
+          function seen() {}
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (8 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        Item {
+          id: root
+          Rectangle { id: face; fill: "#2060c0" }
+          states: [
+            State { name: "lit"; PropertyChanges { face.fill: "#ffffff"; face.border.width: 2 } },
+            State {
+              name: "dim"
+              PropertyChanges {
+
+                explicit: true
+                face.fill: "#202020"
+                face.onFillChanged: root.seen()
+              }
+            }
+          ]
+          function seen() {}
+        }
+        """
+
+    # The id form names an object by its id. A target that is a property or a path has none, and
+    # stays a target, which Ljós's `PropertyChanges` still has.
+    @ljos-only @headless
+    Scenario: A target that is not an id stays a target
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          property Item shown: face
+          Rectangle { id: face }
+          states: State { name: "lit"; PropertyChanges { target: root.shown; opacity: 0.5 } }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (1 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        Item {
+          id: root
+          property Item shown: face
+          Rectangle { id: face }
+          states: State { name: "lit"; PropertyChanges { target: root.shown; opacity: 0.5 } }
+        }
+        """
+
+  Rule: A file's `state` is one of the names its states are given
+
+    @ljos-only @headless
+    Scenario: A state the file declares, or none, is set and compared with nothing to report
+      Given the file "Button.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          id: button
+          state: "normal"
+          property bool down: state === "pressed"
+          function press() { button.state = "pressed" }
+          function reset() { state = "" }
+          states: [
+            State { name: "normal" },
+            State { name: "pressed"; extend: "normal" }
+          ]
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    @ljos-only @headless
+    Scenario: A state the file does not declare is reported where it is set, compared or extended
+      Given the file "Button.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          id: button
+          state: "norml"
+          property bool down: state === "presed"
+          function press() { button.state = "presed" }
+          states: [
+            State { name: "normal" },
+            State { name: "pressed"; extend: "norml" }
+          ]
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Button.qml:4:18: error: `state` is `"" | "normal" | "pressed"`; this gives it `"norml"` [ts-assign-type]
+        Button.qml:5:31: error: `===` compares `"" | "normal" | "pressed"` with `"presed"`, which it never is [ts-assign-type]
+        Button.qml:6:45: error: `state` is `"" | "normal" | "pressed"`; this gives it `"presed"` [ts-assign-type]
+        Button.qml:9:46: error: `extend` names `"norml"`, and the states are `"" | "normal" | "pressed"` [ts-assign-type]
+        1 files, 4 errors, 0 warnings
+        ljos: 4 errors
+        """
+
+    # A state named by an expression is known only as the file runs, and a component's states are
+    # declared in its own file: `state` is then any string.
+    @ljos-only @headless
+    Scenario: A state named by an expression leaves `state` a string
+      Given the file "Button.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          id: button
+          property string prefix: "on"
+          function press() { button.state = "anything" }
+          states: [ State { name: button.prefix + "1" } ]
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
