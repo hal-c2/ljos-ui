@@ -297,7 +297,7 @@ a string; neither takes a reviver, a replacer or an indent, which are
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
-| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72, the DPI rounded to a whole number as a platform reports it); with no screen yet, the platform's own points (72 or 96 to the inch). Built with `Screen` (M1) | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
+| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (the screen's logical DPI, exact, over 72: a host may report a fractional DPI, as Qt allows); with no screen yet, the platform's own points (72 or 96 to the inch). Built with `Screen` (M1) | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
 | `Qt.binding` | a `Binding` object, or a state | declarative | |
 | `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
 | `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
