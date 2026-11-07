@@ -841,6 +841,22 @@ pub(crate) struct RowObject {
     /// Its role properties are aliases of the row's object: there is
     /// nothing to keep up to date.
     pub(crate) aliased: bool,
+    /// A row with no value of its own is its own `modelData`.
+    pub(crate) row_is_model_data: bool,
+}
+
+impl RowObject {
+    /// `modelData` of row `i`: the model's value for it, or else the row
+    /// object itself where the delegate takes it so.
+    pub(crate) fn model_data(&self, engine: &Engine, model: &Rc<dyn ItemModel>, i: usize) -> Value {
+        model
+            .model_data(engine, i)
+            .unwrap_or(if self.row_is_model_data {
+                Value::Object(self.id)
+            } else {
+                Value::Undefined
+            })
+    }
 }
 
 /// What a row object is for.
@@ -1302,6 +1318,7 @@ impl Engine {
         shape: &Rc<RowShape>,
         row: usize,
         owner: Option<ObjectId>,
+        row_is_model_data: bool,
     ) -> Result<RowObject, EngineError> {
         let source = model.row_object(row).filter(|o| self.is_alive(*o));
         let shape = match source.and_then(|o| self.meta_of(o)) {
@@ -1316,10 +1333,15 @@ impl Engine {
         };
         set(shape.index, Value::Int(row as i32));
         set(shape.model, Value::Object(data));
-        set(
-            shape.model_data,
-            model.model_data(self, row).unwrap_or_default(),
-        );
+        // A row with no value of its own, as a row of a model of several
+        // roles, is its own `modelData` where `row_is_model_data`:
+        // `modelData.city` reads the role `model.city` does in Qt.
+        let own = if row_is_model_data {
+            Value::Object(data)
+        } else {
+            Value::Undefined
+        };
+        set(shape.model_data, model.model_data(self, row).unwrap_or(own));
         match source {
             Some(o) => {
                 let from = self.meta_of(o);
@@ -1340,6 +1362,7 @@ impl Engine {
             id: data,
             shape,
             aliased: source.is_some(),
+            row_is_model_data,
         })
     }
 }
