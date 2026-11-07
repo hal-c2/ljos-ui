@@ -1461,7 +1461,7 @@ compat pass lowers a file only when every control it names is there.
 | Slice | Controls | State |
 |---|---|---|
 | K1 | `Label`, `AbstractButton`, `Button`, attached `ToolTip`, `ScrollBar` (and its attached form), `ScrollView`, `Popup` | built |
-| K2 | `TextField`, `TextArea` | |
+| K2 | `TextField`, `TextArea` | built |
 | K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | |
 | K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
 | K5 | `FileDialog`, `FolderDialog` (`QtQuick.Dialogs`') | built |
@@ -1516,6 +1516,12 @@ JavaScript`), the checker does not follow an attached object read off
 another object (`save.ToolTip.text`). Read on the object itself
 (`ToolTip.text` inside the `Button`), it checks. The generated `.d.ts`
 (§4.4) covers `Ljos.Ui` only.
+
+Not yet: `TextEdit` is not in `Ljos.Ui`, so a text area's
+`wrapMode: TextEdit.Wrap` keeps its file; `Text.Wrap` is the same value
+and lowers. `Accessible` is not in `Ljos.Ui` either, so in a file in
+Ljós's API the a11y rule's `Accessible.name` remedy does not check yet;
+a `Label` beside the field does.
 
 ## 5. The checker
 
