@@ -188,3 +188,22 @@ fn a_style_chosen_while_lowering_lowers_the_controls_again() {
     assert!(kept.reason.contains("Fusion"), "{}", kept.reason);
     assert_eq!(project.source("Main"), Some(MAIN));
 }
+
+#[test]
+fn a_file_that_lowered_qt_to_app_is_lowered_again_when_an_app_qml_comes_and_goes() {
+    const PAD: &str = "import QtQuick\nItem { x: Qt.platform.os.length }\n";
+    let mut project = Project::new(Runtime::new());
+    project.add("Pad", PAD);
+    project.set_compat(true);
+    let source = project.source("Pad").expect("Pad");
+    assert!(source.contains("App.platform"), "{source}");
+
+    // `App` is the file's now: `Qt.platform` stays Qt's.
+    project.add("App", "import QtQuick\nItem { }\n");
+    let source = project.source("Pad").expect("Pad");
+    assert!(source.contains("x: Qt.platform"), "{source}");
+
+    project.remove("App");
+    let source = project.source("Pad").expect("Pad");
+    assert!(source.contains("App.platform"), "{source}");
+}
