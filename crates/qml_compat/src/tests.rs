@@ -769,6 +769,7 @@ fn a_table_the_list_could_be_told_from_stays_a_list_model() {
         "Repeater { model: ListModel { ListElement { a: 1; b: 1 } ListElement { a: \"1\"; b: 1 } } Text { text: model.a } }",
         // A view's sections, and a delegate given by id.
         "ListView { section.property: \"a\"; model: ListModel { ListElement { a: 1; b: 1 } } delegate: Text { text: model.a } }",
+        "ListView { section { property: \"a\" } model: ListModel { ListElement { a: 1; b: 1 } } delegate: Text { text: model.a } }",
         // The model read off its view, and a name `rows` the file reads.
         "Repeater { id: r; model: ListModel { ListElement { a: 1; b: 1 } } Text { text: model.a + r.model.count } }",
         "Repeater { property int rows: 2; model: ListModel { ListElement { a: 1; b: 1 } } Text { text: model.a + rows } }",
@@ -789,6 +790,11 @@ fn a_table_the_list_could_be_told_from_stays_a_list_model() {
         "property int m: 2\n    ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a } }",
         "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a } }\n    Loader {}",
         "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a + Rows.x } }",
+        // The model read off the view it is given to, from outside it and
+        // from its delegate, and a view with sections in a group.
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    ListView { id: list; model: m; delegate: Text { text: model.a } }\n    Text { text: list.model.count }",
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    ListView { model: m; delegate: Text { text: model.a + ListView.view.model.count } }",
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    ListView { section { property: \"a\" } model: m; delegate: Text { text: model.a } }",
     ] {
         match lower_as(
             &format!("import QtQuick\nItem {{\n    {source}\n}}\n"),
