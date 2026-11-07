@@ -26,11 +26,11 @@ fn kept_for(source: &str) -> String {
 #[test]
 fn the_renames_are_what_ljos_ui_has() {
     let ui = qt_types::module(MODULE).expect("Ljos.Ui is described");
-    for (old, new) in TYPE_RENAMES {
+    for (old, new) in type_renames() {
         assert!(ui.type_named(new).is_some(), "{new}");
         assert!(ui.type_named(old).is_none(), "{old}");
     }
-    for (ty, renames) in MEMBER_RENAMES {
+    for (ty, renames) in member_renames() {
         let ty = ui.type_named(ty).expect("a renaming type");
         for (old, new) in *renames {
             assert!(ty.property(new).is_some(), "{}.{new}", ty.name);
