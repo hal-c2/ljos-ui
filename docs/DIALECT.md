@@ -800,9 +800,12 @@ then letters, digits or `_`; not `page.qml`, `my-page.qml` or
 (`page + ".qml"`, `Qt.resolvedUrl(…)`), names a file elsewhere
 (`"pages/Page.qml"`, `qrc:`), when the Loader is given a `sourceComponent`
 too, or when its `source` is also read, set or handled (`loader.source`,
-`setSource`, `onSourceChanged`, a bare `source` in its own bindings, a
-`Connections` or `PropertyChanges` aimed at it): after lowering it is
-empty. `ljos check --tsc` and the authoring tools read `component: Page`
+`setSource`, `onSourceChanged`, a bare `source` in its own bindings or,
+for the root of the file or of an inline component, anywhere in its scope,
+a `Connections` or `PropertyChanges` aimed at it): after lowering it is
+empty. It keeps the file, too, when the Loader's `sourceComponent` is read
+or heard (`loader.sourceComponent`, `onSourceComponentChanged`): Qt's stays
+empty beside a `source`, and the lowered one is the component. `ljos check --tsc` and the authoring tools read `component: Page`
 as the compiler does.
 
 DECISION: `Ljos.Ui`'s `Loader` keeps `source` beside `component`. A face
