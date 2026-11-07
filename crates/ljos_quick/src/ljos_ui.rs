@@ -17,8 +17,14 @@ use std::sync::OnceLock;
 use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
 use crate::font_enums::FontEnums;
+use crate::shapes::{
+    ConicalGradient, LinearGradient, Path, PathAngleArc, PathArc, PathAttribute, PathCubic,
+    PathCurve, PathLine, PathMove, PathMultiline, PathPercent, PathPolyline, PathQuad,
+    PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
+};
 use crate::{
-    BoxColumn, BoxRow, Item, Layout, LjosBox, MouseArea, PropertyChanges, Rectangle, State, Text,
+    BoxColumn, BoxRow, Gradient, GradientStop, Item, Layout, LjosBox, MouseArea, PropertyChanges,
+    Rectangle, State, Text,
 };
 
 /// The module's name, as a file imports it.
@@ -56,6 +62,16 @@ pub(crate) fn register(engine: &Engine) {
     // `Layout` it is given, as in Qt's layouts.
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
+    ]));
+    // Qt's shapes, as they are (docs/DIALECT.md §4.14): `QtQuick.Shapes`'
+    // types, the elements of a `Path` (which Qt has in `QtQuick`), and the
+    // `Gradient` a shape's gradients are, with its stops.
+    engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
+        Shape, ShapePath, ShapeGradient, LinearGradient, RadialGradient, ConicalGradient,
+        Gradient, GradientStop,
+        Path, PathMove, PathLine, PathQuad, PathCubic, PathArc, PathAngleArc,
+        PathCurve, PathSvg, PathPolyline, PathMultiline, PathRectangle,
+        PathAttribute, PathPercent,
     ]));
     let version = Version::new(1, 0);
     for face in [rectangle, pointer_area] {
@@ -112,6 +128,21 @@ mod tests {
         assert!(area.inherits(MouseArea::static_meta()));
         assert!(engine.lookup_type(MODULE, "MouseArea").is_none());
         assert!(engine.lookup_type("QtQuick", "MouseArea").is_some());
+    }
+
+    #[test]
+    fn the_shapes_are_qts_as_they_are() {
+        let engine = engine();
+        for (name, meta) in [
+            ("Shape", Shape::static_meta()),
+            ("ShapePath", ShapePath::static_meta()),
+            ("PathSvg", PathSvg::static_meta()),
+            ("LinearGradient", LinearGradient::static_meta()),
+            ("GradientStop", GradientStop::static_meta()),
+        ] {
+            let found = engine.lookup_type(MODULE, name).expect(name);
+            assert!(MetaRef::ptr_eq(&found, &MetaRef::Static(meta)), "{name}");
+        }
     }
 
     #[test]

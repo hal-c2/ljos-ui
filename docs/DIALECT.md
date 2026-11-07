@@ -214,7 +214,16 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
 - `Rectangle` with `fill`, a face of Qt Quick's `Rectangle`;
 - `PointerArea`, a face of `MouseArea`;
 - `Item`, `Text`, `State`, `PropertyChanges` and the font enums, exported
-  as they are.
+  as they are;
+- Qt's shapes, exported as they are (§4.14): `Shape`, `ShapePath`, the
+  elements of a `Path` (`PathSvg`, `PathLine` and the rest), and the
+  gradients that fill a path (`LinearGradient`, `RadialGradient`,
+  `ConicalGradient`) with `Gradient` and `GradientStop`.
+
+DECISION: `Gradient` and `GradientStop` come with the shapes. A shape's
+gradient is a `Gradient`, and its stops are `GradientStop`s, so a file
+can't fill a path with one without them. A `Rectangle`'s `gradient` then
+works in Ljós's API too.
 
 It is described in `crates/qt_types/src/ljos.txt`, so `ljos check` and the
 lowering know it with no Qt installed.
@@ -906,7 +915,7 @@ construction.
 | `property var` | `property unknown`, or a type | mechanical |
 | `Qt.labs.platform`, `StandardPaths` | `Ljos.Platform` | mechanical |
 | `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
-| `Canvas`, `Shape` | the same | none |
+| `Canvas`, `Shape` | the same | none; `Shape`, `ShapePath`, the `Path` elements and the shape gradients built, the `QtQuick.Shapes` import lowered (§4.2). `Canvas` not yet |
 
 ### 4.15 What this changes for the engine
 
@@ -1053,7 +1062,8 @@ How it holds the other rules:
 `qml_compat::lower(text, locals)` parses the file and walks it. Each edit
 is to a name of the Ljós API, and the text keeps every line. The edits are:
 
-- an import, `QtQuick` → `Ljos.Ui`;
+- an import, `QtQuick` → `Ljos.Ui`; a `QtQuick.Shapes` import is
+  left an empty line, since `Ljos.Ui` has the shapes;
 - a type, `MouseArea` → `PointerArea`;
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
   `Connections` on a known target, a value source's target (`… on color`),
@@ -1061,7 +1071,9 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
 - `property var` / `variant` → `property unknown`.
 
 A `QtQml` import stays. Any other module import (`QtQuick.Controls`, an
-aliased `QtQuick`) keeps the file.
+aliased `QtQuick` or `QtQuick.Shapes`) keeps the file. So does a type of
+`QtQuick.Shapes` that `Ljos.Ui` doesn't have, made or read through
+(`` `X` is not in Ljos.Ui yet ``).
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
@@ -1359,7 +1371,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: Qt's shapes as they are, and the `QtQuick.Shapes` import lowered (§4.2) | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
