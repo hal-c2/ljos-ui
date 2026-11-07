@@ -559,6 +559,18 @@ fn a_font_the_names_cannot_say_keeps_the_file() {
             "import QtQuick\nText { font { bold: true; weight: 300 } }\n",
             "both set",
         ),
+        (
+            "import QtQuick\nText { font.bold: true; font { weight: 300 } }\n",
+            "both set",
+        ),
+        (
+            "import QtQuick\nText { font { bold: true } font.weight: 300 }\n",
+            "both set",
+        ),
+        (
+            "import QtQuick\nItem { Item { id: someItem } Text { text: someItem.font.bold } }\n",
+            "not known",
+        ),
         ("import QtQuick\nText { font.pointSize: 9 }\n", "`Screen`"),
         (
             "import QtQuick\nText { Component.onCompleted: font.pointSize = 9 }\n",
@@ -580,6 +592,21 @@ fn a_font_the_names_cannot_say_keeps_the_file() {
         let reason = kept_for(source);
         assert!(reason.contains(why), "{source}: {reason}");
     }
+}
+
+#[test]
+fn a_font_s_member_name_off_what_is_no_font_is_left_as_written() {
+    // A row's role or a script's object may be called `bold`; only a
+    // `font`, or what the file declares as a font or a `var`, may be one.
+    let text = lowered(
+        "import QtQuick\nItem {\n    function shown(row) { return row.pointSize }\n    Text { text: model.bold + model.pixelSize }\n    Component.onCompleted: console.log(({ bold: true }).bold)\n}\n",
+    );
+    assert!(
+        text.contains("text: model.bold + model.pixelSize"),
+        "{text}"
+    );
+    assert!(text.contains("({ bold: true }).bold"), "{text}");
+    assert!(text.contains("return row.pointSize"), "{text}");
 }
 
 #[test]
