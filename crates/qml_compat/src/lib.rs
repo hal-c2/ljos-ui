@@ -903,10 +903,22 @@ impl<'s> Pass<'s> {
         )
     }
 
+    /// Whether `name` is QtQuick.Layouts' type here, not the type of an
+    /// import after it that has the name too (see [`Self::named_type`]).
+    fn of_layouts(&self, name: &str, at: usize) -> bool {
+        self.layouts.and_then(|m| m.type_named(name)).is_some()
+            && match self.named_type(name, at, 0) {
+                Ok(Ty::Exact(t)) => t.module == "QtQuick.Layouts",
+                Ok(_) => false,
+                // Qt's, of a type Ljos.Layout has not yet.
+                Err(_) => true,
+            }
+    }
+
     /// Keeps a file that names a type of QtQuick.Layouts whose attached
     /// object Ljos.Layout has not: only `Layout`'s is there.
     fn attached_layout(&self, name: &str, at: usize) -> Step {
-        if name != "Layout" && self.layouts.and_then(|m| m.type_named(name)).is_some() {
+        if name != "Layout" && self.of_layouts(name, at) {
             return Err(self.no(
                 format!("`{name}`'s attached properties are not in {LAYOUT} yet"),
                 at,
@@ -3111,7 +3123,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             {
                 self.keep(kept.reason, it.span.start);
             } else if name == "GridLayout"
-                && self.pass.layouts.is_some()
+                && self.pass.of_layouts(name, it.span.start as usize)
                 && let Some(new) = renamed_layout(name)
             {
                 // Its enumerations: `GridLayout.TopToBottom` is `Grid`'s.
