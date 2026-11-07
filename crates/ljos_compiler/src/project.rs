@@ -1072,18 +1072,6 @@ fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item =
         .filter(|m| aliases.iter().any(|(_, dir)| dir == m.dir))
 }
 
-/// Which of the modules `found` describes (each with the key and the path
-/// of its directory, in the order the roots are read) an import of its URI
-/// sees.
-///
-/// An aliased URI is the module of its directory alone. Otherwise, where
-/// a directory is at the URI's own path from a root (`App/Media` for
-/// `App.Media`), that is where an import path finds the module, and
-/// another directory that names the same URI (a stand-in kept beside the
-/// real one) is not seen. A directory there that describes no QML type
-/// (a module of native code, whose build names only its sources) has
-/// nothing for an import to find, and hides nothing. With no such
-/// directory every description counts.
 /// What the compat pass is told of the project around the file `key`.
 struct Locals<'p, O> {
     project: &'p Project<O>,
@@ -1127,6 +1115,18 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
     }
 }
 
+/// Which of the modules `found` describes (each with the key and the path
+/// of its directory, in the order the roots are read) an import of its URI
+/// sees.
+///
+/// An aliased URI is the module of its directory alone. Otherwise, where
+/// a directory is at the URI's own path from a root (`App/Media` for
+/// `App.Media`), that is where an import path finds the module, and
+/// another directory that names the same URI (a stand-in kept beside the
+/// real one) is not seen. A directory there that describes no QML type
+/// (a module of native code, whose build names only its sources) has
+/// nothing for an import to find, and hides nothing. With no such
+/// directory every description counts.
 fn counted(found: &[(String, PathBuf, Module)], aliases: &Aliases) -> Vec<bool> {
     let home = |uri: &str| uri.replace('.', "/");
     let at_home: HashSet<&str> = found
