@@ -446,3 +446,35 @@ fn where_a_grid_positioner_and_ljos_grid_disagree_the_file_is_kept() {
         "import QtQuick\nGrid {{ columns: 2; spacing: 2; {TILE} {TILE} Rectangle {{ visible: false }} Item {{ width: 0 }} }}\n"
     ));
 }
+
+/// A directory `parts` with a `GridLayout` of its own, an `Item`.
+struct OwnGrid;
+
+impl Locals for OwnGrid {
+    fn root(&self, _: &str) -> Option<Root> {
+        None
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        matches!((from, name), (Imported::Dir("parts"), "GridLayout")).then(|| root_of("Item", &[]))
+    }
+}
+
+/// Imported after QtQuick.Layouts, a `GridLayout` is the import's, in a
+/// script as on an object: neither is Ljos.Layout's `Grid`.
+#[test]
+fn a_grid_layout_of_an_import_after_qt_is_the_imports_in_a_script_too() {
+    let source = "import QtQuick\nimport QtQuick.Layouts\nimport \"parts\"\n\
+                  Item { GridLayout { } property var f: GridLayout.TopToBottom }\n";
+    match lower(source, &OwnGrid) {
+        Outcome::Lowered(lowered) => {
+            assert!(lowered.text.contains("GridLayout { }"), "{}", lowered.text);
+            assert!(
+                lowered.text.contains("f: GridLayout.TopToBottom"),
+                "{}",
+                lowered.text
+            );
+        }
+        other => panic!("not lowered: {other:?}"),
+    }
+}
