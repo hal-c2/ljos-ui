@@ -1148,3 +1148,33 @@ fn a_module_ljos_builds_part_of_still_stands_in_for_the_rest() {
     assert!(!stands_in("QtQuick3D"));
     assert!(!stands_in("QtQuick3D.Effects"));
 }
+
+/// A table whose types say what some of their methods give.
+const RETURNS: &str = "\
+module Gauges
+\tGauge Gauges.Gauge
+\tDial Gauges.Dial
+\ttype Gauges.Gauge Gauge
+\t\tmethod level returns:real
+\t\tmethod label returns:string
+\t\tmethod spin
+\ttype Gauges.Dial Dial
+\t\tprototype Gauges.Gauge named
+\t\tmethod label
+";
+
+#[test]
+fn a_method_gives_what_its_nearest_declaration_says() {
+    static TABLE: OnceLock<Table> = OnceLock::new();
+    let table = TABLE.get_or_init(|| read(RETURNS, ""));
+    let ty = |class: &str| &table.types[table.classes[class]];
+    let (gauge, dial) = (ty("Gauges.Gauge"), ty("Gauges.Dial"));
+    assert_eq!(gauge.method_returns_in(table, "level"), Some("real"));
+    assert_eq!(gauge.method_returns_in(table, "label"), Some("string"));
+    assert_eq!(gauge.method_returns_in(table, "spin"), None);
+    // Dial redeclares `label` and does not say: not Gauge's `string`.
+    assert_eq!(dial.method_returns_in(table, "label"), None);
+    // What it inherits as it is gives what the base says.
+    assert_eq!(dial.method_returns_in(table, "level"), Some("real"));
+    assert_eq!(dial.method_returns_in(table, "missing"), None);
+}
