@@ -696,6 +696,19 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
         let QmlBindingValue::Expression(expression) = value else {
             return;
         };
+        // An id begins with a small letter and a type with a capital, so
+        // the value most such bindings hold, a component's id, costs no
+        // more than a look at its first letter.
+        let mut leftmost = expression;
+        while let Expression::StaticMemberExpression(member) = leftmost {
+            leftmost = &member.object;
+        }
+        let Expression::Identifier(first) = leftmost else {
+            return;
+        };
+        if !first.name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return;
+        }
         let Some(path) = crate::project::dotted(expression) else {
             return;
         };
