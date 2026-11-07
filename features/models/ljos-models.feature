@@ -285,6 +285,8 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         1 files, 0 lowered, 1 kept
         """
 
+    # The model's value is a translation, so it stays a ListModel and is no constant table
+    # (features/models/ljos-constant-rows.feature).
     @ljos-only @headless
     Scenario: A role of a model of one role is that model's modelData
       Given the file "Main.qml":
@@ -292,7 +294,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         import QtQuick
         Item {
           Repeater {
-            model: ListModel { ListElement { city: "Reykjavík" } }
+            model: ListModel { ListElement { city: qsTr("Reykjavík") } }
             Text { text: model.city }
           }
         }
@@ -308,7 +310,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
         Item {
           Repeater {
-            model: ListModel { ListElement { city: "Reykjavík" } }
+            model: ListModel { ListElement { city: qsTr("Reykjavík") } }
             Text { text: modelData }
           }
         }
