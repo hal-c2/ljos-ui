@@ -260,11 +260,11 @@ Feature: Ljos.Core: timers, connections, bindings and components
       Given the file "Swatch.qml":
         """qml
         import QtQuick
-        Rectangle { width: 40; height: 40; color: Qt.rgba(0.2, 0.4, 0.6, 1) }
+        Rectangle { width: 40; height: 40; color: "#336699" }
         """
       When the author runs "ljos migrate --write ."
       Then the file "Swatch.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        Rectangle { width: 40; height: 40; fill: Qt.rgba(0.2, 0.4, 0.6, 1) }
+        Rectangle { width: 40; height: 40; fill: "#336699" }
         """
