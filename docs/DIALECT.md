@@ -230,8 +230,17 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
   as they are;
 - `Repeater` and `ListView` with its attached `ListView.*`, exported as
   they are (§4.8);
+- Qt's shapes, exported as they are (§4.14): `Shape`, `ShapePath`, the
+  elements of a `Path` (`PathSvg`, `PathLine` and the rest), and the
+  gradients that fill a path (`LinearGradient`, `RadialGradient`,
+  `ConicalGradient`) with `Gradient` and `GradientStop`;
 - in `Ljos.Models`, `ListModel`, `ListElement` and `Instantiator`, exported
   as they are.
+
+DECISION: `Gradient` and `GradientStop` come with the shapes. A shape's
+gradient is a `Gradient`, and its stops are `GradientStop`s, so a file
+can't fill a path with one without them. A `Rectangle`'s `gradient` then
+works in Ljós's API too.
 
 DECISION: `ListView.view` (and `GridView.view`) is a `Flickable` to the
 checker. One attached type serves every view and their common base has
@@ -985,7 +994,7 @@ construction.
 | `property var` | `property unknown`, or a type | mechanical |
 | `Qt.labs.platform`, `StandardPaths` | `Ljos.Platform` | mechanical |
 | `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
-| `Canvas`, `Shape` | the same | none |
+| `Canvas`, `Shape` | the same | none; `QtQuick.Shapes` import lowered (§4.2) |
 | `QtQuick.Controls.Basic` | `Ljos.Controls` | mechanical, for the controls the module has (§4.16) |
 | `QtQuick.Controls` | `Ljos.Controls` | mechanical where the program starts with Basic; kept with another style (§4.16) |
 | `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
@@ -1230,20 +1239,23 @@ How it holds the other rules:
 `qml_compat::lower(text, locals)` parses the file and walks it. Each edit
 is to a name of the Ljós API, and the text keeps every line. The edits are:
 
-- an import, `QtQuick` → `Ljos.Ui`;
+- an import, `QtQuick` → `Ljos.Ui`; a `QtQuick.Shapes` import is
+  left an empty line, since `Ljos.Ui` has the shapes;
 - a type, `MouseArea` → `PointerArea`;
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
   `Connections` on a known target, a value source's target (`… on color`),
   and `id.member` where the target's type is known;
 - `property var` / `variant` → `property unknown`.
 
-A `QtQml` import stays. `QtQuick.Layouts` and the controls
+A `QtQml` import stays. `QtQuick.Layouts`, `QtQuick.Shapes` and the controls
 (`QtQuick.Controls.Basic`, and `QtQuick.Controls` where the program starts
-with Basic) are lowered (§4.6, §4.16). A module of the project, and a
+with Basic) are lowered (§4.6, §4.14, §4.16). A module of the project, and a
 directory imported by path, are files of the project: the file is lowered
 with them (§6.2). Any other module import (`QtQuick.Controls.Material`, an
-aliased `QtQuick`, a module of the project imported under a name, or one
-whose types are native) keeps the file.
+aliased `QtQuick` or `QtQuick.Shapes`, a module of the project imported under
+a name, or one whose types are native) keeps the file. So does a type of
+`QtQuick.Shapes` that `Ljos.Ui` doesn't have, made or read through
+(`` `X` is not in Ljos.Ui yet ``).
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
