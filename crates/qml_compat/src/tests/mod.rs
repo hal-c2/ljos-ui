@@ -46,7 +46,12 @@ fn the_renames_are_what_ljos_ui_has() {
     let ui = qt_types::module(MODULE).expect("Ljos.Ui is described");
     for (old, new) in type_renames() {
         assert!(ui.type_named(new).is_some(), "{new}");
-        assert!(ui.type_named(old).is_none(), "{old}");
+        // An old name is gone, unless another type now has it: Qt's
+        // `DragHandler` is `Drag`, and Qt's `Drag` `DragSource`.
+        assert!(
+            ui.type_named(old).is_none() || type_renames().any(|(_, n)| n == old),
+            "{old}"
+        );
     }
     // Each type Ljos.Ui has of a Qt type that renames members, by the name
     // it has there; every entry of the table is some such type's.
