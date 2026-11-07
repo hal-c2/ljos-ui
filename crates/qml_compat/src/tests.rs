@@ -599,6 +599,8 @@ fn a_loader_whose_source_is_read_where_the_pass_does_not_follow_keeps_the_file()
         "Item { id: root; Loader { id: l; source: \"Page.qml\" } states: State { name: \"o\"; PropertyChanges { l.source: \"Page.qml\" } } }",
         // A Loader that is the root: an unqualified `source` anywhere may be its.
         "Loader { source: \"Page.qml\"; Item { width: source.length } }",
+        // So is the root of an inline component.
+        "Item { component P: Loader { source: \"Page.qml\"; Item { width: source.length } } }",
     ] {
         match lower(&format!("import QtQuick\n{source}\n"), &page) {
             Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
@@ -617,6 +619,37 @@ fn a_loader_whose_source_is_read_where_the_pass_does_not_follow_keeps_the_file()
         "{}",
         done.text
     );
+    // An inline component's root Loader is not the file root's scope.
+    let Outcome::Lowered(done) = lower(
+        "import QtQuick\nItem {\n  property string source\n  width: source.length\n  component P: Loader { source: \"Page.qml\" }\n}\n",
+        &page,
+    ) else {
+        panic!("not lowered");
+    };
+    assert!(
+        done.text.contains("Loader { component: Page }"),
+        "{}",
+        done.text
+    );
+}
+
+/// Qt's `sourceComponent` stays empty when a `source` is given; lowered,
+/// it is the component, so whatever reads it or hears it change is told
+/// otherwise.
+#[test]
+fn a_loader_whose_component_is_read_keeps_the_file() {
+    let read = "a `Loader`'s `sourceComponent` is read or heard, and lowered it is not empty";
+    for source in [
+        "Loader { property int n; source: \"Page.qml\"; onSourceComponentChanged: n++ }",
+        "Loader { source: \"Page.qml\"; onLoaded: console.log(sourceComponent) }",
+        "Item { Loader { id: l; source: \"Page.qml\" } property bool b: l.sourceComponent !== null }",
+        "Item { Loader { id: l; source: \"Page.qml\" } Connections { target: l; function onSourceComponentChanged() { } } }",
+    ] {
+        match lower(&format!("import QtQuick\n{source}\n"), &page) {
+            Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
+            other => panic!("{source}: {other:?}"),
+        }
+    }
 }
 
 #[test]
