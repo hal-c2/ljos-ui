@@ -18,7 +18,9 @@ use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
 use crate::font_enums::FontEnums;
 use crate::{
-    BoxColumn, BoxRow, Item, Layout, LjosBox, MouseArea, PropertyChanges, Rectangle, State, Text,
+    Accessible, BoxColumn, BoxRow, DoubleValidator, DropArea, Flickable, FontMetrics, Image,
+    IntValidator, Item, Layout, LjosBox, MouseArea, PropertyChanges, Rectangle,
+    RegularExpressionValidator, State, Text, TextEdit, TextInput, TextMetrics, focus, keys,
 };
 
 /// The module's name, as a file imports it.
@@ -56,6 +58,16 @@ pub(crate) fn register(engine: &Engine) {
     // `Layout` it is given, as in Qt's layouts.
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
+    ]));
+    // What says the one thing it says in Qt Quick, under the same name
+    // (docs/DIALECT.md §4.14, "none" in its Lowering column). `Window` is
+    // attached only here; `ljos_controls` gives the one that is a root,
+    // and `Screen` with it.
+    engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
+        Image, Flickable, focus::Window,
+        TextInput, TextEdit, IntValidator, DoubleValidator, RegularExpressionValidator,
+        TextMetrics, FontMetrics,
+        keys::Keys, keys::KeyEventObject, keys::Shortcut, DropArea, Accessible,
     ]));
     let version = Version::new(1, 0);
     for face in [rectangle, pointer_area] {
