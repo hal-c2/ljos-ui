@@ -109,9 +109,6 @@ pub(crate) fn register(engine: &Engine) {
     for face in [rectangle, pointer_area, list_view] {
         engine.register_type(MODULE, version, MetaRef::Static(face()));
     }
-    // `Component`, `Timer` and the `Qt` namespace, until the module that
-    // takes their place is designed.
-    engine.register_import(MODULE, "QtQml");
 }
 
 #[cfg(test)]

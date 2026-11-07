@@ -1,6 +1,6 @@
 // expect: reject-type 6 TS2366
 // Note 11 §3.3 with a member left out: the switch does not cover the union.
-import Ljos.Ui
+import Ljos.Ui; import Ljos.Core
 Item {
     property string shown: ""
     function statusLabel(status: "todo" | "doing" | "blocked" | "done"): string {

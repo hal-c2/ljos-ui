@@ -62,11 +62,8 @@ fn the_renames_are_what_ljos_ui_has() {
 }
 
 #[test]
-fn a_file_without_qtquick_is_unchanged() {
-    assert_eq!(
-        lower("import QtQml\nQtObject { }\n", &no_locals),
-        Outcome::Unchanged
-    );
+fn a_file_without_qt_imports_is_unchanged() {
+    assert_eq!(lower("Item { }\n", &no_locals), Outcome::Unchanged);
 }
 
 /// The corpus is a submodule, not this repository's (CLEAN_ROOM.md): the
