@@ -60,7 +60,10 @@ pub(crate) fn tables(
 ) -> Vec<Table> {
     let mut file = Reads::default();
     reads_of(root, &mut file);
-    if file.names.iter().any(|n| n == ALIAS) {
+    // A view's model read off it (`list.model.count`,
+    // `ListView.view.model.get(0)`) is asked as a `ListModel`, which a list
+    // does not answer: no table of the file is known not to be that model.
+    if file.names.iter().any(|n| n == ALIAS) || file.model_read {
         return Vec::new();
     }
     let mut views = Vec::new();
@@ -102,10 +105,8 @@ pub(crate) fn tables(
             found.push(table);
         }
     }
-    // A view's `rows` is a name the file does not already read, and a view's
-    // model is not read off it (`list.model.get(0)`), which a list does not
-    // answer as a `ListModel` does.
-    if file.names.iter().any(|n| n == "rows") || file.model_read {
+    // A view's `rows` is a name the file does not already read.
+    if file.names.iter().any(|n| n == "rows") {
         return found;
     }
     for view in &views {
@@ -499,6 +500,11 @@ fn find_views<'o, 'a>(root: &'o QmlObject<'a>, views: &mut Vec<View<'o, 'a>>) {
                         (Some("delegate"), _) => plain = false,
                         _ => {}
                     }
+                }
+                // `section { property: "kind" }` is the grouped form of
+                // `section.property`.
+                QmlMember::Object(group) if group.type_name.as_simple() == Some("section") => {
+                    plain = false;
                 }
                 QmlMember::Object(child)
                     if child
