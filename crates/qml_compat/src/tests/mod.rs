@@ -201,6 +201,7 @@ fn in_style(source: &str, style: &str) -> Outcome {
         &Styled {
             locals: &no_locals,
             style,
+            natives: None,
         },
     )
 }

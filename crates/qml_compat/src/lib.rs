@@ -166,13 +166,62 @@ pub trait Locals {
     fn imported(&self, _from: Imported<'_>, _name: &str) -> Option<Root> {
         None
     }
+
+    /// The program's own types, as the checker is told them
+    /// (`ljostypes.json`); none when they are not described, and a file
+    /// that imports a module of them is kept.
+    fn natives(&self) -> Option<&dyn Natives> {
+        None
+    }
+}
+
+/// A native type, as the [`Natives`] that has it numbers it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Native(pub u32);
+
+/// What a property of a native type holds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Holds {
+    /// An object of another of the program's types.
+    Native(Native),
+    /// An object of a type of the toolkit's, in module `module`.
+    Toolkit { module: String, name: String },
+    /// A value, or an object the description does not type.
+    Value,
+}
+
+/// The modules of types a program registers itself, which no table of
+/// Qt's or Ljós's has: what the checker reads of them, for the pass.
+pub trait Natives {
+    /// Whether `uri` is a module of the program's own.
+    fn has_module(&self, uri: &str) -> bool;
+
+    fn module_type(&self, uri: &str, name: &str) -> Option<Native>;
+
+    /// The type's name, for messages.
+    fn name(&self, ty: Native) -> String;
+
+    /// The type is one object a file reads, not one it makes.
+    fn is_singleton(&self, ty: Native) -> bool;
+
+    /// Whether the type has a member `name`: a property, its change
+    /// signal, a signal, a method or an enum.
+    fn has_member(&self, ty: Native, name: &str) -> bool;
+
+    /// What its property `name` holds; None when it has no such property.
+    fn property(&self, ty: Native, name: &str) -> Option<Holds>;
+
+    /// The module and name of the toolkit type it is built on, whose
+    /// members it has under Qt's names.
+    fn toolkit_base(&self, ty: Native) -> Option<(String, String)>;
 }
 
 /// The project's files, in a program that starts with the controls style
-/// `style`.
+/// `style`, with its own types `natives`.
 pub struct Styled<'a> {
     pub locals: &'a dyn Locals,
     pub style: &'a str,
+    pub natives: Option<&'a dyn Natives>,
 }
 
 impl std::fmt::Debug for Styled<'_> {
@@ -198,6 +247,10 @@ impl Locals for Styled<'_> {
 
     fn controls_style(&self) -> Option<&str> {
         Some(self.style)
+    }
+
+    fn natives(&self) -> Option<&dyn Natives> {
+        self.natives
     }
 }
 
@@ -245,6 +298,8 @@ enum Import {
     },
     /// `QtQuick.Shapes`.
     Shapes,
+    /// A module of the program's own types ([`Natives`]).
+    Native,
     Module(String),
     Dir(String),
 }
@@ -252,7 +307,11 @@ enum Import {
 impl Import {
     fn imported(&self) -> Option<Imported<'_>> {
         match self {
-            Import::Qt { .. } | Import::Qml | Import::Controls { .. } | Import::Shapes => None,
+            Import::Qt { .. }
+            | Import::Qml
+            | Import::Controls { .. }
+            | Import::Shapes
+            | Import::Native => None,
             Import::Module(uri) => Some(Imported::Module(uri)),
             Import::Dir(path) => Some(Imported::Dir(path)),
         }
@@ -311,6 +370,8 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         core_line: None,
         controls_line: None,
         imported: RefCell::default(),
+        natives: locals.natives(),
+        native_modules: Vec::new(),
         ids: Vec::new(),
         inline: Vec::new(),
         qualifiers: Vec::new(),
@@ -428,6 +489,9 @@ enum Ty {
     Plain,
     /// The pass does not know.
     Unknown,
+    /// Of the program's own type, exactly when the flag says so, else of
+    /// it or one derived from it.
+    Native(Native, bool),
 }
 
 struct Pass<'s> {
@@ -463,6 +527,9 @@ struct Pass<'s> {
     controls_line: Option<usize>,
     /// What [`imported_root`](Self::imported_root) found, by name.
     imported: RefCell<HashMap<String, Option<(usize, Root)>>>,
+    natives: Option<&'s dyn Natives>,
+    /// The modules of the program's own types the file imports.
+    native_modules: Vec<String>,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     /// The names the file imports under (`import "box.js" as Box`), which
@@ -631,6 +698,14 @@ impl<'s> Pass<'s> {
                     }
                     controls.push(import.span);
                     self.imports.push(Import::Controls { dialogs });
+                }
+                // The program's own types are what it registers, in Qt's
+                // API and in Ljós's: the import stays as it is written.
+                other if self.natives.is_some_and(|n| n.has_module(other)) => {
+                    if import.alias.is_none() {
+                        self.native_modules.push(other.to_owned());
+                        self.imports.push(Import::Native);
+                    }
                 }
                 other => match self.locals.module(other) {
                     // Files of the project, lowered with this one
@@ -922,6 +997,10 @@ impl<'s> Pass<'s> {
         let imported = self.imported_root(name);
         let project = imported.as_ref().map(|(at, _)| *at);
         let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
+        let shadowed_native = matches!(
+            (project, last(&|i| matches!(i, Import::Native))),
+            (Some(p), Some(n)) if p > n
+        );
         if let Some(ty) = self.layouts.and_then(|m| m.type_named(name))
             && !self.project_first(
                 name,
@@ -1005,6 +1084,9 @@ impl<'s> Pass<'s> {
                 None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
+        if let Some(ty) = self.native_type(name).filter(|_| !shadowed_native) {
+            return Ok(Ty::Native(ty, true));
+        }
         if depth > 16 {
             return Ok(Ty::Unknown);
         }
@@ -1038,9 +1120,43 @@ impl<'s> Pass<'s> {
                 // What it declares is not in the table: its members are
                 // known by the type it is built on, as far as that goes.
                 Ty::Exact(ty) => Ok(Ty::Derived(ty)),
+                Ty::Native(ty, _) => Ok(Ty::Native(ty, false)),
                 other => Ok(other),
             },
-            _ => Ok(Ty::Unknown),
+            Some(_) => Ok(Ty::Unknown),
+            // The file names the program's types, and this is not one the
+            // program describes: what it is in the file is not known.
+            None if !self.native_modules.is_empty() => Err(self.no(
+                format!(
+                    "`{name}` is neither a file beside it nor a type of `{}` as the program describes it",
+                    self.native_modules.join("`, `")
+                ),
+                at,
+            )),
+            None => Ok(Ty::Unknown),
+        }
+    }
+
+    /// The program's own type `name`, of a module the file imports.
+    fn native_type(&self, name: &str) -> Option<Native> {
+        let natives = self.natives?;
+        self.native_modules
+            .iter()
+            .find_map(|uri| natives.module_type(uri, name))
+    }
+
+    /// The toolkit type of Qt's table the native type `ty` is built on.
+    fn toolkit_base(&self, ty: Native) -> Option<&'static Type> {
+        let (module, name) = self.natives?.toolkit_base(ty)?;
+        qt_types::module(&module)?.type_named(&name)
+    }
+
+    /// The renames of the type of `on`, or of the toolkit type it is
+    /// built on.
+    fn renames_on(&self, on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
+        match on {
+            Ty::Native(ty, _) => renames_of(self.toolkit_base(ty)?),
+            other => renames_on(other),
         }
     }
 
@@ -1352,7 +1468,8 @@ impl<'s> Pass<'s> {
                     let name = property.name.name.as_str();
                     self.members
                         .typed(property.span.start as usize..property.name.span.start as usize);
-                    if renames_on(scope)
+                    if self
+                        .renames_on(scope)
                         .is_some_and(|r| r.iter().any(|(o, n)| *o == name || *n == name))
                     {
                         return Err(self.no(
@@ -1773,6 +1890,7 @@ impl<'s> Pass<'s> {
         match self.member(simple, on) {
             Rename::To(new) => self.change(span, new),
             Rename::Keep => {}
+            Rename::No(reason) => return Err(self.no(reason, span.start)),
             Rename::Unknown => {
                 return Err(self.no(
                     format!("`{simple}` is set on {what}, whose type is not known"),
@@ -1804,6 +1922,7 @@ impl<'s> Pass<'s> {
                 self.change(span, format!("on{first}{}", chars.as_str()));
             }
             Rename::Keep => {}
+            Rename::No(reason) => return Err(self.no(reason, span.start)),
             Rename::Unknown => {
                 return Err(self.no(
                     format!("`{handler}` handles a signal of an object whose type is not known"),
@@ -1822,6 +1941,7 @@ impl<'s> Pass<'s> {
         match self.member(name.parts[index], on) {
             Rename::To(new) => self.change(range, new),
             Rename::Keep => {}
+            Rename::No(reason) => return Err(self.no(reason, range.start)),
             Rename::Unknown => {
                 return Err(self.no(
                     format!("`{name}` is set on an object whose type is not known"),
@@ -1853,7 +1973,41 @@ impl<'s> Pass<'s> {
                 }
                 None => Rename::Keep,
             },
+            Ty::Native(ty, exact) => self.native_member(name, ty, exact),
         }
+    }
+
+    /// What `name`, read off something of the program's type `ty`, is
+    /// called in Ljós.
+    fn native_member(&self, name: &str, ty: Native, exact: bool) -> Rename {
+        let Some(natives) = self.natives else {
+            return Rename::Unknown;
+        };
+        let Some(base) = self.toolkit_base(ty) else {
+            // Built on nothing of the toolkit's: no name of it is one Ljós
+            // renames.
+            return Rename::Keep;
+        };
+        if let Some(new) = renames_of(base).and_then(|renames| lookup_rename(renames, name)) {
+            // The program's type is built on the native type, not on the
+            // face Ljós's API has of it: it answers to Qt's name only.
+            return Rename::No(format!(
+                "`{name}` of `{}` is {}'s, which {MODULE} calls `{new}`, and the program's type has it as `{name}`",
+                natives.name(ty),
+                base.name
+            ));
+        }
+        if natives.has_member(ty, name) {
+            return Rename::Keep;
+        }
+        self.member(
+            name,
+            if exact {
+                Ty::Exact(base)
+            } else {
+                Ty::Derived(base)
+            },
+        )
     }
 
     fn value(&mut self, value: &QmlBindingValue<'_>, scope: Ty, root: Ty) -> Step {
@@ -1912,6 +2066,22 @@ impl<'s> Pass<'s> {
             match ty {
                 Ty::Exact(t) => Some(t.property(name).is_some()),
                 Ty::Plain => Some(false),
+                // The program's type has it, or the toolkit type it is
+                // built on; of a file built on it, the file may too.
+                Ty::Native(native, exact) => {
+                    let has = self.natives.is_some_and(|n| n.has_member(native, name))
+                        || self
+                            .toolkit_base(native)
+                            .is_some_and(|base| base.property(name).is_some());
+                    if has || exact {
+                        Some(has)
+                    } else {
+                        object
+                            .type_name
+                            .as_simple()
+                            .and_then(|n| self.type_declares(n, name, 0))
+                    }
+                }
                 Ty::Derived(_) | Ty::Unknown => object
                     .type_name
                     .as_simple()
@@ -2009,6 +2179,8 @@ impl arrange::Types for Pass<'_> {
 enum Rename {
     To(String),
     Keep,
+    /// The name cannot be lowered, for the reason given.
+    No(String),
     Unknown,
 }
 
@@ -2246,7 +2418,7 @@ fn renames_of(ty: &'static Type) -> Option<&'static [(&'static str, &'static str
 fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
     match on {
         Ty::Exact(ty) | Ty::Derived(ty) => renames_of(ty),
-        Ty::Plain | Ty::Unknown => None,
+        Ty::Plain | Ty::Unknown | Ty::Native(..) => None,
     }
 }
 
@@ -2397,6 +2569,11 @@ impl Script<'_, '_> {
                 .type_named("Item")
                 .map_or(Ty::Unknown, Ty::Derived);
         }
+        if let Some(ty) = self.pass.native_type(name)
+            && self.pass.natives.is_some_and(|n| n.is_singleton(ty))
+        {
+            return Ty::Native(ty, true);
+        }
         match self.member_ty(self.scope, name) {
             Ty::Unknown => self.member_ty(self.root, name),
             known => known,
@@ -2405,6 +2582,9 @@ impl Script<'_, '_> {
 
     /// The type of the member `name` of something of type `on`.
     fn member_ty(&self, on: Ty, name: &str) -> Ty {
+        if let Ty::Native(ty, _) = on {
+            return self.native_member_ty(ty, name);
+        }
         let (Ty::Exact(ty) | Ty::Derived(ty)) = on else {
             return Ty::Unknown;
         };
@@ -2560,6 +2740,34 @@ impl Script<'_, '_> {
         }
         self.pass.changes.extend(row.changes);
     }
+
+    /// The type of the member `name` of something of the program's type
+    /// `ty`: its toolkit base's, as Qt types it, else what the description
+    /// says it holds.
+    fn native_member_ty(&self, ty: Native, name: &str) -> Ty {
+        let Some(natives) = self.pass.natives else {
+            return Ty::Unknown;
+        };
+        if let Some(base) = self.pass.toolkit_base(ty)
+            && base.property(name).is_some()
+        {
+            return self.member_ty(Ty::Derived(base), name);
+        }
+        match natives.property(ty, name) {
+            Some(Holds::Native(held)) => Ty::Native(held, false),
+            Some(Holds::Toolkit { module, name }) => qt_types::module(&module)
+                .and_then(|m| m.type_named(&name))
+                .map_or(Ty::Unknown, |held| {
+                    if held.is_value {
+                        Ty::Plain
+                    } else {
+                        Ty::Derived(held)
+                    }
+                }),
+            Some(Holds::Value) => Ty::Plain,
+            None => Ty::Unknown,
+        }
+    }
 }
 
 impl<'a> Visit<'a> for Script<'_, '_> {
@@ -2683,6 +2891,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                         .change(span.start as usize..span.end as usize, new);
                 }
                 Rename::Keep => {}
+                Rename::No(reason) => self.keep(reason, it.property.span.start),
                 Rename::Unknown => self.keep(
                     format!("`.{name}` is read off something whose type is not known"),
                     it.property.span.start,
@@ -2806,6 +3015,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 .pass
                 .change(it.span.start as usize..it.span.end as usize, new),
             Rename::Keep => {}
+            Rename::No(reason) => self.keep(reason, it.span.start),
             Rename::Unknown => self.keep(
                 format!("`{name}` may be a member of an object whose type is not known"),
                 it.span.start,

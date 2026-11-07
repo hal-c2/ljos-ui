@@ -8,7 +8,7 @@
 //! | To | What |
 //! |---|---|
 //! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
-//! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file |
+//! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file, or a description of the program's types that could not be read |
 //!
 //! A file's constant `ListModel`s are written as typed lists, with their
 //! row types in `<File>.rows.ts` beside it (docs/DIALECT.md §4.8). A file
@@ -27,7 +27,7 @@
 //! | Status | Means |
 //! |---|---|
 //! | 0 | Every file was read (a kept file is not a failure: it runs as written). |
-//! | 2 | A file could not be read or written, or a directory read as a project; the others were still handled. |
+//! | 2 | A file could not be read or written, or a directory read as a project; the others were still handled. Or the program's types could not be read, and nothing was. |
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -61,6 +61,12 @@ pub struct Migrate {
     /// (`QT_QUICK_CONTROLS_STYLE`, `QT_QUICK_CONTROLS_CONF`, the platform's).
     #[arg(long, value_name = "NAME")]
     style: Option<String>,
+    /// The program's own types, as `ljos run --types` reads them: a file
+    /// that imports a module of them is lowered against them. Without it,
+    /// the `ljostypes.json` of the first directory given (of a file, its
+    /// own) that has one.
+    #[arg(long, value_name = "FILE")]
+    types: Option<PathBuf>,
 }
 
 impl Migrate {
@@ -138,11 +144,21 @@ impl Migrate {
             name,
             fallback: None,
         });
+        // The program's own types, where they are described: each project
+        // is checked against them, and a file that imports a module of
+        // them is lowered against them.
+        let oracle = match self.oracle() {
+            Ok(oracle) => oracle,
+            Err(e) => {
+                eprintln!("{e:#}");
+                return 2;
+            }
+        };
         let projects: Vec<Option<Project<EngineOracle>>> = roots
             .iter()
             .enumerate()
-            .map(
-                |(at, root)| match Project::load(root, oracle_for_modules()) {
+            .map(|(at, root)| {
+                match Project::load(root, oracle.clone().unwrap_or_else(oracle_for_modules)) {
                     Ok(mut project) => {
                         if chosen.is_some() {
                             project.set_controls_style(chosen.clone());
@@ -157,8 +173,8 @@ impl Migrate {
                         failed = true;
                         None
                     }
-                },
-            )
+                }
+            })
             .collect();
         // For a root that did not load: the same style, with nothing beside.
         let style = self.style.clone().unwrap_or_else(|| {
@@ -169,6 +185,8 @@ impl Migrate {
             // No style chosen is Basic, as in Qt 6.
             .map_or_else(|| qml_compat::CONTROLS_STYLE.to_owned(), |style| style.name)
         });
+        let natives = oracle.as_ref().map(ljos_compiler::OracleNatives::new);
+        let natives = natives.as_ref().map(|n| n as &dyn qml_compat::Natives);
         // What the pass makes of `file` alone, with the files of its uses
         // keyed by their paths.
         let alone_of = |file: &Path, at: usize, text: &str| {
@@ -179,6 +197,7 @@ impl Migrate {
                     let locals = qml_compat::Styled {
                         locals: &|_: &str| None,
                         style: &style,
+                        natives,
                     };
                     let outcome = match file.file_stem() {
                         Some(stem) => qml_compat::lower_as(text, &stem.to_string_lossy(), &locals),
@@ -434,6 +453,33 @@ fn absolute(path: &Path) -> PathBuf {
         }
     }
     out
+}
+
+impl Migrate {
+    /// What the checker is told of the program's own types, where they
+    /// are described.
+    fn oracle(&self) -> anyhow::Result<Option<ljos::dev::EngineOracle>> {
+        let named = self.types.as_deref();
+        let file = match named {
+            Some(_) => crate::run::types_file(named, Path::new(".")),
+            None => self.paths.iter().find_map(|path| {
+                let dir = if path.is_dir() {
+                    path.as_path()
+                } else {
+                    path.parent().unwrap_or(Path::new("."))
+                };
+                let dir = if dir.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    dir
+                };
+                crate::run::types_file(None, dir)
+            }),
+        };
+        crate::run::read_types(file)?
+            .map(|types| crate::run::oracle_for_types(&types))
+            .transpose()
+    }
 }
 
 /// A file's key for [`qml_compat::group`]: its absolute path without
