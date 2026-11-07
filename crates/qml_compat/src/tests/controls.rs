@@ -106,6 +106,8 @@ fn ljos_controls_has_what_qt_controls_have() {
     for name in [
         "AbstractButton",
         "Button",
+        "CheckBox",
+        "ComboBox",
         "Dialog",
         "ItemDelegate",
         "Label",
@@ -115,6 +117,9 @@ fn ljos_controls_has_what_qt_controls_have() {
         "Popup",
         "ScrollBar",
         "ScrollView",
+        "Slider",
+        "SpinBox",
+        "Switch",
         "TextArea",
         "TextField",
         "ToolTip",

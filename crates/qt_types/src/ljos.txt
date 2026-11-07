@@ -112,6 +112,8 @@ module Ljos.Blocks
 module Ljos.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
 	Button QtQuick/Controls/Basic/Button.qml
+	CheckBox QtQuick/Controls/Basic/CheckBox.qml
+	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
@@ -123,6 +125,9 @@ module Ljos.Controls
 	Popup QtQuick/Controls/Basic/Popup.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider QtQuick/Controls/Basic/Slider.qml
+	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	Switch QtQuick/Controls/Basic/Switch.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
