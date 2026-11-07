@@ -3030,8 +3030,10 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.is_bound(n) && self.inner.graph.ran_this_flush(n))
     }
 
-    /// Whether an override (a state, a `Binding`) holds `prop` now.
-    pub(crate) fn has_override(&self, obj: ObjectId, prop: PropIndex) -> bool {
+    /// Whether an override (a state, a `Binding`) holds `prop` now. Not a
+    /// tracked read: pushing or removing one changes the value in nearly
+    /// every case, so a reader that also reads `prop` hears of it.
+    pub fn has_override(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
         let node = self.node_if_any(obj, prop);
         node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
