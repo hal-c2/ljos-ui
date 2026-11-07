@@ -255,7 +255,15 @@ The phase-1 slice (`crates/ljos_quick/src/ljos_ui.rs`):
   gradients that fill a path (`LinearGradient`, `RadialGradient`,
   `ConicalGradient`) with `Gradient` and `GradientStop`;
 - in `Ljos.Models`, `ListModel`, `ListElement` and `Instantiator`, exported
-  as they are.
+  as they are;
+- what says in Qt Quick the one thing it says in Ljós (§4.14, "none"),
+  exported as it is: `Image`, `Flickable`, `Window` and `Screen` (with
+  `Screen.points`, §4.3), `TextInput` and its validators, `TextEdit`,
+  `TextMetrics`, `FontMetrics`, `Shortcut`, `DropArea`, and the attached
+  `Keys` (with its `KeyEvent`) and `Accessible`. DECISION: a `Window`
+  keeps `color`: it is what is behind the window's items, not a fill, and
+  Qt's `Window` is no `Rectangle`. `Window` and `Screen` come from
+  `ljos_controls`, which builds them, into the same module.
 
 DECISION: `Gradient` and `GradientStop` come with the shapes. A shape's
 gradient is a `Gradient`, and its stops are `GradientStop`s, so a file
@@ -289,7 +297,7 @@ a string; neither takes a reviver, a replacer or an indent, which are
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
 | `Qt.resolvedUrl` | `url("…")`, resolved against the file statically | compile time | none |
-| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72); arrives with `Screen` in M1 | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
+| `font.pointSize` | `Screen.points(pt)`: pixels for `pt` points on the item's screen (logical DPI / 72, the DPI rounded to a whole number as a platform reports it); with no screen yet, the platform's own points (72 or 96 to the inch). Built with `Screen` (M1) | a source, reactive on the item's screen | a multiply; re-evaluated only when the item moves to another screen or that screen's DPI changes |
 | `Qt.binding` | a `Binding` object, or a state | declarative | |
 | `Qt.createComponent`, `createQmlObject` | a component type is a value (§4.11) | typed | |
 | `Qt.quit`, `exit`, `application.*`, `openUrlExternally` | `App.quit()`, `App.arguments`, `App.displayName`, `App.openUrlExternally(u)` | effects, typed | |
@@ -1246,6 +1254,7 @@ construction.
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
 | attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical; built |
 | `Flickable` | `Flickable` | none |
+| `Image`, `Window`, `Screen`, `TextInput`, `TextEdit`, `TextMetrics`, `FontMetrics`, `Shortcut`, attached `Keys` and `Accessible` | the same | none; a `QtQuick.Window` import leaves its line empty, since its types are `QtQuick`'s |
 | `ListModel` of constants | `list<T>` | mechanical, with a generated row type in `<File>.rows.ts` (§4.8). Built |
 | `ListModel` edited | `ListModel` | none |
 | `XmlListModel`, `FolderListModel` | `XmlModel` (decoder), `FolderModel` | mechanical |
@@ -1491,8 +1500,10 @@ are declared so), functions and enums. It reads them from:
   cycle closes.
 
 What it cannot type is an error (`ts-no-any`), at the place the type is
-missing, with what gives it one. A method the type table names without
-types takes and gives `unknown`. It lets by, without a type, a model's
+missing, with what gives it one. A method the type table names takes
+anything, and gives what the table says it does: Ljós's own table says it
+for a method that gives a `bool`, a number or a string (`method points
+returns:real`), and gives `unknown` for any other; Qt's table never says. It lets by, without a type, a model's
 role, a member only the running program knows, and an alias (whose type is
 its target's).
 
@@ -1555,14 +1566,15 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
 `QtQuick.Layouts`, `QtQuick.Shapes`, the controls (`QtQuick.Controls.Basic`,
 and `QtQuick.Controls` where the program starts with Basic),
 `QtQuick.Dialogs`' file and folder dialogs and `QtQml` are lowered (§4.6,
-§4.14, §4.16). A module of the project, and a directory imported by path,
+§4.14, §4.16). `QtQuick.Window` leaves its line empty, since `Ljos.Ui` has
+what it names. A module of the project, and a directory imported by path,
 are files of the project: the file is lowered with them (§6.2). An import
 of the program's own types stays as written, beside `import Ljos.Ui`, where
 the pass is given their description (`locals.natives()`). Any other module
-import (`QtQuick.Controls.Material`, an aliased `QtQuick`, `QtQuick.Shapes`
-or `QtQml`, a module of the project imported under a name, or one whose
-types are native and not described) keeps the file. So does a type of
-`QtQuick.Shapes` that `Ljos.Ui` doesn't have, made or read through
+import (`QtQuick.Controls.Material`, an aliased `QtQuick`, `QtQuick.Shapes`,
+`QtQuick.Window` or `QtQml`, a module of the project imported under a name,
+or one whose types are native and not described) keeps the file. So does a
+type of `QtQuick.Shapes` that `Ljos.Ui` doesn't have, made or read through
 (`` `X` is not in Ljos.Ui yet ``).
 
 The description is what the checker reads (`ljostypes.json`, §4.4). A
