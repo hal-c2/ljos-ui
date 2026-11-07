@@ -17,14 +17,15 @@ use std::sync::OnceLock;
 use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
 use crate::font_enums::FontEnums;
+use crate::handlers::PointerDevice;
 use crate::shapes::{
     ConicalGradient, LinearGradient, Path, PathAngleArc, PathArc, PathAttribute, PathCubic,
     PathCurve, PathLine, PathMove, PathMultiline, PathPercent, PathPolyline, PathQuad,
     PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
 };
 use crate::{
-    BoxColumn, BoxRow, Gradient, GradientStop, Item, Layout, ListView, LjosBox, MouseArea,
-    PropertyChanges, Rectangle, Repeater, State, Text,
+    BoxColumn, BoxRow, Gradient, GradientStop, HoverHandler, Item, Layout, ListView, LjosBox,
+    MouseArea, PropertyChanges, Rectangle, Repeater, State, TapHandler, Text,
 };
 
 /// The module's name, as a file imports it.
@@ -85,6 +86,40 @@ fn list_view() -> &'static MetaObject {
     })
 }
 
+/// What a pointer handler accepts is what a gesture takes: the buttons,
+/// modifiers, devices and kinds of pointer it answers, named as a pointer
+/// event names what it carries (docs/DIALECT.md §4.7).
+const GESTURE_RENAMES: [(&str, &str); 4] = [
+    ("acceptedButtons", "buttons"),
+    ("acceptedModifiers", "modifiers"),
+    ("acceptedDevices", "devices"),
+    ("acceptedPointerTypes", "pointerTypes"),
+];
+
+/// A gesture: a pointer handler under Ljós's names.
+fn gesture(name: &str, of: &'static MetaObject) -> MetaObject {
+    GESTURE_RENAMES
+        .iter()
+        .fold(
+            MetaBuilder::new(name).module(MODULE).face(of),
+            |face, (old, new)| face.rename(old, new),
+        )
+        .build()
+}
+
+/// `TapHandler`, called `Tap`: a gesture is a child of the item it acts on,
+/// and says what it recognises.
+fn tap() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| gesture("Tap", TapHandler::static_meta()))
+}
+
+/// `HoverHandler`, called `Hover`.
+fn hover() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| gesture("Hover", HoverHandler::static_meta()))
+}
+
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
     // `Row`, `Column` and `Box` are the one arrangement
@@ -93,7 +128,7 @@ pub(crate) fn register(engine: &Engine) {
     // what they attach to a delegate (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
-        Repeater,
+        Repeater, PointerDevice,
     ]));
     // Qt's shapes, as they are (docs/DIALECT.md §4.14): `QtQuick.Shapes`'
     // types, the elements of a `Path` (which Qt has in `QtQuick`), and the
@@ -106,7 +141,7 @@ pub(crate) fn register(engine: &Engine) {
         PathAttribute, PathPercent,
     ]));
     let version = Version::new(1, 0);
-    for face in [rectangle, pointer_area, list_view] {
+    for face in [rectangle, pointer_area, list_view, tap, hover] {
         engine.register_type(MODULE, version, MetaRef::Static(face()));
     }
     // `Component`, `Timer` and the `Qt` namespace, until the module that
@@ -175,6 +210,46 @@ mod tests {
             let found = engine.lookup_type(MODULE, name).expect(name);
             assert!(MetaRef::ptr_eq(&found, &MetaRef::Static(meta)), "{name}");
         }
+    }
+
+    #[test]
+    fn a_gesture_takes_what_its_handler_accepts() {
+        let engine = engine();
+        let tap = engine.lookup_type(MODULE, "Tap").expect("registered");
+        let native = TapHandler::static_meta();
+        assert!(tap.inherits(native));
+        for (old, new) in GESTURE_RENAMES {
+            assert_eq!(tap.property_index(new), native.property_index(old), "{new}");
+            assert_eq!(tap.property_index(old), None, "{old}");
+        }
+        assert!(tap.signal_index("buttonsChanged").is_some());
+        assert!(engine.lookup_type(MODULE, "TapHandler").is_none());
+    }
+
+    #[test]
+    fn a_face_that_renames_what_a_base_declares_has_the_base_s_members_as_its_own() {
+        let engine = engine();
+        let hover = engine.lookup_type(MODULE, "Hover").expect("registered");
+        let native = HoverHandler::static_meta();
+        assert!(hover.inherits(native));
+        assert!(hover.inherits(crate::PointerHandler::static_meta()));
+        assert_eq!(
+            hover.property_index("devices"),
+            native.property_index("acceptedDevices")
+        );
+        assert_eq!(hover.property_index("acceptedDevices"), None);
+        // `devices` is declared by PointerHandler, so the face describes
+        // PointerHandler's members as its own and builds on what it does.
+        let own = |name: &str| hover.own_properties().iter().any(|p| p.name == name);
+        assert!(own("devices") && own("hovered") && own("enabled"));
+        assert!(!own("acceptedDevices"));
+        let prototype = hover.prototype().expect("a prototype");
+        assert!(!prototype.inherits(crate::PointerHandler::static_meta()));
+        assert_eq!(
+            hover.own_properties().len(),
+            native.own_properties().len()
+                + crate::PointerHandler::static_meta().own_properties().len()
+        );
     }
 
     #[test]
