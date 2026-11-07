@@ -44,6 +44,9 @@ pub use group::{Alone, References, group, references};
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
 
+/// The module a lowered file imports too when it arranges children.
+pub const LAYOUT: &str = "Ljos.Layout";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -125,12 +128,17 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
     let Some(ui) = qt_types::module(MODULE) else {
         return kept("this build has no description of Ljos.Ui", 0);
     };
+    let Some(layout) = qt_types::module(LAYOUT) else {
+        return kept("this build has no description of Ljos.Layout", 0);
+    };
     let Some(quick) = qt_types::module("QtQuick") else {
         return kept("this build has no description of QtQuick", 0);
     };
     let mut pass = Pass {
         source,
         ui,
+        layout,
+        arranges: std::cell::Cell::new(false),
         quick,
         layouts: None,
         locals,
@@ -197,6 +205,10 @@ enum Ty {
 struct Pass<'s> {
     source: &'s str,
     ui: &'static qt_types::Module,
+    layout: &'static qt_types::Module,
+    /// Whether the file names a type of `Ljos.Layout`, which it imports
+    /// then.
+    arranges: std::cell::Cell<bool>,
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
@@ -244,18 +256,22 @@ impl<'s> Pass<'s> {
         let Some(span) = quick else {
             return Ok(false);
         };
-        if let Some(span) = layouts {
-            // `Ljos.Ui` has `Layout`; the line stays, empty.
-            self.change(span.start as usize..span.end as usize, "");
-        }
-        // On the import's line, so every line stays where it was.
-        self.change(
-            span.start as usize..span.end as usize,
-            format!("{JAVASCRIPT}; import {MODULE}"),
-        );
         self.collect(&document.root);
         let root = self.object_type(&document.root)?;
         self.object(&document.root, root, root, true)?;
+        // On the import's line, so every line stays where it was. What
+        // imported QtQuick.Layouts imports Ljos.Layout in its place, as
+        // a child of a type of another file may be given a `Layout`.
+        let mut import = format!("{JAVASCRIPT}; import {MODULE}");
+        match layouts {
+            Some(span) => self.change(
+                span.start as usize..span.end as usize,
+                format!("import {LAYOUT}"),
+            ),
+            None if self.arranges.get() => import.push_str(&format!("; import {LAYOUT}")),
+            None => {}
+        }
+        self.change(span.start as usize..span.end as usize, import);
         Ok(true)
     }
 
@@ -343,7 +359,7 @@ impl<'s> Pass<'s> {
         if let Some(ty) = self.layouts.and_then(|m| m.type_named(name)) {
             return match name {
                 "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
-                _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
+                _ => Err(self.no(format!("`{name}` is not in {LAYOUT} yet"), at)),
             };
         }
         if let Some(ty) = self.quick.type_named(name) {
@@ -351,10 +367,14 @@ impl<'s> Pass<'s> {
                 return Ok(Ty::Exact(ty));
             }
             let new = renamed_type(name).unwrap_or(name);
-            return match self.ui.type_named(new) {
-                Some(_) => Ok(Ty::Exact(ty)),
-                None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
-            };
+            if self.ui.type_named(new).is_some() {
+                return Ok(Ty::Exact(ty));
+            }
+            if self.layout.type_named(new).is_some() {
+                self.arranges.set(true);
+                return Ok(Ty::Exact(ty));
+            }
+            return Err(self.no(format!("`{name}` is not in {MODULE} yet"), at));
         }
         if depth > 16 {
             return Ok(Ty::Unknown);

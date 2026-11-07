@@ -1,5 +1,6 @@
-//! Qt's positioners and line layouts lowered to `Ljos.Ui`'s one
-//! arrangement (`Row`, `Column`; docs/DIALECT.md).
+//! Qt's positioners and line layouts lowered to `Ljos.Layout`'s one
+//! arrangement (`Row`, `Column`, `Grid`), and Qt's `Flow` to Ljós's
+//! (docs/DIALECT.md §4.6).
 //!
 //! Ljós's `Row` places a child as Qt's `Row` positioner does when the child
 //! says nothing through `Layout.`, and sizes it as Qt's `RowLayout` does when
@@ -31,6 +32,21 @@
 //! `populate`, `Positioner`, `effectiveLayoutDirection`, `forceLayout`). A
 //! child that is a file of the project or an inline component is held to
 //! the same by what its root binds.
+//!
+//! A `Grid` positioner is held to the same, but for a child's own position,
+//! which both set on both axes. It is lowered unless it sets what Ljós's
+//! `Grid` has not (`horizontalItemAlignment`, `verticalItemAlignment`,
+//! `layoutDirection`), or Qt's would count room Ljós's does not: the
+//! spacing after a line of children it does not fill, that of a row or
+//! column it leaves empty, and a child beyond its rows and columns, which
+//! Qt's leaves where it is. Where the pass cannot count the children (a
+//! `Repeater`, a `visible` it cannot read, an item that may have no size)
+//! it keeps the file if a count could tell the two apart. Qt's `Grid` has
+//! four columns unless told; the pass writes them out, as Ljós's `Grid` is
+//! one line unless told.
+//!
+//! Ljós's `Flow` is Qt's; a `Flow` is held to a positioner's rules so that
+//! what Ljós's arrangement would read differently is not written to it.
 
 use std::ops::Range;
 
@@ -50,6 +66,10 @@ pub(crate) enum Shape {
     Positioner { vertical: bool },
     /// `RowLayout` or `ColumnLayout` of QtQuick.Layouts.
     Layout { vertical: bool },
+    /// `Grid` of QtQuick, the positioner.
+    Grid,
+    /// `Flow` of QtQuick.
+    Flow,
 }
 
 impl Shape {
@@ -57,6 +77,8 @@ impl Shape {
         match (ty.module, ty.name) {
             ("QtQuick", "Row") => Some(Shape::Positioner { vertical: false }),
             ("QtQuick", "Column") => Some(Shape::Positioner { vertical: true }),
+            ("QtQuick", "Grid") => Some(Shape::Grid),
+            ("QtQuick", "Flow") => Some(Shape::Flow),
             ("QtQuick.Layouts", "RowLayout") => Some(Shape::Layout { vertical: false }),
             ("QtQuick.Layouts", "ColumnLayout") => Some(Shape::Layout { vertical: true }),
             _ => None,
@@ -66,12 +88,24 @@ impl Shape {
     fn vertical(self) -> bool {
         match self {
             Shape::Positioner { vertical } | Shape::Layout { vertical } => vertical,
+            Shape::Grid | Shape::Flow => false,
         }
+    }
+
+    /// Whether Qt's places its children, as a positioner, and does not size
+    /// them.
+    fn positions(self) -> bool {
+        !matches!(self, Shape::Layout { .. })
     }
 
     /// What Ljós calls it.
     fn ljos(self) -> &'static str {
-        if self.vertical() { "Column" } else { "Row" }
+        match self {
+            Shape::Grid => "Grid",
+            Shape::Flow => "Flow",
+            _ if self.vertical() => "Column",
+            _ => "Row",
+        }
     }
 
     fn qt(self) -> &'static str {
@@ -80,6 +114,8 @@ impl Shape {
             Shape::Positioner { vertical: true } => "Column",
             Shape::Layout { vertical: false } => "RowLayout",
             Shape::Layout { vertical: true } => "ColumnLayout",
+            Shape::Grid => "Grid",
+            Shape::Flow => "Flow",
         }
     }
 }
@@ -130,7 +166,11 @@ pub(crate) fn arrange(
         changes: Vec::new(),
     };
     match shape {
-        Shape::Positioner { .. } => a.positioner(object)?,
+        Shape::Positioner { .. } | Shape::Flow => a.positioner(object)?,
+        Shape::Grid => {
+            a.positioner(object)?;
+            a.grid(object)?;
+        }
         Shape::Layout { .. } => a.layout(object)?,
     }
     Ok(a.changes)
@@ -176,10 +216,15 @@ impl Arrange<'_, '_> {
         let qt = self.shape.qt();
         for (name, binding) in bindings(object) {
             if POSITIONER_ONLY.contains(&name.as_str()) {
-                return Err(self.keep(
-                    format!("`{name}` is a member of Qt's `{qt}` that Ljós's has not"),
-                    binding.span.start as usize,
-                ));
+                // Ljós's `Flow` is Qt's, and has them.
+                let why = if self.shape == Shape::Flow {
+                    format!(
+                        "`{name}` keeps a `Flow` as Qt's until the Box rules reach a wrapping line"
+                    )
+                } else {
+                    format!("`{name}` is a member of Qt's `{qt}` that Ljós's has not")
+                };
+                return Err(self.keep(why, binding.span.start as usize));
             }
         }
         for name in POSITIONER_ONLY_NAMES {
@@ -226,7 +271,7 @@ impl Arrange<'_, '_> {
         if name.starts_with("anchors.") {
             return Err(self.anchored(name, at));
         }
-        if name == cross {
+        if matches!(self.shape, Shape::Positioner { .. }) && name == cross {
             let reason = if whose.is_empty() {
                 format!("Qt's `{qt}` leaves a child's `{cross}` to it, and Ljós's sets it")
             } else {
@@ -235,6 +280,208 @@ impl Arrange<'_, '_> {
             return Err(self.keep(reason, at));
         }
         Ok(())
+    }
+
+    /// A `Grid` positioner, past what every positioner is held to.
+    fn grid(&mut self, object: &QmlObject<'_>) -> Result<(), Kept> {
+        let own = bindings(object);
+        let find = |n: &str| own.iter().find(|(m, _)| m == n).map(|(_, b)| *b);
+        for name in [
+            "horizontalItemAlignment",
+            "verticalItemAlignment",
+            "layoutDirection",
+        ] {
+            if let Some(b) = find(name) {
+                return Err(self.keep(
+                    format!("`{name}` is not in Ljós's `Grid` yet"),
+                    b.span.start as usize,
+                ));
+            }
+        }
+        let at = object.type_name.span.start as usize;
+        let count = |name: &str| -> Result<Option<usize>, Kept> {
+            let Some(b) = find(name) else {
+                return Ok(None);
+            };
+            match number(&b.value) {
+                Some(n) if n >= 0.0 && n.fract() == 0.0 => Ok(Some(n as usize).filter(|n| *n > 0)),
+                _ => Err(self.keep(
+                    format!(
+                        "`{name}` of a `Grid` is not a whole number the pass can read, so it \
+                         cannot tell where Qt's `Grid` counts room Ljós's does not"
+                    ),
+                    b.span.start as usize,
+                )),
+            }
+        };
+        let (rows, columns) = (count("rows")?, count("columns")?);
+        let top_to_bottom = match find("flow") {
+            None => false,
+            Some(b) => match &b.value {
+                QmlBindingValue::Expression(Expression::StaticMemberExpression(m)) if matches!(&m.object, Expression::Identifier(id) if id.name == "Grid") => {
+                    match m.property.name.as_str() {
+                        "LeftToRight" => false,
+                        "TopToBottom" => true,
+                        _ => return Err(self.unread("flow", b)),
+                    }
+                }
+                _ => return Err(self.unread("flow", b)),
+            },
+        };
+        // A gap the pass cannot read is one that may not be 0.
+        let gap = |name: &str| match find(name).or_else(|| find("spacing")) {
+            None => Some(0.0),
+            Some(b) => number(&b.value),
+        };
+        let gaps = [gap("columnSpacing"), gap("rowSpacing")];
+        let (along, across) = if top_to_bottom { (1, 0) } else { (0, 1) };
+        let spaced = |axis: usize| gaps[axis] != Some(0.0);
+        let shown = self.shown(object);
+        // How Qt's `Grid` counts its cells for `n` children: along its
+        // flow, then across.
+        let given = if top_to_bottom {
+            (rows, columns)
+        } else {
+            (columns, rows)
+        };
+        let differs = |n: usize| -> Option<String> {
+            let (line, lines) = match given {
+                (Some(l), ls) => (l, ls),
+                (None, Some(ls)) => (n.div_ceil(ls).max(1), Some(ls)),
+                (None, None) if top_to_bottom => (n.div_ceil(4).max(1), Some(4)),
+                (None, None) => (4, None),
+            };
+            let placed = match (given, lines) {
+                ((Some(l), Some(ls)), _) => n.min(l * ls),
+                _ => n,
+            };
+            let a = if top_to_bottom { "column" } else { "row" };
+            if matches!(given, (Some(_), Some(_))) && placed < n {
+                return Some(
+                    "Qt's `Grid` leaves a child beyond its rows and columns where it is, and \
+                     Ljós's `Grid` places it"
+                        .into(),
+                );
+            }
+            if spaced(along) && n > 0 && n < line {
+                return Some(format!(
+                    "Qt's `Grid` counts the spacing after a {a} of children it does not fill, \
+                     and Ljós's `Grid` does not"
+                ));
+            }
+            if let Some(ls) = lines
+                && spaced(across)
+                && placed.div_ceil(line) < ls
+            {
+                return Some(format!(
+                    "Qt's `Grid` counts the spacing of a {a} it leaves empty, and Ljós's \
+                     `Grid` does not; it has {ls} {a}s and {placed} children to fill them, \
+                     {line} to a {a}"
+                ));
+            }
+            None
+        };
+        match shown {
+            Shown::Between(least, most) => {
+                for n in least..=most {
+                    if let Some(why) = differs(n) {
+                        let why = if least == most {
+                            why
+                        } else {
+                            format!("{why}, for as many children as it may show")
+                        };
+                        return Err(self.keep(why, at));
+                    }
+                }
+            }
+            Shown::Unknown(why) => {
+                if spaced(along) || spaced(across) || matches!(given, (Some(_), Some(_))) {
+                    return Err(self.keep(
+                        format!(
+                            "{why}, and how many children Qt's `Grid` places tells where it \
+                             counts room Ljós's `Grid` does not"
+                        ),
+                        at,
+                    ));
+                }
+            }
+        }
+        // Qt's `Grid` has four columns unless told, and a count of 0 tells
+        // it nothing (qml6); Ljós's is one line.
+        if rows.is_none() && columns.is_none() {
+            if let Some(b) = find("columns")
+                && let QmlBindingValue::Expression(Expression::NumericLiteral(zero)) = &b.value
+            {
+                self.changes.push(Change {
+                    range: zero.span.start as usize..zero.span.end as usize,
+                    replacement: "4".into(),
+                });
+            } else if let Some(at) = after_brace(self.source, object) {
+                self.insert(at, " columns: 4;");
+            }
+        }
+        Ok(())
+    }
+
+    fn unread(&self, name: &str, b: &QmlBinding<'_>) -> Kept {
+        self.keep(
+            format!("`{name}` of a `Grid` is not one the pass can read"),
+            b.span.start as usize,
+        )
+    }
+
+    /// How many of `object`'s children a positioner places: one with no
+    /// size or not visible it leaves out.
+    fn shown(&self, object: &QmlObject<'_>) -> Shown {
+        let (mut least, mut most) = (0, 0);
+        for member in &object.members {
+            let QmlMember::Object(child) = member else {
+                continue;
+            };
+            if is_group(child) {
+                continue;
+            }
+            let name = child.type_name.to_string();
+            let ty = self.types.qt_type(&name);
+            if ty.is_some_and(|t| t.name == "Repeater") {
+                return Shown::Unknown("it has a `Repeater`".into());
+            }
+            if ty.is_some_and(|t| !is_item(t)) {
+                continue;
+            }
+            let own = bindings(child);
+            let value = |n: &str| own.iter().find(|(m, _)| m == n).map(|(_, b)| &b.value);
+            let mut maybe = match value("visible") {
+                None => false,
+                Some(v) => match boolean(v) {
+                    Some(true) => false,
+                    Some(false) => continue,
+                    None => true,
+                },
+            };
+            let size = |axis: usize| value(SIZE[axis]).or_else(|| value(IMPLICIT[axis]));
+            if [W, H]
+                .iter()
+                .any(|a| size(*a).and_then(number) == Some(0.0))
+            {
+                continue;
+            }
+            // An item with no size of its own unless given one; a file of the
+            // project may be such an item.
+            let sizeless = ty.is_none_or(|t| ZERO_IMPLICIT.contains(&t.name));
+            if sizeless
+                && ![W, H]
+                    .iter()
+                    .all(|a| size(*a).and_then(number).is_some_and(|n| n > 0.0))
+            {
+                maybe = true;
+            }
+            most += 1;
+            if !maybe {
+                least += 1;
+            }
+        }
+        Shown::Between(least, most)
     }
 
     fn anchored(&self, name: &str, at: usize) -> Kept {
@@ -471,7 +718,7 @@ impl Arrange<'_, '_> {
                 QmlMember::Object(child) if !is_group(child) => {
                     let name = child.type_name.to_string();
                     let Some(ty) = self.types.qt_type(&name) else {
-                        if matches!(self.shape, Shape::Positioner { .. }) {
+                        if self.shape.positions() {
                             // A positioner places any item the same as Ljós's
                             // arrangement does; what it is does not matter.
                             out.push(child);
@@ -535,6 +782,12 @@ impl Arrange<'_, '_> {
             )
         })
     }
+}
+
+/// How many children a positioner places, as far as the pass can tell.
+enum Shown {
+    Between(usize, usize),
+    Unknown(String),
 }
 
 /// `anchors { }`, `font { }`: a group of the object, not a child.

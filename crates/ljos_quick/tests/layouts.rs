@@ -492,6 +492,7 @@ fn placing_a_child_leaves_its_binding_and_makes_a_size_a_given_one() {
 
 const BOXES: &str = r#"
 import Ljos.Ui
+import Ljos.Layout
 Item {
     width: 300; height: 300
     Box {
@@ -507,7 +508,7 @@ Item {
 }
 "#;
 
-/// `Ljos.Ui`'s arrangement, planned (a child with a `Layout`) or placing as
+/// `Ljos.Layout`'s arrangement, planned (a child with a `Layout`) or placing as
 /// a positioner (none has one), polishes once for a new scene and once for
 /// each frame in which something it reads changed, however many did.
 #[test]
