@@ -2100,6 +2100,11 @@ fn has_own(on: Ty, name: &str) -> bool {
     ty.property(name).is_some() || ty.signal(name).is_some() || ty.has_method(name)
 }
 
+/// An `Item`, or a type derived from one, in Qt's table or Ljós's own.
+fn is_item(ty: &'static qt_types::Type) -> bool {
+    ty.is_a(&["QQuickItem", "QtQuick.Item"])
+}
+
 fn renamed_type(name: &str) -> Option<&'static str> {
     type_renames()
         .find(|(old, _)| *old == name)
@@ -2637,13 +2642,37 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         {
             self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
         }
-        // An attached object read off another: `item.Drag.active`.
+        // An attached object read off an item: `item.Drag.active`. Of
+        // anything else the name is a key of its own (`config.Drag`), and a
+        // type that attaches nothing is never read off an object.
         if name.starts_with(|c: char| c.is_ascii_uppercase())
             && let Some(new) = renamed_type(name)
+            && self
+                .pass
+                .quick
+                .type_named(name)
+                .is_some_and(|ty| ty.attached().is_some())
         {
-            let span = it.property.span;
-            self.pass
-                .change(span.start as usize..span.end as usize, new);
+            let only = format!("only an item's is Qt's attached `{name}`");
+            match self.ty(&it.object) {
+                Ty::Exact(ty) | Ty::Derived(ty) if is_item(ty) => {
+                    let span = it.property.span;
+                    self.pass
+                        .change(span.start as usize..span.end as usize, new);
+                }
+                Ty::Exact(ty) | Ty::Derived(ty) => self.keep(
+                    format!(
+                        "`.{name}` is read off a `{}`, which is no item, and {only}",
+                        ty.name
+                    ),
+                    it.property.span.start,
+                ),
+                Ty::Plain => {}
+                Ty::Unknown => self.keep(
+                    format!("`.{name}` is read off something whose type is not known, and {only}"),
+                    it.property.span.start,
+                ),
+            }
         }
         if is_renamed_member(name) && !self.called.contains(&it.property.span.start) {
             let on = self.ty(&it.object);

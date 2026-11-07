@@ -751,6 +751,11 @@ since moving an item and carrying data are two different things. Built:
 `Drag.active`, `Drag.hotSpot` and the rest, and `Drag.Automatic` read
 through the type, lower to `DragSource`'s; `DropArea` is as it is. An
 item's `Drag.active` and `DragSource.active` are one value.
+`.Drag` read off an object is renamed only when the object is an item (an
+id, `parent`): only an item has the attached `Drag`. Off a value
+(`"x".Drag`) it is the value's and stays as written. Off something the
+pass can't type (`config.Drag.speed`, `config` a JavaScript object), or
+off an object that is no item, it keeps the file.
 
 DECISION: `PointHandler` is `Pointer`, the one point on its item it
 follows, as `Tap` and `Hover` are named for what they see.
