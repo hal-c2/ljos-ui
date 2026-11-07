@@ -259,7 +259,7 @@ Feature: Ljós's Grid and Flow
       Then the check reports:
         """
         Tiles.qml:4:30: error: `anchors.right` on a child of a `Grid` is overridden by it; use `Layout.alignment` or move it out of the Grid [layout-anchored]
-        Tiles.qml:5:30: error: `anchors.top` on a child of a `Flow` is overridden by it; use `Layout.alignment` or move it out of the Flow [layout-anchored]
+        Tiles.qml:5:30: error: `anchors.top` on a child of a `Flow` is overridden by it; wrap it in an `Item` or move it out of the Flow [layout-anchored]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
         """

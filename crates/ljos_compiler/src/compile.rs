@@ -1318,11 +1318,17 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 && SIDES.contains(side)
             {
                 let span = self.span(span);
+                // Ljós's `Flow` is Qt's positioner, which reads no `Layout`.
+                let fix = if arrangement == "Flow" {
+                    "wrap it in an `Item`"
+                } else {
+                    "use `Layout.alignment`"
+                };
                 self.diagnostics.push(Diagnostic::error(
                     Code::LayoutAnchored,
                     format!(
                         "`anchors.{side}` on a child of a `{arrangement}` is overridden by it; \
-                         use `Layout.alignment` or move it out of the {arrangement}"
+                         {fix} or move it out of the {arrangement}"
                     ),
                     span,
                 ));
