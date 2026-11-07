@@ -499,7 +499,8 @@ impl<O: TypeOracle> Project<O> {
             .filter(|(other, alone)| {
                 other.as_str() != key
                     && other.rsplit_once('/').map_or("", |(d, _)| d) == dir
-                    && alone.references.types.iter().any(|t| t == name)
+                    && (alone.references.types.iter().any(|t| t == name)
+                        || alone.references.introduced.iter().any(|t| t == name))
             })
             .map(|(other, _)| other.clone())
             .collect();

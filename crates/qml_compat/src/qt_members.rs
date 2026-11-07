@@ -11,8 +11,11 @@
 //! property's type), no member of a type the file's objects are, no name a
 //! file beside it declares on the root it is built on, and the file has no
 //! object whose type the pass does not know and no delegate, whose model's
-//! roles would come first. Otherwise the member stays Qt's, and the file is
-//! lowered all the same.
+//! roles would come first. A capitalised name (`App`) may also be a type of a
+//! directory the file imports by path, which the pass cannot see, so under
+//! such an import it is not free. Otherwise the member stays Qt's, and the
+//! file is lowered all the same. A project lowers a file again when a file of
+//! a name the pass gives comes beside it or goes ([`introduced`]).
 
 use std::cell::RefCell;
 use std::ops::Range;
@@ -43,6 +46,16 @@ const SAME: &[&str] = &[
     "hsla",
     "hsva",
 ];
+
+/// The type name lowering `Qt.member` brings into the file, if any: a file
+/// of that name beside it would take it, so the project lowers the file
+/// again when one comes or goes.
+pub(crate) fn introduced(member: &str) -> Option<&'static str> {
+    match becomes(member)? {
+        Becomes::OnApp => Some(APP),
+        Becomes::Function(_) => None,
+    }
+}
 
 fn becomes(member: &str) -> Option<Becomes> {
     if let Some(name) = SAME.iter().find(|name| **name == member) {
@@ -80,6 +93,8 @@ pub(crate) struct Members {
     typed: Vec<Range<usize>>,
     /// An object whose type the pass does not know, or a delegate.
     unsure: bool,
+    /// The file imports a directory by path, not under a name.
+    pathed: bool,
 }
 
 impl Members {
@@ -110,6 +125,11 @@ impl Members {
         }
     }
 
+    /// `import "qml"`: what the directory has is in sight.
+    pub(crate) fn imports_by_path(&mut self) {
+        self.pathed = true;
+    }
+
     pub(crate) fn delegate(&mut self) {
         self.unsure = true;
     }
@@ -134,7 +154,8 @@ impl Members {
         }
         let declared = self.declared.borrow();
         let free = |name: &str| {
-            !beside(name)
+            !(self.pathed && name.starts_with(|c: char| c.is_ascii_uppercase()))
+                && !beside(name)
                 && !declared.iter().any(|d| d == name)
                 && !self.types.iter().any(|ty| {
                     ty.property(name).is_some() || ty.has_method(name) || ty.signal(name).is_some()
