@@ -915,6 +915,28 @@ fn class_of(table: &Table, index: Option<usize>) -> Option<&'static str> {
     index.map(|index| table.types[index].class)
 }
 
+/// What Ljós's own table lists of a type Qt's describes is its addition,
+/// unless Qt's lists the member too: a Qt newer than the addition has it.
+#[test]
+fn a_member_qt_has_is_not_one_ljos_adds() {
+    const ADDS: &str = "\
+module Shared
+\tThing Shared.Thing
+\ttype Shared.Thing Thing
+\t\tprop theirs int
+\t\tprop ours int
+";
+    // `adds` answers for a type of the table it is in, which has to live
+    // as long as the global one. `QThing` inherits nothing, so the
+    // lookups never leave it.
+    let table: &'static Table = Box::leak(Box::new(read(QT, ADDS)));
+    let thing = &table.types[table.classes["QThing"]];
+    assert!(thing.property("theirs").is_some() && thing.property("ours").is_none());
+    assert!(!thing.adds("theirs"), "Qt's table has it");
+    assert!(thing.adds("ours"), "only Ljós's has it");
+    assert!(!thing.adds("neither"));
+}
+
 #[test]
 fn a_module_both_tables_describe_is_read_from_qt_s() {
     let table = read(QT, BESIDE);
