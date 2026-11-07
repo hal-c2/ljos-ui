@@ -367,6 +367,14 @@ impl Project {
         self.modules.contains_key(uri)
     }
 
+    /// The files that are the types of the project's module `uri`.
+    pub fn module_files(&self, uri: &str) -> impl Iterator<Item = &str> {
+        self.modules
+            .get(uri)
+            .into_iter()
+            .flat_map(|types| types.values().map(String::as_str))
+    }
+
     /// The file the type `name` of the project's module `uri` is.
     pub fn module_type(&self, uri: &str, name: &str) -> Option<&str> {
         self.modules.get(uri)?.get(name).map(String::as_str)

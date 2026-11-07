@@ -188,3 +188,75 @@ fn a_style_chosen_while_lowering_lowers_the_controls_again() {
     assert!(kept.reason.contains("Fusion"), "{}", kept.reason);
     assert_eq!(project.source("Main"), Some(MAIN));
 }
+
+const GAUGES: &str = "module Gauges\nDial 1.0 Dial.qml\nsingleton Tones 1.0 Tones.qml\n";
+const DIAL: &str = "import QtQuick\nRectangle { Rectangle { color: Tones.color } }\n";
+const TONES: &str =
+    "pragma Singleton\nimport QtQml\nQtObject { property color color: \"green\" }\n";
+const GAUGE_MAIN: &str = "import QtQuick\nimport Gauges\nItem { Dial { color: Tones.color } }\n";
+
+#[test]
+fn a_module_of_the_project_is_lowered_with_the_files_that_import_it() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Gauges/Dial", DIAL);
+    project.add("Gauges/Tones", TONES);
+    project.add("Main", GAUGE_MAIN);
+    project.add_qmldir("Gauges", GAUGES);
+    project.set_compat(true);
+
+    assert!(lowered(&project, "Main"), "{:?}", project.lowering("Main"));
+    assert!(lowered(&project, "Gauges/Dial"));
+    // A Dial's root is a Rectangle: its colour is a fill.
+    let main = project.source("Main").expect("Main");
+    assert!(main.contains("Dial { fill: Tones.color }"), "{main}");
+}
+
+#[test]
+fn a_module_told_after_its_importer_was_lowered_lowers_it_again() {
+    // A project opened reads a module as a file reaches it, after the
+    // file that imports it was lowered.
+    let mut project = Project::new(Runtime::new());
+    project.set_compat(true);
+    project.add("Main", GAUGE_MAIN);
+    let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
+        panic!("Main is kept: {:?}", project.lowering("Main"));
+    };
+    assert!(kept.reason.contains("not lowered yet"), "{}", kept.reason);
+
+    project.add("Gauges/Dial", DIAL);
+    project.add("Gauges/Tones", TONES);
+    project.add_qmldir("Gauges", GAUGES);
+    assert!(lowered(&project, "Main"), "{:?}", project.lowering("Main"));
+    assert!(lowered(&project, "Gauges/Dial"));
+}
+
+#[test]
+fn a_module_with_native_types_only_keeps_the_files_that_import_it() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Main", "import QtQuick\nimport Sensors\nItem { }\n");
+    project.add_qmldir("Sensors", "module Sensors\nplugin sensorsplugin\n");
+    project.set_compat(true);
+
+    let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
+        panic!("Main is kept: {:?}", project.lowering("Main"));
+    };
+    assert_eq!(
+        kept.reason,
+        "it imports `Sensors`, a module of the project whose types are native: they are not lowered"
+    );
+}
+
+#[test]
+fn a_directory_imported_by_path_has_its_types_by_their_roots() {
+    let mut project = Project::new(Runtime::new());
+    project.add("parts/Swatch", BUTTON);
+    project.add(
+        "Main",
+        "import QtQuick\nimport \"parts\"\nItem { Swatch { color: \"blue\" } }\n",
+    );
+    project.set_compat(true);
+
+    assert!(lowered(&project, "Main"), "{:?}", project.lowering("Main"));
+    let main = project.source("Main").expect("Main");
+    assert!(main.contains("Swatch { fill: \"blue\" }"), "{main}");
+}
