@@ -3734,7 +3734,12 @@ impl QuickScene {
             && (ev.pos - p).hypot() <= DRAG_THRESHOLD
         {
             self.pointer.last_click = None;
-            self.pointer.double = emit_mouse(engine, m, "doubleClicked", ev, local, false);
+            // As qml6 tells it, a double-click something hears is no
+            // click, even turned down; one nothing hears is a click.
+            self.pointer.double = engine
+                .signal_index(m, "doubleClicked")
+                .is_ok_and(|s| engine.signal_connected(m, s));
+            emit_mouse(engine, m, "doubleClicked", ev, local, false);
         }
         true
     }
