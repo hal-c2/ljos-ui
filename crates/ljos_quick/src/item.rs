@@ -418,14 +418,29 @@ pub fn effective_margin(engine: &Engine, obj: ObjectId, side: PropIndex) -> f64 
 }
 
 /// Whether nothing has given the item a size along one axis: it still
-/// follows its implicit size and no pair of anchors stretches it. Tracks
-/// the anchors, so an effect asking re-runs when they change.
+/// follows its implicit size, no override (a `Binding`, a state) holds the
+/// size and no pair of anchors stretches it. Tracks the anchors, so an
+/// effect asking re-runs when they change. Whether an override holds the
+/// size is not tracked: a caller that reads the size hears one come and
+/// go, and reading the size here would loop where the implicit size is
+/// computed.
 pub(crate) fn size_follows_implicit(engine: &Engine, obj: ObjectId, horizontal: bool) -> bool {
     let axis = usize::from(!horizontal);
     let follows = engine
         .with(obj, |i: &Item| i.follows_implicit[axis].strong_count() > 0)
         .unwrap_or(false);
     if !follows {
+        return false;
+    }
+    // An override leaves the fallback binding under it, to come back when
+    // the override goes; while it is on top the size is a given one, as Qt
+    // counts a size a `Binding` writes.
+    let size = if horizontal {
+        Item::WIDTH.index
+    } else {
+        Item::HEIGHT.index
+    };
+    if engine.has_override(obj, size) {
         return false;
     }
     let a = AnchorProps::get();

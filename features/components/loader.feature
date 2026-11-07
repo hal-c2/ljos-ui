@@ -153,6 +153,36 @@ Feature: Loader
       Then the property "itemWidth" of "filling" is 300
       And the property "itemHeight" of "filling" is 200
 
+  Rule: A Loader sized by a Binding gives that size to its item
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"; width: 300; height: 200
+          Loader {
+            id: bound; objectName: "bound"
+            sourceComponent: Rectangle { implicitWidth: 11; implicitHeight: 12; width: 30; height: 20 }
+            property real given: 120
+            Binding on width { value: bound.given; restoreMode: Binding.RestoreNone }
+            Binding on height { value: 60; restoreMode: Binding.RestoreNone }
+            property real itemWidth: item ? item.width : -1
+            property real itemHeight: item ? item.height : -1
+          }
+        }
+        """
+
+    Scenario: The item takes the size the Binding gives the Loader
+      Then the property "width" of "bound" is 120
+      And the property "itemWidth" of "bound" is 120
+      And the property "itemHeight" of "bound" is 60
+      And the property "implicitWidth" of "bound" is 11
+
+    Scenario: The item follows a size a Binding changes
+      When the property "given" of "bound" is set to 90
+      Then the property "itemWidth" of "bound" is 90
+
   Rule: A Loader loads a file named by its source
 
     Background:
