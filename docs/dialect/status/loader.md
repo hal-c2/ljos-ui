@@ -4,7 +4,8 @@ Milestone M1 (Ui and Layout) in [DIALECT.md §13](../../DIALECT.md#13-milestones
 
 Built:
 
-- Nothing built yet.
+- `Loader` with `component`, a type as a component value, a static
+  `source` lowered (DIALECT.md §4.11).
 
 Remaining:
 
