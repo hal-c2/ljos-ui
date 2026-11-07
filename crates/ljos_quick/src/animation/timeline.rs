@@ -1150,6 +1150,48 @@ impl Timed {
         }
     }
 
+    /// The timeline of a transition run on one object as a passage: its
+    /// animations, all at once, each moving `defaults.obj` where it names
+    /// no target.
+    pub(crate) fn of_passage(engine: &Engine, anims: &[ObjectId], defaults: &Defaults) -> Timed {
+        Timed::together(
+            anims
+                .iter()
+                .filter(|a| is_a::<Animation>(engine, **a))
+                .map(|a| Timed::build(engine, *a, Some(defaults)))
+                .collect(),
+        )
+    }
+
+    /// `list`, all at once.
+    pub(crate) fn together(list: Vec<Timed>) -> Timed {
+        let longest = list.iter().map(Timed::total).max().unwrap_or(0);
+        Timed::of_node(Node::Par(list), longest)
+    }
+
+    /// `list`, one after another.
+    pub(crate) fn in_turn(mut list: Vec<Timed>) -> Timed {
+        let mut at = 0i64;
+        for c in &mut list {
+            c.start = at;
+            at = at.saturating_add(c.total()).min(FOREVER);
+        }
+        Timed::of_node(Node::Seq(list), at)
+    }
+
+    fn of_node(node: Node, pass: i64) -> Timed {
+        Timed {
+            node,
+            start: 0,
+            pass,
+            base: pass,
+            calm: false,
+            loops: 1,
+            iter: 0,
+            state: State::Idle,
+        }
+    }
+
     fn build_in(engine: &Engine, anim: ObjectId, env: Env<'_>) -> Timed {
         let defaults = env.defaults;
         let ends = || property_ends(engine, anim, defaults);
