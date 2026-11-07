@@ -124,11 +124,11 @@ fn anchors_in_layout<'a>(found: &mut Found<'_, '_, '_, 'a>, chain: &[Frame<'_, '
     } else {
         return;
     };
-    // `Ljos.Ui`'s arrangements are the compiler's to report
+    // `Ljos.Layout`'s arrangements are the compiler's to report
     // (`layout-anchored`), which says what to write instead.
     if !found.is(layout, class::LAYOUT)
         || found.is(layout, class::STACK_LAYOUT)
-        || found.is(layout, &["Ljos.Ui.Arrangement"])
+        || found.is(layout, &["Ljos.Layout.Arrangement"])
     {
         return;
     }

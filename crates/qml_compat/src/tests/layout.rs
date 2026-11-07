@@ -15,7 +15,7 @@ fn a_row_layout_is_a_row_with_its_defaults_written_out() {
     ));
     assert_eq!(
         text,
-        "pragma Scripts: JavaScript; import Ljos.Ui\n\nRow { spacing: 5;\n    width: 200\n    \
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Layout\nRow { spacing: 5;\n    width: 200\n    \
          Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
          Rectangle { Layout.fillWidth: true; Layout.alignment: Qt.AlignTop }\n    \
          Item { Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }\n}\n"
@@ -83,8 +83,8 @@ fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
             "not one the pass can read",
         ),
         ("RowLayout { Swatch { } }", "a file of the project"),
-        ("GridLayout { }", "`GridLayout` is not in Ljos.Ui"),
-        ("StackLayout { }", "`StackLayout` is not in Ljos.Ui"),
+        ("GridLayout { }", "`GridLayout` is not in Ljos.Layout"),
+        ("StackLayout { }", "`StackLayout` is not in Ljos.Layout"),
     ] {
         let reason = kept_for(&format!("{LAYOUTS}{body}\n"));
         assert!(reason.contains(why), "{body}: {reason}");
@@ -210,4 +210,109 @@ fn where_a_positioner_and_the_arrangement_disagree_the_file_is_kept() {
         let reason = kept_for(&format!("import QtQuick\n{body}\n"));
         assert!(reason.contains(why), "{body}: {reason}");
     }
+}
+
+/// A file that arranges children with Qt's positioners imports
+/// `Ljos.Layout` on the line it imports `Ljos.Ui`; one that imported
+/// QtQuick.Layouts imports it on that line.
+#[test]
+fn a_file_that_arranges_imports_ljos_layout() {
+    let text = lowered("import QtQuick\nRow { Rectangle { width: 4; height: 4 } }\n");
+    assert!(
+        text.starts_with("pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\nRow"),
+        "{text}"
+    );
+    let text = lowered("import QtQuick\nRectangle { color: \"red\" }\n");
+    assert!(!text.contains("Ljos.Layout"), "{text}");
+    let text = lowered(&format!("{LAYOUTS}Item {{ }}\n"));
+    assert!(
+        text.starts_with("pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Layout\nItem"),
+        "{text}"
+    );
+}
+
+const TILE: &str = "Rectangle { width: 10; height: 10 }";
+
+#[test]
+fn a_grid_and_a_flow_are_lowered_as_they_are_written() {
+    for body in [
+        format!("Grid {{ columns: 2; spacing: 4; {TILE} {TILE} {TILE} }}"),
+        // No spacing: a line it does not fill counts none.
+        format!("Grid {{ columns: 3; {TILE} {TILE} }}"),
+        format!("Grid {{ rows: 2; flow: Grid.TopToBottom; spacing: 3; {TILE} {TILE} {TILE} }}"),
+        format!("Flow {{ width: 30; spacing: 2; {TILE} {TILE} {TILE} }}"),
+    ] {
+        let text = lowered(&format!("import QtQuick\n{body}\n"));
+        assert!(text.ends_with(&format!("\n{body}\n")), "{body}: {text}");
+    }
+    let text = lowered(&format!("import QtQuick\nGrid {{ {TILE} }}\n"));
+    assert!(
+        text.ends_with(&format!("\nGrid {{ columns: 4; {TILE} }}\n")),
+        "{text}"
+    );
+}
+
+/// Each way Qt's `Grid` counts room Ljós's does not keeps the file, and
+/// says which.
+#[test]
+fn where_a_grid_positioner_and_ljos_grid_disagree_the_file_is_kept() {
+    for (body, why) in [
+        (
+            format!("Grid {{ columns: 3; spacing: 5; {TILE} {TILE} }}"),
+            "spacing after a row of children it does not fill",
+        ),
+        (
+            format!("Grid {{ spacing: 1; {TILE} }}"),
+            "spacing after a row of children it does not fill",
+        ),
+        (
+            format!("Grid {{ rows: 4; rowSpacing: 2; {TILE} {TILE} {TILE} {TILE} {TILE} }}"),
+            "it has 4 rows and 5 children to fill them, 2 to a row",
+        ),
+        (
+            format!("Grid {{ rows: 1; columns: 1; {TILE} {TILE} }}"),
+            "a child beyond its rows and columns",
+        ),
+        (
+            format!("Grid {{ columns: 2; spacing: 2; Repeater {{ model: 3; {TILE} }} }}"),
+            "it has a `Repeater`",
+        ),
+        (
+            format!("Grid {{ columns: 2; spacing: 2; Item {{ }} {TILE} }}"),
+            "for as many children as it may show",
+        ),
+        (
+            format!(
+                "Grid {{ columns: 2; spacing: 2; {TILE} Rectangle {{ visible: on; width: 1; height: 1 }} }}"
+            ),
+            "for as many children as it may show",
+        ),
+        (
+            "Grid { columns: n }".to_string(),
+            "`columns` of a `Grid` is not a whole number",
+        ),
+        (
+            "Grid { flow: f }".to_string(),
+            "`flow` of a `Grid` is not one the pass can read",
+        ),
+        (
+            "Grid { horizontalItemAlignment: Grid.AlignHCenter }".to_string(),
+            "`horizontalItemAlignment` is not in Ljós's `Grid` yet",
+        ),
+        (
+            "Grid { Rectangle { anchors.centerIn: parent } }".to_string(),
+            "`anchors.centerIn` on a child of a `Grid`",
+        ),
+        (
+            "Flow { add: Transition { } }".to_string(),
+            "`add` is a member of Qt's `Flow`",
+        ),
+    ] {
+        let reason = kept_for(&format!("import QtQuick\n{body}\n"));
+        assert!(reason.contains(why), "{body}: {reason}");
+    }
+    // A hidden child and one with no size are left out by both.
+    lowered(&format!(
+        "import QtQuick\nGrid {{ columns: 2; spacing: 2; {TILE} {TILE} Rectangle {{ visible: false }} Item {{ width: 0 }} }}\n"
+    ));
 }

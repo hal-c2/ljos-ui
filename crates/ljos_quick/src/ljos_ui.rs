@@ -24,11 +24,10 @@ use crate::shapes::{
     PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
 };
 use crate::{
-    Accessible, BoxColumn, BoxRow, DoubleValidator, Drag, DragHandler, DropArea, Flickable,
-    FontMetrics, Gradient, GradientStop, HoverHandler, Image, IntValidator, Item, Layout, ListView,
-    LjosBox, Loader, MouseArea, PointHandler, PropertyChanges, Rectangle,
-    RegularExpressionValidator, Repeater, State, TapHandler, Text, TextEdit, TextInput,
-    TextMetrics, WheelHandler, focus, keys,
+    Accessible, DoubleValidator, Drag, DragHandler, DropArea, Flickable, FontMetrics, Gradient,
+    GradientStop, HoverHandler, Image, IntValidator, Item, ListView, Loader, MouseArea,
+    PointHandler, PropertyChanges, Rectangle, RegularExpressionValidator, Repeater, State,
+    TapHandler, Text, TextEdit, TextInput, TextMetrics, WheelHandler, focus, keys,
 };
 
 /// The module's name, as a file imports it.
@@ -173,13 +172,10 @@ fn drag_source() -> &'static MetaObject {
 
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
-    // `Row`, `Column` and `Box` are the one arrangement
-    // (layouts/arrangement.rs); a child asks it for a size with the
-    // `Layout` it is given, as in Qt's layouts. The views are Qt's, with
-    // what they attach to a delegate (`ListView.isCurrentItem`).
+    // What arranges children is `Ljos.Layout`'s (ljos_layout.rs). The views
+    // are Qt's, with what they attach to a delegate (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
-        Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
-        Repeater, PointerDevice, DropArea,
+        Item, Text, State, PropertyChanges, FontEnums, Repeater, PointerDevice, DropArea,
     ]));
     // Qt's shapes, as they are (docs/DIALECT.md §4.14): `QtQuick.Shapes`'
     // types, the elements of a `Path` (which Qt has in `QtQuick`), and the

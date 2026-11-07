@@ -640,14 +640,55 @@ measures both with budget cases.
   explicit size with no `preferred*` and an implicit size not statically 0.
   That child is the case where the rules differ, and its file is kept, with
   that reason.
-- `GridLayout` → `Grid`, and `Grid` → `Grid`, kept under the same
-  conditions as their row and column forms: a `Grid` positioner child with
-  `Layout.*`, or a `GridLayout` child with an explicit size, no
-  `preferred*` and an implicit size not statically 0.
+- `GridLayout` → `Grid`, kept when a child sets an explicit size with no
+  `preferred*` and an implicit size not statically 0, as `RowLayout` is.
+- `Grid` → `Grid`, kept when a child has `Layout.*`, as `Row` is, and where
+  Qt's positioner and Ljós's `Grid` place children apart (below).
 - `StackLayout` → `Pages`.
-- `Flow` → `Flow`.
+- `Flow` → `Flow`, kept when a child has `Layout.*` or anchors, or the
+  Flow sets `add`, `move` or `populate`.
 - `LayoutItemProxy` keeps its file. It needs a person to merge the two
   layouts into one Box.
+- A lowered file that names any of these imports `Ljos.Layout`. A
+  `QtQuick.Layouts` line becomes `import Ljos.Layout`, and otherwise
+  `; import Ljos.Layout` goes on the `import Ljos.Ui` line, so no
+  line moves.
+
+**Grid.** Ljós's `Grid` is a Box in two axes with the one size rule: a
+child keeps its own size, `Layout.row`, `column`, `rowSpan`, `columnSpan`
+and `fill*` are honoured, and room left over stays at the end. Its
+counts are `columns` and `rows`; with only one set, the other is as many
+as the children need. With neither, it is one line along `flow`. Qt's
+`Grid` positioner differs in four places, measured with qml6:
+
+| Qt's `Grid` | Lowering |
+|---|---|
+| neither count set: 4 columns | writes `columns: 4` |
+| a child beyond rows × columns is left where it is | keeps the file |
+| a line along the flow it does not fill counts the spacing after its last child | keeps the file when that spacing is not 0 |
+| a line across the flow it leaves empty counts its spacing | keeps the file when that spacing is not 0 |
+
+The pass counts the children a file shows: a `visible: false` child or a
+literal zero size is skipped, as Qt skips it, and a bound `visible` or a
+size it cannot read gives a range. It keeps the file if any count in the
+range differs. A `Repeater` child keeps it unless every spacing is 0 and
+only one count is set. `layoutDirection` and the item alignments keep the
+file until they are measured.
+
+DECISION: Ljós's `Grid` is a one-rule native, not Qt's positioner. A
+positioner that never sizes a child is a `Grid` with no `fill`, and the
+four differences above are corner cases the lowering keeps.
+
+DECISION: Ljós's `Grid` with no count is one line. Qt's 4 is a magic
+number, and the pass writes it out.
+
+DECISION: `Flow` is Qt's `Flow`, taken whole into `Ljos.Layout`. Its
+transitions and `Layout.*` children keep the file until the Box rules
+reach a wrapping line.
+
+DECISION: the `QtQuick.Layouts` import line always becomes
+`import Ljos.Layout`, even when the file names nothing on it, since a
+sibling's root may be a `Row` that takes `Layout.*`.
 
 DECISION: an explicit size is a request in a Ljós Box, as it is in a
 positioner. Qt's Layouts ignoring it is the surprise this removes. The
@@ -1242,9 +1283,9 @@ construction.
 |---|---|---|
 | `Row`, `Column` | `Row`, `Column` (a Box) | mechanical; kept when a child has `Layout.*` (§4.6) |
 | `RowLayout`, `ColumnLayout` | `Row`, `Column` | mechanical; kept when an explicit size meets a non-zero implicit size |
-| `GridLayout`, `Grid` | `Grid` | mechanical; kept as `RowLayout` and `Row` are |
+| `GridLayout`, `Grid` | `Grid` | mechanical; kept as `RowLayout` and `Row` are, and where Qt's `Grid` places apart (§4.6) |
 | `StackLayout` | `Pages` | mechanical |
-| `Flow` | `Flow` | mechanical |
+| `Flow` | `Flow` | mechanical; kept for a `Layout.*` or anchored child, or a transition |
 | `LayoutItemProxy` | a Box whose `direction` is bound | DECISION: kept; a person merges the layouts |
 | `anchors.*` on a free parent | the same | none |
 | `anchors.*` on a layout child | `Layout.alignment`/margins | DECISION: kept (Qt overrides them at run time, so their effect is unclear) |
@@ -1547,13 +1588,15 @@ How it holds the other rules:
 `qml_compat::lower(text, locals)` parses the file and walks it. Each edit
 is to a name of the Ljós API, and the text keeps every line. The edits are:
 
-- an import, `QtQuick` → `Ljos.Ui`, and `QtQml` → `Ljos.Core`. A file
-  that has `QtQml` from `QtQuick` and names one of its types (`Timer`,
-  `Component.onCompleted`, or a type it writes: `property QtObject o`,
-  `signal picked(QtObject o)`) gets `; import Ljos.Core` on the import's
-  line. A file of `QtQml` alone is lowered to `Ljos.Core` alone. A
-  `QtQuick.Shapes` import is left an empty line, since `Ljos.Ui` has the
-  shapes;
+- an import, `QtQuick` → `Ljos.Ui`, `QtQml` → `Ljos.Core`, and
+  `QtQuick.Layouts` → `Ljos.Layout` (or `; import Ljos.Layout` on the
+  import's line when a file names `Row`, `Column`, `Grid` or `Flow` and has
+  no Layouts import). A file that has `QtQml` from `QtQuick` and names one
+  of its types (`Timer`, `Component.onCompleted`, or a type it writes:
+  `property QtObject o`, `signal picked(QtObject o)`) gets
+  `; import Ljos.Core` on the import's line. A file of `QtQml` alone is
+  lowered to `Ljos.Core` alone. A `QtQuick.Shapes` import is left an empty
+  line, since `Ljos.Ui` has the shapes;
 - a type, `MouseArea` → `PointerArea`, made or written
   (`property MouseArea area`);
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
@@ -2119,6 +2162,10 @@ bindings and states without a rule.
 - DECISION (§4.6): one arrangement, the Box, with one size rule per axis:
   `Layout.preferred*`, else an explicit size, else the implicit size.
   Anchors on a Box child are a check error.
+- DECISION (§4.6): `Ljos.Layout` holds `Box`, `Row`, `Column`, `Grid`,
+  `Flow` and `Layout`; `Ljos.Ui` no longer does. `Grid` is a one-rule
+  native that is one line with no count, and the pass keeps a file where
+  Qt's `Grid` positioner places a child elsewhere.
 - DECISION (§4.7): gestures are child objects that read one pointer stream,
   not items. Qt's drag-and-drop `Drag` becomes `DragSource`/`DropArea`.
 - DECISION (§4.8): typed lists with a `key` are the default model, and

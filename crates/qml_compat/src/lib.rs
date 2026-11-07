@@ -87,6 +87,9 @@ pub const CORE: &str = "Ljos.Core";
 /// Qt's dialogs, whose file and folder dialogs [`CONTROLS`] has as they are.
 pub const QT_DIALOGS: &str = "QtQuick.Dialogs";
 
+/// The module a lowered file imports too when it arranges children.
+pub const LAYOUT: &str = "Ljos.Layout";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -350,6 +353,9 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
     let Some(core) = qt_types::module(CORE) else {
         return kept("this build has no description of Ljos.Core", 0);
     };
+    let Some(layout) = qt_types::module(LAYOUT) else {
+        return kept("this build has no description of Ljos.Layout", 0);
+    };
     let Some(quick) = qt_types::module("QtQuick") else {
         return kept("this build has no description of QtQuick", 0);
     };
@@ -359,6 +365,9 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         core,
         cores: std::cell::Cell::new(false),
         uis: std::cell::Cell::new(false),
+        layout,
+        arranges: std::cell::Cell::new(false),
+        layout_line: None,
         quick,
         layouts: None,
         controls: None,
@@ -504,6 +513,10 @@ struct Pass<'s> {
     /// Whether the file names a type of `Ljos.Ui`: a file that imports
     /// `QtQml` and not `QtQuick` imports it then too.
     uis: std::cell::Cell<bool>,
+    layout: &'static qt_types::Module,
+    /// Whether the file names a type of `Ljos.Layout`, which it imports
+    /// then.
+    arranges: std::cell::Cell<bool>,
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
@@ -525,6 +538,9 @@ struct Pass<'s> {
     ui_line: Option<usize>,
     core_line: Option<usize>,
     controls_line: Option<usize>,
+    /// The line `import Ljos.Layout` takes: `QtQuick.Layouts`', else
+    /// `Ljos.Ui`'s.
+    layout_line: Option<usize>,
     /// What [`imported_root`](Self::imported_root) found, by name.
     imported: RefCell<HashMap<String, Option<(usize, Root)>>>,
     natives: Option<&'s dyn Natives>,
@@ -657,6 +673,7 @@ impl<'s> Pass<'s> {
                 "QtQuick.Layouts" if import.alias.is_none() => {
                     self.layouts = qt_types::module("QtQuick.Layouts");
                     layouts = Some(import.span);
+                    self.layout_line = Some(self.imports.len());
                     self.imports.push(Import::Qt { layouts: true });
                 }
                 // `Ljos.Ui` has its types as they are.
@@ -754,9 +771,13 @@ impl<'s> Pass<'s> {
         if self.core_line.is_none() {
             self.core_line = self.ui_line;
         }
-        // `Ljos.Ui` has `Layout`, the shapes and what the others name;
-        // each line stays, empty.
-        for span in [layouts, shapes].into_iter().flatten().chain(emptied) {
+        // `Ljos.Layout` takes `QtQuick.Layouts`' line, else `Ljos.Ui`'s.
+        if self.layout_line.is_none() {
+            self.layout_line = self.ui_line;
+        }
+        // `Ljos.Ui` has the shapes and what the others name; each line
+        // stays, empty.
+        for span in shapes.into_iter().chain(emptied) {
             self.change(span.start as usize..span.end as usize, "");
         }
         for (i, span) in controls.into_iter().enumerate() {
@@ -816,6 +837,16 @@ impl<'s> Pass<'s> {
             _ => String::new(),
         };
         let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
+        // What imported QtQuick.Layouts imports Ljos.Layout in its place, as
+        // a child of a type of another file may be given a `Layout`.
+        let models = match layouts {
+            Some(layouts) => {
+                self.change(span(layouts), format!("import {LAYOUT}"));
+                models
+            }
+            None if self.arranges.get() => format!("{models}; import {LAYOUT}"),
+            None => models,
+        };
         match (quick, qml) {
             (Some(quick), Some(qml)) => {
                 self.change(
@@ -1013,16 +1044,13 @@ impl<'s> Pass<'s> {
                 name,
                 project,
                 last(&|i| matches!(i, Import::Qt { layouts: true })),
-                (MODULE, self.ui_line),
+                (LAYOUT, self.layout_line),
                 at,
             )?
         {
             return match name {
-                "RowLayout" | "ColumnLayout" | "Layout" => {
-                    self.uis.set(true);
-                    Ok(Ty::Exact(ty))
-                }
-                _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
+                "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
+                _ => Err(self.no(format!("`{name}` is not in {LAYOUT} yet"), at)),
             };
         }
         let controls = |dialogs: bool| if dialogs { self.dialogs } else { self.controls };
@@ -1083,13 +1111,15 @@ impl<'s> Pass<'s> {
                 return self.core_type(name, ty, at);
             }
             let new = renamed_type(name).unwrap_or(name);
-            return match self.ui.type_named(new) {
-                Some(_) => {
-                    self.uis.set(true);
-                    Ok(Ty::Exact(ty))
-                }
-                None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
-            };
+            if self.ui.type_named(new).is_some() {
+                self.uis.set(true);
+                return Ok(Ty::Exact(ty));
+            }
+            if self.layout.type_named(new).is_some() {
+                self.arranges.set(true);
+                return Ok(Ty::Exact(ty));
+            }
+            return Err(self.no(format!("`{name}` is not in {MODULE} yet"), at));
         }
         if let Some((native_at, ty)) = native.filter(|_| !shadowed_native) {
             // A Ljós module whose line comes after the program's import
@@ -1263,6 +1293,9 @@ impl<'s> Pass<'s> {
         if self.ui.type_named(name).is_some() {
             return Some((MODULE, self.ui_line));
         }
+        if self.layout.type_named(name).is_some() {
+            return Some((LAYOUT, self.layout_line));
+        }
         let controls = self.controls.or(self.dialogs)?;
         controls
             .ljos
@@ -1287,11 +1320,15 @@ impl<'s> Pass<'s> {
         at: usize,
     ) -> Result<bool, Kept> {
         let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
+        let new = renamed_type(name).unwrap_or(name);
         let (qt, lowered) = if !ty.module.starts_with("QtQml") {
-            (
-                last(&|i| matches!(i, Import::Qt { layouts: false })),
-                (MODULE, self.ui_line),
-            )
+            // What arranges children is `Ljos.Layout`'s, on its own line.
+            let lowered = if self.ui.type_named(new).is_none() && self.layout.type_named(new).is_some() {
+                (LAYOUT, self.layout_line)
+            } else {
+                (MODULE, self.ui_line)
+            };
+            (last(&|i| matches!(i, Import::Qt { layouts: false })), lowered)
         } else if MODELS.contains(&name) {
             (
                 last(&|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
@@ -1360,6 +1397,7 @@ impl<'s> Pass<'s> {
                     .ui
                     .type_named(ljos)
                     .or_else(|| self.core.type_named(ljos))
+                    .or_else(|| self.layout.type_named(ljos))
                 {
                     self.members.object_type(Some(t));
                 }

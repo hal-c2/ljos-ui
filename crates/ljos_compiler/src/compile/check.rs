@@ -47,6 +47,9 @@ use ty::{Arena, Kind, Param, Sig, Ty, article};
 /// The module whose import makes a file one of Ljós's API.
 pub(crate) const MODULE: &str = "Ljos.Ui";
 
+/// The module of Ljós's API that arranges children.
+pub(crate) const LAYOUT: &str = "Ljos.Layout";
+
 /// Whether `document` is written in Ljós's API: it imports it itself.
 pub(crate) fn is_dialect(document: &QmlDocument<'_>) -> bool {
     document.imports.iter().any(|import| {

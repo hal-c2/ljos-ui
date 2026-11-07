@@ -4,8 +4,10 @@ Milestone M1 (Ui and Layout) in [DIALECT.md §13](../../DIALECT.md#13-milestones
 
 Built:
 
-- Nothing built yet.
+- the `Ljos.Layout` module (`Box`, `Row`, `Column`, `Grid`, `Flow`, `Layout`)
+- positioner `Grid` and `Flow` lowered
 
 Remaining:
 
-- All that §13 lists for this area.
+- `GridLayout`
+- `StackLayout` → `Pages`

@@ -683,7 +683,7 @@ fn row_of(import: &str, n: usize) -> Budget {
     between(a, b)
 }
 
-/// `Ljos.Ui`'s `Row` of children that only have sizes is a positioner, at
+/// `Ljos.Layout`'s `Row` of children that only have sizes is a positioner, at
 /// a positioner's cost (docs/DIALECT.md): no more objects, nodes,
 /// allocations or bytes than QtQuick's `Row` of the same children, in all
 /// and for each child more.
@@ -691,9 +691,10 @@ fn row_of(import: &str, n: usize) -> Budget {
 fn a_box_of_fixed_children_costs_no_more_than_a_row_positioner() {
     let _alone = alone();
     let qt = [row_of("QtQuick", 10), row_of("QtQuick", 20)];
-    let ljos = [row_of("Ljos.Ui", 10), row_of("Ljos.Ui", 20)];
+    const LJOS: &str = "Ljos.Ui\nimport Ljos.Layout";
+    let ljos = [row_of(LJOS, 10), row_of(LJOS, 20)];
     let nodes = |b: &Budget| b.graph.values + b.graph.bindings + b.graph.effects + b.graph.scopes;
-    let said = format!("QtQuick {qt:#?}\nLjos.Ui {ljos:#?}");
+    let said = format!("QtQuick {qt:#?}\nLjos.Layout {ljos:#?}");
     for i in 0..2 {
         assert!(ljos[i].objects <= qt[i].objects, "{said}");
         assert!(nodes(&ljos[i]) <= nodes(&qt[i]), "{said}");

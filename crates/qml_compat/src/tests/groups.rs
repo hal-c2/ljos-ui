@@ -42,8 +42,8 @@ fn files_that_name_one_another_are_lowered_together() {
         ("app/Button".to_string(), alone(button)),
         (
             "app/Main".to_string(),
-            // Kept: `Flow` is not in Ljos.Ui.
-            alone("import QtQuick\nFlow { Button { color: \"blue\" } }\n"),
+            // Kept: `PathView` is not in Ljos.Ui.
+            alone("import QtQuick\nPathView { Button { color: \"blue\" } }\n"),
         ),
         ("other/Lone".to_string(), alone(button)),
     ]);
