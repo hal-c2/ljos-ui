@@ -22,6 +22,8 @@ pub const MODULE: &str = "Ljos.Controls";
 /// The controls the module has that the Basic style draws.
 const DRAWN: &[&str] = &[
     "Button",
+    "CheckBox",
+    "ComboBox",
     "Dialog",
     "ItemDelegate",
     "Label",
@@ -31,6 +33,9 @@ const DRAWN: &[&str] = &[
     "Popup",
     "ScrollBar",
     "ScrollView",
+    "Slider",
+    "SpinBox",
+    "Switch",
     "TextArea",
     "TextField",
     "ToolTip",
