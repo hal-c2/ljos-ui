@@ -392,7 +392,12 @@ impl Type {
     /// Whether Ljós adds a member called `name` to the type or to one it
     /// inherits, where Qt's table describes them: the runtime has it,
     /// though Qt does not.
-    pub fn adds(&self, name: &str) -> bool {
+    pub fn adds(&'static self, name: &str) -> bool {
+        // A Qt newer than the runtime's addition has the member itself
+        // (`Accessible.showOnScreenAction`, Qt 6.11): then it is Qt's.
+        if self.property(name).is_some() || self.signal(name).is_some() || self.has_method(name) {
+            return false;
+        }
         self.added.contains(&name)
             || self.prototype().is_some_and(|ty| ty.adds(name))
             || self.stands_on.is_some_and(|index| {
@@ -922,13 +927,25 @@ fn read(qt: &'static str, own: &'static str) -> Table {
     }
 
     for (module, name, class) in exports {
-        if let Some(index) = table.classes.get(class) {
+        // An own module may export a type of another own module that Qt's
+        // table describes (`Ljos.Ui`'s `Item` is `QtQuick.Item`). That
+        // module was passed over, so its class is not there: the export is
+        // what the name means in a file that imports that module, as a
+        // `named` type is, which beside Qt's table is Qt's `QQuickItem`.
+        let index = table.classes.get(class).copied().or_else(|| {
+            let (of, _) = class.rsplit_once('.')?;
+            let own = table.modules.get(module).is_some_and(|m| m.is_own);
+            (own && over.modules.contains(&of))
+                .then(|| table.type_meant(class))
+                .flatten()
+        });
+        if let Some(index) = index {
             table
                 .modules
                 .get_mut(module)
                 .expect("a module")
                 .exports
-                .insert(name, *index);
+                .insert(name, index);
         }
     }
     for (index, at) in named {
