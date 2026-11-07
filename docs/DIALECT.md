@@ -464,11 +464,18 @@ measures both with budget cases.
   explicit size with no `preferred*` and an implicit size not statically 0.
   That child is the case where the rules differ, and its file is kept, with
   that reason.
-- `GridLayout` → `Grid` (not built yet; it keeps its file today), kept when a child sets an explicit size with no
+- `GridLayout` → `Grid`, kept when a child sets an explicit size with no
   `preferred*` and an implicit size not statically 0, as `RowLayout` is.
+  The pass writes out Qt's `columnSpacing: 5` and `rowSpacing: 5`, and
+  `Qt.AlignVCenter` on a child, as for `RowLayout`. It keeps the file where
+  Qt's room is spread on either axis that no child fills, and where Qt's
+  `GridLayout` reads it otherwise (below). `GridLayout.TopToBottom` in a
+  script is `Grid.TopToBottom`.
 - `Grid` → `Grid`, kept when a child has `Layout.*`, as `Row` is, and where
   Qt's positioner and Ljós's `Grid` place children apart (below).
-- `StackLayout` → `Pages`.
+- `StackLayout` → `Pages`, as written. A file that names `StackLayout`'s
+  attached object (`StackLayout.isCurrentItem`, `StackLayout.index`) is
+  kept until `Pages` has one.
 - `Flow` → `Flow`, kept when a child has `Layout.*` or anchors, or the
   Flow sets `add`, `move` or `populate`.
 - `LayoutItemProxy` keeps its file. It needs a person to merge the two
@@ -498,6 +505,29 @@ size it cannot read gives a range. It keeps the file if any count in the
 range differs. A `Repeater` child keeps it unless every spacing is 0 and
 only one count is set. `layoutDirection` and the item alignments keep the
 file until they are measured.
+
+**GridLayout.** Qt's `GridLayout` sizes its cells by the same rules as its
+line layouts, which Ljós's `Grid` follows: qml6 places a two-column grid of
+fill, fixed and fill-height children, and two fill children sharing a row,
+as Ljós does (features/layouts/ljos-grid-pages.feature). It differs where:
+
+| Qt's `GridLayout` | Lowering |
+|---|---|
+| `rows` along a left-to-right flow is ignored: `rows: 2` puts three children in one row | keeps the file |
+| `columns` along a top-to-bottom flow, by the same rule | keeps the file (not measured; by symmetry) |
+| `Layout.row`, `column`, `rowSpan`, `columnSpan` place a child in a cell the pass does not follow yet | keeps the file |
+| `layoutDirection`, `uniformCellSizes`, `uniformCellWidths`, `uniformCellHeights` | keeps the file |
+| a `flow` the pass cannot read | keeps the file |
+
+DECISION: `Pages` is a face of `StackLayout` under Ljós's name, as
+`PointerArea` is of `MouseArea`: `currentIndex` and `count` as they are, and
+a hidden child keeps its own size (qml6). It has no attached object yet, so
+a file that reads one is kept.
+
+DECISION: a `GridLayout` is lowered only where its `flow` and counts say
+what Ljós's `Grid` reads. Qt's ignores the count across its flow, and a
+`Grid` that read it would place children apart, so the pass keeps the file
+rather than drop the count, which would change what a person reads.
 
 DECISION: Ljós's `Grid` is a one-rule native, not Qt's positioner. A
 positioner that never sizes a child is a `Grid` with no `fill`, and the
@@ -911,8 +941,8 @@ construction.
 |---|---|---|
 | `Row`, `Column` | `Row`, `Column` (a Box) | mechanical; kept when a child has `Layout.*` (§4.6) |
 | `RowLayout`, `ColumnLayout` | `Row`, `Column` | mechanical; kept when an explicit size meets a non-zero implicit size |
-| `GridLayout`, `Grid` | `Grid` | `Grid`: mechanical; kept as `Row` is, and where Qt's `Grid` places apart (§4.6). `GridLayout`: not built yet, and kept |
-| `StackLayout` | `Pages` | mechanical |
+| `GridLayout`, `Grid` | `Grid` | mechanical; kept as `RowLayout` and `Row` are, and where Qt's `GridLayout` or `Grid` places apart (§4.6) |
+| `StackLayout` | `Pages` | mechanical; kept when its attached object is read |
 | `Flow` | `Flow` | mechanical; kept for a `Layout.*` or anchored child, or a transition |
 | `LayoutItemProxy` | a Box whose `direction` is bound | DECISION: kept; a person merges the layouts |
 | `anchors.*` on a free parent | the same | none |
@@ -1402,7 +1432,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: the `Ljos.Layout` module (`Box`, `Row`, `Column`, `Grid`, `Flow`, `Layout`), positioner `Grid` and `Flow` lowered. Remaining: `GridLayout`, `StackLayout` → `Pages`, the `Ljos.Ui` items, `ljos run --compat` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: the `Ljos.Layout` module (`Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`, `Layout`), positioner `Grid` and `Flow` lowered, `GridLayout` → `Grid`, `StackLayout` → `Pages`. Remaining: the `Ljos.Ui` items, `ljos run --compat` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
@@ -1482,6 +1512,8 @@ bindings and states without a rule.
   `Flow` and `Layout`; `Ljos.Ui` no longer does. `Grid` is a one-rule
   native that is one line with no count, and the pass keeps a file where
   Qt's `Grid` positioner places a child elsewhere.
+- DECISION (§4.6): `Pages` is a face of `StackLayout`, and `GridLayout`
+  lowers to `Grid` only where its `flow` and counts say what `Grid` reads.
 - DECISION (§4.7): gestures are child objects that read one pointer stream,
   not items. Qt's drag-and-drop `Drag` becomes `DragSource`/`DropArea`.
 - DECISION (§4.8): typed lists with a `key` are the default model, and

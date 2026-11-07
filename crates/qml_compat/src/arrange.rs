@@ -25,6 +25,12 @@
 //!   children, Ljós's is a child like any other;
 //! - an anchored child, and `uniformCellSizes`.
 //!
+//! A `GridLayout` is a `Grid` held to the same on both axes, with Qt's
+//! `columnSpacing` and `rowSpacing` of 5 written out. It is kept where Qt's
+//! reads it otherwise: a count across its flow (Qt's ignores it), a child
+//! placed in a cell of its own (`Layout.row`, `column`, `rowSpan`,
+//! `columnSpan`), `layoutDirection`, or uniform cells.
+//!
 //! A `Row` positioner is lowered unless a child says something through
 //! `Layout.` (Qt's ignores it, Ljós's would not), a child sets its own
 //! position across the row (Qt's leaves it, Ljós's sets it), a child is
@@ -70,6 +76,8 @@ pub(crate) enum Shape {
     Grid,
     /// `Flow` of QtQuick.
     Flow,
+    /// `GridLayout` of QtQuick.Layouts.
+    GridLayout,
 }
 
 impl Shape {
@@ -81,6 +89,7 @@ impl Shape {
             ("QtQuick", "Flow") => Some(Shape::Flow),
             ("QtQuick.Layouts", "RowLayout") => Some(Shape::Layout { vertical: false }),
             ("QtQuick.Layouts", "ColumnLayout") => Some(Shape::Layout { vertical: true }),
+            ("QtQuick.Layouts", "GridLayout") => Some(Shape::GridLayout),
             _ => None,
         }
     }
@@ -88,20 +97,20 @@ impl Shape {
     fn vertical(self) -> bool {
         match self {
             Shape::Positioner { vertical } | Shape::Layout { vertical } => vertical,
-            Shape::Grid | Shape::Flow => false,
+            Shape::Grid | Shape::Flow | Shape::GridLayout => false,
         }
     }
 
     /// Whether Qt's places its children, as a positioner, and does not size
     /// them.
     fn positions(self) -> bool {
-        !matches!(self, Shape::Layout { .. })
+        !matches!(self, Shape::Layout { .. } | Shape::GridLayout)
     }
 
     /// What Ljós calls it.
     fn ljos(self) -> &'static str {
         match self {
-            Shape::Grid => "Grid",
+            Shape::Grid | Shape::GridLayout => "Grid",
             Shape::Flow => "Flow",
             _ if self.vertical() => "Column",
             _ => "Row",
@@ -116,6 +125,7 @@ impl Shape {
             Shape::Layout { vertical: true } => "ColumnLayout",
             Shape::Grid => "Grid",
             Shape::Flow => "Flow",
+            Shape::GridLayout => "GridLayout",
         }
     }
 }
@@ -171,7 +181,7 @@ pub(crate) fn arrange(
             a.positioner(object)?;
             a.grid(object)?;
         }
-        Shape::Layout { .. } => a.layout(object)?,
+        Shape::Layout { .. } | Shape::GridLayout => a.layout(object)?,
     }
     Ok(a.changes)
 }
@@ -315,19 +325,7 @@ impl Arrange<'_, '_> {
             }
         };
         let (rows, columns) = (count("rows")?, count("columns")?);
-        let top_to_bottom = match find("flow") {
-            None => false,
-            Some(b) => match &b.value {
-                QmlBindingValue::Expression(Expression::StaticMemberExpression(m)) if matches!(&m.object, Expression::Identifier(id) if id.name == "Grid") => {
-                    match m.property.name.as_str() {
-                        "LeftToRight" => false,
-                        "TopToBottom" => true,
-                        _ => return Err(self.unread("flow", b)),
-                    }
-                }
-                _ => return Err(self.unread("flow", b)),
-            },
-        };
+        let top_to_bottom = self.top_to_bottom(&own)?;
         // A gap the pass cannot read is one that may not be 0.
         let gap = |name: &str| match find(name).or_else(|| find("spacing")) {
             None => Some(0.0),
@@ -423,6 +421,25 @@ impl Arrange<'_, '_> {
         Ok(())
     }
 
+    /// Whether a `Grid` or `GridLayout` lays its children out column after
+    /// column, as far as the pass can read its `flow`.
+    fn top_to_bottom(&self, own: &[(String, &QmlBinding<'_>)]) -> Result<bool, Kept> {
+        let Some((_, b)) = own.iter().find(|(n, _)| n == "flow") else {
+            return Ok(false);
+        };
+        let qt = self.shape.qt();
+        match &b.value {
+            QmlBindingValue::Expression(Expression::StaticMemberExpression(m)) if matches!(&m.object, Expression::Identifier(id) if id.name == qt) => {
+                match m.property.name.as_str() {
+                    "LeftToRight" => Ok(false),
+                    "TopToBottom" => Ok(true),
+                    _ => Err(self.unread("flow", b)),
+                }
+            }
+            _ => Err(self.unread("flow", b)),
+        }
+    }
+
     fn unread(&self, name: &str, b: &QmlBinding<'_>) -> Kept {
         self.keep(
             format!("`{name}` of a `Grid` is not one the pass can read"),
@@ -496,31 +513,108 @@ impl Arrange<'_, '_> {
     }
 
     fn layout(&mut self, object: &QmlObject<'_>) -> Result<(), Kept> {
-        let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
+        let ljos = self.shape.ljos();
         let main = self.main();
         let own = bindings(object);
-        if let Some((_, b)) = own.iter().find(|(n, _)| n == "uniformCellSizes") {
+        let uniform = [
+            "uniformCellSizes",
+            "uniformCellWidths",
+            "uniformCellHeights",
+        ];
+        if let Some((n, b)) = own.iter().find(|(n, _)| uniform.contains(&n.as_str())) {
             return Err(self.keep(
-                format!("`uniformCellSizes` is not in Ljós's `{ljos}` yet"),
+                format!("`{n}` is not in Ljós's `{ljos}` yet"),
                 b.span.start as usize,
             ));
         }
+        let grid = self.shape == Shape::GridLayout;
+        if grid {
+            self.grid_layout(&own)?;
+        }
         let children = self.laid_out(object)?;
-        let mut fills = Some(false);
         for child in &children {
-            match bound(child, FILL[main]).map(boolean) {
+            self.child(child)?;
+        }
+        // A grid has room to spread on both axes, a line along its own.
+        let axes = if grid { vec![W, H] } else { vec![main] };
+        for axis in axes {
+            self.spread(object, &own, &children, axis)?;
+        }
+        let span = object.type_name.span;
+        self.changes.push(Change {
+            range: span.start as usize..span.end as usize,
+            replacement: ljos.to_string(),
+        });
+        let has = |n: &str| own.iter().any(|(m, _)| m == n);
+        let defaults = if grid {
+            ["columnSpacing", "rowSpacing"]
+                .into_iter()
+                .filter(|n| !has(n))
+                .map(|n| format!(" {n}: {LAYOUT_SPACING};"))
+                .collect::<String>()
+        } else if has("spacing") {
+            String::new()
+        } else {
+            format!(" spacing: {LAYOUT_SPACING};")
+        };
+        if !defaults.is_empty()
+            && let Some(at) = after_brace(self.source, object)
+        {
+            self.insert(at, defaults);
+        }
+        Ok(())
+    }
+
+    /// What a `GridLayout` says that Ljós's `Grid` would read otherwise.
+    fn grid_layout(&self, own: &[(String, &QmlBinding<'_>)]) -> Result<(), Kept> {
+        let find = |n: &str| own.iter().find(|(m, _)| m == n).map(|(_, b)| *b);
+        if let Some(b) = find("layoutDirection") {
+            return Err(self.keep(
+                "`layoutDirection` is not in Ljós's `Grid` yet".into(),
+                b.span.start as usize,
+            ));
+        }
+        // Qt's reads only the count along its flow; Ljós's reads both.
+        let ignored = if self.top_to_bottom(own)? {
+            ("columns", "top-to-bottom")
+        } else {
+            ("rows", "left-to-right")
+        };
+        if let Some(b) = find(ignored.0) {
+            return Err(self.keep(
+                format!(
+                    "`{}` of a `GridLayout` is ignored along a {} flow, and Ljós's `Grid` \
+                     would not ignore it",
+                    ignored.0, ignored.1
+                ),
+                b.span.start as usize,
+            ));
+        }
+        Ok(())
+    }
+
+    /// Keeps the file where Qt's layout would spread room along `axis` that
+    /// no child fills, which Ljós's leaves at the end.
+    fn spread(
+        &self,
+        object: &QmlObject<'_>,
+        own: &[(String, &QmlBinding<'_>)],
+        children: &[&QmlObject<'_>],
+        axis: usize,
+    ) -> Result<(), Kept> {
+        let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
+        let mut fills = Some(false);
+        for child in children {
+            match bound(child, FILL[axis]).map(boolean) {
                 Some(Some(true)) => fills = fills.map(|_| true),
                 Some(None) => fills = None,
                 _ => {}
             }
         }
-        for child in children {
-            self.child(child)?;
-        }
-        if fills != Some(true) && (sized(&own, main) || self.a_root) {
+        if fills != Some(true) && (sized(own, axis) || self.a_root) {
             // A root is sized by whatever uses it, which this file does not
             // show.
-            let sized_by = if sized(&own, main) {
+            let sized_by = if sized(own, axis) {
                 ""
             } else {
                 " (a file that uses it may size it)"
@@ -529,25 +623,15 @@ impl Arrange<'_, '_> {
                 format!(
                     "`{qt}` spreads the room no child fills over its children, and Ljós's \
                      `{ljos}` leaves it at the end{sized_by}; give a child `{}: true`",
-                    FILL[main]
+                    FILL[axis]
                 ),
                 object.type_name.span.start as usize,
             ));
         }
-        let span = object.type_name.span;
-        self.changes.push(Change {
-            range: span.start as usize..span.end as usize,
-            replacement: ljos.to_string(),
-        });
-        if !own.iter().any(|(n, _)| n == "spacing")
-            && let Some(at) = after_brace(self.source, object)
-        {
-            self.insert(at, format!(" spacing: {LAYOUT_SPACING};"));
-        }
         Ok(())
     }
 
-    /// One child of a `RowLayout` or `ColumnLayout`.
+    /// One child of a `RowLayout`, `ColumnLayout` or `GridLayout`.
     fn child(&mut self, child: &QmlObject<'_>) -> Result<(), Kept> {
         let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
         let name = child.type_name.to_string();
@@ -556,11 +640,28 @@ impl Arrange<'_, '_> {
         if let Some((n, b)) = own.iter().find(|(n, _)| n.starts_with("anchors.")) {
             return Err(self.anchored(n, b.span.start as usize));
         }
+        if self.shape == Shape::GridLayout {
+            let cells = [
+                "Layout.row",
+                "Layout.column",
+                "Layout.rowSpan",
+                "Layout.columnSpan",
+            ];
+            if let Some((n, b)) = own.iter().find(|(n, _)| cells.contains(&n.as_str())) {
+                return Err(self.keep(
+                    format!(
+                        "`{n}` puts a child of a `GridLayout` where the pass does not yet follow \
+                         Qt"
+                    ),
+                    b.span.start as usize,
+                ));
+            }
+        }
+        // Qt's layouts fill a layout's cell and bound it by its children.
         if self
             .types
             .qt_type(&name)
-            .and_then(Shape::of)
-            .is_some_and(|s| matches!(s, Shape::Layout { .. }))
+            .is_some_and(|t| t.module == "QtQuick.Layouts" && t.name != "Layout")
         {
             return Err(self.keep(
                 format!(
