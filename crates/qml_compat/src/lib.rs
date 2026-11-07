@@ -22,6 +22,7 @@ mod arrange;
 mod bindings;
 mod given;
 mod group;
+mod qt_members;
 mod renames;
 mod rows;
 mod tables;
@@ -130,6 +131,9 @@ pub struct Root {
     /// The properties it declares: a `model` it declares is its own, not a
     /// delegate's row.
     pub properties: Vec<String>,
+    /// The properties, functions and signals it declares: names in sight
+    /// of a file built on it.
+    pub declares: Vec<String>,
 }
 
 /// What the pass needs to know of the project the file is in: for a type a
@@ -319,6 +323,7 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         stem,
         tables: Vec::new(),
         declared: Vec::new(),
+        members: qt_members::Members::default(),
     };
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
@@ -372,6 +377,18 @@ impl Root {
                 .iter()
                 .filter_map(|member| match member {
                     QmlMember::Property(property) => Some(property.name.name.to_string()),
+                    _ => None,
+                })
+                .collect(),
+            declares: object
+                .members
+                .iter()
+                .filter_map(|member| match member {
+                    QmlMember::Property(property) => Some(property.name.name.to_string()),
+                    QmlMember::Function(function) => {
+                        function.id.as_ref().map(|id| id.name.to_string())
+                    }
+                    QmlMember::Signal(signal) => Some(signal.name.name.to_string()),
                     _ => None,
                 })
                 .collect(),
@@ -470,6 +487,8 @@ struct Pass<'s> {
     /// What the scope object declares: an unqualified name it declares is
     /// its own, before the root's.
     declared: Vec<String>,
+    /// The members of `Qt` that `Ljos.Core` has under its own names.
+    members: qt_members::Members,
 }
 
 type Step = Result<(), Kept>;
@@ -661,6 +680,11 @@ impl<'s> Pass<'s> {
         let root = self.object_type(&document.root)?;
         self.root_owns = self.owns(&document.root, root);
         self.object(&document.root, root, root, true)?;
+        let members = std::mem::take(&mut self.members);
+        for (range, name) in members.settle(self.source, |name| self.locals.root(name).is_some()) {
+            self.change(range, name);
+            self.cores.set(true);
+        }
         // On the import's line, so every line stays where it was. What
         // imported `QtQml` imports `Ljos.Core` in its place; what has it
         // from `QtQuick` imports it beside `Ljos.Ui` when it names one of
@@ -950,8 +974,11 @@ impl<'s> Pass<'s> {
                 at,
             ));
         }
-        let root = self.local_root(name, imported).map(|r| r.type_name);
-        match root {
+        let root = self.local_root(name, imported);
+        if let Some(root) = &root {
+            self.members.declared_beside(&root.declares);
+        }
+        match root.map(|root| root.type_name) {
             Some(root) if root != name => match self.named_type(&root, at, depth + 1)? {
                 // What it declares is not in the table: its members are
                 // known by the type it is built on, as far as that goes.
@@ -1096,6 +1123,33 @@ impl<'s> Pass<'s> {
     /// an inline component or of a `Component`, or an object given as a
     /// value (a `Loader` sizes its `sourceComponent`'s).
     fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty, a_root: bool) -> Step {
+        match ty {
+            Ty::Exact(t) | Ty::Derived(t) => {
+                self.members.object_type(Some(t));
+                // The lowered file's object is Ljós's, whose members are
+                // in sight there.
+                let ljos = renamed_type(t.name).unwrap_or(t.name);
+                if let Some(t) = self
+                    .ui
+                    .type_named(ljos)
+                    .or_else(|| self.core.type_named(ljos))
+                {
+                    self.members.object_type(Some(t));
+                }
+                // A delegate's model gives it roles, which come before
+                // anything else in sight.
+                if t.default_property() == Some("delegate")
+                    && object
+                        .members
+                        .iter()
+                        .any(|m| matches!(m, QmlMember::Object(_)))
+                {
+                    self.members.delegate();
+                }
+            }
+            Ty::Unknown => self.members.object_type(None),
+            Ty::Plain => {}
+        }
         // A `Component` a view is given by id is its delegate as if it
         // were written in the view's `delegate:`.
         let given = self.given.take().or_else(|| match ty {
@@ -1224,6 +1278,9 @@ impl<'s> Pass<'s> {
                     self.object(child, child_ty, child_root, made)?;
                 }
                 QmlMember::Binding(binding) => {
+                    if binding.name.as_simple() == Some("delegate") {
+                        self.members.delegate();
+                    }
                     let made = self.changes.len();
                     self.binding(binding, ty, scope, root, target)?;
                     if let Some(id) = &prefix {
@@ -1232,6 +1289,8 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Property(property) => {
                     let name = property.name.name.as_str();
+                    self.members
+                        .typed(property.span.start as usize..property.name.span.start as usize);
                     if renames_on(scope)
                         .is_some_and(|r| r.iter().any(|(o, n)| *o == name || *n == name))
                     {
@@ -2192,6 +2251,16 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
         }
         let name = it.property.name.as_str();
+        // A parameter or a local called `Qt` is no global: its members stay.
+        if let Expression::Identifier(qt) = &it.object
+            && qt.name == "Qt"
+            && !self.own.binds("Qt", qt.span.start)
+        {
+            let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
+            self.pass
+                .members
+                .qt(span(qt.span), name, span(it.property.span));
+        }
         if name == "createQmlObject" {
             // The text is compiled when the script runs, as written.
             self.keep(

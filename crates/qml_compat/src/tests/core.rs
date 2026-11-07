@@ -22,10 +22,10 @@ fn a_type_of_qtqml_brings_ljos_core_onto_the_import_line() {
         "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
          Item { Component.onCompleted: {} }\n"
     );
-    // `Qt` is a global, of every file.
+    // `Qt` is a global, of every file: what stays Qt's needs no import.
     assert_eq!(
-        lowered("import QtQuick\nItem { x: Qt.platform.os.length }\n"),
-        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { x: Qt.platform.os.length }\n"
+        lowered("import QtQuick\nItem { property color c: Qt.darker(\"red\") }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { property color c: Qt.darker(\"red\") }\n"
     );
 }
 
@@ -97,4 +97,56 @@ fn a_type_of_qtqml_a_file_writes_brings_ljos_core() {
         "pragma Scripts: JavaScript; import Ljos.Ui\n\
          Item { property PointerArea area; property Item at }\n"
     );
+}
+
+#[test]
+fn a_member_of_qt_that_ljos_core_has_is_lowered_where_its_name_is_free() {
+    assert_eq!(
+        lowered("import QtQuick\nItem { x: Qt.platform.os.length; y: Qt.point(1, 2).y }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { x: App.platform.os.length; y: point(1, 2).y }\n"
+    );
+    // A property of that name, a local of it, or a file beside
+    // it of that name, is what the name is.
+    assert_eq!(
+        lowered("import QtQuick\nItem { property int size: 1; width: Qt.size(1, 2).width }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+         Item { property int size: 1; width: Qt.size(1, 2).width }\n"
+    );
+    assert_eq!(
+        lowered("import QtQuick\nItem { function f(later) { Qt.callLater(later) } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+         Item { function f(later) { Qt.callLater(later) } }\n"
+    );
+    // A parameter called `Qt` is no global: its members are its own.
+    assert_eq!(
+        lowered("import QtQuick\nItem { function f(Qt) { return Qt.point(1, 2) } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+         Item { function f(Qt) { return Qt.point(1, 2) } }\n"
+    );
+    let app = |name: &str| (name == "App").then(|| root_of("Item", &[]));
+    match lower("import QtQuick\nItem { x: Qt.platform.os.length }\n", &app) {
+        Outcome::Lowered(lowered) => assert_eq!(
+            lowered.text,
+            "pragma Scripts: JavaScript; import Ljos.Ui\nItem { x: Qt.platform.os.length }\n"
+        ),
+        other => panic!("not lowered: {other:?}"),
+    }
+    // What a file it is built on declares is in sight too.
+    let base = |name: &str| {
+        (name == "Base").then(|| Root {
+            declares: vec!["rgba".into()],
+            ..root_of("Item", &[])
+        })
+    };
+    match lower(
+        "import QtQuick\nBase { property color c: Qt.rgba(1, 0, 0, 1) }\n",
+        &base,
+    ) {
+        Outcome::Lowered(lowered) => assert_eq!(
+            lowered.text,
+            "pragma Scripts: JavaScript; import Ljos.Ui\nBase { property color c: Qt.rgba(1, 0, 0, 1) }\n"
+        ),
+        other => panic!("not lowered: {other:?}"),
+    }
 }
