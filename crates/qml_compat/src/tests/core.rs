@@ -44,3 +44,16 @@ fn a_model_of_qtqml_is_had_from_ljos_core_until_ljos_models_has_it() {
         "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem { ListModel { } }\n"
     );
 }
+
+#[test]
+fn a_file_of_qtqml_that_names_a_type_of_ljos_ui_imports_it_too() {
+    // `QtQuick.Layouts` without `QtQuick`: its layout is Ljós.Ui's.
+    let text = lowered(
+        "import QtQml\nimport QtQuick.Layouts\n\
+         RowLayout { Item { implicitWidth: 8; Layout.fillWidth: true } }\n",
+    );
+    assert!(
+        text.starts_with("pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n"),
+        "{text}"
+    );
+}
