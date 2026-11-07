@@ -474,7 +474,13 @@ impl Api {
                 {
                     continue;
                 }
-                let _ = writeln!(out, "    const {key}: {name}.{};", enumeration.name);
+                // An enum named as its type (`Flow.Flow`) hides the
+                // namespace inside it, so it is named alone there.
+                if enumeration.name == name {
+                    let _ = writeln!(out, "    const {key}: {name};");
+                } else {
+                    let _ = writeln!(out, "    const {key}: {name}.{};", enumeration.name);
+                }
             }
         }
         if ty.is_singleton {
@@ -605,6 +611,17 @@ mod tests {
             excerpt,
             "/** QtQml.point */\ninterface point {\n    readonly x: number;\n    readonly y: number;\n}"
         );
+    }
+
+    #[test]
+    fn an_enum_named_as_its_type_is_named_in_its_namespace() {
+        let declarations = Api::of("QtQuick").expect("QtQuick").declarations();
+        let start = declarations
+            .find("declare namespace Flow {")
+            .expect("Flow's enums are declared");
+        let body = &declarations[start..];
+        let body = &body[..body.find("\n}\n").expect("closed")];
+        assert!(body.contains("\n    const LeftToRight: Flow;"), "{body}");
     }
 
     #[test]
