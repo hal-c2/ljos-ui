@@ -562,6 +562,7 @@ module Ljos.Ui
 	Layout QtQuick.Layouts.Layout
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
+	Loader Ljos.Ui.Loader
 	Path QtQuick.Path
 	PathAngleArc QtQuick.PathAngleArc
 	PathArc QtQuick.PathArc
@@ -662,6 +663,25 @@ module Ljos.Ui
 		signal footerPositioningChanged
 		method incrementCurrentIndex
 		method decrementCurrentIndex
+	type Ljos.Ui.Loader Loader
+		prototype QtQuick.Item named
+		enum Status Null=0 Ready=1 Loading=2 Error=3
+		prop source QtQml.url named
+		prop component QtQml.Component named pointer reset
+		prop active QtQml.bool named
+		prop asynchronous QtQml.bool named
+		prop item QtQml.QtObject named pointer readonly
+		prop status Status readonly
+		prop progress QtQml.real named readonly
+		signal sourceChanged
+		signal componentChanged
+		signal activeChanged
+		signal asynchronousChanged
+		signal itemChanged
+		signal statusChanged
+		signal progressChanged
+		signal loaded
+		method setSource
 	type Ljos.Ui.PointerArea PointerArea
 		prototype QtQuick.Item named
 		prop hoverEnabled QtQml.bool named
