@@ -123,6 +123,8 @@ Feature: A Loader shows a component, named as a type
 
   Rule: A Qt Loader is lowered when what it loads is written out
 
+    # `component` is the lowered file's name for what the Loader shows: a file kept as Qt's has no
+    # such property, so the change is seen through it only when the file was lowered.
     @ljos-only
     Scenario: A Qt Loader lowered shows the same page and takes the same change
       Given Qt QML is lowered to the Ljós API
@@ -146,6 +148,7 @@ Feature: A Loader shows a component, named as a type
       And the pixel at 20, 15 of the window is "#336699"
       When the method "grow" of "root" is called
       Then the property "width" of "second" is 60
+      And the property "component" of "second" is not null
       And the property "changes" of "root" is 1
 
     @ljos-only @headless
