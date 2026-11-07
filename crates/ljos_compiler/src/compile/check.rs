@@ -253,6 +253,8 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     assigned: Vec<Fact<'a>>,
     fns: Vec<FnCtx>,
     own: HashMap<(usize, &'a str), Own>,
+    /// The types `declare_states` gave the file's `state`s.
+    states: Vec<Ty>,
     /// The element read by index last: what it gives may be undefined.
     indexed: Option<Span>,
     /// The QML object whose scope a script runs in: `this`.
@@ -287,6 +289,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             assigned: Vec::new(),
             fns: Vec::new(),
             own: HashMap::new(),
+            states: Vec::new(),
             indexed: None,
             this: None,
             nested: 0,
@@ -809,6 +812,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 );
             }
         }
+        self.states.push(ty);
         self.own.insert(
             (index, "state"),
             Own {
@@ -1238,6 +1242,22 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 .any(|part| self.arena.parts(b).contains(part))
     }
 
+    /// Whether `given` goes into a `state` typed `target`: a name the
+    /// file declares, or a string a script holds, which names one only as
+    /// it runs.
+    ///
+    /// DECISION: a `string` is let into `state`, as `never_equal` lets a
+    /// comparison by: Qt's apps keep the next state in a string property
+    /// (coffee's `previousState`, lightningviewer's `close_state`). Only a
+    /// name written out that the file does not declare is refused.
+    fn names_a_state(&self, target: Ty, given: Ty) -> bool {
+        self.states.contains(&target)
+            && self.arena.parts(given).iter().all(|part| {
+                matches!(self.arena.kind(*part), Kind::String)
+                    || self.arena.parts(target).contains(part)
+            })
+    }
+
     /// Whether a value of type `source` may go where `target` is wanted.
     fn takes(&self, target: Ty, source: Ty) -> bool {
         self.takes_as(target, source, true)
@@ -1400,7 +1420,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     /// `name`, of type `target` said as `word`, is: by the rule that
     /// refuses it.
     fn check_assign(&mut self, name: &str, target: Ty, word: &str, given: Ty, span: Span) {
-        if self.takes(target, given) {
+        if self.takes(target, given) || self.names_a_state(target, given) {
             return;
         }
         if self.indexed == Some(span) {
