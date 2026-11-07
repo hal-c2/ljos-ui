@@ -74,6 +74,7 @@
 //!         signal clicked mouse:QQuickMouseEvent   the arguments by name, `_` for one
 //!                                       without, each with `:` and its type when known
 //!         method forceActiveFocus
+//!         method points returns:real    what it gives, when the table says
 //! ```
 //!
 //! A class is what a type is registered from: in Qt's table the C++ class, in
@@ -352,6 +353,10 @@ pub struct Type {
     pub properties: Vec<Property>,
     pub signals: Vec<Signal>,
     pub methods: Vec<&'static str>,
+    /// What a method of [`Type::methods`] gives, by name, when the table
+    /// says: Ljós's own table does for a method that gives a `bool`, a
+    /// number or a string; Qt's never does.
+    pub method_returns: Vec<(&'static str, &'static str)>,
     default_property: Option<&'static str>,
     prototype: Option<usize>,
     extension: Option<usize>,
@@ -458,6 +463,19 @@ impl Type {
     pub fn has_method(&'static self, name: &str) -> bool {
         self.find(false, &|ty| ty.methods.contains(&name).then_some(()))
             .is_some()
+    }
+
+    /// What the method `name` gives, as the table writes a type (`real`),
+    /// when it says: from the nearest type that has a method of that name.
+    pub fn method_returns(&'static self, name: &str) -> Option<&'static str> {
+        self.find(false, &|ty| {
+            ty.methods.contains(&name).then(|| {
+                ty.method_returns
+                    .iter()
+                    .find_map(|(method, returns)| (*method == name).then_some(*returns))
+            })
+        })
+        .flatten()
     }
 
     /// The enum key `Type.key` names: `Text.Raised`, `Qt.AlignLeft`.
@@ -828,6 +846,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                     properties: Vec::new(),
                     signals: Vec::new(),
                     methods: Vec::new(),
+                    method_returns: Vec::new(),
                     default_property: None,
                     prototype: None,
                     extension: None,
@@ -919,7 +938,13 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                             parameter_types,
                         });
                     }
-                    "method" => ty.methods.push(word()),
+                    "method" => {
+                        let name = word();
+                        ty.methods.push(name);
+                        if let Some(returns) = words.find_map(|w| w.strip_prefix("returns:")) {
+                            ty.method_returns.push((name, returns));
+                        }
+                    }
                     _ => {}
                 }
             }
