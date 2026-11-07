@@ -7,7 +7,9 @@ Built:
 - `Ljos.Core` with `QtObject`, `Timer`, `Component`, `Connections`,
   `Binding` and `Locale` (§4.1).
 - `QtQml` lowered to it; `Ljos.Ui`'s `QtQml` import dropped.
+- The value-type and colour constructors, `App`, `later` and `url`, with
+  `Qt.*` lowered to them by member where the name is free (§4.3).
 
 Remaining:
 
-- `Qt.*` by member, the value-type constructors, `App`, `later`.
+- The enums (`Qt.Key_*`, `Qt.Align*`).

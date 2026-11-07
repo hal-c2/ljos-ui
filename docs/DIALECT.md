@@ -280,7 +280,7 @@ a string; neither takes a reviver, a replacer or an indent, which are
 | Qt | Ljós | Kind | Cost |
 |---|---|---|---|
 | `Qt.vector2d/3d/4d`, `quaternion`, `matrix4x4`, `point`, `size`, `rect` | constructors: `vector3d(x, y, z)` in `Ljos.Core` | pure, tier 1 | a value, no host call |
-| `Qt.rgba`, `hsla`, `darker`, `lighter`, `tint` | `color.rgba(…)`, `c.darker(f)` | pure, tier 1 | folded at compile time when constant |
+| `Qt.rgba`, `hsla`, `hsva`, `darker`, `lighter`, `alpha`, `tint` | `rgba(…)`, `hsla(…)`, `hsva(…)` in `Ljos.Core`; `c.darker(f)`, `c.lighter(f)`, `c.alpha(a)`, `c.tint(t)` on a colour | pure, tier 1 | folded at compile time when constant |
 | `new Date()`, a `Timer` that reads it | `Clock.now(Clock.Resolution.Second)`: a reactive `Instant` | a source | one wake-up per resolution tick for the whole app while anything reads it; a reader whose only effect is drawing is skipped while hidden, and any other reader (a handler, a `when:`, a non-visual object) keeps it ticking |
 | `Date` values, `Date.parse` | `Instant` (UTC ms), `Instant.parseRfc2822`, `Instant.parseIso`, `i.since(j)` (a `Duration`) | pure | a number |
 | `Qt.formatDateTime`, `Qt.locale()`, `toLocaleString` | `Locale.current.formatDate(i, Locale.Format.Short)` | pure, reactive on the locale | |
@@ -317,6 +317,39 @@ Timer {
 The Ljós version wakes once a second for the whole app, with all seven
 clocks reading one value. `hands` is a pure TypeScript function, so tier 1
 can compile it.
+
+Built in M2: `Ljos.Core` gives `later`, `point`, `size`, `rect`,
+`vector2d`, `vector3d`, `vector4d`, `quaternion`, `rgba`, `hsla`, `hsva`,
+`url` and `App` (`App.platform`, `App.openUrlExternally`, `App.quit`), and
+the checker types them and a colour's methods
+(`features/language/ljos-core-globals.feature`).
+
+DECISION: `Ljos.Core`'s names are seen only by a file that imports it, and
+last: an id, a property, a role or a local of the same name comes first, so
+`property int size` is the property and `size(…)` is not in reach there.
+They are not globals of the engine. The compiled file takes them from one
+frozen object at its end, so no line moves; `url` is the file's own, since
+it resolves against the file.
+
+DECISION: the colour constructors are bare `rgba(…)`, not `color.rgba(…)`:
+`color` is a property of most items, and would hide them.
+
+DECISION: the lowering pass turns `Qt.point(…)` into `point(…)`,
+`Qt.callLater` into `later`, `Qt.resolvedUrl` into `url`, and
+`Qt.platform`, `Qt.openUrlExternally` and `Qt.quit` into `App`'s, and the
+file then imports `Ljos.Core`. It does so only where the new name can be
+nothing else. The pass cannot see every name in sight, so the new name must
+be no other word of the file (outside a property's type), no member of a
+type the file's objects are (Qt's or Ljós's), and nothing a file it is built
+on declares, and the file has no object of a type the pass does not know
+and no delegate, whose roles would come first. Otherwise the member stays
+Qt's: `Qt` stays a global of every file, so that runs as before.
+
+DECISION: `Qt.darker`, `lighter`, `alpha` and `tint` stay Qt's in a lowered
+file. Their first argument may be a colour's name, a string, which has no
+methods, and a lowered file's scripts are not typed, so `c.darker(f)`
+cannot be written for it. `Qt.binding` stays too: what it becomes, a
+`Binding` or a state, is not one edit.
 
 DECISION: there is no `date` type in a Ljós file. An `Instant` is a number
 of UTC milliseconds with methods, and a calendar date is formatted through
@@ -1583,8 +1616,16 @@ QtQuick.Controls`. The lowered count does not move yet: the files the
 import let through are kept by the other types they name, or by their
 group.
 
-`Qt.*` keeps no file today: `Ljos.Ui` imports `QtQml`, so the namespace is
-still there. Modules, not globals, decide coverage (§17).
+`Qt.*` keeps no file today: `Qt` is a global of every file, and a member
+`Ljos.Core` has is lowered to it where its name is free (§4.3). Modules, not
+globals, decide coverage. Phase 2 starts with them (§17).
+
+With `Qt.*` lowered by member (§4.3) the counts are the same. One file's
+edits change: car-configurator's `CameraReset.qml` writes `vector3d(…)` for
+its two `Qt.vector3d(…)` and imports `Ljos.Core` (3 edits, was 1). The one
+`Qt` member left in a lowered file is `Qt.createComponent`, which waits for
+§4.11. No example the render sweep runs has a lowered file whose text
+changed.
 
 ## 7. Tiers and the web
 
@@ -1951,6 +1992,11 @@ bindings and states without a rule.
   names, and brings `QtQml.Models`; a lowered file has the models from
   `Ljos.Models`. `Qt` is a
   global of every file. `Ljos.Ui` imports nothing.
+- DECISION (§4.3): `Ljos.Core`'s functions and `App` are names of a file
+  that imports it, after everything else in sight; colours are made with
+  bare `rgba(…)`. `Qt.*` is lowered to them by member only where the new
+  name is free, and `Qt.darker`/`lighter`/`alpha`/`tint` and `Qt.binding`
+  stay Qt's in a lowered file.
 - DECISION: the edits are text replacements at spans that keep every line,
   and they move onto `qml_edit` in M3.
 - DECISION (§4.6): one arrangement, the Box, with one size rule per axis:
