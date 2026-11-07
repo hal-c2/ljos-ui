@@ -1504,8 +1504,8 @@ bindings and states without a rule.
 - DECISION: compat JS is called from TS only through declarations (Q7),
   the `.d.ts` beside the `.js`, which a person writes.
 - DECISION (§4.4): a decoder narrows; nothing casts. A decoder is a type
-  guard, an assertion function, or a plain typed function that narrows
-  `unknown` and returns a typed value or a fallback: user code with no
+  guard, an assertion function, or a plain typed function that narrows what
+  it is given and returns a typed value or a fallback: user code with no
   runtime check of the checker's, and `unknown` narrows as TypeScript 5 narrows it, which the
   tsc oracle holds the checker to.
 - DECISION: phase 2 builds modules before globals: `Ljos.Layout` and
