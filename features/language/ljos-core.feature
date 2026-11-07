@@ -199,6 +199,40 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """
 
     @ljos-only @headless
+    Scenario: A file that writes a type of QtQml's imports Ljos.Core when it is migrated
+      Given the file "Holder.qml":
+        """qml
+        import QtQuick
+        Item {
+          property QtObject o
+          property Component c
+          property list<QtObject> xs
+          signal picked(QtObject o)
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Holder.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        Item {
+          property QtObject o
+          property Component c
+          property list<QtObject> xs
+          signal picked(QtObject o)
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    @ljos-only @headless
     Scenario: A file that names a model of QtQml's has it from Ljos.Core until Ljos.Models has it
       Given the file "Names.qml":
         """qml
