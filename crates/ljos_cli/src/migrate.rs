@@ -36,6 +36,13 @@ pub struct Migrate {
     /// the command says what it would do.
     #[arg(long)]
     write: bool,
+    /// The controls style the program starts with, which is what
+    /// `import QtQuick.Controls` means: a file that imports it is lowered
+    /// only where that is Basic, the style `Ljos.Controls` draws. Without
+    /// it, the style a program started here would get
+    /// (`QT_QUICK_CONTROLS_STYLE`, `QT_QUICK_CONTROLS_CONF`, the platform's).
+    #[arg(long, value_name = "NAME")]
+    style: Option<String>,
 }
 
 impl Migrate {
@@ -53,6 +60,14 @@ impl Migrate {
                 files.push(path.clone());
             }
         }
+        let style = self.style.clone().unwrap_or_else(|| {
+            ljos_compiler::controls_style(
+                |name| std::env::var(name).ok(),
+                |path| std::fs::read_to_string(path).ok(),
+            )
+            // No style chosen is Basic, as in Qt 6.
+            .map_or_else(|| qml_compat::CONTROLS_STYLE.to_owned(), |style| style.name)
+        });
         // Every file first: files that name one another are lowered
         // together, as a lowered run lowers them (`qml_compat::group`).
         let mut alone = BTreeMap::new();
@@ -77,7 +92,13 @@ impl Migrate {
             alone.insert(
                 key.clone(),
                 qml_compat::Alone {
-                    outcome: qml_compat::lower(&text, &locals),
+                    outcome: qml_compat::lower(
+                        &text,
+                        &qml_compat::Styled {
+                            locals: &locals,
+                            style: &style,
+                        },
+                    ),
                     references: qml_compat::references(&text),
                 },
             );

@@ -44,6 +44,19 @@ pub use group::{Alone, References, group, references};
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
 
+/// The module a lowered file imports its controls from.
+pub const CONTROLS: &str = "Ljos.Controls";
+
+/// The modules of Qt's controls lowered to [`CONTROLS`]: the Basic style,
+/// and `QtQuick.Controls` where the program starts with Basic
+/// ([`Locals::controls_style`]). A style's own module,
+/// `QtQuick.Controls.Material`, keeps its file: its attached API is the
+/// style's.
+pub const QT_CONTROLS: &[&str] = &["QtQuick.Controls", "QtQuick.Controls.Basic"];
+
+/// The style [`CONTROLS`] draws.
+pub const CONTROLS_STYLE: &str = "Basic";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -101,6 +114,38 @@ pub struct Root {
 /// object.
 pub trait Locals {
     fn root(&self, name: &str) -> Option<Root>;
+
+    /// The style `import QtQuick.Controls` is where the file runs, as the
+    /// program chooses it when it starts; none when that is not known, and
+    /// a file that imports it is kept.
+    fn controls_style(&self) -> Option<&str> {
+        None
+    }
+}
+
+/// The files beside this one, in a program that starts with the controls
+/// style `style`.
+pub struct Styled<'a> {
+    pub locals: &'a dyn Locals,
+    pub style: &'a str,
+}
+
+impl std::fmt::Debug for Styled<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Styled")
+            .field("style", &self.style)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Locals for Styled<'_> {
+    fn root(&self, name: &str) -> Option<Root> {
+        self.locals.root(name)
+    }
+
+    fn controls_style(&self) -> Option<&str> {
+        Some(self.style)
+    }
 }
 
 impl<F: Fn(&str) -> Option<Root>> Locals for F {
@@ -133,6 +178,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ui,
         quick,
         layouts: None,
+        controls: None,
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
@@ -200,6 +246,8 @@ struct Pass<'s> {
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
+    /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
+    controls: Option<Controls>,
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
@@ -208,18 +256,29 @@ struct Pass<'s> {
 
 type Step = Result<(), Kept>;
 
+/// Qt's description of the controls a file imports, and Ljós's of those
+/// it has taken.
+#[derive(Clone, Copy)]
+struct Controls {
+    qt: &'static qt_types::Module,
+    ljos: &'static qt_types::Module,
+}
+
 impl<'s> Pass<'s> {
     /// Whether the file imports `QtQuick` and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let mut quick = None;
         let mut layouts = None;
+        let mut controls = Vec::new();
         for import in &document.imports {
             let at = import.span.start as usize;
             let QmlImportSource::Module(name) = &import.source else {
                 continue;
             };
             let uri = name.to_string();
-            if import.alias.is_some() && (uri == "QtQuick" || uri == "QtQml") {
+            if import.alias.is_some()
+                && (uri == "QtQuick" || uri == "QtQml" || QT_CONTROLS.contains(&uri.as_str()))
+            {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
             match uri.as_str() {
@@ -230,6 +289,29 @@ impl<'s> Pass<'s> {
                 "QtQuick.Layouts" if import.alias.is_none() => {
                     self.layouts = qt_types::module("QtQuick.Layouts");
                     layouts = Some(import.span);
+                }
+                // Ljós's controls are Basic's; `QtQuick.Controls` is the
+                // style the program starts with, which may be another.
+                "QtQuick.Controls" if self.locals.controls_style() != Some(CONTROLS_STYLE) => {
+                    let reason = match self.locals.controls_style() {
+                        Some(style) => format!(
+                            "it imports `QtQuick.Controls`, which is the {style} style where it runs, and {CONTROLS} is {CONTROLS_STYLE}"
+                        ),
+                        None => "it imports `QtQuick.Controls`, whose style is chosen as the program starts".to_owned(),
+                    };
+                    return Err(self.no(reason, at));
+                }
+                uri if QT_CONTROLS.contains(&uri) => {
+                    let (Some(qt), Some(ljos)) =
+                        (qt_types::module(uri), qt_types::module(CONTROLS))
+                    else {
+                        return Err(self.no(
+                            format!("this build has no description of `{uri}` or {CONTROLS}"),
+                            at,
+                        ));
+                    };
+                    self.controls.get_or_insert(Controls { qt, ljos });
+                    controls.push(import.span);
                 }
                 // A module that builds on QtQuick names its types, and those
                 // are Qt's until Ljós has its own (docs/DIALECT.md).
@@ -247,6 +329,15 @@ impl<'s> Pass<'s> {
         if let Some(span) = layouts {
             // `Ljos.Ui` has `Layout`; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
+        }
+        for (i, span) in controls.into_iter().enumerate() {
+            // A second import of Qt's controls is the first again.
+            let import = if i == 0 {
+                format!("import {CONTROLS}")
+            } else {
+                String::new()
+            };
+            self.change(span.start as usize..span.end as usize, import);
         }
         // On the import's line, so every line stays where it was.
         self.change(
@@ -344,6 +435,14 @@ impl<'s> Pass<'s> {
             return match name {
                 "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
+            };
+        }
+        if let Some(controls) = self.controls
+            && let Some(ty) = controls.qt.type_named(name)
+        {
+            return match controls.ljos.type_named(name) {
+                Some(_) => Ok(Ty::Exact(ty)),
+                None => Err(self.no(format!("`{name}` is not in {CONTROLS} yet"), at)),
             };
         }
         if let Some(ty) = self.quick.type_named(name) {
@@ -664,6 +763,7 @@ impl arrange::Types for Pass<'_> {
         self.quick
             .type_named(name)
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
+            .or_else(|| self.controls.and_then(|c| c.qt.type_named(name)))
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -904,7 +1004,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             if let Some(new) = renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
-            } else if self.pass.quick.type_named(name).is_some()
+            } else if (self.pass.quick.type_named(name).is_some()
+                || self
+                    .pass
+                    .controls
+                    .is_some_and(|c| c.qt.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 self.keep(kept.reason, it.span.start);

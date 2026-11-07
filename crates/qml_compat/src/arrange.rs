@@ -106,7 +106,8 @@ const POSITIONER_ONLY_NAMES: &[&str] = &["effectiveLayoutDirection", "forceLayou
 
 /// What the pass knows of the types it meets.
 pub(crate) trait Types {
-    /// The QtQuick or QtQuick.Layouts type `name` names in the file.
+    /// The type of Qt's (QtQuick, QtQuick.Layouts or the controls) `name` names
+    /// in the file.
     fn qt_type(&self, name: &str) -> Option<&'static Type>;
     /// For a file of the project or an inline component, the names its
     /// root binds, with those of the roots it is built on; `None` for a
