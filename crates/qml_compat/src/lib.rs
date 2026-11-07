@@ -19,6 +19,7 @@
 //! ([`group`]): what one sets on another is then called the same in both.
 
 mod arrange;
+mod given;
 mod group;
 mod renames;
 mod rows;
@@ -263,6 +264,8 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         given: None,
         view_rows: None,
         delegate: None,
+        by_id: Vec::new(),
+        loose: false,
         scope_owns: Owns::NONE,
         root_owns: Owns::NONE,
     };
@@ -361,6 +364,11 @@ struct Pass<'s> {
     view_rows: Option<Rows>,
     /// The delegate the pass is in.
     delegate: Option<Delegate>,
+    /// The `Component`s views are given by id alone, and those views' rows.
+    by_id: Vec<(String, Rows)>,
+    /// Whether the pass is in a `Component` that is no view's delegate the
+    /// file shows.
+    loose: bool,
     /// What the object whose members an unqualified name is first has.
     scope_owns: Owns,
     /// What the root of the file, or of the inline component, has.
@@ -497,6 +505,11 @@ impl<'s> Pass<'s> {
             self.change(span.start as usize..span.end as usize, import);
         }
         self.collect(&document.root);
+        let by_id = given::by_id(&document.root, &|o| self.is_view(o), &self.listed)
+            .into_iter()
+            .filter(|(id, _)| matches!(self.id(id), Some(Ty::Exact(t)) if t.name == "Component"))
+            .collect();
+        self.by_id = by_id;
         let root = self.object_type(&document.root)?;
         self.root_owns = self.owns(&document.root, root);
         self.object(&document.root, root, root, true)?;
@@ -511,6 +524,18 @@ impl<'s> Pass<'s> {
             format!("{JAVASCRIPT}; import {MODULE}{models}"),
         );
         Ok(true)
+    }
+
+    /// Whether `object` is of a type that shows a model with a delegate.
+    fn is_view(&self, object: &QmlObject<'_>) -> bool {
+        let Some(name) = object.type_name.as_simple() else {
+            return false;
+        };
+        matches!(
+            self.named_type(name, 0, 0),
+            Ok(Ty::Exact(t) | Ty::Derived(t))
+                if t.property("model").is_some() && t.property("delegate").is_some()
+        )
     }
 
     fn no(&self, reason: String, at: usize) -> Kept {
@@ -708,12 +733,22 @@ impl<'s> Pass<'s> {
     /// an inline component or of a `Component`, or an object given as a
     /// value (a `Loader` sizes its `sourceComponent`'s).
     fn object(&mut self, object: &QmlObject<'_>, ty: Ty, root: Ty, a_root: bool) -> Step {
-        let given = self.given.take();
+        // A `Component` a view is given by id is its delegate as if it
+        // were written in the view's `delegate:`.
+        let given = self.given.take().or_else(|| match ty {
+            Ty::Exact(t) if t.name == "Component" => {
+                let id = object_id(object)?;
+                let (_, rows) = self.by_id.iter().find(|(given, _)| *given == id)?;
+                Some(rows.clone())
+            }
+            _ => None,
+        });
         let saved = (
             self.delegate.clone(),
             self.scope_owns,
             self.view_rows.clone(),
             self.root_owns,
+            self.loose,
         );
         let done = self.object_in(object, ty, root, a_root, given);
         (
@@ -721,6 +756,7 @@ impl<'s> Pass<'s> {
             self.scope_owns,
             self.view_rows,
             self.root_owns,
+            self.loose,
         ) = saved;
         done
     }
@@ -737,6 +773,9 @@ impl<'s> Pass<'s> {
         let named = |names: &[&str]| matches!(ty, Ty::Exact(t) if names.contains(&t.name));
         // What hands a delegate on rather than being it.
         let carrier = given.is_some() && named(&["Component", "DelegateChooser", "DelegateChoice"]);
+        if given.is_none() && named(&["Component"]) {
+            self.loose = true;
+        }
         let owns = self.owns(object, ty);
         match given {
             Some(rows) if carrier => self.view_rows = Some(rows),
@@ -842,9 +881,10 @@ impl<'s> Pass<'s> {
                     let ty = self.object_type(&component.object)?;
                     // Its own file, as far as names go.
                     let (delegate, root_owns) = (self.delegate.take(), self.root_owns);
+                    let loose = std::mem::take(&mut self.loose);
                     self.root_owns = self.owns(&component.object, ty);
                     self.object(&component.object, ty, ty, true)?;
-                    (self.delegate, self.root_owns) = (delegate, root_owns);
+                    (self.delegate, self.root_owns, self.loose) = (delegate, root_owns, loose);
                 }
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
@@ -1461,9 +1501,15 @@ impl Script<'_, '_> {
     /// Why `what`, which reads `part` of a row where the file shows no
     /// view, keeps the file, and what to declare in its place.
     fn unshown(&self, what: &str, part: &str, declare: &str) -> String {
-        format!(
-            "`{what}` reads {part} of a view the file is not shown in; give the root `required property {declare}`"
-        )
+        if self.pass.loose {
+            format!(
+                "`{what}` reads {part} of a view the `Component` it is in is not written in the `delegate:` of, or given to by id alone; give the Component's root `required property {declare}`"
+            )
+        } else {
+            format!(
+                "`{what}` reads {part} of a view the file is not shown in; give the root `required property {declare}`"
+            )
+        }
     }
 
     /// The script is read: what it wrote of the row is the file's, unless
