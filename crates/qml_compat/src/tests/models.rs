@@ -91,12 +91,20 @@ fn an_array_of_objects_has_no_roles() {
     assert!(text.contains("Text { text: modelData.city }"), "{text}");
 }
 
+/// Outside any delegate the file shows, `model` is a row only if what
+/// makes the file makes it a delegate, and of what the file does not say:
+/// nothing of it is guessed, `model.index` and `model.modelData` either.
 #[test]
-fn a_file_that_is_a_delegate_reads_only_what_every_row_gives() {
-    let text = lowered("import QtQuick\nText { text: model.index + \":\" + model.modelData }\n");
+fn a_file_outside_any_delegate_reads_nothing_of_a_row() {
+    let reason = kept_for("import QtQuick\nText { text: model.index }\n");
     assert!(
-        text.contains("Text { text: index + \":\" + modelData }"),
-        "{text}"
+        reason.contains("`model.index` reads the row of a view the file is not shown in; give the root `required property int index`"),
+        "{reason}"
+    );
+    let reason = kept_for("import QtQuick\nText { text: model.modelData }\n");
+    assert!(
+        reason.contains("give the root `required property var modelData`"),
+        "{reason}"
     );
     let reason = kept_for("import QtQuick\nText { text: model.city }\n");
     assert!(
