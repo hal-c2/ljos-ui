@@ -1229,7 +1229,9 @@ each example, --style Fusion:   495 files, 13 lowered, 472 kept
 
 With Basic, no example file is kept by its controls import any more. What
 the controls keep instead (recounted after K4; the totals above did not
-move):
+move). Three files are no longer kept for a control K4 adds: two are
+still kept, now by their group, and one lowers, so the rows sum to 113,
+not 114:
 
 | Reason | Files |
 |---|---:|
