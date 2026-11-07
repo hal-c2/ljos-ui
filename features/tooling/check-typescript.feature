@@ -27,7 +27,7 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
     Scenario: A readonly property is declared readonly and an enum as an enum
       When the declarations of Ljós's API are written
       Then the declaration of "PointerArea" has the member "readonly pressed: boolean;"
-      And the declaration of "Text" has the member "horizontalAlignment: Text.HAlignment;"
+      And the declaration of "Text" has the member "align: Text.HAlignment;"
       And the declarations have the line "const AlignLeft: Text.HAlignment;"
 
   Rule: TypeScript reads a file in Ljós's API as the checker does
