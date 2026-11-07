@@ -699,6 +699,23 @@ DECISION: a duplicate `key` is a check error in a constant list. At run
 time rows that share a key are matched in order (the second row with key
 `k` keeps the delegate the second one had), and the view logs it once.
 
+DECISION: keys are compared with their type: the key `1` and the key
+`"1"` are two keys. A row that has no field of the key's name has the key
+`undefined`, which rows without it share.
+
+DECISION: `key`, `enter` and `exit` are on the native `Repeater` and
+`ItemView`, so a Qt file that sets them runs them too, as an extension;
+Qt has none of them. `Ljos.Ui`'s `ListView` is a face of Qt's that calls
+`add` and `remove` `enter` and `exit`; the attached `ListView.onAdd` and
+`ListView.onRemove` keep their names.
+
+DECISION: an `exit` runs only on a row the list removed. A new model, a
+new delegate, or the view's end destroys every delegate at once.
+
+DECISION: the pass renames `add` and `remove` of a `ListView` as
+properties only: `lm.remove(0)` is a call and stays, since every member
+the pass renames is a property.
+
 ### 4.9 States
 
 **What apps say.** "In this condition it looks like this", and sometimes
@@ -975,7 +992,17 @@ construction.
 - **Gestures** are recognisers on one pointer stream, attached to an item's
   hit test. They have no items and no geometry.
 - **Keyed views** diff a list by key. `enter`/`exit` live on the view, which
-  keeps an exiting delegate until its transition ends.
+  keeps an exiting delegate until its transition ends. Built
+  (`features/views/keyed-views.feature`): a `Repeater` or `ListView` given
+  a `key` holds its rows as a model of its own
+  (`crates/ljos_engine/src/keyed.rs`), and a new list is told to it as the
+  rows removed, moved, inserted and changed, so a row that stays keeps its
+  delegate and reads its new fields. A keyed `Repeater`'s `enter` runs on
+  the item of a row inserted once it has made its first items, and its
+  `exit` on the item of a row removed, which stays, out of `count`, until
+  the transition ends. `Ljos.Ui`'s `ListView` calls Qt's `add` and
+  `remove` `enter` and `exit`. The scenarios of `enter` and `exit` in a
+  Ljós file wait for `Transition` in `Ljos.Ui`.
 - **Clock** is one timer per resolution, scheduled by its readers. A
   reader whose only effect is drawing does not count while it is hidden;
   a handler, a `when:` or a non-visual object always counts, so a hidden
