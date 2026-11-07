@@ -65,11 +65,29 @@ pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
 
 /// The Qt types Ljós calls by another name. Every other type of the slice is
 /// called as Qt calls it.
-pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
+pub const TYPE_RENAMES: &[(&str, &str)] = &[
+    ("MouseArea", "PointerArea"),
+    ("TapHandler", "Tap"),
+    ("HoverHandler", "Hover"),
+];
+
+/// What a pointer handler accepts is what a gesture takes (docs/DIALECT.md
+/// §4.7).
+const GESTURE: &[(&str, &str)] = &[
+    ("acceptedButtons", "buttons"),
+    ("acceptedModifiers", "modifiers"),
+    ("acceptedDevices", "devices"),
+    ("acceptedPointerTypes", "pointerTypes"),
+];
 
 /// Per Qt type (and what derives from it), the members Ljós calls by another
 /// name. A property's change signal and its handler follow its name.
-pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
+pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[
+    ("Rectangle", &[("color", "fill")]),
+    // Ljós's TapHandler is described on its own, not on PointerHandler.
+    ("TapHandler", GESTURE),
+    ("PointerHandler", GESTURE),
+];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -183,6 +201,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ids: Vec::new(),
         inline: Vec::new(),
         changes: Vec::new(),
+        declared: Vec::new(),
     };
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
@@ -252,6 +271,9 @@ struct Pass<'s> {
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
+    /// What the scope object declares: an unqualified name it declares is
+    /// its own, before the root's.
+    declared: Vec<String>,
 }
 
 type Step = Result<(), Kept>;
@@ -495,6 +517,9 @@ impl<'s> Pass<'s> {
         if let Some(on) = &object.on {
             self.member_name(on, scope, "a value source's target")?;
         }
+        // A group's names are the object's it is a group of.
+        let outer = (!matches!(ty, Ty::Plain))
+            .then(|| std::mem::replace(&mut self.declared, declared(object)));
         let is_changes = matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges");
         let is_connections = matches!(ty, Ty::Exact(t) if t.name == "Connections");
         let target = if is_changes || is_connections {
@@ -559,6 +584,9 @@ impl<'s> Pass<'s> {
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
         }
+        if let Some(outer) = outer {
+            self.declared = outer;
+        }
         Ok(())
     }
 
@@ -594,6 +622,9 @@ impl<'s> Pass<'s> {
         if name.parts.len() == 1 {
             if first == "id" {
                 return Ok(());
+            }
+            if is_grab_permissions(first) {
+                return Err(self.no(GRAB_PERMISSIONS.into(), at));
             }
             match (
                 target,
@@ -715,7 +746,9 @@ impl<'s> Pass<'s> {
                 // Derived from a type that is not one that renames it, but
                 // perhaps from one derived from that: an Item may be a
                 // Rectangle.
-                None if matches!(on, Ty::Derived(_)) && could_be_renaming(ty) => Rename::Unknown,
+                None if matches!(on, Ty::Derived(_)) && could_be_renaming(ty, name) => {
+                    Rename::Unknown
+                }
                 None => Rename::Keep,
             },
         }
@@ -798,6 +831,56 @@ enum Rename {
     Unknown,
 }
 
+/// Why a file that sets or reads Qt's grab permissions is kept.
+const GRAB_PERMISSIONS: &str =
+    "`grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet";
+
+/// `grabPermissions`, its change signal or its handler.
+fn is_grab_permissions(name: &str) -> bool {
+    matches!(
+        name,
+        "grabPermissions" | "grabPermissionsChanged" | "onGrabPermissionsChanged"
+    )
+}
+
+/// Of the renames `on` has, the one whose new name is `name` (or its change
+/// signal's), where `on`'s Qt type has no `name` of its own: once lowered,
+/// `name` unqualified is that member, where in Qt it is found further out.
+fn captured(on: Ty, name: &str) -> Option<(&'static Type, &'static str)> {
+    let (Ty::Exact(ty) | Ty::Derived(ty)) = on else {
+        return None;
+    };
+    let (old, _) = renames_of(ty)?
+        .iter()
+        .find(|(_, new)| name == *new || name.strip_suffix("Changed") == Some(*new))?;
+    let own = ty.property(name).is_some() || ty.signal(name).is_some() || ty.has_method(name);
+    (!own).then_some((ty, *old))
+}
+
+/// The properties, signals and functions `object` declares.
+fn declared(object: &QmlObject<'_>) -> Vec<String> {
+    object
+        .members
+        .iter()
+        .filter_map(|member| match member {
+            QmlMember::Property(property) => Some(property.name.name.to_string()),
+            QmlMember::Signal(signal) => Some(signal.name.name.to_string()),
+            QmlMember::Function(function) => function.id.as_ref().map(|id| id.name.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `on`'s Qt type has a member `name`. A type the pass does not
+/// know, or one derived from a known one, may have it or not: the root is
+/// asked about it then too.
+fn has_own(on: Ty, name: &str) -> bool {
+    let Ty::Exact(ty) = on else {
+        return false;
+    };
+    ty.property(name).is_some() || ty.signal(name).is_some() || ty.has_method(name)
+}
+
 fn renamed_type(name: &str) -> Option<&'static str> {
     TYPE_RENAMES
         .iter()
@@ -842,24 +925,18 @@ fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
     }
 }
 
-/// Whether something of type `ty` may be of a type that renames members:
-/// an `Item` may be a `Rectangle`, a `Text` or a `Timer` may not.
-fn could_be_renaming(ty: &'static Type) -> bool {
-    let is_item = |mut at: Option<&'static Type>| {
-        while let Some(t) = at {
-            if t.name == "Item" {
-                return true;
-            }
-            at = t.prototype();
-        }
-        false
-    };
-    // Every type that renames is an Item; one that is an Item and is no
-    // further along than a renaming type's ancestors may be one.
-    is_item(Some(ty))
-        && MEMBER_RENAMES.iter().any(|(name, _)| {
+/// Whether something of type `ty` may be of a type that renames the member
+/// `name`: an `Item` may be a `Rectangle`, whose `color` is `fill`, and a
+/// `QtObject` a `TapHandler`; a `Text` or a `Timer` may be neither.
+fn could_be_renaming(ty: &'static Type, name: &str) -> bool {
+    // One that is no further along than a renaming type's ancestors may be
+    // one.
+    MEMBER_RENAMES
+        .iter()
+        .filter(|(_, renames)| lookup_rename(renames, name).is_some())
+        .any(|(renaming, _)| {
             qt_types::module("QtQuick")
-                .and_then(|m| m.type_named(name))
+                .and_then(|m| m.type_named(renaming))
                 .is_some_and(|renaming| {
                     let mut at = Some(renaming);
                     while let Some(t) = at {
@@ -968,6 +1045,18 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.property.span.start,
             );
         }
+        if is_grab_permissions(name) {
+            self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+        }
+        // A key of the grab permissions read through a handler's name.
+        if let Expression::Identifier(ty) = &it.object
+            && let Some(ty) = self.pass.quick.type_named(&ty.name)
+            && let Some(key) = ty.enum_value(name)
+            && (key.enumeration.name == "GrabPermissions"
+                || key.enumeration.alias == Some("GrabPermissions"))
+        {
+            self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+        }
         if is_renamed_member(name) {
             let on = self.ty(&it.object);
             match self.pass.member(name, on) {
@@ -1015,7 +1104,31 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
             return;
         }
-        if !is_renamed_member(name) || self.pass.id(name).is_some() {
+        if is_grab_permissions(name) {
+            self.keep(GRAB_PERMISSIONS.into(), it.span.start);
+            return;
+        }
+        // An id is found before the scope's members, in Qt as once lowered.
+        if self.pass.id(name).is_some() {
+            return;
+        }
+        // Not the scope's own, the name is looked up on the root next, in
+        // Qt as once lowered.
+        let captor = captured(self.scope, name).or_else(|| {
+            let own = has_own(self.scope, name) || self.pass.declared.iter().any(|d| d == name);
+            (!own).then(|| captured(self.root, name))?
+        });
+        if let Some((ty, old)) = captor {
+            let new = renamed_type(ty.name).unwrap_or(ty.name);
+            self.keep(
+                format!(
+                    "`{name}` would be the `{new}`'s own once lowered (Qt's `{old}`), not what it names in Qt"
+                ),
+                it.span.start,
+            );
+            return;
+        }
+        if !is_renamed_member(name) {
             return;
         }
         // An unqualified member: the scope object's, else the root's.
