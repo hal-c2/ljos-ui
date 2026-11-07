@@ -111,6 +111,7 @@ impl Migrate {
             let _ = files_below(&here, is_qml, &mut below);
             let importers = importers(
                 &files,
+                &here,
                 below.into_iter().filter(|f| !seen.contains(&absolute(f))),
             );
             if !importers.is_empty() {
@@ -246,23 +247,40 @@ impl Migrate {
 
 /// The files of `candidates` whose imports name the directory of a file of
 /// `named`: by its path (`import "parts"`), or by the module its `qmldir`
-/// says it is (`import Gauges`). The others are not read further, so a
+/// or build says it is (`import Gauges`). The others are not read further, so a
 /// tree around the files named costs a parse of each file, not a project.
 fn importers(
     named: &[(PathBuf, usize)],
+    here: &Path,
     candidates: impl Iterator<Item = PathBuf>,
 ) -> Vec<PathBuf> {
     let dirs: BTreeSet<PathBuf> = named
         .iter()
         .filter_map(|(file, _)| absolute(file).parent().map(Path::to_owned))
         .collect();
-    let modules: BTreeSet<String> = dirs
-        .iter()
-        .filter_map(|dir| {
-            let text = std::fs::read_to_string(dir.join("qmldir")).ok()?;
-            Some(qml_front::discover::qmldir(&text)?.uri)
-        })
-        .collect();
+    // A module the file is of: one described in its directory, or one a
+    // directory above it (up to `here`) describes with the file among its
+    // types, as a build may list a file from a subdirectory.
+    let mut modules = BTreeSet::new();
+    for (file, _) in named {
+        let file = absolute(file);
+        let Some(own) = file.parent() else { continue };
+        for dir in own.ancestors() {
+            if dir != own && !dir.starts_with(here) {
+                break;
+            }
+            for module in ljos_compiler::described_in(dir) {
+                let holds = dir == own
+                    || module
+                        .types
+                        .iter()
+                        .any(|ty| absolute(&dir.join(&ty.path)) == file);
+                if holds {
+                    modules.insert(module.uri);
+                }
+            }
+        }
+    }
     candidates
         .filter(|file| {
             let Ok(text) = std::fs::read_to_string(file) else {
@@ -378,6 +396,7 @@ mod tests {
         let other = at("c/Main.qml", "import QtQuick\nimport \"parts\"\nItem {}\n");
         let found = importers(
             &[(dial, 0)],
+            &absolute(dir.path()),
             [by_path.clone(), by_module.clone(), other].into_iter(),
         );
         assert_eq!(found, [by_path, by_module]);
