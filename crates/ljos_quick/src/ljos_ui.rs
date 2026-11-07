@@ -24,8 +24,9 @@ use crate::shapes::{
     PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
 };
 use crate::{
-    BoxColumn, BoxRow, Gradient, GradientStop, HoverHandler, Item, Layout, ListView, LjosBox,
-    Loader, MouseArea, PropertyChanges, Rectangle, Repeater, State, TapHandler, Text,
+    BoxColumn, BoxRow, Drag, DragHandler, DropArea, Gradient, GradientStop, HoverHandler, Item,
+    Layout, ListView, LjosBox, Loader, MouseArea, PointHandler, PropertyChanges, Rectangle,
+    Repeater, State, TapHandler, Text, WheelHandler,
 };
 
 /// The module's name, as a file imports it.
@@ -96,10 +97,12 @@ const GESTURE_RENAMES: [(&str, &str); 4] = [
     ("acceptedPointerTypes", "pointerTypes"),
 ];
 
-/// A gesture: a pointer handler under Ljós's names.
+/// A gesture: a pointer handler under Ljós's names, for what it accepts (a
+/// `WheelHandler` accepts no buttons).
 fn gesture(name: &str, of: &'static MetaObject) -> MetaObject {
     GESTURE_RENAMES
         .iter()
+        .filter(|(old, _)| of.property_index(old).is_some())
         .fold(
             MetaBuilder::new(name).module(MODULE).face(of),
             |face, (old, new)| face.rename(old, new),
@@ -135,6 +138,37 @@ fn loader() -> &'static MetaObject {
     })
 }
 
+/// `DragHandler`, called `Drag`: it moves its target as the pointer drags.
+fn drag() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| gesture("Drag", DragHandler::static_meta()))
+}
+
+/// `PointHandler`, called `Pointer`: the one pointer that is on the item,
+/// pressed or not.
+fn pointer() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| gesture("Pointer", PointHandler::static_meta()))
+}
+
+/// `WheelHandler`, called `Wheel`.
+fn wheel() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| gesture("Wheel", WheelHandler::static_meta()))
+}
+
+/// Qt's attached `Drag`, called `DragSource`: what carries data to a
+/// `DropArea`, where `Drag` is the gesture that moves an item.
+fn drag_source() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("DragSource")
+            .module(MODULE)
+            .face(Drag::static_meta())
+            .build()
+    })
+}
+
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
     // `Row`, `Column` and `Box` are the one arrangement
@@ -143,7 +177,7 @@ pub(crate) fn register(engine: &Engine) {
     // what they attach to a delegate (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
-        Repeater, PointerDevice,
+        Repeater, PointerDevice, DropArea,
     ]));
     // Qt's shapes, as they are (docs/DIALECT.md §4.14): `QtQuick.Shapes`'
     // types, the elements of a `Path` (which Qt has in `QtQuick`), and the
@@ -156,7 +190,18 @@ pub(crate) fn register(engine: &Engine) {
         PathAttribute, PathPercent,
     ]));
     let version = Version::new(1, 0);
-    for face in [rectangle, pointer_area, list_view, tap, hover, loader] {
+    for face in [
+        rectangle,
+        pointer_area,
+        list_view,
+        tap,
+        hover,
+        loader,
+        drag,
+        pointer,
+        wheel,
+        drag_source,
+    ] {
         engine.register_type(MODULE, version, MetaRef::Static(face()));
     }
 }
@@ -227,15 +272,56 @@ mod tests {
     #[test]
     fn a_gesture_takes_what_its_handler_accepts() {
         let engine = engine();
-        let tap = engine.lookup_type(MODULE, "Tap").expect("registered");
-        let native = TapHandler::static_meta();
-        assert!(tap.inherits(native));
-        for (old, new) in GESTURE_RENAMES {
-            assert_eq!(tap.property_index(new), native.property_index(old), "{new}");
-            assert_eq!(tap.property_index(old), None, "{old}");
+        let gestures = [
+            ("Tap", TapHandler::static_meta()),
+            ("Hover", HoverHandler::static_meta()),
+            ("Drag", DragHandler::static_meta()),
+            ("Pointer", PointHandler::static_meta()),
+            ("Wheel", WheelHandler::static_meta()),
+        ];
+        for (name, native) in gestures {
+            let gesture = engine.lookup_type(MODULE, name).expect("registered");
+            assert!(gesture.inherits(native), "{name}");
+            for (old, new) in GESTURE_RENAMES {
+                assert_eq!(
+                    gesture.property_index(new),
+                    native.property_index(old),
+                    "{name}.{new}"
+                );
+                assert_eq!(gesture.property_index(old), None, "{name}.{old}");
+            }
+            assert!(engine.lookup_type(MODULE, &native.name).is_none(), "{name}");
         }
+        let tap = engine.lookup_type(MODULE, "Tap").expect("registered");
         assert!(tap.signal_index("buttonsChanged").is_some());
-        assert!(engine.lookup_type(MODULE, "TapHandler").is_none());
+        // A wheel takes no buttons, as its handler takes none.
+        let wheel = engine.lookup_type(MODULE, "Wheel").expect("registered");
+        assert!(wheel.property_index("modifiers").is_some());
+        assert_eq!(wheel.property_index("buttons"), None);
+    }
+
+    /// `DragSource.active` and the `Drag.active` of the same item are one
+    /// attached object, which a drag in the scene reads.
+    #[test]
+    fn a_drag_source_is_what_qt_s_drag_attaches() {
+        let engine = engine();
+        let source = engine
+            .lookup_type(MODULE, "DragSource")
+            .expect("registered");
+        assert!(
+            engine
+                .lookup_type(MODULE, "Drag")
+                .is_some_and(|d| d.inherits(DragHandler::static_meta()))
+        );
+        let item = engine
+            .create(MetaRef::Static(Item::static_meta()), None)
+            .expect("an item");
+        let by_face = engine.attached_object(item, &source).expect("attached");
+        let by_qt = engine
+            .attached_object(item, &MetaRef::Static(Drag::static_meta()))
+            .expect("attached");
+        assert_eq!(by_face, by_qt);
+        assert_eq!(crate::drag_attached(&engine, item), Some(by_face));
     }
 
     #[test]
