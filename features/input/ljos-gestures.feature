@@ -197,3 +197,22 @@ Feature: Ljós's gestures: Tap and Hover
         kept ./Main.qml:3:33: `PointerHandler` is not in Ljos.Ui yet
         1 files, 0 lowered, 1 kept
         """
+
+    # Once lowered, a gesture's new name is found on the gesture before the object outside it,
+    # where in Qt the gesture has no member of that name.
+    @ljos-only @headless
+    Scenario: A name a gesture now has, read inside it, keeps the file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          property int buttons: 0
+          TapHandler { onTapped: buttons += 1 }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:4:26: `buttons` would be the `Tap`'s own once lowered (Qt's `acceptedButtons`), not what it names in Qt
+        1 files, 0 lowered, 1 kept
+        """

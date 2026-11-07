@@ -558,7 +558,11 @@ MouseArea.
   through the handler's name follows it (`TapHandler.WithinBounds` →
   `Tap.WithinBounds`), and `PointerDevice` is in `Ljos.Ui` as it is.
   Such a member read off an object the pass cannot type (a `QtObject`
-  property) keeps the file, as `color` read off an `Item` does.
+  property) keeps the file, as `color` read off an `Item` does. A new
+  name read unqualified inside the object whose Qt type has no member of
+  that name (`buttons` in a `TapHandler`'s handler, where Qt finds the
+  root's `buttons`, or `fill` in a `Rectangle`'s binding) keeps the file:
+  once lowered it would be the object's own.
 - A MouseArea with children, a geometry of its own, or `mouse.accepted`
   keeps its file as a `PointerArea` (phase 1's face) until M3.
 

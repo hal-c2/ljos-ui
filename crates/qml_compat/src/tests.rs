@@ -588,3 +588,36 @@ Item {\n\
         Outcome::Lowered(_)
     ));
 }
+
+/// A name a renamed member is called now would be found on the object
+/// where, in Qt, it is found further out: the file is kept.
+#[test]
+fn a_new_name_that_would_capture_an_outer_one_keeps_the_file() {
+    let source = "import QtQuick\n\
+Item {\n\
+    property int buttons: 0\n\
+    TapHandler { onTapped: buttons += 1 }\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`buttons` would be the `Tap`'s own once lowered (Qt's `acceptedButtons`), not what it names in Qt"
+    );
+    let source = "import QtQuick\n\
+Item {\n\
+    property color fill: \"red\"\n\
+    Rectangle { color: fill }\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`fill` would be the `Rectangle`'s own once lowered (Qt's `color`), not what it names in Qt"
+    );
+    // Read off the outer object by its id, it is still that object's.
+    assert!(matches!(
+        lower(
+            "import QtQuick\nItem { id: root; property int buttons: 0\n    TapHandler { onTapped: root.buttons += 1 } }\n",
+            &no_locals
+        ),
+        Outcome::Lowered(_)
+    ));
+}
+
