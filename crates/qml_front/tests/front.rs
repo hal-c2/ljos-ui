@@ -94,6 +94,7 @@ fn lookups(source: &str, queries: &[(&str, &str)]) -> Vec<String> {
                     Some(Target::Namespace(source)) => format!("namespace {source:?}"),
                     Some(Target::Global(Global::Qml)) => "QML global".to_string(),
                     Some(Target::Global(Global::Js)) => "JS global".to_string(),
+                    Some(Target::Global(Global::Core)) => "Ljos.Core global".to_string(),
                 });
                 said
             })
@@ -449,6 +450,41 @@ Item {
             "JS global",
             "undefined",
         ]
+    );
+}
+
+#[test]
+fn what_ljos_core_gives_is_seen_only_by_a_file_that_imports_it() {
+    let core = r#"import QtQuick
+import Ljos.Core
+Item {
+    property int size: 3
+    width: size + point(1, 2).x + App.platform.os.length + later
+}"#;
+    let quick = r#"import QtQuick
+Item {
+    width: point(1, 2).x + App.platform.os.length
+}"#;
+    assert_eq!(
+        lookups(
+            core,
+            &[
+                ("size", "size +"),
+                ("point", "point("),
+                ("App", "App"),
+                ("later", "later")
+            ]
+        ),
+        [
+            "Item.size",
+            "Ljos.Core global",
+            "Ljos.Core global",
+            "Ljos.Core global"
+        ]
+    );
+    assert_eq!(
+        lookups(quick, &[("point", "point("), ("App", "App")]),
+        ["undefined", "undefined"]
     );
 }
 
