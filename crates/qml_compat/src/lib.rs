@@ -133,6 +133,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ui,
         quick,
         layouts: None,
+        shapes: None,
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
@@ -200,6 +201,8 @@ struct Pass<'s> {
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
+    /// QtQuick.Shapes, when the file imports it.
+    shapes: Option<&'static qt_types::Module>,
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
@@ -213,13 +216,16 @@ impl<'s> Pass<'s> {
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let mut quick = None;
         let mut layouts = None;
+        let mut shapes = None;
         for import in &document.imports {
             let at = import.span.start as usize;
             let QmlImportSource::Module(name) = &import.source else {
                 continue;
             };
             let uri = name.to_string();
-            if import.alias.is_some() && (uri == "QtQuick" || uri == "QtQml") {
+            if import.alias.is_some()
+                && matches!(uri.as_str(), "QtQuick" | "QtQml" | "QtQuick.Shapes")
+            {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
             match uri.as_str() {
@@ -230,6 +236,11 @@ impl<'s> Pass<'s> {
                 "QtQuick.Layouts" if import.alias.is_none() => {
                     self.layouts = qt_types::module("QtQuick.Layouts");
                     layouts = Some(import.span);
+                }
+                // `Ljos.Ui` has its types as they are.
+                "QtQuick.Shapes" => {
+                    self.shapes = qt_types::module("QtQuick.Shapes");
+                    shapes = Some(import.span);
                 }
                 // A module that builds on QtQuick names its types, and those
                 // are Qt's until Ljós has its own (docs/DIALECT.md).
@@ -244,8 +255,8 @@ impl<'s> Pass<'s> {
         let Some(span) = quick else {
             return Ok(false);
         };
-        if let Some(span) = layouts {
-            // `Ljos.Ui` has `Layout`; the line stays, empty.
+        for span in [layouts, shapes].into_iter().flatten() {
+            // `Ljos.Ui` has `Layout` and the shapes; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
         }
         // On the import's line, so every line stays where it was.
@@ -344,6 +355,12 @@ impl<'s> Pass<'s> {
             return match name {
                 "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
+            };
+        }
+        if let Some(ty) = self.shapes.and_then(|m| m.type_named(name)) {
+            return match self.ui.type_named(name) {
+                Some(_) => Ok(Ty::Exact(ty)),
+                None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
         if let Some(ty) = self.quick.type_named(name) {
@@ -664,6 +681,7 @@ impl arrange::Types for Pass<'_> {
         self.quick
             .type_named(name)
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
+            .or_else(|| self.shapes.and_then(|m| m.type_named(name)))
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -904,7 +922,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             if let Some(new) = renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
-            } else if self.pass.quick.type_named(name).is_some()
+            } else if (self.pass.quick.type_named(name).is_some()
+                || self
+                    .pass
+                    .shapes
+                    .is_some_and(|m| m.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 self.keep(kept.reason, it.span.start);
