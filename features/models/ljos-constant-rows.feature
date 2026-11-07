@@ -166,6 +166,106 @@ Feature: A ListModel of constants is a typed list
       When the author runs "ljos render . --out written.png --settle 0 --compat keep"
       Then the pictures "kept.png" and "written.png" have the same pixels
 
+    # A file put back to its Qt text (a `git checkout` of it) leaves beside it the rows module
+    # migrate wrote, which is not tracked. That module is the one migrate would write, to the
+    # byte, so the file is lowered again as it was the first time, and the module is not written
+    # again.
+    @ljos-only @headless
+    Scenario: A rows module that is the one migrate would write lowers the file again
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          width: 120; height: 40
+          ListModel {
+            id: zones
+            ListElement { city: "Oslo"; shift: 1 }
+          }
+          Repeater { model: zones; Text { text: model.city } }
+        }
+        """
+      And the file "Main.rows.ts":
+        """ts
+        // The rows of the constant ListModels of Main.qml (docs/DIALECT.md §4.8).
+        export interface ZonesRow {
+          readonly city: string;
+          readonly shift: number;
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (7 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import "Main.rows.ts" as Rows
+        Item {
+          width: 120; height: 40
+          readonly property list<Rows.ZonesRow> zones: [
+
+            { city: "Oslo", shift: 1 }
+          ]
+          Repeater { model: zones; Text { text: modelData.city } }
+        }
+        """
+      And the file "Main.rows.ts" is:
+        """ts
+        // The rows of the constant ListModels of Main.qml (docs/DIALECT.md §4.8).
+        export interface ZonesRow {
+          readonly city: string;
+          readonly shift: number;
+        }
+        """
+
+    # A script of that path with other text is the author's: it does not declare the rows the
+    # lowered file would import, so the file is kept and neither is written.
+    @ljos-only @headless
+    Scenario: A rows module of the author's keeps the file as it is
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          width: 120; height: 40
+          ListModel {
+            id: zones
+            ListElement { city: "Oslo"; shift: 1 }
+          }
+          Repeater { model: zones; Text { text: model.city } }
+        }
+        """
+      And the file "Main.rows.ts":
+        """ts
+        export interface ZonesRow {
+          readonly city: string;
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        kept ./Main.qml:1:1: `Main.rows.ts` is a script of the project's, not the module of this file's rows
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        import QtQuick
+        Item {
+          width: 120; height: 40
+          ListModel {
+            id: zones
+            ListElement { city: "Oslo"; shift: 1 }
+          }
+          Repeater { model: zones; Text { text: model.city } }
+        }
+        """
+      And the file "Main.rows.ts" is:
+        """ts
+        export interface ZonesRow {
+          readonly city: string;
+        }
+        """
+
     # A table written in a view's `model:` becomes a list the view holds. A delegate whose root
     # declares required properties is given them by the list as by the table, so they stay.
     @ljos-only @headless

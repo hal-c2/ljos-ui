@@ -283,12 +283,13 @@ impl<O: TypeOracle> Project<O> {
         // The file's name names the module of its constant tables' rows.
         let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
         let mut outcome = qml_compat::lower_as(text, stem, &locals);
-        // A script of the rows module's path that the pass did not write is
-        // the project's, and does not declare the rows the lowered file
-        // imports: the file is kept, as `ljos migrate` keeps it.
+        // A script of the rows module's path that the pass did not write,
+        // and that is not the module it would write, is the project's, and
+        // does not declare the rows the lowered file imports: the file is
+        // kept, as `ljos migrate` keeps it.
         if let qml_compat::Outcome::Lowered(lowered) = &outcome
             && !lowered.modules.is_empty()
-            && !self.owns_rows(key)
+            && !self.owns_rows(key, &lowered.modules)
         {
             outcome = qml_compat::Outcome::Kept(qml_compat::Kept {
                 reason: format!(
@@ -354,15 +355,26 @@ impl<O: TypeOracle> Project<O> {
         }
     }
 
-    /// Whether the pass may give the file `key` its rows module: no script
-    /// is at its path, or the one there is the pass's.
-    fn owns_rows(&self, key: &str) -> bool {
+    /// Whether the pass may give the file `key` its rows module, one of
+    /// `modules` (their names beside the file, and their text): no script
+    /// is at its path, the one there is the pass's, or the one there is
+    /// the module to the byte. That last is what `ljos migrate` wrote
+    /// before: the file lowered again imports it as it is, so a file put
+    /// back to its Qt text beside its module is lowered again.
+    fn owns_rows(&self, key: &str, modules: &[(String, String)]) -> bool {
         let path = Self::rows_path(key);
-        !self.scripts.contains_key(&path)
-            || self
-                .generated
-                .get(key)
-                .is_some_and(|wrote| wrote.contains(&path))
+        let Some(there) = self.scripts.get(&path) else {
+            return true;
+        };
+        let name = path
+            .rsplit_once('/')
+            .map_or(path.as_str(), |(_, name)| name);
+        self.generated
+            .get(key)
+            .is_some_and(|wrote| wrote.contains(&path))
+            || modules
+                .iter()
+                .any(|(module, text)| module == name && text == there)
     }
 
     /// Lowers again the files whose rows module is at `path`, a script the

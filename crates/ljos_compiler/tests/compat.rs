@@ -298,3 +298,30 @@ fn a_script_of_the_rows_module_s_path_keeps_the_file_and_is_the_project_s() {
     project.set_compat(false);
     assert_eq!(project.script("Main.rows.ts"), Some(OWN));
 }
+
+/// A script of the rows module's path that is the module the pass would
+/// write, to the byte, is what `ljos migrate` wrote before: the file is
+/// lowered again with it, and it stays the project's script as it is.
+#[test]
+fn a_script_that_is_the_rows_module_lowers_the_file_again() {
+    let mut first = Project::new(Runtime::new());
+    first.add("Main", TABLE);
+    first.set_compat(true);
+    let rows = first
+        .script("Main.rows.ts")
+        .expect("the pass writes the rows module")
+        .to_owned();
+    let lowered_text = first.source("Main").expect("Main").to_owned();
+
+    let mut project = Project::new(Runtime::new());
+    project.add("Main", TABLE);
+    project.add_script("Main.rows.ts", rows.clone());
+    project.set_compat(true);
+    assert!(lowered(&project, "Main"), "{:?}", project.lowering("Main"));
+    assert_eq!(project.source("Main"), Some(lowered_text.as_str()));
+    assert_eq!(project.script("Main.rows.ts"), Some(rows.as_str()));
+    // The pass did not write it, so the pass off leaves it.
+    project.set_compat(false);
+    assert_eq!(project.source("Main"), Some(TABLE));
+    assert_eq!(project.script("Main.rows.ts"), Some(rows.as_str()));
+}
