@@ -11,14 +11,22 @@
 //! Repeater is not virtualised (ARCHITECTURE §8.4): every row has an
 //! item, made on the spot, and a model change makes, destroys or moves
 //! only the items of the rows it names.
+//!
+//! `key`, `enter` and `exit` are Ljós's own (docs/DIALECT.md §4.15): a
+//! Repeater given a `key` matches the rows of a new list to the rows it
+//! shows by that field, so that a row that stays keeps its item, and plays
+//! `enter` on the item of a new row and `exit` on that of a row gone.
 
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use ljos_engine::{
-    DelegateHost, Delegates, Engine, EngineError, LogLevel, ObjectId, PropIndex, QmlObject,
-    RemovalOrder, Value, WriteKind, qml_impl,
+    DelegateHost, Delegates, Engine, EngineError, Keyed, KeyedSource, LogLevel, ObjectId,
+    PropIndex, QmlObject, RemovalOrder, Value, WriteKind, qml_impl,
 };
+
+use crate::animation::{Passage, Transition, run_passage};
 
 use crate::item::{Item, is_item};
 use crate::tree;
@@ -35,8 +43,21 @@ pub struct Repeater {
     pub delegate: Option<ObjectId>,
     #[qml(notify, readonly)]
     pub count: i32,
+    /// The field of a row of a list that names it: a new list keeps the
+    /// items of the rows it names again.
+    #[qml(notify)]
+    pub key: String,
+    /// Played on the item of a row the model gained once the Repeater has
+    /// its items.
+    #[qml(notify, object = "Transition")]
+    pub enter: Option<ObjectId>,
+    /// Played on the item of a row the model lost, which goes when it ends.
+    #[qml(notify, object = "Transition")]
+    pub exit: Option<ObjectId>,
     #[qml(skip)]
     delegates: Option<Delegates>,
+    #[qml(skip)]
+    keyed: Rc<KeyedSource>,
     /// The next parent change hands the items over instead of making
     /// them again.
     #[qml(skip)]
@@ -75,11 +96,25 @@ impl Repeater {
     }
 }
 
-struct Host(ObjectId);
+struct Host {
+    me: ObjectId,
+    /// The Repeater is making every item, as for a new model: none of them
+    /// enters.
+    populating: Cell<bool>,
+}
+
+impl Host {
+    /// The Repeater's `enter` or `exit`, when it is a `Transition`.
+    fn transition(&self, e: &Engine, p: PropIndex) -> Option<ObjectId> {
+        e.untrack(|| e.read(self.me, p))
+            .as_object()
+            .filter(|t| e.with::<Transition, _>(*t, |_| ()).is_ok())
+    }
+}
 
 impl DelegateHost for Host {
     fn allocated(&self, e: &Engine, _: usize, object: ObjectId, before: Option<ObjectId>) {
-        let me = self.0;
+        let me = self.me;
         if !is_item(e, object) {
             e.log(
                 LogLevel::Warning,
@@ -113,15 +148,37 @@ impl DelegateHost for Host {
 
     fn added(&self, e: &Engine, index: usize, object: ObjectId) {
         let _ = e.emit_by_name(
-            self.0,
+            self.me,
             "itemAdded",
             &[Value::Int(index as i32), Value::Object(object)],
         );
+        if self.populating.get() || !is_item(e, object) {
+            return;
+        }
+        if let Some(t) = self.transition(e, Repeater::ENTER.index) {
+            run_passage(e, t, object, Passage::Enter, |_| {});
+        }
+    }
+
+    fn exits(&self, e: &Engine, object: ObjectId, done: Box<dyn FnOnce(&Engine)>) -> bool {
+        let Some(t) = self.transition(e, Repeater::EXIT.index) else {
+            return false;
+        };
+        if !is_item(e, object) {
+            return false;
+        }
+        let done = Cell::new(Some(done));
+        run_passage(e, t, object, Passage::Exit, move |e| {
+            if let Some(done) = done.take() {
+                done(e);
+            }
+        });
+        true
     }
 
     fn removed(&self, e: &Engine, index: usize, object: ObjectId) {
         let _ = e.emit_by_name(
-            self.0,
+            self.me,
             "itemRemoved",
             &[Value::Int(index as i32), Value::Object(object)],
         );
@@ -135,7 +192,7 @@ impl DelegateHost for Host {
     }
 
     fn moved(&self, e: &Engine) {
-        let me = self.0;
+        let me = self.me;
         let items = e
             .with::<Repeater, _>(me, |r| r.delegates.clone())
             .ok()
@@ -148,7 +205,7 @@ impl DelegateHost for Host {
     }
 
     fn count_changed(&self, e: &Engine, count: usize) {
-        let _ = e.set_internal(self.0, Repeater::COUNT, count as i32);
+        let _ = e.set_internal(self.me, Repeater::COUNT, count as i32);
     }
 }
 
@@ -225,17 +282,27 @@ impl Repeater {
     }
 
     /// Items are made from completion on, and all of them again whenever
-    /// `model`, `delegate` or the Repeater's parent changes.
+    /// `model`, `delegate` or the Repeater's parent changes, except that a
+    /// keyed Repeater given a new list keeps the items of the rows it
+    /// names again.
     #[qml(on_complete)]
     fn completed(cx: &ljos_engine::Cx) -> Result<(), EngineError> {
         let me = cx.this;
-        let delegates = Delegates::new(me, Rc::new(Host(me)), RemovalOrder::LastToFirst);
-        cx.with_mut::<Repeater, _>(|r| r.delegates = Some(delegates.clone()))?;
+        let host = Rc::new(Host {
+            me,
+            populating: Cell::new(false),
+        });
+        let delegates = Delegates::new(me, host.clone(), RemovalOrder::LastToFirst);
+        let keyed = cx.with_mut::<Repeater, _>(|r| {
+            r.delegates = Some(delegates.clone());
+            r.keyed.clone()
+        })?;
         let seen = ljos_engine::ModelSeen::default();
         let parent = std::cell::Cell::new(None);
         cx.engine.effect_in(me, move |e| {
             let model = e.get(me, Repeater::MODEL).unwrap_or_default();
             let delegate = e.get(me, Repeater::DELEGATE).ok().flatten();
+            let key = e.get(me, Repeater::KEY).unwrap_or_default();
             // Tracked: the items live in the parent.
             let moved = parent.replace(e.visual_parent(me)) != parent.get();
             let generation = e.track_model(&model);
@@ -245,14 +312,22 @@ impl Repeater {
             let rest = vec![
                 delegate.map_or(Value::Null, Value::Object),
                 Value::Real(generation as f64),
+                Value::from(key.as_str()),
             ];
             let fresh = e.untrack(|| seen.fresh(e, &model, rest));
-            if !fresh && (carried || !moved) {
+            let remake = moved && !carried;
+            if !fresh && !remake {
                 return;
             }
             e.untrack(|| {
-                let model = e.model_from_value(&model, Some(me));
+                let model = match keyed.model(e, &key, &model, delegate, Some(me), remake) {
+                    Keyed::Updated => return,
+                    Keyed::New(rows) => rows,
+                    Keyed::No => e.model_from_value(&model, Some(me)),
+                };
+                host.populating.set(true);
                 delegates.set_source(e, Some(model), delegate);
+                host.populating.set(false);
             });
         })?;
         Ok(())
