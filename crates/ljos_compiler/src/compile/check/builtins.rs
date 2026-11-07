@@ -22,6 +22,7 @@ pub(super) fn global(name: &str) -> Option<Global> {
         "qsTrId" => Global::QsTrId,
         "Map" => Global::Map,
         "Array" => Global::Array,
+        "JSON" => Global::Json,
         _ => return None,
     })
 }
@@ -81,6 +82,12 @@ pub(super) fn global_member(arena: &mut Arena, global: Global, name: &str) -> Op
             Some(method(arena, found))
         }
         Global::Array => (name == "isArray").then(|| method(arena, "isArray")),
+        Global::Json => {
+            let found = ["parse", "stringify"]
+                .into_iter()
+                .find(|known| *known == name)?;
+            Some(method(arena, found))
+        }
         Global::Qt | Global::QsTr | Global::QsTrId | Global::Map => None,
     }
 }
@@ -130,7 +137,12 @@ pub(super) fn global_call(arena: &mut Arena, global: Global) -> Option<Sig> {
             None,
             Ty::STRING,
         ),
-        Global::Math | Global::Console | Global::Qt | Global::Map | Global::Array => return None,
+        Global::Math
+        | Global::Console
+        | Global::Qt
+        | Global::Map
+        | Global::Array
+        | Global::Json => return None,
     })
 }
 
@@ -265,6 +277,14 @@ pub(super) fn method_sig(arena: &mut Arena, receiver: Ty, method: Method) -> Opt
         Method::Static(Global::Array, "isArray") => {
             sig(vec![param("value", Ty::UNKNOWN)], None, Ty::BOOLEAN)
         }
+        // DECISION: the text alone, with no reviver: what it gives is
+        // unknown either way, and a decoder is where it gets a shape.
+        Method::Static(Global::Json, "parse") => {
+            sig(vec![param("text", Ty::STRING)], None, Ty::UNKNOWN)
+        }
+        // DECISION: the value alone: a replacer and an indent take `null`
+        // and functions of `any`, which the subset does not write.
+        Method::Static(Global::Json, _) => sig(vec![param("value", Ty::UNKNOWN)], None, Ty::STRING),
         Method::Static(..) => return None,
         Method::Primitive(name) => {
             let string = |name: &str| param(name, Ty::STRING);

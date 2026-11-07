@@ -50,6 +50,26 @@ pub(crate) enum Global {
     Map,
     /// `Array`, for `Array.isArray`.
     Array,
+    /// `JSON`: what `parse` gives is unknown, for a decoder to narrow.
+    Json,
+}
+
+impl Global {
+    /// The name a script writes.
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Math => "Math",
+            Self::Number => "Number",
+            Self::String => "String",
+            Self::Console => "console",
+            Self::Qt => "Qt",
+            Self::QsTr => "qsTr",
+            Self::QsTrId => "qsTrId",
+            Self::Map => "Map",
+            Self::Array => "Array",
+            Self::Json => "JSON",
+        }
+    }
 }
 
 /// A method of a built-in type or global, bound to what it is read off.
@@ -534,7 +554,7 @@ impl Arena {
                 };
                 format!("({}) => {ret}", params.join(", "))
             }
-            Kind::Global(global) => format!("{global:?}"),
+            Kind::Global(global) => global.name().into(),
             Kind::Enum { object: o, name } | Kind::EnumNs { object: o, name } => {
                 format!("{}.{name}", object(*o))
             }
@@ -578,7 +598,7 @@ impl Arena {
                 | Kind::Method(..)
                 | Kind::Global(Global::QsTr)
                 | Kind::Global(Global::QsTrId) => "a function".into(),
-                Kind::Global(global) => format!("{global:?}"),
+                Kind::Global(global) => global.name().into(),
                 Kind::Union(_) => unreachable!("a union's parts are not unions"),
             };
             if !words.contains(&word) {
