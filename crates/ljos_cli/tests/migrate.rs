@@ -218,3 +218,50 @@ fn a_module_file_named_alone_is_read_with_the_files_that_import_it() {
     );
     assert_eq!(read(dir.path(), "lib/Ui/Gauges/Dial.qml"), BUTTON);
 }
+
+/// The files that import a module are found however it is named: a file
+/// of a directory imported by its path, a module file named from inside
+/// its directory, and the module's directory named. None of these writes
+/// the module file while its importer stays Qt's.
+#[test]
+fn a_module_is_read_with_its_importers_however_it_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    // A directory imported by its path, with no qmldir.
+    write(dir.path(), "app/parts/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport \"parts\"\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "app/Main.qml", main);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/parts/Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept app/parts/Dial.qml:1:1: "), "{out}");
+    assert!(out.contains("name it too"), "{out}");
+    assert_eq!(read(dir.path(), "app/parts/Dial.qml"), BUTTON);
+
+    // A module file named by its bare name, from inside its directory.
+    write(
+        dir.path(),
+        "lib/Gauges/qmldir",
+        "module Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "lib/Gauges/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "lib/Main.qml", main);
+    let gauges = dir.path().join("lib/Gauges");
+    let (status, out, err) = ljos(&gauges, &["migrate", "--write", "Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept Dial.qml:1:1: "), "{out}");
+    assert_eq!(read(dir.path(), "lib/Gauges/Dial.qml"), BUTTON);
+
+    // The module's directory named, from where the importer is, and from
+    // inside it.
+    for (at, named) in [(dir.path().to_owned(), "lib/Gauges"), (gauges, ".")] {
+        let (status, out, err) = ljos(&at, &["migrate", "--write", named]);
+        assert_eq!(status, 0, "{out}{err}");
+        assert!(out.contains("Dial.qml:1:1: "), "{named}: {out}");
+        assert!(
+            out.ends_with("1 files, 0 lowered, 1 kept\n"),
+            "{named}: {out}"
+        );
+        assert_eq!(read(dir.path(), "lib/Gauges/Dial.qml"), BUTTON);
+    }
+    assert_eq!(read(dir.path(), "lib/Main.qml"), main);
+}

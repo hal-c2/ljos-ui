@@ -14,7 +14,9 @@
 //! group holds a file that was not named, none of it is written: the named file is kept, saying
 //! which file to name too, as the one would be renamed to match the other lowered while the other
 //! stays Qt's. A file is read with the project of its directory, or, in a module's directory, of
-//! the directory the module is imported from, where the files that import it are.
+//! the directory the module is imported from. The files of a group that were not named are looked
+//! for below those projects and below the directory the command runs in: a file that imports one
+//! named from anywhere else is not seen.
 //!
 //! | Status | Means |
 //! |---|---|
@@ -23,7 +25,7 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 use clap::Args;
@@ -52,29 +54,22 @@ impl Migrate {
     pub fn run(self) -> u8 {
         let (mut lowered, mut kept, mut failed) = (0, 0, false);
         // Each file with the project it is of: the directory named, or the
-        // directory of a file named, read as a lowered run reads it, so
-        // the modules and directories a file imports are files to it.
+        // directory of a file named, or the directory its module is
+        // imported from (`root_of`), read as a lowered run reads it, so the
+        // modules and directories a file imports are files to it. Roots
+        // and keys are from absolute paths, so a file is the same file
+        // however it is named.
         let mut files: Vec<(PathBuf, usize)> = Vec::new();
         let mut roots: Vec<PathBuf> = Vec::new();
-        // The roots a file was named in: the other files there are read too.
-        let mut around: BTreeSet<usize> = BTreeSet::new();
-        for path in &self.paths {
-            let root = if path.is_dir() {
-                path.clone()
-            } else {
-                // `Main.qml`'s parent is the empty path: the directory the
-                // command runs in.
-                let dir = path
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."));
-                import_root(dir).unwrap_or(dir).to_owned()
-            };
-            let at = roots.iter().position(|r| *r == root).unwrap_or_else(|| {
+        let at_of = |root: PathBuf, roots: &mut Vec<PathBuf>| {
+            roots.iter().position(|r| *r == root).unwrap_or_else(|| {
                 roots.push(root);
                 roots.len() - 1
-            });
+            })
+        };
+        for path in &self.paths {
             if path.is_dir() {
+                let at = at_of(root_of(&absolute(path)), &mut roots);
                 let mut below = Vec::new();
                 if let Err(e) = files_below(path, is_qml, &mut below) {
                     eprintln!("{}: {e}", path.display());
@@ -82,27 +77,54 @@ impl Migrate {
                 }
                 files.extend(below.into_iter().map(|file| (file, at)));
             } else {
-                around.insert(at);
-                files.push((path.clone(), at));
+                let file = absolute(path);
+                let dir = file.parent().unwrap_or(&file).to_owned();
+                files.push((path.clone(), at_of(root_of(&dir), &mut roots)));
+            }
+        }
+        // Where the files a group may hold that were not named are looked
+        // for: below each root of a file named, and below the directory
+        // the command runs in, where the files that import a directory by
+        // its path are. Each is read with the project it is of.
+        let named = roots.len();
+        let mut unnamed: Vec<(PathBuf, usize)> = Vec::new();
+        let mut around: Vec<PathBuf> = roots.clone();
+        around.extend(std::env::current_dir().ok().map(|dir| absolute(&dir)));
+        let mut seen = BTreeSet::new();
+        for dir in around {
+            let mut below = Vec::new();
+            // A file that cannot be read is said where it is named.
+            let _ = files_below(&dir, is_qml, &mut below);
+            for file in below {
+                if seen.insert(file.clone()) {
+                    let root = root_of(file.parent().unwrap_or(&file));
+                    unnamed.push((file, at_of(root, &mut roots)));
+                }
             }
         }
         let projects: Vec<Option<Project<EngineOracle>>> = roots
             .iter()
-            .map(|root| match Project::load(root, oracle_for_modules()) {
-                Ok(project) => Some(project),
-                Err(e) => {
-                    eprintln!("{}: {e}", root.display());
-                    failed = true;
-                    None
-                }
-            })
+            .enumerate()
+            .map(
+                |(at, root)| match Project::load(root, oracle_for_modules()) {
+                    Ok(project) => Some(project),
+                    // A project only searched for importers is not the
+                    // command's to fail on.
+                    Err(_) if at >= named => None,
+                    Err(e) => {
+                        eprintln!("{}: {e}", root.display());
+                        failed = true;
+                        None
+                    }
+                },
+            )
             .collect();
         // What the pass makes of `file` alone, with the files of its uses
         // keyed by their paths.
         let alone_of = |file: &Path, at: usize, text: &str| {
             let root = &roots[at];
             let mut one = match &projects[at] {
-                Some(project) => project.compat_alone(&key_in(root, file), text),
+                Some(project) => project.compat_alone(&key_in(root, &absolute(file)), text),
                 None => qml_compat::Alone {
                     outcome: qml_compat::lower(text, &|_: &str| None),
                     references: qml_compat::references(text),
@@ -132,18 +154,10 @@ impl Migrate {
             alone.insert(key.clone(), (alone_of(file, *at, &text), *at));
             texts.insert(key, (file, text));
         }
-        // Then the files a group may hold that were not named: the others
-        // beside a file named, and every file a file uses, until no more
-        // are found. Each is read, never written: one the pass would lower
-        // keeps its group, so a named file is not lowered to match a file
-        // that stays Qt's.
-        let mut unnamed: Vec<(PathBuf, usize)> = Vec::new();
-        for &at in &around {
-            let mut below = Vec::new();
-            // A file that cannot be read is said where it is named.
-            let _ = files_below(&roots[at], is_qml, &mut below);
-            unnamed.extend(below.into_iter().map(|file| (file, at)));
-        }
+        // Then the files found around them, and every file a file uses,
+        // until no more are found. Each is read, never written: one the
+        // pass would lower keeps its group, so a named file is not lowered
+        // to match a file that stays Qt's.
         loop {
             let used: Vec<(PathBuf, usize)> = alone
                 .values()
@@ -214,34 +228,50 @@ impl Migrate {
     }
 }
 
-/// The directory a module in `dir` is imported from, when its `qmldir`
-/// names one whose parts are the directories it is in: `lib/Ui/Gauges`
-/// holding `module Ui.Gauges` is imported from `lib`. A file of the module
-/// is of the project there, with the files that import it.
-fn import_root(dir: &Path) -> Option<&Path> {
-    let text = std::fs::read_to_string(dir.join("qmldir")).ok()?;
-    let uri = qml_front::discover::qmldir(&text)?.uri;
-    let mut root = dir;
-    for part in uri.rsplit('.') {
-        if root.file_name()? != part {
-            return None;
+/// The project `dir`'s files are of: the directory a module in `dir` is
+/// imported from, when its `qmldir` names one whose parts are the
+/// directories it is in (`lib/Ui/Gauges` holding `module Ui.Gauges` is
+/// imported from `lib`, with the files that import it), and `dir` itself
+/// otherwise.
+fn root_of(dir: &Path) -> PathBuf {
+    let import_root = || {
+        let text = std::fs::read_to_string(dir.join("qmldir")).ok()?;
+        let uri = qml_front::discover::qmldir(&text)?.uri;
+        let mut root = dir;
+        for part in uri.rsplit('.') {
+            if root.file_name()? != part {
+                return None;
+            }
+            root = root.parent()?;
         }
-        root = root.parent()?;
-    }
-    Some(if root.as_os_str().is_empty() {
-        Path::new(".")
-    } else {
-        root
-    })
+        Some(root)
+    };
+    import_root().unwrap_or(dir).to_owned()
 }
 
-/// A file's key for [`qml_compat::group`]: its path without `.qml`, with
-/// `/` between the parts on every system.
+/// `path` from the root of the file system, with `.` and `..` taken out
+/// by its words alone, as the path a person wrote names it.
+fn absolute(path: &Path) -> PathBuf {
+    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            part => out.push(part),
+        }
+    }
+    out
+}
+
+/// A file's key for [`qml_compat::group`]: its absolute path without
+/// `.qml`, with `/` between the parts on every system.
 fn key_of(file: &Path) -> String {
-    let path = file.with_extension("");
+    let path = absolute(file).with_extension("");
     let parts: Vec<String> = path
         .components()
-        .filter(|c| !matches!(c, std::path::Component::CurDir))
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
     let joined = parts.join("/");
@@ -257,7 +287,7 @@ fn key_in(root: &Path, file: &Path) -> String {
     let path = file.strip_prefix(root).unwrap_or(file).with_extension("");
     let parts: Vec<String> = path
         .components()
-        .filter(|c| !matches!(c, std::path::Component::CurDir))
+        .filter(|c| !matches!(c, Component::CurDir))
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
     parts.join("/")

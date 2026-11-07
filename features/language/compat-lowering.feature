@@ -196,6 +196,33 @@ Feature: Qt's QML lowered to Ljós's API
         Rectangle { width: 60; height: 60; color: "#203040" }
         """
 
+    # A directory imported by its path has no qmldir to say where it is imported from: the file that
+    # imports it is found below the directory the command runs in.
+    @ljos-only @headless
+    Scenario: A file of a directory imported by its path is not written without the file that imports it
+      Given the file "app/parts/Dial.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import "parts"
+        Rectangle { width: 200; height: 100; Dial { color: "#c03030" } }
+        """
+      When the author runs "ljos migrate --write app/parts/Dial.qml"
+      Then the command prints:
+        """
+        kept app/parts/Dial.qml:1:1: it is used with `Main.qml`, which is kept: it is not named: name it too
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "app/parts/Dial.qml" is:
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+
     @ljos-only @headless
     Scenario: A module with native types only keeps the files that import it
       Given the file "app/Sensors/qmldir":
