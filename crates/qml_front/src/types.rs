@@ -383,6 +383,15 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         false
     }
 
+    /// Whether the file imports the module `uri` itself, not `as` a name.
+    pub fn imports(&self, uri: &str) -> bool {
+        self.project.summary(self.file).is_some_and(|summary| {
+            summary.imports.iter().any(|import| {
+                import.alias.is_none() && matches!(&import.source, Source::Module(m) if m == uri)
+            })
+        })
+    }
+
     /// What the file imports `as` `name`, if anything.
     pub fn namespace(&self, name: &str) -> Option<&'p Source> {
         let summary = self.project.summary(self.file)?;
