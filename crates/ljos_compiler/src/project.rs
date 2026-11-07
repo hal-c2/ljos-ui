@@ -1143,8 +1143,9 @@ fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
     Ok(out)
 }
 
-/// The declarations among `names`, one directory's files, that are beside
-/// a JavaScript file of theirs: `calc.d.ts` beside `calc.js`, `calc.d.mts`
+/// The declarations among `names`, one directory's files (or paths, each
+/// matched to the JavaScript file at its own path), that are beside a
+/// JavaScript file of theirs: `calc.d.ts` beside `calc.js`, `calc.d.mts`
 /// beside `calc.mjs`. Every loader reads a directory's declarations through
 /// this, so a lone `.d.ts` (`ljos.d.ts`) is read by none of them.
 pub fn declared_beside(names: &[String]) -> impl Iterator<Item = &String> {
