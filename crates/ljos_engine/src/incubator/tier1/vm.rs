@@ -685,7 +685,7 @@ pub(crate) fn field(v: &Value, name: &str) -> Option<Value> {
             "underline" => Some(Value::Bool(f.underline)),
             "strikeout" => Some(Value::Bool(f.strikeout)),
             "pointSize" => d(f.read_point_size()),
-            "pixelSize" => Some(Value::Real(f64::from(f.read_pixel_size()))),
+            "pixelSize" | "size" => Some(Value::Real(f64::from(f.read_pixel_size()))),
             "letterSpacing" => d(f.letter_spacing),
             "wordSpacing" => d(f.word_spacing),
             "capitalization" => Some(Value::Real(f64::from(f.capitalization))),

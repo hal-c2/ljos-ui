@@ -2474,6 +2474,7 @@ module QtQuick
 		signal loopsChanged
 		signal alwaysRunToEndChanged
 		signal started
+		prop size QtQml.int named
 		signal stopped
 		signal finished
 		method start

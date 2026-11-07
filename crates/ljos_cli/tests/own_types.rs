@@ -836,9 +836,10 @@ fn a_value_has_the_members_the_engine_gives_it() {
 }
 
 /// The members Ljós gives a value type of Qt's that Qt does not have
-/// (`features/a11y/font-scale.feature`). A build with Qt's table does not
-/// know them, so `ljos check` there holds one to be a slip.
-const ADDED_TO_QT_S_VALUES: &[&str] = &["font.scaleWithSystem"];
+/// (`features/a11y/font-scale.feature`; `font.size`, Ljós's name for the
+/// pixel size, `features/text/ljos-text-names.feature`). A build with Qt's
+/// table does not know them, so `ljos check` there holds one to be a slip.
+const ADDED_TO_QT_S_VALUES: &[&str] = &["font.scaleWithSystem", "font.size"];
 
 #[test]
 fn the_namespace_has_the_keys_the_engine_gives_a_script() {

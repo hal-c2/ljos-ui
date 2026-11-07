@@ -61,6 +61,8 @@ pub const VALUE_TYPES: &[ValueType] = &[
             ("family", "string"),
             ("pointSize", "real"),
             ("pixelSize", "int"),
+            // Ljós's name for it (docs/DIALECT.md §4.13).
+            ("size", "int"),
             ("weight", "int"),
             ("bold", "bool"),
             ("italic", "bool"),

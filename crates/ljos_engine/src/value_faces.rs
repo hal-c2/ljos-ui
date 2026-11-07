@@ -574,6 +574,8 @@ pub(crate) const FACES: &str = r##"
       o.pixelSize = pixelSize > 0 ? pixelSize : pointSize > 0 ? Math.trunc(pointSize * font.dpi / 72) : -1;
       hide(o, "__ljos_pointSize", pointSize);
       hide(o, "__ljos_pixelSize", pixelSize);
+      // Ljós's name for the pixel size; out of sight, as `scaleWithSystem` is.
+      hide(o, "size", o.pixelSize);
       o.capitalization = capitalization;
       o.letterSpacing = letterSpacing;
       o.wordSpacing = wordSpacing;
@@ -612,6 +614,7 @@ pub(crate) const FACES: &str = r##"
       return (v < 0 ? -Math.round(-v) : Math.round(v)) | 0;
     };
     hide(font.proto, "__ljos_with", function (member, value, script) {
+      if (member === "size") member = "pixelSize";
       if (member === "bold") return change.call(this, "weight", value ? 700 : 400);
       // One size, as `Value::with_member` keeps it.
       // Qt keeps the size it had for one of none, and holds a weight
