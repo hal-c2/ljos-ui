@@ -25,7 +25,7 @@ mod qt_members;
 use std::ops::Range;
 
 use oxc_ast::ast::{
-    BindingIdentifier, ComputedMemberExpression, Expression, IdentifierReference,
+    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
@@ -252,8 +252,14 @@ impl<'s> Pass<'s> {
         let mut layouts = None;
         for import in &document.imports {
             let at = import.span.start as usize;
-            let QmlImportSource::Module(name) = &import.source else {
-                continue;
+            let name = match &import.source {
+                QmlImportSource::Module(name) => name,
+                QmlImportSource::Path(path) => {
+                    if import.alias.is_none() && !group::is_script(path) {
+                        self.members.imports_by_path();
+                    }
+                    continue;
+                }
             };
             let uri = name.to_string();
             if import.alias.is_some() && (uri == "QtQuick" || uri == "QtQml") {
@@ -1008,6 +1014,22 @@ impl Script<'_, '_> {
 }
 
 impl<'a> Visit<'a> for Script<'_, '_> {
+    fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of ctx's
+        // component; `url` takes one argument, so that call stays Qt's.
+        if let Expression::StaticMemberExpression(callee) = &it.callee
+            && matches!(&callee.object, Expression::Identifier(qt) if qt.name == "Qt")
+            && callee.property.name == "resolvedUrl"
+            && it.arguments.len() > 1
+        {
+            for argument in &it.arguments {
+                self.visit_argument(argument);
+            }
+            return;
+        }
+        walk::walk_call_expression(self, it);
+    }
+
     fn visit_static_member_expression(&mut self, it: &StaticMemberExpression<'a>) {
         let name = it.property.name.as_str();
         if let Expression::Identifier(qt) = &it.object
