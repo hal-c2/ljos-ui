@@ -113,6 +113,31 @@ fn a_kept_file_keeps_the_files_it_names_and_says_where() {
     assert_eq!(read(dir.path(), "app/Button.qml"), BUTTON);
 }
 
+/// A file named by its bare name is of the project of the directory the
+/// command runs in: the files beside it are read for what their roots are.
+#[test]
+fn a_bare_file_name_is_of_the_project_it_is_run_in() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "Main.qml",
+        "import QtQuick\nItem {\n    Button { color: \"blue\" }\n}\n",
+    );
+    write(dir.path(), "Button.qml", BUTTON);
+    let (status, out, err) = ljos(
+        dir.path(),
+        &["migrate", "--write", "Main.qml", "Button.qml"],
+    );
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.ends_with("2 files, 2 lowered, 0 kept\n"), "{out}");
+    // `Button`'s root is a Rectangle: its `color` is the API's `fill`.
+    assert!(
+        read(dir.path(), "Main.qml").contains("Button { fill: \"blue\" }"),
+        "{}",
+        read(dir.path(), "Main.qml")
+    );
+}
+
 /// The group is the same whether the files are named by a relative or an
 /// absolute path.
 #[test]
@@ -149,4 +174,143 @@ fn a_file_it_cannot_read_or_write_is_status_2_and_the_rest_are_still_done() {
     assert!(err.contains("locked/Lone.qml: "), "{err}");
     assert!(out.contains("lowered app/Swatch.qml (2 edits)"), "{out}");
     assert!(read(dir.path(), "app/Swatch.qml").contains("import Ljos.Ui"));
+}
+
+/// A module file named alone is of the project that imports its module: the
+/// directory its `qmldir` is found from, not its own. So a file there that
+/// names it and was not named keeps it, as when the importer alone is named.
+#[test]
+fn a_module_file_named_alone_is_read_with_the_files_that_import_it() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Gauges/qmldir",
+        "module Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "app/Gauges/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "app/Main.qml", main);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/Gauges/Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept app/Gauges/Dial.qml:1:1: "), "{out}");
+    assert!(out.contains("name it too"), "{out}");
+    assert!(out.ends_with("1 files, 0 lowered, 1 kept\n"), "{out}");
+    assert_eq!(read(dir.path(), "app/Gauges/Dial.qml"), BUTTON);
+    assert_eq!(read(dir.path(), "app/Main.qml"), main);
+
+    // A dotted module's import path is as many directories up as it has parts.
+    write(
+        dir.path(),
+        "lib/Ui/Gauges/qmldir",
+        "module Ui.Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "lib/Ui/Gauges/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport Ui.Gauges\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "lib/Main.qml", main);
+    let (status, out, err) = ljos(
+        dir.path(),
+        &["migrate", "--write", "lib/Ui/Gauges/Dial.qml"],
+    );
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(
+        out.starts_with("kept lib/Ui/Gauges/Dial.qml:1:1: "),
+        "{out}"
+    );
+    assert_eq!(read(dir.path(), "lib/Ui/Gauges/Dial.qml"), BUTTON);
+}
+
+/// The files that import a module are found however it is named: a file
+/// of a directory imported by its path, a module file named from inside
+/// its directory, and the module's directory named. None of these writes
+/// the module file while its importer stays Qt's.
+#[test]
+fn a_module_is_read_with_its_importers_however_it_is_named() {
+    let dir = tempfile::tempdir().unwrap();
+    // A directory imported by its path, with no qmldir.
+    write(dir.path(), "app/parts/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport \"parts\"\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "app/Main.qml", main);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/parts/Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept app/parts/Dial.qml:1:1: "), "{out}");
+    assert!(out.contains("name it too"), "{out}");
+    assert_eq!(read(dir.path(), "app/parts/Dial.qml"), BUTTON);
+
+    // A module file named by its bare name, from inside its directory.
+    write(
+        dir.path(),
+        "lib/Gauges/qmldir",
+        "module Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "lib/Gauges/Dial.qml", BUTTON);
+    let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"blue\" } }\n";
+    write(dir.path(), "lib/Main.qml", main);
+    let gauges = dir.path().join("lib/Gauges");
+    let (status, out, err) = ljos(&gauges, &["migrate", "--write", "Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept Dial.qml:1:1: "), "{out}");
+    assert_eq!(read(dir.path(), "lib/Gauges/Dial.qml"), BUTTON);
+
+    // The module's directory named, from where the importer is, and from
+    // inside it.
+    for (at, named) in [(dir.path().to_owned(), "lib/Gauges"), (gauges, ".")] {
+        let (status, out, err) = ljos(&at, &["migrate", "--write", named]);
+        assert_eq!(status, 0, "{out}{err}");
+        assert!(out.contains("Dial.qml:1:1: "), "{named}: {out}");
+        assert!(
+            out.ends_with("1 files, 0 lowered, 1 kept\n"),
+            "{named}: {out}"
+        );
+        assert_eq!(read(dir.path(), "lib/Gauges/Dial.qml"), BUTTON);
+    }
+    assert_eq!(read(dir.path(), "lib/Main.qml"), main);
+}
+
+/// A file below the project root is read with the root's project, so a
+/// module on the root's import path is one of its files however deep the
+/// file is.
+#[test]
+fn an_importer_below_the_root_is_read_with_the_root_s_project() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Gauges/qmldir",
+        "module Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "app/Gauges/Dial.qml", BUTTON);
+    let page = "import QtQuick\nimport Gauges\nItem { Dial { color: \"red\" } }\n";
+    write(dir.path(), "app/views/Page.qml", page);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/Gauges/Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept app/Gauges/Dial.qml:1:1: "), "{out}");
+    assert!(out.contains("it is used with `Page.qml`"), "{out}");
+    assert_eq!(read(dir.path(), "app/Gauges/Dial.qml"), BUTTON);
+    assert_eq!(read(dir.path(), "app/views/Page.qml"), page);
+}
+
+#[test]
+fn an_importer_of_a_module_only_a_build_describes_is_read_with_it() {
+    // No qmldir: the module is the build's, and the URI is in the
+    // CMakeLists.txt of the named file's directory, or of one above it
+    // that lists the file from a subdirectory.
+    for (cmake_dir, file) in [("app/Gauges", "Dial.qml"), ("app/Gauges", "parts/Dial.qml")] {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &format!("{cmake_dir}/CMakeLists.txt"),
+            &format!("qt_add_qml_module(gauges URI Gauges QML_FILES {file})\n"),
+        );
+        let named = format!("{cmake_dir}/{file}");
+        write(dir.path(), &named, BUTTON);
+        let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"red\" } }\n";
+        write(dir.path(), "app/Main.qml", main);
+        let (status, out, err) = ljos(dir.path(), &["migrate", "--write", &named]);
+        assert_eq!(status, 0, "{out}{err}");
+        assert!(
+            out.starts_with(&format!("kept {named}:1:1: ")),
+            "{named}: {out}"
+        );
+        assert_eq!(read(dir.path(), &named), BUTTON, "{named}");
+        assert_eq!(read(dir.path(), "app/Main.qml"), main, "{named}");
+    }
 }

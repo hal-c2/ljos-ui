@@ -95,3 +95,150 @@ Feature: Qt's QML lowered to Ljós's API
         """
       Then the property "color" of "swatch" is "#336699"
       And the pixel at 20, 20 of the window is "#336699"
+
+  Rule: A module of the project is lowered with the files that import it
+
+    # A module's types are files of the project, as the loader finds them on its import path: the
+    # pass reads what each one's root is, as it does for a file beside the one it lowers, and the
+    # module is lowered with its importers or kept with them.
+    @ljos-only @headless
+    Scenario: An application and the module of components it imports are lowered whole
+      Given the file "app/Gauges/qmldir":
+        """
+        module Gauges
+        Dial 1.0 Dial.qml
+        singleton Tones 1.0 Tones.qml
+        """
+      And the file "app/Gauges/Tones.qml":
+        """qml
+        pragma Singleton
+        import QtQml
+        QtObject { property color color: "#30a050" }
+        """
+      And the file "app/Gauges/Dial.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 60; height: 60; radius: 30; color: "#203040"
+          Rectangle { anchors.centerIn: parent; width: 20; height: 20; color: Tones.color }
+        }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import Gauges
+        Rectangle {
+          width: 200; height: 100; color: "white"
+          Dial { x: 20; y: 20; color: "#c03030" }
+          Dial { x: 120; y: 20; color: Tones.color }
+        }
+        """
+      When the author runs "ljos migrate app"
+      Then the command prints:
+        """
+        would lower app/Gauges/Dial.qml (3 edits)
+        would lower app/Main.qml (4 edits)
+        3 files, 2 lowered, 0 kept
+        """
+      When the author runs "ljos render app --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render app --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+
+    # A file named alone is lowered against the files around it, and a file of its group that was
+    # not named would stay Qt's while the named one is renamed to match it lowered: none of the group
+    # is written, and the command says which file to name too.
+    @ljos-only @headless
+    Scenario: A file named alone is not written without the files it is lowered with
+      Given the file "app/Gauges/qmldir":
+        """
+        module Gauges
+        Dial 1.0 Dial.qml
+        """
+      And the file "app/Gauges/Dial.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import Gauges
+        Rectangle { width: 200; height: 100; Dial { color: "#c03030" } }
+        """
+      When the author runs "ljos migrate --write app/Main.qml"
+      Then the command prints:
+        """
+        kept app/Main.qml:1:1: it is used with `Gauges/Dial.qml`, which is kept: it is not named: name it too
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "app/Main.qml" is:
+        """qml
+        import QtQuick
+        import Gauges
+        Rectangle { width: 200; height: 100; Dial { color: "#c03030" } }
+        """
+      When the author runs "ljos migrate app/Main.qml app/Gauges/Dial.qml"
+      Then the command prints:
+        """
+        would lower app/Gauges/Dial.qml (2 edits)
+        would lower app/Main.qml (2 edits)
+        2 files, 2 lowered, 0 kept
+        """
+      When the author runs "ljos migrate --write app/Gauges/Dial.qml"
+      Then the command prints:
+        """
+        kept app/Gauges/Dial.qml:1:1: it is used with `Main.qml`, which is kept: it is not named: name it too
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "app/Gauges/Dial.qml" is:
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+
+    # A directory imported by its path has no qmldir to say where it is imported from: the file that
+    # imports it is found below the directory the command runs in.
+    @ljos-only @headless
+    Scenario: A file of a directory imported by its path is not written without the file that imports it
+      Given the file "app/parts/Dial.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import "parts"
+        Rectangle { width: 200; height: 100; Dial { color: "#c03030" } }
+        """
+      When the author runs "ljos migrate --write app/parts/Dial.qml"
+      Then the command prints:
+        """
+        kept app/parts/Dial.qml:1:1: it is used with `Main.qml`, which is kept: it is not named: name it too
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "app/parts/Dial.qml" is:
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+
+    @ljos-only @headless
+    Scenario: A module with native types only keeps the files that import it
+      Given the file "app/Sensors/qmldir":
+        """
+        module Sensors
+        plugin sensorsplugin
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import Sensors
+        Rectangle { width: 40; height: 40; color: "#336699" }
+        """
+      When the author runs "ljos migrate app"
+      Then the command prints:
+        """
+        kept app/Main.qml:2:1: it imports `Sensors`, a module of the project whose types are native: they are not lowered
+        1 files, 0 lowered, 1 kept
+        """

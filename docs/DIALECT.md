@@ -1,7 +1,15 @@
 # Ljós's own API, typed scripts, and Qt's QML as compat
 
-- **Status:** phase 1 (design and a spike), 2026-11-04. The spike's slice is
-  built on the `dialect/phase-1` branch; everything past it is design.
+- **Status:** phase 2: being built, 2026-11-07. Phase 1's spike and design
+  are on main. What of each milestone (§13) is on main:
+  - **M1:** `Ljos.Ui`'s one arrangement (`Row`, `Column`, `Box`), with Qt's
+    `Row`, `Column`, `RowLayout` and `ColumnLayout` lowered to it; the
+    modules and directories of the project lowered with the files that
+    import them (§6.2); `ljos render --compat` and `ljos migrate`.
+  - **M4:** TypeScript modules imported by QML, `property T` of their types,
+    `tsc` given the modules, and the checker's rules but `ts-boundary`
+    (§4.4, §5).
+  - **M2, M3, M5, M6:** not started.
 - **Decision record:** [ADR 0004](adr/0004-compat-lowering-before-the-ir.md)
   (compat is a lowering pass in front of a Qt-agnostic IR).
 - **Inputs:** [ARCHITECTURE.md](ARCHITECTURE.md) (which wins over this
@@ -1060,8 +1068,12 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   and `id.member` where the target's type is known;
 - `property var` / `variant` → `property unknown`.
 
-A `QtQml` import stays. Any other module import (`QtQuick.Controls`, an
-aliased `QtQuick`) keeps the file.
+A `QtQml` import stays, and `QtQuick.Layouts` is lowered with the
+arrangement (§4.6). A module of the project, and a directory imported by
+path, are files of the project: the file is lowered with them (§6.2). Any
+other module import (`QtQuick.Controls`, an aliased `QtQuick`, a module of
+the project imported under a name, or one whose types are native) keeps the
+file.
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
@@ -1070,9 +1082,21 @@ built at run time and used as a member), or a script that reaches
 something it cannot follow. A kept file is not an error: it runs as
 written, on the same runtime.
 
-`locals` tells the pass what the root type of a file beside it is, so
-`Button { color: "blue" }` on a `Button.qml` whose root is a `Rectangle` is
-lowered as a `Rectangle` member.
+`locals` tells the pass what the project is around the file, as the
+project's loader finds it (`qml_front`'s modules and import path):
+
+- the root type of a file beside it, so `Button { color: "blue" }` on a
+  `Button.qml` whose root is a `Rectangle` is lowered as a `Rectangle`
+  member;
+- whether a module it imports is the project's, with QML files, or the
+  project's with native types only;
+- the root type of each type a module of the project, or a directory
+  imported by path, brings. A name two imports have is the last one's, as
+  the loader resolves it: `Text` of a project module imported after
+  `QtQuick` is the project's.
+
+A type of the project read in a script (`Theme.accent`) is a singleton: the
+one object its file makes, of its root's type and of no type built on it.
 
 ### 6.2 By group
 
@@ -1085,9 +1109,11 @@ before grouping. `qml_compat::references` collects what a file may name:
 - property types;
 - `.qml` string literals;
 - directories imported by path;
-- modules imported by name: a module of the project is a directory whose
-  path ends in the name's parts (`import My.Controls` is any `…/My/Controls/`),
-  as an import path finds it, and every file below it is of the group;
+- modules imported by name. A module the project's loader finds (a
+  `qmldir` or a CMake module with QML types) brings its files, wherever
+  they are (`Alone::uses`). Beside that, a directory whose path ends in the
+  name's parts (`import My.Controls` is any `…/My/Controls/`), as an import
+  path finds it, ties every file below it to the group;
 - capitalised identifiers, such as an enum's owner.
 
 `qml_compat::group` joins files with union-find. A group is lowered only
@@ -1103,7 +1129,9 @@ run as written, and the cost of a missed tie is a wrong program.
 
 | Kept because | Phase |
 |---|---|
-| A type or module the API has not taken (`Column`, `Behavior`, `QtQuick.Controls`, …) | Lowered as the API grows (M1, M6) |
+| A type or module the API has not taken (`Behavior`, `QtQuick.Controls`, …) | Lowered as the API grows (M1, M6) |
+| A module of the project whose types are native (C++ with no QML file here) | Kept while its types are not described to the pass |
+| A module of the project imported under a name (`import Gauges as G`) | Kept until the pass follows a qualified type |
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
@@ -1111,30 +1139,40 @@ run as written, and the cost of a missed tie is a wrong program.
 
 ### 6.4 Coverage today
 
-`ljos migrate` over the corpus, with group lowering:
+`ljos migrate` over the corpus, each example as its own project (one
+`ljos migrate <example>` per directory of `examples/demos` and
+`examples/tutorials`, then one over `doc` and `tests`), 2026-11-07:
 
 ```
-corpus/qtdoc/examples:  495 files, 23 lowered, 462 kept
-corpus/qtdoc (all):     524 files, 29 lowered, 485 kept
+corpus/qtdoc/examples:  495 files, 13 lowered, 467 kept
+corpus/qtdoc (all):     524 files, 24 lowered, 485 kept
 ```
 
-Before grouping, 75 example files lowered. 52 of those set a Qt name on, or
-were used by, a file that was kept. Coverage is low on purpose, because the
-slice is three types. Kept files run as before, so low coverage costs
-nothing.
+One project per example matters: run over all of `examples` at once, a
+module of one example (`content`) ties every `…/content/` directory of the
+others by the directory rule (§6.2), and nothing is lowered.
 
-Why the 462 example files are kept:
+Before the project's modules were lowered, the same count was the same 13
+lowered and 472 kept. 25 files were kept by an import of their own
+project's module (`Thermostat`, `content`, `ToDoList`, `StocQt`, `Config`,
+…). Those now get past their imports, and every one is still kept by
+something else: a Controls or 3D import, a type not in `Ljos.Ui` yet, or a
+file of their group. Coverage is low on purpose, because the slice is
+`Rectangle`, `MouseArea`, the arrangement and the layouts.
+
+Why the 467 example files are kept:
 
 | Reason | Files |
 |---|---:|
-| a module import: `QtQuick.Controls` (102), `QtQuick3D` (89), `QtQuick.Controls.Basic` (62), `QtQuick.Layouts` (46), `QtQuick.Templates` (15), `QtQuick.Controls.Fusion` (13), `QtQuick.Particles` (12), `QtCore` (9), … | 364 |
-| a file of its group is kept | 52 |
-| a type not in `Ljos.Ui` yet: `Image` (10), `Screen` (5), `Behavior` (5), `ListView` (4), `Window` (3), … | 44 |
-| a member read off something whose type is not known | 2 |
+| a module import: `QtQuick.Controls` (90), `QtQuick3D` (86), `QtQuick.Controls.Basic` (43), `QtQuick.Templates` (15), `QtQuick.Controls.Fusion` (15), `QtQuick.Particles` (12), `QtMultimedia` (7), `QtCore` (5), … | 309 |
+| a file of its group is kept | 76 |
+| a type not in `Ljos.Ui` yet: `Image`, `Window`, `Screen`, `ListView`, `Behavior`, `GridLayout`, … | 63 |
+| a layout the arrangement would place otherwise, or a child whose size in it is not known | 12 |
+| a member read off, or set on, something whose type is not known | 6 |
+| a module of the project whose types are native | 1 |
 
 `Qt.*` keeps no file today: `Ljos.Ui` imports `QtQml`, so the namespace is
-still there. Modules, not globals, decide coverage. Phase 2 starts with
-them (§17).
+still there. Modules, not globals, decide coverage (§17).
 
 ## 7. Tiers and the web
 
@@ -1167,6 +1205,17 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 - It runs the same pass and the same grouping as `--compat lower`. A
   migrated file is the text a lowered run compiled, byte for byte, and it
   compiles to the same program.
+- Each directory named is read as a project, as a run reads it, so a
+  module of the project and a directory imported by path are files to the
+  files that import them. A file named alone is of the project of its
+  directory (a bare `Main.qml`, of the directory the command runs in).
+  When its group holds a file that was not named, none of the group is
+  written: the named file is kept, saying which file to name too
+  (``it is used with `Gauges/Dial.qml`, which is kept: it is not named:
+  name it too``), so a file is never renamed to match one that stays Qt's.
+  Give it an application's directory, not a tree of several:
+  the group's directory rule (§6.2) ties one application's module to
+  another's directory of the same name.
 - A lowered file says its scripts are still Qt's JavaScript:
   `pragma Scripts: JavaScript`, on the import's line so that every line
   stays where it was. The checker does not hold such a file to its rules,

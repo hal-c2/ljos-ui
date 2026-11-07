@@ -128,6 +128,10 @@ impl<'a> Visit<'a> for Strings<'_> {
 pub struct Alone {
     pub outcome: Outcome,
     pub references: References,
+    /// The files of the project its imports bring, keyed as [`group`]'s
+    /// files are, as the project's loader finds them: a module's files may
+    /// be anywhere a build or a `qmldir` says.
+    pub uses: Vec<String>,
 }
 
 /// What each file of a project is lowered to, keyed as `files` is by the
@@ -149,6 +153,11 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
         for address in &file.references.files {
             let path = address.strip_suffix(".qml").unwrap_or(address);
             if let Some(other) = index(&normal(&beside(path))) {
+                sets.join(at, other);
+            }
+        }
+        for used in &file.uses {
+            if let Some(other) = index(used) {
                 sets.join(at, other);
             }
         }
@@ -202,7 +211,7 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
                 (Outcome::Lowered(_), Some((other, why))) => Outcome::Kept(Kept {
                     reason: format!(
                         "it is used with `{}.qml`, which is kept: {}",
-                        other.rsplit('/').next().unwrap_or(other),
+                        from_dir_of(key, other),
                         why.reason
                     ),
                     at: 0,
@@ -212,6 +221,18 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
             (key.clone(), outcome)
         })
         .collect()
+}
+
+/// `other` as a path from the directory of `key`: `Gauges/Dial` below it,
+/// and its name otherwise, as beside it.
+fn from_dir_of<'k>(key: &str, other: &'k str) -> &'k str {
+    let below = match key.rsplit_once('/') {
+        Some((dir, _)) => other
+            .strip_prefix(dir)
+            .and_then(|rest| rest.strip_prefix('/')),
+        None => Some(other),
+    };
+    below.unwrap_or_else(|| other.rsplit('/').next().unwrap_or(other))
 }
 
 fn join(dir: &str, name: &str) -> String {
@@ -267,7 +288,7 @@ impl Sets {
 /// `import "lib.js"`, `import "filter.ts"`: a script, not a directory of
 /// types (as `qml_front::project::is_script`, which this crate does not
 /// link, says).
-fn is_script(path: &str) -> bool {
+pub(crate) fn is_script(path: &str) -> bool {
     path.ends_with(".js")
         || path.ends_with(".mjs")
         || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
