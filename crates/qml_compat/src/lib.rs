@@ -57,6 +57,11 @@ pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
 /// called as Qt calls it.
 pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
 
+/// The types of QtQuick.Layouts Ljos.Layout calls by another name. A
+/// `GridLayout` object is renamed where it is arranged (arrange.rs), with
+/// what the pass checks of it; a name of one in a script is renamed here.
+pub const LAYOUT_RENAMES: &[(&str, &str)] = &[("GridLayout", "Grid"), ("StackLayout", "Pages")];
+
 /// Per Qt type (and what derives from it), the members Ljós calls by another
 /// name. A property's change signal and its handler follow its name.
 pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
@@ -275,6 +280,18 @@ impl<'s> Pass<'s> {
         Ok(true)
     }
 
+    /// Keeps a file that names a type of QtQuick.Layouts whose attached
+    /// object Ljos.Layout has not: only `Layout`'s is there.
+    fn attached_layout(&self, name: &str, at: usize) -> Step {
+        if name != "Layout" && self.layouts.and_then(|m| m.type_named(name)).is_some() {
+            return Err(self.no(
+                format!("`{name}`'s attached properties are not in {LAYOUT} yet"),
+                at,
+            ));
+        }
+        Ok(())
+    }
+
     fn no(&self, reason: String, at: usize) -> Kept {
         Kept { reason, at }
     }
@@ -347,10 +364,16 @@ impl<'s> Pass<'s> {
             return Ok(Ty::Plain);
         }
         let at = object.type_name.span;
+        let ty = self.named_type(name, at.start as usize, 0)?;
         if let Some(new) = renamed_type(name) {
             self.change(at.start as usize..at.end as usize, new);
+        } else if name != "GridLayout"
+            && matches!(ty, Ty::Exact(t) if t.module == "QtQuick.Layouts")
+            && let Some(new) = renamed_layout(name)
+        {
+            self.change(at.start as usize..at.end as usize, new);
         }
-        self.named_type(name, at.start as usize, 0)
+        Ok(ty)
     }
 
     /// The type `name` is in this file: Qt's (and then one Ljos.Ui has),
@@ -358,7 +381,9 @@ impl<'s> Pass<'s> {
     fn named_type(&self, name: &str, at: usize, depth: usize) -> Result<Ty, Kept> {
         if let Some(ty) = self.layouts.and_then(|m| m.type_named(name)) {
             return match name {
-                "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
+                "RowLayout" | "ColumnLayout" | "GridLayout" | "StackLayout" | "Layout" => {
+                    Ok(Ty::Exact(ty))
+                }
                 _ => Err(self.no(format!("`{name}` is not in {LAYOUT} yet"), at)),
             };
         }
@@ -539,6 +564,7 @@ impl<'s> Pass<'s> {
         } else if first.starts_with(|c: char| c.is_ascii_uppercase()) {
             // An attached object: `Keys.onPressed`, `Component.onCompleted`.
             self.named_type(first, at, 0)?;
+            self.attached_layout(first, at)?;
         } else if let Some(id) = self.id(first)
             && matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges")
         {
@@ -720,6 +746,13 @@ enum Rename {
 
 fn renamed_type(name: &str) -> Option<&'static str> {
     TYPE_RENAMES
+        .iter()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
+fn renamed_layout(name: &str) -> Option<&'static str> {
+    LAYOUT_RENAMES
         .iter()
         .find(|(old, _)| *old == name)
         .map(|(_, new)| *new)
@@ -927,6 +960,15 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             } else if self.pass.quick.type_named(name).is_some()
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
+                self.keep(kept.reason, it.span.start);
+            } else if name == "GridLayout"
+                && self.pass.layouts.is_some()
+                && let Some(new) = renamed_layout(name)
+            {
+                // Its enumerations: `GridLayout.TopToBottom` is `Grid`'s.
+                self.pass
+                    .change(it.span.start as usize..it.span.end as usize, new);
+            } else if let Err(kept) = self.pass.attached_layout(name, it.span.start as usize) {
                 self.keep(kept.reason, it.span.start);
             }
             return;
