@@ -177,8 +177,9 @@ Feature: Qt's QML lowered to Ljós's API
       Then the command prints:
         """
         would lower app/Gauges/Dial.qml (3 edits)
+        would lower app/Gauges/Tones.qml (1 edits)
         would lower app/Main.qml (4 edits)
-        3 files, 2 lowered, 0 kept
+        3 files, 3 lowered, 0 kept
         """
       When the author runs "ljos render app --out kept.png --settle 0 --compat keep"
       And the author runs "ljos render app --out lowered.png --settle 0 --compat lower"
