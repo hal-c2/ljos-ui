@@ -35,6 +35,7 @@ pub use compile::compile_file;
 pub use dump::dump;
 pub use project::{Project, resource_dirs, resources, skipped_dir};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
+pub use script::module::is_declarations;
 pub use style::{controls_style, controls_style_on, platform_style};
 
 /// A file's compiled form, with what was wrong with it. A file with errors
@@ -187,6 +188,9 @@ pub enum Code {
     TsVariance,
     /// The checker: what the subset leaves out of JavaScript.
     TsForbidden,
+    /// The checker: a JavaScript file reached with no declarations beside
+    /// it.
+    TsBoundary,
     /// An anchor on a child of `Ljos.Ui`'s `Row`, `Column` or `Box`, which
     /// places the child itself.
     LayoutAnchored,
@@ -226,6 +230,7 @@ impl Code {
             Code::TsOptionalExact => "ts-optional-exact",
             Code::TsVariance => "ts-variance",
             Code::TsForbidden => "ts-forbidden",
+            Code::TsBoundary => "ts-boundary",
             Code::LayoutAnchored => "layout-anchored",
         }
     }

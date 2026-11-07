@@ -538,6 +538,9 @@ impl<O: TypeOracle + Clone> ReloadSession<O> {
         for (path, text) in self.project.scripts() {
             project.add_script(path, text);
         }
+        for (path, text) in self.project.declarations() {
+            project.add_declarations(path, text);
+        }
         self.project = project;
         self.all_dirty = true;
     }

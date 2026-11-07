@@ -402,6 +402,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     None => Ty::ERROR,
                 }
             }
+            Some(Target::Namespace(qml_front::project::Source::Path(path)))
+                if crate::script::module::is_javascript(&path) =>
+            {
+                let key = self.c.project.front().import_dir(self.c.key, &path);
+                self.javascript_value(&key)
+            }
             Some(Target::Namespace(_)) => self.arena.intern(Kind::Namespace(name.into())),
             _ => Ty::ERROR,
         }
@@ -456,6 +462,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
                 let mutable = self.arena.array(elem, false);
                 return self.member(mutable, name);
+            }
+        }
+        for &part in &parts {
+            if let Kind::Script(key) = self.arena.kind(part) {
+                let key = key.clone();
+                self.boundary(&key, name, property.span);
+                return Ty::ERROR;
             }
         }
         for &part in &parts {

@@ -363,6 +363,9 @@ fn project(root: &Path, imports: &[PathBuf]) -> anyhow::Result<Project<QtTypeOra
     for (path, text) in found.scripts() {
         project.add_script(path, text);
     }
+    for (path, text) in found.declarations() {
+        project.add_declarations(path, text);
+    }
     for dir in imports {
         add_import(&mut project, root, dir);
     }
