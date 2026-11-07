@@ -372,8 +372,14 @@ checker sees.
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
 boundary as `unknown` and is decoded (note 11 §3.7). A decoder narrows;
 nothing casts: `as T` stays an error everywhere (`ts-no-cast`), a decoder's
-result included. A decoder is user code, a type guard or an assertion
-function a module exports, written without casts:
+result included. A decoder is user code a module exports, written
+without casts, in one of three forms: a type guard (`v is T`), an
+assertion function (`asserts v is T`), or a plain typed function that
+narrows what it is given (`unknown`, or a loosely shaped value such as
+the `XmlNode` of the rssnews example below) and returns a typed value or
+a fallback (`T | undefined`, or a default). The checker treats the first two specially,
+narrowing what they are given; the third needs nothing of it, being an
+ordinary typed function:
 
 ```ts
 export interface Row { tag: string; count: number }
@@ -382,6 +388,7 @@ export function isRow(v: unknown): v is Row {
         && "count" in v && typeof v.count === "number"
 }
 export function row(v: unknown): asserts v is Row { if (!isRow(v)) { throw new Error("not a row") } }
+export function rowOr(v: unknown, fallback: Row): Row { return isRow(v) ? v : fallback }
 ```
 
 What is built (`features/language/decoders.feature`, and the tsc oracle's
@@ -1789,8 +1796,9 @@ bindings and states without a rule.
 - DECISION: compat JS is called from TS only through declarations (Q7),
   the `.d.ts` beside the `.js`, which a person writes.
 - DECISION (§4.4): a decoder narrows; nothing casts. A decoder is a type
-  guard or an assertion function, user code with no runtime check of the
-  checker's, and `unknown` narrows as TypeScript 5 narrows it, which the
+  guard, an assertion function, or a plain typed function that narrows
+  `unknown` and returns a typed value or a fallback: user code with no
+  runtime check of the checker's, and `unknown` narrows as TypeScript 5 narrows it, which the
   tsc oracle holds the checker to.
 - DECISION: phase 2 builds modules before globals: `Ljos.Layout` and
   the kept-for `Ljos.Ui` types (M1) before `Ljos.Core` (M2). Module imports
