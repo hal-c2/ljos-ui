@@ -526,6 +526,13 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    fn method_returns(&self, ty: EngineType, name: &str) -> Option<String> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.method_returns(ty, name),
+            EngineType::Native(_) => None,
+        }
+    }
+
     fn default_property(&self, ty: EngineType) -> Option<&str> {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.default_property(ty),
