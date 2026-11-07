@@ -327,3 +327,30 @@ fn an_importer_below_the_root_is_read_with_the_root_s_project() {
     assert_eq!(read(dir.path(), "app/Gauges/Dial.qml"), BUTTON);
     assert_eq!(read(dir.path(), "app/views/Page.qml"), page);
 }
+
+#[test]
+fn an_importer_of_a_module_only_a_build_describes_is_read_with_it() {
+    // No qmldir: the module is the build's, and the URI is in the
+    // CMakeLists.txt of the named file's directory, or of one above it
+    // that lists the file from a subdirectory.
+    for (cmake_dir, file) in [("app/Gauges", "Dial.qml"), ("app/Gauges", "parts/Dial.qml")] {
+        let dir = tempfile::tempdir().unwrap();
+        write(
+            dir.path(),
+            &format!("{cmake_dir}/CMakeLists.txt"),
+            &format!("qt_add_qml_module(gauges URI Gauges QML_FILES {file})\n"),
+        );
+        let named = format!("{cmake_dir}/{file}");
+        write(dir.path(), &named, BUTTON);
+        let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"red\" } }\n";
+        write(dir.path(), "app/Main.qml", main);
+        let (status, out, err) = ljos(dir.path(), &["migrate", "--write", &named]);
+        assert_eq!(status, 0, "{out}{err}");
+        assert!(
+            out.starts_with(&format!("kept {named}:1:1: ")),
+            "{named}: {out}"
+        );
+        assert_eq!(read(dir.path(), &named), BUTTON, "{named}");
+        assert_eq!(read(dir.path(), "app/Main.qml"), main, "{named}");
+    }
+}
