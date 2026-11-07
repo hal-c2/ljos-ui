@@ -28,6 +28,7 @@ use oxc_ast::ast::{
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
+use oxc_span::GetSpan;
 use oxc_syntax::scope::ScopeFlags;
 use qml_edit::Change;
 use qml_syntax::{
@@ -56,7 +57,22 @@ pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
 
 /// Per Qt type (and what derives from it), the members Ljós calls by another
 /// name. A property's change signal and its handler follow its name.
-pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
+pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[
+    ("Rectangle", &[("color", "fill")]),
+    (
+        "Text",
+        &[
+            ("horizontalAlignment", "align"),
+            ("wrapMode", "wrap"),
+            ("textFormat", "format"),
+        ],
+    ),
+];
+
+/// The members of a font Ljós calls by another name, wherever the font is.
+/// `bold` is a `weight` ([`Pass::font_part`]) and `pointSize` a run-time
+/// conversion, so neither is a rename.
+pub const FONT_RENAMES: &[(&str, &str)] = &[("pixelSize", "size")];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -136,6 +152,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
+        fonts: Vec::new(),
         changes: Vec::new(),
     };
     match pass.document(&parsed.document) {
@@ -188,8 +205,10 @@ enum Ty {
     /// Of this type or one derived from it.
     Derived(&'static Type),
     /// A value with no members the pass renames: a number, a string, a
-    /// `color`, a `font`.
+    /// `color`.
     Plain,
+    /// A `font`, whose members [`FONT_RENAMES`] says.
+    Font,
     /// The pass does not know.
     Unknown,
 }
@@ -203,6 +222,10 @@ struct Pass<'s> {
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
+    /// The properties the file declares as a `font`, a `var`, a `variant`
+    /// or an `alias` (`property alias face: label.font`): what a script may
+    /// hold a font in.
+    fonts: Vec<String>,
     changes: Vec<Change>,
 }
 
@@ -285,6 +308,14 @@ impl<'s> Pass<'s> {
                     self.collect_value(&binding.value);
                 }
                 QmlMember::Property(property) => {
+                    if let Some(type_name) = &property.type_name
+                        && matches!(
+                            type_name.name.as_simple(),
+                            Some("font" | "var" | "variant" | "alias")
+                        )
+                    {
+                        self.fonts.push(property.name.name.to_string());
+                    }
                     if let Some(value) = &property.value {
                         self.collect_value(value);
                     }
@@ -403,9 +434,24 @@ impl<'s> Pass<'s> {
         } else {
             None
         };
+        let names = binding_names(object);
         for member in &object.members {
             match member {
                 QmlMember::Object(child) => {
+                    let on = if is_changes {
+                        target.unwrap_or(Ty::Unknown)
+                    } else {
+                        scope
+                    };
+                    if let Some(group) = child.type_name.as_simple()
+                        && group.starts_with(|c: char| c.is_ascii_lowercase())
+                    {
+                        let group_ty = member_ty(on, group);
+                        if matches!(group_ty, Ty::Font) || group == "font" {
+                            self.font_group(child, group, group_ty, scope, root, &names)?;
+                            continue;
+                        }
+                    }
                     let child_ty = self.object_type(child)?;
                     let child_root = if matches!(child_ty, Ty::Plain) {
                         scope
@@ -415,7 +461,9 @@ impl<'s> Pass<'s> {
                     let made = matches!(ty, Ty::Exact(t) if t.name == "Component");
                     self.object(child, child_ty, child_root, made)?;
                 }
-                QmlMember::Binding(binding) => self.binding(binding, ty, scope, root, target)?,
+                QmlMember::Binding(binding) => {
+                    self.binding(binding, ty, scope, root, target, &names)?;
+                }
                 QmlMember::Property(property) => {
                     let name = property.name.name.as_str();
                     if renames_on(scope)
@@ -488,6 +536,7 @@ impl<'s> Pass<'s> {
         scope: Ty,
         root: Ty,
         target: Option<Ty>,
+        names: &[String],
     ) -> Step {
         let name = &binding.name;
         let at = name.span.start as usize;
@@ -522,10 +571,141 @@ impl<'s> Pass<'s> {
         } else if let Some(id) = self.id(first)
             && matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges")
         {
-            // `PropertyChanges { rect.color: ... }`.
+            // `PropertyChanges { rect.color: ... }`, `{ label.font.bold: ... }`.
             self.part(name, 1, id)?;
+            if name.parts.len() > 2 {
+                self.font_part(binding, 2, member_ty(id, name.parts[1]), names)?;
+            }
+        } else {
+            // A group's member: `font.pixelSize`, on the object or on the
+            // target of a `PropertyChanges`.
+            let on = match target {
+                Some(target) if matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges") => target,
+                _ => ty,
+            };
+            self.font_part(binding, 1, member_ty(on, first), names)?;
         }
         self.value(&binding.value, scope, root)
+    }
+
+    /// `font { pixelSize: 14; bold: true }`, a group of `font` called
+    /// `name` on an object (`font` is what the pass knows of it). `outer`
+    /// are the names set on that object: its `font.weight` is the group's
+    /// `weight`.
+    fn font_group(
+        &mut self,
+        group: &QmlObject<'_>,
+        name: &str,
+        font: Ty,
+        scope: Ty,
+        root: Ty,
+        outer: &[String],
+    ) -> Step {
+        let prefix = format!("{name}.");
+        let mut names = binding_names(group);
+        names.extend(
+            outer
+                .iter()
+                .filter_map(|n| n.strip_prefix(&prefix).map(str::to_owned)),
+        );
+        for member in &group.members {
+            if let QmlMember::Binding(binding) = member {
+                self.font_part(binding, 0, font, &names)?;
+                self.value(&binding.value, scope, root)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Lowers the `index`th part of `binding`'s name when it is the last
+    /// and a member of a font, `group` being what the pass knows of the
+    /// part before it. `names` are the bindings beside it.
+    fn font_part(
+        &mut self,
+        binding: &QmlBinding<'_>,
+        index: usize,
+        group: Ty,
+        names: &[String],
+    ) -> Step {
+        let name = &binding.name;
+        if index + 1 != name.parts.len() || !is_font_member(name.parts[index]) {
+            return Ok(());
+        }
+        let Some(range) = part_range(self.source, name, index) else {
+            return Ok(());
+        };
+        match group {
+            Ty::Font => {}
+            // A group called `font` on an object whose type is not known
+            // may be one; another group of a member called so is not.
+            Ty::Unknown if index == 0 || name.parts[index - 1] == "font" => {
+                return Err(self.no(
+                    format!("`{name}` is set on an object whose type is not known"),
+                    range.start,
+                ));
+            }
+            _ => return Ok(()),
+        }
+        match name.parts[index] {
+            "pointSize" => {
+                // A point is the screen's logical DPI / 72 of a pixel,
+                // known only when the file runs (docs/DIALECT.md §4.13).
+                return Err(self.no(
+                    format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}"),
+                    range.start,
+                ));
+            }
+            "bold" => {
+                let weight: Vec<&str> = name.parts[..index]
+                    .iter()
+                    .copied()
+                    .chain(["weight"])
+                    .collect();
+                // Which one wins in Qt depends on the order they are set in.
+                if names.contains(&weight.join(".")) {
+                    return Err(self.no(
+                        "`font.bold` and `font.weight` are both set, and are one `weight` in Ljós"
+                            .into(),
+                        range.start,
+                    ));
+                }
+                let at = range.start;
+                self.change(range, "weight");
+                self.bold_value(&binding.value, at)?;
+            }
+            _ => {
+                if let Rename::To(new) = self.member(name.parts[index], Ty::Font) {
+                    self.change(range, new);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// What `font.bold` is given, as the weight it means: `Font.Bold`
+    /// (700) for true, `Font.Normal` (400) for false, as in Qt.
+    fn bold_value(&mut self, value: &QmlBindingValue<'_>, at: usize) -> Step {
+        let QmlBindingValue::Expression(expression) = value else {
+            return Err(self.no(
+                "`font.bold` is given by a block, which is not lowered yet".into(),
+                at,
+            ));
+        };
+        let span = expression.span();
+        let (start, end) = (span.start as usize, span.end as usize);
+        if let Expression::BooleanLiteral(literal) = expression {
+            let weight = if literal.value {
+                "Font.Bold"
+            } else {
+                "Font.Normal"
+            };
+            self.change(start..end, weight);
+        } else {
+            // Around what the expression's own renames change, so first.
+            self.change(start..start, "(");
+            self.change(end..end, ") ? Font.Bold : Font.Normal");
+        }
+        Ok(())
     }
 
     /// Renames the simple name `name` when it is a member the type `on`
@@ -602,11 +782,17 @@ impl<'s> Pass<'s> {
 
     /// What `name`, read off something of type `on`, is called in Ljós.
     fn member(&self, name: &str, on: Ty) -> Rename {
+        if let Ty::Font = on {
+            return match lookup_rename(FONT_RENAMES, name) {
+                Some(new) => Rename::To(new),
+                None => Rename::Keep,
+            };
+        }
         if !is_renamed_member(name) {
             return Rename::Keep;
         }
         match on {
-            Ty::Plain => Rename::Keep,
+            Ty::Plain | Ty::Font => Rename::Keep,
             Ty::Unknown => Rename::Unknown,
             Ty::Exact(ty) | Ty::Derived(ty) => match renames_of(ty) {
                 Some(renames) => match lookup_rename(renames, name) {
@@ -705,6 +891,34 @@ fn renamed_type(name: &str) -> Option<&'static str> {
         .map(|(_, new)| *new)
 }
 
+/// A member of a font the pass lowers, or keeps a file for.
+fn is_font_member(name: &str) -> bool {
+    matches!(name, "pixelSize" | "bold" | "pointSize")
+}
+
+/// The names of `object`'s bindings, as written: `font.bold`, and a
+/// group's as if written so: `font { weight: 300 }` sets `font.weight`.
+fn binding_names(object: &QmlObject<'_>) -> Vec<String> {
+    let mut names = Vec::new();
+    for member in &object.members {
+        match member {
+            QmlMember::Binding(binding) => names.push(binding.name.to_string()),
+            QmlMember::Object(child) => {
+                if let Some(group) = child.type_name.as_simple()
+                    && group.starts_with(|c: char| c.is_ascii_lowercase())
+                {
+                    names.extend(child.members.iter().filter_map(|member| match member {
+                        QmlMember::Binding(binding) => Some(format!("{group}.{}", binding.name)),
+                        _ => None,
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 /// A member name, with its change signal, that some type renames.
 fn is_renamed_member(name: &str) -> bool {
     MEMBER_RENAMES
@@ -738,7 +952,7 @@ fn renames_of(ty: &'static Type) -> Option<&'static [(&'static str, &'static str
 fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
     match on {
         Ty::Exact(ty) | Ty::Derived(ty) => renames_of(ty),
-        Ty::Plain | Ty::Unknown => None,
+        Ty::Plain | Ty::Font | Ty::Unknown => None,
     }
 }
 
@@ -842,19 +1056,38 @@ impl Script<'_, '_> {
         }
     }
 
-    /// The type of the member `name` of something of type `on`.
     fn member_ty(&self, on: Ty, name: &str) -> Ty {
-        let (Ty::Exact(ty) | Ty::Derived(ty)) = on else {
-            return Ty::Unknown;
-        };
-        let Some(property) = ty.property(name) else {
-            return Ty::Unknown;
-        };
-        match property.value_type() {
-            Some(value) if value.is_value => Ty::Plain,
-            Some(value) => Ty::Derived(value),
-            None => Ty::Plain,
+        member_ty(on, name)
+    }
+
+    /// Whether `expression`, whose type the pass does not know, may be a
+    /// font: a member called `font`, or a property the file declares as one,
+    /// as a `var` or as an `alias`. What a function is given or a local holds is not
+    /// followed (docs/DIALECT.md §4.13).
+    fn could_be_font(&self, expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::Identifier(id) => {
+                id.name == "font" || self.pass.fonts.iter().any(|f| f == id.name.as_str())
+            }
+            Expression::StaticMemberExpression(member) => member.property.name == "font",
+            _ => false,
         }
+    }
+}
+
+/// The type of the member `name` of something of type `on`.
+fn member_ty(on: Ty, name: &str) -> Ty {
+    let (Ty::Exact(ty) | Ty::Derived(ty)) = on else {
+        return Ty::Unknown;
+    };
+    let Some(property) = ty.property(name) else {
+        return Ty::Unknown;
+    };
+    match property.value_type() {
+        Some(value) if value.is_value && value.name == "font" => Ty::Font,
+        Some(value) if value.is_value => Ty::Plain,
+        Some(value) => Ty::Derived(value),
+        None => Ty::Plain,
     }
 }
 
@@ -868,8 +1101,27 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.property.span.start,
             );
         }
-        if is_renamed_member(name) {
+        if is_renamed_member(name) || is_font_member(name) {
             let on = self.ty(&it.object);
+            match (on, name) {
+                (Ty::Font, "bold") => self.keep(
+                    "`.bold` of a font is read or written, and Ljós's font has only a `weight`"
+                        .into(),
+                    it.property.span.start,
+                ),
+                (Ty::Font, "pointSize") => self.keep(
+                    format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}"),
+                    it.property.span.start,
+                ),
+                // A row's role or a script's object may be called so too.
+                (Ty::Unknown, _) if !is_renamed_member(name) && self.could_be_font(&it.object) => {
+                    self.keep(
+                        format!("`.{name}` is read off something whose type is not known"),
+                        it.property.span.start,
+                    );
+                }
+                _ => {}
+            }
             match self.pass.member(name, on) {
                 Rename::To(new) => {
                     let span = it.property.span;
@@ -888,7 +1140,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
 
     fn visit_computed_member_expression(&mut self, it: &ComputedMemberExpression<'a>) {
         if let Expression::StringLiteral(key) = &it.expression
-            && is_renamed_member(&key.value)
+            && (is_renamed_member(&key.value) || is_font_member(&key.value))
         {
             self.keep(
                 format!("`[\"{}\"]` names a member Ljós renames", key.value),

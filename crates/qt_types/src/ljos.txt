@@ -539,7 +539,7 @@ module Ljos.Ui
 	Rectangle Ljos.Ui.Rectangle
 	Row Ljos.Ui.Row
 	State QtQuick.State
-	Text QtQuick.Text
+	Text Ljos.Ui.Text
 	type Ljos.Ui.Box Box
 		prototype Ljos.Ui.Arrangement
 		enum Direction Row=0 Column=1
@@ -600,6 +600,83 @@ module Ljos.Ui
 		signal bottomRightRadiusChanged
 	type Ljos.Ui.Row Row
 		prototype Ljos.Ui.Arrangement
+	type Ljos.Ui.Text Text
+		prototype QtQuick.Item named
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
+		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
+		enum TextElideMode ElideLeft=0 ElideRight=1 ElideMiddle=2 ElideNone=3
+		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 Wrap=4
+		enum LineHeightMode ProportionalHeight=0 FixedHeight=1
+		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
+		enum RenderTypeQuality DefaultRenderTypeQuality=-1 LowRenderTypeQuality=26 NormalRenderTypeQuality=52 HighRenderTypeQuality=104 VeryHighRenderTypeQuality=208
+		enum FontSizeMode FixedSize=0 HorizontalFit=1 VerticalFit=2 Fit=3
+		enum TextStyle Normal=0 Outline=1 Raised=2 Sunken=3
+		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3 StyledText=4
+		prop text QtQml.string named
+		prop color QtQuick.color named
+		prop font QtQuick.font named
+		prop style TextStyle
+		prop styleColor QtQuick.color named
+		prop align HAlignment reset
+		prop effectiveHorizontalAlignment HAlignment readonly
+		prop verticalAlignment VAlignment
+		prop wrap WrapMode
+		prop elide TextElideMode
+		prop maximumLineCount QtQml.int named reset
+		prop fontSizeMode FontSizeMode
+		prop minimumPixelSize QtQml.int named
+		prop minimumPointSize QtQml.int named
+		prop lineHeight QtQml.real named
+		prop lineHeightMode LineHeightMode
+		prop renderType RenderType
+		prop renderTypeQuality RenderTypeQuality
+		prop contentWidth QtQml.real named readonly
+		prop contentHeight QtQml.real named readonly
+		prop lineCount QtQml.int named readonly
+		prop truncated QtQml.bool named readonly
+		prop baseUrl QtQml.url named reset
+		prop format TextFormat
+		prop linkColor QtQuick.color named
+		prop hoveredLink QtQml.string named readonly
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		signal textChanged
+		signal colorChanged
+		signal fontChanged
+		signal styleChanged
+		signal styleColorChanged
+		signal alignChanged
+		signal effectiveHorizontalAlignmentChanged
+		signal verticalAlignmentChanged
+		signal wrapChanged
+		signal elideChanged
+		signal maximumLineCountChanged
+		signal fontSizeModeChanged
+		signal minimumPixelSizeChanged
+		signal minimumPointSizeChanged
+		signal lineHeightChanged
+		signal lineHeightModeChanged
+		signal renderTypeChanged
+		signal renderTypeQualityChanged
+		signal contentWidthChanged
+		signal contentHeightChanged
+		signal lineCountChanged
+		signal truncatedChanged
+		signal baseUrlChanged
+		signal formatChanged
+		signal linkColorChanged
+		signal hoveredLinkChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal topPaddingChanged
+		signal rightPaddingChanged
+		signal bottomPaddingChanged
+		signal linkActivated link:string
+		signal linkHovered link:string
+		method linkAt
 	type Ljos.Ui.Arrangement Arrangement
 		prototype QtQuick.Layouts.Layout named
 		is uncreatable
@@ -1858,6 +1935,7 @@ module QtQuick
 		prop family QtQml.string named
 		prop pointSize QtQml.real named
 		prop pixelSize QtQml.int named
+		prop size QtQml.int named
 		prop weight QtQml.int named
 		prop bold QtQml.bool named
 		prop italic QtQml.bool named
