@@ -361,7 +361,14 @@ alone has no `Timer` or `Component.Ready`, in TypeScript as in the
 checker. Files that import the same modules share one declarations file
 and one run of `tsc`. A type such a file cannot name but is handed,
 the `QtObject` a `PointerArea` gives a handler, is still declared,
-because what the file imports reaches it. `ljos types --dts` declares
+because what the file imports reaches it, but under its class
+(`QtQml_QtObject`) when another module of the API exports its name. A
+type the file writes, `property QtObject o` in a file of `Ljos.Ui`
+alone, must be one of its imports: the checker says
+`` `QtObject` is not a type of anything the file imports `` and
+TypeScript cannot find the name. A value type (`font`, `point`) may be
+written by any file, and a dotted name is a namespace's or an enum's,
+which this rule does not judge. `ljos types --dts` declares
 the whole API, `Ljos.Ui` and `Ljos.Core` together.
 
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
