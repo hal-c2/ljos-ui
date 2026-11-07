@@ -287,6 +287,7 @@ fn a_table_the_list_could_be_told_from_stays_a_list_model() {
         // from its delegate, and a view with sections in a group.
         "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    ListView { id: list; model: m; delegate: Text { text: model.a } }\n    Text { text: list.model.count }",
         "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    ListView { model: m; delegate: Text { text: model.a + ListView.view.model.count } }",
+        "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    Repeater { model: m; Text { text: model.a + parent.model } }",
         "ListModel { id: m; ListElement { a: 1; b: 1 } }\n    ListView { section { property: \"a\" } model: m; delegate: Text { text: model.a } }",
     ] {
         match lower_as(

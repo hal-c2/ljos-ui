@@ -357,7 +357,9 @@ fn an_importer_of_a_module_only_a_build_describes_is_read_with_it() {
 
 /// A module of the path migrate would write the rows to that is there
 /// already with other bytes, readable or not, is never overwritten, and
-/// the file that would import it is not written either.
+/// the file that would import it is not written either. One the project
+/// reads as a script is the project's, and keeps the file; one it cannot
+/// read is refused.
 #[test]
 fn a_rows_module_there_already_is_not_overwritten() {
     const TABLE: &str = "import QtQuick\nItem {\n    ListModel { id: zones; ListElement { city: \"Oslo\"; shift: 1 } }\n    Repeater { model: zones; Text { text: model.city } }\n}\n";
@@ -367,8 +369,18 @@ fn a_rows_module_there_already_is_not_overwritten() {
         write(dir.path(), "app/Main.qml", TABLE);
         std::fs::write(dir.path().join("app/Main.rows.ts"), there).unwrap();
         let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
-        assert_ne!(status, 0, "{out}{err}");
-        assert!(err.contains("app/Main.rows.ts: is there already"), "{err}");
+        if there == not_text {
+            assert_eq!(status, 2, "{out}{err}");
+            assert!(err.contains("app/Main.rows.ts: is there already"), "{err}");
+        } else {
+            assert_eq!(status, 0, "{out}{err}");
+            assert!(
+                out.starts_with(
+                    "kept app/Main.qml:1:1: `Main.rows.ts` is a script of the project's"
+                ),
+                "{out}"
+            );
+        }
         assert_eq!(
             std::fs::read(dir.path().join("app/Main.rows.ts")).unwrap(),
             there
