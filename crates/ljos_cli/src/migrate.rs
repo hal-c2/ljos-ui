@@ -8,6 +8,12 @@
 //! | To | What |
 //! |---|---|
 //! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
+//!
+//! A file is lowered with the files it names and that name it (`qml_compat::group`). When that
+//! group holds a file that was not named, none of it is written: the named file is kept, saying
+//! which file to name too, as the one would be renamed to match the other lowered while the other
+//! stays Qt's.
+//!
 //! | stderr | `<file>: <error>` for a file that could not be read or written |
 //!
 //! | Status | Means |
@@ -16,7 +22,7 @@
 //! | 2 | A file could not be read or written, or a directory read as a project; the others were still handled. |
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -58,11 +64,18 @@ impl Migrate {
         // the modules and directories a file imports are files to it.
         let mut files: Vec<(PathBuf, usize)> = Vec::new();
         let mut roots: Vec<PathBuf> = Vec::new();
+        // The roots a file was named in: the other files there are read too.
+        let mut around: BTreeSet<usize> = BTreeSet::new();
         for path in &self.paths {
             let root = if path.is_dir() {
                 path.clone()
             } else {
-                path.parent().unwrap_or(Path::new(".")).to_owned()
+                // `Main.qml`'s parent is the empty path: the directory the
+                // command runs in.
+                path.parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or(Path::new("."))
+                    .to_owned()
             };
             let at = roots.iter().position(|r| *r == root).unwrap_or_else(|| {
                 roots.push(root);
@@ -76,6 +89,7 @@ impl Migrate {
                 }
                 files.extend(below.into_iter().map(|file| (file, at)));
             } else {
+                around.insert(at);
                 files.push((path.clone(), at));
             }
         }
@@ -110,6 +124,30 @@ impl Migrate {
             // No style chosen is Basic, as in Qt 6.
             .map_or_else(|| qml_compat::CONTROLS_STYLE.to_owned(), |style| style.name)
         });
+        // What the pass makes of `file` alone, with the files of its uses
+        // keyed by their paths.
+        let alone_of = |file: &Path, at: usize, text: &str| {
+            let root = &roots[at];
+            let mut one = match &projects[at] {
+                Some(project) => project.compat_alone(&key_in(root, file), text),
+                None => qml_compat::Alone {
+                    outcome: qml_compat::lower(
+                        text,
+                        &qml_compat::Styled {
+                            locals: &|_: &str| None,
+                            style: &style,
+                        },
+                    ),
+                    references: qml_compat::references(text),
+                    uses: Vec::new(),
+                },
+            };
+            // The project's keys are from its root; these are the paths.
+            for used in &mut one.uses {
+                *used = key_of(&root.join(format!("{used}.qml")));
+            }
+            one
+        };
         // Every file first: files that name one another are lowered
         // together, as a lowered run lowers them (`qml_compat::group`).
         let mut alone = BTreeMap::new();
@@ -123,31 +161,64 @@ impl Migrate {
                     continue;
                 }
             };
-            let root = &roots[*at];
-            let mut one = match &projects[*at] {
-                Some(project) => project.compat_alone(&key_in(root, file), &text),
-                None => qml_compat::Alone {
-                    outcome: qml_compat::lower(
-                        &text,
-                        &qml_compat::Styled {
-                            locals: &|_: &str| None,
-                            style: &style,
-                        },
-                    ),
-                    references: qml_compat::references(&text),
-                    uses: Vec::new(),
-                },
-            };
-            // The project's keys are from its root; these are the paths.
-            for used in &mut one.uses {
-                *used = key_of(&root.join(format!("{used}.qml")));
-            }
             let key = key_of(file);
-            alone.insert(key.clone(), one);
+            alone.insert(key.clone(), (alone_of(file, *at, &text), *at));
             texts.insert(key, (file, text));
         }
+        // Then the files a group may hold that were not named: the others
+        // beside a file named, and every file a file uses, until no more
+        // are found. Each is read, never written: one the pass would lower
+        // keeps its group, so a named file is not lowered to match a file
+        // that stays Qt's.
+        let mut unnamed: Vec<(PathBuf, usize)> = Vec::new();
+        for &at in &around {
+            let mut below = Vec::new();
+            // A file that cannot be read is said where it is named.
+            let _ = files_below(&roots[at], is_qml, &mut below);
+            unnamed.extend(below.into_iter().map(|file| (file, at)));
+        }
+        loop {
+            let used: Vec<(PathBuf, usize)> = alone
+                .values()
+                .flat_map(|(one, at): &(qml_compat::Alone, usize)| {
+                    one.uses
+                        .iter()
+                        .map(move |key| (PathBuf::from(format!("{key}.qml")), *at))
+                })
+                .filter(|(file, _)| !alone.contains_key(&key_of(file)))
+                .collect();
+            unnamed.extend(used);
+            let mut found = false;
+            for (file, at) in std::mem::take(&mut unnamed) {
+                let key = key_of(&file);
+                if alone.contains_key(&key) {
+                    continue;
+                }
+                let Ok(text) = std::fs::read_to_string(&file) else {
+                    continue;
+                };
+                let mut one = alone_of(&file, at, &text);
+                if let Outcome::Lowered(_) = one.outcome {
+                    one.outcome = Outcome::Kept(qml_compat::Kept {
+                        reason: "it is not named: name it too".into(),
+                        at: 0,
+                    });
+                }
+                alone.insert(key, (one, at));
+                found = true;
+            }
+            if !found {
+                break;
+            }
+        }
+        let alone: BTreeMap<String, qml_compat::Alone> = alone
+            .into_iter()
+            .map(|(key, (one, _))| (key, one))
+            .collect();
         for (key, outcome) in qml_compat::group(&alone) {
-            let (file, text) = &texts[&key];
+            let Some((file, text)) = texts.get(&key) else {
+                continue;
+            };
             match outcome {
                 Outcome::Unchanged => {}
                 Outcome::Kept(why) => {
@@ -182,6 +253,7 @@ fn key_of(file: &Path) -> String {
     let path = file.with_extension("");
     let parts: Vec<String> = path
         .components()
+        .filter(|c| !matches!(c, std::path::Component::CurDir))
         .map(|c| c.as_os_str().to_string_lossy().into_owned())
         .collect();
     let joined = parts.join("/");
