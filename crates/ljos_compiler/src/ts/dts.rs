@@ -22,7 +22,8 @@ pub const API: &str = "Ljos.Ui";
 pub const MODULES: &[&str] = &[API, "Ljos.Core"];
 
 /// The modules of Ljós's API `source` imports, by their own names, in the
-/// order of [`MODULES`].
+/// order of [`MODULES`]. An import under an alias counts: the file sees the
+/// module, as the checker's `is_dialect` does.
 pub fn modules_of(source: &str) -> Vec<&'static str> {
     let allocator = qml_syntax::Allocator::default();
     let parsed = qml_syntax::parse(&allocator, source);
@@ -31,8 +32,7 @@ pub fn modules_of(source: &str) -> Vec<&'static str> {
         .copied()
         .filter(|uri| {
             parsed.document.imports.iter().any(|import| {
-                import.alias.is_none()
-                    && matches!(&import.source, qml_syntax::ast::QmlImportSource::Module(name) if name.to_string() == *uri)
+                matches!(&import.source, qml_syntax::ast::QmlImportSource::Module(name) if name.to_string() == *uri)
             })
         })
         .collect()
