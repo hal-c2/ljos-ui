@@ -41,6 +41,10 @@ pub struct Tree<'a, T> {
     targets: HashMap<usize, &'a str>,
     /// The PropertyChanges among them: what one changes is given its target.
     given: HashSet<usize>,
+    /// Where a template goes, a binding or property whose value names a
+    /// type (`component: Page`), by the binding's span. Ljós's API takes it
+    /// for an object of the type, written with nothing in it (DIALECT §4.11).
+    pub named_templates: Vec<Span>,
 }
 
 #[derive(Debug)]
@@ -136,6 +140,7 @@ impl<'a, T: Copy + Eq> Tree<'a, T> {
                 changes: Vec::new(),
                 targets: HashMap::new(),
                 given: HashSet::new(),
+                named_templates: Vec::new(),
             },
             types,
             assigned,
@@ -596,16 +601,23 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                                 && (leaves_required(&binding.value) || takes_component(&path))
                         }
                     };
+                    if template {
+                        self.named_template(binding.span, &binding.value);
+                    }
                     self.values(&binding.value, context, template);
                 }
                 QmlMember::Property(QmlPropertyDeclaration {
                     value: Some(value),
                     type_name,
+                    span,
                     ..
                 }) => {
                     let template = type_name.as_ref().is_some_and(|type_name| {
                         type_name.name.as_simple() == Some("Component") && !type_name.is_list
                     });
+                    if template {
+                        self.named_template(*span, value);
+                    }
                     self.values(value, context, template);
                 }
                 QmlMember::InlineComponent(inline) => {
@@ -676,6 +688,20 @@ impl<'a, O: TypeOracle> Analysis<'a, '_, '_, O> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Whether `value`, written where a template goes, names a type.
+    fn named_template(&mut self, span: Span, value: &QmlBindingValue<'a>) {
+        let QmlBindingValue::Expression(expression) = value else {
+            return;
+        };
+        let Some(path) = crate::project::dotted(expression) else {
+            return;
+        };
+        let parts: Vec<&str> = path.iter().map(String::as_str).collect();
+        if self.types.find(&parts).is_some() {
+            self.tree.named_templates.push(span);
         }
     }
 
