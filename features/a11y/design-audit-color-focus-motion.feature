@@ -382,6 +382,58 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit does not report "focus-order"
 
+    Scenario: Tab from a page scrolled below its fold to the footer under it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Column {
+            x: 20; y: 20; spacing: 8
+            Flickable {
+              width: 200; height: 120
+              clip: true
+              contentHeight: page.height
+              Column {
+                id: page
+                spacing: 8
+                TextField { placeholderText: "Name" }
+                Item { width: 1; height: 300 }
+                ComboBox { model: ["Never", "Always"] }
+              }
+            }
+            Button { text: "Done" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-order"
+
+    Scenario: Tab back up a page that scrolls
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Flickable {
+            x: 20; y: 20; width: 200; height: 240
+            clip: true
+            contentHeight: page.height
+            Column {
+              id: page
+              spacing: 8
+              TextField { id: name; placeholderText: "Name"; KeyNavigation.tab: city }
+              TextField { id: street; placeholderText: "Street"; KeyNavigation.tab: name }
+              TextField { id: city; placeholderText: "City"; KeyNavigation.tab: street }
+            }
+          }
+        }
+        """
+      Then the design audit reports "focus-order"
+
     Scenario: A dialog that Escape does not close
       Given the QML:
         """qml

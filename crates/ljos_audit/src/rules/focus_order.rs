@@ -12,11 +12,17 @@
 //!
 //! Rows are what overlap vertically by `limits::keyboard::ROW_OVERLAP` of
 //! the shorter; a column is what overlaps horizontally at all.
+//!
+//! A stop inside a scroller the other stop is not in is placed where the
+//! scroller is: its laid-out place may be far below the fold, but it is
+//! read where the scroller is read.
 
 use ljos_design::limits::keyboard::ROW_OVERLAP;
 use ljos_render::kurbo::Rect;
 
-use crate::cx::{Cx, declared_by_app, scene_rect, shown_items, words};
+use ljos_engine::{Engine, ObjectId};
+
+use crate::cx::{Cx, ancestors, declared_by_app, is_scroller, scene_rect, shown_items, words};
 use crate::focus_walk::rounds;
 
 fn row_overlap(a: Rect, b: Rect) -> bool {
@@ -28,6 +34,25 @@ fn column_overlap(a: Rect, b: Rect) -> bool {
     a.x1.min(b.x1) - a.x0.max(b.x0) > 0.0
 }
 
+/// The scrollers `item` lies in, outermost first.
+fn scrollers(engine: &Engine, item: ObjectId) -> Vec<ObjectId> {
+    let mut out: Vec<_> = ancestors(engine, item)
+        .filter(|a| is_scroller(engine, *a))
+        .collect();
+    out.reverse();
+    out
+}
+
+/// Where the stop is read beside another: its own place when both lie in
+/// the same scrollers, otherwise the place of the outermost scroller it
+/// lies in and the other does not.
+fn read_at(engine: &Engine, at: Rect, own: &[ObjectId], other: &[ObjectId]) -> Rect {
+    let shared = own.iter().zip(other).take_while(|(a, b)| a == b).count();
+    own.get(shared)
+        .and_then(|s| scene_rect(engine, *s))
+        .unwrap_or(at)
+}
+
 pub(crate) fn check(cx: &mut Cx) {
     let e = cx.engine;
     let drawn: std::collections::HashSet<_> = shown_items(cx).into_iter().collect();
@@ -37,11 +62,13 @@ pub(crate) fn check(cx: &mut Cx) {
         let placed: Vec<_> = round
             .into_iter()
             .filter(|s| drawn.contains(s))
-            .filter_map(|s| scene_rect(e, s).map(|r| (s, r)))
-            .filter(|(_, r)| r.width() >= 1.0 && r.height() >= 1.0)
+            .filter_map(|s| scene_rect(e, s).map(|r| (s, r, scrollers(e, s))))
+            .filter(|(_, r, _)| r.width() >= 1.0 && r.height() >= 1.0)
             .collect();
         for pair in placed.windows(2) {
-            let ((from, a), (to, b)) = (pair[0], pair[1]);
+            let ((from, a, sa), (to, b, sb)) = (&pair[0], &pair[1]);
+            let (from, to) = (*from, *to);
+            let (a, b) = (read_at(e, *a, sa, sb), read_at(e, *b, sb, sa));
             // Nested stops (a field inside a spin box) are one place.
             if a.contains_rect(b) || b.contains_rect(a) {
                 continue;
