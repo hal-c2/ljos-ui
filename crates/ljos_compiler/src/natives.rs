@@ -1,0 +1,105 @@
+//! What the compat pass is told of a program's own types: what the
+//! checker's [`TypeOracle`] has of them, so a file is lowered against the
+//! types it is checked against.
+
+use std::cell::RefCell;
+
+use qml_compat::{Holds, Native};
+use qml_front::{QtTypeOracle, TypeOracle};
+
+/// The native types `oracle` has beside the table of types, as
+/// [`qml_compat::Natives`].
+pub struct OracleNatives<'o, O: TypeOracle> {
+    oracle: &'o O,
+    /// The types handed out, by their [`Native`] number.
+    types: RefCell<Vec<O::Type>>,
+}
+
+impl<O: TypeOracle> std::fmt::Debug for OracleNatives<'_, O> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OracleNatives")
+            .field("types", &self.types.borrow().len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl<'o, O: TypeOracle> OracleNatives<'o, O> {
+    pub fn new(oracle: &'o O) -> Self {
+        OracleNatives {
+            oracle,
+            types: RefCell::default(),
+        }
+    }
+
+    fn number(&self, ty: O::Type) -> Native {
+        let mut types = self.types.borrow_mut();
+        let at = types.iter().position(|t| *t == ty).unwrap_or_else(|| {
+            types.push(ty);
+            types.len() - 1
+        });
+        Native(u32::try_from(at).expect("fewer native types than u32 numbers"))
+    }
+
+    fn ty(&self, native: Native) -> O::Type {
+        self.types.borrow()[native.0 as usize]
+    }
+
+    /// Whether `ty` is a type of the table, the toolkit's.
+    fn is_toolkit(&self, ty: O::Type) -> bool {
+        self.oracle.module(ty).is_some_and(|module| {
+            QtTypeOracle
+                .module_type(&module, self.oracle.name(ty))
+                .is_some()
+        })
+    }
+}
+
+impl<O: TypeOracle> qml_compat::Natives for OracleNatives<'_, O> {
+    fn has_module(&self, uri: &str) -> bool {
+        // A module of the table's is the toolkit's, whatever the program
+        // registers in it.
+        self.oracle.has_module(uri) && !QtTypeOracle.has_module(uri)
+    }
+
+    fn module_type(&self, uri: &str, name: &str) -> Option<Native> {
+        if !self.has_module(uri) {
+            return None;
+        }
+        let ty = self.oracle.module_type(uri, name)?;
+        Some(self.number(ty))
+    }
+
+    fn name(&self, ty: Native) -> String {
+        self.oracle.name(self.ty(ty)).to_owned()
+    }
+
+    fn is_singleton(&self, ty: Native) -> bool {
+        self.oracle.is_singleton(self.ty(ty))
+    }
+
+    fn has_member(&self, ty: Native, name: &str) -> bool {
+        let ty = self.ty(ty);
+        let oracle = self.oracle;
+        oracle.property(ty, name).is_some()
+            || oracle.signal(ty, name).is_some()
+            || oracle.has_method(ty, name)
+            || oracle.has_enum(ty, name)
+    }
+
+    fn property(&self, ty: Native, name: &str) -> Option<Holds> {
+        let property = self.oracle.property(self.ty(ty), name)?;
+        Some(match property.value {
+            Some(held) if self.is_toolkit(held) => Holds::Toolkit {
+                module: self.oracle.module(held)?,
+                name: self.oracle.name(held).to_owned(),
+            },
+            Some(held) => Holds::Native(self.number(held)),
+            None => Holds::Value,
+        })
+    }
+
+    fn toolkit_base(&self, ty: Native) -> Option<(String, String)> {
+        let base = self.oracle.toolkit_base(self.ty(ty))?;
+        Some((self.oracle.module(base)?, self.oracle.name(base).to_owned()))
+    }
+}

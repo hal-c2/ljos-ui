@@ -8,12 +8,12 @@
 //! | To | What |
 //! |---|---|
 //! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
-//! | stderr | `<file>: <error>` for a file that could not be read or written |
+//! | stderr | `<file>: <error>` for a file that could not be read or written, or a description of the program's types that could not be read |
 //!
 //! | Status | Means |
 //! |---|---|
 //! | 0 | Every file was read (a kept file is not a failure: it runs as written). |
-//! | 2 | A file could not be read or written; the others were still handled. |
+//! | 2 | A file could not be read or written; the others were still handled. Or the program's types could not be read, and nothing was. |
 
 use std::{
     collections::BTreeMap,
@@ -43,6 +43,12 @@ pub struct Migrate {
     /// (`QT_QUICK_CONTROLS_STYLE`, `QT_QUICK_CONTROLS_CONF`, the platform's).
     #[arg(long, value_name = "NAME")]
     style: Option<String>,
+    /// The program's own types, as `ljos run --types` reads them: a file
+    /// that imports a module of them is lowered against them. Without it,
+    /// the `ljostypes.json` of the first directory given (of a file, its
+    /// own) that has one.
+    #[arg(long, value_name = "FILE")]
+    types: Option<PathBuf>,
 }
 
 impl Migrate {
@@ -68,6 +74,15 @@ impl Migrate {
             // No style chosen is Basic, as in Qt 6.
             .map_or_else(|| qml_compat::CONTROLS_STYLE.to_owned(), |style| style.name)
         });
+        let oracle = match self.oracle() {
+            Ok(oracle) => oracle,
+            Err(e) => {
+                eprintln!("{e:#}");
+                return 2;
+            }
+        };
+        let natives = oracle.as_ref().map(ljos_compiler::OracleNatives::new);
+        let natives = natives.as_ref().map(|n| n as &dyn qml_compat::Natives);
         // Every file first: files that name one another are lowered
         // together, as a lowered run lowers them (`qml_compat::group`).
         let mut alone = BTreeMap::new();
@@ -97,6 +112,7 @@ impl Migrate {
                         &qml_compat::Styled {
                             locals: &locals,
                             style: &style,
+                            natives,
                         },
                     ),
                     references: qml_compat::references(&text),
@@ -131,6 +147,33 @@ impl Migrate {
         }
         outln!("{} files, {lowered} lowered, {kept} kept", files.len());
         if failed { 2 } else { 0 }
+    }
+}
+
+impl Migrate {
+    /// What the checker is told of the program's own types, where they
+    /// are described.
+    fn oracle(&self) -> anyhow::Result<Option<ljos::dev::EngineOracle>> {
+        let named = self.types.as_deref();
+        let file = match named {
+            Some(_) => crate::run::types_file(named, Path::new(".")),
+            None => self.paths.iter().find_map(|path| {
+                let dir = if path.is_dir() {
+                    path.as_path()
+                } else {
+                    path.parent().unwrap_or(Path::new("."))
+                };
+                let dir = if dir.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    dir
+                };
+                crate::run::types_file(None, dir)
+            }),
+        };
+        crate::run::read_types(file)?
+            .map(|types| crate::run::oracle_for_types(&types))
+            .transpose()
     }
 }
 
