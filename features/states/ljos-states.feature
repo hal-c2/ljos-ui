@@ -213,6 +213,31 @@ Feature: States in Ljós's API
         ljos: 4 errors
         """
 
+    # Qt's apps keep the next state in a string property (coffee's `previousState`), and qml6 runs
+    # them: a string a script holds names a state only as it runs, so it is let in, as `===` lets it.
+    @ljos-only @headless
+    Scenario: A string a script holds goes into `state`, and a name written out it lacks does not
+      Given the file "Button.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          id: button
+          property string previous: ""
+          property bool wide: false
+          function go(next: string) { button.state = next }
+          function back() { state = previous }
+          function pick() { state = wide ? "on" : "of" }
+          states: [ State { name: "on" } ]
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Button.qml:8:37: error: `state` is `"" | "on"`; this gives it `"on" | "of"` [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     # A state named by an expression is known only as the file runs, and a component's states are
     # declared in its own file: `state` is then any string.
     @ljos-only @headless

@@ -882,6 +882,11 @@ as it runs, or there.
 DECISION: only strings written out are said never to be equal, as
 TypeScript says of types with no overlap; any other comparison is let by.
 
+DECISION: a `string` goes into `state`, where TypeScript would refuse it:
+Qt's apps keep the next state in a string property (coffee's
+`ApplicationFlow.qml` sets `state = previousState`). Only a name written
+out, or a union of them, that the file does not declare is an error.
+
 Remaining: `Transition.from`/`to` (a comma list, as qml6 reads it) and an
 animation's `properties` are checked once `Transition` is in `Ljos.Ui`.
 
