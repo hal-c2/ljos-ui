@@ -1460,10 +1460,19 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
                 Ty::BOOLEAN
             }
-            BinaryOperator::StrictEquality
-            | BinaryOperator::StrictInequality
-            | BinaryOperator::In
-            | BinaryOperator::Instanceof => Ty::BOOLEAN,
+            BinaryOperator::StrictEquality | BinaryOperator::StrictInequality => {
+                if self.never_equal(left, right) {
+                    let display = |ty| self.arena.display(ty, &|o| self.obj_name(o));
+                    let (left, right) = (display(left), display(right));
+                    self.report(
+                        Code::TsAssignType,
+                        format!("`{op}` compares `{left}` with `{right}`, which it never is"),
+                        span,
+                    );
+                }
+                Ty::BOOLEAN
+            }
+            BinaryOperator::In | BinaryOperator::Instanceof => Ty::BOOLEAN,
             BinaryOperator::LessThan
             | BinaryOperator::LessEqualThan
             | BinaryOperator::GreaterThan
