@@ -258,7 +258,9 @@ impl Api {
     /// The TypeScript type of a declaration the file writes as `name`. A
     /// word that nothing the file imports names is written as it is, so
     /// TypeScript says it cannot find it, as the checker does; a value type
-    /// every file may write (`font`) stays `unknown`. None for a date.
+    /// every file may write (`font`) stays `unknown`. None for a date. The
+    /// declarations have none of a project's own types, so the caller, which
+    /// can find those, writes them `unknown`.
     pub fn written_type(&self, name: &str) -> Option<String> {
         if is_date(name) {
             return None;
