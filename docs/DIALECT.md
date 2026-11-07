@@ -864,6 +864,40 @@ construction.
 - `wrapMode: Text.WordWrap` → `wrap: Text.Wrap.Word`, and every other enum
   the same way, by its owner in the table.
 
+Built (phase 1): `Ljos.Ui`'s `Text` calls `horizontalAlignment`,
+`wrapMode` and `textFormat` `align`, `wrap` and `format`, with their change
+handlers (`onAlignChanged`); `elide` keeps its name. A font's pixel size is
+also its `size`. The pass renames these wherever a member is named: a
+binding, a group (`font { pixelSize: 12 }`), a `PropertyChanges`
+(`label.font.size: 40`), a handler and a script. `font.bold: true` lowers
+to `font.weight: Font.Bold`, `false` to `Font.Normal`, and an expression
+`e` to `(e) ? Font.Bold : Font.Normal`.
+
+DECISION: the enums keep Qt's names for now. `align: Text.AlignRight`,
+`wrap: Text.WordWrap` and `Font.Bold` are what a Ljós file says until the
+enum cleanup (M3); `Text.Wrap.Word`, `Font.Weight.Bold` and the shared
+`Align` above are where it goes.
+
+DECISION: the font is one value type for the whole engine, not one per
+module, so `size` is a second name for `pixelSize` on every font, and a Qt
+file can say `font.size` too. A Ljós file is not yet held to `size` and
+`weight`; that waits for natives to take the API's names (M5).
+
+A file is kept, for now, when:
+
+- a script reads or writes `.bold` of a font (Ljós's font has only a
+  `weight`, and a read of it is not a boolean);
+- it sets both `font.bold` and `font.weight` (in Ljós they are one
+  `weight`);
+- it sets `font.bold` to a block;
+- it sets `font.pointSize` (until `Screen` is in `Ljos.Ui`);
+- it reads `.pixelSize`, `.bold` or `.pointSize` off something whose type
+  is not known (`property var face`, `face.pixelSize`), or reads
+  `font["pixelSize"]`.
+
+`fillMode` → `fit` is `Image`'s, and `TextInput`'s and `TextEdit`'s
+renames are theirs: they follow when those types are in `Ljos.Ui`.
+
 ### 4.14 Every Qt construct, and where it goes
 
 | Qt | Ljós | Lowering |
@@ -896,9 +930,10 @@ construction.
 | `Component { id }` | an inline `component X:` or an inline delegate | mechanical |
 | `palette.*` | `Theme.color.*` | mechanical where 1:1 |
 | `Material.*`, `Universal.*` | — | DECISION: kept (a style's own API) |
-| `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical |
+| `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical; `font.bold` lowers to `Font.Bold`/`Font.Normal`; kept when a script reads or writes `.bold`, both `bold` and `weight` are set, or a font member is read off a type that is not known; built |
 | `font.pointSize` | `font.size: Screen.points(…)` | kept until `Screen` lands (M1), then mechanical (a run-time conversion) |
-| `horizontalAlignment`, `wrapMode`, `elide`, `textFormat`, `fillMode` | `align`, `wrap`, `elide`, `format`, `fit` | mechanical |
+| `horizontalAlignment`, `wrapMode`, `elide`, `textFormat` (on `Text`) | `align`, `wrap`, `elide`, `format` | mechanical; enum values keep Qt's names until M3; built |
+| `fillMode` (on `Image`), and `TextInput`'s and `TextEdit`'s text members | `fit`, and `Text`'s names | mechanical once the type is in `Ljos.Ui` |
 | `Qt.*` globals | `Ljos.Core`, `App`, value types (§4.3) | mechanical, by member |
 | `date`, `Date` | `Instant`, `Locale` | mechanical when only stored or compared, else kept |
 | `Screen.primaryOrientation` | the window's aspect | DECISION: kept; the meaning differs on desktops |
@@ -1106,6 +1141,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | A type or module the API has not taken (`Column`, `Behavior`, `QtQuick.Controls`, …) | Lowered as the API grows (M1, M6) |
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
+| `.bold` of a font read or written by a script, `font.bold` with `font.weight`, `font.pointSize`, or a font member read off a type that is not known (§4.13) | Kept until the pass knows more types (M4) and `Screen` lands (M1) |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
 | `property var` whose type is not known | Kept until M4 decoders |
 
@@ -1359,7 +1395,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); a load-time budget gate. Built: `Text`'s `align`, `wrap` and `format`, and a font's `size` and `weight` (§4.13). Remaining: the items, and `Image`'s `fit` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
