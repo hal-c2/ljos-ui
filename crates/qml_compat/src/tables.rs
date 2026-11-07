@@ -95,11 +95,11 @@ pub(crate) fn tables(
             || !given
                 .iter()
                 .all(|v| delegate_reads_rows(v, &rows, is_qt_type))
-            || declares(root, &id)
+            || declares(root, id)
         {
             continue;
         }
-        let row = unique(&mut taken, &type_name(&id));
+        let row = unique(&mut taken, &type_name(id));
         let head = format!("readonly property list<{ALIAS}.{row}> {id}: [");
         if let Some(table) = write(source, model, model.span.start, head, "]", &rows, row) {
             found.push(table);
@@ -123,7 +123,7 @@ pub(crate) fn tables(
             continue;
         }
         let base = match crate::object_id(view.object) {
-            Some(id) => type_name(&id),
+            Some(id) => type_name(id),
             None => "Row".to_string(),
         };
         let row = unique(&mut taken, &base);

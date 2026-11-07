@@ -792,8 +792,8 @@ impl<'s> Pass<'s> {
                 QmlMember::Object(child) if self.is_table(child) => {
                     // A list of objects, which is not looked into.
                     if let Some(id) = object_id(child) {
-                        self.ids.push((id.clone(), Ty::Plain));
-                        self.listed.push((id, Rows::Roles));
+                        self.ids.push((id.to_owned(), Ty::Plain));
+                        self.listed.push((id.to_owned(), Rows::Roles));
                     }
                 }
                 QmlMember::Object(child) => {
@@ -801,7 +801,7 @@ impl<'s> Pass<'s> {
                         && let Some(id) = object_id(child)
                     {
                         let rows = rows::of_roles(rows::listed_roles(child), true);
-                        self.listed.push((id, rows));
+                        self.listed.push((id.to_owned(), rows));
                     }
                     self.collect(child);
                 }
@@ -1243,6 +1243,9 @@ impl<'s> Pass<'s> {
             .then(|| std::mem::replace(&mut self.declared, declared(object)));
         let is_changes = matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges");
         let is_connections = matches!(ty, Ty::Exact(t) if t.name == "Connections");
+        if matches!(ty, Ty::Exact(t) | Ty::Derived(t) if is_loader(t)) {
+            self.loader_source(object)?;
+        }
         let target = if is_changes || is_connections {
             Some(self.target(object))
         } else {
@@ -1372,6 +1375,58 @@ impl<'s> Pass<'s> {
             self.change(at.start as usize..at.end as usize, new);
         }
         self.named_type(name, at.start as usize, 0).map(|_| ())
+    }
+
+    /// `source: "Page.qml"` on a Loader is `component: Page` (DIALECT
+    /// §4.11): the file is a type of the project, and a component of it is
+    /// what the Loader made of the string. Anything else a `source` says is
+    /// only known when it runs, so the file is kept.
+    fn loader_source(&mut self, object: &QmlObject<'_>) -> Step {
+        let Some(binding) = object.members.iter().find_map(|member| match member {
+            QmlMember::Binding(binding) if binding.name.as_simple() == Some("source") => {
+                Some(binding)
+            }
+            _ => None,
+        }) else {
+            return Ok(());
+        };
+        let at = binding.name.span.start as usize;
+        let QmlBindingValue::Expression(Expression::StringLiteral(url)) = &binding.value else {
+            return Err(self.no(
+                "a `Loader`'s `source` is made as it runs, so what it loads is not known".into(),
+                at,
+            ));
+        };
+        let file = url.value.as_str();
+        let name = file
+            .strip_prefix("./")
+            .unwrap_or(file)
+            .strip_suffix(".qml")
+            .filter(|name| !name.is_empty() && !name.contains(['/', '\\', ':']));
+        let Some(name) = name.filter(|name| self.locals.root(name).is_some()) else {
+            return Err(self.no(
+                format!("a `Loader`'s `source` is \"{file}\", which is not a file beside this one"),
+                at,
+            ));
+        };
+        // The Loader's `source` is then empty: whatever reads it, or hears
+        // it change, would be told otherwise.
+        let reads = object_id(object).is_some_and(|id| {
+            self.source.contains(&format!("{id}.source"))
+                || self.source.contains(&format!("{id}.setSource"))
+        }) || object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("onSourceChanged"))
+        });
+        if reads {
+            return Err(self.no(
+                "a `Loader`'s `source` is read or set as well as written".into(),
+                at,
+            ));
+        }
+        let span = binding.name.span;
+        self.change(span.start as usize..span.end as usize, "component");
+        self.change(url.span.start as usize..url.span.end as usize, name);
+        Ok(())
     }
 
     /// What a `PropertyChanges` or `Connections` acts on.
@@ -1707,21 +1762,6 @@ impl<'s> Pass<'s> {
     }
 }
 
-/// The id an object binds.
-fn object_id(object: &QmlObject<'_>) -> Option<String> {
-    object.members.iter().find_map(|member| match member {
-        QmlMember::Binding(binding) if binding.name.as_simple() == Some("id") => {
-            match &binding.value {
-                QmlBindingValue::Expression(Expression::Identifier(id)) => {
-                    Some(id.name.to_string())
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    })
-}
-
 /// What a script writes of a delegate's row, held until the script is
 /// read whole: a local it declares later may be what a name is.
 #[derive(Default)]
@@ -1890,6 +1930,30 @@ fn lookup_rename(renames: &[(&str, &str)], name: &str) -> Option<String> {
         // The change signal follows the property.
         let signal = name.strip_suffix("Changed")?;
         (signal == *old).then(|| format!("{new}Changed"))
+    })
+}
+
+/// Whether `ty` is, or is built on, a `Loader`.
+fn is_loader(ty: &'static Type) -> bool {
+    let mut at = Some(ty);
+    while let Some(ty) = at {
+        if ty.name == "Loader" {
+            return true;
+        }
+        at = ty.prototype();
+    }
+    false
+}
+
+/// The `id` an object gives itself.
+fn object_id<'a>(object: &QmlObject<'a>) -> Option<&'a str> {
+    object.members.iter().find_map(|member| match member {
+        QmlMember::Binding(QmlBinding {
+            name,
+            value: QmlBindingValue::Expression(Expression::Identifier(id)),
+            ..
+        }) if name.as_simple() == Some("id") => Some(id.name.as_str()),
+        _ => None,
     })
 }
 
