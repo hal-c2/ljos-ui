@@ -1052,7 +1052,7 @@ impl Engine {
 
     /// The fields of a record or of a plain JS object; `None` for a
     /// function, which is only itself.
-    fn fields(&self, v: &Value) -> Option<Vec<(String, Value)>> {
+    pub(crate) fn fields(&self, v: &Value) -> Option<Vec<(String, Value)>> {
         match v {
             Value::Map(m) => Some(m.iter().map(|(k, v)| (k.to_string(), v.clone())).collect()),
             Value::Js(_) if self.is_callable(v) => None,

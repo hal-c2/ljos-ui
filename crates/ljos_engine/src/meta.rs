@@ -429,6 +429,9 @@ pub struct MetaObject {
     pub plain_object: bool,
     /// The type is its base under other names ([`MetaBuilder::face`]).
     face: bool,
+    /// A face of the faced type's base, which a description of this face
+    /// builds on ([`MetaBuilder::face_over`]).
+    face_base: Option<MetaRef>,
     /// Declared a functional block. Boxed: nearly no type is one.
     pub block: Option<Box<BlockInfo>>,
     lookup: OnceLock<Lookup>,
@@ -592,7 +595,7 @@ impl MetaObject {
     /// members are the face's own under their new names.
     pub fn prototype(&self) -> Option<&MetaRef> {
         match self.face_of() {
-            Some(of) => of.base.as_ref(),
+            Some(of) => self.face_base.as_ref().or(of.base.as_ref()),
             None => self.base.as_ref(),
         }
     }
@@ -978,6 +981,7 @@ impl MetaBuilder {
                 required_at: Vec::new(),
                 plain_object: false,
                 face: false,
+                face_base: None,
                 block: None,
                 lookup: OnceLock::new(),
                 classes: RwLock::new(Vec::new()),
@@ -1444,9 +1448,32 @@ impl MetaBuilder {
         m.native = of.native;
         m.plain_object = of.plain_object;
         m.attached = of.attached;
+        m.default_property = of.default_property.clone();
         m.required_at = of.required_at.clone();
         m.face = true;
         b
+    }
+
+    /// Builds a [face](Self::face) on `base`, a face of the faced type's
+    /// base, so that what it inherits is named as `base` names it: renamed
+    /// here too ([`rename`](Self::rename) finds an inherited member), and
+    /// described as `base`'s. Panics when `base` is not such a face.
+    #[inline(never)]
+    pub fn face_over(mut self, base: impl Into<MetaRef>) -> Self {
+        let base = base.into();
+        let m = &mut self.meta;
+        assert!(m.face, "{}: only a face builds on a face", m.name);
+        let faced_base = m.base.as_ref().and_then(|of| of.base.clone());
+        assert!(
+            base.face_of()
+                .zip(faced_base.as_ref())
+                .is_some_and(|(of, b)| MetaRef::ptr_eq(of, b)),
+            "{}: {} is not a face of its base",
+            m.name,
+            base.name
+        );
+        m.face_base = Some(base);
+        self
     }
 
     /// Calls the member `old` of a [face](Self::face) `new`: a property,
