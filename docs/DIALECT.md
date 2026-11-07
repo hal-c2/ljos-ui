@@ -1075,6 +1075,28 @@ every move is a JS write per block.
 
 **Lowering.** `Loader { source: "X.qml" }` with a static string →
 `Loader { component: X }`. `sourceComponent` → `component`.
+
+Built (phase 1): `Ljos.Ui`'s `Loader` has `component` for Qt's
+`sourceComponent` (and `componentChanged`, `onComponentChanged`). In a file
+of Ljós's API, a type named where a component goes — `component: Page`,
+`property Component shown: Page` — is a component of that type, as
+`Page {}` written there is. The compat pass writes
+`source: "Page.qml"` (or `"./Page.qml"`) as `component: Page` when
+`Page.qml` is beside the file. It keeps the file when the string is made
+as it runs (`page + ".qml"`, `Qt.resolvedUrl(…)`), names a file elsewhere
+(`"pages/Page.qml"`, `qrc:`), or when the Loader's `source` is also read,
+set or handled (`loader.source`, `setSource`, `onSourceChanged`): after
+lowering it is empty.
+
+DECISION: `Ljos.Ui`'s `Loader` keeps `source` beside `component`. A face
+renames members and cannot leave one out, and `setSource` is how a file
+loaded by name gets its properties. "No file is named by a string" holds
+for what the compat pass writes and is for `ljos check` to say, not yet
+for the type.
+
+DECISION: a type named where a component goes is a component only in a
+file that imports `Ljos.Ui`. In Qt's QML the same text is an error, and a
+file written for Qt keeps it.
 `Qt.createComponent("X.qml").createObject(p, {…})` with a static string →
 `X.createObject(p, {…})`. A URL built at run time, `createQmlObject` and
 `destroy()` keep their files (R1).
@@ -1178,7 +1200,8 @@ construction.
 | `State`, `PropertyChanges { target: }` | `PropertyChanges { id.prop: }` | mechanical when the target is an id; another target stays; a group or attached member set through a target keeps the file (§4.9) |
 | `StateGroup` | the same | none |
 | `ParentChange` | — | DECISION: kept (0 uses) |
-| `Loader { source: "X.qml" }` | `Loader { component: X }` | mechanical when the string is static |
+| `Loader { source: "X.qml" }` | `Loader { component: X }` | mechanical when the string is static and `X.qml` is beside the file; built |
+| `Loader { sourceComponent: c }` | `Loader { component: c }` | mechanical; built |
 | `Qt.createComponent(...).createObject` | `X.createObject` | mechanical when the string is static |
 | `createQmlObject`, `destroy()` | — | DECISION: kept (R1) |
 | `Component { id }` | an inline `component X:` or an inline delegate | mechanical |
