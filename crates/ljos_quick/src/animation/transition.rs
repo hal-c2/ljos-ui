@@ -19,6 +19,7 @@
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-transition.html.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use ljos_engine::{Atom, Engine, ObjectId, PropIndex, QmlList, QmlObject, QtObject, Value};
@@ -70,10 +71,20 @@ pub struct Transition {
 }
 
 /// The passages of a transition that run beside one another: each one's
-/// number, target and end, and the number the next is given.
+/// number, target and end.
 #[derive(Default)]
 struct Passing {
     list: RefCell<Vec<(u64, ObjectId, driver::Done)>>,
+}
+
+/// The passage each object is on, of whichever transition, and the
+/// number the next passage is given. One per engine: the driver keeps one
+/// run per object, so a passage that starts on an object that is on
+/// another transition's (an exit on the way in) ends that one, with its
+/// end, before the driver replaces it.
+#[derive(Default)]
+struct Passages {
+    on: RefCell<HashMap<ObjectId, (u64, driver::Done)>>,
     next: Cell<u64>,
 }
 
@@ -286,7 +297,7 @@ pub fn run_passage(
 /// Runs `transition` on `target` as [`run_passage`] does, as a run of its
 /// own beside the runs of it on other objects: the items a view lets in
 /// or out at once each have their passage. A new passage of `target`
-/// ends the one it has. `done` is called when the passage is over, and
+/// ends the one it is on, of this transition or another. `done` is called when the passage is over, and
 /// also when it is ended before ([`stop_transition`]), so that what waits
 /// for an object's way out is never left waiting.
 pub fn run_passage_beside(
@@ -299,12 +310,8 @@ pub fn run_passage_beside(
     let Ok(passing) = engine.with::<Transition, _>(transition, |t| t.passing.clone()) else {
         return;
     };
-    let had = passing
-        .list
-        .borrow()
-        .iter()
-        .find(|p| p.1 == target)
-        .map(|p| p.2.clone());
+    let passages = engine.extension::<Passages>();
+    let had = passages.on.borrow().get(&target).map(|p| p.1.clone());
     if let Some(end) = had {
         driver::forget_driven(engine, target);
         end(engine);
@@ -354,10 +361,11 @@ pub fn run_passage_beside(
         },
         (None, _) => (movement, None),
     };
-    let id = passing.next.get();
-    passing.next.set(id + 1);
+    let id = passages.next.get();
+    passages.next.set(id + 1);
     let end: driver::Done = {
         let passing = passing.clone();
+        let passages = passages.clone();
         Rc::new(move |e| {
             let left = {
                 let mut list = passing.list.borrow_mut();
@@ -367,6 +375,12 @@ pub fn run_passage_beside(
                 list.remove(at);
                 list.len()
             };
+            {
+                let mut on = passages.on.borrow_mut();
+                if on.get(&target).is_some_and(|p| p.0 == id) {
+                    on.remove(&target);
+                }
+            }
             restore(e, give_back);
             if left == 0 {
                 show_running(e, transition, false);
@@ -375,6 +389,7 @@ pub fn run_passage_beside(
         })
     };
     passing.list.borrow_mut().push((id, target, end.clone()));
+    passages.on.borrow_mut().insert(target, (id, end.clone()));
     show_running(engine, transition, true);
     driver::start_timeline(engine, target, timeline, Some(end));
 }
