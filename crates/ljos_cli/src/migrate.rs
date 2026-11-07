@@ -8,13 +8,12 @@
 //! | To | What |
 //! |---|---|
 //! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
+//! | stderr | `<file>: <error>` for a file that could not be read or written |
 //!
 //! A file is lowered with the files it names and that name it (`qml_compat::group`). When that
 //! group holds a file that was not named, none of it is written: the named file is kept, saying
 //! which file to name too, as the one would be renamed to match the other lowered while the other
 //! stays Qt's.
-//!
-//! | stderr | `<file>: <error>` for a file that could not be read or written |
 //!
 //! | Status | Means |
 //! |---|---|
