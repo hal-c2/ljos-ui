@@ -177,6 +177,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
+        fonts: Vec::new(),
         changes: Vec::new(),
     };
     match pass.document(&parsed.document) {
@@ -248,6 +249,9 @@ struct Pass<'s> {
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
+    /// The properties the file declares as a `font`, a `var` or a
+    /// `variant`: what a script may hold a font in.
+    fonts: Vec<String>,
     changes: Vec<Change>,
 }
 
@@ -373,6 +377,11 @@ impl<'s> Pass<'s> {
                     self.collect_value(&binding.value);
                 }
                 QmlMember::Property(property) => {
+                    if let Some(type_name) = &property.type_name
+                        && matches!(type_name.name.as_simple(), Some("font" | "var" | "variant"))
+                    {
+                        self.fonts.push(property.name.name.to_string());
+                    }
                     if let Some(value) = &property.value {
                         self.collect_value(value);
                     }
@@ -513,7 +522,7 @@ impl<'s> Pass<'s> {
                     {
                         let group_ty = member_ty(on, group);
                         if matches!(group_ty, Ty::Font) || group == "font" {
-                            self.font_group(child, group_ty, scope, root)?;
+                            self.font_group(child, group, group_ty, scope, root, &names)?;
                             continue;
                         }
                     }
@@ -653,10 +662,26 @@ impl<'s> Pass<'s> {
         self.value(&binding.value, scope, root)
     }
 
-    /// `font { pixelSize: 14; bold: true }`, a group of `font` on an
-    /// object (`group` is what the pass knows of it).
-    fn font_group(&mut self, group: &QmlObject<'_>, font: Ty, scope: Ty, root: Ty) -> Step {
-        let names = binding_names(group);
+    /// `font { pixelSize: 14; bold: true }`, a group of `font` called
+    /// `name` on an object (`font` is what the pass knows of it). `outer`
+    /// are the names set on that object: its `font.weight` is the group's
+    /// `weight`.
+    fn font_group(
+        &mut self,
+        group: &QmlObject<'_>,
+        name: &str,
+        font: Ty,
+        scope: Ty,
+        root: Ty,
+        outer: &[String],
+    ) -> Step {
+        let prefix = format!("{name}.");
+        let mut names = binding_names(group);
+        names.extend(
+            outer
+                .iter()
+                .filter_map(|n| n.strip_prefix(&prefix).map(str::to_owned)),
+        );
         for member in &group.members {
             if let QmlMember::Binding(binding) = member {
                 self.font_part(binding, 0, font, &names)?;
@@ -945,16 +970,27 @@ fn is_font_member(name: &str) -> bool {
     matches!(name, "pixelSize" | "bold" | "pointSize")
 }
 
-/// The names of `object`'s bindings, as written: `font.bold`.
+/// The names of `object`'s bindings, as written: `font.bold`, and a
+/// group's as if written so: `font { weight: 300 }` sets `font.weight`.
 fn binding_names(object: &QmlObject<'_>) -> Vec<String> {
-    object
-        .members
-        .iter()
-        .filter_map(|member| match member {
-            QmlMember::Binding(binding) => Some(binding.name.to_string()),
-            _ => None,
-        })
-        .collect()
+    let mut names = Vec::new();
+    for member in &object.members {
+        match member {
+            QmlMember::Binding(binding) => names.push(binding.name.to_string()),
+            QmlMember::Object(child) => {
+                if let Some(group) = child.type_name.as_simple()
+                    && group.starts_with(|c: char| c.is_ascii_lowercase())
+                {
+                    names.extend(child.members.iter().filter_map(|member| match member {
+                        QmlMember::Binding(binding) => Some(format!("{group}.{}", binding.name)),
+                        _ => None,
+                    }));
+                }
+            }
+            _ => {}
+        }
+    }
+    names
 }
 
 /// A member name, with its change signal, that some type renames.
@@ -1095,6 +1131,20 @@ impl Script<'_, '_> {
     fn member_ty(&self, on: Ty, name: &str) -> Ty {
         member_ty(on, name)
     }
+
+    /// Whether `expression`, whose type the pass does not know, may be a
+    /// font: a member called `font`, or a property the file declares as one
+    /// or as a `var`. What a function is given or a local holds is not
+    /// followed (docs/DIALECT.md §4.13).
+    fn could_be_font(&self, expression: &Expression<'_>) -> bool {
+        match expression {
+            Expression::Identifier(id) => {
+                id.name == "font" || self.pass.fonts.iter().any(|f| f == id.name.as_str())
+            }
+            Expression::StaticMemberExpression(member) => member.property.name == "font",
+            _ => false,
+        }
+    }
 }
 
 /// The type of the member `name` of something of type `on`.
@@ -1135,10 +1185,13 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                     format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}"),
                     it.property.span.start,
                 ),
-                (Ty::Unknown, _) if !is_renamed_member(name) => self.keep(
-                    format!("`.{name}` is read off something whose type is not known"),
-                    it.property.span.start,
-                ),
+                // A row's role or a script's object may be called so too.
+                (Ty::Unknown, _) if !is_renamed_member(name) && self.could_be_font(&it.object) => {
+                    self.keep(
+                        format!("`.{name}` is read off something whose type is not known"),
+                        it.property.span.start,
+                    );
+                }
                 _ => {}
             }
             match self.pass.member(name, on) {
