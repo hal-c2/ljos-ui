@@ -4082,9 +4082,13 @@ pub(crate) fn store_in(
 /// the key of what it attaches. A type declared in QML attaches what the
 /// type it is made from does, and the same object: `ScrollBar.vertical`
 /// names one object whether `ScrollBar` is the template or a style's
-/// `ScrollBar.qml`.
+/// `ScrollBar.qml`. A face attaches what the type it faces does, and the
+/// same object, so the key is never the face's own.
 fn attaching(attacher: &MetaRef) -> Option<(crate::meta::AttachedTypeId, fn() -> MetaRef)> {
     attacher.chain().find_map(|m| {
+        if m.face_of().is_some() {
+            return None;
+        }
         let key = crate::meta::AttachedTypeId(std::ptr::from_ref(m) as usize);
         m.attached.map(|make| (key, make))
     })
