@@ -748,3 +748,21 @@ Item {\n\
     ));
 }
 
+/// Qt's grab permissions are a gesture's `takeOver`, which is not built
+/// (docs/DIALECT.md §4.7): set, read or named by their keys, they keep the
+/// file.
+#[test]
+fn grab_permissions_keep_the_file() {
+    let reason =
+        "`grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet";
+    for source in [
+        "import QtQuick\nItem { TapHandler { grabPermissions: 15 } }\n",
+        "import QtQuick\nItem { TapHandler { grabPermissions: TapHandler.CanTakeOverFromAnything } }\n",
+        "import QtQuick\nItem { HoverHandler { onGrabPermissionsChanged: {} } }\n",
+        "import QtQuick\nItem { TapHandler { id: tap }\n    property int g: tap.grabPermissions }\n",
+        "import QtQuick\nItem { TapHandler { onTapped: console.log(grabPermissions) } }\n",
+        "import QtQuick\nItem { property int g: HoverHandler.ApprovesTakeOverByAnything }\n",
+    ] {
+        assert_eq!(kept_for(source), reason, "{source}");
+    }
+}

@@ -613,6 +613,9 @@ impl<'s> Pass<'s> {
             if first == "id" {
                 return Ok(());
             }
+            if is_grab_permissions(first) {
+                return Err(self.no(GRAB_PERMISSIONS.into(), at));
+            }
             match (
                 target,
                 matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges"),
@@ -818,6 +821,18 @@ enum Rename {
     Unknown,
 }
 
+/// Why a file that sets or reads Qt's grab permissions is kept.
+const GRAB_PERMISSIONS: &str =
+    "`grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet";
+
+/// `grabPermissions`, its change signal or its handler.
+fn is_grab_permissions(name: &str) -> bool {
+    matches!(
+        name,
+        "grabPermissions" | "grabPermissionsChanged" | "onGrabPermissionsChanged"
+    )
+}
+
 /// Of the renames `on` has, the one whose new name is `name` (or its change
 /// signal's), where `on`'s Qt type has no `name` of its own: once lowered,
 /// `name` unqualified is that member, where in Qt it is found further out.
@@ -996,6 +1011,18 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.property.span.start,
             );
         }
+        if is_grab_permissions(name) {
+            self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+        }
+        // A key of the grab permissions read through a handler's name.
+        if let Expression::Identifier(ty) = &it.object
+            && let Some(ty) = self.pass.quick.type_named(&ty.name)
+            && let Some(key) = ty.enum_value(name)
+            && (key.enumeration.name == "GrabPermissions"
+                || key.enumeration.alias == Some("GrabPermissions"))
+        {
+            self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+        }
         if is_renamed_member(name) {
             let on = self.ty(&it.object);
             match self.pass.member(name, on) {
@@ -1041,6 +1068,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             {
                 self.keep(kept.reason, it.span.start);
             }
+            return;
+        }
+        if is_grab_permissions(name) {
+            self.keep(GRAB_PERMISSIONS.into(), it.span.start);
             return;
         }
         // An id is found before the scope's members, in Qt as once lowered.

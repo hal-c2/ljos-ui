@@ -181,7 +181,8 @@ Feature: Ljós's gestures: Tap and Hover
         """
 
     # Qt's grab permissions are a gesture's `takeOver` in Ljós's API (docs/DIALECT.md §4.7), which
-    # is not one flag for one flag; until it is built a file that sets them runs as written.
+    # is not one flag for one flag; until it is built a file that sets or reads them, or names
+    # their keys, runs as written.
     @ljos-only @headless
     Scenario: A handler's grab permissions keep its file
       Given the file "Main.qml":
@@ -194,7 +195,23 @@ Feature: Ljós's gestures: Tap and Hover
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:3:33: `PointerHandler` is not in Ljos.Ui yet
+        kept ./Main.qml:3:16: `grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet
+        1 files, 0 lowered, 1 kept
+        """
+
+    @ljos-only @headless
+    Scenario: A key of the grab permissions named through the handler keeps its file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          property int permissions: TapHandler.CanTakeOverFromAnything
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:3:40: `grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet
         1 files, 0 lowered, 1 kept
         """
 
