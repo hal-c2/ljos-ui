@@ -20,6 +20,7 @@
 
 mod arrange;
 mod group;
+mod renames;
 
 use std::ops::Range;
 
@@ -40,6 +41,7 @@ use qml_syntax::{
 use qt_types::Type;
 
 pub use group::{Alone, References, group, references};
+pub use renames::{member_renames, type_renames};
 
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
@@ -62,14 +64,6 @@ pub const CONTROLS_STYLE: &str = "Basic";
 /// taking the pragma out, and `ljos check` then says what to change
 /// (docs/DIALECT.md §8).
 pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
-
-/// The Qt types Ljós calls by another name. Every other type of the slice is
-/// called as Qt calls it.
-pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
-
-/// Per Qt type (and what derives from it), the members Ljós calls by another
-/// name. A property's change signal and its handler follow its name.
-pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -799,17 +793,14 @@ enum Rename {
 }
 
 fn renamed_type(name: &str) -> Option<&'static str> {
-    TYPE_RENAMES
-        .iter()
+    type_renames()
         .find(|(old, _)| *old == name)
         .map(|(_, new)| *new)
 }
 
 /// A member name, with its change signal, that some type renames.
 fn is_renamed_member(name: &str) -> bool {
-    MEMBER_RENAMES
-        .iter()
-        .any(|(_, renames)| lookup_rename(renames, name).is_some())
+    member_renames().any(|(_, renames)| lookup_rename(renames, name).is_some())
 }
 
 fn lookup_rename(renames: &[(&str, &str)], name: &str) -> Option<String> {
@@ -827,7 +818,7 @@ fn lookup_rename(renames: &[(&str, &str)], name: &str) -> Option<String> {
 fn renames_of(ty: &'static Type) -> Option<&'static [(&'static str, &'static str)]> {
     let mut at = Some(ty);
     while let Some(ty) = at {
-        if let Some((_, renames)) = MEMBER_RENAMES.iter().find(|(name, _)| *name == ty.name) {
+        if let Some((_, renames)) = member_renames().find(|(name, _)| *name == ty.name) {
             return Some(renames);
         }
         at = ty.prototype();
@@ -857,7 +848,7 @@ fn could_be_renaming(ty: &'static Type) -> bool {
     // Every type that renames is an Item; one that is an Item and is no
     // further along than a renaming type's ancestors may be one.
     is_item(Some(ty))
-        && MEMBER_RENAMES.iter().any(|(name, _)| {
+        && member_renames().any(|(name, _)| {
             qt_types::module("QtQuick")
                 .and_then(|m| m.type_named(name))
                 .is_some_and(|renaming| {
