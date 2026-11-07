@@ -179,7 +179,9 @@ pub use object::{
 };
 pub use profile::{BindingLoopSeen, HotCause, HotEntry, HotKind, HotRun, MAX_RUNS, Profile};
 pub use property_map::PropertyMap;
-pub use qtqml::{Component, ComponentAttached, Connections, RunningTimer, Timer, handler_name};
+pub use qtqml::{
+    Component, ComponentAttached, Connections, LocaleEnums, RunningTimer, Timer, handler_name,
+};
 pub use registry::{
     BlockEntry, EnumEntry, MethodEntry, ModuleDef, ModuleDump, ParamEntry, PropertyEntry,
     PropertyKind, Registry, SignalEntry, TypeDump, TypeDumpError, TypeEntry, TypeSignals, Version,

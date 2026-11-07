@@ -18,6 +18,9 @@ use qt_types::{Enum, ImportKind, Property, Type};
 /// The module the dialect is written against.
 pub const API: &str = "Ljos.Ui";
 
+/// The modules of Ljós's API: the items, and what is not an item.
+pub const MODULES: &[&str] = &[API, "Ljos.Core"];
+
 /// Names of QML (and of the C++ classes Qt's table calls them by) that are a
 /// TypeScript primitive.
 const PRIMITIVES: &[(&str, &str)] = &[
@@ -135,17 +138,26 @@ pub struct Api {
 }
 
 impl Api {
-    /// The API of `Ljos.Ui`: its types, those of the modules it imports and
-    /// every type one of them reaches through what it inherits, holds or
-    /// attaches. None when the table has no such module.
+    /// The API of Ljós's [`MODULES`]: their types, those of the modules
+    /// they import and every type one of them reaches through what it
+    /// inherits, holds or attaches. None when the table has no such module.
     pub fn new() -> Option<Self> {
-        Self::of(API)
+        Self::of_all(MODULES)
     }
 
     /// The API a file that imports `uri` is written against.
     pub fn of(uri: &str) -> Option<Self> {
-        qt_types::module(uri)?;
-        let mut uris = vec![uri];
+        Self::of_all(&[uri])
+    }
+
+    /// The API a file that imports every one of `modules` is written
+    /// against.
+    pub fn of_all(modules: &[&str]) -> Option<Self> {
+        for uri in modules {
+            qt_types::module(uri)?;
+        }
+        // Popped from the end: the first module's names come first.
+        let mut uris: Vec<&str> = modules.iter().rev().copied().collect();
         let mut seen = HashSet::new();
         let mut exported: HashMap<&'static str, &'static Type> = HashMap::new();
         let mut roots = Vec::new();
@@ -174,6 +186,13 @@ impl Api {
                     .filter(|import| import.kind == ImportKind::Always)
                     .map(|import| import.module),
             );
+        }
+        // `Qt` is a global of every file, whichever modules it imports.
+        if let Some(qt) = qt_types::module("QtQml").and_then(|m| m.type_named("Qt"))
+            && !exported.contains_key(qt.name)
+        {
+            exported.insert(qt.name, qt);
+            roots.push(qt);
         }
         let mut reached: BTreeMap<&'static str, &'static Type> = BTreeMap::new();
         let mut todo = roots;
@@ -605,6 +624,17 @@ mod tests {
             excerpt,
             "/** QtQml.point */\ninterface point {\n    readonly x: number;\n    readonly y: number;\n}"
         );
+    }
+
+    #[test]
+    fn ljos_core_and_the_qt_global_are_declared() {
+        let api = Api::new().expect("Ljos.Ui");
+        assert_eq!(api.named("Timer").map(|t| t.module), Some("QtQml"));
+        let declarations = api.declarations();
+        assert!(declarations.contains("\ninterface Timer extends QtObject {"));
+        assert!(declarations.contains("\ndeclare namespace Qt {"));
+        // A file of `Ljos.Ui` alone has neither.
+        assert!(Api::of(API).expect("Ljos.Ui").named("Timer").is_none());
     }
 
     #[test]

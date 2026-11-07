@@ -71,6 +71,10 @@ pub const MODELS_MODULE: &str = "Ljos.Models";
 /// The types of `QtQml.Models` that are `Ljos.Models`' as they are.
 pub const MODELS: &[&str] = &["ListModel", "ListElement", "Instantiator"];
 
+/// The module a lowered file imports too when it names what is not an
+/// item: a `Timer`, a `Connections`, a `Component`.
+pub const CORE: &str = "Ljos.Core";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -263,12 +267,17 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
     let Some(ui) = qt_types::module(MODULE) else {
         return kept("this build has no description of Ljos.Ui", 0);
     };
+    let Some(core) = qt_types::module(CORE) else {
+        return kept("this build has no description of Ljos.Core", 0);
+    };
     let Some(quick) = qt_types::module("QtQuick") else {
         return kept("this build has no description of QtQuick", 0);
     };
     let mut pass = Pass {
         source,
         ui,
+        core,
+        cores: std::cell::Cell::new(false),
         quick,
         layouts: None,
         controls: None,
@@ -375,6 +384,10 @@ enum Ty {
 struct Pass<'s> {
     source: &'s str,
     ui: &'static qt_types::Module,
+    core: &'static qt_types::Module,
+    /// Whether the file names a type of `Ljos.Core`, which it imports
+    /// then.
+    cores: std::cell::Cell<bool>,
     quick: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
@@ -435,6 +448,7 @@ impl<'s> Pass<'s> {
     /// Whether the file imports `QtQuick` and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let mut quick = None;
+        let mut qml = None;
         let mut layouts = None;
         let mut controls = Vec::new();
         let mut shapes = None;
@@ -465,9 +479,8 @@ impl<'s> Pass<'s> {
                     quick = Some(import.span);
                     self.imports.push(Import::Qt { layouts: false });
                 }
-                "QtQml" => {}
-                // Its models are `Ljos.Models`'; its other types are found
-                // through `Ljos.Ui`'s import of `QtQml`, as they were.
+                "QtQml" => qml = Some(import.span),
+                // Its models are `Ljos.Models`'.
                 "QtQml.Models" => {
                     self.imports_models = true;
                     let span = import.span;
@@ -543,9 +556,9 @@ impl<'s> Pass<'s> {
                 },
             }
         }
-        let Some(span) = quick else {
+        if quick.is_none() && qml.is_none() {
             return Ok(false);
-        };
+        }
         for span in [layouts, shapes].into_iter().flatten() {
             // `Ljos.Ui` has `Layout` and the shapes; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
@@ -579,22 +592,48 @@ impl<'s> Pass<'s> {
         let root = self.object_type(&document.root)?;
         self.root_owns = self.owns(&document.root, root);
         self.object(&document.root, root, root, true)?;
-        // On the import's line, so every line stays where it was.
+        // On the import's line, so every line stays where it was. What
+        // imported `QtQml` imports `Ljos.Core` in its place; what has it
+        // from `QtQuick` imports it beside `Ljos.Ui` when it names one of
+        // its types. A file that makes a model imports `Ljos.Models` on the
+        // same line.
         let models = if self.makes_models.get() && !self.imports_models {
             format!("; import {MODELS_MODULE}")
         } else {
             String::new()
         };
+        // A file whose constant tables are typed lists imports their rows
+        // module on the line that imports Ljós's models.
         let rows = match (self.stem, self.tables.is_empty()) {
             (Some(stem), false) => {
                 format!("; import \"{}\" as {}", rows_module(stem), tables::ALIAS)
             }
             _ => String::new(),
         };
-        self.change(
-            span.start as usize..span.end as usize,
-            format!("{JAVASCRIPT}; import {MODULE}{models}{rows}"),
-        );
+        let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
+        match (quick, qml) {
+            (Some(quick), Some(qml)) => {
+                self.change(
+                    span(quick),
+                    format!("{JAVASCRIPT}; import {MODULE}{models}{rows}"),
+                );
+                self.change(span(qml), format!("import {CORE}"));
+            }
+            (Some(quick), None) => {
+                let mut import = format!("{JAVASCRIPT}; import {MODULE}");
+                if self.cores.get() {
+                    import.push_str(&format!("; import {CORE}"));
+                }
+                import.push_str(&models);
+                import.push_str(&rows);
+                self.change(span(quick), import);
+            }
+            (None, Some(qml)) => self.change(
+                span(qml),
+                format!("{JAVASCRIPT}; import {CORE}{models}{rows}"),
+            ),
+            (None, None) => unreachable!("returned above"),
+        }
         let edits: Vec<Change> = self
             .tables
             .iter()
@@ -779,8 +818,9 @@ impl<'s> Pass<'s> {
             if ty.module.starts_with("QtQml") {
                 if MODELS.contains(&name) {
                     self.makes_models.set(true);
+                    return Ok(Ty::Exact(ty));
                 }
-                return Ok(Ty::Exact(ty));
+                return self.core_type(name, ty, at);
             }
             let new = renamed_type(name).unwrap_or(name);
             return match self.ui.type_named(new) {
@@ -836,6 +876,20 @@ impl<'s> Pass<'s> {
             .borrow_mut()
             .insert(name.to_string(), found.clone());
         found
+    }
+
+    /// `name`, a type of `QtQml`'s, as `Ljos.Core` has it (with the models
+    /// it brings, until `Ljos.Models` has them). `Qt` is a global of every
+    /// file, as it is in Qt's QML.
+    fn core_type(&self, name: &str, ty: &'static Type, at: usize) -> Result<Ty, Kept> {
+        if name == "Qt" {
+            return Ok(Ty::Exact(ty));
+        }
+        if self.core.type_named(name).is_some() {
+            self.cores.set(true);
+            return Ok(Ty::Exact(ty));
+        }
+        Err(self.no(format!("`{name}` is not in {CORE} yet"), at))
     }
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up
