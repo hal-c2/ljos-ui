@@ -405,6 +405,15 @@ fn where_a_grid_layout_or_stack_layout_disagrees_the_file_is_kept() {
             "StackLayout { Item { StackLayout.onIsCurrentItemChanged: {} } }",
             "`StackLayout`'s attached properties",
         ),
+        (
+            "GridLayout { Item { Layout.alignment: a } }",
+            "`GridLayout` centres a child that says nothing of how it is aligned across the \
+             row, where Ljós's `Grid` puts it at the top",
+        ),
+        (
+            "GridLayout { Item { Layout.alignment: Qt.AlignBaseline } }",
+            "`Qt.AlignBaseline` is not in Ljós's `Grid` yet",
+        ),
     ] {
         let reason = kept_for(&format!("{LAYOUTS}{body}\n"));
         assert!(reason.contains(why), "{body}: {reason}");
