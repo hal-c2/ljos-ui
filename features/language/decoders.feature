@@ -420,6 +420,53 @@ Feature: Decoders: what is unknown is narrowed before it is used
         ljos: 5 errors
         """
 
+    Scenario: Taken apart or read in brackets, a JavaScript file without declarations is ts-boundary too
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "util.js" as Util
+        Item {
+          property real total: 0
+          function parts(): void { const { add } = Util; total = add(1, 2) }
+          function brackets(): void { total = Util["add"](1, 2) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:5:44: error: `add` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `add` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        Show.qml:6:52: error: `add` of util.js has no type: util.js has no declarations; write util.d.ts beside it, declaring `add` (and what has no fixed shape as `unknown`, for a decoder to narrow) [ts-boundary]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: An ECMAScript module is typed by the .d.mts beside it
+      Given the file "esm.mjs":
+        """js
+        export function add(a, b) { return a + b }
+        """
+      And the file "esm.d.mts":
+        """ts
+        export declare function add(a: number, b: number): number;
+        """
+      And the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "esm.mjs" as Esm
+        Item {
+          property real total: 0
+          function right(): void { total = Esm.add(1, 2) }
+          function wrong(): void { total = Esm.add("1", 2) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:6:52: error: `a` is a number; this gives it a string [ts-assign-type]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: A TypeScript module reaches a JavaScript file by the same rule
       Given the file "steps.ts":
         """ts
