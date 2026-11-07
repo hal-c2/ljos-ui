@@ -305,8 +305,13 @@ nothing else. The pass cannot see every name in sight, so the new name must
 be no other word of the file (outside a property's type), no member of a
 type the file's objects are (Qt's or Ljós's), and nothing a file it is built
 on declares, and the file has no object of a type the pass does not know
-and no delegate, whose roles would come first. Otherwise the member stays
-Qt's: `Qt` stays a global of every file, so that runs as before.
+and no delegate, whose roles would come first. `App` is not free in a
+file that imports a directory by path without a name, since that directory
+may have an `App.qml`. A project lowers a file again when an `App.qml`
+comes beside it or goes. `Qt.resolvedUrl(u, ctx)` stays Qt's: Qt 6
+resolves it against `ctx`'s component, and `url` takes one argument.
+Otherwise the member stays Qt's: `Qt` stays a global of every file, so that
+runs as before.
 
 DECISION: `Qt.darker`, `lighter`, `alpha` and `tint` stay Qt's in a lowered
 file. Their first argument may be a colour's name, a string, which has no
