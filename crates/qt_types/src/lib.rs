@@ -463,7 +463,11 @@ impl Type {
     /// What the method `name` gives, as the table writes a type (`real`),
     /// when it says: from the nearest type that has a method of that name.
     pub fn method_returns(&'static self, name: &str) -> Option<&'static str> {
-        self.find(false, &|ty| {
+        self.method_returns_in(table(), name)
+    }
+
+    fn method_returns_in(&'static self, table: &'static Table, name: &str) -> Option<&'static str> {
+        self.find_in(table, false, &|ty| {
             ty.methods.contains(&name).then(|| {
                 ty.method_returns
                     .iter()
@@ -525,13 +529,24 @@ impl Type {
     /// The first thing `get` finds in the type, its extension or what it
     /// inherits, in the order QML looks.
     fn find<T>(&'static self, enums: bool, get: &impl Fn(&'static Type) -> Option<T>) -> Option<T> {
+        self.find_in(table(), enums, get)
+    }
+
+    /// [`find`](Self::find) in `table`, which a test may write itself.
+    fn find_in<T>(
+        &'static self,
+        table: &'static Table,
+        enums: bool,
+        get: &impl Fn(&'static Type) -> Option<T>,
+    ) -> Option<T> {
         let extension = || {
-            let extension = &table().types[self.extension?];
-            (enums || !self.extension_is_namespace).then(|| extension.find(enums, get))?
+            let extension = &table.types[self.extension?];
+            (enums || !self.extension_is_namespace).then(|| extension.find_in(table, enums, get))?
         };
+        let prototype = || Some(&table.types[self.prototype?]);
         get(self)
             .or_else(extension)
-            .or_else(|| self.prototype()?.find(enums, get))
+            .or_else(|| prototype()?.find_in(table, enums, get))
     }
 }
 
