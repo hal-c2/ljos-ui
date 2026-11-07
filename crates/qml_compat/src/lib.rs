@@ -57,6 +57,9 @@ pub const QT_CONTROLS: &[&str] = &["QtQuick.Controls", "QtQuick.Controls.Basic"]
 /// The style [`CONTROLS`] draws.
 pub const CONTROLS_STYLE: &str = "Basic";
 
+/// Qt's dialogs, whose file and folder dialogs [`CONTROLS`] has as they are.
+pub const QT_DIALOGS: &str = "QtQuick.Dialogs";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -179,6 +182,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         quick,
         layouts: None,
         controls: None,
+        dialogs: None,
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
@@ -248,6 +252,8 @@ struct Pass<'s> {
     layouts: Option<&'static qt_types::Module>,
     /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
     controls: Option<Controls>,
+    /// Qt's dialogs and [`CONTROLS`], when the file imports them.
+    dialogs: Option<Controls>,
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
@@ -277,7 +283,10 @@ impl<'s> Pass<'s> {
             };
             let uri = name.to_string();
             if import.alias.is_some()
-                && (uri == "QtQuick" || uri == "QtQml" || QT_CONTROLS.contains(&uri.as_str()))
+                && (uri == "QtQuick"
+                    || uri == "QtQml"
+                    || uri == QT_DIALOGS
+                    || QT_CONTROLS.contains(&uri.as_str()))
             {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
@@ -301,7 +310,7 @@ impl<'s> Pass<'s> {
                     };
                     return Err(self.no(reason, at));
                 }
-                uri if QT_CONTROLS.contains(&uri) => {
+                uri if uri == QT_DIALOGS || QT_CONTROLS.contains(&uri) => {
                     let (Some(qt), Some(ljos)) =
                         (qt_types::module(uri), qt_types::module(CONTROLS))
                     else {
@@ -310,7 +319,14 @@ impl<'s> Pass<'s> {
                             at,
                         ));
                     };
-                    self.controls.get_or_insert(Controls { qt, ljos });
+                    let found = if uri == QT_DIALOGS {
+                        &mut self.dialogs
+                    } else {
+                        &mut self.controls
+                    };
+                    found.get_or_insert(Controls { qt, ljos });
+                    // The dialogs are in Ljos.Controls, so their import is
+                    // one of the controls'.
                     controls.push(import.span);
                 }
                 // A module that builds on QtQuick names its types, and those
@@ -437,7 +453,10 @@ impl<'s> Pass<'s> {
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(controls) = self.controls
+        if let Some(controls) = [self.controls, self.dialogs]
+            .into_iter()
+            .flatten()
+            .find(|c| c.qt.type_named(name).is_some())
             && let Some(ty) = controls.qt.type_named(name)
         {
             return match controls.ljos.type_named(name) {
@@ -764,6 +783,7 @@ impl arrange::Types for Pass<'_> {
             .type_named(name)
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
             .or_else(|| self.controls.and_then(|c| c.qt.type_named(name)))
+            .or_else(|| self.dialogs.and_then(|c| c.qt.type_named(name)))
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -1005,10 +1025,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
             } else if (self.pass.quick.type_named(name).is_some()
-                || self
-                    .pass
-                    .controls
-                    .is_some_and(|c| c.qt.type_named(name).is_some()))
+                || [self.pass.controls, self.pass.dialogs]
+                    .into_iter()
+                    .flatten()
+                    .any(|c| c.qt.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 self.keep(kept.reason, it.span.start);
