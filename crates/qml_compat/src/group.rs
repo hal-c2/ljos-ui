@@ -10,7 +10,7 @@
 
 use std::collections::BTreeMap;
 
-use oxc_ast::ast::{Expression, StringLiteral};
+use oxc_ast::ast::{Expression, StaticMemberExpression, StringLiteral};
 use oxc_ast_visit::{Visit, walk};
 use oxc_syntax::scope::ScopeFlags;
 use qml_syntax::{
@@ -35,6 +35,10 @@ pub struct References {
     /// Modules imported by name (`MyControls`, `My.Controls`): a module of
     /// the project is a directory whose path ends in the name's parts.
     pub modules: Vec<String>,
+    /// The type names lowering would bring in (`App` of `Qt.platform`),
+    /// which a file beside it of that name takes: the file is lowered again
+    /// when one comes or goes. They tie it to no group.
+    pub introduced: Vec<String>,
 }
 
 /// What `source` names that may be a file of the project. A file that does
@@ -60,6 +64,8 @@ pub fn references(source: &str) -> References {
     found.types.dedup();
     found.files.sort();
     found.files.dedup();
+    found.introduced.sort();
+    found.introduced.dedup();
     found
 }
 
@@ -119,6 +125,16 @@ impl<'a> Visit<'a> for Strings<'_> {
             self.0.types.push(id.name.to_string());
         }
         walk::walk_expression(self, it);
+    }
+
+    fn visit_static_member_expression(&mut self, it: &StaticMemberExpression<'a>) {
+        if let Expression::Identifier(qt) = &it.object
+            && qt.name == "Qt"
+            && let Some(name) = crate::qt_members::introduced(&it.property.name)
+        {
+            self.0.introduced.push(name.to_string());
+        }
+        walk::walk_static_member_expression(self, it);
     }
 }
 

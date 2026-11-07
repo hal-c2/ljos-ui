@@ -522,6 +522,7 @@ impl<'s> Pass<'s> {
                 // imported under a name is only ever named through it.
                 QmlImportSource::Path(path) => {
                     if import.alias.is_none() && !group::is_script(path) {
+                        self.members.imports_by_path();
                         self.imports.push(Import::Dir((*path).to_string()));
                     }
                     continue;
@@ -2222,6 +2223,18 @@ impl Script<'_, '_> {
 
 impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of ctx's
+        // component; `url` takes one argument, so that call stays Qt's.
+        if let Expression::StaticMemberExpression(callee) = &it.callee
+            && matches!(&callee.object, Expression::Identifier(qt) if qt.name == "Qt")
+            && callee.property.name == "resolvedUrl"
+            && it.arguments.len() > 1
+        {
+            for argument in &it.arguments {
+                self.visit_argument(argument);
+            }
+            return;
+        }
         match it.callee.without_parentheses() {
             Expression::StaticMemberExpression(m) => self.called.push(m.property.span.start),
             Expression::Identifier(id) => self.called.push(id.span.start),
