@@ -17,10 +17,11 @@ use crate::rows::{self, Rows};
 pub(crate) fn by_id(
     root: &QmlObject<'_>,
     is_view: &dyn Fn(&QmlObject<'_>) -> bool,
-    listed: &[(String, Vec<String>)],
+    listed: &[(String, Rows)],
+    tables: &[u32],
 ) -> Vec<(String, Rows)> {
     let mut found = Vec::new();
-    views(root, is_view, listed, &mut found);
+    views(root, is_view, listed, tables, &mut found);
     if found.is_empty() {
         return Vec::new();
     }
@@ -43,7 +44,8 @@ struct Given {
 fn views(
     object: &QmlObject<'_>,
     is_view: &dyn Fn(&QmlObject<'_>) -> bool,
-    listed: &[(String, Vec<String>)],
+    listed: &[(String, Rows)],
+    tables: &[u32],
     found: &mut Vec<Given>,
 ) {
     for member in &object.members {
@@ -53,7 +55,7 @@ fn views(
                     && let QmlBindingValue::Expression(Expression::Identifier(id)) = &binding.value
                     && is_view(object)
                 {
-                    let rows = rows::of_view(object, listed);
+                    let rows = rows::of_view(object, listed, tables);
                     match found.iter_mut().find(|g| g.id == id.name.as_str()) {
                         Some(g) => {
                             g.named += 1;
@@ -68,16 +70,16 @@ fn views(
                         }),
                     }
                 }
-                each_object(&binding.value, |o| views(o, is_view, listed, found));
+                each_object(&binding.value, |o| views(o, is_view, listed, tables, found));
             }
             QmlMember::Property(property) => {
                 if let Some(value) = &property.value {
-                    each_object(value, |o| views(o, is_view, listed, found));
+                    each_object(value, |o| views(o, is_view, listed, tables, found));
                 }
             }
-            QmlMember::Object(child) => views(child, is_view, listed, found),
+            QmlMember::Object(child) => views(child, is_view, listed, tables, found),
             QmlMember::InlineComponent(component) => {
-                views(&component.object, is_view, listed, found);
+                views(&component.object, is_view, listed, tables, found);
             }
             QmlMember::Signal(_) | QmlMember::Function(_) | QmlMember::Enum(_) => {}
         }
