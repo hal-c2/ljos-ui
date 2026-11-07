@@ -464,12 +464,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 return self.member(mutable, name);
             }
         }
-        for &part in &parts {
-            if let Kind::Script(key) = self.arena.kind(part) {
-                let key = key.clone();
-                self.boundary(&key, name, property.span);
-                return Ty::ERROR;
-            }
+        if self.script_member(receiver, name, property.span) {
+            return Ty::ERROR;
         }
         for &part in &parts {
             if let Some(index) = self.module_of(part)
@@ -509,6 +505,35 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
         }
         self.member(receiver, name)
+    }
+
+    /// Whether `receiver` is a JavaScript file with no declarations, so
+    /// that `name` read of it, however it is read (`.name`, `["name"]`,
+    /// `const { name } =`), is `any` to TypeScript: reported, as
+    /// `ts-boundary`, at `span`.
+    fn script_member(&mut self, receiver: Ty, name: &str, span: Span) -> bool {
+        let script = self.arena.members(receiver).into_iter().find_map(|part| {
+            if let Kind::Script(key) = self.arena.kind(part) {
+                Some(key.clone())
+            } else {
+                None
+            }
+        });
+        let Some(key) = script else {
+            return false;
+        };
+        self.boundary(&key, name, span);
+        true
+    }
+
+    /// `script_member` for `object[index]`: the name is the string
+    /// written, or else the index as written.
+    fn script_index(&mut self, object: Ty, index: &Expression<'a>) -> bool {
+        let name = match index {
+            Expression::StringLiteral(s) => s.value.to_string(),
+            other => format!("[{}]", self.text(other.span())),
+        };
+        self.script_member(object, &name, index.span())
     }
 
     fn member_one(&mut self, part: Ty, name: &str) -> Option<Ty> {
@@ -589,6 +614,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let object = self.optional(object, m.optional, short);
                 let object = self.defined(object, m.object.span());
                 let index = self.expr(&m.expression, None);
+                if self.script_index(object, &m.expression) {
+                    return Ty::ERROR;
+                }
                 self.indexed = Some(m.span);
                 self.index(object, index)
             }
@@ -1209,7 +1237,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     AssignmentTarget::ComputedMemberExpression(m) => {
                         let object = self.expr(&m.object, None);
                         let index = self.expr(&m.expression, None);
-                        if self.write_index(object, m.object.span()) {
+                        if self.script_index(object, &m.expression)
+                            || self.write_index(object, m.object.span())
+                        {
                             return self.expr(&assignment.right, None);
                         }
                         let ty = self.index(object, index);
@@ -2331,6 +2361,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             BindingPattern::ObjectPattern(object) => {
                 for property in &object.properties {
+                    // Taken apart, a file with no declarations is as untyped
+                    // as read by `.`: not left to the quiet read below.
+                    let name = match &property.key {
+                        PropertyKey::StaticIdentifier(id) => id.name.to_string(),
+                        PropertyKey::StringLiteral(s) => s.value.to_string(),
+                        key => format!("[{}]", self.text(key.span())),
+                    };
+                    if self.script_member(ty, &name, property.key.span()) {
+                        self.bind_pattern(&property.value, Ty::ERROR, binding);
+                        continue;
+                    }
                     let field = match &property.key {
                         PropertyKey::StaticIdentifier(id) => {
                             self.quiet += 1;
@@ -2343,6 +2384,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.bind_pattern(&property.value, field, binding);
                 }
                 if let Some(rest) = &object.rest {
+                    let name = self.text(rest.span).to_owned();
+                    self.script_member(ty, &name, rest.span);
                     self.bind_pattern(&rest.argument, Ty::ERROR, binding);
                 }
             }
