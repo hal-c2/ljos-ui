@@ -262,6 +262,9 @@ fn importers(
     // directory above it (up to `here`) describes with the file among its
     // types, as a build may list a file from a subdirectory.
     let mut modules = BTreeSet::new();
+    // Named files share their directories and those above them: each is
+    // read once.
+    let mut described: BTreeMap<PathBuf, Vec<qml_front::discover::Module>> = BTreeMap::new();
     for (file, _) in named {
         let file = absolute(file);
         let Some(own) = file.parent() else { continue };
@@ -269,14 +272,17 @@ fn importers(
             if dir != own && !dir.starts_with(here) {
                 break;
             }
-            for module in ljos_compiler::described_in(dir) {
+            let found = described
+                .entry(dir.to_owned())
+                .or_insert_with(|| ljos_compiler::described_in(dir));
+            for module in found.iter() {
                 let holds = dir == own
                     || module
                         .types
                         .iter()
                         .any(|ty| absolute(&dir.join(&ty.path)) == file);
                 if holds {
-                    modules.insert(module.uri);
+                    modules.insert(module.uri.clone());
                 }
             }
         }
