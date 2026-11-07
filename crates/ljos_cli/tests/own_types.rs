@@ -781,8 +781,10 @@ fn the_compiler_sees_every_member_the_types_declare() {
                     assert!(oracle.has_enum_key(ty, None, key), "{what}.{key}");
                 }
             }
-            // What it inherits is there too, and nothing that is not.
-            if meta.base.is_some() {
+            // What it inherits is there too, and nothing that is not. A
+            // face's base is the type it faces; what it inherits is that
+            // type's base, which Qt's attached `Drag` has none of.
+            if meta.prototype().is_some() {
                 assert!(oracle.property(ty, "objectName").is_some(), "{what}");
             }
             assert!(oracle.property(ty, "nothing").is_none(), "{what}");

@@ -539,18 +539,34 @@ MouseArea.
 **Lowering.**
 
 - `MouseArea { anchors.fill: parent; onClicked }` with no children →
-  `Tap { onTapped }` on the parent. A gesture on the parent sees a press
-  after the parent's children, where the MouseArea sees it before the
-  siblings declared ahead of it (it is drawn over them). The two agree
-  unless an interactive sibling (a MouseArea, a handler, a control, a
-  view) is declared before the MouseArea or the MouseArea sets `z`. Such
-  a file is kept with that reason. 43 of the 45 lower; the two kept are
-  `samegame/content/Button.qml` (a sibling before it) and
-  `lightningviewer/SwitchMap.qml` (`z`).
-- `hoverEnabled` + `containsMouse` → `Hover` + `hover.hovered`.
-- `drag.target` → `Drag`.
+  `Tap { gesturePolicy: Tap.ReleaseWithinBounds; longPressThreshold: 0;
+  onTapped }` in its place, and its `cursorShape` (with its `enabled`) a
+  `Hover` beside it. Built. qml6 says that `Tap` clicks as the area does:
+  let go inside wherever the pointer went in between, however long it was
+  held, twice for a double-click, not for the right button unless
+  `acceptedButtons` (→ `buttons`) says so, and nothing below hears it. A
+  gesture on the parent sees a press after the parent's children, where
+  the MouseArea sees it before the siblings declared ahead of it (it is
+  drawn over them). The two agree unless something that takes the pointer
+  (a MouseArea, a handler, a view, a text input, a `Loader`, a type the
+  pass does not know) is declared before it, a sibling or the area sets
+  `z`, or the parent has a `containmentMask`. The area then stays a
+  `PointerArea` and the file is still lowered. So does an area that does
+  more than click: one with members other than `id`, `objectName`,
+  `anchors.fill`, `onClicked`, `enabled`, `acceptedButtons` and
+  `cursorShape`, whose `id` is read (an alias, `area.pressed`), whose
+  handler reads `mouse` or a member of the area, `Tap` or `Hover`
+  unqualified, or whose parent is not an `Item`, `Rectangle` or `Image`.
+  In the qtdoc corpus every file with such an area is kept for another
+  type today, so none is lowered yet.
+- `hoverEnabled` + `containsMouse` → `Hover` + `hover.hovered`. Not built:
+  such an area stays a `PointerArea`.
+- `drag.target` stays a `PointerArea`. qml6 moves a MouseArea's target
+  the drag threshold short of the pointer, where a `DragHandler` moves it
+  with the pointer, so `Drag` would move it further.
 - `*Handler` → the gesture of the same kind, with members renamed.
-  Built: `TapHandler` → `Tap` and `HoverHandler` → `Hover`. What a handler
+  Built: `TapHandler` → `Tap`, `HoverHandler` → `Hover`, `DragHandler` →
+  `Drag`, `PointHandler` → `Pointer` and `WheelHandler` → `Wheel`. What a handler
   accepts is what the gesture takes, named as a pointer event names what
   it carries: `acceptedButtons` → `buttons`, `acceptedModifiers` →
   `modifiers`, `acceptedDevices` → `devices`, `acceptedPointerTypes` →
@@ -578,7 +594,23 @@ members as its own: a description names each member once.
 
 DECISION: Qt's attached `Drag` (drag and drop, 7 uses in 3 files) is not
 the `Drag` gesture. It becomes `DragSource` and `DropArea` in `Ljos.Ui`,
-since moving an item and carrying data are two different things.
+since moving an item and carrying data are two different things. Built:
+`Drag.active`, `Drag.hotSpot` and the rest, and `Drag.Automatic` read
+through the type, lower to `DragSource`'s; `DropArea` is as it is. An
+item's `Drag.active` and `DragSource.active` are one value.
+`.Drag` read off an object is renamed only when the object is an item (an
+id, `parent`): only an item has the attached `Drag`. Off a value
+(`"x".Drag`) it is the value's and stays as written. Off something the
+pass can't type (`config.Drag.speed`, `config` a JavaScript object), or
+off an object that is no item, it keeps the file.
+
+DECISION: `PointHandler` is `Pointer`, the one point on its item it
+follows, as `Tap` and `Hover` are named for what they see.
+
+DECISION: a filling MouseArea is a `Tap` with `ReleaseWithinBounds` and
+no long press, not a plain `Tap`: a plain one gives up a press let go
+outside or held past `longPressThreshold`, which the area still clicks
+for. The two members say so in the lowered file instead of a new default.
 
 ### 4.8 Models and delegates
 
@@ -901,11 +933,11 @@ construction.
 | `LayoutItemProxy` | a Box whose `direction` is bound | DECISION: kept; a person merges the layouts |
 | `anchors.*` on a free parent | the same | none |
 | `anchors.*` on a layout child | `Layout.alignment`/margins | DECISION: kept (Qt overrides them at run time, so their effect is unclear) |
-| `MouseArea` filling its parent, no children | `Tap`/`Hover`/`Drag` | mechanical (43 of 45); kept when an interactive sibling is declared before it or it sets `z` (§4.7) |
+| `MouseArea` filling its parent, no children | `Tap` and `Hover` | mechanical where it only clicks and asks for a cursor; a `PointerArea` when something before it takes the pointer, `z` is set, it drags, hovers, reads `mouse` or has its `id` read (§4.7) |
 | other `MouseArea` | `PointerArea` | mechanical (phase 1), gestures M3 |
-| `*Handler` | `Tap`, `Drag`, `Pinch`, `Hover`, `Wheel`, `LongPress` | mechanical, by member (§4.7); `Tap` and `Hover` built |
+| `*Handler` | `Tap`, `Drag`, `Pointer`, `Pinch`, `Hover`, `Wheel`, `LongPress` | mechanical, by member (§4.7); `Tap`, `Hover`, `Drag`, `Pointer` and `Wheel` built |
 | `PinchArea`, `MultiPointTouchArea` | `Pinch`, gestures | DECISION: kept until M3 |
-| attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical |
+| attached `Drag`, `DropArea` | `DragSource`, `DropArea` | mechanical; built |
 | `Flickable` | `Flickable` | none |
 | `ListModel` of constants | `list<T>` | mechanical, with a generated row type |
 | `ListModel` edited | `ListModel` | none |
@@ -1384,7 +1416,7 @@ on the Qt backend (10 steps).
 
 | M | Builds | Exit criteria |
 |---|---|---|
-| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); the gestures, for the `*Handler`s (§4.7); a load-time budget gate. Built: `Tap` and `Hover` (`TapHandler`, `HoverHandler`), by member. Remaining: `Drag`, `Pinch`, `Wheel`, `LongPress`, a filling `MouseArea` as gestures, `DragSource`, `takeOver` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
+| **M1** Ui and Layout | `ljos run --compat`; `Ljos.Layout` (Row/Column/Grid/Flow and `QtQuick.Layouts`); `Ljos.Ui` items the corpus keeps for (`Image`, `Behavior` and animations, `ListView`, `Flickable`, `Repeater`, `Loader`, `Window`, `Screen`); the gestures, for the `*Handler`s (§4.7); a load-time budget gate. Built: `Tap`, `Hover`, `Drag`, `Pointer` and `Wheel` (`TapHandler`, `HoverHandler`, `DragHandler`, `PointHandler`, `WheelHandler`), by member; `DragSource` (the attached `Drag`); a filling `MouseArea` that clicks as a `Tap` and `Hover`. Remaining: `Pinch`, `LongPress`, a MouseArea's `drag.*` and `hoverEnabled`, `takeOver` | the features pair for each rename; compat sweep identical; ≥ 25 % of corpus example files lowered |
 | **M2** Core | `Ljos.Core` (`Timer`, `Component`, `Connections`, value-type constructors, `App`, `later`), with `Qt.*` lowered to it and `Ljos.Ui`'s `QtQml` import dropped | sweep identical; no lowered file reaches the `Qt` object |
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |

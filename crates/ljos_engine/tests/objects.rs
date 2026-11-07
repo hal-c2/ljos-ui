@@ -8,8 +8,8 @@ use std::rc::Rc;
 
 use common::{Border, Item, Rectangle, engine};
 use ljos_engine::{
-    Color, Cx, EngineError, MetaBuilder, MetaRef, PropIndex, PropertyFlags, Provenance, QmlType,
-    TypeTag, Value, Version, WriteKind,
+    Color, Cx, EngineError, MetaBuilder, MetaObject, MetaRef, PropIndex, PropertyFlags, Provenance,
+    QmlType, TypeTag, Value, Version, WriteKind,
 };
 
 fn rect(e: &ljos_engine::Engine) -> ljos_engine::ObjectId {
@@ -739,6 +739,22 @@ fn attached_objects() {
     ));
     e.destroy_now(r);
     assert!(!e.is_alive(a));
+}
+
+#[test]
+fn a_face_attaches_the_object_the_type_it_faces_attaches() {
+    let e = engine();
+    let r = rect(&e);
+    let keys = e.lookup_type("Test", "Keys").unwrap();
+    let face: &'static MetaObject = Box::leak(Box::new(
+        MetaBuilder::new("KeyEvents")
+            .module("Test")
+            .face(keys.clone())
+            .build(),
+    ));
+    let by_face = e.attached_object(r, &MetaRef::Static(face)).unwrap();
+    assert_eq!(e.attached_object(r, &keys), Ok(by_face));
+    assert_eq!(e.existing_attached_object(r, &keys), Some(by_face));
 }
 
 #[test]

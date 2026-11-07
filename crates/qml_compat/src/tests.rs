@@ -28,7 +28,12 @@ fn the_renames_are_what_ljos_ui_has() {
     let ui = qt_types::module(MODULE).expect("Ljos.Ui is described");
     for (old, new) in TYPE_RENAMES {
         assert!(ui.type_named(new).is_some(), "{new}");
-        assert!(ui.type_named(old).is_none(), "{old}");
+        // An old name is gone, unless another type now has it: Qt's
+        // `DragHandler` is `Drag`, and Qt's `Drag` `DragSource`.
+        assert!(
+            ui.type_named(old).is_none() || TYPE_RENAMES.iter().any(|(_, n)| n == old),
+            "{old}"
+        );
     }
     // Each type Ljos.Ui has of a Qt type that renames members, by the name
     // it has there; every entry of the table is some such type's.
@@ -663,5 +668,204 @@ fn grab_permissions_keep_the_file() {
         "import QtQuick\nItem { property int g: HoverHandler.ApprovesTakeOverByAnything }\n",
     ] {
         assert_eq!(kept_for(source), reason, "{source}");
+    }
+}
+
+#[test]
+fn the_drag_point_and_wheel_handlers_are_lowered_to_gestures() {
+    let source = "import QtQuick\n\
+Item {\n\
+    DragHandler { acceptedButtons: Qt.RightButton; snapMode: DragHandler.NoSnap }\n\
+    PointHandler { id: point; acceptedDevices: PointerDevice.Stylus }\n\
+    WheelHandler { acceptedModifiers: Qt.ControlModifier }\n\
+    property bool pen: point.active && point.acceptedDevices > 0\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Item {\n\
+    Drag { buttons: Qt.RightButton; snapMode: Drag.NoSnap }\n\
+    Pointer { id: point; devices: PointerDevice.Stylus }\n\
+    Wheel { modifiers: Qt.ControlModifier }\n\
+    property bool pen: point.active && point.devices > 0\n\
+}\n"
+    );
+}
+
+/// Qt's attached `Drag` is `DragSource`, set on the item, read in a script
+/// and read off another item; its enums go with it.
+#[test]
+fn the_attached_drag_is_a_drag_source() {
+    let source = "import QtQuick\n\
+Item {\n\
+    id: card\n\
+    Drag.active: true; Drag.dragType: Drag.Automatic\n\
+    Drag.onDragStarted: console.log(Drag.active, card.Drag.source)\n\
+    MouseArea { drag.target: parent; drag.axis: Drag.XAxis }\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Item {\n\
+    id: card\n\
+    DragSource.active: true; DragSource.dragType: DragSource.Automatic\n\
+    DragSource.onDragStarted: console.log(DragSource.active, card.DragSource.source)\n\
+    PointerArea { drag.target: parent; drag.axis: DragSource.XAxis }\n\
+}\n"
+    );
+}
+
+/// Only an item has Qt's attached `Drag`. A key of that name on anything
+/// else is the object's own, and is not renamed.
+#[test]
+fn a_drag_read_off_what_is_no_item_is_not_the_attached_drag() {
+    // A JavaScript object's key: what the object is is not known.
+    let source = "import QtQuick\n\
+Item {\n\
+    function speed() { var config = { Drag: { speed: 2 } }; return config.Drag.speed }\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`.Drag` is read off something whose type is not known, and only an item's is Qt's attached `Drag`"
+    );
+    // An object that is no item.
+    assert_eq!(
+        kept_for("import QtQuick\nItem { Timer { id: tick }\n    property var d: tick.Drag }\n"),
+        "`.Drag` is read off a `Timer`, which is no item, and only an item's is Qt's attached `Drag`"
+    );
+    // A value has no attached objects: the key stays as written.
+    assert_eq!(
+        lowered("import QtQuick\nItem { property var d: \"x\".Drag }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { property unknown d: \"x\".Drag }\n"
+    );
+    // An item, named by its id or as `parent`, has it.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { id: card\n    Item { property bool a: card.Drag.active || parent.Drag.active }\n}\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { id: card\n    Item { property bool a: card.DragSource.active || parent.DragSource.active }\n}\n"
+    );
+}
+
+/// A `MouseArea` that fills its parent and only takes clicks is a `Tap` on
+/// the parent: one that taps when let go inside, however the pointer moved
+/// and however long it was held, as a click is.
+#[test]
+fn a_mouse_area_filling_its_parent_is_a_tap() {
+    let source = "import QtQuick\n\
+Rectangle {\n\
+    id: card\n\
+    MouseArea { anchors.fill: parent; onClicked: card.color = \"red\" }\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Rectangle {\n\
+    id: card\n\
+    Tap { gesturePolicy: Tap.ReleaseWithinBounds; longPressThreshold: 0; onTapped: card.fill = \"red\" }\n\
+}\n"
+    );
+}
+
+/// The cursor it asks for is a `Hover`'s, after the `Tap` on its closing
+/// line, disabled as the area is; its buttons are the `Tap`'s.
+#[test]
+fn a_filling_mouse_area_s_cursor_is_a_hover_s() {
+    let source = "import QtQuick\n\
+Item {\n\
+    id: root\n\
+    property bool on: true\n\
+    Rectangle {\n\
+        id: card\n\
+        MouseArea {\n\
+            id: area; objectName: \"area\"\n\
+            anchors.fill: parent\n\
+            enabled: root.on && card.color != \"red\"\n\
+            cursorShape: Qt.PointingHandCursor\n\
+            acceptedButtons: Qt.RightButton\n\
+            onClicked: {\n\
+                card.color = \"red\"\n\
+            }\n\
+        }\n\
+    }\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Item {\n\
+    id: root\n\
+    property bool on: true\n\
+    Rectangle {\n\
+        id: card\n\
+        Tap {\n\
+            id: area; objectName: \"area\"\n\
+            gesturePolicy: Tap.ReleaseWithinBounds; longPressThreshold: 0\n\
+            enabled: root.on && card.fill != \"red\"\n\
+\n\
+            buttons: Qt.RightButton\n\
+            onTapped: {\n\
+                card.fill = \"red\"\n\
+            }\n\
+        } Hover { enabled: root.on && card.fill != \"red\"; cursorShape: Qt.PointingHandCursor }\n\
+    }\n\
+}\n"
+    );
+}
+
+/// A `MouseArea` that would not act as a `Tap` on its parent stays a
+/// `PointerArea`, and its file is lowered all the same.
+#[test]
+fn a_mouse_area_a_tap_would_not_be_stays_a_pointer_area() {
+    let area = "MouseArea { anchors.fill: parent; onClicked: console.log(1) }";
+    let cases = [
+        // Something that takes the pointer is under it, and would be over a Tap.
+        // (A type of the project's may hold anything.)
+        format!("Item {{ Card {{}} {area} }}"),
+        format!("Item {{ Item {{ MouseArea {{}} }} {area} }}"),
+        format!("Item {{ Item {{ TapHandler {{}} }} {area} }}"),
+        // A handler beside it is on the same item as the Tap would be.
+        format!("Item {{ {area} HoverHandler {{}} }}"),
+        // It, or something beside it, is stacked out of order.
+        format!("Item {{ Rectangle {{ z: 2 }} {area} }}"),
+        "Item { MouseArea { anchors.fill: parent; z: 1; onClicked: console.log(1) } }".into(),
+        // Its parent is not an item that only draws, or answers for where it is.
+        format!("Item {{ Text {{ {area} }} }}"),
+        format!("Item {{ Card {{ {area} }} }}"),
+        format!("Item {{ containmentMask: mask; Item {{ id: mask }} {area} }}"),
+        // It does not fill its parent, or does more than fill it.
+        "Item { MouseArea { anchors.fill: sibling; onClicked: console.log(1) } Item { id: sibling } }"
+            .into(),
+        "Item { MouseArea { anchors.fill: parent; anchors.margins: 4 } }".into(),
+        "Item { MouseArea { anchors.fill: parent; Item {} } }".into(),
+        // It does what a Tap or a Hover does not, or not as they do it.
+        "Item { MouseArea { anchors.fill: parent; onPressed: console.log(1) } }".into(),
+        "Item { MouseArea { anchors.fill: parent; hoverEnabled: true } }".into(),
+        "Item { MouseArea { anchors.fill: parent; drag.target: parent } }".into(),
+        "Item { MouseArea { anchors.fill: parent; property int n: 0 } }".into(),
+        // Its handler reads the click, or a name a Tap or the area has.
+        "Item { MouseArea { anchors.fill: parent; onClicked: console.log(mouse.x) } }".into(),
+        "Item { MouseArea { anchors.fill: parent; onClicked: (m) => console.log(m.x) } }".into(),
+        "Item { MouseArea { anchors.fill: parent; onClicked: console.log(pressed) } }".into(),
+        "Item { MouseArea { anchors.fill: parent; onClicked: console.log(width) } }".into(),
+        "Item { property int point: 0; MouseArea { anchors.fill: parent; onClicked: point += 1 } }"
+            .into(),
+        // It is read by its id.
+        "Item { MouseArea { id: area; anchors.fill: parent } property bool down: area.pressed }"
+            .into(),
+        // What the Hover would copy spans lines.
+        "Item { MouseArea { anchors.fill: parent\n cursorShape: true\n ? Qt.PointingHandCursor : Qt.ArrowCursor } }"
+            .into(),
+        // It is the root.
+        "MouseArea { anchors.fill: parent }".into(),
+    ];
+    for case in cases {
+        let source = format!("import QtQuick\n{case}\n");
+        let Outcome::Lowered(Lowered { text, .. }) = lower(&source, &no_locals) else {
+            panic!("{case}: not lowered");
+        };
+        assert!(
+            text.contains("PointerArea {") && !text.contains("ReleaseWithinBounds"),
+            "{case}\nbecame\n{text}"
+        );
     }
 }
