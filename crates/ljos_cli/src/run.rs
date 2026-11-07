@@ -25,6 +25,7 @@ use ljos_mcp_core::{Cap, CapSet};
 use ljos_shell::{InspectorAccess, InspectorOptions, Report, Setup, SetupError, ShellConfig};
 
 use crate::demand::{OnDemand, Say};
+use crate::render::Compat;
 
 /// The type dump a project keeps beside its entry.
 const TYPES_FILE: &str = "ljostypes.json";
@@ -164,6 +165,13 @@ pub struct Run {
     /// has, stops the run. It is read once: `--watch` does not follow it.
     #[arg(long, value_name = "FILE", conflicts_with = "example")]
     types: Option<PathBuf>,
+    /// `lower`: each file in Qt's QML is lowered to Ljós's API
+    /// (`Ljos.Ui`) as it loads, as `ljos migrate` would write it and as
+    /// `ljos render --compat lower` renders it; a file the pass cannot
+    /// lower whole runs as it is written. `--watch` does not lower yet,
+    /// so the two are refused together.
+    #[arg(long, value_enum, default_value_t = Compat::Keep)]
+    compat: Compat,
     /// What the application is given after `--`, in `Application.arguments`
     /// after the program and the entry file. `-style NAME` among them
     /// chooses the controls style before `QT_QUICK_CONTROLS_STYLE` and the
@@ -395,6 +403,7 @@ fn compile(
     example: Option<&str>,
     types: Option<&(TypeDump, String)>,
     aliases: &Aliases,
+    compat: Compat,
     say: Say,
 ) -> anyhow::Result<OnDemand<EngineOracle>> {
     let oracle = match (example, types) {
@@ -402,7 +411,7 @@ fn compile(
         (None, Some(types)) => oracle_for_types(types)?,
         (None, None) => crate::render::oracle_for_modules(),
     };
-    OnDemand::open(dir, key, aliases, oracle, say)
+    OnDemand::open(dir, key, aliases, oracle, compat == Compat::Lower, say)
 }
 
 /// What the compile thread made; its panic goes on here.
@@ -594,6 +603,14 @@ impl Run {
     }
 
     pub fn run(self) -> anyhow::Result<()> {
+        // A save is recompiled by the watcher, which compiles each file as
+        // it is written: the run would lower its first load and not its
+        // saves.
+        if self.watch && self.compat == Compat::Lower {
+            anyhow::bail!(
+                "--compat lower does not go with --watch yet: a save would not be lowered"
+            );
+        }
         if let Some(style) = style_argument(&self.args).0 {
             // The compiler reads the variable, here and on every save
             // `--watch` applies; `-style` comes before it, as in Qt.
@@ -658,6 +675,7 @@ impl Run {
             ljos_engine::file_url(&path)
         });
         let theme = self.theme.clone();
+        let compat = self.compat;
         // An example's types are its backends'; a file beside it says nothing.
         let types = match (&self.example, &self.types) {
             (Some(_), _) => None,
@@ -727,6 +745,7 @@ impl Run {
                             example.as_deref(),
                             types.as_ref(),
                             &aliases,
+                            compat,
                             Box::new(crate::stderr::line),
                         )?;
                         source.compile_ahead(&key, &stop);
@@ -896,6 +915,21 @@ mod tests {
         let run = line(&["Main.qml", "--top"]).unwrap();
         assert!(run.top);
         assert_eq!(run.mcp, None);
+    }
+
+    #[test]
+    fn a_run_keeps_qt_names_unless_it_is_told_to_lower() {
+        assert!(line(&["Main.qml"]).unwrap().compat == Compat::Keep);
+        let run = line(&["Main.qml", "--compat", "lower"]).unwrap();
+        assert!(run.compat == Compat::Lower);
+        assert!(line(&["Main.qml", "--compat", "sideways"]).is_err());
+    }
+
+    #[test]
+    fn a_watched_run_is_not_lowered() {
+        let run = line(&["Main.qml", "--watch", "--compat", "lower"]).unwrap();
+        let refused = run.run().unwrap_err().to_string();
+        assert!(refused.contains("--watch"), "{refused}");
     }
 
     #[test]
@@ -1093,6 +1127,7 @@ mod tests {
             None,
             None,
             &Aliases::new(),
+            Compat::Keep,
             Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
         )
         .unwrap();
@@ -1149,7 +1184,16 @@ mod tests {
                 ),
             ],
         );
-        let stopped = compile(dir.path(), "Main", None, None, &Aliases::new(), quiet()).unwrap();
+        let stopped = compile(
+            dir.path(),
+            "Main",
+            None,
+            None,
+            &Aliases::new(),
+            Compat::Keep,
+            quiet(),
+        )
+        .unwrap();
         stopped.compile_ahead("Main", &AtomicBool::new(true));
         assert!(stopped.ahead().is_empty());
 
@@ -1161,6 +1205,7 @@ mod tests {
             None,
             None,
             &Aliases::new(),
+            Compat::Keep,
             Box::new(move |line| to.lock().unwrap().push(line.to_owned())),
         )
         .unwrap();
@@ -1206,12 +1251,31 @@ mod tests {
             "import QtQuick\nItem {\n  width: 20 +\n}\n",
         )
         .unwrap();
-        let e = compile(dir.path(), "Main", None, None, &Aliases::new(), quiet())
-            .unwrap_err()
-            .to_string();
+        let e = compile(
+            dir.path(),
+            "Main",
+            None,
+            None,
+            &Aliases::new(),
+            Compat::Keep,
+            quiet(),
+        )
+        .unwrap_err()
+        .to_string();
         assert!(e.contains("Main.qml:"), "{e}");
         std::fs::write(dir.path().join("Main.qml"), "import QtQuick\nItem {}\n").unwrap();
-        assert!(compile(dir.path(), "Main", None, None, &Aliases::new(), quiet()).is_ok());
+        assert!(
+            compile(
+                dir.path(),
+                "Main",
+                None,
+                None,
+                &Aliases::new(),
+                Compat::Keep,
+                quiet()
+            )
+            .is_ok()
+        );
         // An example without a backend compiles as before.
         assert!(
             compile(
@@ -1220,11 +1284,23 @@ mod tests {
                 Some("no-such-example"),
                 None,
                 &Aliases::new(),
+                Compat::Keep,
                 quiet()
             )
             .is_ok()
         );
-        assert!(compile(dir.path(), "Gone", None, None, &Aliases::new(), quiet()).is_err());
+        assert!(
+            compile(
+                dir.path(),
+                "Gone",
+                None,
+                None,
+                &Aliases::new(),
+                Compat::Keep,
+                quiet()
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1236,7 +1312,16 @@ mod tests {
             "import QtQuick\nItem {\n  NoSuchThing { }\n}\n",
         )
         .unwrap();
-        let source = compile(dir.path(), "Main", None, None, &Aliases::new(), quiet()).unwrap();
+        let source = compile(
+            dir.path(),
+            "Main",
+            None,
+            None,
+            &Aliases::new(),
+            Compat::Keep,
+            quiet(),
+        )
+        .unwrap();
         let engine = Engine::new();
         ljos_quick::register(&engine);
         engine.set_component_source(source);
