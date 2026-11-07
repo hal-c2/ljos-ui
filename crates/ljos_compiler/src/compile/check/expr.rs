@@ -476,7 +476,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 // What is not known to have the member is narrowed, as
                 // TypeScript narrows it: the fix names how.
                 let fix = match self.arena.kind(part) {
-                    Kind::Unknown => format!(
+                    Kind::Unknown | Kind::NonNullish => format!(
                         "`{of}` is unknown: narrow it first (`typeof {of} === \"object\" && {of} !== null && \"{name}\" in {of}`), or decode it with a type guard"
                     ),
                     Kind::NonPrimitive => format!(
@@ -795,6 +795,47 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
+    /// Whether TypeScript narrows by an assertion called as `callee`: only
+    /// where each name of it is declared with a written type (TS2775). A
+    /// function of QML's scope is reached through the object it is a member
+    /// of, whose type the file does not write, so it is reported, and
+    /// narrows nothing.
+    fn asserts_through_typed(&mut self, callee: &Expression<'a>) -> bool {
+        let mut root = callee.without_parentheses();
+        while let Expression::StaticMemberExpression(m) = root {
+            root = m.object.without_parentheses();
+        }
+        let Expression::Identifier(id) = root else {
+            return true;
+        };
+        let name = id.name.as_str();
+        let typed = match self.local(name) {
+            Some(local) => !self.inferred.contains(&local.id),
+            None if self.module.is_some() => true,
+            // An import of a module is declared by the module.
+            None => matches!(
+                self.c.lookup(name, id.span.start).and_then(|r| r.target),
+                Some(Target::Namespace(_) | Target::Global(_)) | None
+            ),
+        };
+        if !typed {
+            let fix = if self.local(name).is_some() {
+                format!("write the type of `{name}` where it is declared")
+            } else {
+                "move it into a TypeScript module the file imports".into()
+            };
+            self.report(
+                Code::TsAssignType,
+                format!(
+                    "`{}` asserts, and TypeScript narrows by an assertion only through names declared with a type, which `{name}` is not (TS2775): {fix}",
+                    self.text(callee.span())
+                ),
+                callee.span(),
+            );
+        }
+        typed
+    }
+
     /// What a guard of `to` being `sense` leaves of `now`, as TypeScript
     /// narrows by a type predicate: the parts that are a `to`, else `to`
     /// itself; or, where it is false, the parts that are not.
@@ -803,9 +844,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return if sense { to } else { now };
         }
         let parts = self.arena.members(now);
+        // What is not null or undefined may still be anything else: a
+        // guard narrows it as it narrows unknown.
         let kept: Vec<Ty> = parts
             .into_iter()
-            .filter(|part| self.takes(to, *part) == sense)
+            .filter_map(|part| match part {
+                Ty::NON_NULLISH => Some(if sense { to } else { part }),
+                _ => (self.takes(to, part) == sense).then_some(part),
+            })
             .collect();
         if sense && kept.is_empty() {
             return to;
@@ -1765,6 +1811,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             );
             return;
         }
+        if self.arena.parts(value).contains(&Ty::NON_NULLISH) {
+            self.untyped(
+                of,
+                &format!(
+                    "it is unknown, and `in` looks into an object: check `typeof {of} === \"object\"` first"
+                ),
+                span,
+            );
+            return;
+        }
         let word = self.word(value);
         self.report(
             Code::TsAssignType,
@@ -1844,7 +1900,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             .members(value)
             .into_iter()
             .filter_map(|part| match self.arena.kind(part) {
-                Kind::NonPrimitive => Some(if sense { unknown_array } else { part }),
+                Kind::NonPrimitive | Kind::NonNullish => {
+                    Some(if sense { unknown_array } else { part })
+                }
                 _ if is_array(&self.arena, part) == sense => Some(part),
                 _ => None,
             })
@@ -2074,10 +2132,28 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     _ => return,
                 }
             } else {
-                self.arena.filter(now, |arena, part| {
-                    let same = arena.type_of(part).is_none_or(|of| of == name);
-                    same == equal || arena.type_of(part).is_none()
-                })
+                let parts = self.arena.members(now);
+                let kept: Vec<Ty> = parts
+                    .into_iter()
+                    .filter_map(|part| {
+                        if part == Ty::NON_NULLISH {
+                            // Neither null nor undefined, so `"object"`
+                            // leaves TypeScript's `object` alone.
+                            return Some(match (equal, name) {
+                                (true, "number") => Ty::NUMBER,
+                                (true, "string") => Ty::STRING,
+                                (true, "boolean") => Ty::BOOLEAN,
+                                (true, "object") => Ty::OBJECT,
+                                (true, "undefined") => Ty::NEVER,
+                                _ => part,
+                            });
+                        }
+                        let of = self.arena.type_of(part);
+                        let same = of.is_none_or(|of| of == name);
+                        (same == equal || of.is_none()).then_some(part)
+                    })
+                    .collect();
+                self.arena.union(kept)
             };
             self.push_fact(key, local, ty, base);
             return;
@@ -2120,16 +2196,24 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             && self.local("undefined").is_none());
         let ty = if matches!(other, Expression::NullLiteral(_)) {
             if now == Ty::UNKNOWN {
-                // DECISION: `v !== null` leaves unknown unknown, where
-                // TypeScript says `{}`: nothing can be read off either.
-                if !equal {
-                    return;
+                // `v !== null` leaves `{} | undefined`, as TypeScript says:
+                // nothing can be read off it, and a later `typeof v ===
+                // "object"` leaves no null.
+                if equal {
+                    Ty::NULL
+                } else {
+                    self.arena.or(Ty::NON_NULLISH, Ty::UNDEFINED)
                 }
-                Ty::NULL
             } else if equal {
                 self.arena.filter(now, |_, part| part == Ty::NULL)
             } else {
                 self.arena.filter(now, |_, part| part != Ty::NULL)
+            }
+        } else if undefined && now == Ty::UNKNOWN {
+            if equal {
+                Ty::UNDEFINED
+            } else {
+                self.arena.or(Ty::NON_NULLISH, Ty::NULL)
             }
         } else if undefined {
             if equal {
@@ -2310,7 +2394,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                                     && let BindingPattern::BindingIdentifier(id) = &declarator.id
                                 {
                                     let fresh = self.arena.union(written);
+                                    let first = self.next_local;
                                     self.bind_pattern(&declarator.id, given, binding);
+                                    self.inferred.extend(first..self.next_local);
                                     if let Some(local) = self.local(id.name.as_str()) {
                                         self.fresh.push((local.id, fresh));
                                     }
@@ -2332,7 +2418,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     ),
                 },
             };
+            let first = self.next_local;
             self.bind_pattern(&declarator.id, ty, binding);
+            if written.is_none() {
+                self.inferred.extend(first..self.next_local);
+            }
         }
     }
 
@@ -2382,6 +2472,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 if let Expression::CallExpression(call) = &statement.expression
                     && let Some((guard, subject)) = self.guard_of(call)
                     && guard.asserts
+                    && self.asserts_through_typed(&call.callee)
                     && let Some((key, local, now, base)) = self.path(subject)
                 {
                     let ty = self.narrow_guard(now, guard.ty, true);
