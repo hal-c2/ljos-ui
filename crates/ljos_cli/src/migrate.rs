@@ -13,7 +13,8 @@
 //! A file is lowered with the files it names and that name it (`qml_compat::group`). When that
 //! group holds a file that was not named, none of it is written: the named file is kept, saying
 //! which file to name too, as the one would be renamed to match the other lowered while the other
-//! stays Qt's.
+//! stays Qt's. A file is read with the project of its directory, or, in a module's directory, of
+//! the directory the module is imported from, where the files that import it are.
 //!
 //! | Status | Means |
 //! |---|---|
@@ -63,10 +64,11 @@ impl Migrate {
             } else {
                 // `Main.qml`'s parent is the empty path: the directory the
                 // command runs in.
-                path.parent()
+                let dir = path
+                    .parent()
                     .filter(|p| !p.as_os_str().is_empty())
-                    .unwrap_or(Path::new("."))
-                    .to_owned()
+                    .unwrap_or(Path::new("."));
+                import_root(dir).unwrap_or(dir).to_owned()
             };
             let at = roots.iter().position(|r| *r == root).unwrap_or_else(|| {
                 roots.push(root);
@@ -210,6 +212,27 @@ impl Migrate {
         outln!("{} files, {lowered} lowered, {kept} kept", files.len());
         if failed { 2 } else { 0 }
     }
+}
+
+/// The directory a module in `dir` is imported from, when its `qmldir`
+/// names one whose parts are the directories it is in: `lib/Ui/Gauges`
+/// holding `module Ui.Gauges` is imported from `lib`. A file of the module
+/// is of the project there, with the files that import it.
+fn import_root(dir: &Path) -> Option<&Path> {
+    let text = std::fs::read_to_string(dir.join("qmldir")).ok()?;
+    let uri = qml_front::discover::qmldir(&text)?.uri;
+    let mut root = dir;
+    for part in uri.rsplit('.') {
+        if root.file_name()? != part {
+            return None;
+        }
+        root = root.parent()?;
+    }
+    Some(if root.as_os_str().is_empty() {
+        Path::new(".")
+    } else {
+        root
+    })
 }
 
 /// A file's key for [`qml_compat::group`]: its path without `.qml`, with
