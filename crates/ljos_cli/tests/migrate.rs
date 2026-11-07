@@ -113,6 +113,31 @@ fn a_kept_file_keeps_the_files_it_names_and_says_where() {
     assert_eq!(read(dir.path(), "app/Button.qml"), BUTTON);
 }
 
+/// A file named by its bare name is of the project of the directory the
+/// command runs in: the files beside it are read for what their roots are.
+#[test]
+fn a_bare_file_name_is_of_the_project_it_is_run_in() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "Main.qml",
+        "import QtQuick\nItem {\n    Button { color: \"blue\" }\n}\n",
+    );
+    write(dir.path(), "Button.qml", BUTTON);
+    let (status, out, err) = ljos(
+        dir.path(),
+        &["migrate", "--write", "Main.qml", "Button.qml"],
+    );
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.ends_with("2 files, 2 lowered, 0 kept\n"), "{out}");
+    // `Button`'s root is a Rectangle: its `color` is the API's `fill`.
+    assert!(
+        read(dir.path(), "Main.qml").contains("Button { fill: \"blue\" }"),
+        "{}",
+        read(dir.path(), "Main.qml")
+    );
+}
+
 /// The group is the same whether the files are named by a relative or an
 /// absolute path.
 #[test]
