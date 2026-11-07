@@ -182,7 +182,7 @@ are quoted side by side below:
 |---|---|---|
 | `Ljos.Ui` | items, visuals, gestures, states, text, images | `QtQuick` |
 | `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
-| `Ljos.Controls` | the controls, built on `Ljos.Design` roles | `QtQuick.Controls` |
+| `Ljos.Controls` | the controls, built on `Ljos.Design` roles; today Basic's (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic` |
 | `Ljos.Models` | `ListModel`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
 | `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
@@ -907,6 +907,9 @@ construction.
 | `Qt.labs.platform`, `StandardPaths` | `Ljos.Platform` | mechanical |
 | `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
 | `Canvas`, `Shape` | the same | none |
+| `QtQuick.Controls.Basic` | `Ljos.Controls` | mechanical, for the controls the module has (§4.16) |
+| `QtQuick.Controls` | `Ljos.Controls` | mechanical where the program starts with Basic; kept with another style (§4.16) |
+| `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
 
 ### 4.15 What this changes for the engine
 
@@ -924,6 +927,70 @@ construction.
 - **Decoders** run at a model's boundary in tier 2. The rows they return
   are values.
 - **Theme** is a singleton with a live-reloaded source.
+
+### 4.16 Controls
+
+A file in Ljós's API imports its controls from `Ljos.Controls`:
+
+```qml
+import Ljos.Ui
+import Ljos.Controls
+
+Item {
+    Button { text: "Save"; ToolTip.text: "Writes the file"; ToolTip.delay: 500 }
+    Label { text: "Ready" }
+}
+```
+
+The module grows a slice at a time. Each control in it is the Basic
+style's, as `QtQuick.Controls.Basic` has it: the same style file over the
+same template, made, drawn and taking input as Qt's, so a lowered file and
+the file as written are the same program and draw the same pixels. What
+the module has is in `ljos.txt` (written by the own_types test), and the
+compat pass lowers a file only when every control it names is there.
+
+| Slice | Controls | State |
+|---|---|---|
+| K1 | `Label`, `AbstractButton`, `Button`, attached `ToolTip`, `ScrollBar` (and its attached form), `ScrollView`, `Popup` | built |
+| K2 | `TextField`, `TextArea` | |
+| K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | |
+| K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
+
+Lowering (§6.1): `import QtQuick.Controls.Basic` becomes
+`import Ljos.Controls` on its line, and a second import of the controls
+becomes an empty line. `import QtQuick.Controls` is the style the program
+starts with (`QT_QUICK_CONTROLS_STYLE`, then the file
+`QT_QUICK_CONTROLS_CONF` names, then the platform's: Fusion on Linux), so
+it is lowered only where that is Basic. `ljos migrate --style NAME` says
+what the program starts with; without it, migrate takes what a program
+started there would get. A control the module has not taken yet, or one of
+its enums (`Dial.SnapAlways`), keeps the file with "`Dial` is not in
+Ljos.Controls yet". A `Rectangle` given to a control (`background:`) is
+still a `Rectangle`, so its `color` becomes `fill`; a member read off what
+the style gave (`b.background.color`) keeps the file, because that may be
+a `Rectangle`.
+
+Cost: none at run time. The module registers the files the Basic style
+already compiled, under a second name.
+
+DECISION: `Ljos.Controls` draws Basic, not `Ljos.Design` roles. Building
+on the roles is a rewrite of the style, so it stays in M6.
+
+DECISION: the controls keep Qt's member and enum names
+(`ScrollBar.AlwaysOn`, `Label.color` as the glyph colour, as on `Text`)
+until M3's enum cleanup and §4.13's text renames reach them.
+
+DECISION: `Ljos.Controls` does not bring `Ljos.Ui` with it; a file imports
+both, as a Qt file imports `QtQuick` and the controls.
+
+DECISION: a controls import under a name (`as C`) keeps the file, as an
+aliased `QtQuick` does.
+
+Not yet: in a file in Ljós's API (checked, no `pragma Scripts:
+JavaScript`), the checker does not follow an attached object read off
+another object (`save.ToolTip.text`). Read on the object itself
+(`ToolTip.text` inside the `Button`), it checks. The generated `.d.ts`
+(§4.4) covers `Ljos.Ui` only.
 
 ## 5. The checker
 
@@ -1060,8 +1127,10 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   and `id.member` where the target's type is known;
 - `property var` / `variant` → `property unknown`.
 
-A `QtQml` import stays. Any other module import (`QtQuick.Controls`, an
-aliased `QtQuick`) keeps the file.
+A `QtQml` import stays. `QtQuick.Layouts` and the controls
+(`QtQuick.Controls.Basic`, and `QtQuick.Controls` where the program starts
+with Basic) are lowered (§4.6, §4.16). Any other module import
+(`QtQuick.Controls.Material`, an aliased `QtQuick`) keeps the file.
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
@@ -1103,7 +1172,8 @@ run as written, and the cost of a missed tie is a wrong program.
 
 | Kept because | Phase |
 |---|---|
-| A type or module the API has not taken (`Column`, `Behavior`, `QtQuick.Controls`, …) | Lowered as the API grows (M1, M6) |
+| A type or module the API has not taken (`Column`, `Behavior`, `Dial`, `QtQuick.Controls.Fusion`, …) | Lowered as the API grows (M1, M6) |
+| `import QtQuick.Controls` in a program that starts with a style other than Basic | Lowered once `Ljos.Controls` has that style (M6) |
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
@@ -1132,6 +1202,31 @@ Why the 462 example files are kept:
 | a type not in `Ljos.Ui` yet: `Image` (10), `Screen` (5), `Behavior` (5), `ListView` (4), `Window` (3), … | 44 |
 | a member read off something whose type is not known | 2 |
 
+Recounted with `Ljos.Controls` (K1, 2026-11-07). One run over
+`corpus/qtdoc/examples` is one group today: modules imported by name tie
+the examples together, and a kept `QtQuick3D` file keeps the rest. So the
+examples are counted one example at a time, as an app is migrated:
+
+```
+one run over examples:          495 files,  0 lowered, 485 kept
+each example, --style Basic:    495 files, 13 lowered, 472 kept
+each example, --style Fusion:   495 files, 13 lowered, 472 kept
+```
+
+With Basic, no example file is kept by its controls import any more. What
+the controls keep instead:
+
+| Reason | Files |
+|---|---:|
+| a file of its group is kept | 71 |
+| `QtQuick.Controls.Fusion` (15), `.impl` (7), `.Material` (5) | 27 |
+| a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `TextField`, `Switch`, `Slider`, `Pane`, `Page` (1 each) | 16 |
+
+With Fusion (the Linux default), 89 files are kept by `import
+QtQuick.Controls`. The lowered count does not move yet: the files the
+import let through are kept by the other types they name, or by their
+group.
+
 `Qt.*` keeps no file today: `Ljos.Ui` imports `QtQml`, so the namespace is
 still there. Modules, not globals, decide coverage. Phase 2 starts with
 them (§17).
@@ -1158,7 +1253,7 @@ them (§17).
 ## 8. `ljos migrate`
 
 ```
-ljos migrate [--write] PATH…
+ljos migrate [--write] [--style NAME] PATH…
 would lower qml/SimpleButton.qml (5 edits)
 kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 2 files, 1 lowered, 1 kept
@@ -1364,7 +1459,7 @@ on the Qt backend (10 steps).
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
-| **M6** Controls | `Ljos.Controls` and styles | Controls corpus lowered; qml6 parity on its features |
+| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K2–K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
 
 ## 14. Answers to note 11's open questions
 
