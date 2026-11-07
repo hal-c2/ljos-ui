@@ -31,7 +31,7 @@ pub mod tier1;
 pub mod ts;
 
 pub use alias::{Alias, AliasError, Aliases, Mount};
-pub use compile::compile_file;
+pub use compile::{compile_file, is_ljos_ui, name_templates_in};
 pub use dump::dump;
 pub use project::{Project, declared_beside, described_in, resource_dirs, resources, skipped_dir};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};

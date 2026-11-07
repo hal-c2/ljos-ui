@@ -109,12 +109,19 @@ pub fn extract(
 ) -> Option<Extracted> {
     let source = project.source(key)?;
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    let mut parsed = qml_syntax::parse(&allocator, source);
     if parsed.panicked || !is_dialect(&parsed.document) {
         return None;
     }
     let types = Types::new(&project.front, &project.oracle, key);
-    let tree = Tree::analyze(&parsed.document, types, &mut Vec::new());
+    let mut tree = Tree::analyze(&parsed.document, types, &mut Vec::new());
+    if !tree.named_templates.is_empty() {
+        // Read as the compiler reads it: `component: Page` is a template.
+        let named = std::mem::take(&mut tree.named_templates);
+        drop(tree);
+        crate::compile::name_templates_in(&allocator, &mut parsed.document, &named);
+        tree = Tree::analyze(&parsed.document, types, &mut Vec::new());
+    }
     let mut writer = Writer {
         api,
         source,
