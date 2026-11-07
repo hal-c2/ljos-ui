@@ -28,7 +28,12 @@ fn the_renames_are_what_ljos_ui_has() {
     let ui = qt_types::module(MODULE).expect("Ljos.Ui is described");
     for (old, new) in TYPE_RENAMES {
         assert!(ui.type_named(new).is_some(), "{new}");
-        assert!(ui.type_named(old).is_none(), "{old}");
+        // An old name is gone, unless another type now has it: Qt's
+        // `DragHandler` is `Drag`, and Qt's `Drag` `DragSource`.
+        assert!(
+            ui.type_named(old).is_none() || TYPE_RENAMES.iter().any(|(_, n)| n == old),
+            "{old}"
+        );
     }
     // Each type Ljos.Ui has of a Qt type that renames members, by the name
     // it has there; every entry of the table is some such type's.
@@ -664,4 +669,48 @@ fn grab_permissions_keep_the_file() {
     ] {
         assert_eq!(kept_for(source), reason, "{source}");
     }
+}
+
+#[test]
+fn the_drag_point_and_wheel_handlers_are_lowered_to_gestures() {
+    let source = "import QtQuick\n\
+Item {\n\
+    DragHandler { acceptedButtons: Qt.RightButton; snapMode: DragHandler.NoSnap }\n\
+    PointHandler { id: point; acceptedDevices: PointerDevice.Stylus }\n\
+    WheelHandler { acceptedModifiers: Qt.ControlModifier }\n\
+    property bool pen: point.active && point.acceptedDevices > 0\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Item {\n\
+    Drag { buttons: Qt.RightButton; snapMode: Drag.NoSnap }\n\
+    Pointer { id: point; devices: PointerDevice.Stylus }\n\
+    Wheel { modifiers: Qt.ControlModifier }\n\
+    property bool pen: point.active && point.devices > 0\n\
+}\n"
+    );
+}
+
+/// Qt's attached `Drag` is `DragSource`, set on the item, read in a script
+/// and read off another item; its enums go with it.
+#[test]
+fn the_attached_drag_is_a_drag_source() {
+    let source = "import QtQuick\n\
+Item {\n\
+    id: card\n\
+    Drag.active: true; Drag.dragType: Drag.Automatic\n\
+    Drag.onDragStarted: console.log(Drag.active, card.Drag.source)\n\
+    MouseArea { drag.target: parent; drag.axis: Drag.XAxis }\n\
+}\n";
+    assert_eq!(
+        lowered(source),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+Item {\n\
+    id: card\n\
+    DragSource.active: true; DragSource.dragType: DragSource.Automatic\n\
+    DragSource.onDragStarted: console.log(DragSource.active, card.DragSource.source)\n\
+    PointerArea { drag.target: parent; drag.axis: DragSource.XAxis }\n\
+}\n"
+    );
 }

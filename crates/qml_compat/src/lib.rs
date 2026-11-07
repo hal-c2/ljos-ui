@@ -56,6 +56,12 @@ pub const TYPE_RENAMES: &[(&str, &str)] = &[
     ("MouseArea", "PointerArea"),
     ("TapHandler", "Tap"),
     ("HoverHandler", "Hover"),
+    ("DragHandler", "Drag"),
+    ("PointHandler", "Pointer"),
+    ("WheelHandler", "Wheel"),
+    // Qt's attached `Drag` carries data to a `DropArea`; Ljós's `Drag` is
+    // the gesture that moves an item.
+    ("Drag", "DragSource"),
 ];
 
 /// What a pointer handler accepts is what a gesture takes (docs/DIALECT.md
@@ -74,6 +80,14 @@ pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[
     // Ljós's TapHandler is described on its own, not on PointerHandler.
     ("TapHandler", GESTURE),
     ("PointerHandler", GESTURE),
+    // A wheel takes no buttons.
+    ("WheelHandler", WHEEL),
+];
+
+const WHEEL: &[(&str, &str)] = &[
+    ("acceptedModifiers", "modifiers"),
+    ("acceptedDevices", "devices"),
+    ("acceptedPointerTypes", "pointerTypes"),
 ];
 
 /// What [`lower`] made of a file.
@@ -548,8 +562,14 @@ impl<'s> Pass<'s> {
                 _ => self.member_name(name, ty, "the object")?,
             }
         } else if first.starts_with(|c: char| c.is_ascii_uppercase()) {
-            // An attached object: `Keys.onPressed`, `Component.onCompleted`.
+            // An attached object: `Keys.onPressed`, `Component.onCompleted`,
+            // and `Drag.active`, which is `DragSource.active`.
             self.named_type(first, at, 0)?;
+            if let Some(new) = renamed_type(first)
+                && let Some(range) = part_range(self.source, name, 0)
+            {
+                self.change(range, new);
+            }
         } else if let Some(id) = self.id(first)
             && matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges")
         {
@@ -956,6 +976,14 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 || key.enumeration.alias == Some("GrabPermissions"))
         {
             self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+        }
+        // An attached object read off another: `item.Drag.active`.
+        if name.starts_with(|c: char| c.is_ascii_uppercase())
+            && let Some(new) = renamed_type(name)
+        {
+            let span = it.property.span;
+            self.pass
+                .change(span.start as usize..span.end as usize, new);
         }
         if is_renamed_member(name) {
             let on = self.ty(&it.object);
