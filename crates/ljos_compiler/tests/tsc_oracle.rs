@@ -13,8 +13,9 @@
 //! another case's: what TypeScript and the checker say of a module is said
 //! of the case it is named for, so an accepted case's module is clean too.
 //! So may it import a JavaScript file, `<Case>.js`, with its declarations,
-//! `<Case>.d.ts`, beside it or not; what is said of the declarations is
-//! said of the case too.
+//! `<Case>.d.ts`, beside it or not, or an ECMAScript module, `<Case>.mjs`,
+//! with `<Case>.d.mts`; what is said of the declarations is said of the
+//! case too.
 
 use std::path::{Path, PathBuf};
 
@@ -130,10 +131,10 @@ fn typescript_agrees_with_each_expectation() {
             continue;
         }
         let module = format!("{}.ts", case.key);
-        let declarations = format!("{}.d.ts", case.key);
+        let declarations = [format!("{}.d.ts", case.key), format!("{}.d.mts", case.key)];
         let of: Vec<&ts::Finding> = findings
             .iter()
-            .filter(|f| f.key == case.key || f.key == module || f.key == declarations)
+            .filter(|f| f.key == case.key || f.key == module || declarations.contains(&f.key))
             .collect();
         let said = || {
             of.iter()
@@ -180,7 +181,7 @@ fn the_checker_agrees_or_the_gap_is_known() {
             .find(|r| r.key == case.key)
             .unwrap_or_else(|| panic!("{} was not compiled", case.key));
         let module = format!("{}.ts", case.key);
-        let declarations = format!("{}.d.ts", case.key);
+        let declarations = [format!("{}.d.ts", case.key), format!("{}.d.mts", case.key)];
         let diagnostics: Vec<&ljos_compiler::Diagnostic> = match &file.result {
             Ok(compiled) => compiled
                 .diagnostics
@@ -189,7 +190,7 @@ fn the_checker_agrees_or_the_gap_is_known() {
                     compiled
                         .modules
                         .iter()
-                        .filter(|m| m.key == module || m.key == declarations)
+                        .filter(|m| m.key == module || declarations.contains(&m.key))
                         .flat_map(|m| &m.diagnostics),
                 )
                 .collect(),
