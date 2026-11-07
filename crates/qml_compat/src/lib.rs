@@ -2049,7 +2049,6 @@ fn lookup_rename(renames: &[(&str, &str)], name: &str) -> Option<String> {
     })
 }
 
-/// A QML type's name: an ASCII capital, then letters, digits and `_`.
 /// Whether `text` has `id.member` as whole names: `l.source` is not in
 /// `l.sourceComponent` or `pool.source`.
 fn names_member(text: &str, id: &str, member: &str) -> bool {
@@ -2059,6 +2058,7 @@ fn names_member(text: &str, id: &str, member: &str) -> bool {
         .any(|(at, _)| !text[..at].ends_with(word) && !text[at + needle.len()..].starts_with(word))
 }
 
+/// A QML type's name: an ASCII capital, then letters, digits and `_`.
 fn is_type_name(name: &str) -> bool {
     name.starts_with(|c: char| c.is_ascii_uppercase())
         && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
