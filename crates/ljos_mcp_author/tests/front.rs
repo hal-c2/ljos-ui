@@ -676,3 +676,21 @@ fn a_file_importing_an_unknown_module_has_only_the_front_end_s_findings() {
         "{diagnostics:?}"
     );
 }
+
+#[test]
+fn a_type_given_as_a_component_is_a_use_of_it() {
+    // In Ljos.Ui, `component: Rectangle` is a `Rectangle` with nothing in
+    // it, as the compiler reads it.
+    let dir = project(&[(
+        "Main.qml",
+        "import Ljos.Ui\nItem {\n    Loader { component: Rectangle }\n}\n",
+    )]);
+    let usage = QmlFrontEnd::new(dir.path()).api_uses();
+    let types: Vec<&str> = usage
+        .uses
+        .iter()
+        .filter(|u| u.member.is_none())
+        .map(|u| u.type_name.as_str())
+        .collect();
+    assert_eq!(types, ["Item", "Loader", "Rectangle"], "{usage:?}");
+}

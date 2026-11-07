@@ -141,14 +141,21 @@ pub(super) fn collect(root: &Path) -> Usage {
 
 fn file(loader: &Loader<'_>, key: &str, source: &str, out: &mut Vec<ApiUse>) {
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    let mut parsed = qml_syntax::parse(&allocator, source);
     if !parsed.is_ok() {
         return;
     }
     let oracle = QtTypeOracle;
     let types = Types::new(&loader.project, &oracle, key);
     let mut errors = Vec::new();
-    let tree = Tree::analyze(&parsed.document, types, &mut errors);
+    let mut tree = Tree::analyze(&parsed.document, types, &mut errors);
+    if !tree.named_templates.is_empty() && ljos_compiler::is_ljos_ui(&parsed.document) {
+        // Read as the compiler reads it: `component: Page` is a `Page`.
+        let named = std::mem::take(&mut tree.named_templates);
+        drop(tree);
+        ljos_compiler::name_templates_in(&allocator, &mut parsed.document, &named);
+        tree = Tree::analyze(&parsed.document, types, &mut Vec::new());
+    }
 
     let name = format!("{key}.qml");
     let mut walk = Walk {

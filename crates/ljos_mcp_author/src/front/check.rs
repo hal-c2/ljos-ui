@@ -228,18 +228,17 @@ fn file(
     pending: &mut dyn FnMut(String, Diagnostic),
 ) {
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    let mut parsed = qml_syntax::parse(&allocator, source);
     if !parsed.is_ok() {
         return;
     }
-    let doc = &parsed.document;
     let oracle = QtTypeOracle;
     let types = Types::new(env.project, &oracle, key);
 
     // Imports no one knows: the module may provide the types we cannot find.
     let mut unverifiable = false;
     let mut imports: Vec<String> = Vec::new();
-    for import in &doc.imports {
+    for import in &parsed.document.imports {
         if let QmlImportSource::Module(uri) = &import.source {
             let uri = uri.to_string();
             if !oracle.has_module(&uri) && !env.modules.contains(&uri) {
@@ -261,7 +260,16 @@ fn file(
     }
 
     let mut errors = Vec::new();
-    let tree = Tree::analyze(doc, types, &mut errors);
+    let mut tree = Tree::analyze(&parsed.document, types, &mut errors);
+    if !tree.named_templates.is_empty() && ljos_compiler::is_ljos_ui(&parsed.document) {
+        // Checked as the compiler reads it: `component: Page` is a `Page`.
+        let named = std::mem::take(&mut tree.named_templates);
+        drop(tree);
+        ljos_compiler::name_templates_in(&allocator, &mut parsed.document, &named);
+        errors.clear();
+        tree = Tree::analyze(&parsed.document, types, &mut errors);
+    }
+    let doc = &parsed.document;
     for error in &errors {
         if let Some(d) = semantic_error(env, &imports, path, source, error, unverifiable) {
             out.push(d);
