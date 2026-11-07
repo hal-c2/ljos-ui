@@ -48,9 +48,28 @@ fn the_renames_are_what_ljos_ui_has() {
         assert!(ui.type_named(new).is_some(), "{new}");
         assert!(ui.type_named(old).is_none(), "{old}");
     }
-    for (ty, renames) in member_renames() {
-        let ty = ui.type_named(ty).expect("a renaming type");
-        for (old, new) in *renames {
+    // Each type Ljos.Ui has of a Qt type that renames members, by the name
+    // it has there; every entry of the table is some such type's.
+    let quick = qt_types::module("QtQuick").expect("QtQuick is described");
+    let names = member_renames().map(|(name, _)| (*name, *name));
+    let mut seen = Vec::new();
+    for (qt, name) in type_renames().copied().chain(names) {
+        let (Some(qt), Some(ty)) = (quick.type_named(qt), ui.type_named(name)) else {
+            continue;
+        };
+        let Some(renames) = renames_of(qt) else {
+            continue;
+        };
+        // The entry that renames for it: its own, or its nearest ancestor's.
+        let mut at = Some(qt);
+        while let Some(ty) = at {
+            if member_renames().any(|(name, _)| *name == ty.name) {
+                seen.push(ty.name);
+                break;
+            }
+            at = ty.prototype();
+        }
+        for (old, new) in renames {
             assert!(ty.property(new).is_some(), "{}.{new}", ty.name);
             assert!(ty.property(old).is_none(), "{}.{old}", ty.name);
             assert!(
@@ -58,6 +77,9 @@ fn the_renames_are_what_ljos_ui_has() {
                 "{new}Changed"
             );
         }
+    }
+    for (name, _) in member_renames() {
+        assert!(seen.contains(name), "no type of Ljos.Ui is a {name}");
     }
 }
 

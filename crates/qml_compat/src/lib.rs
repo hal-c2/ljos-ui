@@ -1170,7 +1170,9 @@ impl<'s> Pass<'s> {
                 // Derived from a type that is not one that renames it, but
                 // perhaps from one derived from that: an Item may be a
                 // Rectangle.
-                None if matches!(on, Ty::Derived(_)) && could_be_renaming(ty) => Rename::Unknown,
+                None if matches!(on, Ty::Derived(_)) && could_be_renaming(ty, name) => {
+                    Rename::Unknown
+                }
                 None => Rename::Keep,
             },
         }
@@ -1385,24 +1387,17 @@ fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
     }
 }
 
-/// Whether something of type `ty` may be of a type that renames members:
-/// an `Item` may be a `Rectangle`, a `Text` or a `Timer` may not.
-fn could_be_renaming(ty: &'static Type) -> bool {
-    let is_item = |mut at: Option<&'static Type>| {
-        while let Some(t) = at {
-            if t.name == "Item" {
-                return true;
-            }
-            at = t.prototype();
-        }
-        false
-    };
-    // Every type that renames is an Item; one that is an Item and is no
-    // further along than a renaming type's ancestors may be one.
-    is_item(Some(ty))
-        && member_renames().any(|(name, _)| {
+/// Whether something of type `ty` may be of a type that renames the member
+/// `name`: an `Item` may be a `Rectangle`, whose `color` is `fill`, and a
+/// `QtObject` a `TapHandler`; a `Text` or a `Timer` may be neither.
+fn could_be_renaming(ty: &'static Type, name: &str) -> bool {
+    // One that is no further along than a renaming type's ancestors may be
+    // one.
+    member_renames()
+        .filter(|(_, renames)| lookup_rename(renames, name).is_some())
+        .any(|(renaming, _)| {
             qt_types::module("QtQuick")
-                .and_then(|m| m.type_named(name))
+                .and_then(|m| m.type_named(renaming))
                 .is_some_and(|renaming| {
                     let mut at = Some(renaming);
                     while let Some(t) = at {
