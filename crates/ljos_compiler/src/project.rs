@@ -75,6 +75,10 @@ pub struct Project<O> {
     paths: BTreeMap<String, PathBuf>,
     /// The JavaScript files, by their path from the root (`content/calc.js`).
     scripts: BTreeMap<String, String>,
+    /// The declarations (`calc.d.ts`) beside JavaScript files, by their
+    /// path from the root: what a file in Ljós's API reaches the
+    /// JavaScript file through (docs/DIALECT.md §5.1, `ts-boundary`).
+    declarations: BTreeMap<String, String>,
     pub(crate) oracle: O,
     /// The modules told to the front end that are built with C++, with its
     /// files: where a name nothing here has may have been meant to come from.
@@ -137,6 +141,7 @@ impl<O: TypeOracle> Project<O> {
             displaced: BTreeMap::new(),
             paths: BTreeMap::new(),
             scripts: BTreeMap::new(),
+            declarations: BTreeMap::new(),
             oracle,
             native: BTreeMap::new(),
             described: BTreeSet::new(),
@@ -431,6 +436,25 @@ impl<O: TypeOracle> Project<O> {
         self.callable.get_mut().clear();
     }
 
+    /// Adds the declarations at `path` (`calc.d.ts`) of the JavaScript
+    /// file beside them.
+    pub fn add_declarations(&mut self, path: &str, source: impl Into<String>) {
+        self.declarations.insert(path.to_string(), source.into());
+    }
+
+    /// The declarations beside JavaScript files: their paths from the
+    /// root, and their text.
+    pub fn declarations(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.declarations
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// The text of the declarations at `path`.
+    pub fn declaration(&self, path: &str) -> Option<&str> {
+        self.declarations.get(path).map(String::as_str)
+    }
+
     /// The JavaScript files: their paths from the root, and their text.
     pub fn scripts(&self) -> impl Iterator<Item = (&str, &str)> {
         self.scripts.iter().map(|(k, v)| (k.as_str(), v.as_str()))
@@ -696,6 +720,15 @@ impl<O: TypeOracle> Project<O> {
                     self.add_script(&key, text);
                 }
             }
+            for name in declared_beside(names) {
+                let path = dir.join(name);
+                let (Some(key), Ok(text)) = (key(&path), std::fs::read_to_string(&path)) else {
+                    continue;
+                };
+                if !self.declarations.contains_key(&key) {
+                    self.add_declarations(&key, text);
+                }
+            }
         }
         for (dir, names) in &dirs {
             let Some(dir_key) = key(dir) else {
@@ -752,6 +785,15 @@ impl<O: TypeOracle> Project<O> {
                         std::fs::read_to_string(&path),
                     ) {
                         project.add_script(&key, text);
+                    }
+                }
+                for name in declared_beside(names) {
+                    let path = dir.join(name);
+                    if let (Some(key), Ok(text)) = (
+                        key_under(base, prefix, &path),
+                        std::fs::read_to_string(&path),
+                    ) {
+                        project.add_declarations(&key, text);
                     }
                 }
                 let (described, kept) = described(dir, names);
@@ -1224,4 +1266,14 @@ fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
     }
     out.sort();
     Ok(out)
+}
+
+/// The declarations among `names`, one directory's files, that are beside
+/// a JavaScript file of theirs: `calc.d.ts` beside `calc.js`.
+fn declared_beside(names: &[String]) -> impl Iterator<Item = &String> {
+    names.iter().filter(|name| {
+        names.iter().any(|script| {
+            crate::script::module::declarations_of(script).is_some_and(|d| d == **name)
+        })
+    })
 }

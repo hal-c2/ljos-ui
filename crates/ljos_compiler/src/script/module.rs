@@ -29,6 +29,28 @@ pub(crate) fn is_module(path: &str) -> bool {
     path.ends_with(".ts") && !path.ends_with(".d.ts")
 }
 
+/// Whether `path` names a JavaScript file, which Ljós's API reaches only
+/// through the declarations beside it.
+pub(crate) fn is_javascript(path: &str) -> bool {
+    path.ends_with(".js") || path.ends_with(".mjs")
+}
+
+/// Whether `path` names the declarations of a JavaScript file:
+/// `calc.d.ts`, `calc.d.mts`.
+pub fn is_declarations(path: &str) -> bool {
+    path.ends_with(".d.ts") || path.ends_with(".d.mts")
+}
+
+/// Where the declarations of the JavaScript file at `path` are, as
+/// TypeScript looks for them: `calc.d.ts` beside `calc.js`, `calc.d.mts`
+/// beside `calc.mjs`. None for what is no JavaScript file.
+pub(crate) fn declarations_of(path: &str) -> Option<String> {
+    if let Some(stem) = path.strip_suffix(".mjs") {
+        return Some(format!("{stem}.d.mts"));
+    }
+    path.strip_suffix(".js").map(|stem| format!("{stem}.d.ts"))
+}
+
 /// What a module is that it cannot run as: a byte span of its text and why.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Fault {

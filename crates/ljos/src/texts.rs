@@ -257,6 +257,8 @@ fn add_beside(
             }
         } else if qml_front::project::is_script(&name) {
             project.add_script(&format!("{prefix}/{name}"), text);
+        } else if ljos_compiler::is_declarations(&name) {
+            project.add_declarations(&format!("{prefix}/{name}"), text);
         }
     }
 }
