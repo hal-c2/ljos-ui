@@ -324,7 +324,13 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         tables: Vec::new(),
         declared: Vec::new(),
         members: qt_members::Members::default(),
+        root_at: parsed.document.root.span.start,
+        bare_sources: Vec::new(),
+        aimed: Vec::new(),
     };
+    let mut bare = BareSources(Vec::new());
+    bare.object(&parsed.document.root);
+    pass.bare_sources = bare.0;
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
         Ok(true) => {
@@ -489,6 +495,13 @@ struct Pass<'s> {
     declared: Vec<String>,
     /// The members of `Qt` that `Ljos.Core` has under its own names.
     members: qt_members::Members,
+    /// Where the file's root object starts.
+    root_at: u32,
+    /// Where a script names `source` or `setSource` unqualified: a Loader's,
+    /// when it is in reach.
+    bare_sources: Vec<u32>,
+    /// What objects aimed at an id (`target: loader`) set or handle there.
+    aimed: Vec<(String, String)>,
 }
 
 type Step = Result<(), Kept>;
@@ -772,6 +785,27 @@ impl<'s> Pass<'s> {
 
     /// The ids and inline components, before anything refers to them.
     fn collect(&mut self, object: &QmlObject<'_>) {
+        let aimed_at = object.members.iter().find_map(|member| match member {
+            QmlMember::Binding(QmlBinding {
+                name,
+                value: QmlBindingValue::Expression(Expression::Identifier(id)),
+                ..
+            }) if name.as_simple() == Some("target") => Some(id.name.to_string()),
+            _ => None,
+        });
+        if let Some(id) = aimed_at {
+            for member in &object.members {
+                let name = match member {
+                    QmlMember::Binding(binding) => binding.name.parts[0].to_string(),
+                    QmlMember::Function(function) => match &function.id {
+                        Some(name) => name.name.to_string(),
+                        None => continue,
+                    },
+                    _ => continue,
+                };
+                self.aimed.push((id.clone(), name));
+            }
+        }
         for member in &object.members {
             match member {
                 QmlMember::Binding(binding) => {
@@ -1409,6 +1443,22 @@ impl<'s> Pass<'s> {
                 at,
             ));
         };
+        // Written where a component goes, the name is read as a type only
+        // if it is one: `page` would be an id, `my-page` a subtraction.
+        if !is_type_name(name) {
+            return Err(self.no(
+                format!("a `Loader`'s `source` is \"{file}\", whose name is not a type's"),
+                at,
+            ));
+        }
+        if object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("sourceComponent"))
+        }) {
+            return Err(self.no(
+                "a `Loader` is given both a `source` and a `sourceComponent`".into(),
+                at,
+            ));
+        }
         // The Loader's `source` is then empty: whatever reads it, or hears
         // it change, would be told otherwise.
         let reads = object_id(object).is_some_and(|id| {
@@ -1416,7 +1466,11 @@ impl<'s> Pass<'s> {
                 || self.source.contains(&format!("{id}.setSource"))
         }) || object.members.iter().any(|member| {
             matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("onSourceChanged"))
-        });
+        }) || object_id(object).is_some_and(|id| {
+            self.aimed
+                .iter()
+                .any(|(at, name)| at == id && matches!(name.as_str(), "source" | "onSourceChanged"))
+        }) || self.reads_source_unqualified(object);
         if reads {
             return Err(self.no(
                 "a `Loader`'s `source` is read or set as well as written".into(),
@@ -1427,6 +1481,30 @@ impl<'s> Pass<'s> {
         self.change(span.start as usize..span.end as usize, "component");
         self.change(url.span.start as usize..url.span.end as usize, name);
         Ok(())
+    }
+
+    /// Whether a script of the Loader's own, or anywhere in the file when it
+    /// is the file's root, names `source` or `setSource` unqualified. One
+    /// in a child is the child's own, unless the child has none and the
+    /// Loader is the root; the pass keeps the file then too.
+    fn reads_source_unqualified(&self, object: &QmlObject<'_>) -> bool {
+        if object.span.start == self.root_at {
+            return !self.bare_sources.is_empty();
+        }
+        object.members.iter().any(|member| {
+            let span = match member {
+                QmlMember::Binding(binding) => match binding.value {
+                    QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => binding.span,
+                    _ => return false,
+                },
+                QmlMember::Function(function) => function.span,
+                QmlMember::Property(property) if property.value.is_some() => property.span,
+                _ => return false,
+            };
+            self.bare_sources
+                .iter()
+                .any(|at| (span.start..span.end).contains(at))
+        })
     }
 
     /// What a `PropertyChanges` or `Connections` acts on.
@@ -1931,6 +2009,53 @@ fn lookup_rename(renames: &[(&str, &str)], name: &str) -> Option<String> {
         let signal = name.strip_suffix("Changed")?;
         (signal == *old).then(|| format!("{new}Changed"))
     })
+}
+
+/// A QML type's name: an ASCII capital, then letters, digits and `_`.
+fn is_type_name(name: &str) -> bool {
+    name.starts_with(|c: char| c.is_ascii_uppercase())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Where the scripts of a file name `source` or `setSource` unqualified.
+struct BareSources(Vec<u32>);
+
+impl BareSources {
+    fn object(&mut self, object: &QmlObject<'_>) {
+        for member in &object.members {
+            match member {
+                QmlMember::Binding(binding) => self.value(&binding.value),
+                QmlMember::Property(property) => {
+                    if let Some(value) = &property.value {
+                        self.value(value);
+                    }
+                }
+                QmlMember::Function(function) => {
+                    self.visit_function(function, ScopeFlags::Function);
+                }
+                QmlMember::Object(child) => self.object(child),
+                QmlMember::InlineComponent(component) => self.object(&component.object),
+                QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+            }
+        }
+    }
+
+    fn value(&mut self, value: &QmlBindingValue<'_>) {
+        match value {
+            QmlBindingValue::Expression(expression) => self.visit_expression(expression),
+            QmlBindingValue::Statement(statement) => self.visit_statement(statement),
+            QmlBindingValue::Object(object) => self.object(object),
+            QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.object(o)),
+        }
+    }
+}
+
+impl<'a> Visit<'a> for BareSources {
+    fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
+        if matches!(it.name.as_str(), "source" | "setSource") {
+            self.0.push(it.span.start);
+        }
+    }
 }
 
 /// Whether `ty` is, or is built on, a `Loader`.
