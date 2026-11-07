@@ -265,3 +265,25 @@ fn a_module_is_read_with_its_importers_however_it_is_named() {
     }
     assert_eq!(read(dir.path(), "lib/Main.qml"), main);
 }
+
+/// A file below the project root is read with the root's project, so a
+/// module on the root's import path is one of its files however deep the
+/// file is.
+#[test]
+fn an_importer_below_the_root_is_read_with_the_root_s_project() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Gauges/qmldir",
+        "module Gauges\nDial 1.0 Dial.qml\n",
+    );
+    write(dir.path(), "app/Gauges/Dial.qml", BUTTON);
+    let page = "import QtQuick\nimport Gauges\nItem { Dial { color: \"red\" } }\n";
+    write(dir.path(), "app/views/Page.qml", page);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/Gauges/Dial.qml"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(out.starts_with("kept app/Gauges/Dial.qml:1:1: "), "{out}");
+    assert!(out.contains("it is used with `Page.qml`"), "{out}");
+    assert_eq!(read(dir.path(), "app/Gauges/Dial.qml"), BUTTON);
+    assert_eq!(read(dir.path(), "app/views/Page.qml"), page);
+}
