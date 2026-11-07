@@ -109,6 +109,15 @@ module Ljos.Blocks
 		signal delegateChanged
 		signal countChanged
 
+module Ljos.Controls
+	AbstractButton QtQuick.Templates.AbstractButton
+	Button QtQuick/Controls/Basic/Button.qml
+	Label QtQuick/Controls/Basic/Label.qml
+	Popup QtQuick/Controls/Basic/Popup.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	ToolTip QtQuick/Controls/Basic/ToolTip.qml
+
 module Ljos.Design
 	Colors Ljos/Design/Colors.qml
 	EnterTransition Ljos/Design/EnterTransition.qml
