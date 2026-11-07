@@ -25,9 +25,9 @@ use objc2::runtime::{AnyObject, NSObject, Sel};
 use objc2::{DefinedClass, MainThreadMarker, MainThreadOnly, define_class, msg_send, sel};
 use objc2_app_kit::{
     NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenu,
-    NSMenuItem,
+    NSMenuItem, NSWindow,
 };
-use objc2_foundation::{NSInteger, NSObjectProtocol, NSProcessInfo, NSString};
+use objc2_foundation::{NSInteger, NSObjectProtocol, NSProcessInfo, NSString, NSUserDefaults};
 
 define_class!(
     // SAFETY: NSObject has no subclassing requirements, and the class
@@ -72,6 +72,16 @@ impl AppKitMenuBar {
         let target = mtm.alloc::<Target>().set_ivars(post);
         // SAFETY: NSObject's `init` on a freshly allocated object.
         let target: Retained<Target> = unsafe { msg_send![super(target), init] };
+        // AppKit adds items of its own to an application's menus: "Enter
+        // Full Screen" to the one titled View (else Window), beside an
+        // application's own full-screen item and on the same key, and "Show
+        // Tab Bar" and "Show All Tabs" for windows it would group into tabs.
+        // An application's menus hold its items alone (#201), so both are
+        // turned off before the first menu is set: the first in the
+        // application's own defaults, not the user's global ones.
+        NSUserDefaults::standardUserDefaults()
+            .setBool_forKey(false, &NSString::from_str("NSFullScreenMenuItemEverywhere"));
+        NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
         let bar = Self { target, mtm };
         bar.show(&SystemBar::default());
         Some(bar)
@@ -186,12 +196,21 @@ impl MenuBarService for AppKitMenuBar {
         let holder = self.item(&name, None, "");
         holder.setSubmenu(Some(&app));
         main.addItem(&holder);
+        let app_kit = NSApplication::sharedApplication(self.mtm);
+        let mut windows = None;
         for menu in &bar.menus {
             let holder = self.item(&menu.title, None, "");
-            holder.setSubmenu(Some(&self.menu(menu)));
+            let made = self.menu(menu);
+            holder.setSubmenu(Some(&made));
             main.addItem(&holder);
+            // The menu macOS lists the application's windows in, as every
+            // Cocoa application's Window menu does.
+            if menu.title == "Window" {
+                windows = Some(made);
+            }
         }
-        NSApplication::sharedApplication(self.mtm).setMainMenu(Some(&main));
+        app_kit.setMainMenu(Some(&main));
+        app_kit.setWindowsMenu(windows.as_deref());
     }
 }
 
