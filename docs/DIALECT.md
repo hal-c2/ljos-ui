@@ -684,13 +684,14 @@ file until they are measured.
 
 **GridLayout.** Qt's `GridLayout` sizes its cells by the same rules as its
 line layouts, which Ljós's `Grid` follows: qml6 places a two-column grid of
-fill, fixed and fill-height children, and two fill children sharing a row,
-as Ljós does (features/layouts/ljos-grid-pages.feature). It differs where:
+fill, fixed and fill-height children, two fill children sharing a row, and
+a top-to-bottom grid of two rows, as Ljós does
+(features/layouts/ljos-grid-pages.feature). It differs where:
 
 | Qt's `GridLayout` | Lowering |
 |---|---|
 | `rows` along a left-to-right flow is ignored: `rows: 2` puts three children in one row | keeps the file |
-| `columns` along a top-to-bottom flow, by the same rule | keeps the file (not measured; by symmetry) |
+| `columns` along a top-to-bottom flow is ignored: `columns: 2` puts three children in one column (qml6) | keeps the file |
 | `Layout.row`, `column`, `rowSpan`, `columnSpan` place a child in a cell the pass does not follow yet | keeps the file |
 | `layoutDirection`, `uniformCellSizes`, `uniformCellWidths`, `uniformCellHeights` | keeps the file |
 | a `flow` the pass cannot read | keeps the file |
