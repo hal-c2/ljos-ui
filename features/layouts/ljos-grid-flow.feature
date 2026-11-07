@@ -321,6 +321,61 @@ Feature: Ljós's Grid and Flow
         }
         """
 
+    # qml6: a count of 0 is no count, so `columns: 0` is Qt's four columns.
+    @ljos-only @headless
+    Scenario: A Grid of no columns is migrated to Qt's four, said once
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 80; height: 40; color: "white"
+          Grid {
+            columns: 0
+            Rectangle { width: 10; height: 10; color: "#c03030" }
+            Rectangle { width: 10; height: 10; color: "#30c030" }
+            Rectangle { width: 10; height: 10; color: "#3030c0" }
+            Rectangle { width: 10; height: 10; color: "#c0c030" }
+            Rectangle { width: 10; height: 10; color: "#30c0c0" }
+          }
+        }
+        """
+      When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate . --write"
+      Then the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout
+        Rectangle {
+          width: 80; height: 40; fill: "white"
+          Grid {
+            columns: 4
+            Rectangle { width: 10; height: 10; fill: "#c03030" }
+            Rectangle { width: 10; height: 10; fill: "#30c030" }
+            Rectangle { width: 10; height: 10; fill: "#3030c0" }
+            Rectangle { width: 10; height: 10; fill: "#c0c030" }
+            Rectangle { width: 10; height: 10; fill: "#30c0c0" }
+          }
+        }
+        """
+
+    @ljos-only @headless
+    Scenario: A Flow with a transition is kept, and says why
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Flow {
+          add: Transition { }
+          Rectangle { width: 10; height: 10 }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:3:3: `add` keeps a `Flow` as Qt's until the Box rules reach a wrapping line
+        1 files, 0 lowered, 1 kept
+        """
+
     # Qt's Grid counts the spacing after the last child of a line it does not fill: two children
     # 20 and 30 wide in its default four columns, spaced 5, make it 60 wide, not 55 (qml6).
     @ljos-only @headless

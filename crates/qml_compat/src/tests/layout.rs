@@ -252,6 +252,29 @@ fn a_grid_and_a_flow_are_lowered_as_they_are_written() {
     );
 }
 
+/// A count of 0 is no count to Qt's `Grid` (qml6), so a `columns: 0` is
+/// its four columns, written once.
+#[test]
+fn a_grid_of_no_columns_is_given_qt_s_four_once() {
+    for (body, want) in [
+        (
+            format!("Grid {{ columns: 0; {TILE} }}"),
+            format!("Grid {{ columns: 4; {TILE} }}"),
+        ),
+        (
+            format!("Grid {{ rows: 0; columns: 0; {TILE} }}"),
+            format!("Grid {{ rows: 0; columns: 4; {TILE} }}"),
+        ),
+        (
+            format!("Grid {{ rows: 0; {TILE} }}"),
+            format!("Grid {{ columns: 4; rows: 0; {TILE} }}"),
+        ),
+    ] {
+        let text = lowered(&format!("import QtQuick\n{body}\n"));
+        assert!(text.ends_with(&format!("\n{want}\n")), "{body}: {text}");
+    }
+}
+
 /// Each way Qt's `Grid` counts room Ljós's does not keeps the file, and
 /// says which.
 #[test]
@@ -305,7 +328,7 @@ fn where_a_grid_positioner_and_ljos_grid_disagree_the_file_is_kept() {
         ),
         (
             "Flow { add: Transition { } }".to_string(),
-            "`add` is a member of Qt's `Flow`",
+            "`add` keeps a `Flow` as Qt's until the Box rules reach a wrapping line",
         ),
     ] {
         let reason = kept_for(&format!("import QtQuick\n{body}\n"));
