@@ -197,6 +197,10 @@ are quoted side by side below:
 | `Ljos.Platform` | `StandardPaths`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
 | `Ljos.Blocks` | functional blocks and shells (ADR 0003) | (Ljós's own, already built) |
 
+A program's own modules, the types it registers from Rust, are neither
+Qt's nor Ljós's. A file imports them as it did, in Qt's API and in Ljós's
+alike (§4.4, §6.1).
+
 DECISION: the module set is `Ljos.*`, one module per concern, named in the
 singular. `Ljos.Ui` was the first, and phase 1 built only it.
 
@@ -426,6 +430,15 @@ What is built (`features/language/ts-modules.feature`):
   reach TypeScript through the module itself.
 - A type predicate (`v is T`) and an assertion function (`asserts v is T`)
   are typed, not read as a boolean; what they narrow is below.
+
+The compat pass reads the same description (§6.1). A native type's own
+members keep their names in a lowered file, since the program registers
+them under those names. Its singletons are typed by what they hold
+(`Look.palette.accent.color`), and the members it has from the toolkit
+type it is built on are that type's. A name Ljós renames there
+(`Rectangle`'s `color`) keeps the file. The program's type is built on the
+native type, not on the face Ljós's API has of it (§3), so it answers
+only to Qt's name.
 
 The other direction is generated. Each QML component and native type has a
 `.d.ts` declaration, so a TS module can take `Card` or `ListView` as a
@@ -1543,12 +1556,23 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
 and `QtQuick.Controls` where the program starts with Basic),
 `QtQuick.Dialogs`' file and folder dialogs and `QtQml` are lowered (§4.6,
 §4.14, §4.16). A module of the project, and a directory imported by path,
-are files of the project: the file is lowered with them (§6.2). Any other
-module import (`QtQuick.Controls.Material`, an aliased `QtQuick`,
-`QtQuick.Shapes` or `QtQml`, a module of the project imported under a name,
-or one whose types are native) keeps the file. So does a type of
+are files of the project: the file is lowered with them (§6.2). An import
+of the program's own types stays as written, beside `import Ljos.Ui`, where
+the pass is given their description (`locals.natives()`). Any other module
+import (`QtQuick.Controls.Material`, an aliased `QtQuick`, `QtQuick.Shapes`
+or `QtQml`, a module of the project imported under a name, or one whose
+types are native and not described) keeps the file. So does a type of
 `QtQuick.Shapes` that `Ljos.Ui` doesn't have, made or read through
 (`` `X` is not in Ljos.Ui yet ``).
+
+The description is what the checker reads (`ljostypes.json`, §4.4). A
+lowered run passes its oracle's (`ljos_compiler::OracleNatives`), so a
+file is lowered against the types it is checked against. `ljos migrate`
+reads the file `--types` names, else the `ljostypes.json` of the first
+directory it is given. A module of the toolkit's table is never the
+program's, whatever it registers in it. A type the file names that is
+neither Qt's, nor a file of the project, nor in the description keeps the
+file.
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
 and says why with a byte offset, when anything in it names what the API
@@ -1619,6 +1643,8 @@ run as written, and the cost of a missed tie is a wrong program.
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
 | `property var` whose type is not known | Kept. A person types it, or makes it `property unknown` and decodes it (§4.4) |
 | A name the file's Qt imports lack (a file of the project, or one the context gives) that a Ljós module the lowered file imports has (`Box.qml` beside a file, which `Ljos.Ui` would shadow; `Button.qml` beside one that imports `QtQuick.Dialogs`, which `Ljos.Controls` would) | Kept for good. An import is found before the files beside it, so lowering would change the type; renaming the project's file is the author's call |
+| An import of the program's own types with no description of them, or a type the description lacks | Lowered once the program describes it (`ljostypes.json`) |
+| A member Ljós renames, on a program's type built on the toolkit type that has it (`color` of a type built on `Rectangle`) | Lowered once a program's types get Ljós faces |
 
 ### 6.4 Coverage today
 
@@ -1718,7 +1744,7 @@ changed.
 ## 8. `ljos migrate`
 
 ```
-ljos migrate [--write] [--style NAME] PATH…
+ljos migrate [--write] [--style NAME] [--types FILE] PATH…
 would lower qml/SimpleButton.qml (5 edits)
 kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 2 files, 1 lowered, 1 kept
@@ -1756,8 +1782,13 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   has a script of that path of its own, the script stays and the file is
   kept as written, as migrate keeps it, since its lowered text would import
   rows the script does not declare.
-- Exit status 0 means every file was read, and 2 means a file could not be
-  read or written.
+- `--types` names the description of the program's own types, as
+  `ljos run --types` does. Without it, migrate reads the `ljostypes.json`
+  of the first directory given that has one; for a file, that is the
+  file's directory (§6.1).
+- Exit status 0 means every file was read. 2 means a file could not be
+  read or written, or the description could not be read; in that case
+  nothing is migrated.
 - The edits are text replacements at known spans, which keeps every line
   and comment. M3 moves them onto `qml_edit`'s lossless CST edits (ADR
   0003 part 4), so Studio and migrate share one edit engine, and an edit
