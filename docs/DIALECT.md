@@ -952,7 +952,7 @@ compat pass lowers a file only when every control it names is there.
 | Slice | Controls | State |
 |---|---|---|
 | K1 | `Label`, `AbstractButton`, `Button`, attached `ToolTip`, `ScrollBar` (and its attached form), `ScrollView`, `Popup` | built |
-| K2 | `TextField`, `TextArea` | |
+| K2 | `TextField`, `TextArea` | built |
 | K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | |
 | K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
 
@@ -991,6 +991,12 @@ JavaScript`), the checker does not follow an attached object read off
 another object (`save.ToolTip.text`). Read on the object itself
 (`ToolTip.text` inside the `Button`), it checks. The generated `.d.ts`
 (§4.4) covers `Ljos.Ui` only.
+
+Not yet: `TextEdit` is not in `Ljos.Ui`, so a text area's
+`wrapMode: TextEdit.Wrap` keeps its file; `Text.Wrap` is the same value
+and lowers. `Accessible` is not in `Ljos.Ui` either, so in a file in
+Ljós's API the a11y rule's `Accessible.name` remedy does not check yet;
+a `Label` beside the field does.
 
 ## 5. The checker
 
@@ -1459,7 +1465,7 @@ on the Qt backend (10 steps).
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
-| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K2–K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
+| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1), `TextField`, `TextArea` (K2); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K3, K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
 
 ## 14. Answers to note 11's open questions
 
