@@ -1463,7 +1463,7 @@ compat pass lowers a file only when every control it names is there.
 | K1 | `Label`, `AbstractButton`, `Button`, attached `ToolTip`, `ScrollBar` (and its attached form), `ScrollView`, `Popup` | built |
 | K2 | `TextField`, `TextArea` | built |
 | K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | built |
-| K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
+| K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | built |
 | K5 | `FileDialog`, `FolderDialog` (`QtQuick.Dialogs`') | built |
 
 Lowering (§6.1): `import QtQuick.Controls.Basic` becomes
@@ -1841,13 +1841,14 @@ each example, --style Fusion:   495 files, 13 lowered, 472 kept
 ```
 
 With Basic, no example file is kept by its controls import any more. What
-the controls keep instead:
+the controls keep instead (recounted after K4; the totals above did not
+move):
 
 | Reason | Files |
 |---|---:|
-| a file of its group is kept | 71 |
+| a file of its group is kept | 73 |
 | `QtQuick.Controls.Fusion` (15), `.impl` (7), `.Material` (5) | 27 |
-| a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `TextField`, `Switch`, `Slider`, `Pane`, `Page` (1 each) | 16 |
+| a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `Pane`, `Page` (1 each) | 13 |
 
 With `QtQuick.Dialogs` lowered (K5), each example with `--style Basic` is
 495 files, 14 lowered, 471 kept, as it was at K1's last commit (which
