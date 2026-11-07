@@ -39,7 +39,7 @@ pub mod keys;
 mod layer;
 mod layouts;
 mod ljos_core;
-mod ljos_ui;
+pub mod ljos_ui;
 mod loader;
 mod long_press;
 mod metrics;

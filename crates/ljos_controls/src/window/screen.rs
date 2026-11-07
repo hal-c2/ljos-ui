@@ -100,6 +100,26 @@ impl ScreenAttached {
         };
         (turns(&b) - turns(&a)).rem_euclid(4) * 90
     }
+
+    /// Pixels for `points` points on the object's screen: its logical dots
+    /// per inch over 72 (docs/DIALECT.md §4.3), the size Qt gives a
+    /// `font.pointSize`. Tracked, so that a binding follows the item to a
+    /// screen of another density; where no screen says, the platform's.
+    #[qml(invokable, name = "points")]
+    fn points(cx: &Cx, points: Value) -> f64 {
+        let points = points.to_number();
+        let per_mm = cx
+            .engine
+            .read(cx.this, ScreenAttached::LOGICAL_PIXEL_DENSITY.index)
+            .to_number();
+        if !(per_mm.is_finite() && per_mm > 0.0) {
+            return ljos_runtime::points_to_pixels(points);
+        }
+        // The density is a whole number of dots per inch over 25.4; taken
+        // back to the inch, a 96 is 96 and not a float's neighbour of it.
+        let per_inch = (per_mm * 25.4 * 1e6).round() / 1e6;
+        points * per_inch / 72.0
+    }
 }
 
 /// The window `obj` is shown in, itself included. Tracked, so that a

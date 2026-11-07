@@ -326,11 +326,16 @@ pub(super) fn register(engine: &Engine) {
         ljos_engine::Version::new(2, 15),
         ljos_engine::MetaRef::Static(ScreenInfo::static_meta()),
     );
-    engine.register_type(
-        "QtQuick",
-        ljos_engine::Version::new(2, 15),
-        ljos_engine::MetaRef::Static(super::screen::Screen::static_meta()),
-    );
+    for (uri, version) in [
+        ("QtQuick", ljos_engine::Version::new(2, 15)),
+        (ljos_quick::ljos_ui::MODULE, ljos_engine::Version::new(1, 0)),
+    ] {
+        engine.register_type(
+            uri,
+            version,
+            ljos_engine::MetaRef::Static(super::screen::Screen::static_meta()),
+        );
+    }
     super::screen::register(engine);
     engine.register_singleton::<Application>("QtQuick", ljos_engine::Version::new(2, 15));
     // Made here and not on first use: a native singleton has no hook that
