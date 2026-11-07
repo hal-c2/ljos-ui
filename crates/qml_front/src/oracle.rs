@@ -42,6 +42,12 @@ pub trait TypeOracle {
 
     fn has_method(&self, ty: Self::Type, name: &str) -> bool;
 
+    /// What the method `name` gives, as a type is written (`real`), when the
+    /// table says; None when it does not, and the method gives `unknown`.
+    fn method_returns(&self, _ty: Self::Type, _name: &str) -> Option<String> {
+        None
+    }
+
     /// The property objects written inside one of the type go to.
     fn default_property(&self, ty: Self::Type) -> Option<&str>;
 
@@ -361,6 +367,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn has_method(&self, ty: QtType, name: &str) -> bool {
         ty.0.has_method(name)
+    }
+
+    fn method_returns(&self, ty: QtType, name: &str) -> Option<String> {
+        ty.0.method_returns(name).map(str::to_string)
     }
 
     fn default_property(&self, ty: QtType) -> Option<&str> {

@@ -534,7 +534,16 @@ impl<'a, 'c> Module<'a, 'c> {
         let mut methods = BTreeSet::new();
         for method in meta.own_methods() {
             if methods.insert(method.name.as_str()) {
-                let _ = writeln!(out, "\t\tmethod {}", method.name);
+                let _ = write!(out, "\t\tmethod {}", method.name);
+                // What the checker can type a call by; anything else is
+                // `unknown` to it, as a method of Qt's table is.
+                if matches!(
+                    method.ret,
+                    TypeTag::Bool | TypeTag::Int | TypeTag::Real | TypeTag::String
+                ) {
+                    let _ = write!(out, " returns:{}", method.ret.name());
+                }
+                out.push('\n');
             }
         }
         self.types.push_str(&out);
