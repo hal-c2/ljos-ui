@@ -201,6 +201,7 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         ids: Vec::new(),
         inline: Vec::new(),
         changes: Vec::new(),
+        declared: Vec::new(),
     };
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
@@ -270,6 +271,9 @@ struct Pass<'s> {
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
+    /// What the scope object declares: an unqualified name it declares is
+    /// its own, before the root's.
+    declared: Vec<String>,
 }
 
 type Step = Result<(), Kept>;
@@ -513,6 +517,9 @@ impl<'s> Pass<'s> {
         if let Some(on) = &object.on {
             self.member_name(on, scope, "a value source's target")?;
         }
+        // A group's names are the object's it is a group of.
+        let outer = (!matches!(ty, Ty::Plain))
+            .then(|| std::mem::replace(&mut self.declared, declared(object)));
         let is_changes = matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges");
         let is_connections = matches!(ty, Ty::Exact(t) if t.name == "Connections");
         let target = if is_changes || is_connections {
@@ -576,6 +583,9 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
+        }
+        if let Some(outer) = outer {
+            self.declared = outer;
         }
         Ok(())
     }
@@ -847,6 +857,30 @@ fn captured(on: Ty, name: &str) -> Option<(&'static Type, &'static str)> {
     (!own).then_some((ty, *old))
 }
 
+/// The properties, signals and functions `object` declares.
+fn declared(object: &QmlObject<'_>) -> Vec<String> {
+    object
+        .members
+        .iter()
+        .filter_map(|member| match member {
+            QmlMember::Property(property) => Some(property.name.name.to_string()),
+            QmlMember::Signal(signal) => Some(signal.name.name.to_string()),
+            QmlMember::Function(function) => function.id.as_ref().map(|id| id.name.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Whether `on`'s Qt type has a member `name`. A type the pass does not
+/// know, or one derived from a known one, may have it or not: the root is
+/// asked about it then too.
+fn has_own(on: Ty, name: &str) -> bool {
+    let Ty::Exact(ty) = on else {
+        return false;
+    };
+    ty.property(name).is_some() || ty.signal(name).is_some() || ty.has_method(name)
+}
+
 fn renamed_type(name: &str) -> Option<&'static str> {
     TYPE_RENAMES
         .iter()
@@ -1078,7 +1112,13 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         if self.pass.id(name).is_some() {
             return;
         }
-        if let Some((ty, old)) = captured(self.scope, name) {
+        // Not the scope's own, the name is looked up on the root next, in
+        // Qt as once lowered.
+        let captor = captured(self.scope, name).or_else(|| {
+            let own = has_own(self.scope, name) || self.pass.declared.iter().any(|d| d == name);
+            (!own).then(|| captured(self.root, name))?
+        });
+        if let Some((ty, old)) = captor {
             let new = renamed_type(ty.name).unwrap_or(ty.name);
             self.keep(
                 format!(

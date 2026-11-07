@@ -738,6 +738,32 @@ Item {\n\
         kept_for(source),
         "`fill` would be the `Rectangle`'s own once lowered (Qt's `color`), not what it names in Qt"
     );
+    // Not the scope's, the name is looked up on the root next: in Qt it is
+    // found outside the file, once lowered on the root.
+    let source = "import QtQuick\n\
+Rectangle {\n\
+    Text { text: fill }\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`fill` would be the `Rectangle`'s own once lowered (Qt's `color`), not what it names in Qt"
+    );
+    let source = "import QtQuick\n\
+TapHandler {\n\
+    property QtObject counter: QtObject { property int seen: buttons }\n\
+}\n";
+    assert_eq!(
+        kept_for(source),
+        "`buttons` would be the `Tap`'s own once lowered (Qt's `acceptedButtons`), not what it names in Qt"
+    );
+    // A scope that has the name finds it before the root does.
+    assert!(matches!(
+        lower(
+            "import QtQuick\nRectangle { Item { property color fill: \"red\"; opacity: fill == \"red\" ? 1 : 0 } }\n",
+            &no_locals
+        ),
+        Outcome::Lowered(_)
+    ));
     // Read off the outer object by its id, it is still that object's.
     assert!(matches!(
         lower(
