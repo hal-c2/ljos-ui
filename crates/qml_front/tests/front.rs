@@ -1063,3 +1063,31 @@ fn a_property_that_holds_an_enum_takes_a_key() {
     assert!(qml_front::Property::<usize>::declared("int", false, false).takes_key);
     assert!(!qml_front::Property::<usize>::declared("int", true, false).takes_key);
 }
+
+/// A type written where a template goes is collected, for the compiler of
+/// Ljós's API to write as an object of it; an id, a script and an unknown
+/// name are not.
+#[test]
+fn a_type_named_where_a_template_goes_is_collected() {
+    let source = r#"import QtQuick
+Item {
+    Component { id: card; Text {} }
+    property Component named: Rectangle
+    property Component byId: card
+    ListView { delegate: Text }
+    ListView { delegate: card }
+    ListView { delegate: Missing }
+    ListView { delegate: true ? card : card }
+}"#;
+    analyzed(&[("Sample", source)], "Sample", |tree, _, _| {
+        let collected: Vec<&str> = tree
+            .named_templates
+            .iter()
+            .map(|span| &source[span.start as usize..span.end as usize])
+            .collect();
+        assert_eq!(
+            collected,
+            ["property Component named: Rectangle", "delegate: Text"]
+        );
+    });
+}
