@@ -57,6 +57,9 @@ pub const QT_CONTROLS: &[&str] = &["QtQuick.Controls", "QtQuick.Controls.Basic"]
 /// The style [`CONTROLS`] draws.
 pub const CONTROLS_STYLE: &str = "Basic";
 
+/// Qt's dialogs, whose file and folder dialogs [`CONTROLS`] has as they are.
+pub const QT_DIALOGS: &str = "QtQuick.Dialogs";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -179,9 +182,11 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         quick,
         layouts: None,
         controls: None,
+        dialogs: None,
         locals,
         ids: Vec::new(),
         inline: Vec::new(),
+        qualifiers: Vec::new(),
         changes: Vec::new(),
     };
     match pass.document(&parsed.document) {
@@ -248,9 +253,14 @@ struct Pass<'s> {
     layouts: Option<&'static qt_types::Module>,
     /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
     controls: Option<Controls>,
+    /// Qt's dialogs and [`CONTROLS`], when the file imports them.
+    dialogs: Option<Controls>,
     locals: &'s dyn Locals,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
+    /// The names the file imports under (`import "box.js" as Box`), which
+    /// Qt and Ljós find before a type of an import.
+    qualifiers: Vec<String>,
     changes: Vec<Change>,
 }
 
@@ -270,6 +280,11 @@ impl<'s> Pass<'s> {
         let mut quick = None;
         let mut layouts = None;
         let mut controls = Vec::new();
+        self.qualifiers = document
+            .imports
+            .iter()
+            .filter_map(|import| import.alias.as_ref().map(|alias| alias.name.to_string()))
+            .collect();
         for import in &document.imports {
             let at = import.span.start as usize;
             let QmlImportSource::Module(name) = &import.source else {
@@ -277,7 +292,10 @@ impl<'s> Pass<'s> {
             };
             let uri = name.to_string();
             if import.alias.is_some()
-                && (uri == "QtQuick" || uri == "QtQml" || QT_CONTROLS.contains(&uri.as_str()))
+                && (uri == "QtQuick"
+                    || uri == "QtQml"
+                    || uri == QT_DIALOGS
+                    || QT_CONTROLS.contains(&uri.as_str()))
             {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
@@ -301,7 +319,7 @@ impl<'s> Pass<'s> {
                     };
                     return Err(self.no(reason, at));
                 }
-                uri if QT_CONTROLS.contains(&uri) => {
+                uri if uri == QT_DIALOGS || QT_CONTROLS.contains(&uri) => {
                     let (Some(qt), Some(ljos)) =
                         (qt_types::module(uri), qt_types::module(CONTROLS))
                     else {
@@ -310,7 +328,14 @@ impl<'s> Pass<'s> {
                             at,
                         ));
                     };
-                    self.controls.get_or_insert(Controls { qt, ljos });
+                    let found = if uri == QT_DIALOGS {
+                        &mut self.dialogs
+                    } else {
+                        &mut self.controls
+                    };
+                    found.get_or_insert(Controls { qt, ljos });
+                    // The dialogs are in Ljos.Controls, so their import is
+                    // one of the controls'.
                     controls.push(import.span);
                 }
                 // A module that builds on QtQuick names its types, and those
@@ -437,7 +462,10 @@ impl<'s> Pass<'s> {
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(controls) = self.controls
+        if let Some(controls) = [self.controls, self.dialogs]
+            .into_iter()
+            .flatten()
+            .find(|c| c.qt.type_named(name).is_some())
             && let Some(ty) = controls.qt.type_named(name)
         {
             return match controls.ljos.type_named(name) {
@@ -458,6 +486,25 @@ impl<'s> Pass<'s> {
         if depth > 16 {
             return Ok(Ty::Unknown);
         }
+        let inline = self.inline.iter().any(|(n, _)| n == name);
+        // Past the first step the name is another file's, found among its
+        // own imports, which this file's do not say.
+        if depth == 0
+            && !inline
+            && let Some(module) = self.ljos_module_with(name)
+        {
+            let what = if self.locals.root(name).is_some() {
+                "is a file of the project"
+            } else {
+                "is not a type of the modules the file imports"
+            };
+            return Err(self.no(
+                format!(
+                    "`{name}` {what}, and {module}, which the lowered file imports, has a `{name}` that would be found first"
+                ),
+                at,
+            ));
+        }
         let root = self
             .inline
             .iter()
@@ -473,6 +520,18 @@ impl<'s> Pass<'s> {
             },
             _ => Ok(Ty::Unknown),
         }
+    }
+
+    /// The Ljós module the lowered file imports that has `name`, for a name
+    /// no Qt module the file imports has. A Qt file finds such a name among
+    /// the files beside it, but an import is found before those, so the
+    /// lowered file would make Ljós's type instead.
+    fn ljos_module_with(&self, name: &str) -> Option<&'static str> {
+        if self.ui.type_named(name).is_some() {
+            return Some(MODULE);
+        }
+        let controls = self.controls.or(self.dialogs)?;
+        controls.ljos.type_named(name).map(|_| CONTROLS)
     }
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up
@@ -764,6 +823,7 @@ impl arrange::Types for Pass<'_> {
             .type_named(name)
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
             .or_else(|| self.controls.and_then(|c| c.qt.type_named(name)))
+            .or_else(|| self.dialogs.and_then(|c| c.qt.type_named(name)))
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -1001,16 +1061,27 @@ impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
         let name = it.name.as_str();
         if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            if self.pass.qualifiers.iter().any(|q| q == name) {
+                // The file's own: it means in the lowered file what it
+                // means in Qt's, whatever type has its name.
+                return;
+            }
             if let Some(new) = renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
             } else if (self.pass.quick.type_named(name).is_some()
-                || self
-                    .pass
-                    .controls
-                    .is_some_and(|c| c.qt.type_named(name).is_some()))
+                || [self.pass.controls, self.pass.dialogs]
+                    .into_iter()
+                    .flatten()
+                    .any(|c| c.qt.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
+                self.keep(kept.reason, it.span.start);
+            } else if self.pass.ljos_module_with(name).is_some()
+                && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
+            {
+                // A name the Qt imports lack, read in a script, is the
+                // project's or the context's; lowered, it would be Ljós's.
                 self.keep(kept.reason, it.span.start);
             }
             return;

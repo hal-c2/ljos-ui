@@ -182,11 +182,11 @@ are quoted side by side below:
 |---|---|---|
 | `Ljos.Ui` | items, visuals, gestures, states, text, images | `QtQuick` |
 | `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
-| `Ljos.Controls` | the controls, built on `Ljos.Design` roles; today Basic's (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic` |
+| `Ljos.Controls` | the controls, built on `Ljos.Design` roles; today Basic's; `FileDialog`, `FolderDialog` (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic`, `QtQuick.Dialogs` |
 | `Ljos.Models` | `ListModel`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
 | `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
-| `Ljos.Platform` | `StandardPaths`, `FolderDialog`, `FileDialog`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
+| `Ljos.Platform` | `StandardPaths`, notifications | `Qt.labs.platform`, `QtCore.StandardPaths` |
 | `Ljos.Blocks` | functional blocks and shells (ADR 0003) | (Ljós's own, already built) |
 
 DECISION: the module set is `Ljos.*`, one module per concern, named in the
@@ -242,7 +242,8 @@ ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
 | `Qt.platform`, `styleHints`, `inputMethod` | `App.platform`, `Theme.motion`, `App.inputMethod` | reactive | |
 | `Math.random` for a range | `Random.between(lo, hi)`, `Random.pick(list)`; `Math.random` stays | effect | |
 | `Qt.callLater` | `later(() => …)` | scheduled, no polling | |
-| `StandardPaths`, `FolderDialog` | `Ljos.Platform` | effects | |
+| `StandardPaths` | `Ljos.Platform` | effects | |
+| `FileDialog`, `FolderDialog` | `Ljos.Controls` (§4.16) | effects | |
 
 `clocks` shows what a reactive clock is worth. Qt's version runs a 100 ms
 `Timer` in each of seven delegates, 70 wake-ups a second, and each one
@@ -910,6 +911,7 @@ construction.
 | `QtQuick.Controls.Basic` | `Ljos.Controls` | mechanical, for the controls the module has (§4.16) |
 | `QtQuick.Controls` | `Ljos.Controls` | mechanical where the program starts with Basic; kept with another style (§4.16) |
 | `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
+| `QtQuick.Dialogs` | `Ljos.Controls` | mechanical for `FileDialog` and `FolderDialog`; kept for the others (§4.16) |
 
 ### 4.15 What this changes for the engine
 
@@ -955,6 +957,7 @@ compat pass lowers a file only when every control it names is there.
 | K2 | `TextField`, `TextArea` | |
 | K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | |
 | K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
+| K5 | `FileDialog`, `FolderDialog` (`QtQuick.Dialogs`') | built |
 
 Lowering (§6.1): `import QtQuick.Controls.Basic` becomes
 `import Ljos.Controls` on its line, and a second import of the controls
@@ -972,6 +975,21 @@ a `Rectangle`.
 
 Cost: none at run time. The module registers the files the Basic style
 already compiled, under a second name.
+
+The file and folder dialogs are `QtQuick.Dialogs`' own types, registered
+in `Ljos.Controls` under a second name: the system's dialog where it has
+one, else the dialog Ljós draws. `import QtQuick.Dialogs` is lowered as
+one more import of the controls: it becomes `import Ljos.Controls` on its
+line when the file imports no other controls, and an empty line when it
+does. `ColorDialog`, `FontDialog` and `MessageDialog`, and their enums
+(`MessageDialog.Ok`), keep the file with "`ColorDialog` is not in
+Ljos.Controls yet"; the dialogs under a name (`as D`) keep it as an aliased
+controls import does. Since the lowered file imports `Ljos.Controls`, a file of
+the project named as one of its types (`Button.qml` beside a file of
+dialogs) keeps the file (§6.3).
+
+DECISION: the dialogs come into `Ljos.Controls` as they are, not into a
+module of their own; Qt's names stay, since §4.14 renames none of them.
 
 DECISION: `Ljos.Controls` draws Basic, not `Ljos.Design` roles. Building
 on the roles is a rewrite of the style, so it stays in M6.
@@ -1127,9 +1145,10 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   and `id.member` where the target's type is known;
 - `property var` / `variant` → `property unknown`.
 
-A `QtQml` import stays. `QtQuick.Layouts` and the controls
+A `QtQml` import stays. `QtQuick.Layouts`, the controls
 (`QtQuick.Controls.Basic`, and `QtQuick.Controls` where the program starts
-with Basic) are lowered (§4.6, §4.16). Any other module import
+with Basic) and `QtQuick.Dialogs`' file and folder dialogs are lowered
+(§4.6, §4.16). Any other module import
 (`QtQuick.Controls.Material`, an aliased `QtQuick`) keeps the file.
 
 A file is lowered *whole* or *kept*. The pass keeps the file as written,
@@ -1178,6 +1197,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
 | `property var` whose type is not known | Kept until M4 decoders |
+| A name the file's Qt imports lack (a file of the project, or one the context gives) that a Ljós module the lowered file imports has (`Box.qml` beside a file, which `Ljos.Ui` would shadow; `Button.qml` beside one that imports `QtQuick.Dialogs`, which `Ljos.Controls` would) | Kept for good. An import is found before the files beside it, so lowering would change the type; renaming the project's file is the author's call |
 
 ### 6.4 Coverage today
 
@@ -1221,6 +1241,12 @@ the controls keep instead:
 | a file of its group is kept | 71 |
 | `QtQuick.Controls.Fusion` (15), `.impl` (7), `.Material` (5) | 27 |
 | a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `TextField`, `Switch`, `Slider`, `Pane`, `Page` (1 each) | 16 |
+
+With `QtQuick.Dialogs` lowered (K5), each example with `--style Basic` is
+495 files, 14 lowered, 471 kept, as it was at K1's last commit (which
+lowers 14, one more than the count above). The six example files that import
+it are kept by their next import: `QtCore` (2), `QtQuick.Controls.Fusion`
+(2), and a module of the example's own (2).
 
 With Fusion (the Linux default), 89 files are kept by `import
 QtQuick.Controls`. The lowered count does not move yet: the files the
@@ -1459,7 +1485,7 @@ on the Qt backend (10 steps).
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
-| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K2–K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
+| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1), and `QtQuick.Dialogs`' `FileDialog` and `FolderDialog` (K5); `QtQuick.Controls.Basic` and `QtQuick.Dialogs` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K2–K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
 
 ## 14. Answers to note 11's open questions
 
