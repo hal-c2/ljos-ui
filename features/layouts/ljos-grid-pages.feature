@@ -119,6 +119,94 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
         | a    | 0  | 73    |
         | b    | 78 | 122   |
 
+    # A top-to-bottom GridLayout reads `rows`, the count along its flow: a and b share the
+    # first column, c starts the second.
+    @qt-parity
+    Scenario Outline: A top-to-bottom GridLayout of two rows that fills
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        GridLayout {
+          objectName: "grid"
+          flow: GridLayout.TopToBottom
+          rows: 2
+          width: 200; height: 100
+          Rectangle { objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
+          Rectangle { objectName: "b"; implicitWidth: 50; implicitHeight: 20 }
+          Rectangle { objectName: "c"; implicitWidth: 30; implicitHeight: 10; Layout.fillHeight: true }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "y" of "<item>" is <y>
+      And the property "width" of "<item>" is <width>
+      And the property "height" of "<item>" is <height>
+      And the property "implicitWidth" of "grid" is 85
+      And the property "implicitHeight" of "grid" is 35
+
+      Examples:
+        | item | x   | y  | width | height |
+        | a    | 0   | 33 | 165   | 10     |
+        | b    | 0   | 80 | 50    | 20     |
+        | c    | 170 | 0  | 30    | 75     |
+
+    @ljos-only
+    Scenario Outline: The same children in a top-to-bottom Ljós Grid, as the pass writes it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Grid { columnSpacing: 5; rowSpacing: 5;
+          objectName: "grid"
+          flow: Grid.TopToBottom
+          rows: 2
+          width: 200; height: 100
+          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
+          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20 }
+          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "c"; implicitWidth: 30; implicitHeight: 10; Layout.fillHeight: true }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "y" of "<item>" is <y>
+      And the property "width" of "<item>" is <width>
+      And the property "height" of "<item>" is <height>
+      And the property "implicitWidth" of "grid" is 85
+      And the property "implicitHeight" of "grid" is 35
+
+      Examples:
+        | item | x   | y  | width | height |
+        | a    | 0   | 33 | 165   | 10     |
+        | b    | 0   | 80 | 50    | 20     |
+        | c    | 170 | 0  | 30    | 75     |
+
+    # The count across a top-to-bottom flow is ignored: `columns: 2` still puts three children
+    # in one column. The pass keeps such a file (DIALECT.md §4.14), so this has no Ljós Grid twin.
+    @qt-parity
+    Scenario Outline: A top-to-bottom GridLayout ignores its columns
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        GridLayout {
+          flow: GridLayout.TopToBottom
+          columns: 2
+          Rectangle { objectName: "a"; implicitWidth: 30; implicitHeight: 10 }
+          Rectangle { objectName: "b"; implicitWidth: 30; implicitHeight: 10 }
+          Rectangle { objectName: "c"; implicitWidth: 30; implicitHeight: 10 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "x" of "<item>" is <x>
+      And the property "y" of "<item>" is <y>
+
+      Examples:
+        | item | x | y  |
+        | a    | 0 | 0  |
+        | b    | 0 | 15 |
+        | c    | 0 | 30 |
+
   Rule: Pages shows one child at a time, as StackLayout does
 
     # qml6: the hidden child keeps its implicit size; the shown one fills the layout.
