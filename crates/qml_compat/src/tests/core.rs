@@ -38,10 +38,15 @@ fn an_import_of_qtqml_beside_qtquick_becomes_ljos_core() {
 }
 
 #[test]
-fn a_model_of_qtqml_is_had_from_ljos_core_until_ljos_models_has_it() {
+fn a_model_of_qtqml_is_had_from_ljos_models_not_ljos_core() {
     assert_eq!(
         lowered("import QtQuick\nItem { ListModel { } }\n"),
-        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem { ListModel { } }\n"
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models\nItem { ListModel { } }\n"
+    );
+    // Beside a type of Ljos.Core, the file imports both.
+    assert_eq!(
+        lowered("import QtQuick\nItem { ListModel { } Timer { } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models\nItem { ListModel { } Timer { } }\n"
     );
 }
 

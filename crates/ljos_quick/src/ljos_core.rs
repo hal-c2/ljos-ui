@@ -6,7 +6,8 @@
 //! They are `QtQml`'s types, exported from this module too, so a file of
 //! Ljós's API and the Qt file it was lowered from make the same objects.
 //! `Ljos.Ui` does not bring them: a file imports this module for them.
-//! It brings `QtQml.Models`, until `Ljos.Models` has the models.
+//! It brings `QtQml.Models`; a lowered file has the models from
+//! `Ljos.Models`.
 
 use ljos_engine::{Component, Connections, Engine, LocaleEnums, QtObject, Timer};
 
@@ -69,7 +70,7 @@ mod tests {
     }
 
     #[test]
-    fn the_models_come_with_it_until_ljos_models_has_them() {
+    fn qtqml_models_come_with_it_and_ljos_ui_imports_nothing() {
         let engine = engine();
         assert_eq!(engine.imports_of(MODULE), ["QtQml.Models"]);
         assert!(engine.imports_of(crate::ljos_ui::MODULE).is_empty());

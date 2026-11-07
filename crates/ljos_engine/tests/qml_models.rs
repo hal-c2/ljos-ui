@@ -804,8 +804,12 @@ fn a_delegate_of_ljos_ui_reads_its_row_as_model_data_and_one_of_qt_does_not() {
     let h = engine();
     h.engine
         .register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [support::Item]));
+    // The delegate is a `QtObject`, which a file of Ljós's API has from
+    // `Ljos.Core`.
+    h.engine
+        .register_module(ljos_engine::module!("Ljos.Core" 1.0 => [ljos_engine::QtObject]));
     let ljos = h.load(&rows_of_several_roles(
-        "pragma Scripts: JavaScript\nimport Ljos.Ui\nimport QtQml.Models",
+        "pragma Scripts: JavaScript\nimport Ljos.Ui\nimport Ljos.Core\nimport QtQml.Models",
     ));
     let row = h.find(ljos, "z1");
     assert_eq!(

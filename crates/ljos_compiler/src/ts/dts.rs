@@ -324,10 +324,22 @@ impl Api {
         {
             return Some(ts.to_string());
         }
-        if ty.name == "Component" && ty.module == "QtQml" {
-            return Some("Component".to_string());
+        if is_component(ty) {
+            return Some(self.component());
         }
         self.name_of(ty).map(str::to_string)
+    }
+
+    /// What the declarations call QtQml's `Component`: by its name where
+    /// the file imports `Ljos.Core`, by its class where it reaches it only
+    /// through what it does import (a `ListView`'s delegate in a file of
+    /// `Ljos.Ui` alone).
+    fn component(&self) -> String {
+        qt_types::module("QtQml")
+            .and_then(|m| m.type_named("Component"))
+            .and_then(|ty| self.name_of(ty))
+            .unwrap_or("unknown")
+            .to_string()
     }
 
     /// The enum `name` names, as `Owner.Enum`: one of `owner`'s or of what it
@@ -385,7 +397,7 @@ impl Api {
             None => self.ts_type(property.type_name, Some(owner))?,
         };
         let ty = if property.is_component {
-            "Component".to_string()
+            self.component()
         } else {
             ty
         };
@@ -431,14 +443,12 @@ impl Api {
         let Some(name) = self.name_of(ty) else {
             return;
         };
-        let generic = name == "Component" && ty.module == "QtQml";
-        let extends = ty
-            .prototype()
-            .and_then(|p| self.name_of(p))
-            .map(|p| format!(" extends {p}"))
-            .unwrap_or_default();
+        let generic = is_component(ty);
+        let base = ty.prototype().and_then(|p| self.name_of(p));
+        let extends = base.map(|p| format!(" extends {p}")).unwrap_or_default();
         let head = if generic {
-            format!("interface Component<T = QtObject>{extends} {{")
+            let made = base.unwrap_or("unknown");
+            format!("interface {name}<T = {made}>{extends} {{")
         } else {
             format!("interface {name}{extends} {{")
         };
@@ -591,6 +601,12 @@ interface String {
     arg(value: string | number | boolean): string;
 }
 ";
+
+/// Whether `ty` is QtQml's `Component`, which the declarations make generic
+/// in what it creates.
+fn is_component(ty: &Type) -> bool {
+    ty.name == "Component" && ty.module == "QtQml"
+}
 
 fn is_word(name: &str) -> bool {
     let mut chars = name.chars();

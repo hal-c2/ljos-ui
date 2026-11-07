@@ -233,7 +233,7 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """
 
     @ljos-only @headless
-    Scenario: A file that names a model of QtQml's has it from Ljos.Core until Ljos.Models has it
+    Scenario: A file that names a model of QtQml's has it from Ljos.Models, not Ljos.Core
       Given the file "Names.qml":
         """qml
         import QtQuick
@@ -249,7 +249,7 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """
       And the file "Names.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
         Item {
           ListModel { id: names; ListElement { name: "a" } }
         }
