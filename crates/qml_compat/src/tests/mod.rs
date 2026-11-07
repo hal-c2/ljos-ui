@@ -156,6 +156,7 @@ fn alone(source: &str) -> Alone {
     Alone {
         outcome: lower(source, &locals),
         references: references(source),
+        uses: Vec::new(),
     }
 }
 

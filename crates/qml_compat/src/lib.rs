@@ -22,7 +22,7 @@ mod arrange;
 mod group;
 mod renames;
 
-use std::ops::Range;
+use std::{cell::RefCell, collections::HashMap, ops::Range};
 
 use oxc_ast::ast::{
     BindingIdentifier, ComputedMemberExpression, Expression, IdentifierReference,
@@ -103,10 +103,11 @@ pub struct Root {
     pub bindings: Vec<String>,
 }
 
-/// What the pass needs to know of the files beside this one: for a type a
+/// What the pass needs to know of the project the file is in: for a type a
 /// file of the project is (`SimpleButton` for `SimpleButton.qml`), its root
-/// object.
+/// object, and what the modules and directories the file imports are.
 pub trait Locals {
+    /// The root object of the file `name` beside this one.
     fn root(&self, name: &str) -> Option<Root>;
 
     /// The style `import QtQuick.Controls` is where the file runs, as the
@@ -115,10 +116,22 @@ pub trait Locals {
     fn controls_style(&self) -> Option<&str> {
         None
     }
+
+    /// What the module `uri` is to the project, as its loader finds it on
+    /// the import path: none for one the project does not have.
+    fn module(&self, _uri: &str) -> Option<ProjectModule> {
+        None
+    }
+
+    /// The root object of the type `name` that `from` brings: a file of a
+    /// module of the project, or of a directory imported by path.
+    fn imported(&self, _from: Imported<'_>, _name: &str) -> Option<Root> {
+        None
+    }
 }
 
-/// The files beside this one, in a program that starts with the controls
-/// style `style`.
+/// The project's files, in a program that starts with the controls style
+/// `style`.
 pub struct Styled<'a> {
     pub locals: &'a dyn Locals,
     pub style: &'a str,
@@ -137,6 +150,14 @@ impl Locals for Styled<'_> {
         self.locals.root(name)
     }
 
+    fn module(&self, uri: &str) -> Option<ProjectModule> {
+        self.locals.module(uri)
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        self.locals.imported(from, name)
+    }
+
     fn controls_style(&self) -> Option<&str> {
         Some(self.style)
     }
@@ -145,6 +166,50 @@ impl Locals for Styled<'_> {
 impl<F: Fn(&str) -> Option<Root>> Locals for F {
     fn root(&self, name: &str) -> Option<Root> {
         self(name)
+    }
+}
+
+/// A module the project has (a `qmldir` or a build describes it).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectModule {
+    /// Its types are QML files of the project: they are lowered with the
+    /// files that import them.
+    Files,
+    /// None of its types is a QML file: they are native, and not Qt's or
+    /// Ljós's, so what a file sets on them is not known.
+    Native,
+}
+
+/// What an import that is not Qt's brings a file's types from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Imported<'a> {
+    /// A module of the project: `import My.Controls`.
+    Module(&'a str),
+    /// A directory, as written: `import "parts"`.
+    Dir(&'a str),
+}
+
+/// An import of the file, in the order written, that decides what a type
+/// name is.
+#[derive(Clone, Debug)]
+enum Import {
+    /// `QtQuick` (with `QtQml`'s types), or `QtQuick.Layouts`.
+    Qt {
+        layouts: bool,
+    },
+    /// `QtQuick.Controls` or one of its styles' modules.
+    Controls,
+    Module(String),
+    Dir(String),
+}
+
+impl Import {
+    fn imported(&self) -> Option<Imported<'_>> {
+        match self {
+            Import::Qt { .. } | Import::Controls => None,
+            Import::Module(uri) => Some(Imported::Module(uri)),
+            Import::Dir(path) => Some(Imported::Dir(path)),
+        }
     }
 }
 
@@ -174,6 +239,8 @@ pub fn lower(source: &str, locals: &dyn Locals) -> Outcome {
         layouts: None,
         controls: None,
         locals,
+        imports: Vec::new(),
+        imported: RefCell::default(),
         ids: Vec::new(),
         inline: Vec::new(),
         changes: Vec::new(),
@@ -243,6 +310,11 @@ struct Pass<'s> {
     /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
     controls: Option<Controls>,
     locals: &'s dyn Locals,
+    /// The imports that name types, in the order written: the last that
+    /// has a name is the one it is.
+    imports: Vec<Import>,
+    /// What [`imported_root`](Self::imported_root) found, by name.
+    imported: RefCell<HashMap<String, Option<(usize, Root)>>>,
     ids: Vec<(String, Ty)>,
     inline: Vec<(String, Root)>,
     changes: Vec<Change>,
@@ -266,8 +338,16 @@ impl<'s> Pass<'s> {
         let mut controls = Vec::new();
         for import in &document.imports {
             let at = import.span.start as usize;
-            let QmlImportSource::Module(name) = &import.source else {
-                continue;
+            let name = match &import.source {
+                QmlImportSource::Module(name) => name,
+                // A directory's types are files of the project; one
+                // imported under a name is only ever named through it.
+                QmlImportSource::Path(path) => {
+                    if import.alias.is_none() && !group::is_script(path) {
+                        self.imports.push(Import::Dir((*path).to_string()));
+                    }
+                    continue;
+                }
             };
             let uri = name.to_string();
             if import.alias.is_some()
@@ -276,13 +356,17 @@ impl<'s> Pass<'s> {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
             match uri.as_str() {
-                "QtQuick" => quick = Some(import.span),
+                "QtQuick" => {
+                    quick = Some(import.span);
+                    self.imports.push(Import::Qt { layouts: false });
+                }
                 "QtQml" => {}
                 // Its line layouts are lowered to Ljós's arrangement
                 // ([`arrange`]); its other types keep the file.
                 "QtQuick.Layouts" if import.alias.is_none() => {
                     self.layouts = qt_types::module("QtQuick.Layouts");
                     layouts = Some(import.span);
+                    self.imports.push(Import::Qt { layouts: true });
                 }
                 // Ljós's controls are Basic's; `QtQuick.Controls` is the
                 // style the program starts with, which may be another.
@@ -306,15 +390,36 @@ impl<'s> Pass<'s> {
                     };
                     self.controls.get_or_insert(Controls { qt, ljos });
                     controls.push(import.span);
+                    self.imports.push(Import::Controls);
                 }
-                // A module that builds on QtQuick names its types, and those
-                // are Qt's until Ljós has its own (docs/DIALECT.md).
-                other => {
-                    return Err(self.no(
-                        format!("it imports `{other}`, which is not lowered yet"),
-                        at,
-                    ));
-                }
+                other => match self.locals.module(other) {
+                    // Files of the project, lowered with this one
+                    // ([`group`]); the line stays as it is.
+                    Some(ProjectModule::Files) if import.alias.is_none() => {
+                        self.imports.push(Import::Module(uri));
+                    }
+                    Some(ProjectModule::Files) => {
+                        return Err(self.no(format!("it imports `{other}` under a name"), at));
+                    }
+                    Some(ProjectModule::Native) => {
+                        return Err(self.no(
+                            format!(
+                                "it imports `{other}`, a module of the project whose types \
+                                 are native: they are not lowered"
+                            ),
+                            at,
+                        ));
+                    }
+                    // A module that builds on QtQuick names its types, and
+                    // those are Qt's until Ljós has its own
+                    // (docs/DIALECT.md).
+                    None => {
+                        return Err(self.no(
+                            format!("it imports `{other}`, which is not lowered yet"),
+                            at,
+                        ));
+                    }
+                },
             }
         }
         let Some(span) = quick else {
@@ -425,7 +530,29 @@ impl<'s> Pass<'s> {
     /// The type `name` is in this file: Qt's (and then one Ljos.Ui has),
     /// an inline component, or a file of the project.
     fn named_type(&self, name: &str, at: usize, depth: usize) -> Result<Ty, Kept> {
-        if let Some(ty) = self.layouts.and_then(|m| m.type_named(name)) {
+        // Of an import after Qt's that has the name too, the type is that
+        // import's, as the loader takes the last.
+        let imported = self.imported_root(name);
+        let shadowed = |layouts: bool| {
+            let qt = self
+                .imports
+                .iter()
+                .rposition(|i| matches!(i, Import::Qt { layouts: l } if *l == layouts));
+            matches!((&imported, qt), (Some((at, _)), Some(qt)) if *at > qt)
+        };
+        let shadowed_layout = shadowed(true);
+        let shadowed_quick = shadowed(false);
+        let controls_at = self
+            .imports
+            .iter()
+            .rposition(|i| matches!(i, Import::Controls));
+        let shadowed_controls =
+            matches!((&imported, controls_at), (Some((at, _)), Some(c)) if *at > c);
+        if let Some(ty) = self
+            .layouts
+            .filter(|_| !shadowed_layout)
+            .and_then(|m| m.type_named(name))
+        {
             return match name {
                 "RowLayout" | "ColumnLayout" | "Layout" => Ok(Ty::Exact(ty)),
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
@@ -433,13 +560,14 @@ impl<'s> Pass<'s> {
         }
         if let Some(controls) = self.controls
             && let Some(ty) = controls.qt.type_named(name)
+            && !shadowed_controls
         {
             return match controls.ljos.type_named(name) {
                 Some(_) => Ok(Ty::Exact(ty)),
                 None => Err(self.no(format!("`{name}` is not in {CONTROLS} yet"), at)),
             };
         }
-        if let Some(ty) = self.quick.type_named(name) {
+        if let Some(ty) = self.quick.type_named(name).filter(|_| !shadowed_quick) {
             if ty.module.starts_with("QtQml") {
                 return Ok(Ty::Exact(ty));
             }
@@ -452,12 +580,7 @@ impl<'s> Pass<'s> {
         if depth > 16 {
             return Ok(Ty::Unknown);
         }
-        let root = self
-            .inline
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, root)| root.type_name.clone())
-            .or_else(|| self.locals.root(name).map(|r| r.type_name));
+        let root = self.local_root(name, imported).map(|r| r.type_name);
         match root {
             Some(root) if root != name => match self.named_type(&root, at, depth + 1)? {
                 // What it declares is not in the table: its members are
@@ -467,6 +590,41 @@ impl<'s> Pass<'s> {
             },
             _ => Ok(Ty::Unknown),
         }
+    }
+
+    /// The root of the type `name` a file of the project is: an inline
+    /// component, a type an import of the project brings, or a file beside
+    /// this one, in the order the loader looks (`imported` is what
+    /// [`imported_root`](Self::imported_root) found).
+    fn local_root(&self, name: &str, imported: Option<(usize, Root)>) -> Option<Root> {
+        self.inline
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, root)| root.clone())
+            .or(imported.map(|(_, root)| root))
+            .or_else(|| self.locals.root(name))
+    }
+
+    /// The last import of the project that has the type `name`, and what
+    /// its root is.
+    fn imported_root(&self, name: &str) -> Option<(usize, Root)> {
+        if let Some(known) = self.imported.borrow().get(name) {
+            return known.clone();
+        }
+        // Each is a file the project reads; a file names a type many times.
+        let found = self
+            .imports
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(at, import)| {
+                let from = import.imported()?;
+                self.locals.imported(from, name).map(|root| (at, root))
+            });
+        self.imported
+            .borrow_mut()
+            .insert(name.to_string(), found.clone());
+        found
     }
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up
@@ -769,13 +927,9 @@ impl arrange::Types for Pass<'_> {
             if self.qt_type(&name).is_some() {
                 break;
             }
-            let root = self
-                .inline
-                .iter()
-                .find(|(n, _)| *n == name)
-                .map(|(_, root)| root.clone())
-                .or_else(|| self.locals.root(&name));
-            let Some(root) = root else { break };
+            let Some(root) = self.local_root(&name, self.imported_root(&name)) else {
+                break;
+            };
             found.get_or_insert_default().extend(root.bindings);
             if root.type_name == name {
                 break;
@@ -918,6 +1072,21 @@ impl Script<'_, '_> {
     fn name(&self, name: &str) -> Ty {
         if let Some(ty) = self.pass.id(name) {
             return ty;
+        }
+        if name.starts_with(|c: char| c.is_ascii_uppercase())
+            && self
+                .pass
+                .local_root(name, self.pass.imported_root(name))
+                .is_some()
+        {
+            // A type of the project read as a value is a singleton: the
+            // one object its file makes, so of the type its root is and of
+            // no type built on that. What the file declares is its own.
+            return match self.pass.named_type(name, 0, 0) {
+                Ok(Ty::Exact(ty) | Ty::Derived(ty)) => Ty::Exact(ty),
+                Ok(other) => other,
+                Err(_) => Ty::Unknown,
+            };
         }
         if name == "parent" {
             // An Item; which one is known when the file runs.

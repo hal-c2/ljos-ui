@@ -128,6 +128,10 @@ impl<'a> Visit<'a> for Strings<'_> {
 pub struct Alone {
     pub outcome: Outcome,
     pub references: References,
+    /// The files of the project its imports bring, keyed as [`group`]'s
+    /// files are, as the project's loader finds them: a module's files may
+    /// be anywhere a build or a `qmldir` says.
+    pub uses: Vec<String>,
 }
 
 /// What each file of a project is lowered to, keyed as `files` is by the
@@ -149,6 +153,11 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
         for address in &file.references.files {
             let path = address.strip_suffix(".qml").unwrap_or(address);
             if let Some(other) = index(&normal(&beside(path))) {
+                sets.join(at, other);
+            }
+        }
+        for used in &file.uses {
+            if let Some(other) = index(used) {
                 sets.join(at, other);
             }
         }
@@ -267,7 +276,7 @@ impl Sets {
 /// `import "lib.js"`, `import "filter.ts"`: a script, not a directory of
 /// types (as `qml_front::project::is_script`, which this crate does not
 /// link, says).
-fn is_script(path: &str) -> bool {
+pub(crate) fn is_script(path: &str) -> bool {
     path.ends_with(".js")
         || path.ends_with(".mjs")
         || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
