@@ -18,7 +18,8 @@ use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
 use crate::font_enums::FontEnums;
 use crate::{
-    BoxColumn, BoxRow, Item, Layout, LjosBox, MouseArea, PropertyChanges, Rectangle, State, Text,
+    BoxColumn, BoxRow, Item, Layout, ListView, LjosBox, MouseArea, PropertyChanges, Rectangle,
+    Repeater, State, Text,
 };
 
 /// The module's name, as a file imports it.
@@ -53,9 +54,11 @@ pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
     // `Row`, `Column` and `Box` are the one arrangement
     // (layouts/arrangement.rs); a child asks it for a size with the
-    // `Layout` it is given, as in Qt's layouts.
+    // `Layout` it is given, as in Qt's layouts. The views are Qt's, with
+    // what they attach to a delegate (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, Text, State, PropertyChanges, FontEnums, BoxRow, BoxColumn, LjosBox, Layout,
+        Repeater, ListView,
     ]));
     let version = Version::new(1, 0);
     for face in [rectangle, pointer_area] {
@@ -122,5 +125,34 @@ mod tests {
             &text,
             &MetaRef::Static(Text::static_meta())
         ));
+    }
+
+    #[test]
+    fn the_views_and_models_are_qt_s_own() {
+        let engine = engine();
+        for (module, name, native) in [
+            (MODULE, "Repeater", Repeater::static_meta()),
+            (MODULE, "ListView", ListView::static_meta()),
+            (
+                "Ljos.Models",
+                "ListModel",
+                ljos_engine::ListModel::static_meta(),
+            ),
+            (
+                "Ljos.Models",
+                "ListElement",
+                ljos_engine::ListElement::static_meta(),
+            ),
+            (
+                "Ljos.Models",
+                "Instantiator",
+                ljos_engine::Instantiator::static_meta(),
+            ),
+        ] {
+            let ty = engine.lookup_type(module, name).expect(name);
+            assert!(MetaRef::ptr_eq(&ty, &MetaRef::Static(native)), "{name}");
+        }
+        // A model is not an item, and a view not a model.
+        assert!(engine.lookup_type("Ljos.Models", "ListView").is_none());
     }
 }

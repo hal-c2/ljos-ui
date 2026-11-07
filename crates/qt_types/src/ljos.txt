@@ -492,7 +492,10 @@ module Ljos.Design
 		signal displayWeightChanged
 
 module Ljos.Models
+	Instantiator QtQml.Instantiator
 	JsonListModel Ljos.Models.JsonListModel
+	ListElement QtQml.Models.ListElement
+	ListModel QtQml.Models.ListModel
 	type Ljos.Models.JsonListModel JsonListModel
 		prototype QtQml.QtObject named
 		enum Status Null=0 Ready=1 Loading=2 Error=3
@@ -534,9 +537,11 @@ module Ljos.Ui
 	Font QtQuick.Font
 	Item QtQuick.Item
 	Layout QtQuick.Layouts.Layout
+	ListView QtQuick.ListView
 	PointerArea Ljos.Ui.PointerArea
 	PropertyChanges QtQuick.PropertyChanges
 	Rectangle Ljos.Ui.Rectangle
+	Repeater QtQuick.Repeater
 	Row Ljos.Ui.Row
 	State QtQuick.State
 	Text QtQuick.Text
@@ -4303,7 +4308,7 @@ module QtQuick
 		method forceLayout
 	type QtQuick.ItemViewAttached ItemViewAttached
 		is uncreatable
-		prop view QtQml.QtObject named pointer readonly
+		prop view QtQuick.Flickable named pointer readonly
 		prop isCurrentItem QtQml.bool named readonly
 		prop section QtQml.string named readonly
 		prop previousSection QtQml.string named readonly
