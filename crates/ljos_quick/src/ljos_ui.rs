@@ -25,7 +25,7 @@ use crate::shapes::{
 };
 use crate::{
     BoxColumn, BoxRow, Gradient, GradientStop, HoverHandler, Item, Layout, ListView, LjosBox,
-    MouseArea, PropertyChanges, Rectangle, Repeater, State, TapHandler, Text,
+    Loader, MouseArea, PropertyChanges, Rectangle, Repeater, State, TapHandler, Text,
 };
 
 /// The module's name, as a file imports it.
@@ -120,6 +120,21 @@ fn hover() -> &'static MetaObject {
     META.get_or_init(|| gesture("Hover", HoverHandler::static_meta()))
 }
 
+/// `Loader`, with `sourceComponent` called `component`: what it shows is a
+/// component, named as a type (`component: Page`) or written in place. A
+/// file named by a string, `source`, is Qt's, kept because a face cannot
+/// leave a member out.
+fn loader() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("Loader")
+            .module(MODULE)
+            .face(Loader::static_meta())
+            .rename("sourceComponent", "component")
+            .build()
+    })
+}
+
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
     // `Row`, `Column` and `Box` are the one arrangement
@@ -141,7 +156,7 @@ pub(crate) fn register(engine: &Engine) {
         PathAttribute, PathPercent,
     ]));
     let version = Version::new(1, 0);
-    for face in [rectangle, pointer_area, list_view, tap, hover] {
+    for face in [rectangle, pointer_area, list_view, tap, hover, loader] {
         engine.register_type(MODULE, version, MetaRef::Static(face()));
     }
 }
@@ -246,6 +261,24 @@ mod tests {
             hover.own_properties().len(),
             native.own_properties().len()
                 + crate::PointerHandler::static_meta().own_properties().len()
+        );
+    }
+
+    #[test]
+    fn a_loader_s_source_component_is_its_component() {
+        let engine = engine();
+        let face = engine.lookup_type(MODULE, "Loader").expect("registered");
+        let native = Loader::static_meta();
+        assert_eq!(
+            face.property_index("component"),
+            native.property_index("sourceComponent")
+        );
+        assert_eq!(face.property_index("sourceComponent"), None);
+        assert!(face.signal_index("componentChanged").is_some());
+        // A file named by a string stays, for `setSource`.
+        assert_eq!(
+            face.property_index("source"),
+            native.property_index("source")
         );
     }
 
