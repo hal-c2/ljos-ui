@@ -510,10 +510,7 @@ module Ljos.Design
 		signal displayWeightChanged
 
 module Ljos.Models
-	Instantiator QtQml.Instantiator
 	JsonListModel Ljos.Models.JsonListModel
-	ListElement QtQml.Models.ListElement
-	ListModel QtQml.Models.ListModel
 	type Ljos.Models.JsonListModel JsonListModel
 		prototype QtQml.QtObject named
 		enum Status Null=0 Ready=1 Loading=2 Error=3
@@ -555,6 +552,7 @@ module Ljos.Ui
 	Font QtQuick.Font
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
+	Hover Ljos.Ui.Hover
 	Item QtQuick.Item
 	Layout QtQuick.Layouts.Layout
 	LinearGradient QtQuick.Shapes.LinearGradient
@@ -574,15 +572,16 @@ module Ljos.Ui
 	PathRectangle QtQuick.PathRectangle
 	PathSvg QtQuick.PathSvg
 	PointerArea Ljos.Ui.PointerArea
+	PointerDevice QtQuick.PointerDevice
 	PropertyChanges QtQuick.PropertyChanges
 	RadialGradient QtQuick.Shapes.RadialGradient
 	Rectangle Ljos.Ui.Rectangle
-	Repeater QtQuick.Repeater
 	Row Ljos.Ui.Row
 	Shape QtQuick.Shapes.Shape
 	ShapeGradient QtQuick.Shapes.ShapeGradient
 	ShapePath QtQuick.Shapes.ShapePath
 	State QtQuick.State
+	Tap Ljos.Ui.Tap
 	Text QtQuick.Text
 	type Ljos.Ui.Box Box
 		prototype Ljos.Ui.Arrangement
@@ -591,34 +590,44 @@ module Ljos.Ui
 		signal directionChanged
 	type Ljos.Ui.Column Column
 		prototype Ljos.Ui.Arrangement
-	type Ljos.Ui.ListView ListView
-		prototype Ljos.Ui.ItemView
-		attached Ljos.Ui.ItemViewAttached
-		enum Orientation Horizontal=1 Vertical=2
-		enum SnapMode NoSnap=0 SnapToItem=1 SnapOneItem=2
-		enum HeaderPositioning InlineHeader=0 OverlayHeader=1 PullBackHeader=2
-		enum FooterPositioning InlineFooter=0 OverlayFooter=1 PullBackFooter=2
-		prop orientation Orientation
-		prop spacing QtQml.real named
-		prop section QtQuick.ViewSection pointer readonly
-		prop currentSection QtQml.string named readonly
-		prop highlightMoveVelocity QtQml.real named
-		prop highlightResizeVelocity QtQml.real named
-		prop highlightResizeDuration QtQml.int named
-		prop snapMode SnapMode
-		prop headerPositioning HeaderPositioning
-		prop footerPositioning FooterPositioning
-		signal orientationChanged
-		signal spacingChanged
-		signal currentSectionChanged
-		signal highlightMoveVelocityChanged
-		signal highlightResizeVelocityChanged
-		signal highlightResizeDurationChanged
-		signal snapModeChanged
-		signal headerPositioningChanged
-		signal footerPositioningChanged
-		method incrementCurrentIndex
-		method decrementCurrentIndex
+	type Ljos.Ui.Hover Hover
+		prototype QtQml.QtObject named
+		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		prop enabled QtQml.bool named
+		prop active QtQml.bool named readonly
+		prop target QtQml.QtObject named pointer
+		prop parent QtQml.QtObject named pointer
+		prop grabPermissions GrabPermissions
+		prop margin QtQml.real named
+		prop dragThreshold QtQml.int named reset
+		prop cursorShape Qt::CursorShape reset
+		prop devices DeviceTypes
+		prop pointerTypes PointerTypes
+		prop buttons Qt::MouseButtons
+		prop modifiers Qt::KeyboardModifiers
+		prop point Ljos.Ui.HandlerPoint pointer readonly
+		prop hovered QtQml.bool named readonly
+		prop blocking QtQml.bool named
+		signal enabledChanged
+		signal activeChanged
+		signal targetChanged
+		signal parentChanged
+		signal marginChanged
+		signal dragThresholdChanged
+		signal cursorShapeChanged
+		signal devicesChanged
+		signal pointerTypesChanged
+		signal buttonsChanged
+		signal modifiersChanged
+		signal grabChanged transition:int point:var
+		signal canceled point:var
+		signal hoveredChanged
+		signal blockingChanged
+		signal pointChanged
 	type Ljos.Ui.PointerArea PointerArea
 		prototype QtQuick.Item named
 		prop hoverEnabled QtQml.bool named
@@ -672,6 +681,53 @@ module Ljos.Ui
 		signal bottomRightRadiusChanged
 	type Ljos.Ui.Row Row
 		prototype Ljos.Ui.Arrangement
+	type Ljos.Ui.Tap Tap
+		prototype QtQml.QtObject named
+		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
+		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
+		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
+		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		flags PointerTypes Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
+		prop enabled QtQml.bool named
+		prop pressed QtQml.bool named readonly
+		prop tapCount QtQml.int named readonly
+		prop gesturePolicy GesturePolicy
+		prop buttons Qt::MouseButtons
+		prop parent QtQml.QtObject named pointer readonly
+		prop point Ljos.Ui.HandlerPoint pointer readonly
+		prop target QtQml.QtObject named pointer
+		prop margin QtQml.real named
+		prop dragThreshold QtQml.int named reset
+		prop grabPermissions GrabPermissions
+		prop devices DeviceTypes
+		prop pointerTypes PointerTypes
+		prop modifiers Qt::KeyboardModifiers
+		prop cursorShape Qt::CursorShape reset
+		prop longPressThreshold QtQml.real named reset
+		prop timeHeld QtQml.real named readonly
+		signal enabledChanged
+		signal pressedChanged
+		signal tapCountChanged
+		signal gesturePolicyChanged
+		signal buttonsChanged
+		signal parentChanged
+		signal targetChanged
+		signal marginChanged
+		signal dragThresholdChanged
+		signal devicesChanged
+		signal pointerTypesChanged
+		signal modifiersChanged
+		signal cursorShapeChanged
+		signal longPressThresholdChanged
+		signal timeHeldChanged
+		signal pointChanged
+		signal tapped eventPoint:var _:int
+		signal singleTapped eventPoint:var _:int
+		signal doubleTapped eventPoint:var _:int
+		signal canceled point:var
+		signal longPressed
+		signal grabChanged transition:int point:var
 	type Ljos.Ui.Arrangement Arrangement
 		prototype QtQuick.Layouts.Layout named
 		is uncreatable
@@ -689,106 +745,26 @@ module Ljos.Ui
 		signal topPaddingChanged
 		signal bottomPaddingChanged
 		signal layoutDirectionChanged
-	type Ljos.Ui.ItemView ItemView
-		prototype QtQuick.Flickable named
-		default data
+	type Ljos.Ui.HandlerPoint HandlerPoint
 		is uncreatable
-		enum PositionMode Beginning=0 Center=1 End=2 Visible=3 Contain=4 SnapPosition=5
-		enum VerticalLayoutDirection TopToBottom=2 BottomToTop=3
-		enum HighlightRangeMode NoHighlightRange=0 ApplyRange=1 StrictlyEnforceRange=2
-		prop model QtQml.var named
-		prop delegate QtQml.Component named pointer
-		prop key QtQml.string named
-		prop count QtQml.int named readonly
-		prop currentIndex QtQml.int named
-		prop currentItem QtQml.QtObject named pointer readonly
-		prop keyNavigationWraps QtQml.bool named
-		prop keyNavigationEnabled QtQml.bool named
-		prop cacheBuffer QtQml.int named
-		prop displayMarginBeginning QtQml.int named
-		prop displayMarginEnd QtQml.int named
-		prop layoutDirection Qt::LayoutDirection
-		prop effectiveLayoutDirection Qt::LayoutDirection readonly
-		prop verticalLayoutDirection VerticalLayoutDirection
-		prop header QtQml.Component named pointer
-		prop headerItem QtQml.QtObject named pointer readonly
-		prop footer QtQml.Component named pointer
-		prop footerItem QtQml.QtObject named pointer readonly
-		prop populate QtQml.QtObject named pointer
-		prop enter QtQml.QtObject named pointer
-		prop addDisplaced QtQml.QtObject named pointer
-		prop move QtQml.QtObject named pointer
-		prop moveDisplaced QtQml.QtObject named pointer
-		prop exit QtQml.QtObject named pointer
-		prop removeDisplaced QtQml.QtObject named pointer
-		prop displaced QtQml.QtObject named pointer
-		prop highlight QtQml.Component named pointer
-		prop highlightItem QtQml.QtObject named pointer readonly
-		prop highlightFollowsCurrentItem QtQml.bool named
-		prop highlightRangeMode HighlightRangeMode
-		prop preferredHighlightBegin QtQml.real named reset
-		prop preferredHighlightEnd QtQml.real named reset
-		prop highlightMoveDuration QtQml.int named
-		prop reuseItems QtQml.bool named
-		signal modelChanged
-		signal delegateChanged
-		signal keyChanged
-		signal countChanged
-		signal currentIndexChanged
-		signal currentItemChanged
-		signal keyNavigationWrapsChanged
-		signal keyNavigationEnabledChanged
-		signal cacheBufferChanged
-		signal displayMarginBeginningChanged
-		signal displayMarginEndChanged
-		signal layoutDirectionChanged
-		signal effectiveLayoutDirectionChanged
-		signal verticalLayoutDirectionChanged
-		signal headerChanged
-		signal headerItemChanged
-		signal footerChanged
-		signal footerItemChanged
-		signal populateChanged
-		signal enterChanged
-		signal addDisplacedChanged
-		signal moveChanged
-		signal moveDisplacedChanged
-		signal exitChanged
-		signal removeDisplacedChanged
-		signal displacedChanged
-		signal highlightChanged
-		signal highlightItemChanged
-		signal highlightFollowsCurrentItemChanged
-		signal highlightRangeModeChanged
-		signal preferredHighlightBeginChanged
-		signal preferredHighlightEndChanged
-		signal highlightMoveDurationChanged
-		signal reuseItemsChanged
-		method positionViewAtIndex
-		method positionViewAtBeginning
-		method positionViewAtEnd
-		method indexAt
-		method itemAt
-		method itemAtIndex
-		method forceLayout
-	type Ljos.Ui.ItemViewAttached ItemViewAttached
-		is uncreatable
-		prop view QtQuick.Flickable named pointer readonly
-		prop isCurrentItem QtQml.bool named readonly
-		prop section QtQml.string named readonly
-		prop previousSection QtQml.string named readonly
-		prop nextSection QtQml.string named readonly
-		prop delayRemove QtQml.bool named
-		signal viewChanged
-		signal isCurrentItemChanged
-		signal sectionChanged
-		signal previousSectionChanged
-		signal nextSectionChanged
-		signal delayRemoveChanged
-		signal add
-		signal remove
-		signal pooled
-		signal reused
+		prop position QtQml.point named readonly
+		prop scenePosition QtQml.point named readonly
+		prop pressPosition QtQml.point named readonly
+		prop scenePressPosition QtQml.point named readonly
+		prop pressedButtons Qt::MouseButtons readonly
+		prop id QtQml.int named readonly
+		prop velocity QtQuick.vector2d named readonly
+		prop device QtQml.var named readonly
+		prop modifiers Qt::KeyboardModifiers readonly
+		signal positionChanged
+		signal scenePositionChanged
+		signal pressPositionChanged
+		signal scenePressPositionChanged
+		signal pressedButtonsChanged
+		signal idChanged
+		signal velocityChanged
+		signal deviceChanged
+		signal modifiersChanged
 	type Ljos.Ui.RectangleBorder RectangleBorder
 		is uncreatable
 		prop width QtQml.real named
@@ -3361,15 +3337,9 @@ module QtQuick
 		prop model QtQml.var named
 		prop delegate QtQml.Component named pointer
 		prop count QtQml.int named readonly
-		prop key QtQml.string named
-		prop enter QtQuick.Transition named pointer
-		prop exit QtQuick.Transition named pointer
 		signal modelChanged
 		signal delegateChanged
 		signal countChanged
-		signal keyChanged
-		signal enterChanged
-		signal exitChanged
 		signal itemAdded index:int item:QtObject
 		signal itemRemoved index:int item:QtObject
 		method itemAt
@@ -4408,7 +4378,6 @@ module QtQuick
 		enum HighlightRangeMode NoHighlightRange=0 ApplyRange=1 StrictlyEnforceRange=2
 		prop model QtQml.var named
 		prop delegate QtQml.Component named pointer
-		prop key QtQml.string named
 		prop count QtQml.int named readonly
 		prop currentIndex QtQml.int named
 		prop currentItem QtQml.QtObject named pointer readonly
@@ -4442,7 +4411,6 @@ module QtQuick
 		prop reuseItems QtQml.bool named
 		signal modelChanged
 		signal delegateChanged
-		signal keyChanged
 		signal countChanged
 		signal currentIndexChanged
 		signal currentItemChanged
@@ -4483,7 +4451,7 @@ module QtQuick
 		method forceLayout
 	type QtQuick.ItemViewAttached ItemViewAttached
 		is uncreatable
-		prop view QtQuick.Flickable named pointer readonly
+		prop view QtQml.QtObject named pointer readonly
 		prop isCurrentItem QtQml.bool named readonly
 		prop section QtQml.string named readonly
 		prop previousSection QtQml.string named readonly
