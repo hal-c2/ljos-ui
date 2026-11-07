@@ -1153,6 +1153,12 @@ built at run time and used as a member), or a script that reaches
 something it cannot follow. A kept file is not an error: it runs as
 written, on the same runtime.
 
+DECISION: a local or a method with the name of a member Ljós renames
+(`color`, `add`, `remove`) keeps the file only where that member is what
+the name could read: in an object, or a file whose root, of a type that
+renames it or may be one. `function remove(i)` on an `Item` is the
+`Item`'s own and is lowered as it is.
+
 `locals` tells the pass what the root type of a file beside it is, so
 `Button { color: "blue" }` on a `Button.qml` whose root is a `Rectangle` is
 lowered as a `Rectangle` member.
