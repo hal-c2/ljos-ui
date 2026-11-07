@@ -225,7 +225,10 @@ The `Qt` object (815 uses in 114 files) is one namespace for vectors,
 colours, factories, time and the app. It is split by what its members are,
 and nothing is global: a Ljós file sees only what it imports, plus the
 ECMAScript built-ins the subset allows (`Math`, `JSON` through decoders,
-`String`, `Number`, `Array` read-only methods, `Map`).
+`String`, `Number`, `Array` read-only methods, `Map`). `JSON.parse(text)`
+gives `unknown`, for a decoder to narrow (§4.4), and `JSON.stringify(value)`
+a string; neither takes a reviver, a replacer or an indent, which are
+`null` and functions of `any` in TypeScript's own declarations.
 
 | Qt | Ljós | Kind | Cost |
 |---|---|---|---|

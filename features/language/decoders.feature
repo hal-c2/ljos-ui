@@ -295,3 +295,73 @@ Feature: Decoders: what is unknown is narrowed before it is used
       Then the property "shown" of "root" is 4
       And the property "fallback" of "root" is 1
       And the property "caught" of "root" is "not a row"
+
+  Rule: What comes in from outside is unknown until it is decoded
+
+    Background:
+      Given the file "row.ts":
+        """ts
+        export interface Row { title: string }
+        export function isRow(v: unknown): v is Row {
+          return typeof v === "object" && v !== null && "title" in v && typeof v.title === "string"
+        }
+        """
+
+    Scenario: JSON.parse gives unknown, a native var property is unknown, and JSON.stringify gives a string
+      Given the file "Show.qml":
+        """qml
+        import Ljos.Ui
+        import "row.ts" as Rows
+        Item {
+          property string text: ""
+          property string shown: ""
+          property unknown given
+          Rectangle { id: box }
+          function raw(): void { shown = JSON.parse(text).title }
+          function decoded(): void { const v = JSON.parse(text); if (Rows.isRow(v)) { shown = v.title } }
+          function saved(): void { shown = JSON.stringify(given) }
+          function painted(): void { shown = box.gradient.title }
+          function revived(): void { given = JSON.parse(text, given) }
+          function loaded(): void { shown = JSON.load(text) }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Show.qml:8:59: error: `title` has no type: `JSON.parse(text)` is unknown: keep it in a `const` and narrow that, or decode it with a type guard [ts-no-any]
+        Show.qml:11:59: error: `title` has no type: `box.gradient` is unknown: narrow it first (`typeof box.gradient === "object" && box.gradient !== null && "title" in box.gradient`), or decode it with a type guard [ts-no-any]
+        Show.qml:12:46: error: this call takes 1 arguments, and is given 2 [ts-assign-type]
+        Show.qml:13:50: error: `load` has no type: JSON has no member of that name [ts-no-any]
+        2 files, 4 errors, 0 warnings
+        ljos: 4 errors
+        """
+
+    Scenario: A handler parses what it is given, decodes it, and shows a field or the fallback
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import "row.ts" as Rows
+        Item {
+          objectName: "root"
+          property string good: ""
+          property string other: ""
+          property string broken: ""
+          function title(text: string): string {
+            try {
+              const v = JSON.parse(text)
+              return Rows.isRow(v) ? v.title : "untitled"
+            } catch (e) {
+              return "unreadable"
+            }
+          }
+          function show(): void {
+            good = title('{"title": "one"}')
+            other = title('{"name": "two"}')
+            broken = title("{title")
+          }
+        }
+        """
+      When the method "show" of "root" is called
+      Then the property "good" of "root" is "one"
+      And the property "other" of "root" is "untitled"
+      And the property "broken" of "root" is "unreadable"

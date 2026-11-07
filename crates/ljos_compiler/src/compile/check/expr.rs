@@ -429,12 +429,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// `member`, where the member is written: one the value does not have
     /// has no type. Where the compiler reports it too, its report is kept.
-    /// `object` is where the receiver is written, to name it in a fix.
+    /// `object` is the receiver as written, to name it in a fix.
     fn member_at(
         &mut self,
         receiver: Ty,
         property: &qml_syntax::js::IdentifierName<'a>,
-        object: Span,
+        object: &Expression<'a>,
     ) -> Ty {
         let name = property.name.as_str();
         if self.forbid_member(name, property.span) {
@@ -472,10 +472,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 Kind::Error | Kind::Never | Kind::Undefined | Kind::Void | Kind::Global(Global::Qt)
             );
             if checked && self.member_one(part, name).is_none() {
-                let of = self.text(object);
+                let of = self.text(object.span());
                 // What is not known to have the member is narrowed, as
-                // TypeScript narrows it: the fix names how.
+                // TypeScript narrows it: the fix names how. Only a path
+                // keeps what it is narrowed to; a call gives a new value
+                // each time.
                 let fix = match self.arena.kind(part) {
+                    Kind::Unknown | Kind::NonNullish if self.root_local(object).is_none() => {
+                        format!(
+                            "`{of}` is unknown: keep it in a `const` and narrow that, or decode it with a type guard"
+                        )
+                    }
                     Kind::Unknown | Kind::NonNullish => format!(
                         "`{of}` is unknown: narrow it first (`typeof {of} === \"object\" && {of} !== null && \"{name}\" in {of}`), or decode it with a type guard"
                     ),
@@ -558,7 +565,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let object = self.link(&m.object, short);
                 let object = self.optional(object, m.optional, short);
                 let object = self.defined(object, m.object.span());
-                let base = self.member_at(object, &m.property, m.object.span());
+                let base = self.member_at(object, &m.property, &m.object);
                 match self.root_local(&m.object) {
                     Some(local) => self.fact(self.text(m.span), local).unwrap_or(base),
                     None => base,
