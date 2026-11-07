@@ -32,7 +32,8 @@ struct Area {
     types: &'static [(&'static str, &'static str)],
     /// Per Qt type (and what derives from it), the members Ljós calls by
     /// another name. A property's change signal and its handler follow its
-    /// name.
+    /// name. Every one is a property: a member that is called is a method,
+    /// and not one of these.
     members: &'static [(&'static str, &'static [(&'static str, &'static str)])],
 }
 
@@ -63,6 +64,8 @@ pub fn type_renames() -> impl Iterator<Item = &'static (&'static str, &'static s
 
 /// Per Qt type (and what derives from it), the members Ljós calls by another
 /// name. A property's change signal and its handler follow its name.
+/// Every one is a property: a member that is called is a method, and not
+/// one of these.
 pub fn member_renames()
 -> impl Iterator<Item = &'static (&'static str, &'static [(&'static str, &'static str)])> {
     AREAS.iter().flat_map(|area| area.members.iter())

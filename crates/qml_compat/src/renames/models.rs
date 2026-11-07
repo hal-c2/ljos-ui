@@ -4,5 +4,5 @@ use super::Area;
 
 pub(super) const AREA: Area = Area {
     types: &[],
-    members: &[],
+    members: &[("ListView", &[("add", "enter"), ("remove", "exit")])],
 };
