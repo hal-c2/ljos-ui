@@ -55,8 +55,16 @@ pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
 pub const TYPE_RENAMES: &[(&str, &str)] = &[("MouseArea", "PointerArea")];
 
 /// Per Qt type (and what derives from it), the members Ljós calls by another
-/// name. A property's change signal and its handler follow its name.
-pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[("Rectangle", &[("color", "fill")])];
+/// name. A property's change signal and its handler follow its name. The
+/// type nearest along what a type derives from says, so a type with none
+/// keeps the names of the type it is built from.
+pub const MEMBER_RENAMES: &[(&str, &[(&str, &str)])] = &[
+    ("Rectangle", &[("color", "fill")]),
+    // A window's `color` is what is behind its items, not a fill: Qt's
+    // `Window` is no `Rectangle`, and Ljós's API keeps the name. Ljós's own
+    // table has it derive from `Rectangle`, which is how it is built.
+    ("Window", &[]),
+];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -78,7 +86,7 @@ pub struct Lowered {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Kept {
-    /// What of the file the pass cannot lower: "`Image` is not in Ljos.Ui
+    /// What of the file the pass cannot lower: "`PathView` is not in Ljos.Ui
     /// yet".
     pub reason: String,
     /// Where, as a byte offset into the file.
@@ -213,6 +221,7 @@ impl<'s> Pass<'s> {
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let mut quick = None;
         let mut layouts = None;
+        let mut emptied = Vec::new();
         for import in &document.imports {
             let at = import.span.start as usize;
             let QmlImportSource::Module(name) = &import.source else {
@@ -231,6 +240,8 @@ impl<'s> Pass<'s> {
                     self.layouts = qt_types::module("QtQuick.Layouts");
                     layouts = Some(import.span);
                 }
+                // Its types are QtQuick's, and `Ljos.Ui` has them.
+                "QtQuick.Window" if import.alias.is_none() => emptied.push(import.span),
                 // A module that builds on QtQuick names its types, and those
                 // are Qt's until Ljós has its own (docs/DIALECT.md).
                 other => {
@@ -244,8 +255,8 @@ impl<'s> Pass<'s> {
         let Some(span) = quick else {
             return Ok(false);
         };
-        if let Some(span) = layouts {
-            // `Ljos.Ui` has `Layout`; the line stays, empty.
+        // `Ljos.Ui` has what they name; each line stays, empty.
+        for span in layouts.into_iter().chain(emptied) {
             self.change(span.start as usize..span.end as usize, "");
         }
         // On the import's line, so every line stays where it was.
