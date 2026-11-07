@@ -427,6 +427,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 params: params.into_boxed_slice(),
                 rest: None,
                 ret,
+                guard: None,
             })
         };
         let value = |checker: &mut Self, ty: &str| {
@@ -460,6 +461,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }]),
                 rest: Some(Ty::UNKNOWN),
                 ret: Ty::VOID,
+                guard: None,
             }),
             "point" | "vector2d" => {
                 let ret = value(self, name);
@@ -543,6 +545,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }]),
                 rest: None,
                 ret: Ty::COLOR,
+                guard: None,
             })
         };
         Some(match name {
