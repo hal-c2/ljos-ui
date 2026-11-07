@@ -643,3 +643,35 @@ fn where_a_positioner_and_the_arrangement_disagree_the_file_is_kept() {
         assert!(reason.contains(why), "{body}: {reason}");
     }
 }
+
+#[test]
+fn a_member_of_qt_stays_qt_s_where_a_directory_imported_by_path_may_name_it() {
+    // `qml/App.qml` is not beside the file: what a directory imported by
+    // path has is not in sight of the pass.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport \"qml\"\nItem { x: Qt.platform.os.length; y: Qt.point(1, 2).y }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         import \"qml\"\nItem { x: Qt.platform.os.length; y: point(1, 2).y }\n"
+    );
+    // Under a name, the directory's types are that name's.
+    assert_eq!(
+        lowered("import QtQuick\nimport \"qml\" as Q\nItem { x: Qt.platform.os.length }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         import \"qml\" as Q\nItem { x: App.platform.os.length }\n"
+    );
+}
+
+#[test]
+fn qt_resolved_url_given_a_context_stays_qt_s() {
+    // Qt 6 resolves against the file of the second argument's component;
+    // `url` takes one.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { property url a: Qt.resolvedUrl(\"a.png\"); property url b: Qt.resolvedUrl(\"b.png\", this) }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { property url a: url(\"a.png\"); property url b: Qt.resolvedUrl(\"b.png\", this) }\n"
+    );
+}
