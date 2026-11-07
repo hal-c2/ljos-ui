@@ -390,7 +390,14 @@ The other direction is generated. Each QML component and native type has a
 `.d.ts` declaration, so a TS module can take `Card` or `ListView` as a
 parameter type. The declarations come from the same table `ljos check`
 reads (§10, `ljos types --dts`), so `tsc` and an editor see what the
-checker sees.
+checker sees. `ljos check --tsc` gives each file the declarations of the
+modules of Ljós's API it imports, and nothing else: a file of `Ljos.Ui`
+alone has no `Timer` or `Component.Ready`, in TypeScript as in the
+checker. Files that import the same modules share one declarations file
+and one run of `tsc`. A type such a file cannot name but is handed,
+the `QtObject` a `PointerArea` gives a handler, is still declared,
+because what the file imports reaches it. `ljos types --dts` declares
+the whole API, `Ljos.Ui` and `Ljos.Core` together.
 
 `var` is not a type in a Ljós file. A value of unknown shape enters at a
 boundary as `unknown` and is decoded (note 11 §3.7). A decoder narrows;
