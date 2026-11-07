@@ -1,7 +1,7 @@
 //! The checker's half that reads scripts: the type of each expression,
 //! what statements bind and narrow, functions, arrows and annotations.
 
-use qml_front::{TypeOracle, names::Target};
+use qml_front::{TypeOracle, names::Target, types::Kind as QKind};
 use qml_syntax::{
     GetSpan, Span,
     js::{
@@ -688,10 +688,27 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.script_member(object, &name, index.span())
     }
 
+    /// `card.DragSource`: the object the type `name` attaches to an object
+    /// read off it, as QML reads one.
+    fn attached_off(&mut self, name: &str) -> Option<Ty> {
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let types = self.c.types;
+        let found = types.find(&[name])?;
+        let attached = types
+            .base(&found.kind)
+            .and_then(|base| types.oracle.attached(base))?;
+        Some(self.object_ty(&QKind::Builtin(attached)))
+    }
+
     fn member_one(&mut self, part: Ty, name: &str) -> Option<Ty> {
         use builtins::Primitive as P;
         match self.arena.kind(part).clone() {
-            Kind::Object(o) => self.object_member(o, name).map(|own| own.ty),
+            Kind::Object(o) => self
+                .object_member(o, name)
+                .map(|own| own.ty)
+                .or_else(|| self.attached_off(name)),
             Kind::Type(o) => self.type_member(o, name),
             Kind::Namespace(namespace) => {
                 let found = self.c.types.find(&[&namespace, name])?;
