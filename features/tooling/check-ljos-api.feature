@@ -278,7 +278,7 @@ Feature: Checking the scripts of a file written in Ljós's API
           property string label: "full"
           property real level: label
           width: label + "!"
-          Text { text: label.length; horizontalAlignment: Text.AlignHCenter; verticalAlignment: Text.Fit }
+          Text { text: label.length; align: Text.AlignHCenter; verticalAlignment: Text.Fit }
         }
         """
       When the files are checked
@@ -287,7 +287,7 @@ Feature: Checking the scripts of a file written in Ljós's API
         Gauge.qml:4:32: error: `level` is a real; this gives it a string [ts-assign-type]
         Gauge.qml:5:18: error: `width` is a real; this gives it a string [ts-assign-type]
         Gauge.qml:6:24: error: `text` is a string; this gives it a number [ts-assign-type]
-        Gauge.qml:6:97: error: `verticalAlignment` is a Text.VAlignment; this gives it `Text.Fit` [ts-assign-type]
+        Gauge.qml:6:83: error: `verticalAlignment` is a Text.VAlignment; this gives it `Text.Fit` [ts-assign-type]
         1 files, 4 errors, 0 warnings
         ljos: 4 errors
         """
