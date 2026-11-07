@@ -1338,8 +1338,9 @@ A file is kept, for now, when:
 - it sets `font.pointSize` (until `Screen` is in `Ljos.Ui`);
 - it reads `.pixelSize`, `.bold` or `.pointSize` off something whose type
   is not known but that may be a font: a member called `font`
-  (`someItem.font.bold`) or a property the file declares as a `font` or a
-  `var` (`property var face`, `face.pixelSize`); or it reads
+  (`someItem.font.bold`) or a property the file declares as a `font`, a
+  `var` or an `alias` (`property var face`, `face.pixelSize`;
+  `property alias face: label.font`); or it reads
   `font["pixelSize"]`.
 
 DECISION: off anything else, such a name is not a font's, and is left as
@@ -1385,7 +1386,7 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 | `Component { id }` | an inline `component X:` or an inline delegate | mechanical |
 | `palette.*` | `Theme.color.*` | mechanical where 1:1 |
 | `Material.*`, `Universal.*` | — | DECISION: kept (a style's own API) |
-| `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical; `font.bold` lowers to `Font.Bold`/`Font.Normal`; kept when a script reads or writes `.bold`, both `bold` and `weight` are set (in any form), or a font member is read off a `font` or `var` whose type is not known; built |
+| `font.pixelSize`, `font.bold` | `font.size`, `font.weight` | mechanical; `font.bold` lowers to `Font.Bold`/`Font.Normal`; kept when a script reads or writes `.bold`, both `bold` and `weight` are set (in any form), or a font member is read off a `font`, `var` or `alias` whose type is not known; built |
 | `font.pointSize` | `font.size: Screen.points(…)` | kept until `Screen` lands (M1), then mechanical (a run-time conversion) |
 | `horizontalAlignment`, `wrapMode`, `elide`, `textFormat` (on `Text`) | `align`, `wrap`, `elide`, `format` | mechanical; enum values keep Qt's names until M3; built |
 | `fillMode` (on `Image`), and `TextInput`'s and `TextEdit`'s text members | `fit`, and `Text`'s names | mechanical once the type is in `Ljos.Ui` |
@@ -1774,7 +1775,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | A module of the project imported under a name (`import Gauges as G`) | Kept until the pass follows a qualified type |
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
-| `.bold` of a font read or written by a script, `font.bold` with `font.weight` (in any form), `font.pointSize`, or a font member read off a `font` or `var` whose type is not known (§4.13) | Kept until the pass knows more types (M4) and `Screen` lands (M1) |
+| `.bold` of a font read or written by a script, `font.bold` with `font.weight` (in any form), `font.pointSize`, or a font member read off a `font`, `var` or `alias` whose type is not known (§4.13) | Kept until the pass knows more types (M4) and `Screen` lands (M1) |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
 | `property var` whose type is not known | Kept. A person types it, or makes it `property unknown` and decodes it (§4.4) |
 | A name the file's Qt imports lack (a file of the project, or one the context gives) that a Ljós module the lowered file imports has (`Box.qml` beside a file, which `Ljos.Ui` would shadow; `Button.qml` beside one that imports `QtQuick.Dialogs`, which `Ljos.Controls` would) | Kept for good. An import is found before the files beside it, so lowering would change the type; renaming the project's file is the author's call |
