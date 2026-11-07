@@ -954,7 +954,7 @@ compat pass lowers a file only when every control it names is there.
 | K1 | `Label`, `AbstractButton`, `Button`, attached `ToolTip`, `ScrollBar` (and its attached form), `ScrollView`, `Popup` | built |
 | K2 | `TextField`, `TextArea` | built |
 | K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | built |
-| K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | |
+| K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | built |
 
 Lowering (§6.1): `import QtQuick.Controls.Basic` becomes
 `import Ljos.Controls` on its line, and a second import of the controls
@@ -1228,13 +1228,16 @@ each example, --style Fusion:   495 files, 13 lowered, 472 kept
 ```
 
 With Basic, no example file is kept by its controls import any more. What
-the controls keep instead:
+the controls keep instead (recounted after K4; the totals above did not
+move). Three files are no longer kept for a control K4 adds: two are
+still kept, now by their group, and one lowers, so the rows sum to 113,
+not 114:
 
 | Reason | Files |
 |---|---:|
-| a file of its group is kept | 71 |
+| a file of its group is kept | 73 |
 | `QtQuick.Controls.Fusion` (15), `.impl` (7), `.Material` (5) | 27 |
-| a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `TextField`, `Switch`, `Slider`, `Pane`, `Page` (1 each) | 16 |
+| a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `Pane`, `Page` (1 each) | 13 |
 
 With Fusion (the Linux default), 89 files are kept by `import
 QtQuick.Controls`. The lowered count does not move yet: the files the
@@ -1473,7 +1476,7 @@ on the Qt backend (10 steps).
 | **M3** Tools | migrate on `qml_edit`; MCP `migrate`, `explain`; Studio shows the API; enum cleanup (`Qt.Align*`) | migrate round-trip on the corpus re-lowers to itself; Studio edits a Ljós file losslessly |
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes. Built: TS modules, `property T` of their types, `tsc` given the modules (§4.4). Remaining: decoders and `JSON.parse` as `unknown`, `ts-boundary` (T3b); tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
-| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1), `TextField`, `TextArea` (K2), `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` (K3); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (K4 and the rest), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
+| **M6** Controls | `Ljos.Controls` and styles. Built: the module, with Basic's `Label`, `AbstractButton`, `Button`, `ToolTip`, `ScrollBar`, `ScrollView`, `Popup` (K1), `TextField`, `TextArea` (K2), `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` (K3), `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` (K4); `QtQuick.Controls.Basic` lowered to it, and `QtQuick.Controls` where the program starts with Basic (§4.16). Remaining: the other controls (`ApplicationWindow`, `StackView`, `RoundButton`, `Pane`, `Page` first: they keep the most corpus files), the controls on `Ljos.Design` roles, the other styles | Controls corpus lowered; qml6 parity on its features |
 
 ## 14. Answers to note 11's open questions
 
