@@ -258,6 +258,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
       Given the file "Form.qml":
         """qml
         import Ljos.Ui
+        import Ljos.Layout
         import Ljos.Controls
         Column {
           CheckBox { text: "Wrap" }
