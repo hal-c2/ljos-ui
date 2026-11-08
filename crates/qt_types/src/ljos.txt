@@ -1330,6 +1330,53 @@ module Qt.labs.lottieqt
 		method gotoAndStop
 		method getDuration returns:real
 
+module Qt.labs.platform
+	Menu Qt.labs.platform.Menu
+	MenuBar Qt.labs.platform.MenuBar
+	MenuItem Qt.labs.platform.MenuItem
+	MenuSeparator Qt.labs.platform.MenuSeparator
+	type Qt.labs.platform.Menu Menu
+		prototype QtQml.QtObject named
+		default items
+		prop items QtQml.var named list
+		prop title QtQml.string named
+		prop enabled QtQml.bool named
+		prop visible QtQml.bool named
+		signal itemsChanged
+		signal titleChanged
+		signal enabledChanged
+		signal visibleChanged
+	type Qt.labs.platform.MenuBar MenuBar
+		prototype QtQml.QtObject named
+		default menus
+		prop menus QtQml.var named list
+		prop window QtQuick.Window named pointer
+		signal menusChanged
+		signal windowChanged
+	type Qt.labs.platform.MenuItem MenuItem
+		prototype QtQml.QtObject named
+		enum MenuRole NoRole=0 TextHeuristicRole=1 ApplicationSpecificRole=2 AboutQtRole=3 AboutRole=4 PreferencesRole=5 QuitRole=6
+		prop text QtQml.string named
+		prop enabled QtQml.bool named
+		prop visible QtQml.bool named
+		prop checkable QtQml.bool named
+		prop checked QtQml.bool named
+		prop separator QtQml.bool named
+		prop shortcut QtQml.var named
+		prop role MenuRole
+		signal textChanged
+		signal enabledChanged
+		signal visibleChanged
+		signal checkableChanged
+		signal checkedChanged
+		signal separatorChanged
+		signal shortcutChanged
+		signal roleChanged
+		signal triggered
+		method toggle
+	type Qt.labs.platform.MenuSeparator MenuSeparator
+		prototype Qt.labs.platform.MenuItem named
+
 module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
 	DelegateChooser QtQml.Models.DelegateChooser
