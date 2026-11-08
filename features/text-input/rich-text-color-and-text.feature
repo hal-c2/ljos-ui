@@ -114,3 +114,28 @@ Feature: A rich TextEdit whose color and text change together
         | a span's style     | color      | color: root.lit ? "black" : "white"      | "<span style='color:" + root.shade() + "'>" + (root.lit ? "b" : "c") + "</span>"                                    |
         | a style sheet      | color      | color: root.lit ? "black" : "white"      | "<html><head><style>a { color: " + root.shade() + " }</style></head><body><a href='x'>" + (root.lit ? "b" : "c") + "</a></body></html>" |
         | a link's own style | font size  | font.pixelSize: root.lit ? 14 : 15       | "<a style='color:" + root.shade() + "' href='x'>" + (root.lit ? "b" : "c") + "</a>"                                 |
+
+    Scenario: A plain text comes in as its color changes, ten handlers deep
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root
+          objectName: "root"
+          property bool lit: true
+          property int n0; property int n1; property int n2; property int n3; property int n4
+          property int n5; property int n6; property int n7; property int n8; property int n9
+          onN0Changed: n1++; onN1Changed: n2++; onN2Changed: n3++; onN3Changed: n4++; onN4Changed: n5++
+          onN5Changed: n6++; onN6Changed: n7++; onN7Changed: n8++; onN8Changed: n9++; onN9Changed: lit = false
+          TextEdit {
+            id: edit
+            objectName: "edit"
+            textFormat: TextEdit.PlainText
+            color: root.lit ? "black" : "white"
+            text: root.lit ? "b" : "c"
+          }
+        }
+        """
+      When the property "n0" of "root" is set to 1
+      Then the property "text" of "edit" is "c"
+      And the property "length" of "edit" is 1
