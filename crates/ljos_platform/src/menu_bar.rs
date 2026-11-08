@@ -39,7 +39,34 @@ pub struct SystemBar {
 pub struct SystemMenu {
     /// Without the `&` of a mnemonic.
     pub title: String,
+    pub role: MenuRole,
     pub entries: Vec<SystemEntry>,
+}
+
+/// What the system makes of one of the bar's menus.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MenuRole {
+    /// Told by its title, as Qt's `TextHeuristicRole` tells an item's:
+    /// "Window" lists the application's windows.
+    #[default]
+    TextHeuristic,
+    /// The application's items alone.
+    None,
+    /// The system lists the application's windows in it, whatever its
+    /// title says (macOS's Window menu).
+    Window,
+}
+
+impl SystemMenu {
+    /// Whether the system may list the application's windows in this
+    /// menu: which one does is [`SystemBar::windows_menu`]'s choice.
+    pub fn lists_windows(&self) -> bool {
+        match self.role {
+            MenuRole::Window => true,
+            MenuRole::TextHeuristic => self.title == "Window",
+            MenuRole::None => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -90,6 +117,16 @@ impl SystemBar {
             SystemEntry::Item(i) if i.text == *last => Some(i),
             _ => None,
         })
+    }
+
+    /// The index of the menu the system lists the application's windows
+    /// in: the first with [`MenuRole::Window`], or else the first whose
+    /// title says so; `None` if none does.
+    pub fn windows_menu(&self) -> Option<usize> {
+        self.menus
+            .iter()
+            .position(|m| m.role == MenuRole::Window)
+            .or_else(|| self.menus.iter().position(SystemMenu::lists_windows))
     }
 
     /// An item of the application menu by its text.
@@ -246,11 +283,13 @@ mod tests {
             quit: Some(item(9, "Quit")),
             menus: vec![SystemMenu {
                 title: "File".into(),
+                role: MenuRole::TextHeuristic,
                 entries: vec![
                     SystemEntry::Item(new),
                     SystemEntry::Separator,
                     SystemEntry::Menu(SystemMenu {
                         title: "Recent".into(),
+                        role: MenuRole::TextHeuristic,
                         entries: vec![SystemEntry::Item(item(2, "a"))],
                     }),
                     SystemEntry::Item(wrap),
@@ -265,5 +304,55 @@ mod tests {
         assert_eq!(bar.item(&["File", "Recent", "a"]).map(|i| i.id), Some(2));
         assert_eq!(bar.item(&["File", "a"]), None);
         assert_eq!(bar.application_item("Quit").map(|i| i.id), Some(9));
+    }
+
+    fn menu(title: &str, role: MenuRole) -> SystemMenu {
+        SystemMenu {
+            title: title.into(),
+            role,
+            entries: Vec::new(),
+        }
+    }
+
+    fn bar(menus: Vec<SystemMenu>) -> SystemBar {
+        SystemBar {
+            menus,
+            ..SystemBar::default()
+        }
+    }
+
+    #[test]
+    fn a_menu_with_the_window_role_lists_the_windows_whatever_its_title() {
+        let b = bar(vec![
+            menu("Datei", MenuRole::TextHeuristic),
+            menu("Fenster", MenuRole::Window),
+            menu("Window", MenuRole::Window),
+        ]);
+        assert_eq!(b.windows_menu(), Some(1));
+    }
+
+    #[test]
+    fn without_the_role_a_menu_titled_window_lists_them() {
+        let b = bar(vec![
+            menu("File", MenuRole::TextHeuristic),
+            menu("Window", MenuRole::TextHeuristic),
+        ]);
+        assert_eq!(b.windows_menu(), Some(1));
+        // A role said is taken over a title, wherever the menus are.
+        let b = bar(vec![
+            menu("Window", MenuRole::TextHeuristic),
+            menu("Fenster", MenuRole::Window),
+        ]);
+        assert_eq!(b.windows_menu(), Some(1));
+    }
+
+    #[test]
+    fn no_menu_lists_the_windows_without_the_role_or_the_title() {
+        let b = bar(vec![
+            menu("Fenster", MenuRole::TextHeuristic),
+            menu("Window", MenuRole::None),
+        ]);
+        assert_eq!(b.windows_menu(), None);
+        assert_eq!(SystemBar::default().windows_menu(), None);
     }
 }

@@ -22,11 +22,21 @@
 //! same way, for the window it belongs to; its items say their place with
 //! `role`, the text heuristic being the default, and what is not
 //! `visible` is not shown.
+//!
+//! The system lists the application's windows in the menu whose
+//! `SystemMenu.role` (module `Ljos`) is `SystemMenu.WindowRole`, or else
+//! in the one titled "Window" ([`SystemBar::windows_menu`]); such a menu
+//! is shown even with nothing of its own in it. Qt has no such role: a
+//! menu whose title is translated says it.
 
 use std::cell::RefCell;
 
-use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, OverrideContent, QmlType, Value};
-use ljos_platform::{KeyEquivalent, Platform, SystemBar, SystemEntry, SystemItem, SystemMenu};
+use ljos_engine::{
+    Engine, EngineError, MetaRef, ObjectId, OverrideContent, QmlObject, QmlType, Value,
+};
+use ljos_platform::{
+    KeyEquivalent, MenuRole, Platform, SystemBar, SystemEntry, SystemItem, SystemMenu,
+};
 use ljos_quick::Item;
 use ljos_quick::Modifiers;
 use ljos_quick::keys::{KeySequence, platform, standard_key_sequences};
@@ -40,6 +50,61 @@ use crate::platform_menu::{self, PlatformMenu, PlatformMenuBar, PlatformMenuItem
 use crate::util::{check, flag, is_a, object};
 use crate::window::Window;
 use ljos_quick::focus::WindowAttached;
+
+/// `SystemMenu` (module `Ljos`): only attached, to a `Menu` of a
+/// `MenuBar`, saying what the system's menu bar makes of it.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "Ljos",
+    name = "SystemMenu",
+    attached = SystemMenuAttached,
+    uncreatable,
+    enums = system_menu_enums
+)]
+pub struct SystemMenuAttacher {}
+
+/// What `SystemMenu.role: …` attaches to a menu.
+#[derive(Debug, Default, QmlObject)]
+#[qml(name = "SystemMenuAttached", enums = system_menu_enums)]
+pub struct SystemMenuAttached {
+    /// `SystemMenu.TextHeuristicRole` (the title says), `NoRole` or
+    /// `WindowRole` (the system lists the windows in it).
+    #[qml(notify, enumeration = "Role")]
+    pub role: i32,
+}
+
+const TEXT_HEURISTIC_ROLE: i32 = 0;
+const NO_ROLE: i32 = 1;
+const WINDOW_ROLE: i32 = 2;
+
+fn system_menu_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![(
+        "Role",
+        vec![
+            ("TextHeuristicRole", i64::from(TEXT_HEURISTIC_ROLE)),
+            ("NoRole", i64::from(NO_ROLE)),
+            ("WindowRole", i64::from(WINDOW_ROLE)),
+        ],
+    )]
+}
+
+/// Registers `SystemMenu` in `Ljos`.
+pub(crate) fn register(engine: &Engine) {
+    engine.register_module(ljos_engine::module!("Ljos" 1.0 => [SystemMenuAttacher]));
+}
+
+/// The role `SystemMenu.role` gives `menu` (tracked).
+fn menu_role(e: &Engine, menu: ObjectId) -> MenuRole {
+    let attacher = MetaRef::Static(SystemMenuAttacher::static_meta());
+    let Some(att) = e.existing_attached_object(menu, &attacher) else {
+        return MenuRole::TextHeuristic;
+    };
+    match e.read(att, SystemMenuAttached::ROLE.index).to_number() as i32 {
+        NO_ROLE => MenuRole::None,
+        WINDOW_ROLE => MenuRole::Window,
+        _ => MenuRole::TextHeuristic,
+    }
+}
 
 #[derive(Default)]
 struct Bars {
@@ -321,7 +386,15 @@ fn describe_menu(
         }
     }
     trim_separators(&mut entries);
-    (!entries.is_empty()).then_some(SystemMenu { title, entries })
+    let menu = SystemMenu {
+        title,
+        role: menu_role(e, menu),
+        entries,
+    };
+    // A menu of the bar's the system may list the windows in is shown
+    // with nothing of its own, for the system to fill.
+    let keep = !menu.entries.is_empty() || (app.is_some() && menu.lists_windows());
+    keep.then_some(menu)
 }
 
 /// Puts `item` in the application menu where its role has a place there
@@ -436,7 +509,15 @@ fn describe_platform_menu(
         }
     }
     trim_separators(&mut entries);
-    (!entries.is_empty()).then_some(SystemMenu { title, entries })
+    let menu = SystemMenu {
+        title,
+        role: menu_role(e, menu),
+        entries,
+    };
+    // A menu of the bar's the system may list the windows in is shown
+    // with nothing of its own, for the system to fill.
+    let keep = !menu.entries.is_empty() || (app.is_some() && menu.lists_windows());
+    keep.then_some(menu)
 }
 
 fn describe_item(e: &Engine, item: ObjectId) -> SystemItem {

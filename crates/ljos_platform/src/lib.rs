@@ -80,7 +80,8 @@ pub use fetch::{
 pub use http::HttpFetcher;
 pub use icon::{Icon, IconError};
 pub use menu_bar::{
-    KeyEquivalent, MenuBarService, RecordedMenuBar, SystemBar, SystemEntry, SystemItem, SystemMenu,
+    KeyEquivalent, MenuBarService, MenuRole, RecordedMenuBar, SystemBar, SystemEntry, SystemItem,
+    SystemMenu,
 };
 pub use network::{
     NetworkInformation, NetworkStatus, Reachability, TransportMedium, network_status,
