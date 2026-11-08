@@ -133,7 +133,16 @@ mod tests {
                 deeper(n - 1).map(|r| r + usize::from(pad[0]))
             }
         }
-        let (Some(shallow), Some(deep)) = (room_below_here(), deeper(16)) else {
+        // A stack of its own, well above twice the reserve however deep the
+        // test goes: below that, room_of halves what is left and the room
+        // shrinks by only half of what the frames take.
+        let (shallow, deep) = std::thread::Builder::new()
+            .stack_size(4 << 20)
+            .spawn(|| (room_below_here(), deeper(16)))
+            .unwrap()
+            .join()
+            .unwrap();
+        let (Some(shallow), Some(deep)) = (shallow, deep) else {
             return;
         };
         assert!(
