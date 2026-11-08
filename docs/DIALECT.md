@@ -1517,14 +1517,12 @@ another object (`save.ToolTip.text`). Read on the object itself
 (`ToolTip.text` inside the `Button`), it checks. The generated `.d.ts`
 (§4.4) covers `Ljos.Ui` only.
 
-Not yet: `TextEdit`, `TextInput` and the validators (`IntValidator`,
-`DoubleValidator`, `RegularExpressionValidator`) are not in `Ljos.Ui`.
-So a text area's `wrapMode: TextEdit.Wrap` keeps its file (`Text.Wrap` is
-the same value and lowers), and so does a text field's `echoMode:
-TextInput.Password` or `validator:`, which have no `Text` value to be
-written as. `Accessible` is not in `Ljos.Ui` either, so in a file in
-Ljós's API the a11y rule's `Accessible.name` remedy does not check yet;
-a `Label` beside the field does.
+`TextEdit`, `TextInput`, the validators (`IntValidator`,
+`DoubleValidator`, `RegularExpressionValidator`) and `Accessible` are in
+`Ljos.Ui` as they are (§4.14). So a text area's `wrapMode: TextEdit.Wrap`,
+a text field's `echoMode: TextInput.Password` and its `validator:` lower
+with the file, and in a file in Ljós's API the a11y rule's
+`Accessible.name` remedy checks.
 
 ## 5. The checker
 

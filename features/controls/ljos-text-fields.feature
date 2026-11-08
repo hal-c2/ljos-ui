@@ -196,33 +196,45 @@ Feature: Ljós's controls: text fields
       Then the pictures "kept.png" and "lowered.png" have the same pixels
 
     @ljos-only @headless
-    Scenario: A text area's wrapping named by TextEdit keeps the file
+    Scenario: A text area's wrapping named by TextEdit lowers with it
       Given the file "Main.qml":
         """qml
         import QtQuick
         import QtQuick.Controls.Basic
         TextArea { text: "one two"; wrapMode: TextEdit.Wrap }
         """
-      When the author runs "ljos migrate ."
+      When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        kept ./Main.qml:3:39: `TextEdit` is not in Ljos.Ui yet
-        1 files, 0 lowered, 1 kept
+        lowered ./Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Controls
+        TextArea { text: "one two"; wrapMode: TextEdit.Wrap }
         """
 
     @ljos-only @headless
-    Scenario: A text field's echo mode named by TextInput keeps the file
+    Scenario: A text field's echo mode named by TextInput lowers with it
       Given the file "Main.qml":
         """qml
         import QtQuick
         import QtQuick.Controls.Basic
         TextField { echoMode: TextInput.Password }
         """
-      When the author runs "ljos migrate ."
+      When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        kept ./Main.qml:3:23: `TextInput` is not in Ljos.Ui yet
-        1 files, 0 lowered, 1 kept
+        lowered ./Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Controls
+        TextField { echoMode: TextInput.Password }
         """
 
     @ljos-only @headless
