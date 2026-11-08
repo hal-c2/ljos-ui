@@ -7,10 +7,7 @@ use std::{
 };
 
 use common::*;
-use ljos_js::{
-    Bytecode, BytecodeOptions, FALLBACK_MAX_STACK, JsConfig, JsFault, JsHost, JsValue, Slice,
-    Timing,
-};
+use ljos_js::{Bytecode, BytecodeOptions, JsConfig, JsFault, JsHost, JsValue, Slice, Timing};
 
 fn plain() -> JsHost {
     JsHost::new(JsConfig::default()).unwrap()
@@ -102,6 +99,14 @@ fn recurse(n: u32) -> String {
     )
 }
 
+// Where the end of the stack is unknown, the default host is kept to
+// FALLBACK_MAX_STACK too, so the two hosts give the same.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "android",
+    target_vendor = "apple",
+    windows
+))]
 #[test]
 fn a_call_that_goes_deep_uses_the_threads_stack() {
     // A thread of 8 MiB, far more than the old fixed limit, and a call
@@ -113,7 +118,7 @@ fn a_call_that_goes_deep_uses_the_threads_stack() {
         .spawn(|| {
             let deep = recurse(2_000);
             let capped = JsHost::new(JsConfig {
-                max_stack: Some(FALLBACK_MAX_STACK),
+                max_stack: Some(ljos_js::FALLBACK_MAX_STACK),
                 ..JsConfig::default()
             })
             .unwrap();
