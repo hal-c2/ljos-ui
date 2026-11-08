@@ -238,6 +238,27 @@ Feature: Ljós's controls: text fields
         """
 
     @ljos-only @headless
+    Scenario: A text field's validator lowers with it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        TextField { validator: IntValidator { bottom: 0 } }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Controls
+        TextField { validator: IntValidator { bottom: 0 } }
+        """
+
+    @ljos-only @headless
     Scenario: A file of text fields in Ljós's API has nothing to report
       Given the file "Form.qml":
         """qml
@@ -256,4 +277,37 @@ Feature: Ljós's controls: text fields
       Then the check reports:
         """
         1 files, 0 errors, 0 warnings
+        """
+
+    @ljos-only @headless
+    Scenario: A text field in Ljós's API named by Accessible.name needs no Label beside it
+      Given the file "Form.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          TextField { placeholderText: "Name"; Accessible.name: "Name" }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    @ljos-only @headless
+    Scenario: A text field in Ljós's API with only its placeholder to name it is warned of
+      Given the file "Form.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          TextField { placeholderText: "Name" }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Form.qml:4:23: warning: this `TextField` has only its placeholder to say what it is for, which disappears as soon as the user types and which a screen reader may not read; set `Accessible.name`, or put a `Label` beside it (docs/design/accessibility.md#a11y-placeholder-label) [a11y-placeholder-label]
+        1 files, 0 errors, 1 warnings
         """
