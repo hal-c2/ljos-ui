@@ -22,7 +22,7 @@ fn a_loader_of_a_file_beside_it_names_the_file_as_a_type() {
     };
     assert_eq!(
         done.text,
-        "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\n  Loader { component: Page }\n  Loader { component: Page }\n  Loader { id: l; component: c; onComponentChanged: l.component }\n  Component { id: c; Item { } }\n}\n"
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem {\n  Loader { component: Page }\n  Loader { component: Page }\n  Loader { id: l; component: c; onComponentChanged: l.component }\n  Component { id: c; Item { } }\n}\n"
     );
 }
 
