@@ -27,7 +27,9 @@ use objc2_app_kit::{
     NSApplication, NSControlStateValueOff, NSControlStateValueOn, NSEventModifierFlags, NSMenu,
     NSMenuItem, NSWindow,
 };
-use objc2_foundation::{NSInteger, NSObjectProtocol, NSProcessInfo, NSString, NSUserDefaults};
+use objc2_foundation::{
+    NSDictionary, NSInteger, NSNumber, NSObjectProtocol, NSProcessInfo, NSString, NSUserDefaults,
+};
 
 define_class!(
     // SAFETY: NSObject has no subclassing requirements, and the class
@@ -77,10 +79,15 @@ impl AppKitMenuBar {
         // application's own full-screen item and on the same key, and "Show
         // Tab Bar" and "Show All Tabs" for windows it would group into tabs.
         // An application's menus hold its items alone (#201), so both are
-        // turned off before the first menu is set: the first in the
-        // application's own defaults, not the user's global ones.
-        NSUserDefaults::standardUserDefaults()
-            .setBool_forKey(false, &NSString::from_str("NSFullScreenMenuItemEverywhere"));
+        // turned off before the first menu is set. The first is a default
+        // registered for this run only: setting it would write the
+        // application's preferences file at every launch.
+        let key = NSString::from_str("NSFullScreenMenuItemEverywhere");
+        let off = NSNumber::numberWithBool(false);
+        let defaults = NSDictionary::<NSString, AnyObject>::from_slices(&[&*key], &[&**off]);
+        // SAFETY: the dictionary's keys are strings and its values property
+        // list objects, as registered defaults are.
+        unsafe { NSUserDefaults::standardUserDefaults().registerDefaults(&defaults) };
         NSWindow::setAllowsAutomaticWindowTabbing(false, mtm);
         let bar = Self { target, mtm };
         bar.show(&SystemBar::default());

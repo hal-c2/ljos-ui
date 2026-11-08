@@ -78,7 +78,7 @@ blocking.workspace = true
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
 objc2-app-kit = { workspace = true, features = ["NSWorkspace", "NSAccessibility", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSEvent", "NSGraphicsContext", "NSImage", "NSPasteboard", "NSPasteboardItem", "NSView", "NSWindow", "objc2-quartz-core", "NSMenu", "NSMenuItem", "NSCell"] }
-objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2", "NSArray", "NSData", "NSGeometry", "NSProcessInfo", "NSUserDefaults"] }
+objc2-foundation = { workspace = true, features = ["NSNotification", "NSOperation", "block2", "NSArray", "NSData", "NSGeometry", "NSProcessInfo", "NSUserDefaults", "NSDictionary", "NSValue"] }
 block2.workspace = true
 # The wgpu painter's layer, tagged sRGB (src/srgb_layer.rs).
 objc2-quartz-core.workspace = true
