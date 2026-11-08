@@ -359,7 +359,7 @@ Feature: A ListModel of constants is a typed list
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
         Item {
           ListModel { id: edited; ListElement { city: "Reykjavík"; shift: 0 } }
           Component.onCompleted: edited.append({ city: "Tokyo", shift: 9 })
