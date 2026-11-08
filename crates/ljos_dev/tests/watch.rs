@@ -164,6 +164,22 @@ impl App {
         reports
     }
 
+    /// Wakes with the watcher until a reload is applied: its stats, and
+    /// the reports of the passes before it. Saves made one after the
+    /// other may be built apart, however close; a save that changes no
+    /// object the program made is then a pass of its own.
+    fn until_reloaded(&mut self) -> (Vec<Report>, ljos_dev::ReloadStats) {
+        let mut before = Vec::new();
+        loop {
+            for report in self.wait() {
+                match report {
+                    Report::Reloaded(stats) => return (before, stats),
+                    other => before.push(other),
+                }
+            }
+        }
+    }
+
     /// Whether the host stays asleep for `time`.
     fn sleeps(&self, time: Duration) -> bool {
         self.woke.recv_timeout(time).is_err()
@@ -258,6 +274,18 @@ fn a_save_changes_the_scene_and_keeps_its_state() {
 
 #[test]
 fn a_reload_tells_the_warnings_of_the_files_the_program_uses_only() {
+    tells_the_warnings_of_the_files_used(false);
+}
+
+/// As the one above, with the quiet time over between the two saves, as
+/// a loaded machine may have it: the stray file is built alone first.
+#[test]
+fn a_reload_after_a_stray_save_built_alone_tells_the_used_files_only() {
+    tells_the_warnings_of_the_files_used(true);
+}
+
+/// `apart`: the first save is built before the second is made.
+fn tells_the_warnings_of_the_files_used(apart: bool) {
     let main = "import QtQuick\nItem {\n  Used { }\n  property int n: 1\n}\n";
     let mut app = app(&[
         ("Main.qml", main),
@@ -283,12 +311,23 @@ fn a_reload_tells_the_warnings_of_the_files_the_program_uses_only() {
         "stray/Stray.qml",
         "import QtQuick\nItem {\n  property var v: strayUnknown\n  property var w: more\n}\n",
     );
+    let mut before = if apart { app.wait() } else { Vec::new() };
     app.save(
         "Used.qml",
         "import QtQuick\nItem {\n  property var v: usedUnknown\n  property var w: more\n}\n",
     );
-    let reports = app.wait();
-    assert_eq!(files(&reloaded(&reports).warnings), ["Used.qml"]);
+    let (more, stats) = app.until_reloaded();
+    before.extend(more);
+    let told: Vec<String> = before
+        .iter()
+        .flat_map(|r| match r {
+            Report::Warnings(w) => files(w),
+            Report::Reloaded(s) => files(&s.warnings),
+            _ => Vec::new(),
+        })
+        .collect();
+    assert_eq!(told, Vec::<String>::new(), "{before:?}");
+    assert_eq!(files(&stats.warnings), ["Used.qml"]);
 }
 
 #[test]
