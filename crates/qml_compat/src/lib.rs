@@ -364,6 +364,9 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
     let Some(quick) = qt_types::module("QtQuick") else {
         return kept("this build has no description of QtQuick", 0);
     };
+    let Some(qml) = qt_types::module("QtQml") else {
+        return kept("this build has no description of QtQml", 0);
+    };
     let mut pass = Pass {
         source,
         ui,
@@ -374,6 +377,7 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         arranges: std::cell::Cell::new(false),
         layout_line: None,
         quick,
+        qml,
         layouts: None,
         controls: None,
         shapes: None,
@@ -526,6 +530,9 @@ struct Pass<'s> {
     /// then.
     arranges: std::cell::Cell<bool>,
     quick: &'static qt_types::Module,
+    /// QtQml, which QtQuick imports: what of QtQuick's is QtQml's lowers
+    /// into Ljos.Core or Ljos.Models, not Ljos.Ui.
+    qml: &'static qt_types::Module,
     /// QtQuick.Layouts, when the file imports it.
     layouts: Option<&'static qt_types::Module>,
     /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
@@ -1171,7 +1178,7 @@ impl<'s> Pass<'s> {
         if let Some(ty) = self.quick.type_named(name)
             && !self.quick_first(name, ty, project, at)?
         {
-            if ty.module.starts_with("QtQml") {
+            if self.qml.has(ty) {
                 if MODELS.contains(&name) {
                     self.makes_models.set(true);
                     return Ok(Ty::Exact(ty));
@@ -1389,7 +1396,7 @@ impl<'s> Pass<'s> {
     ) -> Result<bool, Kept> {
         let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
         let new = renamed_type(name).unwrap_or(name);
-        let (qt, lowered) = if !ty.module.starts_with("QtQml") {
+        let (qt, lowered) = if !self.qml.has(ty) {
             // What arranges children is `Ljos.Layout`'s, on its own line.
             let lowered =
                 if self.ui.type_named(new).is_none() && self.layout.type_named(new).is_some() {

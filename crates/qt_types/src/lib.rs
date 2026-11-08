@@ -322,6 +322,18 @@ impl Module {
         let index = table.type_named(self.uri, name, &mut Vec::new())?;
         Some(&table.types[index])
     }
+
+    /// Whether a file that imports this module has `ty` by its name. Which
+    /// module describes a type is the table's to say, and the two say it
+    /// differently: Qt's has its builtins (`QtObject`, `Component`, `Qt`)
+    /// in a module of their own that `QtQml` imports, and `DelegateChooser`
+    /// in `Qt.labs.qmlmodels`, where Ljós's own has them in `QtQml` and
+    /// `QtQml.Models`. Whose a type is, asked this way rather than by
+    /// [`Type::module`], is the same with either table.
+    pub fn has(&self, ty: &Type) -> bool {
+        self.type_named(ty.name)
+            .is_some_and(|found| std::ptr::eq(found, ty))
+    }
 }
 
 #[derive(Debug)]
