@@ -6,7 +6,7 @@ mod common;
 
 use common::*;
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
-use ljos_quick::{Layout, Positioner, layout_runs};
+use ljos_quick::{ChildSizes, Layout, Positioner, child_sizes, layout_runs};
 
 fn layout_attached(e: &Engine, o: ObjectId) -> ObjectId {
     e.attached_object(o, &MetaRef::Static(Layout::static_meta()))
@@ -152,6 +152,50 @@ RowLayout {
     frame(&mut s, &e);
     assert_eq!(num(&e, a, "width"), 30.0);
     assert_eq!(num(&e, find(&e, root, "b"), "x"), 35.0);
+}
+
+#[test]
+fn a_layout_tells_the_sizes_it_lets_each_child_take() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Layouts
+RowLayout {
+    Item { objectName: "fixed"; implicitWidth: 30; implicitHeight: 10; Layout.preferredHeight: 600 }
+    Item {
+        objectName: "fills"; implicitWidth: 30; implicitHeight: 200
+        Layout.fillHeight: true; Layout.minimumHeight: 40; Layout.maximumHeight: 500
+    }
+    Item { objectName: "hidden"; visible: false; implicitHeight: 10 }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 300.0);
+    frame(&mut s, &e);
+    let sizes = |n: &str| child_sizes(&e, root, find(&e, root, n), true);
+    // A child that does not fill takes what it prefers, no more, no less.
+    assert_eq!(
+        sizes("fixed"),
+        Some(ChildSizes {
+            minimum: 600.0,
+            preferred: 600.0,
+            maximum: 600.0
+        })
+    );
+    assert_eq!(
+        sizes("fills"),
+        Some(ChildSizes {
+            minimum: 40.0,
+            preferred: 200.0,
+            maximum: 500.0
+        })
+    );
+    // A child the layout leaves out, and what is not a layout, size nothing.
+    assert_eq!(sizes("hidden"), None);
+    let fixed = find(&e, root, "fixed");
+    assert_eq!(child_sizes(&e, fixed, root, true), None);
 }
 
 #[test]
