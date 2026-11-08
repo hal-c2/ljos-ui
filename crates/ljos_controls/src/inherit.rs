@@ -152,7 +152,7 @@ fn differing(a: &Font, b: &Font) -> u32 {
         }
     };
     bit(
-        a.family != b.family || a.fallback_families != b.fallback_families,
+        a.family != b.family || a.fallback_families() != b.fallback_families(),
         attr::FAMILY,
     );
     bit(a.point_size != b.point_size, attr::POINT_SIZE);
@@ -184,8 +184,8 @@ fn differing(a: &Font, b: &Font) -> u32 {
         a.prefer_typo_line_metrics != b.prefer_typo_line_metrics,
         attr::PREFER_TYPO_LINE_METRICS,
     );
-    bit(a.features != b.features, attr::FEATURES);
-    bit(a.variable_axes != b.variable_axes, attr::VARIABLE_AXES);
+    bit(a.features() != b.features(), attr::FEATURES);
+    bit(a.variable_axes() != b.variable_axes(), attr::VARIABLE_AXES);
     m
 }
 
@@ -195,8 +195,7 @@ fn merged(base: &Font, own: &Font, mask: u32) -> Font {
     let has = |flag: u32| mask & flag != 0;
     // The list is one setting with the family it starts with.
     if has(attr::FAMILY) {
-        f.family = own.family.clone();
-        f.fallback_families = own.fallback_families.clone();
+        f.set_families_of(own);
     }
     // A font has one size. Whichever unit was set here wins over the
     // other unit from above.
@@ -261,10 +260,10 @@ fn merged(base: &Font, own: &Font, mask: u32) -> Font {
         f.prefer_typo_line_metrics = own.prefer_typo_line_metrics;
     }
     if has(attr::FEATURES) {
-        f.features = own.features.clone();
+        f.set_features(own.features().clone());
     }
     if has(attr::VARIABLE_AXES) {
-        f.variable_axes = own.variable_axes.clone();
+        f.set_variable_axes(own.variable_axes().clone());
     }
     f
 }

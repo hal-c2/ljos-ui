@@ -387,6 +387,9 @@ fn ten_listview_delegates() {
     // `Qt.inputMethod` is one object an engine, made when JavaScript starts:
     // nothing a delegate pays, but the object table's next growth now falls
     // inside the count (one allocation, 3.6 kB, once).
+    // A font holds what few fonts set, its families after the first,
+    // `features` and `variableAxes`, behind one pointer: 24 bytes fewer a
+    // font, and a delegate's text holds one.
     assert_eq!(
         b,
         Budget {
@@ -404,7 +407,7 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1209,
-            bytes: 155304,
+            bytes: 155064,
         }
     );
 }
@@ -457,7 +460,7 @@ fn ten_wrapped_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1231,
-            bytes: 207601,
+            bytes: 207361,
         }
     );
 }
@@ -507,7 +510,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 671,
-            bytes: 120232,
+            bytes: 119992,
         }
     );
 }
@@ -537,7 +540,7 @@ fn ten_plain_items_torn_down() {
             scopes: 20,
             nodes: 30,
             allocations: 53,
-            freed: 68894,
+            freed: 68654,
         }
     );
 }
@@ -580,14 +583,17 @@ fn bytes_a_thousand_instances_keep() {
     // bytes less each (20.9 kB before). `Text.renderTypeQuality` is 16 bytes
     // a text, and a render node's count of children below it held in 32
     // bits gives them back. `Qt.inputMethod`'s one object moves when the
-    // object table grows, which is the 12 bytes `plain` shows. The rest is mostly
-    // the graph's nodes, the objects and the text's runs.
+    // object table grows, which is the 12 bytes `plain` shows. A font's
+    // families after the first, `features` and `variableAxes` behind one
+    // pointer leave 24 bytes less each (20.8, 23.1 and 11.1 kB before).
+    // The rest is mostly the graph's nodes, the objects and the text's
+    // runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20784,
-            wrapped: 23148,
-            plain: 11122,
+            one_line: 20760,
+            wrapped: 23124,
+            plain: 11098,
         }
     );
 }

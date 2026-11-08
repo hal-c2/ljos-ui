@@ -361,7 +361,6 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
         }
         (Value::Font(x), Value::Font(y)) => {
             x.family == y.family
-                && x.fallback_families == y.fallback_families
                 && d(x.point_size, y.point_size)
                 && x.pixel_size == y.pixel_size
                 && x.weight == y.weight
@@ -379,8 +378,7 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
                 && x.prefer_shaping == y.prefer_shaping
                 && x.context_font_merging == y.context_font_merging
                 && x.prefer_typo_line_metrics == y.prefer_typo_line_metrics
-                && x.features == y.features
-                && x.variable_axes == y.variable_axes
+                && x.rare == y.rare
         }
         _ => false,
     }

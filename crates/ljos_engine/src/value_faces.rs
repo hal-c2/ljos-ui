@@ -123,8 +123,8 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
                 JsValue::Bool(font.prefer_shaping),
                 JsValue::Bool(font.context_font_merging),
                 JsValue::Bool(font.prefer_typo_line_metrics),
-                handle(&font.features),
-                handle(&font.variable_axes),
+                handle(font.features()),
+                handle(font.variable_axes()),
                 JsValue::String(fallbacks_text(font)),
             ],
         ),
@@ -136,7 +136,7 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
 /// line each, which keeps a font's fields plain values JS compares by what
 /// they hold.
 fn fallbacks_text(font: &Font) -> String {
-    let fallbacks = font.fallback_families.as_deref().unwrap_or_default();
+    let fallbacks = font.fallback_families().map_or(&[][..], |l| &**l);
     let names: Vec<&str> = fallbacks.iter().map(|a| &**a).collect();
     names.join("\n")
 }
@@ -190,36 +190,40 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
             y: s(2),
             z: s(3),
         })),
-        FONT => Value::Font(std::sync::Arc::new(Font {
-            family: match fields.first() {
-                Some(JsValue::String(family)) => family.as_str().into(),
-                _ => Font::default().family,
-            },
-            fallback_families: fallbacks_of(fields.get(20)),
-            point_size: n(1),
-            pixel_size: n(2) as i32,
-            weight: n(3) as i32,
-            italic: b(4),
-            underline: b(5),
-            strikeout: b(6),
-            letter_spacing: n(7),
-            word_spacing: n(8),
-            scale_with_system: b(9),
-            capitalization: n(10) as i32,
-            hinting_preference: n(11) as i32,
-            style_name: match fields.get(12) {
-                Some(JsValue::String(name)) => name.as_str().into(),
-                _ => Atom::EMPTY,
-            },
-            overline: b(13),
-            kerning: !matches!(fields.get(14), Some(JsValue::Bool(false))),
-            prefer_shaping: !matches!(fields.get(15), Some(JsValue::Bool(false))),
-            context_font_merging: b(16),
-            prefer_typo_line_metrics: b(17),
-            features: kept(fields.get(18)),
-            variable_axes: kept(fields.get(19)),
-            unwritten: Default::default(),
-        })),
+        FONT => {
+            let mut font = Font {
+                family: match fields.first() {
+                    Some(JsValue::String(family)) => family.as_str().into(),
+                    _ => Font::default().family,
+                },
+                point_size: n(1),
+                pixel_size: n(2) as i32,
+                weight: n(3) as i32,
+                italic: b(4),
+                underline: b(5),
+                strikeout: b(6),
+                letter_spacing: n(7),
+                word_spacing: n(8),
+                scale_with_system: b(9),
+                capitalization: n(10) as i32,
+                hinting_preference: n(11) as i32,
+                style_name: match fields.get(12) {
+                    Some(JsValue::String(name)) => name.as_str().into(),
+                    _ => Atom::EMPTY,
+                },
+                overline: b(13),
+                kerning: !matches!(fields.get(14), Some(JsValue::Bool(false))),
+                prefer_shaping: !matches!(fields.get(15), Some(JsValue::Bool(false))),
+                context_font_merging: b(16),
+                prefer_typo_line_metrics: b(17),
+                rare: Default::default(),
+                unwritten: Default::default(),
+            };
+            font.set_fallbacks(fallbacks_of(fields.get(20)));
+            font.set_features(kept(fields.get(18)));
+            font.set_variable_axes(kept(fields.get(19)));
+            Value::Font(std::sync::Arc::new(font))
+        }
         _ => Value::Undefined,
     }
 }
