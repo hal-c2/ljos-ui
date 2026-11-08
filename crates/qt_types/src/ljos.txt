@@ -803,7 +803,7 @@ module Ljos.Ui
 		enum FooterPositioning InlineFooter=0 OverlayFooter=1 PullBackFooter=2
 		prop orientation Orientation
 		prop spacing QtQml.real named
-		prop section QtQuick.ViewSection pointer readonly
+		prop section QtQuick.ViewSection named pointer readonly
 		prop currentSection QtQml.string named readonly
 		prop highlightMoveVelocity QtQml.real named
 		prop highlightResizeVelocity QtQml.real named
@@ -888,7 +888,7 @@ module Ljos.Ui
 		prop mouseY QtQml.real named readonly
 		prop acceptedButtons Qt::MouseButtons
 		prop preventStealing QtQml.bool named
-		prop drag QtQuick.Drag pointer readonly
+		prop drag QtQuick.Drag named pointer readonly
 		prop cursorShape Qt::CursorShape reset
 		prop pressAndHoldInterval QtQml.int named reset
 		signal hoverEnabledChanged
@@ -3227,7 +3227,7 @@ module QtQuick
 		prop transitions QtQml.var named list
 		prop transform QtQml.var named list
 		prop layer QtQuick.ItemLayer pointer readonly
-		prop palette QtQuick.Palette pointer reset
+		prop palette QtQuick.Palette named pointer reset
 		signal xChanged
 		signal yChanged
 		signal zChanged
@@ -3301,7 +3301,7 @@ module QtQuick
 		enum FooterPositioning InlineFooter=0 OverlayFooter=1 PullBackFooter=2
 		prop orientation Orientation
 		prop spacing QtQml.real named
-		prop section QtQuick.ViewSection pointer readonly
+		prop section QtQuick.ViewSection named pointer readonly
 		prop currentSection QtQml.string named readonly
 		prop highlightMoveVelocity QtQml.real named
 		prop highlightResizeVelocity QtQml.real named
@@ -3354,7 +3354,7 @@ module QtQuick
 		prop mouseY QtQml.real named readonly
 		prop acceptedButtons Qt::MouseButtons
 		prop preventStealing QtQml.bool named
-		prop drag QtQuick.Drag pointer readonly
+		prop drag QtQuick.Drag named pointer readonly
 		prop cursorShape Qt::CursorShape reset
 		prop pressAndHoldInterval QtQml.int named reset
 		signal hoverEnabledChanged
@@ -3704,7 +3704,7 @@ module QtQuick
 		signal maximumYChanged
 	type QtQuick.PinchArea PinchArea
 		prototype QtQuick.Item named
-		prop pinch QtQuick.Pinch pointer readonly
+		prop pinch QtQuick.Pinch named pointer readonly
 		signal pinchStarted pinch:QtObject
 		signal pinchUpdated pinch:QtObject
 		signal pinchFinished pinch:QtObject
@@ -8021,7 +8021,7 @@ module QtQuick.Templates
 		prop enter QtQml.QtObject named pointer
 		prop exit QtQml.QtObject named pointer
 		prop font QtQuick.font named reset
-		prop palette QtQuick.Palette pointer reset
+		prop palette QtQuick.Palette named pointer reset
 		prop locale QtQml.var named reset
 		prop mirrored QtQml.bool named readonly
 		prop anchors QtQuick.Templates.PopupAnchors pointer readonly
