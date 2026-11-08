@@ -76,6 +76,10 @@ struct Prop<V> {
     /// What the property's type works out for itself, not an author's
     /// binding ([`Graph::set_placed`]): a loop does not end here.
     placed: bool,
+    /// Where it waits in `Inner::noted` while [`Flags::NOTE_DUE`], so a
+    /// lift ([`lift`]) finds its entry without searching. In room the
+    /// flags beside it leave.
+    noted_at: u32,
 }
 
 /// The layers over a property's base, behind a box that only a property
@@ -186,12 +190,14 @@ enum Kind<V> {
     /// The closure is `None` only while it runs.
     Effect(Option<EffectFn<V>>),
     /// [`Graph::effect_told`]: `run` as an effect's closure, `told` for
-    /// a change once it has run. `due` while it waits in `Inner::told`;
-    /// kept here, where the kind has room, so a node is no wider.
+    /// a change once it has run. `due` is where it waits in
+    /// `Inner::told`, so a lift ([`lift`]) finds its entry without
+    /// searching; kept here, where the kind has room, so a node is no
+    /// wider.
     Told {
         run: Option<EffectFn<V>>,
         told: Rc<dyn Fn()>,
-        due: bool,
+        due: Option<u32>,
     },
 }
 
@@ -1097,6 +1103,7 @@ impl<V: Clone + 'static> Graph<V> {
                 animated: false,
                 host: false,
                 placed: false,
+                noted_at: 0,
             }),
             Some(value),
             NodeState::Clean,
@@ -1129,6 +1136,7 @@ impl<V: Clone + 'static> Graph<V> {
                     animated: false,
                     host: false,
                     placed: false,
+                    noted_at: 0,
                 }),
                 Some(initial),
                 NodeState::Dirty,
@@ -1403,7 +1411,7 @@ impl<V: Clone + 'static> Graph<V> {
                 Kind::Told {
                     run: Some(Box::new(run)),
                     told: Rc::new(told),
-                    due: false,
+                    due: None,
                 },
                 None,
                 NodeState::Dirty,
@@ -2790,6 +2798,9 @@ impl<V: Clone + 'static> Graph<V> {
     pub fn set_noted(&self, n: NodeId) -> Result<(), ReactiveError> {
         let mut i = self.inner.borrow_mut();
         let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+        if !matches!(node.kind, Kind::Property(_)) {
+            return Err(ReactiveError::NotAProperty(n));
+        }
         node.flags.set(Flags::NOTED, true);
         Ok(())
     }
@@ -3122,7 +3133,7 @@ impl<V: Clone + 'static> Graph<V> {
                 };
                 match &mut node.kind {
                     Kind::Told { told, due, .. } => {
-                        *due = false;
+                        *due = None;
                         Rc::clone(told)
                     }
                     _ => continue,
@@ -3834,37 +3845,52 @@ impl Queue {
 /// queued (`Inner::queues`).
 const SHARED_FLUSH_DEPTH: u32 = 8;
 
-/// Queues `n` on the innermost flush level. A node already waiting on an
-/// outer level moves in; its old entry is skipped when it comes up, as it
-/// is no longer queued there.
 /// Puts a noted `node` (`n`) in `noted`, once until it is told. One that
 /// waits below `floor` already is lifted past it ([`lift`]).
-fn note<V>(noted: &mut Vec<NodeId>, floor: usize, n: NodeId, node: &mut Node<V>) {
+fn note<V>(noted: &mut Vec<NodeId>, floor: usize, n: NodeId, node: &mut Node<V>, steps: &mut u64) {
+    // Only a property is noted ([`Graph::set_noted`]).
+    let Kind::Property(p) = &mut node.kind else {
+        return;
+    };
     if !node.flags.has(Flags::NOTED) {
         return;
     }
     if node.flags.has(Flags::NOTE_DUE) {
-        lift(noted, floor, n);
+        lift(noted, floor, n, &mut p.noted_at, steps);
     } else {
         node.flags.set(Flags::NOTE_DUE, true);
-        noted.push(n);
+        p.noted_at = wait_at(noted, n);
     }
 }
 
-/// Moves `n`, waiting in `list` below `floor` for the level under an own
-/// queue, to its top. A change made inside the queue reached it, and its
-/// watchers move into the queue with that change: told below, it would
-/// be told after they run, and they would read what it keeps up to date
-/// as it was. The entry it leaves is a dead id, skipped when it comes up,
-/// so it is told once and the floors below stay where they are.
-fn lift(list: &mut Vec<NodeId>, floor: usize, n: NodeId) {
-    let floor = floor.min(list.len());
-    if let Some(at) = list[..floor].iter().rposition(|&m| m == n) {
-        list[at] = NodeId::default();
-        list.push(n);
+/// Puts `n` on top of `list`, returning where it waits there.
+fn wait_at(list: &mut Vec<NodeId>, n: NodeId) -> u32 {
+    let at = list.len() as u32;
+    list.push(n);
+    at
+}
+
+/// Moves `n`, waiting in `list` at `at` below `floor` for the level under
+/// an own queue, to its top. A change made inside the queue reached it,
+/// and its watchers move into the queue with that change: told below, it
+/// would be told after they run, and they would read what it keeps up to
+/// date as it was. The entry it leaves is a dead id, skipped when it
+/// comes up, so it is told once and the floors below stay where they are.
+/// Nothing below a floor is taken off its list while the floor stands, so
+/// `at` still holds `n`: lifting each costs one step, however many wait.
+fn lift(list: &mut Vec<NodeId>, floor: usize, n: NodeId, at: &mut u32, steps: &mut u64) {
+    *steps += 1;
+    let i = *at as usize;
+    if i < floor.min(list.len()) {
+        debug_assert_eq!(list[i], n, "a waiting hook's entry moved");
+        list[i] = NodeId::default();
+        *at = wait_at(list, n);
     }
 }
 
+/// Queues `n` on the innermost flush level. A node already waiting on an
+/// outer level moves in; its old entry is skipped when it comes up, as it
+/// is no longer queued there.
 fn enqueue<V>(queues: &mut [Queue], n: NodeId, node: &mut Node<V>) {
     let top = queues.len().saturating_sub(1);
     if node.flags.has(Flags::DEFERRED)
@@ -4181,7 +4207,7 @@ impl<V: Clone + 'static> Inner<V> {
         {
             // A binding's own result was noted by the mark that made it
             // dirty, as a told effect is.
-            note(&mut self.noted, floor, n, node);
+            note(&mut self.noted, floor, n, node, &mut self.stats.lift_steps);
         }
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
@@ -4283,10 +4309,15 @@ impl<V: Clone + 'static> Inner<V> {
                 // dirty, which told it already: the owner reading it is
                 // what brought the result.
                 if self.wave_origin.is_none() {
-                    if std::mem::replace(due, true) {
-                        lift(&mut self.told, lifts.told, m);
-                    } else {
-                        self.told.push(m);
+                    match due {
+                        Some(at) => lift(
+                            &mut self.told,
+                            lifts.told,
+                            m,
+                            at,
+                            &mut self.stats.lift_steps,
+                        ),
+                        None => *due = Some(wait_at(&mut self.told, m)),
                     }
                 }
                 continue;
@@ -4303,8 +4334,16 @@ impl<V: Clone + 'static> Inner<V> {
                 self.wave_origin.is_some() && node.flags.has(Flags::WALKING) && node.mark != pass;
             // Its hook, if it waits below an own queue, comes along: also
             // when this change makes dirty what was waiting to be checked.
-            if node.flags.has(Flags::NOTE_DUE) {
-                lift(&mut self.noted, lifts.noted, m);
+            if node.flags.has(Flags::NOTE_DUE)
+                && let Kind::Property(p) = &mut node.kind
+            {
+                lift(
+                    &mut self.noted,
+                    lifts.noted,
+                    m,
+                    &mut p.noted_at,
+                    &mut self.stats.lift_steps,
+                );
             }
             if node.state.rank() >= st.rank() {
                 // Already waiting, maybe on an outer flush level: this
@@ -4340,7 +4379,13 @@ impl<V: Clone + 'static> Inner<V> {
             if was_clean {
                 // A bound property may come out otherwise: its owner reads
                 // it when it gets to it, which brings it up to date.
-                note(&mut self.noted, lifts.noted, m, node);
+                note(
+                    &mut self.noted,
+                    lifts.noted,
+                    m,
+                    node,
+                    &mut self.stats.lift_steps,
+                );
                 // Not when a binding it was waiting on has changed: what it
                 // waits on still came from the change that reached it.
                 node.marked_by = self.marking;

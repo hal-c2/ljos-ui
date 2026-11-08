@@ -270,6 +270,9 @@ pub struct Stats {
     /// Reads recorded as dependencies: the first read of each node by
     /// each run.
     pub reads: u64,
+    /// Entries of the waiting hooks looked at to lift one that a change
+    /// inside an own queue reaches ([`crate::Graph::own_queue`]).
+    pub lift_steps: u64,
 }
 
 /// What the live nodes are, by kind: what a budget test pins, so a change

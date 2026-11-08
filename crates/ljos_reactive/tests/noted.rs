@@ -337,3 +337,97 @@ fn a_hook_a_change_inside_the_queue_makes_dirty_is_told_inside_it() {
         "the watcher reads what the hook keeps as of the value it reads"
     );
 }
+
+/// Many noted bindings of one source wait below the queue a hook opens,
+/// and a write inside it changes that source again: each hook is lifted
+/// by looking at its own entry, not by searching the ones below the
+/// queue, so lifting them all costs as many steps as there are hooks.
+#[test]
+fn lifting_many_waiting_hooks_looks_at_each_once() {
+    const HOOKS: usize = 1000;
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let source = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let bound: Vec<_> = (0..HOOKS)
+        .map(|_| g.binding(r, 0, move |g| g.get(source)).unwrap())
+        .collect();
+    for &b in &bound {
+        g.get(b);
+        g.set_noted(b).unwrap();
+    }
+    let told = Rc::new(RefCell::new(0));
+    let (hooks, t) = (Rc::clone(&g), Rc::clone(&told));
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(source, 2);
+        } else {
+            *t.borrow_mut() += 1;
+        }
+    });
+    g.set_noted(q).unwrap();
+    let before = g.stats().lift_steps;
+
+    g.batch(|| {
+        g.set(source, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*told.borrow(), HOOKS, "each hook told once");
+    let steps = g.stats().lift_steps - before;
+    assert!(steps <= HOOKS as u64, "{steps} steps to lift {HOOKS} hooks");
+}
+
+/// [`lifting_many_waiting_hooks_looks_at_each_once`] for told effects.
+#[test]
+fn lifting_many_waiting_told_effects_looks_at_each_once() {
+    const TOLD: usize = 1000;
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let source = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let told = Rc::new(RefCell::new(0));
+    for _ in 0..TOLD {
+        let t = Rc::clone(&told);
+        g.effect_told(
+            r,
+            move |g| {
+                g.get(source);
+            },
+            move || *t.borrow_mut() += 1,
+        )
+        .unwrap();
+    }
+    let hooks = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(source, 2);
+        }
+    });
+    g.set_noted(q).unwrap();
+    let before = g.stats().lift_steps;
+
+    g.batch(|| {
+        g.set(source, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*told.borrow(), TOLD, "each told once");
+    let steps = g.stats().lift_steps - before;
+    assert!(steps <= TOLD as u64, "{steps} steps to lift {TOLD} told");
+}
+
+/// Only a property has a hook: what keeps its place in the waiting list
+/// is the property's.
+#[test]
+fn an_effect_is_not_noted() {
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let e = g.effect(r, |_| {}).unwrap();
+    assert_eq!(
+        g.set_noted(e),
+        Err(ljos_reactive::ReactiveError::NotAProperty(e))
+    );
+}
