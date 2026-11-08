@@ -271,7 +271,8 @@ pub struct Stats {
     /// each run.
     pub reads: u64,
     /// Entries of the waiting hooks looked at to lift one that a change
-    /// inside an own queue reaches ([`crate::Graph::own_queue`]).
+    /// inside an own queue reaches ([`crate::Graph::own_queue`]), and the
+    /// nodes looked at past one it finds not clean, for what waits there.
     pub lift_steps: u64,
 }
 
