@@ -7,7 +7,11 @@ pub struct JsConfig {
     pub memory_limit: Option<usize>,
     /// QuickJS runs its cycle collector after the heap grows by this much.
     pub gc_threshold: usize,
-    /// Native stack the interpreter may use before throwing a RangeError.
+    /// Native stack the interpreter may use below where the host is made
+    /// before throwing a RangeError, on a platform whose thread stack
+    /// bounds Ljós cannot read. Elsewhere JS may use the thread's stack down
+    /// to a reserve kept for native code, since Rust frames between nested
+    /// runs count too and a fixed size runs out in deep creation.
     pub max_stack: usize,
     /// Default per-dispatch budget used by [`crate::JsHost::call`].
     pub slice: Slice,
