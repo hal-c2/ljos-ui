@@ -610,6 +610,9 @@ impl<'s> Pass<'s> {
                     // Files of the project, lowered with this one
                     // ([`group`]); the line stays as it is.
                     Some(ProjectModule::Files) if import.alias.is_none() => {
+                        // Its types are in sight as a directory's are, and
+                        // which it has may change after the file is lowered.
+                        self.members.imports_by_path();
                         self.imports.push(Import::Module(uri));
                     }
                     Some(ProjectModule::Files) => {
