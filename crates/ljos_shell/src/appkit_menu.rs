@@ -203,21 +203,17 @@ impl MenuBarService for AppKitMenuBar {
         let holder = self.item(&name, None, "");
         holder.setSubmenu(Some(&app));
         main.addItem(&holder);
-        let app_kit = NSApplication::sharedApplication(self.mtm);
-        let mut windows = None;
-        for menu in &bar.menus {
+        let made: Vec<_> = bar.menus.iter().map(|menu| self.menu(menu)).collect();
+        for (menu, made) in bar.menus.iter().zip(&made) {
             let holder = self.item(&menu.title, None, "");
-            let made = self.menu(menu);
-            holder.setSubmenu(Some(&made));
+            holder.setSubmenu(Some(made));
             main.addItem(&holder);
-            // The menu macOS lists the application's windows in, as every
-            // Cocoa application's Window menu does.
-            if menu.title == "Window" {
-                windows = Some(made);
-            }
         }
+        let app_kit = NSApplication::sharedApplication(self.mtm);
         app_kit.setMainMenu(Some(&main));
-        app_kit.setWindowsMenu(windows.as_deref());
+        // AppKit lists the windows in it, as in any Cocoa application's
+        // Window menu.
+        app_kit.setWindowsMenu(bar.windows_menu().map(|i| &*made[i]));
     }
 }
 
