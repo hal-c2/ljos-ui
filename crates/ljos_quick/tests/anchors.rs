@@ -5,7 +5,7 @@ mod common;
 
 use common::*;
 use ljos_engine::Value;
-use ljos_quick::{ANCHORS_CATEGORY, Item};
+use ljos_quick::{ANCHORS_CATEGORY, Item, inset_in_parent};
 
 fn line(e: &ljos_engine::Engine, o: ljos_engine::ObjectId, edge: &str) -> Value {
     get(e, o, edge)
@@ -22,6 +22,33 @@ fn fill_with_margins_and_one_side_override() {
     set(&e, c, "anchors.leftMargin", Value::Real(3.0));
     let _s = scene(&e, root, 300.0, 300.0);
     assert_eq!(rect(&e, c), (3.0, 10.0, 188.0, 81.0));
+}
+
+#[test]
+fn an_item_anchored_between_its_parents_sides_is_inset_by_its_margins() {
+    let e = engine();
+    let root = make::<Item>(&e, None);
+    geom(&e, root, 0.0, 0.0, 201.0, 101.0);
+    let fill = make::<Item>(&e, Some(root));
+    set(&e, fill, "anchors.fill", Value::Object(root));
+    set(&e, fill, "anchors.margins", Value::Real(10.0));
+    set(&e, fill, "anchors.leftMargin", Value::Real(3.0));
+    let sides = make::<Item>(&e, Some(root));
+    set(&e, sides, "anchors.top", line(&e, root, "top"));
+    set(&e, sides, "anchors.bottom", line(&e, root, "bottom"));
+    set(&e, sides, "anchors.topMargin", Value::Real(4.0));
+    let corner = make::<Item>(&e, Some(root));
+    geom(&e, corner, 0.0, 0.0, 20.0, 20.0);
+    set(&e, corner, "anchors.right", line(&e, root, "right"));
+    set(&e, corner, "anchors.bottom", line(&e, root, "bottom"));
+    let _s = scene(&e, root, 300.0, 300.0);
+    assert_eq!(inset_in_parent(&e, fill, false), Some(13.0));
+    assert_eq!(inset_in_parent(&e, fill, true), Some(20.0));
+    assert_eq!(inset_in_parent(&e, sides, true), Some(4.0));
+    // Its width is its own, as is all of the one held at a corner.
+    assert_eq!(inset_in_parent(&e, sides, false), None);
+    assert_eq!(inset_in_parent(&e, corner, true), None);
+    assert_eq!(inset_in_parent(&e, root, true), None);
 }
 
 #[test]
