@@ -389,7 +389,8 @@ fn ten_listview_delegates() {
     // inside the count (one allocation, 3.6 kB, once).
     // A font holds what few fonts set, its families after the first,
     // `features` and `variableAxes`, behind one pointer: 24 bytes fewer a
-    // font, and a delegate's text holds one.
+    // font, and a delegate's text holds one. A text's style has room for
+    // that list, one pointer: 16 bytes a delegate's text.
     assert_eq!(
         b,
         Budget {
@@ -407,7 +408,7 @@ fn ten_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1209,
-            bytes: 155064,
+            bytes: 155224,
         }
     );
 }
@@ -460,7 +461,7 @@ fn ten_wrapped_listview_delegates() {
                 atoms: 0,
             },
             allocations: 1231,
-            bytes: 207361,
+            bytes: 207521,
         }
     );
 }
@@ -510,7 +511,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 671,
-            bytes: 119992,
+            bytes: 120152,
         }
     );
 }
@@ -540,7 +541,7 @@ fn ten_plain_items_torn_down() {
             scopes: 20,
             nodes: 30,
             allocations: 53,
-            freed: 68654,
+            freed: 68814,
         }
     );
 }
@@ -585,15 +586,18 @@ fn bytes_a_thousand_instances_keep() {
     // bits gives them back. `Qt.inputMethod`'s one object moves when the
     // object table grows, which is the 12 bytes `plain` shows. A font's
     // families after the first, `features` and `variableAxes` behind one
-    // pointer leave 24 bytes less each (20.8, 23.1 and 11.1 kB before).
+    // pointer leave 24 bytes less each (20.8, 23.1 and 11.1 kB before),
+    // and a text style's pointer to its list of families gives back 16
+    // bytes for each copy of the style an instance keeps (48 one-line,
+    // 16 wrapped and plain).
     // The rest is mostly the graph's nodes, the objects and the text's
     // runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20760,
-            wrapped: 23124,
-            plain: 11098,
+            one_line: 20808,
+            wrapped: 23140,
+            plain: 11114,
         }
     );
 }

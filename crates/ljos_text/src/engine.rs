@@ -38,8 +38,8 @@ use crate::layout::{FontMetrics, Line, LineRun, PlacedBox, TextLayout};
 use crate::measure;
 use crate::snap;
 use crate::style::{
-    BoxAlign, ElideMode, InlineObject, LayoutParams, LineHeight, ParamsKey, Ranged, StyleSpan,
-    TextStyle, WrapMode,
+    BoxAlign, ElideMode, FamilyList, InlineObject, LayoutParams, LineHeight, ParamsKey, Ranged,
+    StyleSpan, TextStyle, WrapMode,
 };
 use crate::substitute;
 
@@ -344,7 +344,7 @@ struct Families {
     substitutes: RefCell<HashMap<Box<str>, Option<Arc<str>>>>,
     /// The first font the stack of a family and style yields, by family
     /// list; `None` when there is none to pin. Cleared when fonts change.
-    first_fonts: RefCell<FxHashMap<Box<str>, Vec<FirstFontEntry>>>,
+    first_fonts: RefCell<FirstFonts>,
     /// Texts shaped with a pinned family (`CacheStats::shapes_pinned`).
     pinned: Cell<u64>,
     /// Off only to compare against the whole stack in tests.
@@ -474,22 +474,66 @@ fn generic_family(name: &str) -> Option<GenericFamily> {
     })
 }
 
+/// The families a text asks for: `family`, then those `font.families`
+/// lists after it, each one name.
+#[derive(Clone, Copy)]
+struct Asked<'a> {
+    family: &'a str,
+    rest: Option<&'a FamilyList>,
+}
+
+impl<'a> Asked<'a> {
+    fn of(style: &'a TextStyle) -> Self {
+        Self {
+            family: &style.family,
+            rest: style.fallback_families.as_ref(),
+        }
+    }
+}
+
+/// One family as a QML file or a style sheet names it, which may be a
+/// comma-separated list of names, some quoted.
+impl<'a> From<&'a str> for Asked<'a> {
+    fn from(family: &'a str) -> Self {
+        Self { family, rest: None }
+    }
+}
+
+fn split_families(list: &str) -> impl Iterator<Item = &str> {
+    list.split(',')
+        .map(|part| part.trim().trim_matches(['"', '\'']))
+}
+
+/// [`Families::pinned`]'s first fonts: by family, and by the whole list for
+/// a text that lists its families.
+#[derive(Default)]
+struct FirstFonts {
+    by_family: FxHashMap<Box<str>, Vec<FirstFontEntry>>,
+    by_list: FxHashMap<(Box<str>, FamilyList), Vec<FirstFontEntry>>,
+}
+
+impl FirstFonts {
+    fn clear(&mut self) {
+        self.by_family.clear();
+        self.by_list.clear();
+    }
+}
+
 impl Families {
     /// The family list for a style: what it names, then the engine's
     /// defaults, so a misspelt or missing family still shows text.
     fn stack<'a>(&'a self, style: &'a TextStyle) -> Vec<FontFamilyName<'a>> {
-        self.stack_of(&style.family)
+        self.stack_of(Asked::of(style))
     }
 
-    fn stack_of<'a>(&'a self, family: &'a str) -> Vec<FontFamilyName<'a>> {
+    fn stack_of<'a>(&'a self, asked: Asked<'a>) -> Vec<FontFamilyName<'a>> {
         let mut names = Vec::new();
-        let mut add = |list: &'a str| {
+        let mut add = |list: &mut dyn Iterator<Item = &'a str>| {
             // A named family the system lacks gives way to the next of the
             // list before the face the system would put in its place, as
             // in Qt, so those faces follow the whole list.
             let mut substitutes = Vec::new();
-            for part in list.split(',') {
-                let name = part.trim().trim_matches(['"', '\'']);
+            for name in list {
                 if name.is_empty() {
                     continue;
                 }
@@ -514,9 +558,13 @@ impl Families {
             }
             names.append(&mut substitutes);
         };
-        add(family);
+        match asked.rest {
+            // `font.families`: each a name, whatever it holds.
+            Some(rest) => add(&mut std::iter::once(asked.family).chain(rest.iter().map(|n| &**n))),
+            None => add(&mut split_families(asked.family)),
+        }
         if let Some(family) = &self.default_family {
-            add(family);
+            add(&mut split_families(family));
         }
         if self.system {
             names.push(FontFamilyName::Generic(GenericFamily::SystemUi));
@@ -535,7 +583,7 @@ impl Families {
         &self,
         fcx: &mut FontContext,
         text: &str,
-        family: &str,
+        asked: Asked<'_>,
         weight: FontWeight,
         italic: bool,
     ) -> Option<PinnedFont> {
@@ -552,10 +600,18 @@ impl Families {
             return None;
         }
         let mut fonts = self.first_fonts.borrow_mut();
-        if !fonts.contains_key(family) {
-            fonts.insert(family.into(), Vec::new());
-        }
-        let entries = fonts.get_mut(family)?;
+        let entries = match asked.rest {
+            None => {
+                if !fonts.by_family.contains_key(asked.family) {
+                    fonts.by_family.insert(asked.family.into(), Vec::new());
+                }
+                fonts.by_family.get_mut(asked.family)?
+            }
+            Some(rest) => fonts
+                .by_list
+                .entry((asked.family.into(), rest.clone()))
+                .or_default(),
+        };
         let bits = weight.value().to_bits();
         let at = match entries
             .iter()
@@ -563,7 +619,7 @@ impl Families {
         {
             Some(at) => at,
             None => {
-                let first = self.first_font(fcx, family, weight, italic);
+                let first = self.first_font(fcx, asked, weight, italic);
                 entries.push((bits, italic, first));
                 entries.len() - 1
             }
@@ -583,7 +639,7 @@ impl Families {
     fn first_font(
         &self,
         fcx: &mut FontContext,
-        family: &str,
+        asked: Asked<'_>,
         weight: FontWeight,
         italic: bool,
     ) -> Option<FirstFont> {
@@ -593,7 +649,7 @@ impl Families {
             FontStyle::Normal
         };
         let mut ids = Vec::new();
-        for name in self.stack_of(family) {
+        for name in self.stack_of(asked) {
             match name {
                 FontFamilyName::Named(name) => {
                     ids.extend(fcx.collection.family_by_name(&name).map(|f| f.id()));
@@ -777,7 +833,7 @@ fn shape(
 ) -> Shape {
     let weight = FontWeight::new(finite_weight(style.weight));
     let pinned = (ranged.spans.is_empty() && ranged.objects.is_empty())
-        .then(|| families.pinned(fcx, text, &style.family, weight, style.italic))
+        .then(|| families.pinned(fcx, text, Asked::of(style), weight, style.italic))
         .flatten();
     if pinned.is_some() {
         families.pinned.set(families.pinned.get() + 1);
@@ -790,7 +846,7 @@ fn shape(
     let span_names: Vec<Option<Vec<FontFamilyName<'_>>>> = ranged
         .spans
         .iter()
-        .map(|s| s.family.as_deref().map(|f| families.stack_of(f)))
+        .map(|s| s.family.as_deref().map(|f| families.stack_of(f.into())))
         .collect();
     let size = usable_size(style.pixel_size);
     let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
@@ -1363,7 +1419,7 @@ fn shape_direct(
         return None;
     }
     let weight = FontWeight::new(finite_weight(style.weight));
-    let pinned = families.pinned(fcx, text, &style.family, weight, style.italic)?;
+    let pinned = families.pinned(fcx, text, Asked::of(style), weight, style.italic)?;
     let size = usable_size(style.pixel_size);
     let optical = optical_size(Platform::CURRENT, size);
     let variations = match &optical {
@@ -3774,7 +3830,7 @@ mod tests {
         assert_eq!(generic_family("Sans Serif"), None);
         assert_eq!(generic_family("Helvetica"), None);
         let e = TextEngine::new();
-        let stack = e.families.stack_of(".AppleSystemUIFont");
+        let stack = e.families.stack_of(".AppleSystemUIFont".into());
         assert!(matches!(
             stack[0],
             FontFamilyName::Generic(GenericFamily::SystemUi)
@@ -4358,7 +4414,7 @@ mod tests {
                     let Some(pinned) =
                         engine
                             .families
-                            .pinned(&mut engine.fcx, "a", family, weight, italic)
+                            .pinned(&mut engine.fcx, "a", family.into(), weight, italic)
                     else {
                         continue;
                     };
