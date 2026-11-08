@@ -103,6 +103,8 @@ pub use ljos_engine::Font;
 pub use ljos_engine::{
     OverrideContent, OverrideId, RestoreMode, TypeTag, Vector2d, Vector4d, WriteKind,
 };
+/// What [`crate::font_info`] tells of the face a font resolves to.
+pub use ljos_quick::FaceInfo;
 pub use ljos_quick::LoadError as ImageLoadError;
 pub use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
 pub use ljos_quick::keys::{KeyItem, key};
