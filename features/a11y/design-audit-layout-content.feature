@@ -209,18 +209,9 @@ Feature: The design audit checks layout and content in the live tree
                 Layout.fillWidth: true; Layout.fillHeight: true
                 StackLayout {
                   Layout.fillWidth: true; Layout.fillHeight: true
-                  Item {
-                    implicitWidth: page.implicitWidth
-                    implicitHeight: page.implicitHeight
-                    Flickable {
-                      id: page
-                      anchors.fill: parent
-                      clip: true
-                      implicitWidth: 280
-                      implicitHeight: contentHeight
-                      contentHeight: 600
-                      Label { text: "A long page" }
-                    }
+                  Flickable {
+                    clip: true; implicitWidth: 280
+                    implicitHeight: contentHeight; contentHeight: 600
                   }
                 }
               }
