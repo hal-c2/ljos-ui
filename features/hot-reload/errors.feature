@@ -241,3 +241,64 @@ Feature: A reload that fails
         """
       And a reload happens
       Then the reload error is in "Scenario.qml" at line 4
+
+  Rule: The error of an entry that cannot be made stands until the entry can be
+
+    The window has nothing to show while its entry does not compile, so a
+    save that leaves the entry as it is, of a file the entry never uses,
+    takes nothing of the error away.
+
+    Background:
+      Given the file "app/Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          objectName: "main"
+          width: 20 +
+        }
+        """
+      And the file "app/Notes.qml":
+        """qml
+        import QtQuick
+        Item { }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        Item { objectName: "root" }
+        """
+      When the application watches the roots "app" for the entries "Main"
+
+    Scenario: A save of a file the entry does not use leaves the error
+      Then the reload error is in "Main.qml" at line 5
+      When the file "app/Notes.qml" is saved on disk as:
+        """qml
+        import QtQuick
+        Item { width: 3 }
+        """
+      Then the reload error is in "Main.qml" at line 5
+      And the object "main" does not exist
+
+    Scenario: A mistake made and undone in another file gives the entry's error back
+      When the file "app/Notes.qml" is saved on disk as:
+        """qml
+        import QtQuick
+        Item {
+        """
+      Then the reload error is in "Notes.qml" at line 3
+      When the file "app/Notes.qml" is saved on disk as:
+        """qml
+        import QtQuick
+        Item { }
+        """
+      Then the reload error is in "Main.qml" at line 5
+      And the object "main" does not exist
+
+    Scenario: The entry mended is shown and the error goes
+      When the file "app/Main.qml" is saved on disk as:
+        """qml
+        import QtQuick
+        Item { objectName: "main" }
+        """
+      Then the object "main" exists
+      And there is no reload error
