@@ -16,13 +16,38 @@
 /// the next JS call notices the limit and throws.
 pub(crate) const RESERVE: usize = 512 * 1024;
 
-/// The stack QuickJS may use below the caller's frame: down to [`RESERVE`]
-/// above the end of this thread's stack. `None` where the end is unknown.
-pub(crate) fn room_below_here() -> Option<usize> {
+/// The size to give QuickJS's stack limit on this thread, for
+/// [`crate::JsConfig::max_stack`] `given`.
+pub(crate) fn for_js(given: Option<usize>) -> usize {
+    for_js_at(here(), lowest(), given)
+}
+
+/// [`for_js`] with the stack pointer at `sp` and the stack ending at `end`.
+fn for_js_at(sp: usize, end: Option<usize>, given: Option<usize>) -> usize {
+    let size = match (given, room_at(sp, end)) {
+        (Some(most), Some(room)) => most.min(room),
+        // QuickJS takes the size from its stack top unsigned, and one past
+        // it would wrap the limit round so that every call throws: a size
+        // is kept to what the stack could hold were it to run down to 0.
+        (Some(most), None) => most.min(room_of(sp)),
+        (None, Some(room)) => room,
+        (None, None) => crate::config::FALLBACK_MAX_STACK,
+    };
+    // QuickJS reads 0 as no limit at all.
+    size.max(1)
+}
+
+/// The stack QuickJS may use below `sp`: down to [`RESERVE`] above `end`,
+/// the end of the thread's stack. `None` where the end is unknown.
+fn room_at(sp: usize, end: Option<usize>) -> Option<usize> {
+    sp.checked_sub(end?).map(room_of)
+}
+
+/// The address of the caller's frame.
+#[inline(always)]
+fn here() -> usize {
     let here = std::hint::black_box(0u8);
-    let sp = (&raw const here) as usize;
-    let end = lowest()?;
-    sp.checked_sub(end).map(room_of)
+    (&raw const here) as usize
 }
 
 /// The room in `left` bytes of stack. A thread with less than twice the
@@ -94,6 +119,10 @@ fn lowest() -> Option<usize> {
 mod tests {
     use super::*;
 
+    fn room_below_here() -> Option<usize> {
+        room_at(here(), lowest())
+    }
+
     #[test]
     fn a_thread_has_room_for_most_of_its_stack() {
         let room = std::thread::Builder::new()
@@ -121,6 +150,29 @@ mod tests {
         assert_eq!(room_of(2 * RESERVE), RESERVE);
         assert_eq!(room_of(RESERVE), RESERVE / 2);
         assert_eq!(room_of(64 * 1024), 32 * 1024);
+    }
+
+    /// QuickJS sets its limit at its stack top less the size, unsigned: a
+    /// size past the stack pointer wraps the limit round to the top of the
+    /// address space, and every call throws. Where the end of the stack is
+    /// unknown, a size given is kept, but to no more than the stack could
+    /// hold were it to run down to address 0.
+    #[test]
+    fn a_size_given_where_the_end_is_unknown_cannot_wrap_the_limit() {
+        let sp = 0x7fff_f000_0000;
+        let huge = for_js_at(sp, None, Some(usize::MAX));
+        assert!(huge < sp - RESERVE / 2, "size {huge:#x} at sp {sp:#x}");
+        assert_eq!(for_js_at(sp, None, Some(64 << 20)), 64 << 20);
+        assert_eq!(
+            for_js_at(4 << 20, None, Some(usize::MAX)),
+            (4 << 20) - RESERVE
+        );
+        assert_eq!(for_js_at(sp, None, None), crate::config::FALLBACK_MAX_STACK);
+        assert_eq!(
+            for_js_at(sp, Some(sp - (4 << 20)), Some(usize::MAX)),
+            (4 << 20) - RESERVE
+        );
+        assert_eq!(for_js_at(sp, Some(sp - (4 << 20)), Some(0)), 1);
     }
 
     #[test]

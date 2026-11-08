@@ -1731,14 +1731,7 @@ impl JsHost {
 
         let ctx = Context::full(&rt)?;
         let raw = ctx.with(|c| c.as_raw());
-        let stack = match (cfg.max_stack, crate::stack::room_below_here()) {
-            (Some(most), Some(room)) => most.min(room),
-            (Some(most), None) => most,
-            (None, Some(room)) => room,
-            (None, None) => crate::config::FALLBACK_MAX_STACK,
-        };
-        // QuickJS reads 0 as no limit at all.
-        let stack = stack.max(1);
+        let stack = crate::stack::for_js(cfg.max_stack);
         // SAFETY: the runtime is alive and only this thread uses it. The
         // size is set directly because rquickjs's setter turns anything over
         // 16 MiB (a main thread's stack, say) into no limit at all.
