@@ -4,8 +4,8 @@ Milestone M6 (Controls) in [DIALECT.md §13](../../DIALECT.md#13-milestones). Wr
 
 Built:
 
-- Nothing built yet.
+- `QtQuick.Dialogs`' `FileDialog` and `FolderDialog`, in `Ljos.Controls` (K5); `QtQuick.Dialogs` lowered to it (§4.16)
 
 Remaining:
 
-- All that §13 lists for this area.
+- `ColorDialog`, `FontDialog`, `MessageDialog`: a file using one is kept
