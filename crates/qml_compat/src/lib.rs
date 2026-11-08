@@ -329,9 +329,9 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         bare_sources: Vec::new(),
         aimed: Vec::new(),
     };
-    let mut bare = BareSources(Vec::new());
+    let mut bare = BareSources::default();
     bare.object(&parsed.document.root);
-    pass.bare_sources = bare.0;
+    pass.bare_sources = bare.found;
     match pass.document(&parsed.document) {
         Ok(false) => Outcome::Unchanged,
         Ok(true) => {
@@ -2074,8 +2074,15 @@ enum Bare {
     Component,
 }
 
-/// Where the scripts of a file name a Loader's members unqualified.
-struct BareSources(Vec<(u32, Bare)>);
+/// Where the scripts of a file name a Loader's members unqualified. A
+/// name a script binds itself (a parameter, a local) is the script's, as
+/// [`Script`] reads it, and no member of the Loader's.
+#[derive(Default)]
+struct BareSources {
+    found: Vec<(u32, Bare)>,
+    /// What the script being read binds.
+    own: Bindings,
+}
 
 impl BareSources {
     fn object(&mut self, object: &QmlObject<'_>) {
@@ -2087,9 +2094,7 @@ impl BareSources {
                         self.value(value);
                     }
                 }
-                QmlMember::Function(function) => {
-                    self.visit_function(function, ScopeFlags::Function);
-                }
+                QmlMember::Function(function) => self.script(Node::Function(function)),
                 QmlMember::Object(child) => self.object(child),
                 QmlMember::InlineComponent(component) => self.object(&component.object),
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
@@ -2099,11 +2104,16 @@ impl BareSources {
 
     fn value(&mut self, value: &QmlBindingValue<'_>) {
         match value {
-            QmlBindingValue::Expression(expression) => self.visit_expression(expression),
-            QmlBindingValue::Statement(statement) => self.visit_statement(statement),
+            QmlBindingValue::Expression(expression) => self.script(Node::Expression(expression)),
+            QmlBindingValue::Statement(statement) => self.script(Node::Statement(statement)),
             QmlBindingValue::Object(object) => self.object(object),
             QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.object(o)),
         }
+    }
+
+    fn script(&mut self, node: Node<'_, '_>) {
+        self.own = Bindings::of(node);
+        node.visit(self);
     }
 }
 
@@ -2114,7 +2124,9 @@ impl<'a> Visit<'a> for BareSources {
             "sourceComponent" | "sourceComponentChanged" => Bare::Component,
             _ => return,
         };
-        self.0.push((it.span.start, kind));
+        if !self.own.binds(&it.name, it.span.start) {
+            self.found.push((it.span.start, kind));
+        }
     }
 }
 
