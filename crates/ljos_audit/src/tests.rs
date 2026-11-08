@@ -1571,6 +1571,39 @@ fn a_scroller_a_layout_gives_no_layout_attached_to_does_not_fit_its_popup() {
 }
 
 #[test]
+fn a_filling_scroller_in_a_nested_layout_fits_its_popup() {
+    // Said nothing, a layout in a layout fills it, so the column inside
+    // may be made as small as its view lets it be.
+    let report = popup_fit(&popup_holding(
+        "            ColumnLayout {\n                \
+         Flickable { Layout.fillHeight: true; implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }\n            }",
+    ));
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}
+
+#[test]
+fn a_scroller_on_a_stack_page_told_not_to_fill_does_not_fit_its_popup() {
+    // A stack's pages fill it unless told not to; this one is, so it is
+    // as high as it asks and the popup clips it.
+    let report = popup_fit(&popup_holding(
+        "            StackLayout {\n                Layout.fillWidth: true; Layout.fillHeight: true\n                \
+         Flickable { Layout.fillHeight: false; implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_scroller_inside_an_item_a_layout_keeps_does_not_fit_its_popup() {
+    // The column keeps the item 600 high, so the view filling it cannot
+    // scroll any of that away.
+    let report = popup_fit(&popup_holding(
+        "            Item {\n                implicitWidth: 280; implicitHeight: 600\n                \
+         Flickable { anchors.fill: parent; contentHeight: 600 }\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
 fn a_hidden_scroller_does_not_fit_its_popup() {
     // A layout leaves the hidden view out, so the popup asks for the
     // fixed item's height alone, and nothing shown scrolls through it.

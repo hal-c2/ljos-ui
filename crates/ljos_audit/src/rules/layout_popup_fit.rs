@@ -87,7 +87,7 @@ fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks 
 /// other way is taken to give back what its largest fixed child leaves,
 /// which is what it gives back at most. What each child asks is what
 /// `o` sizes it by ([`asks_of`]); a scroller gives back what it asks for
-/// past the least it can be made.
+/// past the least it can be made, and no child gives back more than that.
 fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usize) -> f64 {
     let Some(left) = budget.checked_sub(1) else {
         return 0.0;
@@ -105,7 +105,9 @@ fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usiz
     for c in child_items(engine, o) {
         let child = asks_of(engine, o, c, axis);
         let given = if shown(engine, c) {
-            gives(engine, c, axis, child, budget)
+            // Nothing inside a child scrolls it smaller than its parent
+            // lets it be: one kept at its size gives back nothing.
+            gives(engine, c, axis, child, budget).min((child.size - child.least).max(0.0))
         } else if stack {
             0.0
         } else {
