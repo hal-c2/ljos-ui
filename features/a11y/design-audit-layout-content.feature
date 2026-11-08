@@ -324,6 +324,30 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit reports "layout-popup-fit" at line 7
 
+    Scenario: A popup whose scroller the layout does not let shrink
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            ColumnLayout {
+              anchors.fill: parent
+              Flickable {
+                Layout.fillWidth: true; Layout.preferredHeight: 600
+                implicitWidth: 280; contentHeight: 600
+              }
+            }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
     Scenario: A popup whose fixed content overflows beside a hidden scroller
       Given the QML:
         """qml
