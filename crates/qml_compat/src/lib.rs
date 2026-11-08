@@ -28,8 +28,9 @@ mod tables;
 use std::{cell::RefCell, collections::HashMap, ops::Range};
 
 use oxc_ast::ast::{
-    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
-    StaticMemberExpression,
+    ArrowFunctionExpression, BindingIdentifier, BlockStatement, CallExpression,
+    ComputedMemberExpression, Expression, FormalParameters, Function, FunctionBody,
+    IdentifierReference, Statement, StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
@@ -1430,6 +1431,7 @@ impl<'s> Pass<'s> {
             declared: Vec::new(),
             row: RowEdits::default(),
             called: Vec::new(),
+            bound: Vec::new(),
         };
         walk(&mut script);
         script.row_done();
@@ -1607,6 +1609,44 @@ fn declared(object: &QmlObject<'_>) -> Vec<String> {
         .collect()
 }
 
+/// The names a function's parameters bind.
+fn parameters(params: &FormalParameters<'_>) -> Vec<String> {
+    let rest = params.rest.iter().map(|rest| &rest.rest.argument);
+    params
+        .items
+        .iter()
+        .map(|item| &item.pattern)
+        .chain(rest)
+        .flat_map(|pattern| pattern.get_binding_identifiers())
+        .map(|id| id.name.to_string())
+        .collect()
+}
+
+/// The names `statements` declare directly: their `var`s, `let`s,
+/// `const`s, functions and classes.
+fn declarations(statements: &[Statement<'_>]) -> Vec<String> {
+    let mut names = Vec::new();
+    for statement in statements {
+        match statement {
+            Statement::VariableDeclaration(declaration) => names.extend(
+                declaration
+                    .declarations
+                    .iter()
+                    .flat_map(|d| d.id.get_binding_identifiers())
+                    .map(|id| id.name.to_string()),
+            ),
+            Statement::FunctionDeclaration(function) => {
+                names.extend(function.id.as_ref().map(|id| id.name.to_string()));
+            }
+            Statement::ClassDeclaration(class) => {
+                names.extend(class.id.as_ref().map(|id| id.name.to_string()));
+            }
+            _ => {}
+        }
+    }
+    names
+}
+
 /// Whether `on`'s Qt type has a member `name`. A type the pass does not
 /// know, or one derived from a known one, may have it or not: the root is
 /// asked about it then too.
@@ -1732,6 +1772,10 @@ struct Script<'p, 's> {
     /// Where the names that are called start: a called name is a method,
     /// and every member Ljós renames is a property (`model.remove(0)`).
     called: Vec<u32>,
+    /// The names the script binds around where it is read, innermost last:
+    /// a function's parameters, and what a block or a function's body
+    /// declares directly, which is bound throughout it.
+    bound: Vec<Vec<String>>,
 }
 
 impl Script<'_, '_> {
@@ -2084,6 +2128,17 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         if self.pass.id(name).is_some() {
             return;
         }
+        // A parameter or a local is found before them too. A `var` in an
+        // inner block, or a `for`'s or a `catch`'s name, is not followed:
+        // read where it may not be bound, the name is taken as a member's
+        // and may keep the file.
+        if self
+            .bound
+            .iter()
+            .any(|names| names.iter().any(|n| n == name))
+        {
+            return;
+        }
         // Not the scope's own, the name is looked up on the root next, in
         // Qt as once lowered.
         let captor = captured(self.scope, name).or_else(|| {
@@ -2120,6 +2175,30 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.span.start,
             ),
         }
+    }
+
+    fn visit_function(&mut self, it: &Function<'a>, flags: ScopeFlags) {
+        self.bound.push(parameters(&it.params));
+        walk::walk_function(self, it, flags);
+        self.bound.pop();
+    }
+
+    fn visit_arrow_function_expression(&mut self, it: &ArrowFunctionExpression<'a>) {
+        self.bound.push(parameters(&it.params));
+        walk::walk_arrow_function_expression(self, it);
+        self.bound.pop();
+    }
+
+    fn visit_function_body(&mut self, it: &FunctionBody<'a>) {
+        self.bound.push(declarations(&it.statements));
+        walk::walk_function_body(self, it);
+        self.bound.pop();
+    }
+
+    fn visit_block_statement(&mut self, it: &BlockStatement<'a>) {
+        self.bound.push(declarations(&it.body));
+        walk::walk_block_statement(self, it);
+        self.bound.pop();
     }
 
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
