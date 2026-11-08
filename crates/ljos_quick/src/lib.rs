@@ -147,6 +147,7 @@ pub use layer::{
 pub use layouts::{
     Arrangement, BoxColumn, BoxRow, ChildSizes, ColumnLayout, GridLayout, Layout, LayoutAttached,
     LayoutItemProxy, LjosBox, LjosGrid, RowLayout, StackLayout, child_sizes, layout_runs,
+    least_size_with,
 };
 pub use ljos_a11y::{ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs};
 pub use loader::Loader;

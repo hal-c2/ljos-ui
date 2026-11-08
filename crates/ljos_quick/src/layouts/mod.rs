@@ -527,6 +527,8 @@ struct Plan {
     /// Columns, then rows.
     tracks: [Vec<Track>; 2],
     spacing: [f64; 2],
+    /// `uniformCellSizes` and the like, by axis.
+    uniform: [bool; 2],
     /// Right to left: `layoutDirection`, the other way round when mirrored.
     rtl: bool,
     /// A stack's `currentIndex`.
@@ -618,6 +620,49 @@ pub fn child_sizes(
         })
         .ok()
         .flatten()
+}
+
+/// The least `layout` can be made along the vertical axis or the
+/// horizontal one were each child it sizes no smaller than `least` says,
+/// kept between the child's minimum and maximum ([`child_sizes`]): by the
+/// layout's own rules, with its spacing, margins, cells made alike, spans,
+/// a stack's largest page and a box's padding. For tools that ask how far
+/// a layout could give way if some children could be made smaller than it
+/// lets them, as a scroller can. `None` as for [`child_sizes`].
+pub fn least_size_with(
+    engine: &Engine,
+    layout: ObjectId,
+    vertical: bool,
+    mut least: impl FnMut(ObjectId, ChildSizes) -> f64,
+) -> Option<f64> {
+    let axis = if vertical { V } else { H };
+    // Held apart from the layout: `least` may read other layouts.
+    let plan = engine
+        .with(layout, |l: &Layout| l.state.plan.clone())
+        .ok()
+        .flatten()?;
+    let cells: Vec<Cell> = plan
+        .cells
+        .iter()
+        .map(|c| {
+            let h = c.hint[axis];
+            let asked = least(
+                c.item,
+                ChildSizes {
+                    minimum: h.min,
+                    preferred: h.pref,
+                    maximum: h.max,
+                },
+            );
+            let min = asked.max(h.min).min(h.max.max(h.min));
+            let mut c = c.clone();
+            c.hint[axis].min = min;
+            c.hint[axis].pref = h.pref.max(min);
+            c
+        })
+        .collect();
+    let (_, hints) = sizes(plan.kind, &cells, plan.spacing, plan.uniform, plan.pad);
+    Some(hints[axis].min)
 }
 
 /// Whether the scene polishes a type through this module: a layout, or
@@ -1046,65 +1091,12 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         }
     }
 
-    let boxed = |c: &Cell, axis: usize| {
-        let m = c.margins[axis] + c.margins[axis + 2];
-        let h = c.hint[axis];
-        (h.min + m, h.pref + m, h.max + m)
-    };
-    let (plan_tracks, hints) = if kind == Kind::Stack {
-        // As large as its largest page wants, and as large as it gets.
-        let of = |axis: usize| {
-            let mut t = Total {
-                min: 0.0,
-                pref: 0.0,
-                max: f64::INFINITY,
-            };
-            for c in &cells {
-                let (min, pref, _) = boxed(c, axis);
-                t.min = t.min.max(min);
-                t.pref = t.pref.max(pref);
-            }
-            t
-        };
-        ([Vec::new(), Vec::new()], [of(H), of(V)])
-    } else {
-        let axis = |axis: usize| {
-            let spans: Vec<Span> = cells
-                .iter()
-                .map(|c| {
-                    let (min, pref, max) = boxed(c, axis);
-                    let (start, len) = if axis == H {
-                        (c.slot.column, c.slot.column_span)
-                    } else {
-                        (c.slot.row, c.slot.row_span)
-                    };
-                    Span {
-                        start,
-                        len,
-                        min,
-                        pref,
-                        max,
-                        stretch: c.hint[axis].stretch,
-                    }
-                })
-                .collect();
-            let count = spans.iter().map(|s| s.start + s.len).max().unwrap_or(0);
-            tracks(count, &spans, set.spacing[axis], set.uniform[axis])
-        };
-        let t = [axis(H), axis(V)];
-        let hints = [total(&t[H], set.spacing[H]), total(&t[V], set.spacing[V])];
-        (t, hints)
-    };
     let (vertical, pad) = match kind {
         Kind::Box => (arrangement::vertical(e, obj), arrangement::paddings(e, obj)),
         Kind::Cells => (false, arrangement::paddings(e, obj)),
         _ => (false, [0.0; 4]),
     };
-    let hints = if kind.one_rule() {
-        arrangement::with_padding(hints, pad)
-    } else {
-        hints
-    };
+    let (plan_tracks, hints) = sizes(kind, &cells, set.spacing, set.uniform, pad);
 
     let mut current = -1;
     if kind == Kind::Stack {
@@ -1125,6 +1117,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         cells,
         tracks: plan_tracks,
         spacing: set.spacing,
+        uniform: set.uniform,
         rtl,
         current,
         vertical,
@@ -1155,6 +1148,75 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     )?;
     show_own_minimum(e, obj, &hints)?;
     Ok(changed)
+}
+
+/// The rows and columns `cells` take, and the layout's own smallest,
+/// preferred and largest size along each axis: with the cells' margins,
+/// the spacing, cells made alike and a box's padding. Measuring and
+/// [`least_size_with`] both go through it, so a tool's answer is the
+/// layout's.
+fn sizes(
+    kind: Kind,
+    cells: &[Cell],
+    spacing: [f64; 2],
+    uniform: [bool; 2],
+    pad: [f64; 4],
+) -> ([Vec<Track>; 2], [Total; 2]) {
+    let boxed = |c: &Cell, axis: usize| {
+        let m = c.margins[axis] + c.margins[axis + 2];
+        let h = c.hint[axis];
+        (h.min + m, h.pref + m, h.max + m)
+    };
+    let (plan_tracks, hints) = if kind == Kind::Stack {
+        // As large as its largest page wants, and as large as it gets.
+        let of = |axis: usize| {
+            let mut t = Total {
+                min: 0.0,
+                pref: 0.0,
+                max: f64::INFINITY,
+            };
+            for c in cells {
+                let (min, pref, _) = boxed(c, axis);
+                t.min = t.min.max(min);
+                t.pref = t.pref.max(pref);
+            }
+            t
+        };
+        ([Vec::new(), Vec::new()], [of(H), of(V)])
+    } else {
+        let axis = |axis: usize| {
+            let spans: Vec<Span> = cells
+                .iter()
+                .map(|c| {
+                    let (min, pref, max) = boxed(c, axis);
+                    let (start, len) = if axis == H {
+                        (c.slot.column, c.slot.column_span)
+                    } else {
+                        (c.slot.row, c.slot.row_span)
+                    };
+                    Span {
+                        start,
+                        len,
+                        min,
+                        pref,
+                        max,
+                        stretch: c.hint[axis].stretch,
+                    }
+                })
+                .collect();
+            let count = spans.iter().map(|s| s.start + s.len).max().unwrap_or(0);
+            tracks(count, &spans, spacing[axis], uniform[axis])
+        };
+        let t = [axis(H), axis(V)];
+        let hints = [total(&t[H], spacing[H]), total(&t[V], spacing[V])];
+        (t, hints)
+    };
+    let hints = if kind.one_rule() {
+        arrangement::with_padding(hints, pad)
+    } else {
+        hints
+    };
+    (plan_tracks, hints)
 }
 
 /// Shares the layout's size out and writes the children's geometry, if the
