@@ -1638,6 +1638,43 @@ fn a_tall_scroller_inside_a_small_one_does_not_fit_its_popup() {
 }
 
 #[test]
+fn layouts_with_no_scroller_in_them_give_back_nothing() {
+    // Two fixed 200 px columns side by side, 5 apart, straight in a 320
+    // px popup: the grid asks for 405 across, and nothing in it scrolls.
+    let report = popup_fit(
+        &page(
+            r##"
+    Popup {
+        width: 320; height: 80
+        Component.onCompleted: open()
+        GridLayout {
+            columns: 2
+            Item { implicitWidth: 200; implicitHeight: 50 }
+            Item { implicitWidth: 200; implicitHeight: 50 }
+        }
+    }"##,
+        )
+        .replace(
+            "import QtQuick\n",
+            "import QtQuick\nimport QtQuick.Layouts\n",
+        ),
+    );
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+    let message = &report.findings[0].message;
+    assert!(message.contains("nothing in it scrolls"), "{message}");
+}
+#[test]
+fn a_stack_of_pages_that_scroll_fits_its_popup() {
+    // The stack lays out the page shown alone, at the height it is given;
+    // the hidden one holds the stack no higher than the least it can be.
+    let report = popup_fit(&popup_holding(
+        "            StackLayout {\n                Layout.fillWidth: true; Layout.fillHeight: true\n                \
+         Flickable { implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }\n                \
+         Flickable { implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }\n            }",
+    ));
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}
+#[test]
 fn text_under_an_opacity_is_measured_over_what_is_behind_it() {
     // Issue #150: the faded tile and its text lie on the light page, not
     // on black. Without a layer each item fades on its own: the tile at
