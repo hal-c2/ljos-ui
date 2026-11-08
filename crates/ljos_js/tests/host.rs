@@ -7,7 +7,10 @@ use std::{
 };
 
 use common::*;
-use ljos_js::{Bytecode, BytecodeOptions, JsConfig, JsFault, JsHost, JsValue, Slice, Timing};
+use ljos_js::{
+    Bytecode, BytecodeOptions, FALLBACK_MAX_STACK, JsConfig, JsFault, JsHost, JsValue, Slice,
+    Timing,
+};
 
 fn plain() -> JsHost {
     JsHost::new(JsConfig::default()).unwrap()
@@ -88,16 +91,40 @@ fn out_of_memory_is_reported_and_context_survives() {
     assert!(host.memory_stats().unwrap().malloc_size < 4 * 1024 * 1024);
 }
 
-/// Calls itself `n` deep: `n`, or -1 once a RangeError says the stack ran
-/// out.
-const RECURSE: &str = "(function () {
-    function f(n) { return n == 0 ? 0 : 1 + f(n - 1) }
-    try { return f(200) } catch (e) { return e instanceof RangeError ? -1 : -2 }
-})()";
+/// A script that calls itself `n` deep: `n`, or -1 once a RangeError
+/// says the stack ran out.
+fn recurse(n: u32) -> String {
+    format!(
+        "(function () {{
+            function f(n) {{ return n == 0 ? 0 : 1 + f(n - 1) }}
+            try {{ return f({n}) }} catch (e) {{ return e instanceof RangeError ? -1 : -2 }}
+        }})()"
+    )
+}
 
 #[test]
 fn a_call_that_goes_deep_uses_the_threads_stack() {
-    assert_eq!(eval_num(&plain(), RECURSE).unwrap(), 200.0);
+    // A thread with room for far more than the old fixed limit, and a call
+    // that needs more than it: kept to that limit, the call runs out.
+    std::thread::Builder::new()
+        .stack_size(64 * 1024 * 1024)
+        .spawn(|| {
+            let deep = recurse(20_000);
+            let capped = JsHost::new(JsConfig {
+                max_stack: Some(FALLBACK_MAX_STACK),
+                ..JsConfig::default()
+            })
+            .unwrap();
+            assert_eq!(
+                eval_num(&capped, &deep).unwrap(),
+                -1.0,
+                "the call needs more than FALLBACK_MAX_STACK"
+            );
+            assert_eq!(eval_num(&plain(), &deep).unwrap(), 20_000.0);
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 #[test]
@@ -107,7 +134,7 @@ fn a_smaller_max_stack_is_kept_to() {
         ..JsConfig::default()
     })
     .unwrap();
-    assert_eq!(eval_num(&host, RECURSE).unwrap(), -1.0);
+    assert_eq!(eval_num(&host, &recurse(200)).unwrap(), -1.0);
     assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
 }
 
