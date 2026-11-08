@@ -98,6 +98,27 @@ fn a_module_has_types_in_cpp_and_types_in_qml() {
     );
 }
 
+/// Whose a type is, by what an import gives a file, is the same with either
+/// table, though Qt's describes the builtins and `DelegateChooser` in other
+/// modules than Ljós's does.
+#[test]
+fn a_module_has_what_it_and_its_imports_describe() {
+    let qml = super::module("QtQml").expect("QtQml");
+    for name in [
+        "QtObject",
+        "Component",
+        "Qt",
+        "Timer",
+        "ListModel",
+        "DelegateChooser",
+    ] {
+        assert!(qml.has(ty("QtQuick", name)), "{name}");
+    }
+    let item = ty("QtQuick", "Item");
+    assert!(!qml.has(item));
+    assert!(super::module("QtQuick").expect("QtQuick").has(item));
+}
+
 /// `import QtQuick` is also `QtQml`, `QtQml.Models` and the builtins.
 #[test]
 #[cfg_attr(
