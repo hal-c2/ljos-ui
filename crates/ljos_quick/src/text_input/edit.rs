@@ -9,7 +9,7 @@
 use ljos_engine::{Atom, Cx, Engine, EngineError, ObjectId, QmlObject, Url, Value, qml_impl};
 use ljos_text::utf16_to_byte;
 
-use super::base::{EditKind, SharedState, TextEditor, check, publish, state_of};
+use super::base::{EditKind, SharedState, TextEditor, check, publish, reconcile, state_of};
 use super::ops::{self, How};
 use super::text_format;
 use crate::item::is_unset;
@@ -212,6 +212,11 @@ impl TextEdit {
                 if !st.borrow().initialised {
                     return;
                 }
+                // The change that reached the font may have reached `text`
+                // too, and its watch may wait below this one (a change made
+                // deep in handlers): written out now, the old document would
+                // take the place of the new text.
+                reconcile(e, obj, &st);
                 super::rich::font_changed(&st);
                 check(e, "font", publish(e, obj, &st));
             })?;
