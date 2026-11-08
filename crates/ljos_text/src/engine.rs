@@ -33,6 +33,7 @@ use crate::coverage;
 use crate::edit::CaretCluster;
 use crate::elide::{Clusters, ELLIPSIS};
 use crate::face;
+use crate::face_info::{self, FaceInfo};
 use crate::fonts::{self, FontError};
 use crate::layout::{FontMetrics, Line, LineRun, PlacedBox, TextLayout};
 use crate::measure;
@@ -2990,6 +2991,34 @@ impl TextEngine {
     /// Metrics of the font `style` resolves to.
     pub fn font_metrics(&mut self, style: &TextStyle) -> FontMetrics {
         self.style_metrics(style).font
+    }
+
+    /// The face `style` resolves to, as Qt's `QFontInfo` tells it: the
+    /// first its families' stack offers, before any character is looked
+    /// up, so a face that lacks a letter is still the one named. A family
+    /// the system has in place of another is that family; a generic one
+    /// ("monospace") is the face the system names for it, which is how an
+    /// application finds the system's fixed-pitch font.
+    pub fn face_info(&mut self, style: &TextStyle) -> FaceInfo {
+        let weight = FontWeight::new(finite_weight(style.weight));
+        let first = self
+            .families
+            .first_font(&mut self.fcx, Asked::of(style), weight, style.italic);
+        if let Some(first) = first {
+            let face = face_info::of(&FontData::new(first.blob, first.index));
+            // The family by the name the font system knows it by, which a
+            // `font.family` takes back.
+            return FaceInfo {
+                family: first.family,
+                ..face
+            };
+        }
+        // No family of the stack could be named back as itself: the face
+        // a text is set in, then.
+        let mut probe = self.shape_plain("x", style, BaseDirection::Ltr);
+        break_lines(&mut probe, None, false);
+        let run = probe.lines().flat_map(|line| line.runs()).next();
+        run.map(|run| face_info::of(run.font())).unwrap_or_default()
     }
 
     /// Width of `text` on one line by its advances, as

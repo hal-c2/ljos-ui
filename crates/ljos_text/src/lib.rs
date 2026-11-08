@@ -45,6 +45,7 @@ mod edit;
 mod elide;
 mod engine;
 mod face;
+mod face_info;
 mod fonts;
 mod layout;
 mod measure;
@@ -60,6 +61,7 @@ pub use edit::{
     EditTable, PlacedBlock,
 };
 pub use engine::{CacheStats, TextEngine, TextMemory, TextTimes};
+pub use face_info::FaceInfo;
 pub use fonts::{BUNDLED_FAMILY, FontError, RegisteredFace, bundled_regular};
 pub use layout::{FontMetrics, Line, LineRun, PlacedBox, TextBounds, TextLayout};
 pub use model::{
