@@ -85,7 +85,7 @@ mod wheel_handler;
 pub use accessible::{Accessible, AccessibleAttached};
 pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
 pub use accessible::{AccessibleDefaults, register_accessible_defaults};
-pub use anchors::{CATEGORY as ANCHORS_CATEGORY, inset_in_parent};
+pub use anchors::CATEGORY as ANCHORS_CATEGORY;
 pub use animation::SpringAnimation;
 pub use animation::{AnchorAnimation, ParentAnimation};
 pub use animation::{
@@ -145,9 +145,8 @@ pub use layer::{
     tab_scope, window_item, window_of,
 };
 pub use layouts::{
-    Arrangement, BoxColumn, BoxRow, ChildSizes, ColumnLayout, GridLayout, Layout, LayoutAttached,
-    LayoutItemProxy, LjosBox, LjosGrid, RowLayout, StackLayout, child_sizes, layout_runs,
-    least_size_with,
+    Arrangement, BoxColumn, BoxRow, ColumnLayout, GridLayout, Layout, LayoutAttached,
+    LayoutItemProxy, LjosBox, LjosGrid, RowLayout, StackLayout, layout_runs,
 };
 pub use ljos_a11y::{ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs};
 pub use loader::Loader;
