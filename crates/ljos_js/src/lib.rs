@@ -34,6 +34,7 @@ mod fault;
 mod heap;
 mod host;
 mod objects;
+mod stack;
 mod thread_time;
 mod value;
 
