@@ -27,9 +27,9 @@ fn for_js_at(sp: usize, end: Option<usize>, given: Option<usize>) -> usize {
     let size = match (given, room_at(sp, end)) {
         (Some(most), Some(room)) => most.min(room),
         // QuickJS takes the size from its stack top unsigned, and one past
-        // it would wrap the limit round so that every call throws: a size
-        // is kept to what the stack could hold were it to run down to 0.
-        (Some(most), None) => most.min(room_of(sp)),
+        // it wraps the limit round so that every call throws. Nothing here
+        // says how much stack there is, so no more than the fallback.
+        (Some(most), None) => most.min(crate::config::FALLBACK_MAX_STACK),
         (None, Some(room)) => room,
         (None, None) => crate::config::FALLBACK_MAX_STACK,
     };
@@ -155,19 +155,16 @@ mod tests {
     /// QuickJS sets its limit at its stack top less the size, unsigned: a
     /// size past the stack pointer wraps the limit round to the top of the
     /// address space, and every call throws. Where the end of the stack is
-    /// unknown, a size given is kept, but to no more than the stack could
-    /// hold were it to run down to address 0.
+    /// unknown, nothing says a given size fits, so it is kept to
+    /// [`FALLBACK_MAX_STACK`](crate::config::FALLBACK_MAX_STACK).
     #[test]
-    fn a_size_given_where_the_end_is_unknown_cannot_wrap_the_limit() {
+    fn a_huge_size_given_where_the_end_is_unknown_is_kept_to_the_fallback() {
+        let fallback = crate::config::FALLBACK_MAX_STACK;
         let sp = 0x7fff_f000_0000;
-        let huge = for_js_at(sp, None, Some(usize::MAX));
-        assert!(huge < sp - RESERVE / 2, "size {huge:#x} at sp {sp:#x}");
-        assert_eq!(for_js_at(sp, None, Some(64 << 20)), 64 << 20);
-        assert_eq!(
-            for_js_at(4 << 20, None, Some(usize::MAX)),
-            (4 << 20) - RESERVE
-        );
-        assert_eq!(for_js_at(sp, None, None), crate::config::FALLBACK_MAX_STACK);
+        assert_eq!(for_js_at(sp, None, Some(usize::MAX)), fallback);
+        assert_eq!(for_js_at(sp, None, Some(64 << 20)), fallback);
+        assert_eq!(for_js_at(sp, None, Some(64 * 1024)), 64 * 1024);
+        assert_eq!(for_js_at(sp, None, None), fallback);
         assert_eq!(
             for_js_at(sp, Some(sp - (4 << 20)), Some(usize::MAX)),
             (4 << 20) - RESERVE

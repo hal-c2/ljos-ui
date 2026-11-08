@@ -12,7 +12,8 @@ pub struct JsConfig {
     /// down to a reserve kept for native code, since Rust frames between
     /// nested runs count too and a fixed size runs out in deep creation;
     /// [`FALLBACK_MAX_STACK`] on a platform whose thread stack bounds Ljós
-    /// cannot read.
+    /// cannot read. A size given is kept to the room down to that reserve,
+    /// and to [`FALLBACK_MAX_STACK`] where the bounds are unknown.
     pub max_stack: Option<usize>,
     /// Default per-dispatch budget used by [`crate::JsHost::call`].
     pub slice: Slice,
