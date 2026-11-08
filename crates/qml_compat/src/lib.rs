@@ -226,8 +226,11 @@ enum Import {
     /// `QtQml`, whose types a later import of the project shadows as it
     /// shadows `QtQuick`'s.
     Qml,
-    /// `QtQuick.Controls` or one of its styles' modules.
-    Controls,
+    /// `QtQuick.Controls` or one of its styles' modules, or
+    /// `QtQuick.Dialogs`.
+    Controls {
+        dialogs: bool,
+    },
     /// `QtQuick.Shapes`.
     Shapes,
     Module(String),
@@ -237,7 +240,7 @@ enum Import {
 impl Import {
     fn imported(&self) -> Option<Imported<'_>> {
         match self {
-            Import::Qt { .. } | Import::Qml | Import::Controls | Import::Shapes => None,
+            Import::Qt { .. } | Import::Qml | Import::Controls { .. } | Import::Shapes => None,
             Import::Module(uri) => Some(Imported::Module(uri)),
             Import::Dir(path) => Some(Imported::Dir(path)),
         }
@@ -292,6 +295,9 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         dialogs: None,
         locals,
         imports: Vec::new(),
+        ui_line: None,
+        core_line: None,
+        controls_line: None,
         imported: RefCell::default(),
         ids: Vec::new(),
         inline: Vec::new(),
@@ -413,6 +419,14 @@ struct Pass<'s> {
     /// The imports that name types, in the order written: the last that
     /// has a name is the one it is.
     imports: Vec<Import>,
+    /// Which of [`imports`](Self::imports) is the line `import Ljos.Ui`
+    /// takes in the lowered file, which `import Ljos.Core` and which
+    /// `import Ljos.Controls`: an import of the project after it is found
+    /// before Ljós's type. `Ljos.Ui` takes `QtQuick`'s line, else
+    /// `QtQml`'s; `Ljos.Core` takes `QtQml`'s, else `QtQuick`'s.
+    ui_line: Option<usize>,
+    core_line: Option<usize>,
+    controls_line: Option<usize>,
     /// What [`imported_root`](Self::imported_root) found, by name.
     imported: RefCell<HashMap<String, Option<(usize, Root)>>>,
     ids: Vec<(String, Ty)>,
@@ -500,10 +514,12 @@ impl<'s> Pass<'s> {
             match uri.as_str() {
                 "QtQuick" => {
                     quick = Some(import.span);
+                    self.ui_line = Some(self.imports.len());
                     self.imports.push(Import::Qt { layouts: false });
                 }
                 "QtQml" => {
                     qml = Some(import.span);
+                    self.core_line = Some(self.imports.len());
                     self.imports.push(Import::Qml);
                 }
                 // Its models are `Ljos.Models`'.
@@ -548,7 +564,8 @@ impl<'s> Pass<'s> {
                             at,
                         ));
                     };
-                    let found = if uri == QT_DIALOGS {
+                    let dialogs = uri == QT_DIALOGS;
+                    let found = if dialogs {
                         &mut self.dialogs
                     } else {
                         &mut self.controls
@@ -556,8 +573,11 @@ impl<'s> Pass<'s> {
                     found.get_or_insert(Controls { qt, ljos });
                     // The dialogs are in Ljos.Controls, so their import is
                     // one of the controls'.
+                    if controls.is_empty() {
+                        self.controls_line = Some(self.imports.len());
+                    }
                     controls.push(import.span);
-                    self.imports.push(Import::Controls);
+                    self.imports.push(Import::Controls { dialogs });
                 }
                 other => match self.locals.module(other) {
                     // Files of the project, lowered with this one
@@ -592,12 +612,21 @@ impl<'s> Pass<'s> {
         if quick.is_none() && qml.is_none() {
             return Ok(false);
         }
+        // The lowered file's lines (`document`'s end): what has no import of
+        // its own shares the other's.
+        if self.ui_line.is_none() {
+            self.ui_line = self.core_line;
+        }
+        if self.core_line.is_none() {
+            self.core_line = self.ui_line;
+        }
         for span in [layouts, shapes].into_iter().flatten() {
             // `Ljos.Ui` has `Layout` and the shapes; the line stays, empty.
             self.change(span.start as usize..span.end as usize, "");
         }
         for (i, span) in controls.into_iter().enumerate() {
-            // A second import of Qt's controls is the first again.
+            // A second import of Qt's controls is the first again. The
+            // first is `controls_line`.
             let import = if i == 0 {
                 format!("import {CONTROLS}")
             } else {
@@ -805,39 +834,16 @@ impl<'s> Pass<'s> {
         // Of an import after Qt's that has the name too, the type is that
         // import's, as the loader takes the last.
         let imported = self.imported_root(name);
-        let after =
-            |qt: Option<usize>| matches!((&imported, qt), (Some((at, _)), Some(qt)) if *at > qt);
-        let shadowed = |layouts: bool| {
-            after(
-                self.imports
-                    .iter()
-                    .rposition(|i| matches!(i, Import::Qt { layouts: l } if *l == layouts)),
-            )
-        };
-        let shadowed_layout = shadowed(true);
-        let shadowed_quick = shadowed(false);
-        // `QtQuick` brings `QtQml`'s types too: they are shadowed by what
-        // is imported after the last of the two.
-        let shadowed_qml = after(
-            self.imports
-                .iter()
-                .rposition(|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
-        );
-        let controls_at = self
-            .imports
-            .iter()
-            .rposition(|i| matches!(i, Import::Controls));
-        let shadowed_controls =
-            matches!((&imported, controls_at), (Some((at, _)), Some(c)) if *at > c);
-        let shapes_at = self
-            .imports
-            .iter()
-            .rposition(|i| matches!(i, Import::Shapes));
-        let shadowed_shapes = matches!((&imported, shapes_at), (Some((at, _)), Some(s)) if *at > s);
-        if let Some(ty) = self
-            .layouts
-            .filter(|_| !shadowed_layout)
-            .and_then(|m| m.type_named(name))
+        let project = imported.as_ref().map(|(at, _)| *at);
+        let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
+        if let Some(ty) = self.layouts.and_then(|m| m.type_named(name))
+            && !self.project_first(
+                name,
+                project,
+                last(&|i| matches!(i, Import::Qt { layouts: true })),
+                (MODULE, self.ui_line),
+                at,
+            )?
         {
             return match name {
                 "RowLayout" | "ColumnLayout" | "Layout" => {
@@ -847,22 +853,44 @@ impl<'s> Pass<'s> {
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(controls) = [self.controls, self.dialogs]
-            .into_iter()
-            .flatten()
-            .find(|c| c.qt.type_named(name).is_some())
-            && let Some(ty) = controls.qt.type_named(name)
-            && !shadowed_controls
+        let controls = |dialogs: bool| if dialogs { self.dialogs } else { self.controls };
+        // Of the controls and the dialogs, the type is that of the last
+        // imported that has it.
+        if let Some((line, controls, ty)) =
+            self.imports
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(line, import)| match import {
+                    Import::Controls { dialogs } => {
+                        let controls = controls(*dialogs)?;
+                        Some((line, controls, controls.qt.type_named(name)?))
+                    }
+                    _ => None,
+                })
+            && !self.project_first(
+                name,
+                project,
+                Some(line),
+                (CONTROLS, self.controls_line),
+                at,
+            )?
         {
             return match controls.ljos.type_named(name) {
                 Some(_) => Ok(Ty::Exact(ty)),
                 None => Err(self.no(format!("`{name}` is not in {CONTROLS} yet"), at)),
             };
         }
-        if let Some(ty) = self
-            .shapes
-            .filter(|_| !shadowed_shapes)
-            .and_then(|m| m.type_named(name))
+        // Shapes lower into Ljos.Ui, so Ljos.Ui's line is where the
+        // lowered file finds them.
+        if let Some(ty) = self.shapes.and_then(|m| m.type_named(name))
+            && !self.project_first(
+                name,
+                project,
+                last(&|i| matches!(i, Import::Shapes)),
+                (MODULE, self.ui_line),
+                at,
+            )?
         {
             return match self.ui.type_named(name) {
                 Some(_) => {
@@ -872,13 +900,9 @@ impl<'s> Pass<'s> {
                 None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(ty) = self.quick.type_named(name).filter(|ty| {
-            !if ty.module.starts_with("QtQml") {
-                shadowed_qml
-            } else {
-                shadowed_quick
-            }
-        }) {
+        if let Some(ty) = self.quick.type_named(name)
+            && !self.quick_first(name, ty, project, at)?
+        {
             if ty.module.starts_with("QtQml") {
                 if MODELS.contains(&name) {
                     self.makes_models.set(true);
@@ -987,18 +1011,75 @@ impl<'s> Pass<'s> {
     /// file would make Ljós's type instead.
     fn ljos_module_with(&self, name: &str) -> Option<(&'static str, Option<usize>)> {
         if self.ui.type_named(name).is_some() {
-            let line = self
-                .imports
-                .iter()
-                .rposition(|i| matches!(i, Import::Qt { layouts: false }));
-            return Some((MODULE, line));
+            return Some((MODULE, self.ui_line));
         }
         let controls = self.controls.or(self.dialogs)?;
-        let line = self
-            .imports
-            .iter()
-            .rposition(|i| matches!(i, Import::Controls));
-        controls.ljos.type_named(name).map(|_| (CONTROLS, line))
+        controls
+            .ljos
+            .type_named(name)
+            .map(|_| (CONTROLS, self.controls_line))
+    }
+
+    /// Whether the type `name` is the project's, imported as the
+    /// `project`th import, rather than the Qt module's whose last import of
+    /// it is the `qt`th; the lowered file finds `module`'s instead, on the
+    /// `line`th. An import of the project between the two lines would be
+    /// one type in Qt's file and another in the lowered one.
+    /// [`project_first`](Self::project_first) for `ty`, `QtQuick`'s type
+    /// `name`: one of `QtQml`'s is shadowed by what is imported after the
+    /// last of `QtQuick` and `QtQml`, and the lowered file finds it on
+    /// `Ljos.Core`'s line, or `Ljos.Models`' for a model.
+    fn quick_first(
+        &self,
+        name: &str,
+        ty: &'static Type,
+        project: Option<usize>,
+        at: usize,
+    ) -> Result<bool, Kept> {
+        let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
+        let (qt, lowered) = if !ty.module.starts_with("QtQml") {
+            (
+                last(&|i| matches!(i, Import::Qt { layouts: false })),
+                (MODULE, self.ui_line),
+            )
+        } else if MODELS.contains(&name) {
+            (
+                last(&|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
+                (MODELS_MODULE, self.ui_line),
+            )
+        } else {
+            (
+                last(&|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
+                (CORE, self.core_line),
+            )
+        };
+        self.project_first(name, project, qt, lowered, at)
+    }
+
+    fn project_first(
+        &self,
+        name: &str,
+        project: Option<usize>,
+        qt: Option<usize>,
+        (module, line): (&str, Option<usize>),
+        at: usize,
+    ) -> Result<bool, Kept> {
+        let after = |line: Option<usize>| matches!((project, line), (Some(p), Some(l)) if p > l);
+        match (after(qt), after(line)) {
+            (true, false) => Err(self.no(
+                format!(
+                    "`{name}` is a file of the project, and {module}, which the lowered file imports, has a `{name}` that would be found first"
+                ),
+                at,
+            )),
+            (false, true) => Err(self.no(
+                format!(
+                    "`{name}` is Qt's, but in the lowered file the project's `{name}`, imported after the line {module} takes, would be found first"
+                ),
+                at,
+            )),
+            (in_qt, _) => Ok(in_qt),
+        }
     }
 
     /// Lowers `object`, of type `ty`, whose unqualified names are looked up

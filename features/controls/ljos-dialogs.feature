@@ -284,3 +284,39 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
           FileDialog { }
         }
         """
+
+    # Qt finds a name in the last import that has it. The lowered file has
+    # one `import Ljos.Controls`, on the line of the first of the dialogs and
+    # the controls: a module of the project imported between that line and
+    # the controls' would be found before Ljós's `Label`, where Qt finds
+    # Basic's.
+    @ljos-only @headless
+    Scenario: A module of the project imported between the dialogs and the controls keeps the file
+      Given the file "app/Gauges/qmldir":
+        """
+        module Gauges
+        Label 1.0 Label.qml
+        """
+      And the file "app/Gauges/Label.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 20 }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Dialogs
+        import Gauges
+        import QtQuick.Controls.Basic
+        Item {
+          Label { color: "red" }
+          FileDialog { }
+        }
+        """
+      When the author runs "ljos migrate app"
+      Then the command prints:
+        """
+        kept app/Gauges/Label.qml:1:1: it is used with `Main.qml`, which is kept: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first
+        kept app/Main.qml:6:3: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first
+        2 files, 0 lowered, 2 kept
+        """

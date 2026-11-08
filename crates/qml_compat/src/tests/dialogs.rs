@@ -149,3 +149,78 @@ fn an_import_qualifier_read_in_a_script_is_the_files_own() {
         "pragma Scripts: JavaScript; import Ljos.Ui\nimport \"paint.js\" as Canvas\nItem { property int d: Canvas.helper() }\n"
     );
 }
+
+/// A module of the project with a `Label`, a `FileDialog` and a
+/// `RowLayout` of its own, each a Rectangle.
+struct Gauges;
+
+impl Locals for Gauges {
+    fn root(&self, _: &str) -> Option<Root> {
+        None
+    }
+
+    fn controls_style(&self) -> Option<&str> {
+        Some(CONTROLS_STYLE)
+    }
+
+    fn module(&self, uri: &str) -> Option<ProjectModule> {
+        (uri == "Gauges").then_some(ProjectModule::Files)
+    }
+
+    fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
+        (from == Imported::Module("Gauges") && matches!(name, "Label" | "FileDialog" | "RowLayout"))
+            .then(|| root_of("Rectangle", &[]))
+    }
+}
+
+/// Qt finds a name in the last import that has it. The lowered file has
+/// one `import Ljos.Controls`, on the first line of the controls and the
+/// dialogs, and `Ljos.Ui` on `QtQuick`'s line, which stands in for
+/// `QtQuick.Layouts` too. An import of the project between the line a Qt
+/// type is found on and the one Ljós's takes means one type in Qt's file
+/// and another in the lowered one.
+#[test]
+fn an_import_of_the_project_between_qts_line_and_ljos_line_keeps_the_file() {
+    let kept = |source: &str| match lower(source, &Gauges) {
+        Outcome::Kept(kept) => kept.reason,
+        other => panic!("lowered: {other:?}"),
+    };
+    // Basic's `Label` in Qt; lowered, `Gauges` is after `Ljos.Controls`.
+    assert_eq!(
+        kept(
+            "import QtQuick\nimport QtQuick.Dialogs\nimport Gauges\nimport QtQuick.Controls.Basic\nItem { Label { color: \"red\" } }\n"
+        ),
+        "`Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first"
+    );
+    // The dialogs' `FileDialog` in Qt, as they are imported last.
+    assert_eq!(
+        kept(
+            "import QtQuick\nimport QtQuick.Controls.Basic\nimport Gauges\nimport QtQuick.Dialogs\nItem { FileDialog { } }\n"
+        ),
+        "`FileDialog` is Qt's, but in the lowered file the project's `FileDialog`, imported after the line Ljos.Controls takes, would be found first"
+    );
+    // `QtQuick.Layouts`' `RowLayout` in Qt; lowered, `Ljos.Ui` is before
+    // `Gauges`.
+    assert_eq!(
+        kept("import QtQuick\nimport Gauges\nimport QtQuick.Layouts\nItem { RowLayout { } }\n"),
+        "`RowLayout` is Qt's, but in the lowered file the project's `RowLayout`, imported after the line Ljos.Ui takes, would be found first"
+    );
+}
+
+#[test]
+fn an_import_of_the_project_after_the_dialogs_is_the_projects_wherever_the_controls_are() {
+    // In Qt and lowered alike, `Gauges` is after the dialogs and the line
+    // `Ljos.Controls` takes: its `FileDialog` is a Rectangle, whose
+    // `color` is a fill.
+    let Outcome::Lowered(lowered) = lower(
+        "import QtQuick\nimport QtQuick.Dialogs\nimport Gauges\nimport QtQuick.Controls.Basic\nItem { FileDialog { color: \"red\" } }\n",
+        &Gauges,
+    ) else {
+        panic!("kept");
+    };
+    assert!(
+        lowered.text.contains("FileDialog { fill: \"red\" }"),
+        "{}",
+        lowered.text
+    );
+}
