@@ -4301,15 +4301,16 @@ impl<V: Clone + 'static> Inner<V> {
             // was read first.
             let through_walk =
                 self.wave_origin.is_some() && node.flags.has(Flags::WALKING) && node.mark != pass;
+            // Its hook, if it waits below an own queue, comes along: also
+            // when this change makes dirty what was waiting to be checked.
+            if node.flags.has(Flags::NOTE_DUE) {
+                lift(&mut self.noted, lifts.noted, m);
+            }
             if node.state.rank() >= st.rank() {
                 // Already waiting, maybe on an outer flush level: this
                 // change is news to it, so it runs with this change's flush.
                 if node.is_eager(all) {
                     enqueue(&mut self.queues, m, node);
-                }
-                // Its hook, if it waits below an own queue, comes along.
-                if node.flags.has(Flags::NOTE_DUE) {
-                    lift(&mut self.noted, lifts.noted, m);
                 }
                 if through_walk {
                     node.mark = pass;

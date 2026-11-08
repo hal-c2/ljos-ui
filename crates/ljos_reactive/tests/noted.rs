@@ -203,7 +203,7 @@ fn a_hook_a_change_inside_the_queue_reaches_is_told_inside_it() {
     assert_eq!(
         *seen.borrow(),
         [(2, 2)],
-        "the watcher reads what the hook keeps as of its own value"
+        "the watcher reads what the hook keeps as of the value it reads"
     );
 }
 
@@ -283,4 +283,57 @@ fn a_hook_only_a_waiting_change_reached_waits_for_the_queue() {
     });
 
     assert_eq!(*order.borrow(), ["other watched", "p told"]);
+}
+
+/// [`a_hook_a_change_inside_the_queue_reaches_is_told_inside_it`] for a
+/// noted binding the batch left waiting to be checked: `b` reads `m`,
+/// which reads `s`, and `t`. The batch's write of `s` reaches `b` through
+/// `m`, so it waits to be checked, noted below the queue `q`'s hook opens.
+/// The write of `t` inside that queue makes it dirty: its hook is told
+/// inside the queue all the same, before `t`'s watcher runs there and
+/// reads `b` with what the hook keeps of it.
+#[test]
+fn a_hook_a_change_inside_the_queue_makes_dirty_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let t = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(m) + 10 * g.get(t)).unwrap();
+    assert_eq!(g.get(b), 0);
+    // What `b`'s hook keeps: the value of `b` it was last told of.
+    let kept = Rc::new(RefCell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, t, move |g, _| {
+        let now = g.untrack(|| g.get(b));
+        w.borrow_mut().push((now, *k.borrow()));
+    })
+    .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            *k.borrow_mut() = hooks.untrack(|| hooks.get(b));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(t, 2);
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(21, 21)],
+        "the watcher reads what the hook keeps as of the value it reads"
+    );
 }
