@@ -85,7 +85,7 @@ mod wheel_handler;
 pub use accessible::{Accessible, AccessibleAttached};
 pub use accessible::{AccessibleAction, AccessibleItem, register_accessible_item};
 pub use accessible::{AccessibleDefaults, register_accessible_defaults};
-pub use anchors::CATEGORY as ANCHORS_CATEGORY;
+pub use anchors::{CATEGORY as ANCHORS_CATEGORY, inset_in_parent};
 pub use animation::SpringAnimation;
 pub use animation::{AnchorAnimation, ParentAnimation};
 pub use animation::{
