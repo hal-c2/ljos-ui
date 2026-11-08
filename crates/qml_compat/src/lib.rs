@@ -19,6 +19,7 @@
 //! ([`group`]): what one sets on another is then called the same in both.
 
 mod arrange;
+mod bindings;
 mod given;
 mod group;
 mod renames;
@@ -27,13 +28,13 @@ mod tables;
 
 use std::{cell::RefCell, collections::HashMap, ops::Range};
 
+use bindings::{Bindings, Node};
 use oxc_ast::ast::{
     BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
     StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
-use oxc_syntax::scope::ScopeFlags;
 use qml_edit::Change;
 use qml_syntax::{
     Allocator,
@@ -1255,9 +1256,7 @@ impl<'s> Pass<'s> {
                             target.unwrap_or(Ty::Unknown),
                         )?;
                     }
-                    self.script(scope, root, |v| {
-                        v.visit_function(function, ScopeFlags::Function)
-                    })?;
+                    self.script(scope, root, Node::Function(function))?;
                 }
                 QmlMember::InlineComponent(component) => {
                     let ty = self.object_type(&component.object)?;
@@ -1536,10 +1535,10 @@ impl<'s> Pass<'s> {
     fn value(&mut self, value: &QmlBindingValue<'_>, scope: Ty, root: Ty) -> Step {
         match value {
             QmlBindingValue::Expression(expression) => {
-                self.script(scope, root, |v| v.visit_expression(expression))
+                self.script(scope, root, Node::Expression(expression))
             }
             QmlBindingValue::Statement(statement) => {
-                self.script(scope, root, |v| v.visit_statement(statement))
+                self.script(scope, root, Node::Statement(statement))
             }
             QmlBindingValue::Object(object) => {
                 let ty = self.object_type(object)?;
@@ -1555,17 +1554,18 @@ impl<'s> Pass<'s> {
         }
     }
 
-    fn script(&mut self, scope: Ty, root: Ty, walk: impl FnOnce(&mut Script<'_, 's>)) -> Step {
+    fn script(&mut self, scope: Ty, root: Ty, node: Node<'_, '_>) -> Step {
         let mut script = Script {
             pass: self,
             scope,
             root,
             kept: None,
             declared: Vec::new(),
+            own: Bindings::of(node),
             row: RowEdits::default(),
             called: Vec::new(),
         };
-        walk(&mut script);
+        node.visit(&mut script);
         script.row_done();
         match script.kept {
             Some(kept) => Err(kept),
@@ -1820,6 +1820,8 @@ struct Script<'p, 's> {
     kept: Option<Kept>,
     /// The locals it declares that a delegate's row has names of.
     declared: Vec<String>,
+    /// Every name it binds itself, and where each is seen.
+    own: Bindings,
     row: RowEdits,
     /// Where the names that are called start: a called name is a method,
     /// and every member Ljós renames is a property (`model.remove(0)`).
@@ -2138,9 +2140,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             return;
         }
         if name.starts_with(|c: char| c.is_ascii_uppercase()) {
-            if self.pass.qualifiers.iter().any(|q| q == name) {
-                // The file's own: it means in the lowered file what it
-                // means in Qt's, whatever type has its name.
+            if self.pass.qualifiers.iter().any(|q| q == name) || self.own.binds(name, it.span.start)
+            {
+                // The file's own, or the script's: it means in the lowered
+                // file what it means in Qt's, whatever type has its name.
                 return;
             }
             if let Some(new) = renamed_type(name) {
