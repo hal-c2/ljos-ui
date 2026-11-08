@@ -248,3 +248,39 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
         kept ./Main.qml:4:3: `Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first
         2 files, 0 lowered, 2 kept
         """
+
+    # A qualifier is found before a type of an import, in Qt and in Ljós,
+    # so a script's `Box` stays the file's own beside Ljos.Ui's `Box`.
+    @ljos-only @headless
+    Scenario: An import qualifier named as a Ljós type is the file's own, and the file lowers
+      Given the file "box.js":
+        """
+        .pragma library
+        function helper() { return 7 }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Dialogs
+        import "box.js" as Box
+        Item {
+          property int d: Box.helper()
+          FileDialog { }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Controls
+        import "box.js" as Box
+        Item {
+          property int d: Box.helper()
+          FileDialog { }
+        }
+        """
