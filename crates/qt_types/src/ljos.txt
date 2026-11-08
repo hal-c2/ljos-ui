@@ -18,6 +18,7 @@
 module Ljos
 	ErrorBoundary Ljos.ErrorBoundary
 	SelectionScope Ljos.SelectionScope
+	SystemMenu Ljos.SystemMenu
 	type Ljos.ErrorBoundary ErrorBoundary
 		prototype QtQuick.Item named
 		default content
@@ -57,6 +58,10 @@ module Ljos
 		method copy
 		method positionAt returns:int
 		method linkAt returns:string
+	type Ljos.SystemMenu SystemMenu
+		attached Ljos.SystemMenuAttached
+		is uncreatable
+		enum Role TextHeuristicRole=0 NoRole=1 WindowRole=2
 	type Ljos.ErrorBoundaryFault ErrorBoundaryFault
 		is uncreatable
 		prop kind QtQml.string named readonly
@@ -67,6 +72,11 @@ module Ljos
 		signal messageChanged
 		signal fileChanged
 		signal lineChanged
+	type Ljos.SystemMenuAttached SystemMenuAttached
+		is uncreatable
+		enum Role TextHeuristicRole=0 NoRole=1 WindowRole=2
+		prop role Role
+		signal roleChanged
 
 module Ljos.Blocks
 	Contribution Ljos.Blocks.Contribution
