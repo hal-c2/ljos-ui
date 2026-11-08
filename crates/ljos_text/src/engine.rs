@@ -484,6 +484,10 @@ impl Families {
     fn stack_of<'a>(&'a self, family: &'a str) -> Vec<FontFamilyName<'a>> {
         let mut names = Vec::new();
         let mut add = |list: &'a str| {
+            // A named family the system lacks gives way to the next of the
+            // list before the face the system would put in its place, as
+            // in Qt, so those faces follow the whole list.
+            let mut substitutes = Vec::new();
             for part in list.split(',') {
                 let name = part.trim().trim_matches(['"', '\'']);
                 if name.is_empty() {
@@ -503,11 +507,12 @@ impl Families {
                     None => {
                         names.push(FontFamilyName::Named(Cow::Borrowed(name)));
                         if let Some(sub) = self.substitute(name) {
-                            names.push(FontFamilyName::Named(Cow::Owned(sub.to_string())));
+                            substitutes.push(FontFamilyName::Named(Cow::Owned(sub.to_string())));
                         }
                     }
                 }
             }
+            names.append(&mut substitutes);
         };
         add(family);
         if let Some(family) = &self.default_family {
