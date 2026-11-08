@@ -1489,6 +1489,41 @@ fn a_page_that_scrolls_deep_in_the_layouts_fits_its_popup() {
 }
 
 #[test]
+fn a_tall_scroller_beside_a_tall_fixed_item_in_a_row_does_not_fit_its_popup() {
+    // The row is as high as its tallest child, and the fixed one takes
+    // none of the height the popup is missing however tall the scroller
+    // beside it is: the row clips it out of reach.
+    let report = popup_fit(&popup_holding(
+        "            RowLayout {\n                \
+         Item { implicitWidth: 140; implicitHeight: 600 }\n                \
+         Flickable { implicitWidth: 140; implicitHeight: 600; contentHeight: 600 }\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_hidden_scroller_does_not_fit_its_popup() {
+    // A layout leaves the hidden view out, so the popup asks for the
+    // fixed item's height alone, and nothing shown scrolls through it.
+    let report = popup_fit(&popup_holding(
+        "            Item { implicitWidth: 280; implicitHeight: 600 }\n            \
+         Flickable { visible: false; implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_scroller_on_a_hidden_page_of_a_stack_does_not_fit_its_popup() {
+    // The page shown is fixed; the one that scrolls is not shown.
+    let report = popup_fit(&popup_holding(
+        "            StackLayout {\n                Layout.fillWidth: true; Layout.fillHeight: true\n                \
+         Item { implicitWidth: 280; implicitHeight: 600 }\n                \
+         Flickable { implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
 fn a_tall_scroller_inside_a_small_one_does_not_fit_its_popup() {
     // What the inner view asks for is the outer one's to scroll, and the
     // outer one is too small to take what the fixed item leaves missing.
