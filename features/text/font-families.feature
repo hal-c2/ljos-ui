@@ -13,8 +13,13 @@
 # any face the system would put in its place: with ["No Such Family Ljos",
 # "Liberation Mono"], QFontInfo's family is Liberation Mono and
 # "Hamburgefonstiv" is 180 pixels wide at 20, as in Liberation Mono, where
-# the missing family alone is set in Liberation Sans. Ljós gives QML the
-# member QFont has; runs on Ljós only.
+# the missing family alone is set in Liberation Sans. Each name of the list
+# is one family whatever it holds: with ["No Such Family Ljos, Liberation
+# Mono", "Liberation Serif"] or ["\"Liberation Mono\"", "Liberation Serif"],
+# QFontInfo's family is Liberation Serif and the text is as wide as in
+# Liberation Serif. One empty name is a list too: setFamilies({""}) lists
+# "" and equals setFamily(""), and is not setFamilies({}), which lists none.
+# Ljós gives QML the member QFont has; runs on Ljós only.
 # LjosSymbolsTest-Regular.ttf ("Ljos Symbols Test") has U+F8F0 at 600 units
 # of 1000, LjosAlternateTest-Regular.ttf ("Ljos Alternate Test") the same
 # character at 500, and with both loaded a text that names neither is set in
@@ -111,6 +116,30 @@ Feature: A font's list of families
     When 100 milliseconds pass
     Then the property "contentWidth" of "t" is 180
 
+  Scenario: A name of the list is one family, whatever characters it holds
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: serif; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "Liberation Serif" }
+        Text {
+          id: comma; text: "Hamburgefonstiv"; font.pixelSize: 20
+          font.families: ["No Such Family Ljos, Liberation Mono", "Liberation Serif"]
+        }
+        Text {
+          id: quoted; text: "Hamburgefonstiv"; font.pixelSize: 20
+          font.families: ["\"Liberation Mono\"", "Liberation Serif"]
+        }
+        property bool commaOne: comma.contentWidth === serif.contentWidth
+        property bool quotedOne: quoted.contentWidth === serif.contentWidth
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "commaOne" of "root" is true
+    And the property "quotedOne" of "root" is true
+
   Scenario: Every family of the list is kept as it is written
     Given the QML:
       """qml
@@ -146,3 +175,51 @@ Feature: A font's list of families
       }
       """
     Then the property "all" of "root" is "Liberation Mono|Symbols Nerd Font Mono"
+
+  Scenario: One empty name is a list of one, not a list of none
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property font none: Qt.font({ families: [] })
+        property font blank: Qt.font({ families: [""] })
+        Text { id: label; font.families: [""] }
+        property int noneCount: none.families.length
+        property int blankCount: blank.families.length
+        property int boundCount: label.font.families.length
+        property bool same: none === blank
+      }
+      """
+    Then the property "noneCount" of "root" is 0
+    And the property "blankCount" of "root" is 1
+    And the property "boundCount" of "root" is 1
+    And the property "same" of "root" is false
+
+  Scenario: A list a script holds names the families, bound or through an alias
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        component Labelled: Item {
+          property alias faces: inner.font.families
+          property alias label: inner
+          Text { id: inner }
+        }
+        property var names: ["Liberation Mono", "Symbols Nerd Font Mono"]
+        property var others: ["Liberation Serif", "Liberation Sans"]
+        Text { id: bound; font.families: root.names }
+        Labelled { id: aliased; faces: root.names }
+        Labelled { id: written }
+        property string boundAll: bound.font.families.join("|")
+        property string aliasedAll: aliased.label.font.families.join("|")
+        property string writtenAll: written.label.font.families.join("|")
+        function rename() { written.faces = root.others }
+      }
+      """
+    When the method "rename" of "root" is called
+    Then the property "boundAll" of "root" is "Liberation Mono|Symbols Nerd Font Mono"
+    And the property "aliasedAll" of "root" is "Liberation Mono|Symbols Nerd Font Mono"
+    And the property "writtenAll" of "root" is "Liberation Serif|Liberation Sans"
