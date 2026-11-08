@@ -15,9 +15,7 @@
 use ljos_controls::{Drawer, ToolTip, item_popup};
 use ljos_design::limits::POPUP_MIN_FILL;
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::{
-    Column, ColumnLayout, Layout, Row, RowLayout, StackLayout, child_items, child_sizes,
-};
+use ljos_quick::{Column, Flow, Grid, Layout, Row, child_items, inset_in_parent, least_size_with};
 
 use crate::cx::{
     Cx, is_a, is_scroller, number, overhang, overhang_words, scene_rect, shown_items, slack, trim,
@@ -25,13 +23,26 @@ use crate::cx::{
 
 /// Whether the scrollers in the content can give back what the popup is
 /// missing, `over` px across and `down` px high: on each side that falls
-/// short, what the content asks for less what it can scroll through is no
-/// more than the popup has.
-fn content_scrolls(engine: &Engine, content: ObjectId, over: f64, down: f64) -> bool {
+/// short, what the popup's content asks for (`contentWidth`,
+/// `contentHeight`) less what it can scroll through is no more than the
+/// popup has.
+fn content_scrolls(
+    engine: &Engine,
+    popup: ObjectId,
+    content: ObjectId,
+    over: f64,
+    down: f64,
+) -> bool {
     let takes = |axis, missing: f64| {
         let mut budget = crate::cx::DEPTH;
+        let asked = number(engine, popup, CONTENT[axis]);
+        let size = if asked.is_finite() {
+            asked
+        } else {
+            number(engine, content, IMPLICIT[axis])
+        };
         let asks = Asks {
-            size: number(engine, content, IMPLICIT[axis]).max(0.0),
+            size: size.max(0.0),
             least: 0.0,
         };
         missing <= 0.0 || gives(engine, content, axis, asks, &mut budget) >= missing
@@ -42,6 +53,7 @@ fn content_scrolls(engine: &Engine, content: ObjectId, over: f64, down: f64) -> 
 const H: usize = 0;
 const V: usize = 1;
 const IMPLICIT: [&str; 2] = ["implicitWidth", "implicitHeight"];
+const CONTENT: [&str; 2] = ["contentWidth", "contentHeight"];
 
 /// What an item asks of what holds it along an axis, and the least it
 /// can be made.
@@ -51,90 +63,69 @@ struct Asks {
     least: f64,
 }
 
-/// What `c` asks of `parent` along `axis`: of a layout, the size the
-/// layout gives it and the least it can make it ([`child_sizes`]), the
-/// same for a child that does not fill; of a layout that leaves the size
-/// to the child, its implicit size, kept; of what else holds it, its
-/// implicit size, which a scroller can give back.
-fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks {
-    let implicit = number(engine, c, IMPLICIT[axis]).max(0.0);
-    match child_sizes(engine, parent, c, axis == V) {
-        Some(s) => Asks {
-            size: s.preferred.max(0.0),
-            least: s.minimum.clamp(0.0, s.preferred.max(0.0)),
-        },
-        None if is_a::<Layout>(engine, parent) => Asks {
-            size: implicit,
-            least: implicit,
-        },
-        None => Asks {
-            size: implicit,
-            least: 0.0,
-        },
-    }
-}
-
 /// How much of what `o` asks for along `axis` it can give back by
 /// scrolling. A page may sit as deep as the app's layouts put it (a row,
 /// a column, a loader, a stack of pages), so this follows the path down
-/// from the content. A scroller can give back all it asks for, and what
-/// is inside one is bounded by it. One after another along the axis,
-/// children give back what each of them can; side by side across it, or
-/// on top of each other, the one that gives back least is the floor, as
-/// a row is as high as its tallest fixed child. Hidden items are left
-/// out as layouts leave them out, but every page of a stack sizes it: the
-/// stack lays out the page shown alone, so a hidden one holds it no
-/// larger than the least that page can be made. A container placing its
-/// children some other way is taken to give back what its largest child
-/// asks for less what the one that keeps most keeps: what it asks for
-/// past its children (spacing, margins, tracks side by side) it keeps,
-/// so with no scroller in it, it gives back nothing. What each child asks
-/// is what `o` sizes it by ([`asks_of`]); a scroller gives back what it
-/// asks for past the least it can be made, and no child gives back more
-/// than that.
+/// from the content. A scroller gives back what it asks for past the
+/// least it can be made, and nothing inside a child scrolls it smaller
+/// than what holds it lets it be.
+///
+/// A layout is asked by its own rules ([`least_size_with`]) how small it
+/// can be once each child it sizes is as small as what scrolls in that
+/// child lets it be: spacing, margins, cells made alike, spans and a
+/// stack's pages are the layout's, not copied here. A hidden page of a
+/// stack holds it no smaller than the least that page can be made. A
+/// positioner keeps each child at its own size, so it gives back nothing.
+/// What else holds its children places them by hand: a child its anchors
+/// size from it asks for its size less the margins ([`inset_in_parent`]),
+/// another its implicit size; on top of each other, the one that gives
+/// back least is the floor.
 fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usize) -> f64 {
     let Some(left) = budget.checked_sub(1) else {
         return 0.0;
     };
     *budget = left;
-    let asks = own.size;
     if is_scroller(engine, o) {
-        return (asks - own.least).max(0.0);
+        return (own.size - own.least).max(0.0);
     }
-    let stack = is_a::<StackLayout>(engine, o);
-    let mut along = 0.0;
-    let mut floor: f64 = 0.0;
-    let mut widest: f64 = 0.0;
-    let mut any = false;
-    for c in child_items(engine, o) {
-        let child = asks_of(engine, o, c, axis);
-        let given = if shown(engine, c) {
-            // Nothing inside a child scrolls it smaller than its parent
-            // lets it be: one kept at its size gives back nothing.
-            gives(engine, c, axis, child, budget).min((child.size - child.least).max(0.0))
-        } else if stack {
-            (child.size - child.least).max(0.0)
-        } else {
-            continue;
-        };
-        any = true;
-        along += given;
-        let child_asks = child.size;
-        widest = widest.max(child_asks);
-        floor = floor.max(child_asks - given);
+    if is_a::<Layout>(engine, o) {
+        let least = least_size_with(engine, o, axis == V, |c, s| {
+            if !shown(engine, c) {
+                return s.minimum;
+            }
+            let size = s.preferred.max(0.0);
+            let least = s.minimum.clamp(0.0, size);
+            let given = gives(engine, c, axis, Asks { size, least }, budget);
+            size - given.min(size - least)
+        });
+        // One that places its children as a positioner, or has not
+        // measured, keeps them at their size.
+        return least.map_or(0.0, |l| (own.size - l).max(0.0));
     }
-    if !any {
+    if is_a::<Row>(engine, o)
+        || is_a::<Column>(engine, o)
+        || is_a::<Grid>(engine, o)
+        || is_a::<Flow>(engine, o)
+    {
         return 0.0;
     }
-    let one_after_another = match axis {
-        H => is_a::<RowLayout>(engine, o) || is_a::<Row>(engine, o),
-        _ => is_a::<ColumnLayout>(engine, o) || is_a::<Column>(engine, o),
-    };
-    if one_after_another {
-        along.min(asks)
-    } else {
-        (widest - floor).max(0.0)
+    let mut widest: f64 = 0.0;
+    let mut floor: f64 = 0.0;
+    for c in child_items(engine, o) {
+        if !shown(engine, c) {
+            continue;
+        }
+        let size = match inset_in_parent(engine, c, axis == V) {
+            Some(inset) => own.size - inset,
+            None => number(engine, c, IMPLICIT[axis]),
+        }
+        .max(0.0);
+        let child = Asks { size, least: 0.0 };
+        let given = gives(engine, c, axis, child, budget).min(size);
+        widest = widest.max(size);
+        floor = floor.max(size - given);
     }
+    (widest - floor).max(0.0)
 }
 
 fn shown(engine: &Engine, o: ObjectId) -> bool {
@@ -233,7 +224,7 @@ pub(crate) fn check(cx: &mut Cx) {
         }
         let (over, down) = (cw - aw - slack(), ch - ah - slack());
         if (over > 0.0 || down > 0.0)
-            && !content.is_some_and(|c| content_scrolls(engine, c, over, down))
+            && !content.is_some_and(|c| content_scrolls(engine, popup, c, over, down))
         {
             let message = format!(
                 "{what} is {has} px where what it holds asks for {asks}, and nothing in it \
