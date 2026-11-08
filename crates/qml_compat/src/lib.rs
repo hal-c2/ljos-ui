@@ -1804,7 +1804,19 @@ impl Script<'_, '_> {
         }
     }
 
+    /// Whether a parameter or a local of the script is `name` where it is
+    /// read: in JS it is found before an id and before any member.
+    fn is_bound(&self, name: &str) -> bool {
+        self.bound
+            .iter()
+            .any(|names| names.iter().any(|n| n == name))
+    }
+
     fn name(&self, name: &str) -> Ty {
+        // What a parameter or a local holds is not known here.
+        if self.is_bound(name) {
+            return Ty::Unknown;
+        }
         if let Some(ty) = self.pass.id(name) {
             return ty;
         }
@@ -2124,19 +2136,15 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             self.keep(GRAB_PERMISSIONS.into(), it.span.start);
             return;
         }
-        // An id is found before the scope's members, in Qt as once lowered.
-        if self.pass.id(name).is_some() {
+        // A parameter or a local is found before an id and the scope's
+        // members. A `var` in an inner block, or a `for`'s or a `catch`'s
+        // name, is not followed: read where it may not be bound, the name is
+        // taken as a member's and may keep the file.
+        if self.is_bound(name) {
             return;
         }
-        // A parameter or a local is found before them too. A `var` in an
-        // inner block, or a `for`'s or a `catch`'s name, is not followed:
-        // read where it may not be bound, the name is taken as a member's
-        // and may keep the file.
-        if self
-            .bound
-            .iter()
-            .any(|names| names.iter().any(|n| n == name))
-        {
+        // An id is found before the scope's members, in Qt as once lowered.
+        if self.pass.id(name).is_some() {
             return;
         }
         // Not the scope's own, the name is looked up on the root next, in

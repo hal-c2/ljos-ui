@@ -147,6 +147,39 @@ fn a_new_name_a_script_binds_is_its_own() {
     }
 }
 
+/// A parameter or a local hides an id of the file, in JS as once lowered:
+/// what it holds is not known, so a member Ljós renames read off it keeps
+/// the file rather than being renamed as the id's.
+#[test]
+fn a_name_a_script_binds_hides_an_id() {
+    for (source, member) in [
+        (
+            "import QtQuick\nRectangle { id: box; function tint(box) { return box.color } }\n",
+            "color",
+        ),
+        (
+            "import QtQuick\nItem { TapHandler { id: tap }\n    function f(tap) { return tap.acceptedButtons } }\n",
+            "acceptedButtons",
+        ),
+        (
+            "import QtQuick\nRectangle { id: box; opacity: { const box = other; return box.color.a } }\n",
+            "color",
+        ),
+    ] {
+        assert_eq!(
+            kept_for(source),
+            format!("`.{member}` is read off something whose type is not known"),
+            "{source}"
+        );
+    }
+    // Where nothing binds the name, it is the id.
+    assert_eq!(
+        lowered("import QtQuick\nRectangle { id: box; function tint(c) { return box.color } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\
+         Rectangle { id: box; function tint(c) { return box.fill } }\n"
+    );
+}
+
 /// Qt's grab permissions are a gesture's `takeOver`, which is not built
 /// (docs/DIALECT.md §4.7): set, read or named by their keys, they keep the
 /// file.
