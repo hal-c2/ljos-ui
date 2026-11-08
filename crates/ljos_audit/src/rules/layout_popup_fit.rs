@@ -82,12 +82,16 @@ fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks 
 /// children give back what each of them can; side by side across it, or
 /// on top of each other, the one that gives back least is the floor, as
 /// a row is as high as its tallest fixed child. Hidden items are left
-/// out as layouts leave them out, but every page of a stack sizes it, the
-/// hidden ones giving nothing back. A container placing its children some
-/// other way is taken to give back what its largest fixed child leaves,
-/// which is what it gives back at most. What each child asks is what
-/// `o` sizes it by ([`asks_of`]); a scroller gives back what it asks for
-/// past the least it can be made, and no child gives back more than that.
+/// out as layouts leave them out, but every page of a stack sizes it: the
+/// stack lays out the page shown alone, so a hidden one holds it no
+/// larger than the least that page can be made. A container placing its
+/// children some other way is taken to give back what its largest child
+/// asks for less what the one that keeps most keeps: what it asks for
+/// past its children (spacing, margins, tracks side by side) it keeps,
+/// so with no scroller in it, it gives back nothing. What each child asks
+/// is what `o` sizes it by ([`asks_of`]); a scroller gives back what it
+/// asks for past the least it can be made, and no child gives back more
+/// than that.
 fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usize) -> f64 {
     let Some(left) = budget.checked_sub(1) else {
         return 0.0;
@@ -109,7 +113,7 @@ fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usiz
             // lets it be: one kept at its size gives back nothing.
             gives(engine, c, axis, child, budget).min((child.size - child.least).max(0.0))
         } else if stack {
-            0.0
+            (child.size - child.least).max(0.0)
         } else {
             continue;
         };
@@ -129,9 +133,7 @@ fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usiz
     if one_after_another {
         along.min(asks)
     } else {
-        // A popup's content item asks for nothing of its own; the popup
-        // asks for what its children do.
-        (asks.max(widest) - floor).max(0.0)
+        (widest - floor).max(0.0)
     }
 }
 
