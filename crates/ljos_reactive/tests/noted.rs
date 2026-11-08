@@ -609,3 +609,215 @@ fn a_change_with_nothing_waiting_below_a_queue_looks_for_nothing() {
 
     assert_eq!(g.stats().lift_steps - before, 0);
 }
+
+/// [`a_hook_a_change_inside_the_queue_reaches_is_told_inside_it`] for a
+/// disposal: `b` reads `s` and `d`. The batch's write of `s` leaves `b`
+/// dirty, noted below the queue `q`'s hook opens for `q`'s own change. The
+/// disposal of `d` inside it is a change of its own, made inside, and not
+/// the one the queue waits on: it reaches `b`, whose hook is told inside
+/// the queue, before the effect that read `d` runs there and reads `b`
+/// with what the hook keeps of it.
+#[test]
+fn a_hook_a_disposal_inside_the_queue_reaches_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let d = g.property(r, 5).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let b = g
+        .binding(r, 0, move |g| g.get(s) + g.try_get(d).unwrap_or(0))
+        .unwrap();
+    assert_eq!(g.get(b), 5);
+    // What `b`'s hook keeps: the value of `b` it was last told of.
+    let kept = Rc::new(RefCell::new(5));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.effect(r, move |g| {
+        g.try_get(d);
+        let now = g.untrack(|| g.get(b));
+        w.borrow_mut().push((now, *k.borrow()));
+    })
+    .unwrap();
+    seen.take();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            *k.borrow_mut() = hooks.untrack(|| hooks.get(b));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(1));
+            hooks.dispose(d).unwrap();
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(1, 1)],
+        "the effect reads what the hook keeps as of the value it reads"
+    );
+}
+
+/// [`a_hook_a_disposal_inside_the_queue_reaches_is_told_inside_it`] for a
+/// told effect that reads `b`: the disposal of `d` reaches it through
+/// `b`, already dirty, and it is told inside the queue, before the effect
+/// that read `d` runs there, and once.
+#[test]
+fn a_told_effect_a_disposal_inside_the_queue_reaches_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let d = g.property(r, 5).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let b = g
+        .binding(r, 0, move |g| g.get(s) + g.try_get(d).unwrap_or(0))
+        .unwrap();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let o = Rc::clone(&order);
+    g.effect_told(
+        r,
+        move |g| {
+            g.get(b);
+        },
+        move || o.borrow_mut().push("told"),
+    )
+    .unwrap();
+    let o = Rc::clone(&order);
+    g.effect(r, move |g| {
+        g.try_get(d);
+        o.borrow_mut().push("ran");
+    })
+    .unwrap();
+    order.take();
+    let hooks = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(1));
+            hooks.dispose(d).unwrap();
+        }
+    });
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(
+        *order.borrow(),
+        ["told", "ran"],
+        "told before the effects of the disposal, once"
+    );
+}
+
+/// [`a_hook_behind_a_dirty_binding_a_change_inside_the_queue_reaches_is_told_inside_it`]
+/// for a binding the change makes dirty that was waiting to be checked:
+/// `b` reads `m`, which reads `a`, which reads `s`, and `m` also reads
+/// `t`. The batch's write of `s` makes `a` dirty and leaves `m` and `b`
+/// waiting to be checked, `b` noted below the queue `q`'s hook opens. The
+/// write of `t` inside that queue makes `m` dirty and stops there, as
+/// `b` waits to be checked already, yet it reaches `b` all the same: its
+/// hook is told inside the queue, before `t`'s watcher runs there and
+/// reads `b` with what the hook keeps of it.
+#[test]
+fn a_hook_behind_a_binding_a_change_inside_the_queue_makes_dirty_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let t = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let a = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(a) + 10 * g.get(t)).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(m)).unwrap();
+    assert_eq!(g.get(b), 0);
+    // What `b`'s hook keeps: the value of `b` it was last told of.
+    let kept = Rc::new(RefCell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, t, move |g, _| {
+        let now = g.untrack(|| g.get(b));
+        w.borrow_mut().push((now, *k.borrow()));
+    })
+    .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            *k.borrow_mut() = hooks.untrack(|| hooks.get(b));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(t, 2);
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(21, 21)],
+        "the watcher reads what the hook keeps as of the value it reads"
+    );
+}
+
+/// [`a_hook_behind_a_binding_a_change_inside_the_queue_makes_dirty_is_told_inside_it`]
+/// for a told effect that reads `b`: the write of `t` inside the queue
+/// stops at `m`, which it makes dirty, and the effect is told inside the
+/// queue all the same, before `t`'s watcher runs there, and once.
+#[test]
+fn a_told_effect_behind_a_binding_a_change_inside_the_queue_makes_dirty_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let t = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let a = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(a) + 10 * g.get(t)).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(m)).unwrap();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let o = Rc::clone(&order);
+    g.effect_told(
+        r,
+        move |g| {
+            g.get(b);
+        },
+        move || o.borrow_mut().push("told"),
+    )
+    .unwrap();
+    let o = Rc::clone(&order);
+    g.watch(r, t, move |_, _| o.borrow_mut().push("watched"))
+        .unwrap();
+    let hooks = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(t, 2);
+        }
+    });
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(
+        *order.borrow(),
+        ["told", "watched"],
+        "told before the effects of the change, once"
+    );
+}
