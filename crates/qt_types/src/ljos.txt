@@ -55,8 +55,8 @@ module Ljos
 		method selectAll
 		method deselect
 		method copy
-		method positionAt
-		method linkAt
+		method positionAt returns:int
+		method linkAt returns:string
 	type Ljos.ErrorBoundaryFault ErrorBoundaryFault
 		is uncreatable
 		prop kind QtQml.string named readonly
@@ -551,17 +551,25 @@ module Ljos.Models
 		method clear
 
 module Ljos.Ui
+	Accessible QtQuick.Accessible
 	Box Ljos.Ui.Box
 	Column Ljos.Ui.Column
 	ConicalGradient QtQuick.Shapes.ConicalGradient
+	DoubleValidator QtQuick.DoubleValidator
 	Drag Ljos.Ui.Drag
 	DragSource Ljos.Ui.DragSource
 	DropArea QtQuick.DropArea
+	Flickable QtQuick.Flickable
 	Font QtQuick.Font
+	FontMetrics QtQuick.FontMetrics
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
 	Hover Ljos.Ui.Hover
+	Image QtQuick.Image
+	IntValidator QtQuick.IntValidator
 	Item QtQuick.Item
+	KeyEvent QtQuick.KeyEvent
+	Keys QtQuick.Keys
 	Layout QtQuick.Layouts.Layout
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
@@ -586,15 +594,22 @@ module Ljos.Ui
 	PropertyChanges QtQuick.PropertyChanges
 	RadialGradient QtQuick.Shapes.RadialGradient
 	Rectangle Ljos.Ui.Rectangle
+	RegularExpressionValidator QtQuick.RegularExpressionValidator
 	Repeater QtQuick.Repeater
 	Row Ljos.Ui.Row
+	Screen QtQuick.Screen
 	Shape QtQuick.Shapes.Shape
 	ShapeGradient QtQuick.Shapes.ShapeGradient
 	ShapePath QtQuick.Shapes.ShapePath
+	Shortcut QtQuick.Shortcut
 	State QtQuick.State
 	Tap Ljos.Ui.Tap
 	Text QtQuick.Text
+	TextEdit QtQuick.TextEdit
+	TextInput QtQuick.TextInput
+	TextMetrics QtQuick.TextMetrics
 	Wheel Ljos.Ui.Wheel
+	Window QtQuick.Window
 	type Ljos.Ui.Box Box
 		prototype Ljos.Ui.Arrangement
 		enum Direction Row=0 Column=1
@@ -1016,7 +1031,7 @@ module Ljos.Ui
 		method start
 		method startDrag
 		method cancel
-		method drop
+		method drop returns:int
 	type Ljos.Ui.ItemView ItemView
 		prototype QtQuick.Flickable named
 		default data
@@ -1095,7 +1110,7 @@ module Ljos.Ui
 		method positionViewAtIndex
 		method positionViewAtBeginning
 		method positionViewAtEnd
-		method indexAt
+		method indexAt returns:int
 		method itemAt
 		method itemAtIndex
 		method forceLayout
@@ -1163,8 +1178,8 @@ module Qt.labs.folderlistmodel
 		signal countChanged
 		signal statusChanged
 		method get
-		method indexOf
-		method isFolder
+		method indexOf returns:int
+		method isFolder returns:bool
 
 module Qt.labs.lottieqt
 	LottieAnimation Qt.labs.lottieqt.LottieAnimation
@@ -1200,7 +1215,7 @@ module Qt.labs.lottieqt
 		method stop
 		method gotoAndPlay
 		method gotoAndStop
-		method getDuration
+		method getDuration returns:real
 
 module Qt.labs.qmlmodels
 	DelegateChoice QtQml.Models.DelegateChoice
@@ -1220,7 +1235,7 @@ module Qt.labs.qmlmodels
 		signal rowsChanged
 		method index
 		method data
-		method setData
+		method setData returns:bool
 		method getRow
 		method setRow
 		method appendRow
@@ -1267,11 +1282,11 @@ module Qt.labs.qmlmodels
 		signal columnCountChanged
 		signal rowsChanged
 		method index
-		method rowCount
-		method hasChildren
+		method rowCount returns:int
+		method hasChildren returns:bool
 		method parent
 		method data
-		method setData
+		method setData returns:bool
 		method getRow
 		method setRow
 		method appendRow
@@ -1361,7 +1376,7 @@ module QtCore
 		is singleton
 		enum StandardLocation DesktopLocation=0 DocumentsLocation=1 FontsLocation=2 ApplicationsLocation=3 MusicLocation=4 MoviesLocation=5 PicturesLocation=6 TempLocation=7 HomeLocation=8 AppLocalDataLocation=9 CacheLocation=10 GenericDataLocation=11 RuntimeLocation=12 ConfigLocation=13 DownloadLocation=14 GenericCacheLocation=15 GenericConfigLocation=16 AppDataLocation=17 AppConfigLocation=18 PublicShareLocation=19 TemplatesLocation=20 StateLocation=21 GenericStateLocation=22
 		enum LocateOption LocateFile=0 LocateDirectory=1
-		method displayName
+		method displayName returns:string
 		method writableLocation
 		method standardLocations
 		method findExecutable
@@ -1417,9 +1432,9 @@ module QtMultimedia
 		method remove
 		method keys
 		method clear
-		method isEmpty
-		method stringValue
-		method metaDataKeyToString
+		method isEmpty returns:bool
+		method stringValue returns:string
+		method metaDataKeyToString returns:string
 	type QtMultimedia.MediaPlayer MediaPlayer
 		prototype QtQml.QtObject named
 		enum PlaybackState StoppedState=0 PlayingState=1 PausedState=2
@@ -1506,9 +1521,9 @@ module QtMultimedia
 		signal loadedChanged
 		method play
 		method stop
-		method isLoaded
-		method isMuted
-		method isPlaying
+		method isLoaded returns:bool
+		method isMuted returns:bool
+		method isPlaying returns:bool
 	type QtMultimedia.Video Video
 		prototype QtMultimedia.VideoOutput named
 		prop source QtQml.url named
@@ -1669,7 +1684,7 @@ module QtPositioning
 		method stop
 		method update
 		method backendProperty
-		method setBackendProperty
+		method setBackendProperty returns:bool
 	type QtPositioning.QtPositioning QtPositioning
 		prototype QtQml.QtObject named
 		is singleton
@@ -1875,7 +1890,7 @@ module QtQml
 		signal progressChanged
 		method createObject
 		method incubateObject
-		method errorString
+		method errorString returns:string
 	type QtQml.Connections Connections
 		prototype QtQml.QtObject named
 		is parser
@@ -2049,11 +2064,11 @@ module QtQml.Models
 		method reset
 		method clearSelection
 		method clearCurrentIndex
-		method isSelected
-		method isRowSelected
-		method isColumnSelected
-		method rowIntersectsSelection
-		method columnIntersectsSelection
+		method isSelected returns:bool
+		method isRowSelected returns:bool
+		method isColumnSelected returns:bool
+		method rowIntersectsSelection returns:bool
+		method columnIntersectsSelection returns:bool
 		method selectedRows
 		method selectedColumns
 	type QtQml.Models.ListElement ListElement
@@ -2134,7 +2149,7 @@ module QtQml.Models
 		method invalidate
 		method invalidateSorter
 		method setPrimarySorter
-		method rowCount
+		method rowCount returns:int
 	type QtQml.Models.SorterBase SorterBase
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -2203,7 +2218,7 @@ module QtQml.XmlListModel
 		signal progressChanged
 		signal statusChanged
 		method reload
-		method errorString
+		method errorString returns:string
 	type QtQml.XmlListModel.XmlListModelRole XmlListModelRole
 		prototype QtQml.QtObject named
 		prop name QtQml.string named
@@ -2536,15 +2551,15 @@ module QtQuick
 		method getContext
 		method requestPaint
 		method markDirty
-		method requestAnimationFrame
+		method requestAnimationFrame returns:int
 		method cancelRequestAnimationFrame
 		method loadImage
 		method unloadImage
-		method isImageLoaded
-		method isImageLoading
-		method isImageError
-		method save
-		method toDataURL
+		method isImageLoaded returns:bool
+		method isImageLoading returns:bool
+		method isImageError returns:bool
+		method save returns:bool
+		method toDataURL returns:string
 	type QtQuick.CloseEvent CloseEvent
 		prototype QtQml.QtObject named
 		is uncreatable
@@ -2630,7 +2645,7 @@ module QtQuick
 		prop text QtQml.string named readonly
 		prop urls QtQml.var named list readonly
 		prop formats QtQml.var named list readonly
-		method getDataAsString
+		method getDataAsString returns:string
 		method getDataAsArrayBuffer
 		method acceptProposedAction
 		method accept
@@ -2856,10 +2871,10 @@ module QtQuick
 		signal overlinePositionChanged
 		signal strikeOutPositionChanged
 		signal lineWidthChanged
-		method advanceWidth
+		method advanceWidth returns:real
 		method boundingRect
 		method tightBoundingRect
-		method elidedText
+		method elidedText returns:string
 	type QtQuick.FrameAnimation FrameAnimation
 		prototype QtQml.QtObject named
 		prop running QtQml.bool named
@@ -3080,7 +3095,7 @@ module QtQuick
 		method mapFromItem
 		method mapToGlobal
 		method mapFromGlobal
-		method contains
+		method contains returns:bool
 		method childAt
 		method forceActiveFocus
 		method nextItemInFocusChain
@@ -3094,7 +3109,7 @@ module QtQuick
 		prop count QtQml.int named readonly
 		prop nativeScanCode QtQml.int named readonly
 		prop accepted QtQml.bool named
-		method matches
+		method matches returns:bool
 	type QtQuick.KeyNavigation KeyNavigation
 		attached QtQuick.KeyNavigationAttached
 		is uncreatable
@@ -3484,7 +3499,7 @@ module QtQuick
 		method incrementCurrentIndex
 		method decrementCurrentIndex
 		method positionViewAtIndex
-		method indexAt
+		method indexAt returns:int
 		method itemAt
 		method itemAtIndex
 	type QtQuick.PauseAnimation PauseAnimation
@@ -4095,20 +4110,20 @@ module QtQuick
 		method index
 		method modelIndex
 		method cellAtIndex
-		method rowAtIndex
-		method columnAtIndex
-		method isRowLoaded
-		method isColumnLoaded
-		method columnWidth
-		method rowHeight
+		method rowAtIndex returns:int
+		method columnAtIndex returns:int
+		method isRowLoaded returns:bool
+		method isColumnLoaded returns:bool
+		method columnWidth returns:real
+		method rowHeight returns:real
 		method setColumnWidth
 		method setRowHeight
-		method explicitColumnWidth
-		method explicitRowHeight
+		method explicitColumnWidth returns:real
+		method explicitRowHeight returns:real
 		method clearColumnWidths
 		method clearRowHeights
-		method implicitColumnWidth
-		method implicitRowHeight
+		method implicitColumnWidth returns:real
+		method implicitRowHeight returns:real
 		method positionViewAtRow
 		method positionViewAtCell
 		method positionViewAtIndex
@@ -4241,7 +4256,7 @@ module QtQuick
 		signal bottomPaddingChanged
 		signal linkActivated link:string
 		signal linkHovered link:string
-		method linkAt
+		method linkAt returns:string
 	type QtQuick.TextDocument TextDocument
 		is uncreatable
 		enum Status Null=0 Loading=1 Loaded=2 Saving=3 Saved=4 ReadError=5 WriteError=6 NonLocalFileError=7
@@ -4284,10 +4299,10 @@ module QtQuick
 		signal cursorSelectionChanged
 		signal linkActivated link:string
 		signal linkHovered link:string
-		method linkAt
+		method linkAt returns:string
 		method append
 		method remove
-		method getFormattedText
+		method getFormattedText returns:string
 	type QtQuick.TextInput TextInput
 		prototype QtQuick.TextEditorBase
 		prop displayText QtQml.string named readonly
@@ -4370,8 +4385,8 @@ module QtQuick
 		signal rootIndexChanged
 		signal expanded row:int depth:int
 		signal collapsed row:int recursively:bool
-		method depth
-		method isExpanded
+		method depth returns:int
+		method isExpanded returns:bool
 		method expand
 		method collapse
 		method toggleExpanded
@@ -4498,13 +4513,13 @@ module QtQuick
 		method showMinimized
 		method showMaximized
 		method showFullScreen
-		method close
+		method close returns:bool
 		method raise
 		method lower
 		method requestActivate
 		method alert
-		method startSystemMove
-		method startSystemResize
+		method startSystemMove returns:bool
+		method startSystemResize returns:bool
 	type QtQuick.WindowContainer WindowContainer
 		prototype QtQuick.Item named
 		prop window QtQml.QtObject named pointer
@@ -4580,7 +4595,7 @@ module QtQuick
 		signal nextPageAction
 		signal showOnScreenAction
 		method announce
-		method stripHtml
+		method stripHtml returns:string
 		method setIgnored
 	type QtQuick.EasingCurve EasingCurve
 		is uncreatable
@@ -4678,7 +4693,7 @@ module QtQuick
 		method start
 		method startDrag
 		method cancel
-		method drop
+		method drop returns:int
 	type QtQuick.HandlerPoint HandlerPoint
 		is uncreatable
 		prop position QtQml.point named readonly
@@ -4805,7 +4820,7 @@ module QtQuick
 		method positionViewAtIndex
 		method positionViewAtBeginning
 		method positionViewAtEnd
-		method indexAt
+		method indexAt returns:int
 		method itemAt
 		method itemAtIndex
 		method forceLayout
@@ -5087,7 +5102,8 @@ module QtQuick
 		signal orientationChanged
 		signal primaryOrientationChanged
 		signal orientationUpdateMaskChanged
-		method angleBetween
+		method angleBetween returns:int
+		method points returns:real
 	type QtQuick.TableViewAttached TableViewAttached
 		is uncreatable
 		prop view QtQml.QtObject named pointer readonly
@@ -5194,11 +5210,11 @@ module QtQuick
 		method undo
 		method redo
 		method clear
-		method getText
+		method getText returns:string
 		method moveCursorSelection
-		method positionAt
+		method positionAt returns:int
 		method positionToRectangle
-		method isRightToLeft
+		method isRightToLeft returns:bool
 	type QtQuick.ViewTransitionAttached ViewTransitionAttached
 		is uncreatable
 		prop item QtQml.QtObject named pointer readonly
@@ -5332,9 +5348,9 @@ module QtQuick.Controls
 		signal fromChanged
 		signal toChanged
 		signal countChanged
-		method monthAt
-		method yearAt
-		method indexOf
+		method monthAt returns:int
+		method yearAt returns:int
+		method indexOf returns:int
 	type QtQuick.Controls.ContextMenu ContextMenu
 		attached QtQuick.Controls.ContextMenuAttached
 		is uncreatable
@@ -6695,8 +6711,8 @@ module QtQuick.Pdf
 		signal pageModelChanged
 		signal passwordRequired
 		method pagePointSize
-		method pageLabel
-		method pageIndexForLabel
+		method pageLabel returns:string
+		method pageIndexForLabel returns:int
 		method getSelection
 		method getSelectionAtIndex
 		method getAllText
@@ -6968,7 +6984,7 @@ module QtQuick.Shapes
 		signal statusChanged
 		signal containsModeChanged
 		signal boundingRectChanged
-		method contains
+		method contains returns:bool
 	type QtQuick.Shapes.ShapeGradient ShapeGradient
 		prototype QtQuick.Gradient named
 		is uncreatable
@@ -7942,7 +7958,7 @@ module QtQuick.Templates
 		signal verticalChanged
 		signal touchDragThresholdChanged
 		method setValues
-		method valueAt
+		method valueAt returns:real
 	type QtQuick.Templates.RoundButton RoundButton
 		prototype QtQuick.Templates.Button named
 		prop radius QtQml.real named reset
@@ -8063,7 +8079,7 @@ module QtQuick.Templates
 		signal moved
 		method increase
 		method decrease
-		method valueAt
+		method valueAt returns:real
 	type QtQuick.Templates.SpinBox SpinBox
 		prototype QtQuick.Templates.Control named
 		prop from QtQml.int named
@@ -10790,11 +10806,11 @@ module QtTest
 		prop height QtQml.int named readonly
 		prop size QtQml.var named readonly
 		method pixel
-		method red
-		method green
-		method blue
-		method alpha
-		method equals
+		method red returns:int
+		method green returns:int
+		method blue returns:int
+		method alpha returns:int
+		method equals returns:bool
 		method save
 	type QtTest.SignalSpy SignalSpy
 		prototype QtQuick.Item named
@@ -10838,10 +10854,10 @@ module QtTest
 		method tryVerify
 		method wait
 		method sleep
-		method waitForRendering
-		method isPolishScheduled
-		method waitForPolish
-		method waitForItemPolished
+		method waitForRendering returns:bool
+		method isPolishScheduled returns:bool
+		method waitForPolish returns:bool
+		method waitForItemPolished returns:bool
 		method createTemporaryObject
 		method createTemporaryQmlObject
 		method findChild
