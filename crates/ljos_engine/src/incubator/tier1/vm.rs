@@ -679,6 +679,10 @@ pub(crate) fn field(v: &Value, name: &str) -> Option<Value> {
         },
         Value::Font(f) => match name {
             "family" => Some(Value::String(f.family.clone())),
+            // An alias of `font.families` reads it here, with no JS to ask.
+            "families" => Some(Value::List(std::sync::Arc::new(
+                f.families().map(|a| Value::String(a.clone())).collect(),
+            ))),
             "bold" => Some(Value::Bool(f.bold())),
             "weight" => Some(Value::Real(f64::from(f.weight))),
             "italic" => Some(Value::Bool(f.italic)),

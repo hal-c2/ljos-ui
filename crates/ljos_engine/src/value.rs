@@ -692,10 +692,11 @@ impl Font {
     }
 
     /// The families in the order they are tried (`QFont::families`): the
-    /// family, then the fallbacks. Empty when the family is.
+    /// family, then the fallbacks. Empty when the font names none.
     pub fn families(&self) -> impl Iterator<Item = &Atom> {
         let fallbacks = self.fallback_families().map_or(&[][..], |l| &**l);
-        (!self.family.is_empty())
+        // QFont keeps an empty first family when others follow it.
+        (!self.family.is_empty() || !fallbacks.is_empty())
             .then_some(&self.family)
             .into_iter()
             .chain(fallbacks)
