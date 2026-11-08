@@ -88,6 +88,29 @@ fn out_of_memory_is_reported_and_context_survives() {
     assert!(host.memory_stats().unwrap().malloc_size < 4 * 1024 * 1024);
 }
 
+/// Calls itself `n` deep: `n`, or -1 once a RangeError says the stack ran
+/// out.
+const RECURSE: &str = "(function () {
+    function f(n) { return n == 0 ? 0 : 1 + f(n - 1) }
+    try { return f(200) } catch (e) { return e instanceof RangeError ? -1 : -2 }
+})()";
+
+#[test]
+fn a_call_that_goes_deep_uses_the_threads_stack() {
+    assert_eq!(eval_num(&plain(), RECURSE).unwrap(), 200.0);
+}
+
+#[test]
+fn a_smaller_max_stack_is_kept_to() {
+    let host = JsHost::new(JsConfig {
+        max_stack: Some(16 * 1024),
+        ..JsConfig::default()
+    })
+    .unwrap();
+    assert_eq!(eval_num(&host, RECURSE).unwrap(), -1.0);
+    assert_eq!(eval_num(&host, "40 + 2").unwrap(), 42.0);
+}
+
 #[test]
 fn exception_carries_message_stack_and_position() {
     let host = plain();

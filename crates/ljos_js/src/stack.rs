@@ -22,7 +22,19 @@ pub(crate) fn room_below_here() -> Option<usize> {
     let here = std::hint::black_box(0u8);
     let sp = (&raw const here) as usize;
     let end = lowest()?;
-    Some(sp.checked_sub(end)?.saturating_sub(RESERVE))
+    sp.checked_sub(end).map(room_of)
+}
+
+/// The room in `left` bytes of stack. A thread with less than twice the
+/// reserve left keeps half of it for native code instead, so that JS still
+/// throws before the stack runs out: no room at all would be read as no
+/// limit.
+fn room_of(left: usize) -> usize {
+    if left > 2 * RESERVE {
+        left - RESERVE
+    } else {
+        left / 2
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -100,6 +112,15 @@ mod tests {
             assert!(room > 3 << 20, "room {room}");
             assert!(room < 4 << 20, "room {room}");
         }
+    }
+
+    #[test]
+    fn a_small_stack_keeps_half_for_native_code() {
+        assert_eq!(room_of(4 << 20), (4 << 20) - RESERVE);
+        assert_eq!(room_of(2 * RESERVE + 2), RESERVE + 2);
+        assert_eq!(room_of(2 * RESERVE), RESERVE);
+        assert_eq!(room_of(RESERVE), RESERVE / 2);
+        assert_eq!(room_of(64 * 1024), 32 * 1024);
     }
 
     #[test]
