@@ -1323,12 +1323,16 @@ impl<'s> Pass<'s> {
         let new = renamed_type(name).unwrap_or(name);
         let (qt, lowered) = if !ty.module.starts_with("QtQml") {
             // What arranges children is `Ljos.Layout`'s, on its own line.
-            let lowered = if self.ui.type_named(new).is_none() && self.layout.type_named(new).is_some() {
-                (LAYOUT, self.layout_line)
-            } else {
-                (MODULE, self.ui_line)
-            };
-            (last(&|i| matches!(i, Import::Qt { layouts: false })), lowered)
+            let lowered =
+                if self.ui.type_named(new).is_none() && self.layout.type_named(new).is_some() {
+                    (LAYOUT, self.layout_line)
+                } else {
+                    (MODULE, self.ui_line)
+                };
+            (
+                last(&|i| matches!(i, Import::Qt { layouts: false })),
+                lowered,
+            )
         } else if MODELS.contains(&name) {
             (
                 last(&|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
