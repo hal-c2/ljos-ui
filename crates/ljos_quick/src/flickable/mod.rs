@@ -476,6 +476,18 @@ pub(crate) fn can_flick(e: &Engine, f: ObjectId, axis: usize) -> bool {
     }
 }
 
+/// Whether the user can move the content in a direction by hand: the
+/// Flickable takes the pointer and the wheel, and lets that direction
+/// move ([`can_flick`]). A scroll bar may move it where this says no.
+pub fn can_scroll(engine: &Engine, flickable: ObjectId, horizontal: bool) -> bool {
+    is_flickable(engine, flickable)
+        && engine.untrack(|| {
+            flag(engine, flickable, Flickable::INTERACTIVE.index)
+                && flag(engine, flickable, Item::ENABLED.index)
+                && can_flick(engine, flickable, if horizontal { X } else { Y })
+        })
+}
+
 /// Puts the content at `to` in one direction, as scrolling does: no
 /// assignment, so a binding on the position stays.
 pub(crate) fn scroll_to(e: &Engine, f: ObjectId, axis: usize, to: f64) {
