@@ -529,7 +529,17 @@ pub fn text_style(f: &Font) -> TextStyle {
         DEFAULT_PIXEL_SIZE
     };
     TextStyle {
-        family: family_of(&f.family),
+        family: match &f.fallback_families {
+            None => family_of(&f.family),
+            // The text engine reads a comma-separated family as the list
+            // it tries in order.
+            Some(_) => f
+                .families()
+                .map(Atom::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+                .into(),
+        },
         pixel_size: pixel_size as f32,
         weight: f.weight.clamp(1, 1000) as f32,
         italic: f.italic,
