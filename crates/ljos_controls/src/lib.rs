@@ -189,6 +189,7 @@ pub fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("Qt.labs.platform" 1.0 => [
         PlatformMenuBar, PlatformMenu, PlatformMenuItem, PlatformMenuSeparator,
     ]));
+    system_menu::register(engine);
     // Only asked while a reload is tracked (`ljos run --watch`).
     engine.register_migrate::<StackView>();
     parts::register(
