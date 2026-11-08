@@ -93,7 +93,8 @@ pub(crate) struct Members {
     typed: Vec<Range<usize>>,
     /// An object whose type the pass does not know, or a delegate.
     unsure: bool,
-    /// The file imports a directory by path, not under a name.
+    /// The file imports a directory by path, or a module of the project,
+    /// not under a name: a type it may bring takes a name the pass gives.
     pathed: bool,
 }
 
@@ -125,7 +126,8 @@ impl Members {
         }
     }
 
-    /// `import "qml"`: what the directory has is in sight.
+    /// `import "qml"` or `import Gauges`: what the directory or the
+    /// project's module has is in sight.
     pub(crate) fn imports_by_path(&mut self) {
         self.pathed = true;
     }

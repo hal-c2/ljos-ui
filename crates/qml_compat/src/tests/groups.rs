@@ -188,6 +188,19 @@ fn a_directory_imported_by_path_has_its_types_by_their_roots() {
     assert!(text.contains("fill: Lib.tint"), "{text}");
 }
 
+/// A module of the project may bring an `App` of its own: `Qt.platform`
+/// stays Qt's, and a member Ljos.Core gives a lowercase name still lowers.
+#[test]
+fn a_member_of_qt_stays_qt_s_where_a_module_of_the_project_may_name_it() {
+    assert_eq!(
+        lowered_in_project(
+            "import QtQuick\nimport Gauges\nItem { x: Qt.platform.os.length; y: Qt.point(1, 2).y }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         import Gauges\nItem { x: Qt.platform.os.length; y: point(1, 2).y }\n"
+    );
+}
+
 #[test]
 fn a_singleton_of_the_project_is_read_as_its_root() {
     // A `QtObject` has no `fill`: its `color` is its own.
