@@ -119,6 +119,34 @@ TapHandler {\n\
     ));
 }
 
+/// A parameter or a local of a renamed member's new name is the script's,
+/// in Qt as once lowered: the file is lowered. One that may not be bound
+/// where it is read still keeps it.
+#[test]
+fn a_new_name_a_script_binds_is_its_own() {
+    for source in [
+        "import QtQuick\nRectangle { function shade(fill) { return Qt.darker(fill) } }\n",
+        "import QtQuick\nRectangle { function shade(...fill) { return fill.length } }\n",
+        "import QtQuick\nRectangle { function shade({ fill }) { return fill } }\n",
+        "import QtQuick\nItem { TapHandler { onTapped: (buttons) => console.log(buttons) } }\n",
+        "import QtQuick\nRectangle { opacity: { const fill = 1; return fill } }\n",
+        "import QtQuick\nRectangle { function f() { if (true) { return fill } var fill = 1 } }\n",
+        "import QtQuick\nRectangle { function f() { function fill() { return 1 } return fill() } }\n",
+    ] {
+        lowered(source);
+    }
+    let capture = "`fill` would be the `Rectangle`'s own once lowered (Qt's `color`), not what it names in Qt";
+    for source in [
+        // Declared in an inner block, read outside it.
+        "import QtQuick\nRectangle { function f() { if (true) { var fill = 1 } return fill } }\n",
+        // A parameter of another function.
+        "import QtQuick\nRectangle { function f(fill) { return 1 }\n    function g() { return fill } }\n",
+        "import QtQuick\nRectangle { function f() { const g = (fill) => fill; return fill } }\n",
+    ] {
+        assert_eq!(kept_for(source), capture, "{source}");
+    }
+}
+
 /// Qt's grab permissions are a gesture's `takeOver`, which is not built
 /// (docs/DIALECT.md §4.7): set, read or named by their keys, they keep the
 /// file.
