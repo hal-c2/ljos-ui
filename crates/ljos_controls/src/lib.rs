@@ -43,6 +43,7 @@ mod menu;
 mod menu_bar;
 mod page_indicator;
 mod parts;
+mod platform_menu;
 mod popup;
 mod rows;
 mod scroll_bar;
@@ -97,6 +98,7 @@ pub use ljos_quick::Palette;
 pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use menu_bar::{MenuBar, MenuBarItem};
 pub use page_indicator::PageIndicator;
+pub use platform_menu::{PlatformMenu, PlatformMenuBar, PlatformMenuItem, PlatformMenuSeparator};
 pub use popup::{Drawer, Overlay, OverlayAttached, Popup, PopupAnchors, item_popup, popup_item};
 pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
 pub use scroll_view::ScrollView;
@@ -183,6 +185,10 @@ pub fn register(engine: &Engine) {
     context_menu::register(engine);
     combobox::register(engine);
     menu_bar::register(engine);
+    // Qt.labs.platform's menus: the system's menu bar, for any window.
+    engine.register_module(ljos_engine::module!("Qt.labs.platform" 1.0 => [
+        PlatformMenuBar, PlatformMenu, PlatformMenuItem, PlatformMenuSeparator,
+    ]));
     // Only asked while a reload is tracked (`ljos run --watch`).
     engine.register_migrate::<StackView>();
     parts::register(

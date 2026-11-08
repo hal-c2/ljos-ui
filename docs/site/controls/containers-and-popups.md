@@ -155,6 +155,8 @@ Column {
 
 `MenuBar` creates a `MenuBarItem` for each `Menu` added to it (`addMenu()`, `removeMenu()`, `count`), matching the height of its items and opening a menu as soon as the pointer presses its `MenuBarItem` (Escape or pressing outside closes it).
 
+`Qt.labs.platform` has a `MenuBar` of the system's own, with `Menu`, `MenuItem` and `MenuSeparator`, for any window, a plain `Window` too. On macOS it is the system's menu bar, showing the active window's bar. A `MenuItem` takes `text`, `shortcut` (`Ctrl` is Command, `Meta` is Control), `enabled`, `visible`, `checkable`, `checked` and `role`, and emits `triggered` when chosen there. `MenuItem.AboutRole`, `PreferencesRole` and `QuitRole` move an item to the application menu whatever its text, and `NoRole` keeps it in its menu. Where the system has no menu bar of its own, as on Linux and Windows, the bar shows nothing.
+
 ```qml
 import QtQuick
 import QtQuick.Controls.Basic

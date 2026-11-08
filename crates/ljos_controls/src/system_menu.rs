@@ -17,6 +17,11 @@
 //! "preferences"; "quit" or "exit". The first item of each role takes the
 //! place and the others are not shown, and a menu left with nothing is
 //! not shown, as on Qt 6.11.
+//!
+//! `Qt.labs.platform`'s `MenuBar` ([`crate::platform_menu`]) is shown the
+//! same way, for the window it belongs to; its items say their place with
+//! `role`, the text heuristic being the default, and what is not
+//! `visible` is not shown.
 
 use std::cell::RefCell;
 
@@ -31,7 +36,8 @@ use crate::action::Action;
 use crate::button::AbstractButton;
 use crate::menu::{Menu, MenuItem, MenuSeparator, action_of, items, sub_menu_of};
 use crate::menu_bar::MenuBar;
-use crate::util::{flag, is_a, object};
+use crate::platform_menu::{self, PlatformMenu, PlatformMenuBar, PlatformMenuItem};
+use crate::util::{check, flag, is_a, object};
 use crate::window::Window;
 use ljos_quick::focus::WindowAttached;
 
@@ -62,6 +68,42 @@ pub(crate) fn adopt(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
         Item::CLIP.index,
         OverrideContent::Value(Value::Bool(true)),
     )?;
+    let att = e.attached_object(bar, &MetaRef::Static(Window::static_meta()))?;
+    track(e, bar, move |e| {
+        // The window's own `active`, which follows activation; the
+        // attached one of an item in a window's bar did not.
+        let active = object(e, att, WindowAttached::WINDOW.index)
+            .is_some_and(|win| flag(e, win, Window::ACTIVE.index));
+        (describe(e, bar), active)
+    })
+}
+
+/// Gives a `Qt.labs.platform` `MenuBar` to the system's menu bar, if the
+/// system has one: done when the bar is complete. Elsewhere it makes
+/// nothing.
+pub(crate) fn adopt_platform(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
+    if !Platform::of(e).menu_bar().native() {
+        return Ok(());
+    }
+    // Unless `window` names one, the bar's window is the first of its
+    // parents that is a window, as Qt finds it; they do not change once
+    // the bar is complete.
+    let declared_in =
+        std::iter::successors(e.owner(bar), |o| e.owner(*o)).find(|o| is_a::<Window>(e, *o));
+    track(e, bar, move |e| {
+        let window = object(e, bar, PlatformMenuBar::WINDOW.index).or(declared_in);
+        let active = window.is_some_and(|win| flag(e, win, Window::ACTIVE.index));
+        (describe_platform(e, bar), active)
+    })
+}
+
+/// Follows what `read` says of `bar` (what it is, and whether its window
+/// is active), and shows the active window's bar.
+fn track(
+    e: &Engine,
+    bar: ObjectId,
+    read: impl Fn(&Engine) -> (SystemBar, bool) + 'static,
+) -> Result<(), EngineError> {
     let bars = e.extension::<Bars>();
     if !bars.listening.replace(true) {
         // A bar that goes (its window unloaded) is shown no more, and its
@@ -75,13 +117,8 @@ pub(crate) fn adopt(e: &Engine, bar: ObjectId) -> Result<(), EngineError> {
             }
         });
     }
-    let att = e.attached_object(bar, &MetaRef::Static(Window::static_meta()))?;
     e.effect_in(bar, move |e| {
-        let described = describe(e, bar);
-        // The window's own `active`, which follows activation; the
-        // attached one of an item in a window's bar did not.
-        let active = object(e, att, WindowAttached::WINDOW.index)
-            .is_some_and(|win| flag(e, win, Window::ACTIVE.index));
+        let (described, active) = read(e);
         e.untrack(|| {
             let bars = e.extension::<Bars>();
             {
@@ -129,7 +166,14 @@ fn publish(e: &Engine) {
 /// as a click on it would. Returns whether there was such an item.
 pub fn choose(e: &Engine, id: u64) -> bool {
     let item = ObjectId::from(KeyData::from_ffi(id));
-    if !e.is_alive(item) || !is_a::<AbstractButton>(e, item) {
+    if !e.is_alive(item) {
+        return false;
+    }
+    if is_a::<PlatformMenuItem>(e, item) {
+        check(e, "MenuItem", platform_menu::trigger(e, item));
+        return true;
+    }
+    if !is_a::<AbstractButton>(e, item) {
         return false;
     }
     let _ = e.invoke_by_name(item, "click", &[]);
@@ -263,21 +307,34 @@ fn describe_menu(
             continue;
         }
         let described = describe_item(e, item);
-        if let Some(app) = app.as_deref_mut() {
-            let place = match role_of(&described.text) {
-                Role::About => Some(&mut app.about),
-                Role::Preferences => Some(&mut app.preferences),
-                Role::Quit => Some(&mut app.quit),
-                Role::None => None,
-            };
-            if let Some(place) = place {
-                place.get_or_insert(described);
-                continue;
-            }
+        let role = role_of(&described.text);
+        if let Some(described) = place(app.as_deref_mut(), role, described) {
+            entries.push(SystemEntry::Item(described));
         }
-        entries.push(SystemEntry::Item(described));
     }
-    // Separators at the ends or side by side show nothing.
+    trim_separators(&mut entries);
+    (!entries.is_empty()).then_some(SystemMenu { title, entries })
+}
+
+/// Puts `item` in the application menu where its role has a place there
+/// and `app` is given (an item of the bar's own menus), the first item of
+/// a role taking the place; otherwise gives it back for its menu.
+fn place(app: Option<&mut SystemBar>, role: Role, item: SystemItem) -> Option<SystemItem> {
+    let Some(app) = app else {
+        return Some(item);
+    };
+    let place = match role {
+        Role::About => &mut app.about,
+        Role::Preferences => &mut app.preferences,
+        Role::Quit => &mut app.quit,
+        Role::None => return Some(item),
+    };
+    place.get_or_insert(item);
+    None
+}
+
+/// Separators at the ends or side by side show nothing.
+fn trim_separators(entries: &mut Vec<SystemEntry>) {
     entries.dedup_by(|a, b| {
         matches!(a, SystemEntry::Separator) && matches!(b, SystemEntry::Separator)
     });
@@ -287,6 +344,90 @@ fn describe_menu(
     while matches!(entries.first(), Some(SystemEntry::Separator)) {
         entries.remove(0);
     }
+}
+
+/// The objects of the list property `p` of `obj` (tracked).
+fn objects(e: &Engine, obj: ObjectId, p: ljos_engine::PropIndex) -> Vec<ObjectId> {
+    match e.read(obj, p) {
+        Value::List(list) => list
+            .iter()
+            .filter_map(|v| match v {
+                Value::Object(o) => Some(*o),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A `Qt.labs.platform` bar as the system shows it (tracked).
+fn describe_platform(e: &Engine, bar: ObjectId) -> SystemBar {
+    let mut out = SystemBar::default();
+    for menu in objects(e, bar, PlatformMenuBar::MENUS.index) {
+        if let Some(m) = describe_platform_menu(e, menu, true, Some(&mut out)) {
+            out.menus.push(m);
+        }
+    }
+    out
+}
+
+/// A `Qt.labs.platform` menu and what is in it; `None` if it is not
+/// visible or has nothing to show. A disabled menu's items cannot be
+/// chosen. Items of the application menu go to `app` where it is given.
+fn describe_platform_menu(
+    e: &Engine,
+    menu: ObjectId,
+    enabled: bool,
+    mut app: Option<&mut SystemBar>,
+) -> Option<SystemMenu> {
+    if !is_a::<PlatformMenu>(e, menu) || !flag(e, menu, PlatformMenu::VISIBLE.index) {
+        return None;
+    }
+    let title = match e.read(menu, PlatformMenu::TITLE.index) {
+        Value::String(s) => without_mnemonic(&s),
+        _ => String::new(),
+    };
+    let enabled = enabled && flag(e, menu, PlatformMenu::ENABLED.index);
+    let mut entries = Vec::new();
+    for item in objects(e, menu, PlatformMenu::ITEMS.index) {
+        if is_a::<PlatformMenu>(e, item) {
+            if let Some(m) = describe_platform_menu(e, item, enabled, None) {
+                entries.push(SystemEntry::Menu(m));
+            }
+            continue;
+        }
+        if !is_a::<PlatformMenuItem>(e, item) || !flag(e, item, PlatformMenuItem::VISIBLE.index) {
+            continue;
+        }
+        if flag(e, item, PlatformMenuItem::SEPARATOR.index) {
+            entries.push(SystemEntry::Separator);
+            continue;
+        }
+        let text = match e.read(item, PlatformMenuItem::TEXT.index) {
+            Value::String(s) => without_mnemonic(&s),
+            _ => String::new(),
+        };
+        use platform_menu::role as r;
+        let role = match e.read(item, PlatformMenuItem::ROLE.index).to_number() as i32 {
+            r::TEXT_HEURISTIC_ROLE => role_of(&text),
+            r::ABOUT_ROLE => Role::About,
+            r::PREFERENCES_ROLE => Role::Preferences,
+            r::QUIT_ROLE => Role::Quit,
+            _ => Role::None,
+        };
+        let described = SystemItem {
+            id: item.data().as_ffi(),
+            text,
+            enabled: enabled && flag(e, item, PlatformMenuItem::ENABLED.index),
+            checkable: flag(e, item, PlatformMenuItem::CHECKABLE.index),
+            checked: flag(e, item, PlatformMenuItem::CHECKED.index),
+            key: key_of(e, &e.read(item, PlatformMenuItem::SHORTCUT.index)),
+        };
+        if let Some(described) = place(app.as_deref_mut(), role, described) {
+            entries.push(SystemEntry::Item(described));
+        }
+    }
+    trim_separators(&mut entries);
     (!entries.is_empty()).then_some(SystemMenu { title, entries })
 }
 
