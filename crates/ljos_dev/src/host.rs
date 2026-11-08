@@ -428,6 +428,17 @@ impl std::fmt::Debug for WarningsOf {
     }
 }
 
+/// Why the session's file of a key does not compile; empty when it does.
+type FailuresFn = dyn Fn(&str) -> Vec<CompileFault>;
+
+struct FailuresOf(Rc<FailuresFn>);
+
+impl std::fmt::Debug for FailuresOf {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FailuresOf")
+    }
+}
+
 /// The watcher never has more than one message out, and the watcher's
 /// state messages replace each other.
 const INBOX: usize = 5;
@@ -458,6 +469,7 @@ pub struct DevSession {
     /// The one of `entries` the root is made of.
     entry: String,
     runs: Runs,
+    failures_of: FailuresOf,
     warnings_of: WarningsOf,
     /// The keys the engine loaded since the last pump.
     loaded: Arc<Mutex<Vec<String>>>,
@@ -816,6 +828,17 @@ impl DevSession {
                 lock(&reloader).session().live().contains_key(key)
             }))
         };
+        let failures_of = {
+            let reloader = reloader.clone();
+            FailuresOf(Rc::new(move |key| {
+                lock(&reloader)
+                    .session()
+                    .failures()
+                    .find(|(k, _)| *k == key)
+                    .map(|(_, faults)| faults.to_vec())
+                    .unwrap_or_default()
+            }))
+        };
         let warnings_of = {
             let reloader = reloader.clone();
             WarningsOf(Rc::new(move |keys| {
@@ -860,6 +883,7 @@ impl DevSession {
             entries,
             entry,
             runs,
+            failures_of,
             warnings_of,
             loaded,
             properties,
@@ -1036,25 +1060,37 @@ impl DevSession {
                     });
                 }
                 DevMsg::Cleared => {
-                    // A theme that was refused is still wrong.
-                    engine.set_last_reload_error(self.theme_fault.clone());
                     self.more_errors = 0;
-                    out.push(Report::Cleared);
                     // An entry before this one was mended back to what
                     // the application has: it takes the window again.
                     let runs = self.runs.0.clone();
-                    let _ = self.choose(engine, host, &*runs, true);
+                    match self.choose(engine, host, &*runs, true) {
+                        Ok(()) => {
+                            // A theme that was refused is still wrong.
+                            engine.set_last_reload_error(self.theme_fault.clone());
+                            out.push(Report::Cleared);
+                        }
+                        // The files are what the application runs, and
+                        // that is still no window: why stands, whatever
+                        // was told since.
+                        Err(fault) => {
+                            engine.set_last_reload_error(Some(fault.clone()));
+                            out.push(Report::Failed {
+                                fault,
+                                more: self.more_errors,
+                            });
+                        }
+                    }
                 }
                 DevMsg::Failed(faults) => {
                     let Some(first) = faults.first() else {
                         continue;
                     };
                     let fault = fault_of(first);
-                    self.more_errors = faults.len() - 1;
                     engine.set_last_reload_error(Some(fault.clone()));
                     out.push(Report::Failed {
                         fault,
-                        more: self.more_errors,
+                        more: faults.len() - 1,
                     });
                     // The entry no longer compiles: the next one that
                     // does takes the window, while this one is mended.
@@ -1066,6 +1102,7 @@ impl DevSession {
                         // The overlay says why the entry was left.
                         engine.set_last_reload_error(Some(fault_of(first)));
                     }
+                    self.more_errors = faults.len() - 1;
                 }
                 DevMsg::Reload {
                     patch,
@@ -1133,12 +1170,24 @@ impl DevSession {
             // What was shown stays until an entry can be made.
             (_, Some(_)) => Ok(()),
             (Some(fault), None) => Err(fault),
-            (None, None) => Err(ReloadFault {
-                file: file_of(&self.entries[0]),
-                line: 0,
-                column: 0,
-                message: "no entry has a file".to_owned(),
-            }),
+            (None, None) => {
+                // An entry passed over because it does not compile: its
+                // mistake is why there is no window, as at the start.
+                let failed = self.entries.iter().find_map(|key| {
+                    let faults = (self.failures_of.0)(key);
+                    (!faults.is_empty()).then_some(faults)
+                });
+                if let Some(faults) = failed {
+                    self.more_errors = faults.len() - 1;
+                    return Err(fault_of(&faults[0]));
+                }
+                Err(ReloadFault {
+                    file: file_of(&self.entries[0]),
+                    line: 0,
+                    column: 0,
+                    message: "no entry has a file".to_owned(),
+                })
+            }
         }
     }
 
@@ -1222,7 +1271,10 @@ impl DevSession {
             // be made from the files before, or another entry is wanted.
             if let Err(fault) = self.choose(engine, host, &has, staying) {
                 engine.set_last_reload_error(Some(fault.clone()));
-                return Report::Failed { fault, more: 0 };
+                return Report::Failed {
+                    fault,
+                    more: self.more_errors,
+                };
             }
         }
         // The roots were made again, so what a fault no boundary took had
