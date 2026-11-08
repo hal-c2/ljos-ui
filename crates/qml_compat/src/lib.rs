@@ -75,6 +75,9 @@ pub const MODELS: &[&str] = &["ListModel", "ListElement", "Instantiator"];
 /// item: a `Timer`, a `Connections`, a `Component`.
 pub const CORE: &str = "Ljos.Core";
 
+/// Qt's dialogs, whose file and folder dialogs [`CONTROLS`] has as they are.
+pub const QT_DIALOGS: &str = "QtQuick.Dialogs";
+
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
 /// taking the pragma out, and `ljos check` then says what to change
@@ -286,6 +289,7 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         layouts: None,
         controls: None,
         shapes: None,
+        dialogs: None,
         locals,
         imports: Vec::new(),
         imported: RefCell::default(),
@@ -402,6 +406,8 @@ struct Pass<'s> {
     controls: Option<Controls>,
     /// QtQuick.Shapes, when the file imports it.
     shapes: Option<&'static qt_types::Module>,
+    /// Qt's dialogs and [`CONTROLS`], when the file imports them.
+    dialogs: Option<Controls>,
     locals: &'s dyn Locals,
     /// The imports that name types, in the order written: the last that
     /// has a name is the one it is.
@@ -477,7 +483,8 @@ impl<'s> Pass<'s> {
                 && (matches!(
                     uri.as_str(),
                     "QtQuick" | "QtQml" | "QtQml.Models" | "QtQuick.Shapes"
-                ) || QT_CONTROLS.contains(&uri.as_str()))
+                ) || uri == QT_DIALOGS
+                    || QT_CONTROLS.contains(&uri.as_str()))
             {
                 return Err(self.no(format!("it imports `{uri}` under a name"), at));
             }
@@ -523,7 +530,7 @@ impl<'s> Pass<'s> {
                     };
                     return Err(self.no(reason, at));
                 }
-                uri if QT_CONTROLS.contains(&uri) => {
+                uri if uri == QT_DIALOGS || QT_CONTROLS.contains(&uri) => {
                     let (Some(qt), Some(ljos)) =
                         (qt_types::module(uri), qt_types::module(CONTROLS))
                     else {
@@ -532,7 +539,14 @@ impl<'s> Pass<'s> {
                             at,
                         ));
                     };
-                    self.controls.get_or_insert(Controls { qt, ljos });
+                    let found = if uri == QT_DIALOGS {
+                        &mut self.dialogs
+                    } else {
+                        &mut self.controls
+                    };
+                    found.get_or_insert(Controls { qt, ljos });
+                    // The dialogs are in Ljos.Controls, so their import is
+                    // one of the controls'.
                     controls.push(import.span);
                     self.imports.push(Import::Controls);
                 }
@@ -824,7 +838,10 @@ impl<'s> Pass<'s> {
                 _ => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
             };
         }
-        if let Some(controls) = self.controls
+        if let Some(controls) = [self.controls, self.dialogs]
+            .into_iter()
+            .flatten()
+            .find(|c| c.qt.type_named(name).is_some())
             && let Some(ty) = controls.qt.type_named(name)
             && !shadowed_controls
         {
@@ -1522,6 +1539,7 @@ impl arrange::Types for Pass<'_> {
             .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
             .or_else(|| self.controls.and_then(|c| c.qt.type_named(name)))
             .or_else(|| self.shapes.and_then(|m| m.type_named(name)))
+            .or_else(|| self.dialogs.and_then(|c| c.qt.type_named(name)))
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -1992,10 +2010,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
             } else if (self.pass.quick.type_named(name).is_some()
-                || self
-                    .pass
-                    .controls
-                    .is_some_and(|c| c.qt.type_named(name).is_some())
+                || [self.pass.controls, self.pass.dialogs]
+                    .into_iter()
+                    .flatten()
+                    .any(|c| c.qt.type_named(name).is_some())
                 || self
                     .pass
                     .shapes
