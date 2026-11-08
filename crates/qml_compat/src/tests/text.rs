@@ -86,6 +86,14 @@ fn a_font_the_names_cannot_say_keeps_the_file() {
             "import QtQuick\nItem { Text { id: t } Component.onCompleted: t.font[\"pixelSize\"] = 3 }\n",
             "renames",
         ),
+        (
+            "import QtQuick\nItem {\n    id: root\n    property var face: label.font\n    Text { id: label }\n    Text { text: root.face.bold }\n}\n",
+            "not known",
+        ),
+        (
+            "import QtQuick\nItem {\n    Text { id: label; property alias face: label.font }\n    Text { text: label.face.pixelSize }\n}\n",
+            "not known",
+        ),
     ] {
         let reason = kept_for(source);
         assert!(reason.contains(why), "{source}: {reason}");
