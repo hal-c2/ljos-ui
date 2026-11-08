@@ -2952,6 +2952,9 @@ impl Script<'_, '_> {
     /// followed (docs/DIALECT.md §4.13).
     fn could_be_font(&self, expression: &Expression<'_>) -> bool {
         match expression {
+            // A parameter or a local of the name is the script's, which
+            // is not followed.
+            Expression::Identifier(id) if self.own.binds(&id.name, id.span.start) => false,
             Expression::Identifier(id) => {
                 id.name == "font" || self.pass.fonts.iter().any(|f| f == id.name.as_str())
             }

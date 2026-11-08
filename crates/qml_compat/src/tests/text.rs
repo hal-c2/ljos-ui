@@ -116,6 +116,17 @@ fn a_font_s_member_name_off_what_is_no_font_is_left_as_written() {
 }
 
 #[test]
+fn a_font_s_member_name_off_a_parameter_or_a_local_of_a_font_s_name_is_left_as_written() {
+    // What a function is given or a local holds is not followed, even
+    // where its name is `font` or a property the file declares as a `var`.
+    let text = lowered(
+        "import QtQuick\nItem {\n    property var face\n    function size(font) { return font.pixelSize }\n    function bold() { let face = { bold: true }; return face.bold }\n}\n",
+    );
+    assert!(text.contains("return font.pixelSize"), "{text}");
+    assert!(text.contains("return face.bold"), "{text}");
+}
+
+#[test]
 fn a_member_named_as_a_font_s_off_a_font_is_kept_as_it_is() {
     // `bold` and `pixelSize` mean a font's only on a font.
     let text = lowered(
