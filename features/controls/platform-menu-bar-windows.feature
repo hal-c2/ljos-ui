@@ -52,3 +52,30 @@ Feature: Which window's Qt.labs.platform MenuBar the system shows
       """
     Then the system shows no menu bar
     And the log has no warnings
+
+  @api-Qt.labs.platform.Menu.enabled @api-Qt.labs.platform.MenuItem.role @api-QtQuick.Window.closing
+  Scenario: Quit with the item that quits in a disabled menu closes the windows instead
+    Given the system shows menu bars of its own
+    And the QML:
+      """qml
+      import QtQuick
+      import Qt.labs.platform
+      Window {
+        id: window; objectName: "window"; width: 200; height: 100; visible: true
+        property int quits: 0
+        property int asked: 0
+        onClosing: (close) => asked++
+        MenuBar {
+          Menu {
+            title: "File"; enabled: false
+            MenuItem { text: "Open" }
+            MenuItem { text: "Beenden"; role: MenuItem.QuitRole; onTriggered: window.quits++ }
+          }
+        }
+      }
+      """
+    Then the system's menu bar shows "File > Open" disabled
+    When the user chooses "Quit" in the system's application menu
+    Then the property "quits" of "window" is 0
+    And the property "asked" of "window" is 1
+    And the property "visible" of "window" is false
