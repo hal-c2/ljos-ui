@@ -587,41 +587,6 @@ pub(crate) fn resolve(engine: &Engine, obj: ObjectId) -> [Option<f64>; 4] {
     })
 }
 
-/// How much shorter than its parent `obj`'s anchors make it along the
-/// vertical axis or the horizontal one, when they size it between the two
-/// edges of its parent (`anchors.fill: parent`, or both side lines on the
-/// parent's own sides): it grows and shrinks with the parent, kept that
-/// much inside by its margins. `None` when its length is its own or
-/// follows something else. For tools that ask how an item's size passes
-/// down to its children.
-pub fn inset_in_parent(engine: &Engine, obj: ObjectId, vertical: bool) -> Option<f64> {
-    let parent = engine.visual_parent(obj)?;
-    let lines = engine.untrack(|| read_lines(engine, obj));
-    let on_parent = |i: usize, edge: Edge| {
-        AnchorLine::from_value(&lines[i]).is_some_and(|l| l.item == parent && l.edge == edge)
-    };
-    let follows = lines[FILL].as_object() == Some(parent)
-        || (lines[FILL].is_nullish()
-            && lines[CENTER_IN].is_nullish()
-            && if vertical {
-                on_parent(TOP, Edge::Top) && on_parent(BOTTOM, Edge::Bottom)
-            } else {
-                on_parent(LEFT, Edge::Left) && on_parent(RIGHT, Edge::Right)
-            });
-    if !follows {
-        return None;
-    }
-    // The anchors' own reading, margins and mirroring included.
-    let [_, width, _, height] = resolve(engine, obj);
-    let (len, prop) = if vertical {
-        (height, Item::HEIGHT.index)
-    } else {
-        (width, Item::WIDTH.index)
-    };
-    let whole = engine.untrack(|| num(engine, parent, prop));
-    Some((whole - len?).max(0.0))
-}
-
 fn horizontal(cx: &mut Ctx<'_>, fill: Option<ObjectId>, center_in: Option<ObjectId>) -> Span {
     let a = AnchorProps::get();
     let e = cx.engine;
