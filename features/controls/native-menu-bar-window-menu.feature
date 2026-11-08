@@ -102,3 +102,21 @@ Feature: The menu the system lists the windows in
       }
       """
     Then the system lists the windows in no menu
+
+  @api-Ljos.SystemMenu.role
+  Scenario: An empty menu titled "Window" beside a menu with the role is not shown
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      import Ljos
+      ApplicationWindow {
+        width: 200; height: 100; visible: true
+        menuBar: MenuBar {
+          Menu { title: "Window" }
+          Menu { title: "Fenster"; SystemMenu.role: SystemMenu.WindowRole }
+        }
+      }
+      """
+    Then the system lists the windows in the menu "Fenster"
+    And the system's menu bar does not show "Window"
