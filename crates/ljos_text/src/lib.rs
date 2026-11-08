@@ -66,6 +66,6 @@ pub use model::{
     Checkpoint, DEFAULT_MAX_LENGTH, TextModel, byte_to_utf16, utf16_len, utf16_to_byte,
 };
 pub use style::{
-    BoxAlign, ElideMode, InlineObject, LayoutParams, LineHeight, Ranged, StyleSpan, TextStyle,
-    WrapMode,
+    BoxAlign, ElideMode, FamilyList, InlineObject, LayoutParams, LineHeight, Ranged, StyleSpan,
+    TextStyle, WrapMode,
 };

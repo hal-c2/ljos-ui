@@ -4,11 +4,19 @@ use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
 
+/// Family names in the order they are tried, each one name whatever it holds.
+/// Behind a thin pointer: every text's style carries one, and few name any.
+pub type FamilyList = Arc<Vec<Arc<str>>>;
+
 /// A resolved font request, in logical pixels.
 #[derive(Clone, Debug)]
 pub struct TextStyle {
     /// Family name. Empty means the engine's default family.
     pub family: Arc<str>,
+    /// The families tried after `family`, in order, before the engine's
+    /// own (`font.families`). Each is one name whatever it holds, and so is
+    /// `family` when there are any.
+    pub fallback_families: Option<FamilyList>,
     /// Font size in logical pixels.
     pub pixel_size: f32,
     /// Weight on the 1 to 1000 scale (400 normal, 700 bold).
@@ -29,6 +37,7 @@ impl Default for TextStyle {
     fn default() -> Self {
         Self {
             family: Arc::from(""),
+            fallback_families: None,
             pixel_size: 14.0,
             weight: 400.0,
             italic: false,
@@ -49,9 +58,10 @@ impl TextStyle {
         }
     }
 
-    fn bits(&self) -> (&str, [u32; 4], [bool; 3]) {
+    fn bits(&self) -> (&str, Option<&FamilyList>, [u32; 4], [bool; 3]) {
         (
             &self.family,
+            self.fallback_families.as_ref(),
             [
                 self.pixel_size.to_bits(),
                 self.weight.to_bits(),
@@ -119,7 +129,12 @@ impl StyleSpan {
     /// The whole style of the span's text, in a layout whose own is `base`.
     pub fn style(&self, base: &TextStyle) -> TextStyle {
         TextStyle {
+            // A part that names its family names that one alone.
             family: self.family.clone().unwrap_or_else(|| base.family.clone()),
+            fallback_families: match self.family {
+                Some(_) => None,
+                None => base.fallback_families.clone(),
+            },
             pixel_size: self.pixel_size,
             weight: self.weight,
             italic: self.italic,
