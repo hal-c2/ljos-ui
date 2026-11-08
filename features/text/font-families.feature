@@ -17,8 +17,16 @@
 # is one family whatever it holds: with ["No Such Family Ljos, Liberation
 # Mono", "Liberation Serif"] or ["\"Liberation Mono\"", "Liberation Serif"],
 # QFontInfo's family is Liberation Serif and the text is as wide as in
-# Liberation Serif. One empty name is a list too: setFamilies({""}) lists
-# "" and equals setFamily(""), and is not setFamilies({}), which lists none.
+# Liberation Serif. So is a list of one: with ["No Such Family Ljos,
+# Liberation Mono"] or ["\"Liberation Mono\""] alone, QFontInfo's family is
+# not Liberation Mono and the text is 179.766 pixels wide, as in the
+# desktop's default font, not 180. One empty name is a list too:
+# setFamilies({""}) lists "" and equals setFamily(""), and is not
+# setFamilies({}), which lists none. A list of one plain name equals
+# setFamily of it. Where Qt reads a lone family as one name too, a
+# font.family in Ljós is read as a style sheet writes one, commas and quotes
+# and all, so a list of one name with a comma or quotes in it is not the
+# family of that text there.
 # Ljós gives QML the member QFont has; runs on Ljós only.
 # LjosSymbolsTest-Regular.ttf ("Ljos Symbols Test") has U+F8F0 at 600 units
 # of 1000, LjosAlternateTest-Regular.ttf ("Ljos Alternate Test") the same
@@ -223,3 +231,68 @@ Feature: A font's list of families
     Then the property "boundAll" of "root" is "Liberation Mono|Symbols Nerd Font Mono"
     And the property "aliasedAll" of "root" is "Liberation Mono|Symbols Nerd Font Mono"
     And the property "writtenAll" of "root" is "Liberation Serif|Liberation Sans"
+
+  Scenario: One empty family is a list of one empty name, however it is named
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: named; font.family: "" }
+        Text { id: listed; font.families: [""] }
+        Text { id: plain; font.family: "Liberation Serif" }
+        Text { id: plainListed; font.families: ["Liberation Serif"] }
+        property bool bound: named.font === listed.font
+        property int boundCount: named.font.families.length
+        property bool plainBound: plain.font === plainListed.font
+        property bool made: Qt.font({ family: "" }) === Qt.font({ families: [""] })
+        property int madeCount: Qt.font({ family: "" }).families.length
+        property bool madeNone: Qt.font({ family: "" }) === Qt.font({ families: [] })
+      }
+      """
+    Then the property "bound" of "root" is true
+    And the property "boundCount" of "root" is 1
+    And the property "plainBound" of "root" is true
+    And the property "made" of "root" is true
+    And the property "madeCount" of "root" is 1
+    And the property "madeNone" of "root" is false
+
+  Scenario: A list of one name is that one family, whatever characters it holds
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: mono; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "Liberation Mono" }
+        Text {
+          id: comma; text: "Hamburgefonstiv"; font.pixelSize: 20
+          font.families: ["No Such Family Ljos, Liberation Mono"]
+        }
+        Text {
+          id: quoted; text: "Hamburgefonstiv"; font.pixelSize: 20
+          font.families: ["\"Liberation Mono\""]
+        }
+        Text {
+          id: madeComma; text: "Hamburgefonstiv"
+          font: Qt.font({ families: ["No Such Family Ljos, Liberation Mono"], pixelSize: 20 })
+        }
+        Text {
+          id: madeQuoted; text: "Hamburgefonstiv"
+          font: Qt.font({ families: ["\"Liberation Mono\""], pixelSize: 20 })
+        }
+        property bool commaMono: comma.contentWidth === mono.contentWidth
+        property bool quotedMono: quoted.contentWidth === mono.contentWidth
+        property bool madeCommaMono: madeComma.contentWidth === mono.contentWidth
+        property bool madeQuotedMono: madeQuoted.contentWidth === mono.contentWidth
+        property string quotedName: quoted.font.families.join("|")
+        property string madeQuotedName: madeQuoted.font.families.join("|")
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "commaMono" of "root" is false
+    And the property "quotedMono" of "root" is false
+    And the property "madeCommaMono" of "root" is false
+    And the property "madeQuotedMono" of "root" is false
+    And the property "quotedName" of "root" is "\"Liberation Mono\""
+    And the property "madeQuotedName" of "root" is "\"Liberation Mono\""
