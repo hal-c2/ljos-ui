@@ -6,7 +6,7 @@ mod common;
 
 use common::*;
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
-use ljos_quick::{ChildSizes, Layout, Positioner, child_sizes, layout_runs};
+use ljos_quick::{ChildSizes, Layout, Positioner, child_sizes, layout_runs, least_size_with};
 
 fn layout_attached(e: &Engine, o: ObjectId) -> ObjectId {
     e.attached_object(o, &MetaRef::Static(Layout::static_meta()))
@@ -196,6 +196,79 @@ RowLayout {
     assert_eq!(sizes("hidden"), None);
     let fixed = find(&e, root, "fixed");
     assert_eq!(child_sizes(&e, fixed, root, true), None);
+}
+
+#[test]
+fn a_layout_tells_the_least_it_can_be_were_its_children_smaller() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Layouts
+ColumnLayout {
+    spacing: 5
+    uniformCellSizes: true
+    Item { objectName: "a"; implicitWidth: 30; implicitHeight: 200; Layout.fillHeight: true }
+    Item {
+        objectName: "b"; implicitWidth: 30; implicitHeight: 200
+        Layout.fillHeight: true; Layout.minimumHeight: 180
+    }
+    Item {
+        objectName: "kept"; implicitWidth: 30; implicitHeight: 20
+        Layout.topMargin: 10; Layout.bottomMargin: 10
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 800.0);
+    frame(&mut s, &e);
+    let least = |f: &dyn Fn(&str) -> f64| {
+        least_size_with(&e, root, true, |c, sizes| {
+            let name = e.read_by_name(c, "objectName").to_js_string();
+            f(name.as_str()).max(sizes.minimum)
+        })
+    };
+    // Cells made alike are each as high as the highest least, 180; the
+    // one kept at its height, margins and all, sits inside its cell.
+    assert_eq!(least(&|_| 0.0), Some(3.0 * 180.0 + 2.0 * 5.0));
+    // A child asked to stay higher raises every cell with it.
+    assert_eq!(
+        least(&|n| if n == "a" { 190.0 } else { 0.0 }),
+        Some(3.0 * 190.0 + 2.0 * 5.0)
+    );
+    // The other axis, and what is not a layout, are asked apart.
+    assert_eq!(
+        least_size_with(&e, root, false, |_, s| s.minimum),
+        Some(30.0)
+    );
+    let a = find(&e, root, "a");
+    assert_eq!(least_size_with(&e, a, true, |_, s| s.minimum), None);
+}
+
+#[test]
+fn a_row_is_no_lower_than_a_fixed_child_and_its_margins() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Layouts
+RowLayout {
+    Item {
+        implicitWidth: 30; implicitHeight: 200
+        Layout.topMargin: 100; Layout.bottomMargin: 100
+    }
+    Item { implicitWidth: 30; implicitHeight: 600; Layout.fillHeight: true }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 400.0, 800.0);
+    frame(&mut s, &e);
+    assert_eq!(
+        least_size_with(&e, root, true, |_, s| s.minimum),
+        Some(400.0)
+    );
 }
 
 #[test]
