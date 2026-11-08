@@ -1134,8 +1134,9 @@ impl DevSession {
     /// Makes the root of the first entry `has` that can be made and puts
     /// it in the window, in place of the root there; `keep` when the
     /// root there may stay, as its entry still runs: an entry after it
-    /// is not tried. The fault of the first entry that could not be
-    /// made, when none could.
+    /// is not tried. When none could be made and no root stays, the fault
+    /// of the first entry that could not be, as the start reports it, with
+    /// its count of further mistakes in `more_errors`.
     fn choose(
         &mut self,
         engine: &Engine,
@@ -1143,12 +1144,21 @@ impl DevSession {
         has: &dyn Fn(&str) -> bool,
         keep: bool,
     ) -> Result<(), ReloadFault> {
-        let mut fault = None;
+        let mut first: Option<(ReloadFault, usize)> = None;
         for key in self.entries.clone() {
             if keep && self.root.is_some() && key == self.entry {
                 return Ok(());
             }
             if !has(&key) {
+                // An entry passed over because it does not compile is still
+                // tried in its place at the start: its mistake comes before
+                // whatever an entry after it does.
+                if first.is_none() {
+                    let faults = (self.failures_of.0)(&key);
+                    if let Some(fault) = faults.first() {
+                        first = Some((fault_of(fault), faults.len() - 1));
+                    }
+                }
                 continue;
             }
             match engine.create_from_url(&key, None, self.properties.clone()) {
@@ -1161,34 +1171,32 @@ impl DevSession {
                     self.entry = key;
                     return Ok(());
                 }
-                Err(e) => {
-                    fault.get_or_insert_with(|| engine.reload_fault(&e));
+                Err(e) if first.is_none() => {
+                    let fault = engine.reload_fault(&e);
+                    // As the start counts them: the mistakes of the file at
+                    // fault, when it is one that did not compile.
+                    let more = key_of(&fault.file)
+                        .map_or(0, |k| (self.failures_of.0)(k).len().saturating_sub(1));
+                    first = Some((fault, more));
                 }
+                Err(_) => {}
             }
         }
-        match (fault, self.root) {
-            // What was shown stays until an entry can be made.
-            (_, Some(_)) => Ok(()),
-            (Some(fault), None) => Err(fault),
-            (None, None) => {
-                // An entry passed over because it does not compile: its
-                // mistake is why there is no window, as at the start.
-                let failed = self.entries.iter().find_map(|key| {
-                    let faults = (self.failures_of.0)(key);
-                    (!faults.is_empty()).then_some(faults)
-                });
-                if let Some(faults) = failed {
-                    self.more_errors = faults.len() - 1;
-                    return Err(fault_of(&faults[0]));
-                }
-                Err(ReloadFault {
-                    file: file_of(&self.entries[0]),
-                    line: 0,
-                    column: 0,
-                    message: "no entry has a file".to_owned(),
-                })
-            }
+        // What was shown stays until an entry can be made.
+        if self.root.is_some() {
+            return Ok(());
         }
+        let (fault, more) = first.unwrap_or_else(|| {
+            let fault = ReloadFault {
+                file: file_of(&self.entries[0]),
+                line: 0,
+                column: 0,
+                message: "no entry has a file".to_owned(),
+            };
+            (fault, 0)
+        });
+        self.more_errors = more;
+        Err(fault)
     }
 
     fn set_theme(&mut self, engine: &Engine, theme: Option<&Theme>, generation: u64) -> Report {
