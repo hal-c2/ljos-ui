@@ -10,6 +10,7 @@ Built:
 - decoders (type guards and assertion functions narrowing `unknown` as TypeScript 5 does)
 - `JSON.parse` and `property unknown` as `unknown`
 - `ts-boundary`, a `.js` typed by the `.d.ts` beside it (§4.4, §5.1)
+- `state` as the union of the names a file's states are given (§4.9)
 
 Remaining:
 

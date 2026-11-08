@@ -4,8 +4,8 @@ Part of `Ljos.Ui`, milestone M1 in [DIALECT.md §13](../../DIALECT.md#13-milesto
 
 Built:
 
-- Nothing built yet.
+- `PropertyChanges { target: }` lowered to the id form (§4.9)
 
 Remaining:
 
-- All that §13 lists for this area.
+- `Transition.from`/`to` and an animation's `properties`, checked once `Transition` is in `Ljos.Ui` (§4.9)

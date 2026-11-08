@@ -849,6 +849,42 @@ DECISION: no general state-machine type. 37 imperative assignments in 8
 files do not pay for a second model of states. The typed union and
 `when:` cover them, and a TS reducer (calqlatr's `press`) covers the rest.
 
+**Built** (features/states/ljos-states.feature):
+
+- The pass writes `PropertyChanges { target: face; color: … }` as
+  `PropertyChanges { face.fill: … }`. The target's binding goes, and its
+  line is left empty when it had one of its own. Each change takes the id,
+  renamed members (`color` → `fill`) and handlers (`face.onFillChanged`)
+  too, and a dotted one (`face.border.width`). `explicit` and
+  `restoreEntryValues` stay members of the `PropertyChanges`. qml6 runs
+  both forms the same, handlers included.
+- The checker types an object's `state` as `""` or one of the names its
+  `states` give, where the file writes them. A binding or an assignment of
+  another name is `ts-assign-type`, and so is a `===` or `!==` of strings
+  written out that share none, and a state's `extend` naming one not
+  declared.
+
+DECISION: a target that is not an id (a property, `parent`, a path) stays
+a target. The id form has no spelling for it, and `Ljos.Ui`'s
+`PropertyChanges` still has `target`, so the file is lowered rather than
+kept. In the corpus, coffee's `ApplicationFlow.qml` targets aliases this
+way.
+
+DECISION: a group (`font { … }`) or an attached member (`Layout.…`) set
+through a target keeps the file. qml6 takes `face.Layout.preferredWidth:`,
+but Ljós's id form is not yet held to it; this keeps 2 corpus files
+(`TabMenu.ui.qml`, `HomeForm.ui.qml`).
+
+DECISION: a state named by an expression leaves `state` a string, as does
+an object whose states another file declares: what they are is known only
+as it runs, or there.
+
+DECISION: only strings written out are said never to be equal, as
+TypeScript says of types with no overlap; any other comparison is let by.
+
+Remaining: `Transition.from`/`to` (a comma list, as qml6 reads it) and an
+animation's `properties` are checked once `Transition` is in `Ljos.Ui`.
+
 **Cost.** Unchanged from Qt's model. A `when:` is a binding, and a typed
 name is compiled to an index where the union is closed.
 
@@ -1038,7 +1074,7 @@ construction.
 | `XmlListModel`, `FolderListModel` | `XmlModel` (decoder), `FolderModel` | mechanical |
 | `model.<role>` | `modelData.<role>` | mechanical |
 | `DelegateModel`, `ObjectModel`, `Package` | — | DECISION: kept (0–1 uses) |
-| `State`, `PropertyChanges { target: }` | `PropertyChanges { id.prop: }` | mechanical |
+| `State`, `PropertyChanges { target: }` | `PropertyChanges { id.prop: }` | mechanical when the target is an id; another target stays; a group or attached member set through a target keeps the file (§4.9) |
 | `StateGroup` | the same | none |
 | `ParentChange` | — | DECISION: kept (0 uses) |
 | `Loader { source: "X.qml" }` | `Loader { component: X }` | mechanical when the string is static |
@@ -1311,6 +1347,8 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
   `Connections` on a known target, a value source's target (`… on color`),
   and `id.member` where the target's type is known;
+- `PropertyChanges { target: id; prop: … }` → `PropertyChanges { id.prop: … }`
+  (§4.9);
 - `property var` / `variant` → `property unknown`.
 
 A `QtQml` import stays. `QtQuick.Layouts`, `QtQuick.Shapes` and the controls
