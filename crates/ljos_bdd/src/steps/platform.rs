@@ -537,12 +537,22 @@ fn system_menu_bar_lacks(w: &mut LjosWorld, title: String) -> StepResult {
     })
 }
 
-#[then(regex = r#"^the system lists the windows in (?:the menu "([^"]+)"|no menu)$"#)]
+#[then(regex = r#"^the system lists the windows in the menu "([^"]+)"$"#)]
 fn system_lists_windows_in(w: &mut LjosWorld, title: String) -> StepResult {
+    lists_windows_in(w, Some(&title))
+}
+
+#[then("the system lists the windows in no menu")]
+fn system_lists_windows_in_no_menu(w: &mut LjosWorld) -> StepResult {
+    lists_windows_in(w, None)
+}
+
+/// The system lists the windows in the bar's menu titled `want`, or in
+/// none.
+fn lists_windows_in(w: &mut LjosWorld, want: Option<&str>) -> StepResult {
     w.each(|b| {
         let bar = shown_bar(b.platform()?)?;
         let got = bar.windows_menu().map(|i| bar.menus[i].title.as_str());
-        let want = (!title.is_empty()).then_some(title.as_str());
         if got == want {
             Ok(())
         } else {
