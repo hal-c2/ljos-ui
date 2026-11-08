@@ -1,6 +1,7 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-image.html#fillMode-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-image.html#paintedHeight-prop
+#   https://doc.qt.io/qt-6/qml-qtqml-binding.html#when-prop
 # Verified on Qt 6.11.2 (qml6, offscreen).
 
 @qt-parity
@@ -110,6 +111,36 @@ Feature: Image fill mode
       """
     Then the property "height" of "anchored" is 5
     And the property "implicitHeight" of "anchored" is 5
+
+  Scenario Outline: A picture kept in shape follows a width <by> once it turns on
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        width: 200; height: 200
+        Image {
+          id: bound
+          objectName: "bound"
+          property bool on: false
+          fillMode: Image.PreserveAspectFit
+          source: "red.png"
+          <holder>
+        }
+      }
+      """
+    When the property "on" of "bound" is set to true
+    Then the property "width" of "bound" is <given>
+    And the property "height" of "bound" is <h>
+    And the property "implicitHeight" of "bound" is <h>
+    When the property "on" of "bound" is set to false
+    Then the property "width" of "bound" is 40
+    And the property "height" of "bound" is 20
+
+    Examples:
+      | by                       | given | h  | holder                                                                                  |
+      | a Binding gives          | 10    | 5  | Binding on width { when: bound.on; value: 10 }                                          |
+      | a Binding gives          | 40    | 20 | Binding on width { when: bound.on; value: 40 }                                          |
+      | a state gives            | 10    | 5  | states: State { when: bound.on; PropertyChanges { target: bound; width: 10 } }          |
 
   Scenario Outline: An Image without a picture draws nothing it could measure
     When the property "fillMode" of "empty" is set to <mode>
