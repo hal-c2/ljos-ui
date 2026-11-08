@@ -14,10 +14,9 @@
 
 use ljos_controls::{Drawer, ToolTip, item_popup};
 use ljos_design::limits::POPUP_MIN_FILL;
-use ljos_engine::{Engine, MetaRef, ObjectId, PropIndex, Provenance, QmlType};
+use ljos_engine::{Engine, ObjectId};
 use ljos_quick::{
-    Arrangement, Column, ColumnLayout, GridLayout, Layout, LayoutAttached, Row, RowLayout,
-    StackLayout, child_items,
+    Column, ColumnLayout, Layout, Row, RowLayout, StackLayout, child_items, child_sizes,
 };
 
 use crate::cx::{
@@ -52,80 +51,26 @@ struct Asks {
     least: f64,
 }
 
-/// What `c` asks of `parent` along `axis`. A layout sizes a child by its
-/// `Layout.preferred` size, else its implicit size, bounded by its
-/// `Layout.minimum` and `maximum` sizes, and keeps one that does not fill
-/// at that size; what else holds it reads its implicit size.
+/// What `c` asks of `parent` along `axis`: of a layout, the size the
+/// layout gives it and the least it can make it ([`child_sizes`]), the
+/// same for a child that does not fill; of a layout that leaves the size
+/// to the child, its implicit size, kept; of what else holds it, its
+/// implicit size, which a scroller can give back.
 fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks {
     let implicit = number(engine, c, IMPLICIT[axis]).max(0.0);
-    let plain = Asks {
-        size: implicit,
-        least: 0.0,
-    };
-    let stack = is_a::<StackLayout>(engine, parent);
-    let arrangement = is_a::<Arrangement>(engine, parent);
-    let lays_out = stack
-        || arrangement
-        || is_a::<RowLayout>(engine, parent)
-        || is_a::<ColumnLayout>(engine, parent)
-        || is_a::<GridLayout>(engine, parent);
-    if !lays_out {
-        return plain;
-    }
-    let att = engine.existing_attached_object(c, &MetaRef::Static(Layout::static_meta()));
-    // A child that does not fill is laid out as large as it asks, no
-    // smaller: what it holds cannot scroll that away. Said nothing, a
-    // stack's page fills it, an arrangement's child does not, and a
-    // layout's child does when it is a layout itself.
-    let fill = [LayoutAttached::FILL_WIDTH, LayoutAttached::FILL_HEIGHT][axis].index;
-    let told = att
-        .filter(|a| {
-            !matches!(
-                engine.provenance(*a, fill),
-                Some(Provenance::Default) | None
-            )
-        })
-        .map(|a| engine.untrack(|| engine.read(a, fill)).to_boolean());
-    let fills = told.unwrap_or(stack || (!arrangement && is_a::<Layout>(engine, c)));
-    let Some(att) = att else {
-        return Asks {
+    match child_sizes(engine, parent, c, axis == V) {
+        Some(s) => Asks {
+            size: s.preferred.max(0.0),
+            least: s.minimum.clamp(0.0, s.preferred.max(0.0)),
+        },
+        None if is_a::<Layout>(engine, parent) => Asks {
             size: implicit,
-            least: if fills { 0.0 } else { implicit },
-        };
-    };
-    let read = |p: [PropIndex; 2]| engine.untrack(|| engine.read(att, p[axis])).to_number();
-    let preferred = read([
-        LayoutAttached::PREFERRED_WIDTH.index,
-        LayoutAttached::PREFERRED_HEIGHT.index,
-    ]);
-    let most = read([
-        LayoutAttached::MAXIMUM_WIDTH.index,
-        LayoutAttached::MAXIMUM_HEIGHT.index,
-    ]);
-    let most = if most.is_nan() {
-        f64::INFINITY
-    } else {
-        most.max(0.0)
-    };
-    let least = read([
-        LayoutAttached::MINIMUM_WIDTH.index,
-        LayoutAttached::MINIMUM_HEIGHT.index,
-    ]);
-    let least = if least.is_finite() {
-        least.max(0.0)
-    } else {
-        0.0
-    }
-    .min(most);
-    let size = if preferred >= 0.0 {
-        preferred
-    } else {
-        implicit
-    };
-    let size = size.clamp(least, most);
-    Asks {
-        size,
-        least: if fills { least } else { size },
+            least: implicit,
+        },
+        None => Asks {
+            size: implicit,
+            least: 0.0,
+        },
     }
 }
 
