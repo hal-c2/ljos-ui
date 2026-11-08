@@ -430,6 +430,54 @@ fn override_stack_restore_modes() {
 }
 
 #[test]
+fn an_override_as_a_write_leaves_what_was_only_followed_a_value() {
+    let g = Graph::new();
+    let r = g.root();
+    let src = g.property(r, 30).unwrap();
+    let following = || {
+        let x = g.binding(r, 0, move |g| g.get(src)).unwrap();
+        g.mark_following(x).unwrap();
+        x
+    };
+
+    // Restored, the override gives back the value followed when it came.
+    let x = following();
+    assert_eq!(g.get(x), 30);
+    let o = g
+        .push_override_as_write(x, OverrideValue::Value(120))
+        .unwrap();
+    assert!(!g.is_following(x), "the following binding is gone");
+    g.set(src, 40);
+    assert_eq!(g.get(x), 120);
+    g.remove_override(x, o, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(x), 30);
+    g.set(src, 50);
+    assert_eq!(g.get(x), 30, "what it followed no longer moves it");
+    assert!(!g.is_bound(x));
+    assert_eq!(g.provenance(x), Some(Provenance::Assigned));
+
+    // With no binding to restore, the override's value stays.
+    let y = following();
+    let o = g
+        .push_override_as_write(y, OverrideValue::Value(120))
+        .unwrap();
+    g.remove_override(y, o, RestoreMode::Binding).unwrap();
+    g.set(src, 60);
+    assert_eq!(g.get(y), 120);
+
+    // A plain override leaves the following binding under it.
+    let z = following();
+    let o = g.push_override(z, OverrideValue::Value(120)).unwrap();
+    g.remove_override(z, o, RestoreMode::BindingOrValue)
+        .unwrap();
+    assert_eq!(g.get(z), 60);
+    assert!(g.is_following(z));
+    g.set(src, 70);
+    assert_eq!(g.get(z), 70);
+}
+
+#[test]
 fn a_write_under_a_cover_is_kept_below_it_and_seen_once_it_comes_off() {
     let g = Graph::new();
     let r = g.root();

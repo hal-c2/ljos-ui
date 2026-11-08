@@ -3030,10 +3030,8 @@ impl Engine {
         node.is_some_and(|n| self.inner.graph.is_bound(n) && self.inner.graph.ran_this_flush(n))
     }
 
-    /// Whether an override (a state, a `Binding`) holds `prop` now. Not a
-    /// tracked read: pushing or removing one changes the value in nearly
-    /// every case, so a reader that also reads `prop` hears of it.
-    pub fn has_override(&self, obj: ObjectId, prop: PropIndex) -> bool {
+    /// Whether an override (a state, a `Binding`) holds `prop` now.
+    pub(crate) fn has_override(&self, obj: ObjectId, prop: PropIndex) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
         let node = self.node_if_any(obj, prop);
         node.is_some_and(|n| self.inner.graph.override_count(n) > 0)
@@ -3046,7 +3044,20 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
     ) -> Result<OverrideId, EngineError> {
-        self.push_layer(obj, prop, content, false, false)
+        self.push_layer(obj, prop, content, Push::Override)
+    }
+
+    /// [`Engine::push_override`] for what Qt writes, a `Binding`'s or a
+    /// state's value: a size that only followed the implicit size keeps the
+    /// value it has now, and that is what comes back when the override goes
+    /// (see `ljos_reactive::Graph::push_override_as_write`).
+    pub fn push_override_as_write(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        content: OverrideContent,
+    ) -> Result<OverrideId, EngineError> {
+        self.push_layer(obj, prop, content, Push::Write)
     }
 
     /// Pushes a cover: the property reads what `content` gives, and a write
@@ -3059,7 +3070,7 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
     ) -> Result<OverrideId, EngineError> {
-        self.push_layer(obj, prop, content, true, false)
+        self.push_layer(obj, prop, content, Push::Cover)
     }
 
     /// Pushes a hold: the property reads what `content` gives, and a write
@@ -3071,7 +3082,7 @@ impl Engine {
         prop: PropIndex,
         content: OverrideContent,
     ) -> Result<OverrideId, EngineError> {
-        self.push_layer(obj, prop, content, false, true)
+        self.push_layer(obj, prop, content, Push::Hold)
     }
 
     fn push_layer(
@@ -3079,8 +3090,7 @@ impl Engine {
         obj: ObjectId,
         prop: PropIndex,
         content: OverrideContent,
-        cover: bool,
-        hold: bool,
+        how: Push,
     ) -> Result<OverrideId, EngineError> {
         let (obj, prop) = self.redirect(obj, prop);
         let ty = {
@@ -3120,12 +3130,11 @@ impl Engine {
             }
         };
         let id = g.batch(|| {
-            let id = if cover {
-                g.push_cover(n, value)?
-            } else if hold {
-                g.push_hold(n, value)?
-            } else {
-                g.push_override(n, value)?
+            let id = match how {
+                Push::Override => g.push_override(n, value)?,
+                Push::Write => g.push_override_as_write(n, value)?,
+                Push::Cover => g.push_cover(n, value)?,
+                Push::Hold => g.push_hold(n, value)?,
             };
             self.sync_field(obj, prop, n);
             Ok::<_, EngineError>(id)
@@ -3925,6 +3934,15 @@ pub(crate) fn read_access(
         PropertyAccess::GroupRoot => Value::Undefined,
         PropertyAccess::Dynamic { slot } => dynamic.get(slot as usize).cloned().unwrap_or_default(),
     }
+}
+
+/// Which kind of layer [`Engine::push_layer`] pushes.
+#[derive(Clone, Copy)]
+enum Push {
+    Override,
+    Write,
+    Cover,
+    Hold,
 }
 
 /// Where [`Engine::plain_number`] puts a write.

@@ -493,7 +493,7 @@ fn hold_starts(
     let mut holds = Vec::new();
     for (c, before) in changes.list.iter().zip(starts) {
         let hold = OverrideContent::Value(before.clone());
-        if let Ok(id) = engine.push_override(c.obj, c.prop, hold) {
+        if let Ok(id) = engine.push_override_as_write(c.obj, c.prop, hold) {
             holds.push((c.obj, c.prop, id, c.kind));
         }
     }
@@ -887,7 +887,9 @@ impl Group {
                 && !holds.iter().any(|h| (h.0, h.1) == (obj, prop))
             {
                 let now = engine.untrack(|| engine.peek(obj, prop));
-                if let Ok(id) = engine.push_override(obj, prop, OverrideContent::Value(now)) {
+                if let Ok(id) =
+                    engine.push_override_as_write(obj, prop, OverrideContent::Value(now))
+                {
                     holds.push((obj, prop, id, restore));
                 }
             }
@@ -939,7 +941,7 @@ impl Group {
         what: Layer,
         held: BindingLayer,
     ) {
-        if let Ok(id) = engine.push_override(obj, prop, content) {
+        if let Ok(id) = engine.push_override_as_write(obj, prop, content) {
             // The property's own binding is not given back, so it says no
             // more of what it held while the item was made (qml6).
             if what == Layer::Property && restore == RestoreMode::None {
@@ -1068,7 +1070,7 @@ impl Group {
                 .filter_map(|p| {
                     let now = engine.untrack(|| engine.peek(p.target, p.prop));
                     let id = engine
-                        .push_override(p.target, p.prop, OverrideContent::Value(now))
+                        .push_override_as_write(p.target, p.prop, OverrideContent::Value(now))
                         .ok()?;
                     Some((p.target, p.prop, id))
                 })
@@ -1473,13 +1475,13 @@ impl Group {
             ];
             for prop in lines {
                 let none = OverrideContent::Value(Value::Undefined);
-                if let Ok(id) = engine.push_override(*item, prop, none) {
+                if let Ok(id) = engine.push_override_as_write(*item, prop, none) {
                     suspended.push((*item, prop, id));
                 }
             }
             for prop in [a.fill, a.center_in] {
                 let none = OverrideContent::Value(Value::Null);
-                if let Ok(id) = engine.push_override(*item, prop, none) {
+                if let Ok(id) = engine.push_override_as_write(*item, prop, none) {
                     suspended.push((*item, prop, id));
                 }
             }
