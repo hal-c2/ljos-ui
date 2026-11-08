@@ -63,6 +63,7 @@ Feature: A Loader shows a component, named as a type
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Core
         Item {
           id: root; objectName: "root"; width: 100; height: 60
           property Component shown: Page
@@ -80,6 +81,7 @@ Feature: A Loader shows a component, named as a type
       Given the file "Main.qml":
         """qml
         import Ljos.Ui
+        import Ljos.Core
         Item {
           id: root
           property Component shown: Page
@@ -119,6 +121,7 @@ Feature: A Loader shows a component, named as a type
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Core
         Item {
           id: root; objectName: "root"; width: 100; height: 60
           property int changes: 0
@@ -205,7 +208,7 @@ Feature: A Loader shows a component, named as a type
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
         Item {
           Loader { component: Page }
           Loader { component: dot; onComponentChanged: {} }
