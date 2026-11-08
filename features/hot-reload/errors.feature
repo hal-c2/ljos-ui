@@ -246,7 +246,8 @@ Feature: A reload that fails
 
     The window has nothing to show while its entry does not compile, so a
     save that leaves the entry as it is, of a file the entry never uses,
-    takes nothing of the error away.
+    takes nothing of the error away. Nor does an entry after it that cannot
+    be made either: the first entry's mistake is why, as at the start.
 
     Background:
       Given the file "app/Main.qml":
@@ -262,14 +263,27 @@ Feature: A reload that fails
         import QtQuick
         Item { }
         """
+      And the file "app/Badge.qml":
+        """qml
+        import QtQuick
+        Item { required property string label }
+        """
+      And the file "app/Later.qml":
+        """qml
+        import QtQuick
+        Item {
+          objectName: "later"
+          Badge {}
+        }
+        """
       And the QML:
         """qml
         import QtQuick
         Item { objectName: "root" }
         """
-      When the application watches the roots "app" for the entries "Main"
 
     Scenario: A save of a file the entry does not use leaves the error
+      When the application watches the roots "app" for the entries "Main"
       Then the reload error is in "Main.qml" at line 5
       When the file "app/Notes.qml" is saved on disk as:
         """qml
@@ -279,8 +293,20 @@ Feature: A reload that fails
       Then the reload error is in "Main.qml" at line 5
       And the object "main" does not exist
 
-    Scenario: A mistake made and undone in another file gives the entry's error back
+    Scenario: An entry after it that cannot be made does not take the error's place
+      When the application watches the roots "app" for the entries "Main, Later"
+      Then the reload error is in "Main.qml" at line 5
       When the file "app/Notes.qml" is saved on disk as:
+        """qml
+        import QtQuick
+        Item { width: 3 }
+        """
+      Then the reload error is in "Main.qml" at line 5
+      And the object "later" does not exist
+
+    Scenario: A mistake made and undone in another file gives the entry's error back
+      When the application watches the roots "app" for the entries "Main"
+      And the file "app/Notes.qml" is saved on disk as:
         """qml
         import QtQuick
         Item {
@@ -295,7 +321,8 @@ Feature: A reload that fails
       And the object "main" does not exist
 
     Scenario: The entry mended is shown and the error goes
-      When the file "app/Main.qml" is saved on disk as:
+      When the application watches the roots "app" for the entries "Main"
+      And the file "app/Main.qml" is saved on disk as:
         """qml
         import QtQuick
         Item { objectName: "main" }
