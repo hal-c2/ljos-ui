@@ -67,16 +67,16 @@ fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
         ),
         "`FileDialog` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `FileDialog` that would be found first"
     );
-    // Ljos.Ui has names QtQuick has not (`Box`, `PointerArea`), so the
-    // module every lowered file imports can shadow a file too.
+    // Ljós's modules have names QtQuick has not (`Box`, `PointerArea`),
+    // so what a lowered file imports can shadow a file too.
     assert_eq!(
         kept("import QtQuick\nItem { Box { } }\n", "Box"),
-        "`Box` is a file of the project, and Ljos.Ui, which the lowered file imports, has a `Box` that would be found first"
+        "`Box` is a file of the project, and Ljos.Layout, which the lowered file imports, has a `Box` that would be found first"
     );
     // Read in a script, as an enum of the project's file, the same.
     assert_eq!(
         kept("import QtQuick\nItem { property int d: Box.Row }\n", "Box"),
-        "`Box` is a file of the project, and Ljos.Ui, which the lowered file imports, has a `Box` that would be found first"
+        "`Box` is a file of the project, and Ljos.Layout, which the lowered file imports, has a `Box` that would be found first"
     );
     // A name the file does not import at all, which a Qt file finds in the
     // context, is shadowed as well.
@@ -150,8 +150,8 @@ fn an_import_qualifier_read_in_a_script_is_the_files_own() {
     );
 }
 
-/// A module of the project with a `Label`, a `FileDialog` and a
-/// `RowLayout` of its own, each a Rectangle.
+/// A module of the project with a `Label`, a `FileDialog`, a `RowLayout`
+/// and a `Row` of its own, each a Rectangle.
 struct Gauges;
 
 impl Locals for Gauges {
@@ -168,15 +168,16 @@ impl Locals for Gauges {
     }
 
     fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
-        (from == Imported::Module("Gauges") && matches!(name, "Label" | "FileDialog" | "RowLayout"))
-            .then(|| root_of("Rectangle", &[]))
+        (from == Imported::Module("Gauges")
+            && matches!(name, "Label" | "FileDialog" | "RowLayout" | "Row"))
+        .then(|| root_of("Rectangle", &[]))
     }
 }
 
 /// Qt finds a name in the last import that has it. The lowered file has
 /// one `import Ljos.Controls`, on the first line of the controls and the
-/// dialogs, and `Ljos.Ui` on `QtQuick`'s line, which stands in for
-/// `QtQuick.Layouts` too. An import of the project between the line a Qt
+/// dialogs, `Ljos.Ui` on `QtQuick`'s line and `Ljos.Layout` on
+/// `QtQuick.Layouts`'. An import of the project between the line a Qt
 /// type is found on and the one Ljós's takes means one type in Qt's file
 /// and another in the lowered one.
 #[test]
@@ -199,12 +200,21 @@ fn an_import_of_the_project_between_qts_line_and_ljos_line_keeps_the_file() {
         ),
         "`FileDialog` is Qt's, but in the lowered file the project's `FileDialog`, imported after the line Ljos.Controls takes, would be found first"
     );
-    // `QtQuick.Layouts`' `RowLayout` in Qt; lowered, `Ljos.Ui` is before
-    // `Gauges`.
+    // The project's `Row` in Qt, imported after `QtQuick`; lowered,
+    // `Ljos.Layout` takes `QtQuick.Layouts`' line, after `Gauges`.
     assert_eq!(
-        kept("import QtQuick\nimport Gauges\nimport QtQuick.Layouts\nItem { RowLayout { } }\n"),
-        "`RowLayout` is Qt's, but in the lowered file the project's `RowLayout`, imported after the line Ljos.Ui takes, would be found first"
+        kept("import QtQuick\nimport Gauges\nimport QtQuick.Layouts\nItem { Row { } }\n"),
+        "`Row` is a file of the project, and Ljos.Layout, which the lowered file imports, has a `Row` that would be found first"
     );
+    // `QtQuick.Layouts`' `RowLayout`, in Qt and lowered alike: its line is
+    // `Ljos.Layout`'s, after `Gauges`.
+    assert!(matches!(
+        lower(
+            "import QtQuick\nimport Gauges\nimport QtQuick.Layouts\nItem { RowLayout { } }\n",
+            &Gauges
+        ),
+        Outcome::Lowered(_)
+    ));
 }
 
 #[test]
@@ -254,7 +264,7 @@ fn a_name_a_script_binds_itself_is_the_scripts() {
     // Outside the scope of its declaration, the name is the type's again.
     assert_eq!(
         kept_for("import QtQuick\nItem { function f() { { let Box = 1 } return Box } }\n"),
-        "`Box` is not a type of the modules the file imports, and Ljos.Ui, which the lowered file imports, has a `Box` that would be found first"
+        "`Box` is not a type of the modules the file imports, and Ljos.Layout, which the lowered file imports, has a `Box` that would be found first"
     );
     assert_eq!(
         lowered(
