@@ -181,16 +181,17 @@ pub fn choose(e: &Engine, id: u64) -> bool {
 }
 
 /// The user chose Quit in the application menu: the item that quits is
-/// triggered, or with none every window is asked to close as its user
-/// would close it, and the application quits if all of them do, as
-/// `QCoreApplication::quit()` does: a window that will not close stops it.
+/// triggered, or with none that can be chosen every window is asked to
+/// close as its user would close it, and the application quits if all of
+/// them do, as `QCoreApplication::quit()` does: a window that will not
+/// close stops it.
 pub fn quit(e: &Engine) {
     let quit_item = e
         .extension::<Bars>()
         .shown
         .borrow()
         .as_ref()
-        .and_then(|(_, bar)| bar.quit.as_ref().map(|q| q.id));
+        .and_then(|(_, bar)| quit_target(bar));
     if quit_item.is_some_and(|id| choose(e, id)) {
         return;
     }
@@ -203,6 +204,13 @@ pub fn quit(e: &Engine) {
         }
     }
     e.request_quit();
+}
+
+/// The item Quit in the application menu triggers: the bar's item that
+/// quits, while it can be chosen. One that is disabled, or in a disabled
+/// menu, leaves Quit to do what it does with none, as Qt's does.
+fn quit_target(bar: &SystemBar) -> Option<u64> {
+    bar.quit.as_ref().filter(|q| q.enabled).map(|q| q.id)
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -477,6 +485,27 @@ fn key_of(e: &Engine, shortcut: &Value) -> Option<KeyEquivalent> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quit_triggers_the_item_that_quits_only_while_it_can_be_chosen() {
+        let mut item = SystemItem {
+            id: 7,
+            text: "Beenden".into(),
+            enabled: true,
+            checkable: false,
+            checked: false,
+            key: None,
+        };
+        let bar = |item: &SystemItem| SystemBar {
+            quit: Some(item.clone()),
+            ..SystemBar::default()
+        };
+        assert_eq!(quit_target(&bar(&item)), Some(7));
+        // Disabled itself, or by its menu, which describes it disabled.
+        item.enabled = false;
+        assert_eq!(quit_target(&bar(&item)), None);
+        assert_eq!(quit_target(&SystemBar::default()), None);
+    }
 
     #[test]
     fn a_mnemonic_is_not_shown() {
