@@ -952,6 +952,27 @@ pub(crate) fn scroll_bars(engine: &Engine, owner: ObjectId) -> [Option<ObjectId>
     .map(|slot| object(engine, att, slot).filter(|b| is_a::<ScrollBar>(engine, *b)))
 }
 
+/// Whether a scroll bar the user can drag moves `flickable` in a
+/// direction: one attached to it, or to the view whose content item it
+/// is, that is shown, enabled, takes the pointer and is not switched off.
+/// A view scrolls by its bars where its Flickable does not let the
+/// pointer.
+pub fn scrolled_by_bar(engine: &Engine, flickable: ObjectId, horizontal: bool) -> bool {
+    engine.untrack(|| {
+        let view = engine
+            .visual_parent(flickable)
+            .filter(|v| flickable_of(engine, *v) == Some(flickable));
+        [Some(flickable), view].into_iter().flatten().any(|owner| {
+            scroll_bars(engine, owner)[usize::from(!horizontal)].is_some_and(|bar| {
+                flag(engine, bar, Item::VISIBLE.index)
+                    && flag(engine, bar, Item::ENABLED.index)
+                    && flag(engine, bar, ScrollBar::INTERACTIVE.index)
+                    && num(engine, bar, ScrollBar::POLICY.index) as i32 != policy::ALWAYS_OFF
+            })
+        })
+    })
+}
+
 pub(crate) fn register(engine: &Engine) {
     register_pointer_item(
         engine,
