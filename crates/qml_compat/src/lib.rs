@@ -1370,7 +1370,9 @@ impl<'s> Pass<'s> {
                     self.members.delegate();
                 }
             }
-            Ty::Unknown => self.members.object_type(None),
+            // What the program's type has is in its description, not in
+            // Qt's table.
+            Ty::Unknown | Ty::Native(..) => self.members.object_type(None),
             Ty::Plain => {}
         }
         // A `Component` a view is given by id is its delegate as if it

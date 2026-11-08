@@ -4,8 +4,9 @@ use super::*;
 
 /// A program's own module `Studio.Kit`: `Tone` with a `color` of its own,
 /// `Swatch` built on Qt's `Rectangle`, and the singleton `Look` holding a
-/// `Palette` of `Tone`s and a `Swatch`. And `Studio.Print` and
-/// `Studio.Press`, whose types are named as Qt's are.
+/// `Palette` of `Tone`s and a `Swatch`. And `Studio.Print`, `Studio.Press`
+/// and `Studio.Clock`, whose types are named as Qt's are, and
+/// `Studio.Touch`, whose type is named as Ljós's is.
 struct Kit;
 
 /// A type's name, whether it is a singleton, the toolkit type it is built
@@ -40,10 +41,18 @@ const PRINT: &[KitType] = &[
 /// A `Text` with a `color`.
 const PRESS: &[KitType] = &[("Text", false, None, &[("text", None), ("color", None)])];
 
+/// A `Timer` with a `color`, which Qt's has not.
+const CLOCK: &[KitType] = &[("Timer", false, None, &[("interval", None), ("color", None)])];
+
+/// A `PointerArea`, which QtQuick has not and `Ljos.Ui` has.
+const TOUCH: &[KitType] = &[("PointerArea", false, None, &[("pressed", None)])];
+
 const MODULES: &[(&str, &[KitType])] = &[
     ("Studio.Kit", KIT),
     ("Studio.Print", PRINT),
     ("Studio.Press", PRESS),
+    ("Studio.Clock", CLOCK),
+    ("Studio.Touch", TOUCH),
 ];
 
 /// A type of `MODULES` is its module's place times this, plus its own.
@@ -273,4 +282,51 @@ fn a_file_beside_it_imported_after_a_native_module_shadows_the_native_type() {
         panic!("not lowered");
     };
     assert!(done.text.contains("Text { text: fill }"), "{}", done.text);
+}
+
+/// `QtQuick` brings `QtQml`'s `Timer`, so the program's is found only
+/// after the last of the two. The lowered file finds `Ljos.Core`'s on
+/// `QtQml`'s line, which may come before the program's import.
+#[test]
+fn a_native_timer_is_found_by_its_place_among_qtquick_and_qtqml() {
+    // The program's `Timer` has a `color`; Qt's has none, so the root's is
+    // read, which is `fill`.
+    let body = "Rectangle { color: \"red\"; Timer { interval: color } }\n";
+    let after = lowered_with_kit(&format!(
+        "import QtQuick\nimport QtQml\nimport Studio.Clock\n{body}"
+    ));
+    assert!(after.contains("Timer { interval: color }"), "{after}");
+    let before = lowered_with_kit(&format!(
+        "import Studio.Clock\nimport QtQuick\nimport QtQml\n{body}"
+    ));
+    assert!(before.contains("Timer { interval: fill }"), "{before}");
+    assert!(before.contains("import Ljos.Core"), "{before}");
+    // Qt's, as `QtQuick` is after it; lowered, `Ljos.Core` takes `QtQml`'s
+    // line, before it.
+    let Outcome::Kept(kept) = with_kit(&format!(
+        "import QtQml\nimport Studio.Clock\nimport QtQuick\n{body}"
+    )) else {
+        panic!("lowered");
+    };
+    assert_eq!(
+        kept.reason,
+        "`Timer` is Qt's, but in the lowered file the program's `Timer`, imported after the line Ljos.Core takes, would be found first"
+    );
+}
+
+/// A name no Qt import has is the program's, but `Ljos.Ui`'s where the
+/// lowered file's `import Ljos.Ui` comes after the program's import.
+#[test]
+fn a_native_type_a_ljos_module_imported_after_it_has_keeps_the_file() {
+    let body = "Item { PointerArea { } }\n";
+    let after = lowered_with_kit(&format!("import QtQuick\nimport Studio.Touch\n{body}"));
+    assert!(after.contains("PointerArea { }"), "{after}");
+    let Outcome::Kept(kept) = with_kit(&format!("import Studio.Touch\nimport QtQuick\n{body}"))
+    else {
+        panic!("lowered");
+    };
+    assert_eq!(
+        kept.reason,
+        "`PointerArea` is one of the program's own types, and Ljos.Ui, which the lowered file imports, has a `PointerArea` that would be found first"
+    );
 }
