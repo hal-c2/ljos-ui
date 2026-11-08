@@ -151,6 +151,27 @@ fn a_member_of_qt_that_ljos_core_has_is_lowered_where_its_name_is_free() {
     }
 }
 
+/// A member of a type the file's objects are is in sight, though no other
+/// word of the file is its name: in a `Component`'s handler, `url` is the
+/// component's, so `Qt.resolvedUrl` stays Qt's. (`Component` is what
+/// `Ljos.Core` is imported for.)
+#[test]
+fn a_member_of_qt_stays_qt_s_where_a_type_of_the_file_s_objects_has_its_name() {
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { Component { Component.onCompleted: console.log(Qt.resolvedUrl(\"a.png\")) } }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { Component { Component.onCompleted: console.log(Qt.resolvedUrl(\"a.png\")) } }\n"
+    );
+    // Where no object's type has it, the name is free.
+    assert_eq!(
+        lowered("import QtQuick\nItem { Item { x: Qt.point(1, 2).x } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { Item { x: point(1, 2).x } }\n"
+    );
+}
+
 #[test]
 fn a_member_of_qt_stays_qt_s_where_a_directory_imported_by_path_may_name_it() {
     // `qml/App.qml` is not beside the file: what a directory imported by
