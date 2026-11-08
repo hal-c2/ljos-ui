@@ -2274,7 +2274,20 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
     ) -> Result<OverrideId, ReactiveError> {
-        self.push_layer(n, value, false, false)
+        self.push_layer(n, value, false, false, false)
+    }
+
+    /// [`Graph::push_override`] as Qt writes a `Binding`'s or a state's
+    /// value: a value the property only follows ([`Graph::mark_following`])
+    /// is, from here on, the value it gives now, as if written. That is
+    /// what comes back when the override goes, and what it followed no
+    /// longer moves it.
+    pub fn push_override_as_write(
+        &self,
+        n: NodeId,
+        value: OverrideValue<V>,
+    ) -> Result<OverrideId, ReactiveError> {
+        self.push_layer(n, value, false, false, true)
     }
 
     /// Pushes an override that covers the property's own value without
@@ -2287,7 +2300,7 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
     ) -> Result<OverrideId, ReactiveError> {
-        self.push_layer(n, value, true, false)
+        self.push_layer(n, value, true, false, false)
     }
 
     /// Pushes an override that decides the property against every imperative
@@ -2299,7 +2312,7 @@ impl<V: Clone + 'static> Graph<V> {
         n: NodeId,
         value: OverrideValue<V>,
     ) -> Result<OverrideId, ReactiveError> {
-        self.push_layer(n, value, false, true)
+        self.push_layer(n, value, false, true, false)
     }
 
     /// Whether a hold is what an imperative write of `n` meets now
@@ -2317,8 +2330,14 @@ impl<V: Clone + 'static> Graph<V> {
         value: OverrideValue<V>,
         cover: bool,
         hold: bool,
+        write: bool,
     ) -> Result<OverrideId, ReactiveError> {
-        let id = {
+        // The value a write leaves is the one the following binding gives
+        // now, which it may not have worked out yet.
+        if write && self.is_following(n) {
+            self.try_get_untracked(n)?;
+        }
+        let (id, followed) = {
             let mut g = self.inner.borrow_mut();
             let i = &mut *g;
             let id = OverrideId(i.next_override);
@@ -2330,6 +2349,18 @@ impl<V: Clone + 'static> Graph<V> {
             i.next_override += 1;
             p.animated = false;
             let covered = !cover && p.overrides.last().is_some_and(|layer| layer.cover);
+            let mut followed = None;
+            if write && !covered && p.top().following {
+                let top = p.top_mut();
+                top.following = false;
+                top.provenance = Provenance::Assigned;
+                followed = Some(std::mem::replace(&mut top.content, Content::Value(None)));
+                i.make_plain(n);
+            }
+            let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            let Kind::Property(p) = &mut node.kind else {
+                return Err(ReactiveError::NotAProperty(n));
+            };
             if !covered && let Content::Value(saved) = &mut p.top_mut().content {
                 *saved = node.value.clone();
             }
@@ -2374,8 +2405,9 @@ impl<V: Clone + 'static> Graph<V> {
                 }
             }
             i.tell_if_set(n, was_unset);
-            id
+            (id, followed)
         };
+        drop(followed);
         self.flush_if_idle();
         Ok(id)
     }

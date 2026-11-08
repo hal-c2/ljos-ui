@@ -194,7 +194,7 @@ fn sync(engine: &Engine, me: ObjectId) {
             let v = as_variant(engine, t, p, read(Binding::VALUE.index))
                 .unwrap_or_else(|| engine.untrack(|| engine.read(t, p)));
             now = engine
-                .push_override(t, p, OverrideContent::Value(v))
+                .push_override_as_write(t, p, OverrideContent::Value(v))
                 .ok()
                 .map(|id| (t, p, id));
         }
@@ -309,7 +309,7 @@ fn sync_members(engine: &Engine, me: ObjectId) {
             }
             ForeignValue::Handler(_) => continue,
         };
-        if let Ok(id) = engine.push_override(t, p, content) {
+        if let Ok(id) = engine.push_override_as_write(t, p, content) {
             holds.push((t, p, id));
         }
     }
