@@ -1,5 +1,6 @@
 //! `FontMetrics` and `TextMetrics`: what a font and a text measure, for code
-//! that has to know before (or without) showing any text.
+//! that has to know before (or without) showing any text; `FontInfo`, the
+//! face a font resolves to.
 //!
 //! Both ask the UI thread's text engine, so they agree with `Text` to the
 //! last fraction of a pixel. Their properties are lazy bindings: an object
@@ -276,5 +277,89 @@ impl TextMetrics {
             let width = e.read(me, Self::ELIDE_WIDTH.index).to_number();
             Value::String(elided(&text, &style, mode, width))
         })
+    }
+}
+
+/// `FontInfo` (QtQuick): the face a font resolves to, and whether its
+/// characters are all one width.
+///
+/// Unlike [`FontMetrics`], it follows the set of fonts, as Qt's does: a
+/// font registered later, by a `FontLoader` or the host, can be the face a
+/// family now resolves to. The system's fixed-pitch face is what the family
+/// `"monospace"` resolves to.
+#[derive(Debug, Default, QmlObject)]
+#[qml(module = "QtQuick", name = "FontInfo", extends = QtObject)]
+pub struct FontInfo {
+    #[qml(base)]
+    pub object: QtObject,
+    #[qml(notify)]
+    pub font: Font,
+    /// The family of the face the text is set in, which is another than the
+    /// font names when the font's is not installed.
+    #[qml(notify, readonly)]
+    pub family: Atom,
+    #[qml(notify, readonly)]
+    pub style_name: Atom,
+    #[qml(notify, readonly)]
+    pub pixel_size: i32,
+    #[qml(notify, readonly)]
+    pub point_size: f64,
+    /// As the font asks: a face without italics is slanted to show it.
+    #[qml(notify, readonly)]
+    pub italic: bool,
+    /// As the font asks, the face's own weight or not.
+    #[qml(notify, readonly)]
+    pub weight: i32,
+    /// Any weight above normal, as in Qt, not only one a face would call
+    /// bold.
+    #[qml(notify, readonly)]
+    pub bold: bool,
+    #[qml(notify, readonly)]
+    pub fixed_pitch: bool,
+    /// `Font.StyleNormal` (0) or `Font.StyleItalic` (1).
+    #[qml(notify, readonly)]
+    pub style: i32,
+}
+
+#[qml_impl]
+impl FontInfo {
+    #[qml(on_complete)]
+    fn completed(cx: &Cx) -> Result<(), EngineError> {
+        let (engine, me) = (cx.engine, cx.this);
+        let face = move |e: &Engine| {
+            crate::font_loader::follow_fonts(e);
+            let style = read_style(e, me, Self::FONT.index);
+            text_engine().borrow_mut().face_info(&style)
+        };
+        engine.bind_initial(me, Self::FAMILY.index, move |e| {
+            Value::String(Atom::from(&*face(e).family))
+        })?;
+        engine.bind_initial(me, Self::STYLE_NAME.index, move |e| {
+            Value::String(Atom::from(&*face(e).style_name))
+        })?;
+        engine.bind_initial(me, Self::FIXED_PITCH.index, move |e| {
+            Value::Bool(face(e).fixed_pitch)
+        })?;
+        // Qt sets a size at a whole pixel and tells the points of that.
+        let pixels =
+            move |e: &Engine| f64::from(read_style(e, me, Self::FONT.index).pixel_size).round();
+        engine.bind_initial(me, Self::PIXEL_SIZE.index, move |e| {
+            Value::Int(pixels(e) as i32)
+        })?;
+        engine.bind_initial(me, Self::POINT_SIZE.index, move |e| {
+            Value::Real(ljos_runtime::pixels_to_points(pixels(e)))
+        })?;
+        let font = move |e: &Engine| match e.read(me, Self::FONT.index) {
+            Value::Font(f) => f,
+            _ => Default::default(),
+        };
+        engine.bind_initial(me, Self::ITALIC.index, move |e| Value::Bool(font(e).italic))?;
+        engine.bind_initial(me, Self::STYLE.index, move |e| {
+            Value::Int(i32::from(font(e).italic))
+        })?;
+        let weight = move |e: &Engine| font(e).weight.clamp(1, 1000);
+        engine.bind_initial(me, Self::WEIGHT.index, move |e| Value::Int(weight(e)))?;
+        engine.bind_initial(me, Self::BOLD.index, move |e| Value::Bool(weight(e) > 400))?;
+        Ok(())
     }
 }

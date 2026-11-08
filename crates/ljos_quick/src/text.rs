@@ -115,6 +115,25 @@ pub fn font_families() -> Vec<String> {
     text_engine().borrow_mut().family_names()
 }
 
+/// The face `font` resolves to on the UI thread's text engine, as
+/// `FontInfo` tells it (`QFontInfo`): its family and style, and whether
+/// every character of it is as wide as the others. A family that is not
+/// installed resolves to the one the system puts in its place.
+pub fn font_info(font: &Font) -> ljos_text::FaceInfo {
+    text_engine().borrow_mut().face_info(&text_style(font))
+}
+
+/// The family the system sets fixed-pitch text in, what the family
+/// `"monospace"` resolves to
+/// (`QFontDatabase::systemFont(QFontDatabase::FixedFont)`).
+pub fn fixed_font_family() -> String {
+    let font = Font {
+        family: Atom::from("monospace"),
+        ..Font::default()
+    };
+    font_info(&font).family.to_string()
+}
+
 /// `Text` (QtQuick): plain text, the tags of `StyledText`, the HTML subset
 /// of `RichText`, or Markdown, as `textFormat` says.
 ///

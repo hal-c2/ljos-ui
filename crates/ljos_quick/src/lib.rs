@@ -151,7 +151,7 @@ pub use layouts::{
 pub use ljos_a11y::{ColorScheme, Contrast, DesktopSettings, HostPrefs, SettingValue, SystemPrefs};
 pub use loader::Loader;
 #[allow(deprecated)]
-pub use metrics::{FontMetrics, TextMetrics};
+pub use metrics::{FontInfo, FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};
 pub use palette::{ColorGroup, Palette};
@@ -185,9 +185,9 @@ pub use system_prefs::{
     start_drag_distance, style_hints, system_prefs, update_system_prefs,
 };
 pub use text::{
-    DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, font_families, set_text_engine,
-    set_text_engine_later, shown_text_style, text_engine, text_engine_in_use, text_style,
-    texts_measured,
+    DEFAULT_PIXEL_SIZE, SharedTextEngine, Text, TextInputs, fixed_font_family, font_families,
+    font_info, set_text_engine, set_text_engine_later, shown_text_style, text_engine,
+    text_engine_in_use, text_style, texts_measured,
 };
 pub use text::{RichHandle, SelectionScope};
 pub use text_input::{
@@ -212,7 +212,7 @@ pub use views::{view_index_of, view_item_at, view_layout_passes};
 pub use wheel_handler::WheelHandler;
 
 /// The text engine's types, for hosts that configure fonts.
-pub use ljos_text::{TextEngine, TextStyle};
+pub use ljos_text::{FaceInfo, TextEngine, TextStyle};
 
 use ljos_engine::Engine;
 
@@ -224,7 +224,7 @@ pub fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("QtQuick" 2.15 => [
         Item, Rectangle, Text, MouseArea, TapHandler, Row, Column, Loader, MouseEvent,
         Accessible, Repeater,
-        FontMetrics, TextMetrics,
+        FontMetrics, TextMetrics, FontInfo,
         Grid, Flow, Positioner, LayoutMirroring, SafeArea,
         Image, BorderImage, AnimatedImage,
         Gradient, GradientStop,

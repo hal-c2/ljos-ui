@@ -2425,6 +2425,7 @@ module QtQuick
 	Flow QtQuick.Flow
 	FocusScope QtQuick.FocusScope
 	Font QtQuick.Font
+	FontInfo QtQuick.FontInfo
 	FontLoader QtQuick.FontLoader
 	FontMetrics QtQuick.FontMetrics
 	FrameAnimation QtQuick.FrameAnimation
@@ -3000,6 +3001,28 @@ module QtQuick
 		enum Capitalization MixedCase=0 AllUppercase=1 AllLowercase=2 SmallCaps=3 Capitalize=4
 		enum HintingPreference PreferDefaultHinting=0 PreferNoHinting=1 PreferVerticalHinting=2 PreferFullHinting=3
 		enum Style StyleNormal=0 StyleItalic=1 StyleOblique=2
+	type QtQuick.FontInfo FontInfo
+		prototype QtQml.QtObject named
+		prop font QtQuick.font named
+		prop family QtQml.string named readonly
+		prop styleName QtQml.string named readonly
+		prop pixelSize QtQml.int named readonly
+		prop pointSize QtQml.real named readonly
+		prop italic QtQml.bool named readonly
+		prop weight QtQml.int named readonly
+		prop bold QtQml.bool named readonly
+		prop fixedPitch QtQml.bool named readonly
+		prop style QtQml.int named readonly
+		signal fontChanged
+		signal familyChanged
+		signal styleNameChanged
+		signal pixelSizeChanged
+		signal pointSizeChanged
+		signal italicChanged
+		signal weightChanged
+		signal boldChanged
+		signal fixedPitchChanged
+		signal styleChanged
 	type QtQuick.FontLoader FontLoader
 		prototype QtQml.QtObject named
 		enum Status Null=0 Ready=1 Loading=2 Error=3
