@@ -511,6 +511,53 @@ module Ljos.Design
 		signal displayLineHeightChanged
 		signal displayWeightChanged
 
+module Ljos.Layout
+	Box Ljos.Layout.Box
+	Column Ljos.Layout.Column
+	Flow QtQuick.Flow
+	Grid Ljos.Layout.Grid
+	Layout QtQuick.Layouts.Layout
+	Row Ljos.Layout.Row
+	type Ljos.Layout.Box Box
+		prototype Ljos.Layout.Arrangement
+		enum Direction Row=0 Column=1
+		prop direction Direction
+		signal directionChanged
+	type Ljos.Layout.Column Column
+		prototype Ljos.Layout.Arrangement
+	type Ljos.Layout.Grid Grid
+		prototype Ljos.Layout.Arrangement
+		enum Flow LeftToRight=0 TopToBottom=1
+		prop columns QtQml.int named
+		prop rows QtQml.int named
+		prop columnSpacing QtQml.real named reset
+		prop rowSpacing QtQml.real named reset
+		prop flow Flow
+		signal columnsChanged
+		signal rowsChanged
+		signal columnSpacingChanged
+		signal rowSpacingChanged
+		signal flowChanged
+	type Ljos.Layout.Row Row
+		prototype Ljos.Layout.Arrangement
+	type Ljos.Layout.Arrangement Arrangement
+		prototype QtQuick.Layouts.Layout named
+		is uncreatable
+		prop spacing QtQml.real named
+		prop padding QtQml.real named reset
+		prop leftPadding QtQml.real named reset
+		prop rightPadding QtQml.real named reset
+		prop topPadding QtQml.real named reset
+		prop bottomPadding QtQml.real named reset
+		prop layoutDirection Qt::LayoutDirection
+		signal spacingChanged
+		signal paddingChanged
+		signal leftPaddingChanged
+		signal rightPaddingChanged
+		signal topPaddingChanged
+		signal bottomPaddingChanged
+		signal layoutDirectionChanged
+
 module Ljos.Models
 	Instantiator QtQml.Instantiator
 	JsonListModel Ljos.Models.JsonListModel
@@ -552,8 +599,6 @@ module Ljos.Models
 
 module Ljos.Ui
 	Accessible QtQuick.Accessible
-	Box Ljos.Ui.Box
-	Column Ljos.Ui.Column
 	ConicalGradient QtQuick.Shapes.ConicalGradient
 	DoubleValidator QtQuick.DoubleValidator
 	Drag Ljos.Ui.Drag
@@ -570,7 +615,6 @@ module Ljos.Ui
 	Item QtQuick.Item
 	KeyEvent QtQuick.KeyEvent
 	Keys QtQuick.Keys
-	Layout QtQuick.Layouts.Layout
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
 	Loader Ljos.Ui.Loader
@@ -596,7 +640,6 @@ module Ljos.Ui
 	Rectangle Ljos.Ui.Rectangle
 	RegularExpressionValidator QtQuick.RegularExpressionValidator
 	Repeater QtQuick.Repeater
-	Row Ljos.Ui.Row
 	Screen QtQuick.Screen
 	Shape QtQuick.Shapes.Shape
 	ShapeGradient QtQuick.Shapes.ShapeGradient
@@ -610,13 +653,6 @@ module Ljos.Ui
 	TextMetrics QtQuick.TextMetrics
 	Wheel Ljos.Ui.Wheel
 	Window QtQuick.Window
-	type Ljos.Ui.Box Box
-		prototype Ljos.Ui.Arrangement
-		enum Direction Row=0 Column=1
-		prop direction Direction
-		signal directionChanged
-	type Ljos.Ui.Column Column
-		prototype Ljos.Ui.Arrangement
 	type Ljos.Ui.Drag Drag
 		prototype QtQml.QtObject named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
@@ -863,8 +899,6 @@ module Ljos.Ui
 		signal topRightRadiusChanged
 		signal bottomLeftRadiusChanged
 		signal bottomRightRadiusChanged
-	type Ljos.Ui.Row Row
-		prototype Ljos.Ui.Arrangement
 	type Ljos.Ui.Tap Tap
 		prototype QtQml.QtObject named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
@@ -953,23 +987,6 @@ module Ljos.Ui
 		signal blockingChanged
 		signal marginChanged
 		signal wheel event:QtObject
-	type Ljos.Ui.Arrangement Arrangement
-		prototype QtQuick.Layouts.Layout named
-		is uncreatable
-		prop spacing QtQml.real named
-		prop padding QtQml.real named reset
-		prop leftPadding QtQml.real named reset
-		prop rightPadding QtQml.real named reset
-		prop topPadding QtQml.real named reset
-		prop bottomPadding QtQml.real named reset
-		prop layoutDirection Qt::LayoutDirection
-		signal spacingChanged
-		signal paddingChanged
-		signal leftPaddingChanged
-		signal rightPaddingChanged
-		signal topPaddingChanged
-		signal bottomPaddingChanged
-		signal layoutDirectionChanged
 	type Ljos.Ui.HandlerPoint HandlerPoint
 		is uncreatable
 		prop position QtQml.point named readonly
