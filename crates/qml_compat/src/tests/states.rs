@@ -33,7 +33,7 @@ fn a_property_changes_target_that_is_no_id_stays_a_target() {
 fn what_the_id_form_has_no_spelling_for_keeps_the_file() {
     for source in [
         "import QtQuick\nItem { Text { id: t }\n states: State { PropertyChanges { target: t; font { bold: true } } } }\n",
-        "import QtQuick\nItem { Item { id: t }\n states: State { PropertyChanges { target: t; Layout.fillWidth: true } } }\n",
+        "import QtQuick\nimport QtQuick.Layouts\nItem { Item { id: t }\n states: State { PropertyChanges { target: t; Layout.fillWidth: true } } }\n",
     ] {
         assert!(
             kept_for(source).contains("Ljós's API names in each change"),
