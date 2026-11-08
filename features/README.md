@@ -307,6 +307,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the system's menu bar is:` + doc string | the system shows that bar, one line a menu, item or separator (`---`), indented two spaces a level: the application menu's items under "Application", then the menus; an item is `✓ ` when checked, its text, its key as macOS writes it (`⇧⌘S`) and `disabled` when it is (`@ljos-only`) |
 | `Then the system's menu bar shows "File > New"` | that menu, or item, is in the bar the system shows; ` enabled`, ` disabled`, ` checked` or ` unchecked` after it says how the item is (`@ljos-only`) |
 | `Then the system's menu bar does not show "File"` | the bar the system shows has no menu with that title (`@ljos-only`) |
+| `Then the system lists the windows in the menu "Window"` | the system lists the application's windows in that menu of the bar it shows (macOS's Window menu); `in no menu` says it lists them in none (`@ljos-only`) |
 | `Then the system shows no menu bar` | no bar of the application's is in the system's menu bar (`@ljos-only`) |
 | `Then the "role" named "name" is inside the "role" named "name"` | the second is its parent in the accessibility tree; the top is the `"window"` named `""` |
 | `Then the accessibility tree's focus is the "role" named "name"` | the one node a screen reader reads as having the keyboard; the `"window"` named `""` when no item has it |
