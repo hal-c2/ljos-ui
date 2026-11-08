@@ -183,6 +183,42 @@ Feature: Loader
       When the property "given" of "bound" is set to 90
       Then the property "itemWidth" of "bound" is 90
 
+  Rule: A Binding on a Loader's size may come and go
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"; width: 300; height: 200
+          Loader {
+            id: bound; objectName: "bound"
+            property bool bind: false
+            property real kid: 30
+            sourceComponent: Rectangle { implicitWidth: bound.kid; implicitHeight: 12 }
+            Binding on width { when: bound.bind; value: 120 }
+            property real itemWidth: item ? item.width : -1
+          }
+        }
+        """
+
+    Scenario: The Loader follows its item until the Binding turns on
+      Then the property "width" of "bound" is 30
+      When the property "kid" of "bound" is set to 40
+      Then the property "width" of "bound" is 40
+      When the property "bind" of "bound" is set to true
+      Then the property "width" of "bound" is 120
+      And the property "itemWidth" of "bound" is 120
+
+    Scenario: Once the Binding is off the Loader keeps the size it had, and gives it to its item
+      When the property "bind" of "bound" is set to true
+      And the property "bind" of "bound" is set to false
+      Then the property "width" of "bound" is 30
+      And the property "itemWidth" of "bound" is 30
+      When the property "kid" of "bound" is set to 50
+      Then the property "width" of "bound" is 30
+      And the property "itemWidth" of "bound" is 30
+
   Rule: A Loader loads a file named by its source
 
     Background:
