@@ -1631,7 +1631,7 @@ impl QuickScene {
     /// window from the root calls it first, since a Text knows its implicit
     /// size only once it is laid out.
     pub fn lay_out(&mut self, engine: &Engine) {
-        self.follow_text_engine();
+        self.follow_text_engine(engine);
         self.polish(engine);
     }
 
@@ -1660,7 +1660,7 @@ impl QuickScene {
     /// Follows the UI thread's text engine: another engine, or other fonts
     /// in the same one, lay every Text out again. Checked on frames that
     /// run anyway.
-    fn follow_text_engine(&mut self) {
+    fn follow_text_engine(&mut self, engine: &Engine) {
         let current = text::text_engine();
         let generation = current.borrow().generation();
         if Rc::ptr_eq(&current, &self.text) && generation == self.text_generation {
@@ -1669,6 +1669,7 @@ impl QuickScene {
         self.text = current;
         self.text_generation = generation;
         self.refresh_text();
+        crate::font_loader::fonts_changed(engine);
     }
 
     /// Called (unborrowed, at most once per frame) when the scene goes from
@@ -1753,7 +1754,7 @@ impl QuickScene {
             s.dirty = true;
             s.pictures = false;
         }
-        self.follow_text_engine();
+        self.follow_text_engine(engine);
         // Pictures decoded in the background since the last frame.
         let images = crate::image::ImageStore::of(engine);
         images.deliver(engine);
