@@ -25,19 +25,18 @@ Feature: The font of a Text
           property bool bigIsWider: big.width > plain.width
           property bool bigIsTaller: big.height > plain.height
           property bool bigBaselineIsLower: big.baselineOffset > plain.baselineOffset
-          property bool pointsArePixels: points.width === pixels.width && points.height === pixels.height
           property bool pixelsWin: both.width === pixels.width
-          property bool pointsRoundUp: eleven.width === fifteen.width && eleven.height === fifteen.height
-          property bool pointsRoundDown: ten.width === thirteen.width && ten.height === thirteen.height
+          property bool pointsRoundUp: eleven.width === elevenInPixels.width && eleven.height === elevenInPixels.height
+          property bool pointsRoundDown: ten.width === tenInPixels.width && ten.height === tenInPixels.height
+          readonly property real perPoint: Screen.logicalPixelDensity * 25.4 / 72
           Text { id: plain; objectName: "plain"; text: "Hello world" }
           Text { id: big; objectName: "big"; text: "Hello world"; font.pixelSize: 40 }
           Text { id: pixels; objectName: "pixels"; text: "Hello world"; font.pixelSize: 16 }
-          Text { id: points; objectName: "points"; text: "Hello world"; font.pointSize: 12 }
           Text { id: both; objectName: "both"; text: "Hello world"; font.pixelSize: 16; font.pointSize: 30 }
           Text { id: eleven; text: "Hello world"; font.pointSize: 11 }
-          Text { id: fifteen; text: "Hello world"; font.pixelSize: 15 }
+          Text { id: elevenInPixels; text: "Hello world"; font.pixelSize: Math.round(11 * root.perPoint) }
           Text { id: ten; text: "Hello world"; font.pointSize: 10 }
-          Text { id: thirteen; text: "Hello world"; font.pixelSize: 13 }
+          Text { id: tenInPixels; text: "Hello world"; font.pixelSize: Math.round(10 * root.perPoint) }
         }
         """
       When 100 milliseconds pass
@@ -47,11 +46,9 @@ Feature: The font of a Text
       And the property "bigIsTaller" of "root" is true
       And the property "bigBaselineIsLower" of "root" is true
 
-    Scenario: Twelve points are sixteen pixels
-      Then the property "pointsArePixels" of "root" is true
-
-    # Seen on Qt 6.11.2: 11 pt is 14.67 px and is set at 15 px; 10 pt is
-    # 13.33 px and is set at 13 px.
+    # Seen on Qt 6.11.2 at 96 dpi (Linux, Windows, qml6 offscreen): 11 pt
+    # is 14.67 px and is set at 15 px; 10 pt is 13.33 px and is set at
+    # 13 px. At macOS's 72 a point is a whole pixel.
     Scenario: A point size is set at the nearest whole pixel size
       Then the property "pointsRoundUp" of "root" is true
       And the property "pointsRoundDown" of "root" is true
