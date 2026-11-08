@@ -1091,7 +1091,8 @@ too, or when its `source` is also read, set or handled (`loader.source`,
 `setSource`, `onSourceChanged`, a bare `source` in its own bindings or,
 for the root of the file or of an inline component, anywhere in its scope,
 a `Connections` or `PropertyChanges` aimed at it): after lowering it is
-empty. It keeps the file, too, when the Loader's `sourceComponent` is read
+empty. A `source` a script binds itself, a parameter or a local, is the
+script's and not the Loader's, as it is for every name the pass reads. It keeps the file, too, when the Loader's `sourceComponent` is read
 or heard (`loader.sourceComponent`, `onSourceComponentChanged`): Qt's stays
 empty beside a `source`, and the lowered one is the component. `ljos check --tsc` and the authoring tools read `component: Page`
 as the compiler does.

@@ -124,6 +124,25 @@ fn a_loader_whose_source_is_read_where_the_pass_does_not_follow_keeps_the_file()
         "{}",
         done.text
     );
+    // A parameter or a local a script binds is the script's, as it is for
+    // every other name; the root Loader's `source` is not read.
+    for script in [
+        "function f(source) { return source.length }",
+        "function f() { var source = \"x\"; return source }",
+        "onStatusChanged: { let source = 1; console.log(source) }",
+        "property var g: (source) => source",
+    ] {
+        let source = format!("import QtQuick\nLoader {{ source: \"Page.qml\"; {script} }}\n");
+        let done = match lower(&source, &page) {
+            Outcome::Lowered(done) => done,
+            other => panic!("{script}: {other:?}"),
+        };
+        assert!(
+            done.text.contains("Loader { component: Page;"),
+            "{}",
+            done.text
+        );
+    }
     // An inline component's root Loader is not the file root's scope.
     let Outcome::Lowered(done) = lower(
         "import QtQuick\nItem {\n  property string source\n  width: source.length\n  component P: Loader { source: \"Page.qml\" }\n}\n",
