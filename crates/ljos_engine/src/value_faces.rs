@@ -151,7 +151,7 @@ fn fallbacks_of(v: Option<&JsValue>) -> Option<std::sync::Arc<[Atom]>> {
     match v {
         Some(JsValue::String(text)) if !text.is_empty() => {
             let names: Vec<String> = serde_json::from_str(text).ok()?;
-            (!names.is_empty()).then(|| names.iter().map(|n| Atom::from(n.as_str())).collect())
+            Some(names.iter().map(|n| Atom::from(n.as_str())).collect())
         }
         _ => None,
     }
@@ -624,8 +624,8 @@ pub(crate) const FACES: &str = r##"
       // reason. The family first, then the ones after it.
       hide(o, "__ljos_fallbacks", fallbacks);
       const rest = fallbacks === "" ? [] : JSON.parse(fallbacks);
-      // An empty first family is one of the list when others follow it.
-      const families = family === "" && rest.length === 0 ? [] : [family, ...rest];
+      // A list keeps an empty first family, one empty name among them.
+      const families = family === "" && fallbacks === "" ? [] : [family, ...rest];
       hide(o, "families", Object.freeze(families));
     },
     // Every setting a font has in Qt; the ones a QML font here cannot
@@ -662,7 +662,9 @@ pub(crate) const FACES: &str = r##"
         const names = value === undefined || value === null ? []
           : typeof value === "string" ? [value] : Array.from(value, String);
         const next = change.call(this, "family", names.length > 0 ? names[0] : "");
-        return change.call(next, "__ljos_fallbacks", names.length > 1 ? JSON.stringify(names.slice(1)) : "");
+        // One empty name is a list of one, kept apart from none (`Font::set_families`).
+        const listed = names.length > 1 || names.length === 1 && names[0] === "";
+        return change.call(next, "__ljos_fallbacks", listed ? JSON.stringify(names.slice(1)) : "");
       }
       // One size, as `Value::with_member` keeps it.
       // Qt keeps the size it had for one of none, and holds a weight
