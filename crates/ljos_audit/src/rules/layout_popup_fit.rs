@@ -5,9 +5,9 @@
 //! content, header, footer and padding ask for: filled to less than
 //! `limits::POPUP_MIN_FILL` of its height it is too large (a width is
 //! often one menus and dialogs share, so it is not held to its content);
-//! asked for more than it has on a side it is too small, unless a
-//! scroller in the content takes what is missing, and of no size at all
-//! it hides what it holds. A popup reaching
+//! asked for more than it has on a side it is too small, unless the
+//! scrollers shown on the way down from its content can give back what is
+//! missing, and of no size at all it hides what it holds. A popup reaching
 //! past the window is too large for it. Tool tips size themselves and are
 //! left out, and a drawer is not held to its fill: it runs along an edge
 //! of the window by design, whatever it holds.
@@ -15,38 +15,88 @@
 use ljos_controls::{Drawer, ToolTip, item_popup};
 use ljos_design::limits::POPUP_MIN_FILL;
 use ljos_engine::{Engine, ObjectId};
-use ljos_quick::child_items;
+use ljos_quick::{Column, ColumnLayout, Row, RowLayout, StackLayout, child_items};
 
 use crate::cx::{
     Cx, is_a, is_scroller, number, overhang, overhang_words, scene_rect, shown_items, slack, trim,
 };
 
-/// Whether a scroller in the content takes what the popup is missing,
-/// `over` px across and `down` px high. A page may sit as deep as the
-/// app's layouts put it (a row, a column, a loader, a stack of pages),
-/// and what it asks for is then its content, which it scrolls through. A
-/// scroller can give back no more than it asks for, so one smaller than
-/// what is missing leaves the rest fixed and out of reach; and what is
-/// inside a scroller is bounded by it, so the search does not go into
-/// one.
+/// Whether the scrollers in the content can give back what the popup is
+/// missing, `over` px across and `down` px high: on each side that falls
+/// short, what the content asks for less what it can scroll through is no
+/// more than the popup has.
 fn content_scrolls(engine: &Engine, content: ObjectId, over: f64, down: f64) -> bool {
-    let mut stack = vec![content];
-    let mut seen = 0;
-    while let Some(o) = stack.pop() {
-        seen += 1;
-        if seen > crate::cx::DEPTH {
-            return false;
-        }
-        if is_scroller(engine, o) {
-            let takes = |name, missing: f64| missing <= 0.0 || number(engine, o, name) >= missing;
-            if takes("implicitWidth", over) && takes("implicitHeight", down) {
-                return true;
-            }
-            continue;
-        }
-        stack.extend(child_items(engine, o));
+    let takes = |axis, missing: f64| {
+        let mut budget = crate::cx::DEPTH;
+        missing <= 0.0 || gives(engine, content, axis, &mut budget) >= missing
+    };
+    takes(H, over) && takes(V, down)
+}
+
+const H: usize = 0;
+const V: usize = 1;
+const IMPLICIT: [&str; 2] = ["implicitWidth", "implicitHeight"];
+
+/// How much of what `o` asks for along `axis` it can give back by
+/// scrolling. A page may sit as deep as the app's layouts put it (a row,
+/// a column, a loader, a stack of pages), so this follows the path down
+/// from the content. A scroller can give back all it asks for, and what
+/// is inside one is bounded by it. One after another along the axis,
+/// children give back what each of them can; side by side across it, or
+/// on top of each other, the one that gives back least is the floor, as
+/// a row is as high as its tallest fixed child. Hidden items are left
+/// out as layouts leave them out, but every page of a stack sizes it, the
+/// hidden ones giving nothing back. A container placing its children some
+/// other way is taken to give back what its largest fixed child leaves,
+/// which is what it gives back at most.
+fn gives(engine: &Engine, o: ObjectId, axis: usize, budget: &mut usize) -> f64 {
+    let Some(left) = budget.checked_sub(1) else {
+        return 0.0;
+    };
+    *budget = left;
+    let asks = number(engine, o, IMPLICIT[axis]).max(0.0);
+    if is_scroller(engine, o) {
+        return asks;
     }
-    false
+    let stack = is_a::<StackLayout>(engine, o);
+    let mut along = 0.0;
+    let mut floor: f64 = 0.0;
+    let mut widest: f64 = 0.0;
+    let mut any = false;
+    for c in child_items(engine, o) {
+        let given = if shown(engine, c) {
+            gives(engine, c, axis, budget)
+        } else if stack {
+            0.0
+        } else {
+            continue;
+        };
+        any = true;
+        along += given;
+        let child_asks = number(engine, c, IMPLICIT[axis]);
+        widest = widest.max(child_asks);
+        floor = floor.max(child_asks - given);
+    }
+    if !any {
+        return 0.0;
+    }
+    let one_after_another = match axis {
+        H => is_a::<RowLayout>(engine, o) || is_a::<Row>(engine, o),
+        _ => is_a::<ColumnLayout>(engine, o) || is_a::<Column>(engine, o),
+    };
+    if one_after_another {
+        along.min(asks)
+    } else {
+        // A popup's content item asks for nothing of its own; the popup
+        // asks for what its children do.
+        (asks.max(widest) - floor).max(0.0)
+    }
+}
+
+fn shown(engine: &Engine, o: ObjectId) -> bool {
+    engine
+        .untrack(|| engine.read_by_name(o, "visible"))
+        .to_boolean()
 }
 
 fn name_of(engine: &Engine, popup: ObjectId) -> String {
@@ -74,10 +124,7 @@ fn something_shown(engine: &Engine, content: ObjectId) -> Option<ObjectId> {
         if seen > crate::cx::DEPTH {
             return None;
         }
-        let shown = engine
-            .untrack(|| engine.read_by_name(o, "visible"))
-            .to_boolean();
-        if !shown {
+        if !shown(engine, o) {
             continue;
         }
         if number(engine, o, "width") > 0.0 && number(engine, o, "height") > 0.0 {
