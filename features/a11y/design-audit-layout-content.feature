@@ -688,6 +688,105 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit does not report "layout-popup-fit"
 
+    Scenario: A dialog whose header holds an item wider than the dialog
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 700; height: 500
+          color: "white"
+          Dialog {
+            Component.onCompleted: open()
+            width: 320
+            header: Item {
+              implicitWidth: 600; implicitHeight: 40
+              Rectangle { width: 600; height: 40; color: "gray" }
+            }
+            Label { text: "Body" }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
+    Scenario: A dialog whose footer holds an item wider than the dialog
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 700; height: 500
+          color: "white"
+          Dialog {
+            Component.onCompleted: open()
+            width: 320
+            footer: Item {
+              implicitWidth: 600; implicitHeight: 40
+              Rectangle { width: 600; height: 40; color: "gray" }
+            }
+            Label { text: "Body" }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
+    Scenario: A popup drawn at twice its size whose scroller reaches all it holds
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            x: 100; y: 100
+            width: 160; height: 120
+            scale: 2
+            contentItem: Flickable {
+              clip: true
+              implicitWidth: 136; implicitHeight: 600
+              contentHeight: 600
+              Rectangle { width: 136; height: 600; color: "gray" }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-popup-fit"
+
+    Scenario: A popup whose scroller is turned on its side
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            x: 100; y: 100
+            width: 160; height: 160
+            contentItem: Item {
+              implicitWidth: 136; implicitHeight: 600
+              Flickable {
+                anchors.centerIn: parent
+                width: 136; height: 136
+                rotation: 90
+                clip: true
+                contentWidth: 600
+                flickableDirection: Flickable.HorizontalFlick
+                Rectangle { width: 600; height: 136; color: "gray" }
+              }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-popup-fit"
+
     Scenario: A split handle that draws nothing
       Given the QML:
         """qml
