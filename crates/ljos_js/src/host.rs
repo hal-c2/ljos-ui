@@ -1705,7 +1705,6 @@ impl JsHost {
             rt.set_memory_limit(limit);
         }
         rt.set_gc_threshold(cfg.gc_threshold);
-        rt.set_max_stack_size(cfg.max_stack);
 
         let interrupt = Rc::new(InterruptState::default());
         {
@@ -1732,15 +1731,21 @@ impl JsHost {
 
         let ctx = Context::full(&rt)?;
         let raw = ctx.with(|c| c.as_raw());
-        if let Some(room) = crate::stack::room_below_here() {
-            // SAFETY: the runtime is alive and only this thread uses it. The
-            // size is set directly because rquickjs's setter turns anything
-            // over 16 MiB (a main thread's stack, say) into no limit at all.
-            unsafe {
-                let rt = rquickjs::qjs::JS_GetRuntime(raw.as_ptr());
-                rquickjs::qjs::JS_UpdateStackTop(rt);
-                rquickjs::qjs::JS_SetMaxStackSize(rt, room as _);
-            }
+        let stack = match (cfg.max_stack, crate::stack::room_below_here()) {
+            (Some(most), Some(room)) => most.min(room),
+            (Some(most), None) => most,
+            (None, Some(room)) => room,
+            (None, None) => crate::config::FALLBACK_MAX_STACK,
+        };
+        // QuickJS reads 0 as no limit at all.
+        let stack = stack.max(1);
+        // SAFETY: the runtime is alive and only this thread uses it. The
+        // size is set directly because rquickjs's setter turns anything over
+        // 16 MiB (a main thread's stack, say) into no limit at all.
+        unsafe {
+            let rt = rquickjs::qjs::JS_GetRuntime(raw.as_ptr());
+            rquickjs::qjs::JS_UpdateStackTop(rt);
+            rquickjs::qjs::JS_SetMaxStackSize(rt, stack as _);
         }
         // SAFETY: the runtime is alive.
         let wrapper_class = unsafe {

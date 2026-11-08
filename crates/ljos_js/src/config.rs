@@ -8,11 +8,12 @@ pub struct JsConfig {
     /// QuickJS runs its cycle collector after the heap grows by this much.
     pub gc_threshold: usize,
     /// Native stack the interpreter may use below where the host is made
-    /// before throwing a RangeError, on a platform whose thread stack
-    /// bounds Ljós cannot read. Elsewhere JS may use the thread's stack down
-    /// to a reserve kept for native code, since Rust frames between nested
-    /// runs count too and a fixed size runs out in deep creation.
-    pub max_stack: usize,
+    /// before throwing a RangeError, at most. `None`: the thread's stack
+    /// down to a reserve kept for native code, since Rust frames between
+    /// nested runs count too and a fixed size runs out in deep creation;
+    /// [`FALLBACK_MAX_STACK`] on a platform whose thread stack bounds Ljós
+    /// cannot read.
+    pub max_stack: Option<usize>,
     /// Default per-dispatch budget used by [`crate::JsHost::call`].
     pub slice: Slice,
     /// Budget for compiling and evaluating a module or registering a type.
@@ -24,12 +25,16 @@ pub struct JsConfig {
     pub idle_collect_min_growth: usize,
 }
 
+/// The stack JS may use where the thread's stack bounds are unknown and
+/// [`JsConfig::max_stack`] gives none.
+pub const FALLBACK_MAX_STACK: usize = 512 * 1024;
+
 impl Default for JsConfig {
     fn default() -> Self {
         Self {
             memory_limit: Some(96 * 1024 * 1024),
             gc_threshold: 8 * 1024 * 1024,
-            max_stack: 512 * 1024,
+            max_stack: None,
             slice: Slice::default(),
             load_slice: Slice {
                 soft: Duration::from_millis(50),
