@@ -222,3 +222,29 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
         kept ./Main.qml:2:1: it imports `QtQuick.Dialogs` under a name
         1 files, 0 lowered, 1 kept
         """
+
+    # A Qt file finds a name its imports lack among the files beside it; the
+    # lowered file imports Ljos.Controls, and an import is found first.
+    @ljos-only @headless
+    Scenario: A file of the project Ljos.Controls has a type of the same name for keeps the file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Dialogs
+        Item {
+          Button { }
+          FileDialog { }
+        }
+        """
+      And the file "Button.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 80; height: 30; color: "#336699" }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Button.qml:1:1: it is used with `Main.qml`, which is kept: `Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first
+        kept ./Main.qml:4:3: `Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first
+        2 files, 0 lowered, 2 kept
+        """
