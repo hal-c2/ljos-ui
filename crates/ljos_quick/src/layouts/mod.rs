@@ -582,6 +582,44 @@ pub fn layout_runs(engine: &Engine, obj: ObjectId) -> u64 {
     state(engine, obj, |s| s.runs).unwrap_or(0)
 }
 
+/// The sizes a layout lets one of its children take along one axis, from
+/// `Layout.` and the child's own size as the layout read them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ChildSizes {
+    pub minimum: f64,
+    pub preferred: f64,
+    /// The same as both others for a child that does not fill.
+    pub maximum: f64,
+}
+
+/// The sizes `layout` last measured `child` to take along the vertical
+/// axis or the horizontal one. For tools that weigh a layout's children
+/// as the layout does. `None` when `layout` is not a layout, has not
+/// measured yet, or does not size `child`: a child it leaves out, or one
+/// of a box that places its children as a positioner, which keeps its
+/// own size.
+pub fn child_sizes(
+    engine: &Engine,
+    layout: ObjectId,
+    child: ObjectId,
+    vertical: bool,
+) -> Option<ChildSizes> {
+    let axis = if vertical { V } else { H };
+    engine
+        .with(layout, |l: &Layout| {
+            let plan = l.state.plan.as_ref()?;
+            let cell = plan.cells.iter().find(|c| c.item == child)?;
+            let h = cell.hint[axis];
+            Some(ChildSizes {
+                minimum: h.min,
+                preferred: h.pref,
+                maximum: h.max,
+            })
+        })
+        .ok()
+        .flatten()
+}
+
 /// Whether the scene polishes a type through this module: a layout, or
 /// one of the positioners the scene has no kind of its own for. Asked of
 /// the type, once (the scene's item class), not of each item.
