@@ -343,7 +343,14 @@ pub struct Rect {
 /// handle at layout time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Font {
+    /// The first of the font's families ([`Font::families`]).
     pub family: Atom,
+    /// The families after [`Font::family`], each tried for a character
+    /// the ones before it lack (`QFont::setFamilies`). `None` when the font
+    /// names one family, so a font that has no list does not allocate one.
+    /// Writing `family` alone leaves these; [`Font::set_family`] is what
+    /// QML's `font.family` does, and clears them.
+    pub fallback_families: Option<Arc<[Atom]>>,
     pub point_size: f64,
     pub pixel_size: i32,
     /// CSS-style weight, 100..=900; 400 is normal, 700 bold.
@@ -388,6 +395,7 @@ pub struct Font {
 #[derive(Clone)]
 struct ApplicationFont {
     family: Atom,
+    fallback_families: Option<Arc<[Atom]>>,
     point_size: f64,
     pixel_size: i32,
     weight: i32,
@@ -435,6 +443,7 @@ impl ApplicationFont {
     fn of(f: &Font) -> Self {
         ApplicationFont {
             family: f.family.clone(),
+            fallback_families: f.fallback_families.clone(),
             point_size: f.point_size,
             pixel_size: f.pixel_size,
             weight: f.weight,
@@ -445,6 +454,7 @@ impl ApplicationFont {
 
     fn lay_on(&self, font: &mut Font) {
         font.family = self.family.clone();
+        font.fallback_families = self.fallback_families.clone();
         font.point_size = self.point_size;
         font.pixel_size = self.pixel_size;
         font.weight = self.weight;
@@ -494,6 +504,7 @@ impl Font {
     pub fn fallback() -> Self {
         Font {
             family: Atom::DEFAULT_FONT_FAMILY,
+            fallback_families: None,
             point_size: Font::DEFAULT_POINT_SIZE,
             pixel_size: -1,
             weight: 400,
@@ -658,6 +669,45 @@ impl Font {
     pub fn bold(&self) -> bool {
         self.weight > 500
     }
+
+    /// The families in the order they are tried (`QFont::families`): the
+    /// family, then the fallbacks. Empty when the family is.
+    pub fn families(&self) -> impl Iterator<Item = &Atom> {
+        let fallbacks = self.fallback_families.as_deref().unwrap_or_default();
+        (!self.family.is_empty())
+            .then_some(&self.family)
+            .into_iter()
+            .chain(fallbacks)
+    }
+
+    /// Names one family, which becomes the whole list
+    /// (`QFont::setFamily`).
+    pub fn set_family(&mut self, family: Atom) {
+        self.family = family;
+        self.fallback_families = None;
+    }
+
+    /// Names the families in the order they are tried
+    /// (`QFont::setFamilies`): the first is the family. None leaves the
+    /// family empty, which is the default one where text is laid out.
+    pub fn set_families(&mut self, families: &[Atom]) {
+        let (family, rest) = match families.split_first() {
+            Some((first, rest)) => (first.clone(), rest),
+            None => (Atom::EMPTY, &[][..]),
+        };
+        self.family = family;
+        self.fallback_families = (!rest.is_empty()).then(|| rest.into());
+    }
+}
+
+/// The strings of a list a script gave, as `QStringList` takes it: each
+/// item as text.
+fn string_list(v: &Value) -> Vec<Atom> {
+    match v {
+        Value::List(items) => items.iter().map(Value::to_js_string).collect(),
+        Value::Undefined | Value::Null => Vec::new(),
+        one => vec![one.to_js_string()],
+    }
 }
 
 /// A QML enum value. In JS it behaves as its number; the type is kept for
@@ -769,7 +819,8 @@ impl Value {
                     _ => Font::default(),
                 };
                 match name {
-                    "family" => f.family = v.to_js_string(),
+                    "family" => f.set_family(v.to_js_string()),
+                    "families" => f.set_families(&string_list(v)),
                     // A font has one size. A pixel size takes its place;
                     // a point size does not, as in Qt, where the pixel size
                     // stays and wins.

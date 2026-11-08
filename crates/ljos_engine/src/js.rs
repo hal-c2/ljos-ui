@@ -1718,7 +1718,24 @@ impl Engine {
                     TypeTag::Font => {
                         let mut f = Font::default();
                         if let Ok(JsValue::String(s)) = scope.get_field(&r, "family") {
-                            f.family = s.into();
+                            f.set_family(s.into());
+                        }
+                        let families = match scope.get_field(&r, "families") {
+                            Ok(JsValue::Array(items)) => Some(items),
+                            Ok(JsValue::Handle(a)) if a.is_array() => scope.array_items(&a).ok(),
+                            _ => None,
+                        };
+                        if let Some(items) = families {
+                            let names: Vec<Atom> = items
+                                .into_iter()
+                                .map(|i| match i {
+                                    JsValue::String(s) => Atom::from(s.as_str()),
+                                    other => self
+                                        .js_to_value(scope, other, &TypeTag::String)
+                                        .to_js_string(),
+                                })
+                                .collect();
+                            f.set_families(&names);
                         }
                         if let Ok(JsValue::Number(n)) = scope.get_field(&r, "pointSize") {
                             f.point_size = n;

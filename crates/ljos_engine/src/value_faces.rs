@@ -125,10 +125,30 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
                 JsValue::Bool(font.prefer_typo_line_metrics),
                 handle(&font.features),
                 handle(&font.variable_axes),
+                JsValue::String(fallbacks_text(font)),
             ],
         ),
         _ => return None,
     })
+}
+
+/// The families after a font's first, as they cross to JS: one text, a
+/// line each, which keeps a font's fields plain values JS compares by what
+/// they hold.
+fn fallbacks_text(font: &Font) -> String {
+    let fallbacks = font.fallback_families.as_deref().unwrap_or_default();
+    let names: Vec<&str> = fallbacks.iter().map(|a| &**a).collect();
+    names.join("\n")
+}
+
+/// What [`fallbacks_text`] made, back.
+fn fallbacks_of(v: Option<&JsValue>) -> Option<std::sync::Arc<[Atom]>> {
+    match v {
+        Some(JsValue::String(text)) if !text.is_empty() => {
+            Some(text.split('\n').map(Atom::from).collect())
+        }
+        _ => None,
+    }
 }
 
 /// A map of a font that came back from JS.
@@ -175,6 +195,7 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
                 Some(JsValue::String(family)) => family.as_str().into(),
                 _ => Font::default().family,
             },
+            fallback_families: fallbacks_of(fields.get(20)),
             point_size: n(1),
             pixel_size: n(2) as i32,
             weight: n(3) as i32,
@@ -549,7 +570,7 @@ pub(crate) const FACES: &str = r##"
   const fontFields = ["family", "__ljos_pointSize", "__ljos_pixelSize", "weight", "italic", "underline",
     "strikeout", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
     "hintingPreference", "styleName", "overline", "kerning", "preferShaping", "contextFontMerging",
-    "preferTypoLineMetrics", "features", "variableAxes"];
+    "preferTypoLineMetrics", "features", "variableAxes", "__ljos_fallbacks"];
   // Qt's answer for a map never given: an empty one.
   const noMap = Object.freeze({});
   const map = (v) => (v === undefined || v === null || v === noMap ? undefined : v);
@@ -557,10 +578,10 @@ pub(crate) const FACES: &str = r##"
   const flag = (v) => !!v;
   const font = kind(fontFields,
     [String, double, whole, whole, flag, flag, flag, double, double, flag, whole, whole,
-      String, flag, flag, flag, flag, flag, map, map],
+      String, flag, flag, flag, flag, flag, map, map, String],
     (o, [family, pointSize, pixelSize, weight, italic, underline, strikeout, letterSpacing, wordSpacing,
       scaleWithSystem, capitalization, hintingPreference, styleName, overline, kerning, preferShaping,
-      contextFontMerging, preferTypoLineMetrics, features, variableAxes]) => {
+      contextFontMerging, preferTypoLineMetrics, features, variableAxes, fallbacks]) => {
       // In Qt's order, which is what JSON.stringify and a for-in list.
       o.family = family;
       o.styleName = styleName;
@@ -589,6 +610,12 @@ pub(crate) const FACES: &str = r##"
       // Ours, so not one of the keys a script finds when it lists a font's:
       // those stay Qt's.
       hide(o, "scaleWithSystem", scaleWithSystem);
+      // QFont's, which Qt's QML font does not have: hidden for the same
+      // reason. The family first, then the ones after it.
+      hide(o, "__ljos_fallbacks", fallbacks);
+      const families = family === "" ? [] : [family];
+      if (fallbacks !== "") families.push(...fallbacks.split("\n"));
+      hide(o, "families", Object.freeze(families));
     },
     // Every setting a font has in Qt; the ones a QML font here cannot
     // change are written as Qt has them by default.
@@ -616,6 +643,16 @@ pub(crate) const FACES: &str = r##"
     hide(font.proto, "__ljos_with", function (member, value, script) {
       if (member === "size") member = "pixelSize";
       if (member === "bold") return change.call(this, "weight", value ? 700 : 400);
+      // One family is the whole list, as QFont::setFamily makes it.
+      if (member === "family") {
+        return change.call(change.call(this, "family", value), "__ljos_fallbacks", "");
+      }
+      if (member === "families") {
+        const names = value === undefined || value === null ? []
+          : typeof value === "string" ? [value] : Array.from(value, String);
+        const next = change.call(this, "family", names.length > 0 ? names[0] : "");
+        return change.call(next, "__ljos_fallbacks", names.slice(1).join("\n"));
+      }
       // One size, as `Value::with_member` keeps it.
       // Qt keeps the size it had for one of none, and holds a weight
       // between 1 and 1000.
@@ -638,7 +675,7 @@ pub(crate) const FACES: &str = r##"
     });
   }
   // What `Qt.font` knows by name. A font here keeps the first thirteen.
-  const fontKeys = ["family", "bold", "weight", "italic", "underline", "strikeout", "pointSize",
+  const fontKeys = ["family", "families", "bold", "weight", "italic", "underline", "strikeout", "pointSize",
     "pixelSize", "letterSpacing", "wordSpacing", "scaleWithSystem", "capitalization",
     "hintingPreference", "styleName", "overline", "kerning", "preferShaping", "features", "variableAxes",
     "contextFontMerging", "preferTypoLineMetrics"];

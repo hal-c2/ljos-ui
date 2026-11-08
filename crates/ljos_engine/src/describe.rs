@@ -59,6 +59,7 @@ pub const VALUE_TYPES: &[ValueType] = &[
         module: QUICK,
         members: &[
             ("family", "string"),
+            ("families", "var"),
             ("pointSize", "real"),
             ("pixelSize", "int"),
             // Ljós's name for it (docs/DIALECT.md §4.13).

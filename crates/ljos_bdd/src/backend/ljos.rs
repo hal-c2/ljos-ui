@@ -1868,7 +1868,7 @@ fn application_font(attrs: &[(String, String)]) -> Result<ljos_engine::Font> {
         let number = || v.parse::<f64>().map_err(|_| bad(k, v));
         let flag = || v.parse::<bool>().map_err(|_| bad(k, v));
         match k.as_str() {
-            "family" => font.family = ljos_engine::Atom::from(v.as_str()),
+            "family" => font.set_family(ljos_engine::Atom::from(v.as_str())),
             "pointSize" => {
                 font.point_size = number()?;
                 font.pixel_size = -1;
