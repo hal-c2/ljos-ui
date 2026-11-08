@@ -151,7 +151,10 @@ fn differing(a: &Font, b: &Font) -> u32 {
             m |= flag;
         }
     };
-    bit(a.family != b.family, attr::FAMILY);
+    bit(
+        a.family != b.family || a.fallback_families != b.fallback_families,
+        attr::FAMILY,
+    );
     bit(a.point_size != b.point_size, attr::POINT_SIZE);
     bit(a.pixel_size != b.pixel_size, attr::PIXEL_SIZE);
     bit(a.weight != b.weight, attr::WEIGHT);
@@ -190,8 +193,10 @@ fn differing(a: &Font, b: &Font) -> u32 {
 fn merged(base: &Font, own: &Font, mask: u32) -> Font {
     let mut f = base.clone();
     let has = |flag: u32| mask & flag != 0;
+    // The list is one setting with the family it starts with.
     if has(attr::FAMILY) {
         f.family = own.family.clone();
+        f.fallback_families = own.fallback_families.clone();
     }
     // A font has one size. Whichever unit was set here wins over the
     // other unit from above.
