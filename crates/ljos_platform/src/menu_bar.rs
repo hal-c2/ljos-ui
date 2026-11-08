@@ -129,6 +129,20 @@ impl SystemBar {
             .or_else(|| self.menus.iter().position(SystemMenu::lists_windows))
     }
 
+    /// Drops the menus with nothing in them but the one
+    /// [`SystemBar::windows_menu`] picks, which the system fills. A menu
+    /// that only might have listed the windows (a "Window" beside a menu
+    /// with [`MenuRole::Window`]) would be shown empty.
+    pub fn drop_empty_menus(&mut self) {
+        let picked = self.windows_menu();
+        let mut at = 0;
+        self.menus.retain(|m| {
+            let keep = !m.entries.is_empty() || Some(at) == picked;
+            at += 1;
+            keep
+        });
+    }
+
     /// An item of the application menu by its text.
     pub fn application_item(&self, text: &str) -> Option<&SystemItem> {
         [&self.about, &self.preferences, &self.quit]
@@ -354,5 +368,26 @@ mod tests {
         ]);
         assert_eq!(b.windows_menu(), None);
         assert_eq!(SystemBar::default().windows_menu(), None);
+    }
+
+    #[test]
+    fn an_empty_menu_the_windows_are_not_listed_in_is_dropped() {
+        let open = SystemEntry::Item(item(1, "Open"));
+        let mut file = menu("File", MenuRole::TextHeuristic);
+        file.entries.push(open);
+        let mut b = bar(vec![
+            menu("Window", MenuRole::TextHeuristic),
+            file.clone(),
+            menu("Fenster", MenuRole::Window),
+        ]);
+        b.drop_empty_menus();
+        let titles: Vec<_> = b.menus.iter().map(|m| m.title.as_str()).collect();
+        assert_eq!(titles, ["File", "Fenster"]);
+        assert_eq!(b.windows_menu(), Some(1));
+        // The empty "Window" stays where it is the one picked.
+        let mut b = bar(vec![menu("Window", MenuRole::TextHeuristic), file]);
+        b.drop_empty_menus();
+        assert_eq!(b.menus.len(), 2);
+        assert_eq!(b.windows_menu(), Some(0));
     }
 }

@@ -342,6 +342,9 @@ fn describe(e: &Engine, bar: ObjectId) -> SystemBar {
             out.menus.push(m);
         }
     }
+    // Empty menus were kept that might list the windows; only the one
+    // that does stays.
+    out.drop_empty_menus();
     out
 }
 
@@ -514,8 +517,9 @@ fn describe_platform_menu(
         role: menu_role(e, menu),
         entries,
     };
-    // A menu of the bar's the system may list the windows in is shown
-    // with nothing of its own, for the system to fill.
+    // A menu of the bar's the system may list the windows in is kept
+    // with nothing of its own, for the system to fill if `describe` finds
+    // it is the one.
     let keep = !menu.entries.is_empty() || (app.is_some() && menu.lists_windows());
     keep.then_some(menu)
 }
