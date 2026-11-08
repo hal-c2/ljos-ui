@@ -8,9 +8,14 @@
 # points and below, 100 fewer at 24 and above, interpolated between.
 # Qt applies the tracking at the font's size in points, its pixel size times
 # 72 over the logical dots per inch. On Linux (96) a 24-pixel text is 18
-# points, where the tracking is 0, so two characters are 28.78125 wide. On
-# macOS (72) a point is a pixel, and the same text is 23.96875 wide, as in
-# Ljós, whose shaper takes the pixel size as the size in points everywhere.
+# points, where the tracking is 0, so two characters are 28.78125 wide.
+# Ljós takes the pixel size as the size in points everywhere, as macOS (72)
+# does, and applies the tracking once, as CoreText sets text: 16.78125 at
+# 12 pixels and 23.96875 at 24. Seen on Qt 6.11.1 on macOS (cocoa), Qt
+# applies it twice there, CoreText's advances carrying it and its shaper
+# adding it again: 19.1875 at 12 and at 24, 21.59375 at 18 where it is 0.
+# Ljós follows CoreText (#253); crates/ljos_text/tests/system_font_tracking.rs
+# holds San Francisco to CoreText's own advances.
 
 Feature: A font's tracking
   A font with a tracking table is set with the space it asks for at the
@@ -35,7 +40,8 @@ Feature: A font's tracking
       """
     Then the property "contentWidth" of "t" is 16.78125
 
-  # See above: Qt on Linux tracks this text as 18 points.
+  # See above: Qt on Linux tracks this text as 18 points, and on macOS
+  # twice.
   @qt-diverges
   Scenario: At a large size the characters are set closer
     Given the font file "LjosTrackTest-Regular.ttf"
