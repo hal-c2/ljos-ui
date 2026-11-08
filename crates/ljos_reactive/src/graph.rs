@@ -3170,7 +3170,8 @@ impl<V: Clone + 'static> Graph<V> {
     /// are until their change is told. The noted properties and
     /// [`Kind::Told`] nodes waiting when it opens wait with them, and are
     /// told when it drops: a hook run inside would read its own change as
-    /// it was.
+    /// it was. One a change made inside the queue reaches is told inside
+    /// it, before what that change sets off there.
     pub fn own_queue(&self, since: u8) -> LevelGuard<'_, V> {
         let mut i = self.inner.borrow_mut();
         i.queues.push(Queue::new());
@@ -3836,11 +3837,31 @@ const SHARED_FLUSH_DEPTH: u32 = 8;
 /// Queues `n` on the innermost flush level. A node already waiting on an
 /// outer level moves in; its old entry is skipped when it comes up, as it
 /// is no longer queued there.
-/// Puts a noted `node` (`n`) in `noted`, once until it is told.
-fn note<V>(noted: &mut Vec<NodeId>, n: NodeId, node: &mut Node<V>) {
-    if node.flags.has(Flags::NOTED) && !node.flags.has(Flags::NOTE_DUE) {
+/// Puts a noted `node` (`n`) in `noted`, once until it is told. One that
+/// waits below `floor` already is lifted past it ([`lift`]).
+fn note<V>(noted: &mut Vec<NodeId>, floor: usize, n: NodeId, node: &mut Node<V>) {
+    if !node.flags.has(Flags::NOTED) {
+        return;
+    }
+    if node.flags.has(Flags::NOTE_DUE) {
+        lift(noted, floor, n);
+    } else {
         node.flags.set(Flags::NOTE_DUE, true);
         noted.push(n);
+    }
+}
+
+/// Moves `n`, waiting in `list` below `floor` for the level under an own
+/// queue, to its top. A change made inside the queue reached it, and its
+/// watchers move into the queue with that change: told below, it would
+/// be told after they run, and they would read what it keeps up to date
+/// as it was. The entry it leaves is a dead id, skipped when it comes up,
+/// so it is told once and the floors below stay where they are.
+fn lift(list: &mut Vec<NodeId>, floor: usize, n: NodeId) {
+    let floor = floor.min(list.len());
+    if let Some(at) = list[..floor].iter().rposition(|&m| m == n) {
+        list[at] = NodeId::default();
+        list.push(n);
     }
 }
 
@@ -4131,6 +4152,18 @@ impl<V: Clone + 'static> Inner<V> {
         record_read_of(n, &mut nodes[n], frames, stats);
     }
 
+    /// How far down `told` and `noted` the change being marked
+    /// ([`Inner::marking`]) lifts what it reaches ([`lift`]). One made
+    /// inside the innermost own queue lifts what waits below it; one the
+    /// queue waits on leaves it there, to be told when the queue drops.
+    fn lifts(&self) -> Floors {
+        if self.waiting_changes.contains(&self.marking) {
+            Floors::default()
+        } else {
+            self.floors
+        }
+    }
+
     fn mark_observers(&mut self, n: NodeId, first: NodeState) {
         // A binding's new result is the change that made it dirty, still
         // spreading; anything else is a change of its own.
@@ -4142,12 +4175,13 @@ impl<V: Clone + 'static> Inner<V> {
             }
         };
         let mut stack = std::mem::take(&mut self.mark_stack);
+        let floor = self.lifts().noted;
         if self.wave_origin != Some(n)
             && let Some(node) = self.nodes.get_mut(n)
         {
             // A binding's own result was noted by the mark that made it
             // dirty, as a told effect is.
-            note(&mut self.noted, n, node);
+            note(&mut self.noted, floor, n, node);
         }
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
@@ -4187,6 +4221,7 @@ impl<V: Clone + 'static> Inner<V> {
     /// [`Inner::propagate_marks`] of `stack`, taken out of `mark_stack`.
     fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>) {
         let all = self.options.eager;
+        let lifts = self.lifts();
         // Stamps the nodes on a walk this pass carried a binding's result
         // through (below), so a cycle of them is passed once.
         self.tick += 1;
@@ -4247,8 +4282,12 @@ impl<V: Clone + 'static> Inner<V> {
                 // A binding's result comes after the mark that made it
                 // dirty, which told it already: the owner reading it is
                 // what brought the result.
-                if self.wave_origin.is_none() && !std::mem::replace(due, true) {
-                    self.told.push(m);
+                if self.wave_origin.is_none() {
+                    if std::mem::replace(due, true) {
+                        lift(&mut self.told, lifts.told, m);
+                    } else {
+                        self.told.push(m);
+                    }
                 }
                 continue;
             }
@@ -4267,6 +4306,10 @@ impl<V: Clone + 'static> Inner<V> {
                 // change is news to it, so it runs with this change's flush.
                 if node.is_eager(all) {
                     enqueue(&mut self.queues, m, node);
+                }
+                // Its hook, if it waits below an own queue, comes along.
+                if node.flags.has(Flags::NOTE_DUE) {
+                    lift(&mut self.noted, lifts.noted, m);
                 }
                 if through_walk {
                     node.mark = pass;
@@ -4296,7 +4339,7 @@ impl<V: Clone + 'static> Inner<V> {
             if was_clean {
                 // A bound property may come out otherwise: its owner reads
                 // it when it gets to it, which brings it up to date.
-                note(&mut self.noted, m, node);
+                note(&mut self.noted, lifts.noted, m, node);
                 // Not when a binding it was waiting on has changed: what it
                 // waits on still came from the change that reached it.
                 node.marked_by = self.marking;

@@ -162,3 +162,125 @@ fn a_hook_a_waiting_change_reached_is_told_after_the_queue_it_waits_on() {
         "each hook reads its own change: {seen:?}"
     );
 }
+
+/// A batch writes `p` then `q`, both noted. `q`'s hook, told first, opens
+/// a queue of its own and writes `p` again. That change is made inside
+/// the queue, so `p`'s hook, waiting below it, is told inside it too,
+/// before `p`'s watcher runs there: the watcher reads what the hook keeps
+/// up to date as of the value it is given, and the hook is told once.
+#[test]
+fn a_hook_a_change_inside_the_queue_reaches_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let p = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    // What `p`'s hook keeps: the value of `p` it was last told of.
+    let kept = Rc::new(RefCell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, s) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, p, move |_, v| s.borrow_mut().push((*v, *k.borrow())))
+        .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == p {
+            *k.borrow_mut() = hooks.untrack(|| hooks.get(p));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(p, 2);
+        }
+    });
+    g.set_noted(p).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(p, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, p], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(2, 2)],
+        "the watcher reads what the hook keeps as of its own value"
+    );
+}
+
+/// [`a_hook_a_change_inside_the_queue_reaches_is_told_inside_it`] for a
+/// told effect: one waiting to be told of `p` is told inside the queue a
+/// write of `p` is made in, before the watcher that write sets off runs,
+/// and once.
+#[test]
+fn a_told_effect_a_change_inside_the_queue_reaches_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let p = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let o = Rc::clone(&order);
+    g.effect_told(
+        r,
+        move |g| {
+            g.get(p);
+        },
+        move || o.borrow_mut().push("told"),
+    )
+    .unwrap();
+    let o = Rc::clone(&order);
+    g.watch(r, p, move |_, _| o.borrow_mut().push("watched"))
+        .unwrap();
+    let hooks = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(p, 2);
+        }
+    });
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(p, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(
+        *order.borrow(),
+        ["told", "watched"],
+        "told before the effects of the change, once"
+    );
+}
+
+/// What a change made before the queue opened reached stays below it: a
+/// hook inside the queue writes nothing that reaches `p`, so `p`'s hook
+/// is told when the queue drops, after the watcher the queue runs.
+#[test]
+fn a_hook_only_a_waiting_change_reached_waits_for_the_queue() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let p = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let other = g.property(r, 0).unwrap();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let o = Rc::clone(&order);
+    g.watch(r, other, move |_, _| o.borrow_mut().push("other watched"))
+        .unwrap();
+    let (hooks, o) = (Rc::clone(&g), Rc::clone(&order));
+    g.set_note_handler(move |n| {
+        if n == p {
+            o.borrow_mut().push("p told");
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(1));
+            hooks.set(other, 1);
+        }
+    });
+    g.set_noted(p).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(p, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*order.borrow(), ["other watched", "p told"]);
+}
