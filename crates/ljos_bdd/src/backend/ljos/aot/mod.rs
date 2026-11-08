@@ -27,6 +27,18 @@ mod k0bd52d01614cb0d8b8186e4e;
     clippy::all,
     clippy::pedantic
 )]
+mod k0cebb892b62f1f42118325cd;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
 mod k109996ea80984d817765d2b3;
 #[allow(
     unused_mut,
@@ -40,6 +52,18 @@ mod k109996ea80984d817765d2b3;
     clippy::pedantic
 )]
 mod k4014236a4f5077c06d173c98;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
+mod k4f1823385169526080d5289f;
 #[allow(
     unused_mut,
     unused_variables,
@@ -87,6 +111,30 @@ mod k8543966b6cf79d445997bbc9;
     clippy::all,
     clippy::pedantic
 )]
+mod k9f51da4c0378b482b2f1a520;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
+mod ka3cabc156698846634b76953;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
 mod kb93b9e01e2838d4e772142be;
 #[allow(
     unused_mut,
@@ -100,14 +148,44 @@ mod kb93b9e01e2838d4e772142be;
     clippy::pedantic
 )]
 mod kc4734a1921127e72ca0bc9aa;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
+mod ke81164926c12502fac3b0034;
+#[allow(
+    unused_mut,
+    unused_variables,
+    unused_assignments,
+    unreachable_code,
+    unused_labels,
+    unused_parens,
+    unused_braces,
+    clippy::all,
+    clippy::pedantic
+)]
+mod kfdc91c69ecd299a93bdcd8ba;
 
 pub(in crate::backend) static COMPILED: &[&ljos_engine::aot::File] = &[
     &k0bd52d01614cb0d8b8186e4e::FILE,
+    &k0cebb892b62f1f42118325cd::FILE,
     &k109996ea80984d817765d2b3::FILE,
     &k4014236a4f5077c06d173c98::FILE,
+    &k4f1823385169526080d5289f::FILE,
     &k685358724ee32629ebebabe1::FILE,
     &k7592f70ced2386d293832f39::FILE,
     &k8543966b6cf79d445997bbc9::FILE,
+    &k9f51da4c0378b482b2f1a520::FILE,
+    &ka3cabc156698846634b76953::FILE,
     &kb93b9e01e2838d4e772142be::FILE,
     &kc4734a1921127e72ca0bc9aa::FILE,
+    &ke81164926c12502fac3b0034::FILE,
+    &kfdc91c69ecd299a93bdcd8ba::FILE,
 ];
