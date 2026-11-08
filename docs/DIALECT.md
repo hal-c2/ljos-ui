@@ -1339,8 +1339,9 @@ A file is kept, for now, when:
 - it reads `.pixelSize`, `.bold` or `.pointSize` off something whose type
   is not known but that may be a font: a member called `font`
   (`someItem.font.bold`) or a property the file declares as a `font`, a
-  `var` or an `alias` (`property var face`, `face.pixelSize`;
-  `property alias face: label.font`); or it reads
+  `var` or an `alias`, by its name or as a member (`property var face`,
+  `face.pixelSize`, `root.face.bold`; `property alias face: label.font`,
+  `label.face.pixelSize`); or it reads
   `font["pixelSize"]`.
 
 DECISION: off anything else, such a name is not a font's, and is left as
