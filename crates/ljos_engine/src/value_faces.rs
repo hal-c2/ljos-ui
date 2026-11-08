@@ -132,20 +132,26 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
     })
 }
 
-/// The families after a font's first, as they cross to JS: one text, a
-/// line each, which keeps a font's fields plain values JS compares by what
-/// they hold.
+/// The families after a font's first, as they cross to JS: one text, which
+/// keeps a font's fields plain values JS compares by what they hold. It is
+/// a JSON array, empty when there are none, so a name that is empty or has
+/// a line break in it comes back as it went, as QFont keeps it.
 fn fallbacks_text(font: &Font) -> String {
-    let fallbacks = font.fallback_families().map_or(&[][..], |l| &**l);
-    let names: Vec<&str> = fallbacks.iter().map(|a| &**a).collect();
-    names.join("\n")
+    match font.fallback_families() {
+        Some(names) => {
+            let names: Vec<&str> = names.iter().map(|a| &**a).collect();
+            serde_json::to_string(&names).unwrap_or_default()
+        }
+        None => String::new(),
+    }
 }
 
 /// What [`fallbacks_text`] made, back.
 fn fallbacks_of(v: Option<&JsValue>) -> Option<std::sync::Arc<[Atom]>> {
     match v {
         Some(JsValue::String(text)) if !text.is_empty() => {
-            Some(text.split('\n').map(Atom::from).collect())
+            let names: Vec<String> = serde_json::from_str(text).ok()?;
+            (!names.is_empty()).then(|| names.iter().map(|n| Atom::from(n.as_str())).collect())
         }
         _ => None,
     }
@@ -617,8 +623,9 @@ pub(crate) const FACES: &str = r##"
       // QFont's, which Qt's QML font does not have: hidden for the same
       // reason. The family first, then the ones after it.
       hide(o, "__ljos_fallbacks", fallbacks);
-      const families = family === "" ? [] : [family];
-      if (fallbacks !== "") families.push(...fallbacks.split("\n"));
+      const rest = fallbacks === "" ? [] : JSON.parse(fallbacks);
+      // An empty first family is one of the list when others follow it.
+      const families = family === "" && rest.length === 0 ? [] : [family, ...rest];
       hide(o, "families", Object.freeze(families));
     },
     // Every setting a font has in Qt; the ones a QML font here cannot
@@ -655,7 +662,7 @@ pub(crate) const FACES: &str = r##"
         const names = value === undefined || value === null ? []
           : typeof value === "string" ? [value] : Array.from(value, String);
         const next = change.call(this, "family", names.length > 0 ? names[0] : "");
-        return change.call(next, "__ljos_fallbacks", names.slice(1).join("\n"));
+        return change.call(next, "__ljos_fallbacks", names.length > 1 ? JSON.stringify(names.slice(1)) : "");
       }
       // One size, as `Value::with_member` keeps it.
       // Qt keeps the size it had for one of none, and holds a weight
