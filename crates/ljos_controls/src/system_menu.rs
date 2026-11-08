@@ -394,8 +394,9 @@ fn describe_menu(
         role: menu_role(e, menu),
         entries,
     };
-    // A menu of the bar's the system may list the windows in is shown
-    // with nothing of its own, for the system to fill.
+    // A menu of the bar's the system may list the windows in is kept
+    // with nothing of its own, for the system to fill if `describe` finds
+    // it is the one.
     let keep = !menu.entries.is_empty() || (app.is_some() && menu.lists_windows());
     keep.then_some(menu)
 }
@@ -452,6 +453,9 @@ fn describe_platform(e: &Engine, bar: ObjectId) -> SystemBar {
             out.menus.push(m);
         }
     }
+    // As for a Ljós bar: of the empty menus kept, only the one that lists
+    // the windows stays.
+    out.drop_empty_menus();
     out
 }
 
@@ -518,8 +522,8 @@ fn describe_platform_menu(
         entries,
     };
     // A menu of the bar's the system may list the windows in is kept
-    // with nothing of its own, for the system to fill if `describe` finds
-    // it is the one.
+    // with nothing of its own, for the system to fill if
+    // `describe_platform` finds it is the one.
     let keep = !menu.entries.is_empty() || (app.is_some() && menu.lists_windows());
     keep.then_some(menu)
 }
