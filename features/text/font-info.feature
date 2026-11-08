@@ -47,6 +47,27 @@ Feature: What a font resolves to
     And the property "fixedPitch" of "two" is false
     And the property "family" of "two" is "Ljos Symbols Test"
 
+  Scenario: A font registered later is the face its family resolves to from then on
+    Given the font file "LjosAlternateTest-Regular.ttf"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property bool missingAtFirst
+        FontInfo { id: info; objectName: "info"; font.family: "Ljos Alternate Test" }
+        FontLoader { id: loader }
+        Component.onCompleted: {
+          missingAtFirst = info.family !== "Ljos Alternate Test" && !info.fixedPitch
+          loader.source = "LjosAlternateTest-Regular.ttf"
+        }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "missingAtFirst" of "root" is true
+    And the property "family" of "info" is "Ljos Alternate Test"
+    And the property "fixedPitch" of "info" is true
+
   Scenario: A monospace family is fixed-pitch and a proportional one is not
     Given the application uses the fonts installed on the system
     And the QML:
