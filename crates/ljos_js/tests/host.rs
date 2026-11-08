@@ -104,12 +104,14 @@ fn recurse(n: u32) -> String {
 
 #[test]
 fn a_call_that_goes_deep_uses_the_threads_stack() {
-    // A thread with room for far more than the old fixed limit, and a call
-    // that needs more than it: kept to that limit, the call runs out.
+    // A thread of 8 MiB, far more than the old fixed limit, and a call
+    // that needs more than it: kept to that limit, the call runs out. A
+    // level takes near 2 KiB, so the limit stops a call some 300 deep and
+    // the thread one some 4 000 deep.
     std::thread::Builder::new()
-        .stack_size(64 * 1024 * 1024)
+        .stack_size(8 * 1024 * 1024)
         .spawn(|| {
-            let deep = recurse(20_000);
+            let deep = recurse(2_000);
             let capped = JsHost::new(JsConfig {
                 max_stack: Some(FALLBACK_MAX_STACK),
                 ..JsConfig::default()
@@ -120,7 +122,7 @@ fn a_call_that_goes_deep_uses_the_threads_stack() {
                 -1.0,
                 "the call needs more than FALLBACK_MAX_STACK"
             );
-            assert_eq!(eval_num(&plain(), &deep).unwrap(), 20_000.0);
+            assert_eq!(eval_num(&plain(), &deep).unwrap(), 2_000.0);
         })
         .unwrap()
         .join()
