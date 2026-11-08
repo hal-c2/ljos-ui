@@ -684,7 +684,7 @@ interface String {
 /// Whether `ty` is QtQml's `Component`, which the declarations make generic
 /// in what it creates.
 fn is_component(ty: &Type) -> bool {
-    ty.name == "Component" && ty.module == "QtQml"
+    ty.name == "Component" && qt_types::module("QtQml").is_some_and(|qml| qml.has(ty))
 }
 
 fn is_word(name: &str) -> bool {
@@ -790,19 +790,31 @@ mod tests {
 
     #[test]
     fn an_excerpt_is_pinned() {
+        // The comment is the class of the description the table has:
+        // Ljós's `QtQml.point`, or Qt's own class beside Qt's table, which
+        // also gives `point` its `toString`.
+        let point = qt_types::module("QtQml")
+            .and_then(|m| m.type_named("point"))
+            .expect("QtQml's point");
+        let head = format!("/** {} */", point.class);
         let declarations = Api::new().expect("Ljos.Ui").declarations();
-        let start = declarations
-            .find("/** QtQml.point */")
-            .expect("point is declared");
+        let start = declarations.find(&head).expect("point is declared");
         let excerpt: String = declarations[start..]
             .lines()
-            .take(5)
+            .take(4)
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(
             excerpt,
-            "/** QtQml.point */\ninterface point {\n    readonly x: number;\n    readonly y: number;\n}"
+            format!("{head}\ninterface point {{\n    readonly x: number;\n    readonly y: number;")
         );
+        if point.is_own {
+            assert_eq!(
+                declarations[start..].lines().nth(4),
+                Some("}"),
+                "Ljós's point has x and y alone"
+            );
+        }
     }
 
     #[test]
