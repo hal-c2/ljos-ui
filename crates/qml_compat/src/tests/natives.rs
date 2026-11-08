@@ -330,3 +330,23 @@ fn a_native_type_a_ljos_module_imported_after_it_has_keeps_the_file() {
         "`PointerArea` is one of the program's own types, and Ljos.Ui, which the lowered file imports, has a `PointerArea` that would be found first"
     );
 }
+
+/// Qt attaches `Drag` to an item, so off one of the program's types built
+/// on one it is Ljós's `DragSource`; off one built on nothing of the
+/// toolkit's it is not known to be Qt's.
+#[test]
+fn an_attached_drag_read_off_a_native_type_is_an_items_where_it_is_built_on_one() {
+    let lowered = lowered_with_kit(
+        "import QtQuick\nimport Studio.Kit\nItem { Swatch { id: s }\n property bool on: s.Drag.active }\n",
+    );
+    assert!(lowered.contains("s.DragSource.active"), "{lowered}");
+    let Outcome::Kept(kept) = with_kit(
+        "import QtQuick\nimport Studio.Kit\nItem { Tone { id: t }\n property bool on: t.Drag.active }\n",
+    ) else {
+        panic!("lowered");
+    };
+    assert_eq!(
+        kept.reason,
+        "`.Drag` is read off one of the program's own types, built on no type of the toolkit's, and only an item's is Qt's attached `Drag`"
+    );
+}
