@@ -160,7 +160,8 @@ mod tests {
     #[test]
     fn a_huge_size_given_where_the_end_is_unknown_is_kept_to_the_fallback() {
         let fallback = crate::config::FALLBACK_MAX_STACK;
-        let sp = 0x7fff_f000_0000;
+        // Fits a 32-bit address space, with room below for the 4 MiB stack.
+        let sp: usize = 0x7fff_0000;
         assert_eq!(for_js_at(sp, None, Some(usize::MAX)), fallback);
         assert_eq!(for_js_at(sp, None, Some(64 << 20)), fallback);
         assert_eq!(for_js_at(sp, None, Some(64 * 1024)), 64 * 1024);
