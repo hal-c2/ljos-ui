@@ -397,6 +397,124 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit reports "layout-popup-fit" at line 7
 
+    Scenario: A popup whose content size its scroller of no size of its own scrolls through
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            contentHeight: 600
+            contentItem: Flickable { clip: true; contentHeight: 600 }
+          }
+        }
+        """
+      Then the design audit does not report "layout-popup-fit"
+
+    Scenario: A popup whose scroller fills the item that asks for its size
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            padding: 0
+            contentItem: Item {
+              implicitWidth: 280; implicitHeight: 600
+              Flickable { anchors.fill: parent; contentHeight: 600 }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "layout-popup-fit"
+
+    Scenario: A popup whose scroller a column keeps at its own height
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            contentItem: Column {
+              Flickable { width: 280; implicitHeight: 600; contentHeight: 900 }
+            }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
+    Scenario: A popup whose row keeps the margins of a fixed item beside a scroller
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            padding: 0
+            contentItem: RowLayout {
+              Item {
+                implicitWidth: 140; implicitHeight: 200
+                Layout.topMargin: 100; Layout.bottomMargin: 100
+              }
+              Flickable {
+                Layout.fillHeight: true
+                implicitWidth: 140; implicitHeight: 600; contentHeight: 600
+              }
+            }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
+    Scenario: A popup whose column of uniform cells keeps each as high as the highest minimum
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 600; height: 500
+          color: "white"
+          Popup {
+            Component.onCompleted: open()
+            width: 320; height: 240
+            padding: 0
+            contentItem: ColumnLayout {
+              uniformCellSizes: true
+              Flickable {
+                Layout.fillHeight: true
+                implicitWidth: 280; implicitHeight: 200; contentHeight: 600
+              }
+              Flickable {
+                Layout.fillHeight: true; Layout.minimumHeight: 180
+                implicitWidth: 280; implicitHeight: 200; contentHeight: 600
+              }
+            }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
     Scenario: A split handle that draws nothing
       Given the QML:
         """qml
