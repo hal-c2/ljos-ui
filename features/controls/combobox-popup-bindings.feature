@@ -8,12 +8,14 @@
 Feature: A combo box's own popup reads the combo box by its id
   A ComboBox's popup is an object of its own, given as a property, and
   its bindings name the combo box by its id. Every way Ljós runs them
-  gives the same as tier 1, however deep the combo box is.
+  gives the same as tier 1, however deep the combo box is: the code
+  compiled ahead of time and the dynamic tiers it is checked against.
 
   Rule: A popup given in a file whose root is the combo box
 
     Background:
-      Given the tier 1 cross-check is on
+      Given the files are compiled ahead of time
+      And the tier 1 cross-check is on
       And the compiled code cross-check is on
       And the file "Combo.qml":
         """qml
@@ -51,12 +53,14 @@ Feature: A combo box's own popup reads the combo box by its id
       And the property "implicitHeight" of "popup" is 68
       And the log has no warning matching "tier 1 and tier 2 differ"
       And the log has no warning matching "dynamic tiers differ"
+      And the file "Combo.qml" ran compiled code
 
     Scenario: The popup follows the combo box's width
       When the property "width" of "combo" is set to 260
       Then the property "width" of "popup" is 260
       And the log has no warning matching "tier 1 and tier 2 differ"
       And the log has no warning matching "dynamic tiers differ"
+      And the file "Combo.qml" ran compiled code
 
     Scenario: The popup's bindings agree while it is open
       When the method "open" of "popup" is called
@@ -64,6 +68,7 @@ Feature: A combo box's own popup reads the combo box by its id
       Then the property "visible" of "popup" is true
       And the log has no warning matching "tier 1 and tier 2 differ"
       And the log has no warning matching "dynamic tiers differ"
+      And the file "Combo.qml" ran compiled code
 
     Scenario: The popup's bindings agree as the combo box goes
       When the method "open" of "popup" is called
@@ -73,12 +78,14 @@ Feature: A combo box's own popup reads the combo box by its id
       Then the object "combo" does not exist
       And the log has no warning matching "tier 1 and tier 2 differ"
       And the log has no warning matching "dynamic tiers differ"
+      And the file "Combo.qml" ran compiled code
 
 
   Rule: A combo box loaded deep inside other objects
 
     Scenario Outline: A combo box <depth> Loaders deep gives its popup its width
-      Given the tier 1 cross-check is on
+      Given the files are compiled ahead of time
+      And the tier 1 cross-check is on
       And the compiled code cross-check is on
       And the file "Combo.qml":
         """qml
@@ -109,6 +116,7 @@ Feature: A combo box's own popup reads the combo box by its id
       Then the property "width" of "popup" is 220
       And the log has no warning matching "tier 1 and tier 2 differ"
       And the log has no warning matching "dynamic tiers differ"
+      And the file "Combo.qml" ran compiled code
       And the log has no warning matching "call stack"
 
       Examples:
