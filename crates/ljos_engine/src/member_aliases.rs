@@ -82,7 +82,7 @@ impl Engine {
             })?;
         let whole = self.untrack(|| self.read(obj, prop));
         whole
-            .with_member(&p.ty, member, v)
+            .with_member(&p.ty, member, &self.plain(v))
             .ok_or_else(|| EngineError::UnknownProperty {
                 ty: meta.name.to_string(),
                 name: format!("{}.{member}", p.name),
@@ -161,7 +161,7 @@ impl Engine {
             // The members no alias binds are as they are now.
             let mut v = e.untrack(|| e.read(to, tp));
             for (member, f) in l.iter_mut() {
-                v = v.with_member(&ty, member, &f(e)?)?;
+                v = v.with_member(&ty, member, &e.plain(&f(e)?))?;
             }
             Some(v)
         });

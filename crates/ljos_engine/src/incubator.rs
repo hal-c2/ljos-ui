@@ -2071,7 +2071,8 @@ impl Engine {
             for (member, code) in &bound {
                 let (i, expr) = code.get();
                 let mv = e.eval_expr(&i, expr, &TypeTag::Var, &[])?;
-                v = v.with_member(&ty, member, &mv)?;
+                // A member reads an array a script holds as the list it is.
+                v = v.with_member(&ty, member, &e.plain(&mv))?;
             }
             Some(v)
         });
