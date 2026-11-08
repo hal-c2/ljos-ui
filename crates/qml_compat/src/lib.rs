@@ -2947,15 +2947,18 @@ impl Script<'_, '_> {
     }
 
     /// Whether `expression`, whose type the pass does not know, may be a
-    /// font: a member called `font`, or a property the file declares as one,
-    /// as a `var` or as an `alias`. What a function is given or a local holds is not
+    /// font: a name or a member called `font`, or one the file declares as a
+    /// font, a `var` or an `alias`. What a function is given or a local holds is not
     /// followed (docs/DIALECT.md §4.13).
     fn could_be_font(&self, expression: &Expression<'_>) -> bool {
         match expression {
             Expression::Identifier(id) => {
                 id.name == "font" || self.pass.fonts.iter().any(|f| f == id.name.as_str())
             }
-            Expression::StaticMemberExpression(member) => member.property.name == "font",
+            Expression::StaticMemberExpression(member) => {
+                let name = member.property.name.as_str();
+                name == "font" || self.pass.fonts.iter().any(|f| f == name)
+            }
             _ => false,
         }
     }
