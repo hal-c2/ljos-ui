@@ -36,6 +36,7 @@ use oxc_ast::ast::{
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::GetSpan;
+use oxc_syntax::scope::ScopeFlags;
 use qml_edit::Change;
 use qml_syntax::{
     Allocator,
