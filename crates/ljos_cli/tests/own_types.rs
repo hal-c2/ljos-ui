@@ -493,11 +493,13 @@ impl<'a, 'c> Module<'a, 'c> {
                 }
                 // A group whose type a module exports is that type, which
                 // is described there and not again as a class of this one.
+                // It is named, as `link` names one: beside Qt's table that
+                // module may be Qt's, which has no class of Ljós's.
                 (TypeTag::Group(_), _) => match groups
                     .get(&*property.name)
                     .and_then(|group| self.all.home_of(group))
                 {
-                    Some(home) => format!("{} pointer", home.named()),
+                    Some(home) => format!("{} named pointer", home.named()),
                     None => self.value(&property.ty),
                 },
                 (ty, _) => self.value(ty),
@@ -1255,14 +1257,6 @@ const NOT_YET: &[(&str, &str)] = &[
     ),
     // An object written in a view goes where one written in a Flickable
     // goes; to Qt it is the view's own (`data`).
-    (
-        "QtQuick.GridView",
-        "the default property is the Flickable's `flickableData`, not `data`",
-    ),
-    (
-        "QtQuick.ListView",
-        "the default property is the Flickable's `flickableData`, not `data`",
-    ),
     (
         "QtQuick.ViewSection",
         "only what a view's `section` is; Qt lets a file make one as well",
