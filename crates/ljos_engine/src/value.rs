@@ -694,9 +694,10 @@ impl Font {
     /// The families in the order they are tried (`QFont::families`): the
     /// family, then the fallbacks. Empty when the font names none.
     pub fn families(&self) -> impl Iterator<Item = &Atom> {
-        let fallbacks = self.fallback_families().map_or(&[][..], |l| &**l);
-        // QFont keeps an empty first family when others follow it.
-        (!self.family.is_empty() || !fallbacks.is_empty())
+        let listed = self.fallback_families();
+        let fallbacks = listed.map_or(&[][..], |l| &**l);
+        // A list keeps an empty first family, as QFont does.
+        (!self.family.is_empty() || listed.is_some())
             .then_some(&self.family)
             .into_iter()
             .chain(fallbacks)
@@ -717,8 +718,11 @@ impl Font {
             Some((first, rest)) => (first.clone(), rest),
             None => (Atom::EMPTY, &[][..]),
         };
+        // One empty name is a list of one, which QFont tells from none: it
+        // is kept as an empty list after the family.
+        let listed = !rest.is_empty() || families.len() == 1 && family.is_empty();
         self.family = family;
-        self.set_fallbacks((!rest.is_empty()).then(|| rest.into()));
+        self.set_fallbacks(listed.then(|| rest.into()));
     }
 
     /// Takes the families of `other`, all of them.
@@ -728,7 +732,8 @@ impl Font {
     }
 
     /// The families after [`Font::family`], in the order they are tried;
-    /// `None` when the font names one.
+    /// `None` when the font names one, or none. An empty list follows a
+    /// family that is one empty name.
     pub fn fallback_families(&self) -> Option<&Arc<[Atom]>> {
         self.rare.0.as_ref()?.fallback_families.as_ref()
     }
