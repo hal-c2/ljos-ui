@@ -22,8 +22,7 @@ Feature: Keyed views
       Given the QML:
         """qml
         pragma Scripts: JavaScript
-        import Ljos.Ui
-        import Ljos.Core
+        import Ljos.Ui; import Ljos.Core
         Item {
           id: root; objectName: "root"; width: 200; height: 200
           property unknown rows: [{ id: "a", n: 1 }, { id: "b", n: 2 }, { id: "c", n: 3 }]
@@ -84,8 +83,7 @@ Feature: Keyed views
     Scenario: A Repeater without a key makes its items again
       Given the QML:
         """qml
-        import Ljos.Ui
-        import Ljos.Core
+        import Ljos.Ui; import Ljos.Core
         Item {
           id: root; objectName: "root"
           property unknown rows: [{ id: "a" }, { id: "b" }]
