@@ -1255,8 +1255,6 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.Controls.Universal.VerticalHeaderViewDelegate",
         "a style file here, which has the default property of the control it is",
     ),
-    // An object written in a view goes where one written in a Flickable
-    // goes; to Qt it is the view's own (`data`).
     (
         "QtQuick.ViewSection",
         "only what a view's `section` is; Qt lets a file make one as well",
