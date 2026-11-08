@@ -2918,7 +2918,16 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 .is_some_and(|ty| ty.attached().is_some())
         {
             let only = format!("only an item's is Qt's attached `{name}`");
-            match self.ty(&it.object) {
+            let on = match self.ty(&it.object) {
+                // The program's type attaches what the toolkit type it is
+                // built on does.
+                Ty::Native(native, _) => match self.pass.toolkit_base(native) {
+                    Some(base) => Ty::Derived(base),
+                    None => Ty::Native(native, false),
+                },
+                on => on,
+            };
+            match on {
                 Ty::Exact(ty) | Ty::Derived(ty) if is_item(ty) => {
                     let span = it.property.span;
                     self.pass
@@ -2932,6 +2941,12 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                     it.property.span.start,
                 ),
                 Ty::Plain => {}
+                Ty::Native(..) => self.keep(
+                    format!(
+                        "`.{name}` is read off one of the program's own types, built on no type of the toolkit's, and {only}"
+                    ),
+                    it.property.span.start,
+                ),
                 Ty::Unknown => self.keep(
                     format!("`.{name}` is read off something whose type is not known, and {only}"),
                     it.property.span.start,
