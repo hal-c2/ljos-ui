@@ -224,3 +224,42 @@ fn an_import_of_the_project_after_the_dialogs_is_the_projects_wherever_the_contr
         lowered.text
     );
 }
+
+/// A name a script binds itself is the script's, in the lowered file as in
+/// Qt's, whatever module has a type of that name.
+#[test]
+fn a_name_a_script_binds_itself_is_the_scripts() {
+    for body in [
+        "function f() { const Row = 2; return Row }",
+        "function f() { var Box = { w: 1 }; return Box.w }",
+        "function f(Box) { return Box }",
+        "function f() { return [1].map(PointerArea => PointerArea + 1) }",
+        "function f() { try { return 1 } catch (Box) { return Box } }",
+        "function f() { function Box() { return 1 } return Box() }",
+        "function f() { for (let Box of [1]) { return Box } return 0 }",
+    ] {
+        let source = format!("import QtQuick\nItem {{ {body} }}\n");
+        assert_eq!(
+            lowered(&source),
+            format!("pragma Scripts: JavaScript; import Ljos.Ui\nItem {{ {body} }}\n")
+        );
+    }
+    // A local named as a type Ljós renames is not renamed: its uses would
+    // be the new name's, its declaration the old one's.
+    let body = "function f() { let MouseArea = 1; return MouseArea }";
+    assert_eq!(
+        lowered(&format!("import QtQuick\nItem {{ {body} }}\n")),
+        format!("pragma Scripts: JavaScript; import Ljos.Ui\nItem {{ {body} }}\n")
+    );
+    // Outside the scope of its declaration, the name is the type's again.
+    assert_eq!(
+        kept_for("import QtQuick\nItem { function f() { { let Box = 1 } return Box } }\n"),
+        "`Box` is not a type of the modules the file imports, and Ljos.Ui, which the lowered file imports, has a `Box` that would be found first"
+    );
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { function f() { if (true) { let MouseArea = 1 } return MouseArea } }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nItem { function f() { if (true) { let MouseArea = 1 } return PointerArea } }\n"
+    );
+}

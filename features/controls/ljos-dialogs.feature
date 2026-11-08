@@ -320,3 +320,32 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
         kept app/Main.qml:6:3: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first
         2 files, 0 lowered, 2 kept
         """
+
+    # A name a script declares is the script's in Qt and in Ljós, so a local
+    # `Box` is not Ljos.Ui's `Box`.
+    @ljos-only @headless
+    Scenario: A local a script names as a Ljós type is the script's own, and the file lowers
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Dialogs
+        Item {
+          function size() { var Box = { w: 4 }; return Box.w }
+          FileDialog { }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          function size() { var Box = { w: 4 }; return Box.w }
+          FileDialog { }
+        }
+        """
