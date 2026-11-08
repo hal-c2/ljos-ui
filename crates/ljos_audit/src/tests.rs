@@ -1539,13 +1539,35 @@ fn a_scroller_kept_from_shrinking_does_not_fit_its_popup() {
 #[test]
 fn a_scroller_of_a_preferred_height_fits_its_popup() {
     // What the popup is missing is the view's to scroll, however its
-    // height is given.
+    // height is given, as long as the layout may make it smaller.
+    let report = popup_fit(&popup_holding(
+        "            Flickable {\n                \
+         Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: 600\n                \
+         implicitWidth: 280; contentHeight: 600\n            }",
+    ));
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}
+
+#[test]
+fn a_scroller_a_layout_does_not_fill_with_does_not_fit_its_popup() {
+    // A child that does not fill is as high as it prefers: the column
+    // lays the view out 600 high, and the popup clips what it cannot
+    // show, however much the view could scroll.
     let report = popup_fit(&popup_holding(
         "            Flickable {\n                \
          Layout.fillWidth: true; Layout.preferredHeight: 600\n                \
          implicitWidth: 280; contentHeight: 600\n            }",
     ));
-    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_scroller_a_layout_gives_no_layout_attached_to_does_not_fit_its_popup() {
+    // Said nothing, a view in a column is as high as it asks.
+    let report = popup_fit(&popup_holding(
+        "            Flickable { implicitWidth: 280; implicitHeight: 600; contentHeight: 600 }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
 }
 
 #[test]

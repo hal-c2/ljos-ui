@@ -14,7 +14,7 @@
 
 use ljos_controls::{Drawer, ToolTip, item_popup};
 use ljos_design::limits::POPUP_MIN_FILL;
-use ljos_engine::{Engine, MetaRef, ObjectId, PropIndex, QmlType};
+use ljos_engine::{Engine, MetaRef, ObjectId, PropIndex, Provenance, QmlType};
 use ljos_quick::{
     Arrangement, Column, ColumnLayout, GridLayout, Layout, LayoutAttached, Row, RowLayout,
     StackLayout, child_items,
@@ -54,25 +54,44 @@ struct Asks {
 
 /// What `c` asks of `parent` along `axis`. A layout sizes a child by its
 /// `Layout.preferred` size, else its implicit size, bounded by its
-/// `Layout.minimum` and `maximum` sizes; what else holds it reads its
-/// implicit size.
+/// `Layout.minimum` and `maximum` sizes, and keeps one that does not fill
+/// at that size; what else holds it reads its implicit size.
 fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks {
     let implicit = number(engine, c, IMPLICIT[axis]).max(0.0);
     let plain = Asks {
         size: implicit,
         least: 0.0,
     };
-    let lays_out = is_a::<RowLayout>(engine, parent)
+    let stack = is_a::<StackLayout>(engine, parent);
+    let arrangement = is_a::<Arrangement>(engine, parent);
+    let lays_out = stack
+        || arrangement
+        || is_a::<RowLayout>(engine, parent)
         || is_a::<ColumnLayout>(engine, parent)
-        || is_a::<GridLayout>(engine, parent)
-        || is_a::<StackLayout>(engine, parent)
-        || is_a::<Arrangement>(engine, parent);
+        || is_a::<GridLayout>(engine, parent);
     if !lays_out {
         return plain;
     }
-    let Some(att) = engine.existing_attached_object(c, &MetaRef::Static(Layout::static_meta()))
-    else {
-        return plain;
+    let att = engine.existing_attached_object(c, &MetaRef::Static(Layout::static_meta()));
+    // A child that does not fill is laid out as large as it asks, no
+    // smaller: what it holds cannot scroll that away. Said nothing, a
+    // stack's page fills it, an arrangement's child does not, and a
+    // layout's child does when it is a layout itself.
+    let fill = [LayoutAttached::FILL_WIDTH, LayoutAttached::FILL_HEIGHT][axis].index;
+    let told = att
+        .filter(|a| {
+            !matches!(
+                engine.provenance(*a, fill),
+                Some(Provenance::Default) | None
+            )
+        })
+        .map(|a| engine.untrack(|| engine.read(a, fill)).to_boolean());
+    let fills = told.unwrap_or(stack || (!arrangement && is_a::<Layout>(engine, c)));
+    let Some(att) = att else {
+        return Asks {
+            size: implicit,
+            least: if fills { 0.0 } else { implicit },
+        };
     };
     let read = |p: [PropIndex; 2]| engine.untrack(|| engine.read(att, p[axis])).to_number();
     let preferred = read([
@@ -103,9 +122,10 @@ fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks 
     } else {
         implicit
     };
+    let size = size.clamp(least, most);
     Asks {
-        size: size.clamp(least, most),
-        least,
+        size,
+        least: if fills { least } else { size },
     }
 }
 
