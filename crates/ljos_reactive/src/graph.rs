@@ -81,8 +81,8 @@ struct Prop<V> {
     /// flags beside it leave.
     noted_at: u32,
     /// A lift walk ([`Inner::lift_behind`]) went past it in the innermost
-    /// own queue: what waited behind it then is lifted, and what waits
-    /// there now came after.
+    /// own queue, and no edge was made since: what waited behind it then
+    /// is lifted, and nothing comes to wait below a floor while it stands.
     lifted_past: bool,
 }
 
@@ -1888,6 +1888,7 @@ impl<V: Clone + 'static> Graph<V> {
                 back: slot,
             });
             i.nodes[n].observers.push(Edge { node: r.node, back });
+            i.edge_added();
         }
     }
 
@@ -3911,37 +3912,41 @@ impl Queue {
 const SHARED_FLUSH_DEPTH: u32 = 8;
 
 /// Puts a noted `node` (`n`) in `noted`, once until it is told. One that
-/// waits below the floor already is lifted past it ([`lift`]) when
-/// `lifting`.
-fn note<V>(noted: &mut Waiting, lifting: bool, n: NodeId, node: &mut Node<V>, steps: &mut u64) {
+/// waits already stays where it is: a change that lifts it did so where it
+/// met it ([`Inner::propagate`]).
+fn note<V>(noted: &mut Waiting, n: NodeId, node: &mut Node<V>) {
     // Only a property is noted ([`Graph::set_noted`]).
     let Kind::Property(p) = &mut node.kind else {
         return;
     };
-    if !node.flags.has(Flags::NOTED) {
-        return;
-    }
-    if node.flags.has(Flags::NOTE_DUE) {
-        *steps += 1;
-        lift(noted, lifting, n, &mut p.noted_at);
-    } else {
+    if node.flags.has(Flags::NOTED) && !node.flags.has(Flags::NOTE_DUE) {
         node.flags.set(Flags::NOTE_DUE, true);
         p.noted_at = noted.push(n);
     }
 }
 
+/// Lifts ([`lift`]) what of `node` (`n`) waits to be told, its hook or,
+/// for a [`Kind::Told`] node, its telling. Whether it has either.
+fn lift_own<V>(told: &mut Waiting, noted: &mut Waiting, n: NodeId, node: &mut Node<V>) -> bool {
+    match &mut node.kind {
+        Kind::Property(p) if node.flags.has(Flags::NOTE_DUE) => lift(noted, n, &mut p.noted_at),
+        Kind::Told { due: Some(at), .. } => lift(told, n, at),
+        _ => return false,
+    }
+    true
+}
+
 /// Moves `n`, waiting in `list` at `at` below the floor for the level
-/// under an own queue, to its top, when `lifting`. A change made inside
-/// the queue reached it, and its watchers move into the queue with that
-/// change: told below, it would be told after they run, and they would
-/// read what it keeps up to date as it was. The entry it leaves is a dead
-/// id, skipped when it comes up, so it is told once and the floors below
-/// stay where they are. Nothing below a floor is taken off its list while
-/// the floor stands, so `at` still holds `n`: lifting each costs one
-/// step, however many wait.
-fn lift(list: &mut Waiting, lifting: bool, n: NodeId, at: &mut u32) {
+/// under an own queue, to its top. A change made inside the queue reached
+/// it, and its watchers move into the queue with that change: told below,
+/// it would be told after they run, and they would read what it keeps up
+/// to date as it was. The entry it leaves is a dead id, skipped when it
+/// comes up, so it is told once and the floors below stay where they are.
+/// Nothing below a floor is taken off its list while the floor stands, so
+/// `at` still holds `n`: lifting each costs one step, however many wait.
+fn lift(list: &mut Waiting, n: NodeId, at: &mut u32) {
     let i = *at as usize;
-    if lifting && i < list.floor.len.min(list.ids.len()) {
+    if i < list.floor.len.min(list.ids.len()) {
         debug_assert_eq!(list.ids[i], n, "a waiting hook's entry moved");
         list.ids[i] = NodeId::default();
         list.dead += 1;
@@ -4240,25 +4245,40 @@ impl<V: Clone + 'static> Inner<V> {
         record_read_of(n, &mut nodes[n], frames, stats);
     }
 
-    /// Whether the change being marked ([`Inner::marking`]) lifts what it
-    /// reaches below the floors of `told` and `noted` ([`lift`]). One made
-    /// inside the innermost own queue does; one the queue waits on leaves
-    /// it there, to be told when the queue drops.
-    fn lifting(&self) -> bool {
-        !self.waiting_changes.contains(&self.marking)
+    /// Stamps the change about to spread, and says whether it lifts what
+    /// waits below the floors of `told` and `noted` ([`lift`]). Every mark
+    /// that enters the graph comes through here, a write, a disposal or a
+    /// reader lost alike, so none spreads under the stamp of a change the
+    /// queue waits on. `of` is the change a binding's new result belongs
+    /// to; anything else is a change of its own. One made inside the
+    /// innermost own queue lifts what it reaches; one the queue waits on
+    /// leaves it there, to be told when the queue drops; and with nothing
+    /// waiting below a floor, no change looks at all.
+    fn begin_change(&mut self, of: Option<u8>) -> bool {
+        self.marking = match of {
+            Some(change) => change,
+            None => {
+                self.change = self.change.wrapping_add(1);
+                self.change
+            }
+        };
+        self.told.floor.below + self.noted.floor.below > 0
+            && !self.waiting_changes.contains(&self.marking)
     }
 
-    /// Lifts ([`lift`]) what waits below the floors behind `from`, which a
-    /// change made inside an own queue found non-clean. The change stops
-    /// there, as what lies past is marked already, yet it reaches what
+    /// Lifts ([`lift_own`]) what waits below the floors behind `from`, a
+    /// node a lifting change reached and went no further from: what lies
+    /// past is marked already, or is running. The change reaches what
     /// waits there all the same: a hook or a told effect left below would
     /// be told after the watchers the change runs inside the queue, and
     /// they would read what it keeps up to date as it was. Nothing is
-    /// marked: the walk only goes on through what is not clean, as the
-    /// change would have. Each property is gone past once in an own queue
-    /// (`Prop::lifted_past`), so a cycle or a diamond ends, and a change
-    /// that reaches it again walks nothing; once nothing waits below the
-    /// floors (`Floor::below`), none walks at all.
+    /// marked: the walk goes everywhere the change would have, whatever
+    /// state each node is in. Each property is gone past once in an own
+    /// queue (`Prop::lifted_past`), so a cycle or a diamond ends, and a
+    /// change that reaches it again walks nothing: nothing comes to wait
+    /// below a floor while it stands, and what is past a property only
+    /// grows with an edge, which forgets the walks ([`Inner::edge_added`]).
+    /// Once nothing waits below the floors (`Floor::below`), none walks.
     fn lift_behind(&mut self, from: NodeId) {
         let mut stack = std::mem::take(&mut self.lift_stack);
         stack.push(from);
@@ -4268,25 +4288,20 @@ impl<V: Clone + 'static> Inner<V> {
             let Some(node) = self.nodes.get_mut(n) else {
                 continue;
             };
+            // `from`'s own was lifted where the change met it.
             if n != from {
                 self.stats.lift_steps += 1;
+                lift_own(&mut self.told, &mut self.noted, n, node);
             }
-            match &mut node.kind {
-                Kind::Told { due: Some(at), .. } => lift(&mut self.told, true, n, at),
-                Kind::Property(p) => {
-                    // `from`'s own entry was lifted where the change met it.
-                    if n != from && node.flags.has(Flags::NOTE_DUE) {
-                        lift(&mut self.noted, true, n, &mut p.noted_at);
-                    }
-                    if p.lifted_past || !matches!(node.state, NodeState::Check | NodeState::Dirty) {
-                        continue;
-                    }
-                    p.lifted_past = true;
-                    self.lift_walked.push(n);
-                    stack.extend(node.observers.iter().map(|o| o.node));
-                }
-                _ => {}
+            let Kind::Property(p) = &mut node.kind else {
+                continue;
+            };
+            if p.lifted_past {
+                continue;
             }
+            p.lifted_past = true;
+            self.lift_walked.push(n);
+            stack.extend(node.observers.iter().map(|o| o.node));
         }
         stack.clear();
         self.lift_stack = stack;
@@ -4307,30 +4322,32 @@ impl<V: Clone + 'static> Inner<V> {
         }
     }
 
+    /// An edge was made: what lies past its source, and what is past every
+    /// property behind that, has grown, and a walk that went past them
+    /// ([`Inner::lift_behind`]) did not see what grew.
+    fn edge_added(&mut self) {
+        if !self.lift_walked.is_empty() {
+            self.forget_lift_walks();
+        }
+    }
+
     fn mark_observers(&mut self, n: NodeId, first: NodeState) {
         // A binding's new result is the change that made it dirty, still
         // spreading; anything else is a change of its own.
-        self.marking = match self.nodes.get(n) {
-            Some(node) if self.wave_origin == Some(n) => node.marked_by,
-            _ => {
-                self.change = self.change.wrapping_add(1);
-                self.change
-            }
+        let result = self.wave_origin == Some(n);
+        let of = match self.nodes.get(n) {
+            Some(node) if result => Some(node.marked_by),
+            _ => None,
         };
+        let lifting = self.begin_change(of);
         let mut stack = std::mem::take(&mut self.mark_stack);
-        let lifting = self.lifting();
-        if self.wave_origin != Some(n)
-            && let Some(node) = self.nodes.get_mut(n)
-        {
+        if !result && let Some(node) = self.nodes.get_mut(n) {
             // A binding's own result was noted by the mark that made it
             // dirty, as a told effect is.
-            note(
-                &mut self.noted,
-                lifting,
-                n,
-                node,
-                &mut self.stats.lift_steps,
-            );
+            if lifting && lift_own(&mut self.told, &mut self.noted, n, node) {
+                self.stats.lift_steps += 1;
+            }
+            note(&mut self.noted, n, node);
         }
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;
@@ -4355,22 +4372,31 @@ impl<V: Clone + 'static> Inner<V> {
         // Passed on as it is: every write of a property comes here, most
         // with one observer, and the stack was taken out and put back
         // twice for it.
-        self.propagate(&mut stack);
+        self.propagate(&mut stack, lifting);
         self.mark_stack = stack;
     }
 
-    /// Dirty for direct observers, Check for everything downstream. A node
-    /// that was already non-clean has already passed Check on.
+    /// Spreads the marks a disposal or a reader lost left on `mark_stack`,
+    /// as a change of its own. Dirty for direct observers, Check for
+    /// everything downstream. A node that was already non-clean has
+    /// already passed Check on.
     fn propagate_marks(&mut self) {
+        if self.mark_stack.is_empty() {
+            return;
+        }
+        let lifting = self.begin_change(None);
         let mut stack = std::mem::take(&mut self.mark_stack);
-        self.propagate(&mut stack);
+        self.propagate(&mut stack, lifting);
         self.mark_stack = stack;
     }
 
-    /// [`Inner::propagate_marks`] of `stack`, taken out of `mark_stack`.
-    fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>) {
+    /// [`Inner::propagate_marks`] of `stack`, taken out of `mark_stack`,
+    /// for a change [`Inner::begin_change`] stamped. `lifting` is what it
+    /// said. Where the change meets what waits below an own queue's floor
+    /// is here, at one place for every node it reaches, and at one more
+    /// for every node it goes no further from ([`Inner::lift_behind`]).
+    fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>, lifting: bool) {
         let all = self.options.eager;
-        let lifting = self.lifting();
         // Stamps the nodes on a walk this pass carried a binding's result
         // through (below), so a cycle of them is passed once.
         self.tick += 1;
@@ -4379,142 +4405,119 @@ impl<V: Clone + 'static> Inner<V> {
             let Some(node) = self.nodes.get_mut(m) else {
                 continue;
             };
-            if self.wave_origin == Some(m) {
-                // The node's own change came back: a dependency cycle.
-                // `settle` reports it and brings the members up to date.
-                node.flags.set(Flags::CYCLIC, true);
-                continue;
-            }
-            if node.flags.has(Flags::SETTLING) {
-                // Its cycle is settling against the value it just
-                // produced. Running it again would be the loop; a source
-                // that changed says the change came back.
-                if st == NodeState::Dirty {
-                    node.flags.set(Flags::CAME_BACK, true);
-                }
-                node.flags.set(Flags::MISSED, true);
-                continue;
-            }
-            if node.state == NodeState::Computing {
-                // Only news if the running node already read the sender in
-                // this run; otherwise it is about to read the fresh value.
-                let read = from_stamp == ALWAYS_STALE
-                    || self
-                        .frames
-                        .iter()
-                        .rev()
-                        .find(|f| f.node == Some(m))
-                        .is_some_and(|f| f.stamp == from_stamp);
-                if read {
-                    let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
-                    if bound && from_stamp != ALWAYS_STALE {
-                        node.flags.set(Flags::CAME_BACK, true);
-                    } else if st == NodeState::Check
-                        && from_stamp != ALWAYS_STALE
-                        && matches!(node.kind, Kind::Effect(_))
-                    {
-                        node.flags.set(Flags::RECHECK, true);
-                    } else {
-                        node.flags.set(Flags::PENDING, true);
-                    }
-                }
-                continue;
-            }
-            if let Kind::Told { due, .. } = &mut node.kind
-                && node.state == NodeState::Clean
-                && node.done_stamp != 0
-                && from_stamp != ALWAYS_STALE
-                && !self.scopes.get(node.scope).is_some_and(|s| s.frozen)
-            {
-                // Its sources stay what they are, so it is only told. A
-                // source that went, or a scope that thaws, runs it again.
-                // A binding's result comes after the mark that made it
-                // dirty, which told it already: the owner reading it is
-                // what brought the result.
-                if self.wave_origin.is_none() {
-                    match due {
-                        Some(at) => {
-                            self.stats.lift_steps += 1;
-                            lift(&mut self.told, lifting, m, at);
-                        }
-                        None => *due = Some(self.told.push(m)),
-                    }
-                }
-                continue;
-            }
-            // A node on a check walk is non-clean, yet what lies past it
-            // may have been brought up to date already: a walk that meets a
-            // node it is walking from takes it as unchanged, and that is
-            // how a cycle looks from inside a pull. A binding's new result
-            // that reaches it goes on, so that it comes back round to the
-            // binding and the loop ends there, at the first binding the
-            // change entered, as Qt ends it, and not at whichever member
-            // was read first.
-            let through_walk =
-                self.wave_origin.is_some() && node.flags.has(Flags::WALKING) && node.mark != pass;
-            // Its hook, if it waits below an own queue, comes along: also
-            // when this change makes dirty what was waiting to be checked.
-            if node.flags.has(Flags::NOTE_DUE)
-                && let Kind::Property(p) = &mut node.kind
-            {
+            // Its hook or its telling, if it waits below an own queue,
+            // comes along, whatever the node is doing.
+            if lifting && lift_own(&mut self.told, &mut self.noted, m, node) {
                 self.stats.lift_steps += 1;
-                lift(&mut self.noted, lifting, m, &mut p.noted_at);
             }
-            if node.state.rank() >= st.rank() {
-                // Already waiting, maybe on an outer flush level: this
-                // change is news to it, so it runs with this change's flush.
+            let passed_on = 'node: {
+                if self.wave_origin == Some(m) {
+                    // The node's own change came back: a dependency cycle.
+                    // `settle` reports it and brings the members up to
+                    // date. What lies past it is what this change marks.
+                    node.flags.set(Flags::CYCLIC, true);
+                    break 'node true;
+                }
+                if node.flags.has(Flags::SETTLING) {
+                    // Its cycle is settling against the value it just
+                    // produced. Running it again would be the loop; a
+                    // source that changed says the change came back.
+                    if st == NodeState::Dirty {
+                        node.flags.set(Flags::CAME_BACK, true);
+                    }
+                    node.flags.set(Flags::MISSED, true);
+                    break 'node false;
+                }
+                if node.state == NodeState::Computing {
+                    // Only news if the running node already read the
+                    // sender in this run; otherwise it is about to read
+                    // the fresh value.
+                    let read = from_stamp == ALWAYS_STALE
+                        || self
+                            .frames
+                            .iter()
+                            .rev()
+                            .find(|f| f.node == Some(m))
+                            .is_some_and(|f| f.stamp == from_stamp);
+                    if read {
+                        let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
+                        if bound && from_stamp != ALWAYS_STALE {
+                            node.flags.set(Flags::CAME_BACK, true);
+                        } else if st == NodeState::Check
+                            && from_stamp != ALWAYS_STALE
+                            && matches!(node.kind, Kind::Effect(_))
+                        {
+                            node.flags.set(Flags::RECHECK, true);
+                        } else {
+                            node.flags.set(Flags::PENDING, true);
+                        }
+                    }
+                    break 'node false;
+                }
+                if let Kind::Told { due, .. } = &mut node.kind
+                    && node.state == NodeState::Clean
+                    && node.done_stamp != 0
+                    && from_stamp != ALWAYS_STALE
+                    && !self.scopes.get(node.scope).is_some_and(|s| s.frozen)
+                {
+                    // Its sources stay what they are, so it is only told.
+                    // A source that went, or a scope that thaws, runs it
+                    // again. A binding's result comes after the mark that
+                    // made it dirty, which told it already: the owner
+                    // reading it is what brought the result.
+                    if self.wave_origin.is_none() && due.is_none() {
+                        *due = Some(self.told.push(m));
+                    }
+                    break 'node true;
+                }
+                // A node on a check walk is non-clean, yet what lies past
+                // it may have been brought up to date already: a walk that
+                // meets a node it is walking from takes it as unchanged,
+                // and that is how a cycle looks from inside a pull. A
+                // binding's new result that reaches it goes on, so that it
+                // comes back round to the binding and the loop ends there,
+                // at the first binding the change entered, as Qt ends it,
+                // and not at whichever member was read first.
+                let through_walk = self.wave_origin.is_some()
+                    && node.flags.has(Flags::WALKING)
+                    && node.mark != pass;
+                let was_clean = node.state == NodeState::Clean;
+                if node.state.rank() < st.rank() {
+                    node.state = st;
+                }
+                // Already waiting, maybe on an outer flush level, or not:
+                // this change is news to it, so it runs with this
+                // change's flush.
                 if node.is_eager(all) {
                     enqueue(&mut self.queues, m, node);
                 }
+                if was_clean {
+                    // A bound property may come out otherwise: its owner
+                    // reads it when it gets to it, which brings it up to
+                    // date.
+                    note(&mut self.noted, m, node);
+                    // Not when a binding it was waiting on has changed:
+                    // what it waits on still came from the change that
+                    // reached it.
+                    node.marked_by = self.marking;
+                } else if !through_walk {
+                    // What lies past is marked already, by this change or
+                    // one before it.
+                    break 'node false;
+                }
                 if through_walk {
                     node.mark = pass;
-                    let stamp = node.read_stamp;
-                    stack.extend(
-                        node.observers
-                            .iter()
-                            .map(|o| (o.node, NodeState::Check, stamp)),
-                    );
                 }
-                // What lies past is marked already, yet this change
-                // reaches what waits there to be told.
-                if lifting && self.told.floor.below + self.noted.floor.below > 0 {
-                    self.lift_behind(m);
-                }
-                continue;
-            }
-            let was_clean = node.state == NodeState::Clean;
-            node.state = st;
-            if node.is_eager(all) {
-                enqueue(&mut self.queues, m, node);
-            }
-            if through_walk {
-                node.mark = pass;
                 let stamp = node.read_stamp;
                 stack.extend(
                     node.observers
                         .iter()
                         .map(|o| (o.node, NodeState::Check, stamp)),
                 );
-            }
-            if was_clean {
-                // A bound property may come out otherwise: its owner reads
-                // it when it gets to it, which brings it up to date.
-                note(
-                    &mut self.noted,
-                    lifting,
-                    m,
-                    node,
-                    &mut self.stats.lift_steps,
-                );
-                // Not when a binding it was waiting on has changed: what it
-                // waits on still came from the change that reached it.
-                node.marked_by = self.marking;
-                let stamp = node.read_stamp;
-                stack.extend(
-                    node.observers
-                        .iter()
-                        .map(|o| (o.node, NodeState::Check, stamp)),
-                );
+                true
+            };
+            if !passed_on && lifting {
+                self.lift_behind(m);
             }
         }
     }
@@ -4550,6 +4553,7 @@ impl<V: Clone + 'static> Inner<V> {
         // otherwise grow its list three times.
         let mut fresh = Edges::with_capacity(reads.len());
         let mut height = 0;
+        let mut added = false;
         for &r in reads {
             if r == n {
                 continue;
@@ -4566,6 +4570,7 @@ impl<V: Clone + 'static> Inner<V> {
                 src.observers[slot as usize].back = fresh.len() as u32;
                 slot
             } else {
+                added = true;
                 src.observers.push(Edge {
                     node: n,
                     back: fresh.len() as u32,
@@ -4592,6 +4597,9 @@ impl<V: Clone + 'static> Inner<V> {
         let node = &mut self.nodes[n];
         node.sources = fresh;
         node.height = height.max(1) | (node.height & BEHIND);
+        if added {
+            self.edge_added();
+        }
     }
 
     /// `n`'s height if `reads` are its sources as they stand, in order and
