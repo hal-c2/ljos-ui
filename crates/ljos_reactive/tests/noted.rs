@@ -431,3 +431,181 @@ fn an_effect_is_not_noted() {
         Err(ljos_reactive::ReactiveError::NotAProperty(e))
     );
 }
+
+/// [`a_hook_a_change_inside_the_queue_reaches_is_told_inside_it`] for a
+/// noted binding behind one the batch left dirty: `b` reads `m`, which
+/// reads `s`. The batch's write of `s` makes `m` dirty and leaves `b`
+/// waiting to be checked, noted below the queue `q`'s hook opens. The
+/// write of `s` inside that queue stops at `m`, already dirty, yet it
+/// reaches `b` all the same: its hook is told inside the queue, before
+/// `s`'s watcher runs there and reads `b` with what the hook keeps of it.
+#[test]
+fn a_hook_behind_a_dirty_binding_a_change_inside_the_queue_reaches_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(m)).unwrap();
+    assert_eq!(g.get(b), 0);
+    // What `b`'s hook keeps: the value of `b` it was last told of.
+    let kept = Rc::new(RefCell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, s, move |g, _| {
+        let now = g.untrack(|| g.get(b));
+        w.borrow_mut().push((now, *k.borrow()));
+    })
+    .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            *k.borrow_mut() = hooks.untrack(|| hooks.get(b));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(s, 2);
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(2, 2)],
+        "the watcher reads what the hook keeps as of the value it reads"
+    );
+}
+
+/// [`a_hook_behind_a_dirty_binding_a_change_inside_the_queue_reaches_is_told_inside_it`]
+/// for a told effect that reads `m`: the write of `s` inside the queue
+/// stops at `m`, already dirty, and the effect is told inside the queue
+/// all the same, before `s`'s watcher runs there, and once.
+#[test]
+fn a_told_effect_behind_a_dirty_binding_a_change_inside_the_queue_reaches_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let order = Rc::new(RefCell::new(Vec::new()));
+    let o = Rc::clone(&order);
+    g.effect_told(
+        r,
+        move |g| {
+            g.get(m);
+        },
+        move || o.borrow_mut().push("told"),
+    )
+    .unwrap();
+    let o = Rc::clone(&order);
+    g.watch(r, s, move |_, _| o.borrow_mut().push("watched"))
+        .unwrap();
+    let hooks = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            hooks.set(s, 2);
+        }
+    });
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(
+        *order.borrow(),
+        ["told", "watched"],
+        "told before the effects of the change, once"
+    );
+}
+
+/// A change made inside the queue that finds a binding dirty again and
+/// again goes past it once: `m` fans out to `FAN` bindings that `b`
+/// reads, and `q`'s hook writes `s` `WRITES` times inside its queue.
+/// `x`'s hook waits below the queue all the while, so there is always
+/// something left to lift, and only having gone past `m` already stops
+/// each walk.
+#[test]
+fn lifting_past_a_dirty_binding_goes_past_it_once_in_a_queue() {
+    const FAN: usize = 100;
+    const WRITES: i64 = 100;
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let x = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let fan: Vec<_> = (0..FAN)
+        .map(|_| g.binding(r, 0, move |g| g.get(m)).unwrap())
+        .collect();
+    let b = g
+        .binding(r, 0, move |g| fan.iter().map(|&k| g.get(k)).sum())
+        .unwrap();
+    assert_eq!(g.get(b), 0);
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, h) = (Rc::clone(&g), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            for w in 2..2 + WRITES {
+                hooks.set(s, w);
+            }
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+    g.set_noted(x).unwrap();
+    let before = g.stats().lift_steps;
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(x, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, b, x], "each hook told once");
+    let steps = g.stats().lift_steps - before;
+    assert!(
+        steps <= 3 * FAN as u64,
+        "{steps} steps to lift one hook past {FAN} bindings {WRITES} times"
+    );
+    assert_eq!(g.get(b), (FAN as i64) * (WRITES + 1));
+}
+
+/// Outside an own queue nothing waits below a floor: a change that finds
+/// a binding dirty again and again looks for nothing behind it.
+#[test]
+fn a_change_with_nothing_waiting_below_a_queue_looks_for_nothing() {
+    const FAN: usize = 100;
+    let g: Graph<i64> = Graph::new();
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let fan: Vec<_> = (0..FAN)
+        .map(|_| g.binding(r, 0, move |g| g.get(m)).unwrap())
+        .collect();
+    for &k in &fan {
+        g.get(k);
+        g.set_noted(k).unwrap();
+    }
+    let before = g.stats().lift_steps;
+
+    g.batch(|| {
+        for w in 1..=100 {
+            g.set(s, w);
+        }
+    });
+
+    assert_eq!(g.stats().lift_steps - before, 0);
+}
