@@ -7,7 +7,14 @@
 # it from C++. Checked against Qt 6.12.0's QFont on Linux: family() is the
 # first of families(), setFamily replaces the whole list with the one
 # family, setFamilies({}) leaves both empty, and two fonts whose lists differ
-# are not equal. Ljós gives QML the member QFont has; runs on Ljós only.
+# are not equal. It keeps every name as given, an empty one or one with a
+# line break in it among them (["", "Liberation Mono"] has the family ""),
+# and a family the system lacks gives way to the next of the list before
+# any face the system would put in its place: with ["No Such Family Ljos",
+# "Liberation Mono"], QFontInfo's family is Liberation Mono and
+# "Hamburgefonstiv" is 180 pixels wide at 20, as in Liberation Mono, where
+# the missing family alone is set in Liberation Sans. Ljós gives QML the
+# member QFont has; runs on Ljós only.
 # LjosSymbolsTest-Regular.ttf ("Ljos Symbols Test") has U+F8F0 at 600 units
 # of 1000, LjosAlternateTest-Regular.ttf ("Ljos Alternate Test") the same
 # character at 500, and with both loaded a text that names neither is set in
@@ -90,3 +97,52 @@ Feature: A font's list of families
     And the property "listedFamily" of "root" is "Liberation Serif"
     And the property "same" of "root" is true
     And the property "differ" of "root" is false
+
+  Scenario: A family the system lacks gives way to the next family of the list
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Text {
+        objectName: "t"; text: "Hamburgefonstiv"; font.pixelSize: 20
+        font.families: ["No Such Family Ljos", "Liberation Mono"]
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "contentWidth" of "t" is 180
+
+  Scenario: Every family of the list is kept as it is written
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property font f: Qt.font({ families: ["Liberation Serif", "", "Two\nLines"] })
+        property font blankFirst: Qt.font({ families: ["", "Liberation Mono"] })
+        property int count: f.families.length
+        property bool blankKept: f.families[1] === ""
+        property bool breakKept: f.families[2] === "Two\nLines"
+        property bool differ: Qt.font({ families: ["A", "B\nC"] }) === Qt.font({ families: ["A", "B", "C"] })
+        property string blankFamily: "[" + blankFirst.family + "]"
+        property int blankCount: blankFirst.families.length
+      }
+      """
+    Then the property "count" of "root" is 3
+    And the property "blankKept" of "root" is true
+    And the property "breakKept" of "root" is true
+    And the property "differ" of "root" is false
+    And the property "blankFamily" of "root" is "[]"
+    And the property "blankCount" of "root" is 2
+
+  Scenario: A font's list of families reads through an alias
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: label; font.families: ["Liberation Mono", "Symbols Nerd Font Mono"] }
+        property alias faces: label.font.families
+        property string all: faces.join("|")
+      }
+      """
+    Then the property "all" of "root" is "Liberation Mono|Symbols Nerd Font Mono"
