@@ -443,7 +443,7 @@ impl Engine {
             None if matches!(v, Value::Js(_)) => return false,
             None => v.clone(),
         };
-        let v = &v;
+        let v = &self.plain(&v);
         let Some(ty) = self
             .meta_of(obj)
             .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
