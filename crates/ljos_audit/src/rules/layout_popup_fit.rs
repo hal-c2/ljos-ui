@@ -14,8 +14,11 @@
 
 use ljos_controls::{Drawer, ToolTip, item_popup};
 use ljos_design::limits::POPUP_MIN_FILL;
-use ljos_engine::{Engine, ObjectId};
-use ljos_quick::{Column, ColumnLayout, Row, RowLayout, StackLayout, child_items};
+use ljos_engine::{Engine, MetaRef, ObjectId, PropIndex, QmlType};
+use ljos_quick::{
+    Arrangement, Column, ColumnLayout, GridLayout, Layout, LayoutAttached, Row, RowLayout,
+    StackLayout, child_items,
+};
 
 use crate::cx::{
     Cx, is_a, is_scroller, number, overhang, overhang_words, scene_rect, shown_items, slack, trim,
@@ -28,7 +31,11 @@ use crate::cx::{
 fn content_scrolls(engine: &Engine, content: ObjectId, over: f64, down: f64) -> bool {
     let takes = |axis, missing: f64| {
         let mut budget = crate::cx::DEPTH;
-        missing <= 0.0 || gives(engine, content, axis, &mut budget) >= missing
+        let asks = Asks {
+            size: number(engine, content, IMPLICIT[axis]).max(0.0),
+            least: 0.0,
+        };
+        missing <= 0.0 || gives(engine, content, axis, asks, &mut budget) >= missing
     };
     takes(H, over) && takes(V, down)
 }
@@ -36,6 +43,71 @@ fn content_scrolls(engine: &Engine, content: ObjectId, over: f64, down: f64) -> 
 const H: usize = 0;
 const V: usize = 1;
 const IMPLICIT: [&str; 2] = ["implicitWidth", "implicitHeight"];
+
+/// What an item asks of what holds it along an axis, and the least it
+/// can be made.
+#[derive(Clone, Copy)]
+struct Asks {
+    size: f64,
+    least: f64,
+}
+
+/// What `c` asks of `parent` along `axis`. A layout sizes a child by its
+/// `Layout.preferred` size, else its implicit size, bounded by its
+/// `Layout.minimum` and `maximum` sizes; what else holds it reads its
+/// implicit size.
+fn asks_of(engine: &Engine, parent: ObjectId, c: ObjectId, axis: usize) -> Asks {
+    let implicit = number(engine, c, IMPLICIT[axis]).max(0.0);
+    let plain = Asks {
+        size: implicit,
+        least: 0.0,
+    };
+    let lays_out = is_a::<RowLayout>(engine, parent)
+        || is_a::<ColumnLayout>(engine, parent)
+        || is_a::<GridLayout>(engine, parent)
+        || is_a::<StackLayout>(engine, parent)
+        || is_a::<Arrangement>(engine, parent);
+    if !lays_out {
+        return plain;
+    }
+    let Some(att) = engine.existing_attached_object(c, &MetaRef::Static(Layout::static_meta()))
+    else {
+        return plain;
+    };
+    let read = |p: [PropIndex; 2]| engine.untrack(|| engine.read(att, p[axis])).to_number();
+    let preferred = read([
+        LayoutAttached::PREFERRED_WIDTH.index,
+        LayoutAttached::PREFERRED_HEIGHT.index,
+    ]);
+    let most = read([
+        LayoutAttached::MAXIMUM_WIDTH.index,
+        LayoutAttached::MAXIMUM_HEIGHT.index,
+    ]);
+    let most = if most.is_nan() {
+        f64::INFINITY
+    } else {
+        most.max(0.0)
+    };
+    let least = read([
+        LayoutAttached::MINIMUM_WIDTH.index,
+        LayoutAttached::MINIMUM_HEIGHT.index,
+    ]);
+    let least = if least.is_finite() {
+        least.max(0.0)
+    } else {
+        0.0
+    }
+    .min(most);
+    let size = if preferred >= 0.0 {
+        preferred
+    } else {
+        implicit
+    };
+    Asks {
+        size: size.clamp(least, most),
+        least,
+    }
+}
 
 /// How much of what `o` asks for along `axis` it can give back by
 /// scrolling. A page may sit as deep as the app's layouts put it (a row,
@@ -48,15 +120,17 @@ const IMPLICIT: [&str; 2] = ["implicitWidth", "implicitHeight"];
 /// out as layouts leave them out, but every page of a stack sizes it, the
 /// hidden ones giving nothing back. A container placing its children some
 /// other way is taken to give back what its largest fixed child leaves,
-/// which is what it gives back at most.
-fn gives(engine: &Engine, o: ObjectId, axis: usize, budget: &mut usize) -> f64 {
+/// which is what it gives back at most. What each child asks is what
+/// `o` sizes it by ([`asks_of`]); a scroller gives back what it asks for
+/// past the least it can be made.
+fn gives(engine: &Engine, o: ObjectId, axis: usize, own: Asks, budget: &mut usize) -> f64 {
     let Some(left) = budget.checked_sub(1) else {
         return 0.0;
     };
     *budget = left;
-    let asks = number(engine, o, IMPLICIT[axis]).max(0.0);
+    let asks = own.size;
     if is_scroller(engine, o) {
-        return asks;
+        return (asks - own.least).max(0.0);
     }
     let stack = is_a::<StackLayout>(engine, o);
     let mut along = 0.0;
@@ -64,8 +138,9 @@ fn gives(engine: &Engine, o: ObjectId, axis: usize, budget: &mut usize) -> f64 {
     let mut widest: f64 = 0.0;
     let mut any = false;
     for c in child_items(engine, o) {
+        let child = asks_of(engine, o, c, axis);
         let given = if shown(engine, c) {
-            gives(engine, c, axis, budget)
+            gives(engine, c, axis, child, budget)
         } else if stack {
             0.0
         } else {
@@ -73,7 +148,7 @@ fn gives(engine: &Engine, o: ObjectId, axis: usize, budget: &mut usize) -> f64 {
         };
         any = true;
         along += given;
-        let child_asks = number(engine, c, IMPLICIT[axis]);
+        let child_asks = child.size;
         widest = widest.max(child_asks);
         floor = floor.max(child_asks - given);
     }
