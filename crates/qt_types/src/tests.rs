@@ -551,6 +551,7 @@ fn ljos_adds_members_to_qt_types() {
     let component = component.attached().unwrap();
     for (ty, name) in [
         (font, "scaleWithSystem"),
+        (font, "families"),
         (accessible, "showOnScreenAction"),
         (component, "reloaded"),
     ] {

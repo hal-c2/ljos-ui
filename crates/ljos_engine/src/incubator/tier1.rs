@@ -703,6 +703,7 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
         }
         (Value::Font(x), Value::Font(y)) => {
             x.family == y.family
+                && x.fallback_families == y.fallback_families
                 && d(x.point_size, y.point_size)
                 && x.pixel_size == y.pixel_size
                 && x.weight == y.weight
