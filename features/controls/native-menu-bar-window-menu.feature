@@ -1,5 +1,6 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-menubar.html ("Native menu bars")
+#   https://doc.qt.io/qt-6/qml-qt-labs-platform-menubar.html
 #   https://doc.qt.io/qt-6/qaction.html#MenuRole-enum (TextHeuristicRole, NoRole)
 #   https://developer.apple.com/documentation/appkit/nsapplication/windowsmenu
 #
@@ -119,4 +120,25 @@ Feature: The menu the system lists the windows in
       }
       """
     Then the system lists the windows in the menu "Fenster"
+    And the system's menu bar does not show "Window"
+
+  @api-Qt.labs.platform.MenuBar @api-Ljos.SystemMenu.role
+  Scenario: A Qt.labs.platform bar's menu with the window role is the one, and an empty "Window" beside it is not shown
+    Given the QML:
+      """qml
+      import QtQuick
+      import Qt.labs.platform
+      import Ljos
+      Window {
+        objectName: "window"; width: 200; height: 100; visible: true
+        MenuBar {
+          Menu { title: "Window" }
+          Menu { title: "Fenster"; SystemMenu.role: SystemMenu.WindowRole }
+        }
+      }
+      """
+    When the method "requestActivate" of "window" is called
+    And 50 milliseconds pass
+    Then the system lists the windows in the menu "Fenster"
+    And the system's menu bar shows "Fenster"
     And the system's menu bar does not show "Window"

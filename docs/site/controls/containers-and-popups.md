@@ -166,7 +166,7 @@ Menu {
 
 `SystemMenu.NoRole` keeps a menu titled "Window" from listing the windows. Elsewhere the attached property does nothing.
 
-`Qt.labs.platform` has a `MenuBar` of the system's own, with `Menu`, `MenuItem` and `MenuSeparator`, for any window, a plain `Window` too. On macOS it is the system's menu bar, showing the active window's bar. A `MenuItem` takes `text`, `shortcut` (`Ctrl` is Command, `Meta` is Control), `enabled`, `visible`, `checkable`, `checked` and `role`, and emits `triggered` when chosen there. `MenuItem.AboutRole`, `PreferencesRole` and `QuitRole` move an item to the application menu whatever its text, and `NoRole` keeps it in its menu. Where the system has no menu bar of its own, as on Linux and Windows, the bar shows nothing.
+`Qt.labs.platform` has a `MenuBar` of the system's own, with `Menu`, `MenuItem` and `MenuSeparator`, for any window, a plain `Window` too. On macOS it is the system's menu bar, showing the active window's bar. A `MenuItem` takes `text`, `shortcut` (`Ctrl` is Command, `Meta` is Control), `enabled`, `visible`, `checkable`, `checked` and `role`, and emits `triggered` when chosen there. `MenuItem.AboutRole`, `PreferencesRole` and `QuitRole` move an item to the application menu whatever its text, and `NoRole` keeps it in its menu. Its `Menu` takes `SystemMenu.role` as well, to say which menu lists the windows. Where the system has no menu bar of its own, as on Linux and Windows, the bar shows nothing.
 
 ```qml
 import QtQuick
