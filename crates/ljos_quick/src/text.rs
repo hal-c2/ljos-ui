@@ -531,14 +531,7 @@ pub fn text_style(f: &Font) -> TextStyle {
     TextStyle {
         family: match &f.fallback_families {
             None => family_of(&f.family),
-            // The text engine reads a comma-separated family as the list
-            // it tries in order.
-            Some(_) => f
-                .families()
-                .map(Atom::as_str)
-                .collect::<Vec<_>>()
-                .join(", ")
-                .into(),
+            Some(fallbacks) => families_of(f, fallbacks),
         },
         pixel_size: pixel_size as f32,
         weight: f.weight.clamp(1, 1000) as f32,
@@ -563,6 +556,33 @@ fn family_of(family: &Atom) -> Arc<str> {
             *last = (family.clone(), Arc::from(family.as_str()));
         }
         last.1.clone()
+    })
+}
+
+/// A font's families as the text engine wants them: one text, comma
+/// separated, which it reads as the list it tries in order. A terminal's
+/// font is read on every paint, so the last list made is handed out again,
+/// as [`family_of`] does for one family.
+fn families_of(f: &Font, fallbacks: &Arc<[Atom]>) -> Arc<str> {
+    type Last = (Atom, Option<Arc<[Atom]>>, Arc<str>);
+    thread_local! {
+        static LAST: RefCell<Last> = RefCell::new((Atom::EMPTY, None, Arc::from("")));
+    }
+    LAST.with(|last| {
+        let mut last = last.borrow_mut();
+        let same_list = last
+            .1
+            .as_ref()
+            .is_some_and(|l| Arc::ptr_eq(l, fallbacks) || **l == **fallbacks);
+        if !same_list || last.0 != f.family {
+            let text: Vec<&str> = f.families().map(Atom::as_str).collect();
+            *last = (
+                f.family.clone(),
+                Some(fallbacks.clone()),
+                Arc::from(text.join(", ")),
+            );
+        }
+        last.2.clone()
     })
 }
 
