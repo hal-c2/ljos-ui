@@ -23,6 +23,7 @@ Feature: Keyed views
         """qml
         pragma Scripts: JavaScript
         import Ljos.Ui
+        import Ljos.Core
         Item {
           id: root; objectName: "root"; width: 200; height: 200
           property unknown rows: [{ id: "a", n: 1 }, { id: "b", n: 2 }, { id: "c", n: 3 }]
@@ -84,6 +85,7 @@ Feature: Keyed views
       Given the QML:
         """qml
         import Ljos.Ui
+        import Ljos.Core
         Item {
           id: root; objectName: "root"
           property unknown rows: [{ id: "a" }, { id: "b" }]
@@ -219,7 +221,7 @@ Feature: Keyed views
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
         ListView {
           width: 200; height: 300
           model: ListModel { id: lm; ListElement { name: "a" } }
@@ -251,7 +253,7 @@ Feature: Keyed views
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
         ListView {
           width: 200; height: 300
           model: ListModel { id: lm; ListElement { name: "a" } }
@@ -280,7 +282,7 @@ Feature: Keyed views
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
         Item {
           ListModel { id: lm; ListElement { name: "a" } }
           function remove(i) { lm.remove(i) }
