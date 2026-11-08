@@ -5,8 +5,9 @@
 //! content, header, footer and padding ask for: filled to less than
 //! `limits::POPUP_MIN_FILL` of its height it is too large (a width is
 //! often one menus and dialogs share, so it is not held to its content);
-//! asked for more than it has on a side it is too small, unless the
-//! content scrolls, and of no size at all it hides what it holds. A popup reaching
+//! asked for more than it has on a side it is too small, unless a
+//! scroller in the content takes what is missing, and of no size at all
+//! it hides what it holds. A popup reaching
 //! past the window is too large for it. Tool tips size themselves and are
 //! left out, and a drawer is not held to its fill: it runs along an edge
 //! of the window by design, whatever it holds.
@@ -20,11 +21,15 @@ use crate::cx::{
     Cx, is_a, is_scroller, number, overhang, overhang_words, scene_rect, shown_items, slack, trim,
 };
 
-/// Whether the content, or an item anywhere inside it, scrolls. A page
-/// may sit as deep as the app's layouts put it (a row, a column, a
-/// loader, a stack of pages), and what it asks for is then its content
-/// height, which it scrolls through.
-fn content_scrolls(engine: &Engine, content: ObjectId) -> bool {
+/// Whether a scroller in the content takes what the popup is missing,
+/// `over` px across and `down` px high. A page may sit as deep as the
+/// app's layouts put it (a row, a column, a loader, a stack of pages),
+/// and what it asks for is then its content, which it scrolls through. A
+/// scroller can give back no more than it asks for, so one smaller than
+/// what is missing leaves the rest fixed and out of reach; and what is
+/// inside a scroller is bounded by it, so the search does not go into
+/// one.
+fn content_scrolls(engine: &Engine, content: ObjectId, over: f64, down: f64) -> bool {
     let mut stack = vec![content];
     let mut seen = 0;
     while let Some(o) = stack.pop() {
@@ -33,7 +38,11 @@ fn content_scrolls(engine: &Engine, content: ObjectId) -> bool {
             return false;
         }
         if is_scroller(engine, o) {
-            return true;
+            let takes = |name, missing: f64| missing <= 0.0 || number(engine, o, name) >= missing;
+            if takes("implicitWidth", over) && takes("implicitHeight", down) {
+                return true;
+            }
+            continue;
         }
         stack.extend(child_items(engine, o));
     }
@@ -131,11 +140,13 @@ pub(crate) fn check(cx: &mut Cx) {
         if !(aw > 0.0 && ah > 0.0 && cw.is_finite() && ch.is_finite()) {
             continue;
         }
-        let scrolled = content.is_some_and(|c| content_scrolls(engine, c));
-        if (cw > aw + slack() || ch > ah + slack()) && !scrolled {
+        let (over, down) = (cw - aw - slack(), ch - ah - slack());
+        if (over > 0.0 || down > 0.0)
+            && !content.is_some_and(|c| content_scrolls(engine, c, over, down))
+        {
             let message = format!(
-                "{what} is {has} px where what it holds asks for {asks}, and it does not \
-                 scroll"
+                "{what} is {has} px where what it holds asks for {asks}, and nothing in it \
+                 scrolls through the rest"
             );
             let f = cx.report("layout-popup-fit", Some(popup), message);
             f.measured = Some(format!("{has} < {asks}"));

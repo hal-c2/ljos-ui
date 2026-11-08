@@ -1443,6 +1443,63 @@ fn rows_of_a_list_that_scrolls_them_into_the_window_are_not_offscreen() {
     assert!(report.is_clean(), "expected nothing, found:\n{report}");
 }
 
+fn popup_fit(source: &str) -> Report {
+    let options = Options::desktop().only(&["layout-popup-fit"]).unwrap();
+    audit_with(source, &options)
+}
+
+/// A 320x240 popup holding `body` in a column that fills it.
+fn popup_holding(body: &str) -> String {
+    page(&format!(
+        r##"
+    Popup {{
+        width: 320; height: 240
+        Component.onCompleted: open()
+        ColumnLayout {{
+            anchors.fill: parent
+{body}
+        }}
+    }}"##
+    ))
+    .replace(
+        "import QtQuick\n",
+        "import QtQuick\nimport QtQuick.Layouts\n",
+    )
+}
+
+#[test]
+fn fixed_content_beside_a_small_scroller_does_not_fit_its_popup() {
+    // Issue #247: the 60 px view scrolls, but the 600 px item beside it
+    // does not, and the popup clips it out of reach.
+    let report = popup_fit(&popup_holding(
+        "            Item { implicitWidth: 280; implicitHeight: 600 }\n            \
+         ScrollView { Layout.fillWidth: true; implicitHeight: 60; TextArea {} }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_page_that_scrolls_deep_in_the_layouts_fits_its_popup() {
+    // Issue #205: what the popup is missing is the page's to scroll.
+    let report = popup_fit(&popup_holding(
+        "            StackLayout {\n                Layout.fillWidth: true; Layout.fillHeight: true\n                \
+         Flickable { implicitWidth: 280; implicitHeight: contentHeight; contentHeight: 600 }\n            }",
+    ));
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}
+
+#[test]
+fn a_tall_scroller_inside_a_small_one_does_not_fit_its_popup() {
+    // What the inner view asks for is the outer one's to scroll, and the
+    // outer one is too small to take what the fixed item leaves missing.
+    let report = popup_fit(&popup_holding(
+        "            Item { implicitWidth: 280; implicitHeight: 600 }\n            \
+         Flickable {\n                Layout.fillWidth: true; implicitHeight: 60; contentHeight: 600\n                \
+         Flickable { width: 280; height: 600; implicitHeight: 600; contentHeight: 900 }\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
 #[test]
 fn text_under_an_opacity_is_measured_over_what_is_behind_it() {
     // Issue #150: the faded tile and its text lie on the light page, not
