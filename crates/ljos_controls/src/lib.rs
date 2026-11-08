@@ -98,7 +98,9 @@ pub use menu::{Menu, MenuItem, MenuSeparator};
 pub use menu_bar::{MenuBar, MenuBarItem};
 pub use page_indicator::PageIndicator;
 pub use popup::{Drawer, Overlay, OverlayAttached, Popup, PopupAnchors, item_popup, popup_item};
-pub use scroll_bar::{ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached};
+pub use scroll_bar::{
+    ScrollBar, ScrollBarAttached, ScrollIndicator, ScrollIndicatorAttached, scrolled_by_bar,
+};
 pub use scroll_view::ScrollView;
 pub use selection_rectangle::{SelectionRectangle, SelectionRectangleAttached};
 pub use slider::{RangeSlider, RangeSliderNode, Slider};
