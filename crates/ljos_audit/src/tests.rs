@@ -1502,6 +1502,53 @@ fn a_tall_scroller_beside_a_tall_fixed_item_in_a_row_does_not_fit_its_popup() {
 }
 
 #[test]
+fn a_scroller_beside_an_item_of_a_preferred_height_in_a_row_does_not_fit_its_popup() {
+    // The row sizes the fixed item by its preferred height, not its
+    // implicit one (0): it is 600 high, and the row clips it.
+    let report = popup_fit(&popup_holding(
+        "            RowLayout {\n                \
+         Item { Layout.preferredWidth: 140; Layout.preferredHeight: 600 }\n                \
+         Flickable { implicitWidth: 140; implicitHeight: 600; contentHeight: 600 }\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn an_item_of_a_preferred_width_beside_a_scroller_does_not_fit_its_popup() {
+    // Across the column the widest child sets the width: the fixed one,
+    // 600 px by its preferred width, which no scroller gives back.
+    let report = popup_fit(&popup_holding(
+        "            Item { Layout.preferredWidth: 600; Layout.preferredHeight: 100 }\n            \
+         Flickable { implicitWidth: 600; implicitHeight: 100; contentWidth: 600 }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_scroller_kept_from_shrinking_does_not_fit_its_popup() {
+    // The view may scroll, but its minimum height keeps it 500 high: it
+    // gives back 100 of the 360 px the popup is missing.
+    let report = popup_fit(&popup_holding(
+        "            Flickable {\n                \
+         Layout.fillWidth: true; Layout.minimumHeight: 500\n                \
+         implicitWidth: 280; implicitHeight: 600; contentHeight: 600\n            }",
+    ));
+    assert_eq!(report.codes(), ["layout-popup-fit"], "\n{report}");
+}
+
+#[test]
+fn a_scroller_of_a_preferred_height_fits_its_popup() {
+    // What the popup is missing is the view's to scroll, however its
+    // height is given.
+    let report = popup_fit(&popup_holding(
+        "            Flickable {\n                \
+         Layout.fillWidth: true; Layout.preferredHeight: 600\n                \
+         implicitWidth: 280; contentHeight: 600\n            }",
+    ));
+    assert!(report.is_clean(), "expected nothing, found:\n{report}");
+}
+
+#[test]
 fn a_hidden_scroller_does_not_fit_its_popup() {
     // A layout leaves the hidden view out, so the popup asks for the
     // fixed item's height alone, and nothing shown scrolls through it.
