@@ -343,14 +343,10 @@ pub struct Rect {
 /// handle at layout time.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Font {
-    /// The first of the font's families ([`Font::families`]).
+    /// The first of the font's families ([`Font::families`]). Writing it
+    /// alone leaves the ones after it; [`Font::set_family`] is what QML's
+    /// `font.family` does, and makes it the only one.
     pub family: Atom,
-    /// The families after [`Font::family`], each tried for a character
-    /// the ones before it lack (`QFont::setFamilies`). `None` when the font
-    /// names one family, so a font that has no list does not allocate one.
-    /// Writing `family` alone leaves these; [`Font::set_family`] is what
-    /// QML's `font.family` does, and clears them.
-    pub fallback_families: Option<Arc<[Atom]>>,
     pub point_size: f64,
     pub pixel_size: i32,
     /// CSS-style weight, 100..=900; 400 is normal, 700 bold.
@@ -382,12 +378,39 @@ pub struct Font {
     pub prefer_shaping: bool,
     pub context_font_merging: bool,
     pub prefer_typo_line_metrics: bool,
-    /// `font.features` and `font.variableAxes`: the JS maps as assigned
-    /// (`Undefined` when never), kept and read back.
-    pub features: Value,
-    pub variable_axes: Value,
+    /// The families after the first, `font.features` and
+    /// `font.variableAxes` ([`Font::fallback_families`], [`Font::features`],
+    /// [`Font::variable_axes`]).
+    pub rare: FontRare,
     /// Set on what a declared `property font` starts as ([`Color::UNWRITTEN`]).
     pub unwritten: Unwritten,
+}
+
+/// What few fonts set, held apart from what every font has: a font that
+/// sets none of it keeps one empty pointer, 8 bytes where it would keep 48,
+/// and every text, control and font property holds a font. Read and written
+/// through [`Font`]'s methods, which keep it empty when nothing in it is
+/// set, so two fonts that set none of it are equal.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FontRare(Option<Arc<Rare>>);
+
+#[derive(Clone, Debug, PartialEq)]
+struct Rare {
+    /// The families after [`Font::family`], each tried for a character the
+    /// ones before it lack (`QFont::setFamilies`).
+    fallback_families: Option<Arc<[Atom]>>,
+    /// The JS maps as assigned (`Undefined` when never), kept and read
+    /// back.
+    features: Value,
+    variable_axes: Value,
+}
+
+impl Rare {
+    const NONE: Rare = Rare {
+        fallback_families: None,
+        features: Value::Undefined,
+        variable_axes: Value::Undefined,
+    };
 }
 
 /// What a host set with [`Font::set_application_font`]: the part of a font
@@ -443,7 +466,7 @@ impl ApplicationFont {
     fn of(f: &Font) -> Self {
         ApplicationFont {
             family: f.family.clone(),
-            fallback_families: f.fallback_families.clone(),
+            fallback_families: f.fallback_families().cloned(),
             point_size: f.point_size,
             pixel_size: f.pixel_size,
             weight: f.weight,
@@ -454,7 +477,7 @@ impl ApplicationFont {
 
     fn lay_on(&self, font: &mut Font) {
         font.family = self.family.clone();
-        font.fallback_families = self.fallback_families.clone();
+        font.set_fallbacks(self.fallback_families.clone());
         font.point_size = self.point_size;
         font.pixel_size = self.pixel_size;
         font.weight = self.weight;
@@ -504,7 +527,6 @@ impl Font {
     pub fn fallback() -> Self {
         Font {
             family: Atom::DEFAULT_FONT_FAMILY,
-            fallback_families: None,
             point_size: Font::DEFAULT_POINT_SIZE,
             pixel_size: -1,
             weight: 400,
@@ -522,8 +544,7 @@ impl Font {
             prefer_shaping: true,
             context_font_merging: false,
             prefer_typo_line_metrics: false,
-            features: Value::Undefined,
-            variable_axes: Value::Undefined,
+            rare: FontRare::default(),
             unwritten: Unwritten(false),
         }
     }
@@ -673,7 +694,7 @@ impl Font {
     /// The families in the order they are tried (`QFont::families`): the
     /// family, then the fallbacks. Empty when the family is.
     pub fn families(&self) -> impl Iterator<Item = &Atom> {
-        let fallbacks = self.fallback_families.as_deref().unwrap_or_default();
+        let fallbacks = self.fallback_families().map_or(&[][..], |l| &**l);
         (!self.family.is_empty())
             .then_some(&self.family)
             .into_iter()
@@ -684,7 +705,7 @@ impl Font {
     /// (`QFont::setFamily`).
     pub fn set_family(&mut self, family: Atom) {
         self.family = family;
-        self.fallback_families = None;
+        self.set_fallbacks(None);
     }
 
     /// Names the families in the order they are tried
@@ -696,7 +717,68 @@ impl Font {
             None => (Atom::EMPTY, &[][..]),
         };
         self.family = family;
-        self.fallback_families = (!rest.is_empty()).then(|| rest.into());
+        self.set_fallbacks((!rest.is_empty()).then(|| rest.into()));
+    }
+
+    /// Takes the families of `other`, all of them.
+    pub fn set_families_of(&mut self, other: &Font) {
+        self.family = other.family.clone();
+        self.set_fallbacks(other.fallback_families().cloned());
+    }
+
+    /// The families after [`Font::family`], in the order they are tried;
+    /// `None` when the font names one.
+    pub fn fallback_families(&self) -> Option<&Arc<[Atom]>> {
+        self.rare.0.as_ref()?.fallback_families.as_ref()
+    }
+
+    /// `font.features`: the JS map as assigned, `Undefined` when never.
+    pub fn features(&self) -> &Value {
+        self.rare
+            .0
+            .as_deref()
+            .map_or(&Value::Undefined, |r| &r.features)
+    }
+
+    /// `font.variableAxes`: the JS map as assigned, `Undefined` when never.
+    pub fn variable_axes(&self) -> &Value {
+        self.rare
+            .0
+            .as_deref()
+            .map_or(&Value::Undefined, |r| &r.variable_axes)
+    }
+
+    /// Keeps `map` as `font.features`; what is not a JS map clears it.
+    pub fn set_features(&mut self, map: Value) {
+        let map = Self::js_map(map);
+        self.with_rare(|r| r.features = map);
+    }
+
+    /// Keeps `map` as `font.variableAxes`; what is not a JS map clears it.
+    pub fn set_variable_axes(&mut self, map: Value) {
+        let map = Self::js_map(map);
+        self.with_rare(|r| r.variable_axes = map);
+    }
+
+    fn js_map(v: Value) -> Value {
+        if matches!(v, Value::Js(_)) {
+            v
+        } else {
+            Value::Undefined
+        }
+    }
+
+    pub(crate) fn set_fallbacks(&mut self, fallbacks: Option<Arc<[Atom]>>) {
+        if fallbacks.is_none() && self.rare.0.is_none() {
+            return;
+        }
+        self.with_rare(|r| r.fallback_families = fallbacks);
+    }
+
+    fn with_rare(&mut self, change: impl FnOnce(&mut Rare)) {
+        let mut rare = self.rare.0.take().map_or(Rare::NONE, Arc::unwrap_or_clone);
+        change(&mut rare);
+        self.rare.0 = (rare != Rare::NONE).then(|| Arc::new(rare));
     }
 }
 
@@ -851,20 +933,8 @@ impl Value {
                     "preferShaping" => f.prefer_shaping = v.to_boolean(),
                     "contextFontMerging" => f.context_font_merging = v.to_boolean(),
                     "preferTypoLineMetrics" => f.prefer_typo_line_metrics = v.to_boolean(),
-                    "features" => {
-                        f.features = if matches!(v, Value::Js(_)) {
-                            v.clone()
-                        } else {
-                            Value::Undefined
-                        };
-                    }
-                    "variableAxes" => {
-                        f.variable_axes = if matches!(v, Value::Js(_)) {
-                            v.clone()
-                        } else {
-                            Value::Undefined
-                        };
-                    }
+                    "features" => f.set_features(v.clone()),
+                    "variableAxes" => f.set_variable_axes(v.clone()),
                     _ => return None,
                 }
                 Some(Value::Font(Arc::new(f)))

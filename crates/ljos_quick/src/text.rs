@@ -529,7 +529,7 @@ pub fn text_style(f: &Font) -> TextStyle {
         DEFAULT_PIXEL_SIZE
     };
     TextStyle {
-        family: match &f.fallback_families {
+        family: match f.fallback_families() {
             None => family_of(&f.family),
             Some(fallbacks) => families_of(f, fallbacks),
         },

@@ -70,9 +70,8 @@ pub fn application_font_changed(
 /// together, since one of them is unset (`-1`) when the other is given.
 fn followed(font: &Font, old: &Font, new: &Font) -> Font {
     let mut f = font.clone();
-    if f.family == old.family && f.fallback_families == old.fallback_families {
-        f.family = new.family.clone();
-        f.fallback_families = new.fallback_families.clone();
+    if f.family == old.family && f.fallback_families() == old.fallback_families() {
+        f.set_families_of(new);
     }
     if f.point_size == old.point_size && f.pixel_size == old.pixel_size {
         f.point_size = new.point_size;

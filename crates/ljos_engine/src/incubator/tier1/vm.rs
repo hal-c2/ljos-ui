@@ -697,9 +697,9 @@ pub(crate) fn field(v: &Value, name: &str) -> Option<Value> {
             "preferShaping" => Some(Value::Bool(f.prefer_shaping)),
             "contextFontMerging" => Some(Value::Bool(f.context_font_merging)),
             "preferTypoLineMetrics" => Some(Value::Bool(f.prefer_typo_line_metrics)),
-            "features" if matches!(f.features, Value::Js(_)) => Some(f.features.clone()),
-            "variableAxes" if matches!(f.variable_axes, Value::Js(_)) => {
-                Some(f.variable_axes.clone())
+            "features" if matches!(f.features(), Value::Js(_)) => Some(f.features().clone()),
+            "variableAxes" if matches!(f.variable_axes(), Value::Js(_)) => {
+                Some(f.variable_axes().clone())
             }
             _ => None,
         },
