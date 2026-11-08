@@ -421,6 +421,9 @@ struct Inner<V> {
     told: Vec<NodeId>,
     /// Noted properties a change reached, told with [`Kind::Told`] nodes.
     noted: Vec<NodeId>,
+    /// What of `told` and `noted` was there when the innermost own queue
+    /// opened: a hook a waiting change reached waits with it.
+    floors: Floors,
     /// Who is told of them ([`Graph::set_note_handler`]).
     note_handler: Option<Rc<dyn Fn(NodeId)>>,
     /// Counts the changes that mark observers, wrapping: what a node's
@@ -578,13 +581,24 @@ impl<V: Clone + 'static> Graph<V> {
 /// flushes under it; what was queued before waits until it drops. Anything
 /// left when it drops, in a batch still open, goes to the level below.
 #[derive(Debug)]
-pub struct LevelGuard<'g, V: Clone + 'static>(&'g Graph<V>, usize);
+pub struct LevelGuard<'g, V: Clone + 'static>(&'g Graph<V>, usize, Option<Floors>);
+
+/// How much of `Inner::told` and `Inner::noted` an own queue
+/// ([`Graph::own_queue`]) leaves to the level below.
+#[derive(Debug, Clone, Copy, Default)]
+struct Floors {
+    told: usize,
+    noted: usize,
+}
 
 impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
     fn drop(&mut self) {
         let mut g = self.0.inner.borrow_mut();
         let i = &mut *g;
         i.waiting_changes.truncate(self.1);
+        if let Some(floors) = self.2 {
+            i.floors = floors;
+        }
         let Some(left) = i.queues.pop() else {
             return;
         };
@@ -774,6 +788,7 @@ impl<V: Clone + 'static> Graph<V> {
                 freeze_later: Vec::new(),
                 told: Vec::new(),
                 noted: Vec::new(),
+                floors: Floors::default(),
                 note_handler: None,
                 change: 0,
                 marking: 0,
@@ -3079,7 +3094,7 @@ impl<V: Clone + 'static> Graph<V> {
                 let mut i = self.inner.borrow_mut();
                 (i.flush_depth >= SHARED_FLUSH_DEPTH).then(|| {
                     i.queues.push(Queue::new());
-                    LevelGuard(self, i.waiting_changes.len())
+                    LevelGuard(self, i.waiting_changes.len(), None)
                 })
             };
             self.update(n);
@@ -3096,6 +3111,9 @@ impl<V: Clone + 'static> Graph<V> {
             let told = {
                 let mut g = self.inner.borrow_mut();
                 let i = &mut *g;
+                if i.told.len() <= i.floors.told {
+                    return;
+                }
                 let Some(n) = i.told.pop() else {
                     return;
                 };
@@ -3120,6 +3138,9 @@ impl<V: Clone + 'static> Graph<V> {
             let (n, handler) = {
                 let mut g = self.inner.borrow_mut();
                 let i = &mut *g;
+                if i.noted.len() <= i.floors.noted {
+                    return;
+                }
                 let Some(n) = i.noted.pop() else {
                     return;
                 };
@@ -3146,7 +3167,10 @@ impl<V: Clone + 'static> Graph<V> {
     /// reaches run after the ones below it, opens one for each. The changes
     /// made since `since` wait with what they queued: until the guard drops,
     /// a handler reads a binding they reached as it was, as Qt's bindings
-    /// are until their change is told.
+    /// are until their change is told. The noted properties and
+    /// [`Kind::Told`] nodes waiting when it opens wait with them, and are
+    /// told when it drops: a hook run inside would read its own change as
+    /// it was.
     pub fn own_queue(&self, since: u8) -> LevelGuard<'_, V> {
         let mut i = self.inner.borrow_mut();
         i.queues.push(Queue::new());
@@ -3156,7 +3180,12 @@ impl<V: Clone + 'static> Graph<V> {
             change = change.wrapping_add(1);
             i.waiting_changes.push(change);
         }
-        LevelGuard(self, open)
+        let here = Floors {
+            told: i.told.len(),
+            noted: i.noted.len(),
+        };
+        let below = std::mem::replace(&mut i.floors, here);
+        LevelGuard(self, open, Some(below))
     }
 
     /// Holds back `n`'s queued direct observers until the guard drops.

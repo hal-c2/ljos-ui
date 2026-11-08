@@ -123,3 +123,42 @@ fn a_second_hold_on_a_held_property_does_not_keep_its_watchers_held() {
 
     assert_eq!(*told.borrow(), 2);
 }
+
+/// A handler ahead on `saved` writes `working`, which two noted bindings
+/// read. The hook told first opens a queue of its own for the change and
+/// writes in it, which flushes: the other hook, told of the same change,
+/// is told once that queue is done and reads its own property new
+/// (issue #237).
+#[test]
+fn a_hook_a_waiting_change_reached_is_told_after_the_queue_it_waits_on() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let plans = g.property(r, 0).unwrap();
+    let saved = g.binding(r, 0, move |g| g.get(plans)).unwrap();
+    let working = g.property(r, 0).unwrap();
+    let shown = g.binding(r, 0, move |g| g.get(working)).unwrap();
+    let enabled = g.binding(r, 0, move |g| g.get(working)).unwrap();
+    let other = g.property(r, 0).unwrap();
+    assert_eq!((g.get(shown), g.get(enabled)), (0, 0));
+    g.watch_ahead(r, saved, move |g, v| g.set(working, *v))
+        .unwrap();
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, s) = (Rc::clone(&g), Rc::clone(&seen));
+    g.set_note_handler(move |n| {
+        s.borrow_mut().push((n, hooks.get(n)));
+        let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(1));
+        let o = hooks.untrack(|| hooks.get(other));
+        hooks.set(other, o + 1);
+    });
+    g.set_noted(shown).unwrap();
+    g.set_noted(enabled).unwrap();
+
+    g.set(plans, 1);
+
+    let seen = seen.take();
+    assert_eq!(seen.len(), 2, "each hook told once: {seen:?}");
+    assert!(
+        seen.iter().all(|&(_, v)| v == 1),
+        "each hook reads its own change: {seen:?}"
+    );
+}
