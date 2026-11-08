@@ -341,6 +341,24 @@ pub fn font_families() -> Vec<String> {
     ljos_quick::font_families()
 }
 
+/// The face `font` resolves to, as QML's `FontInfo` tells it
+/// (`QFontInfo`): its family and style, and whether it is fixed-pitch,
+/// judged by its characters' widths rather than by its name. Asked from
+/// inside the application, as [`font_families`] is.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn font_info(font: &item::Font) -> item::FaceInfo {
+    ljos_quick::font_info(font)
+}
+
+/// The family the system sets fixed-pitch text in
+/// (`QFontDatabase::systemFont(QFontDatabase::FixedFont)`): what the
+/// family `"monospace"` resolves to, a terminal's default face. Asked from
+/// inside the application, as [`font_families`] is.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn fixed_font_family() -> String {
+    ljos_quick::fixed_font_family()
+}
+
 /// The colour scheme the application follows: its own when it set one
 /// (`Qt.styleHints.colorScheme`), else the system's. Tracked: a binding or
 /// a native type's tracked read that asks follows a change of scheme.
