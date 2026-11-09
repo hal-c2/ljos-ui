@@ -8,6 +8,8 @@
 //! opaque and has one colour; at one physical pixel to a logical pixel,
 //! which is what the guidelines measure in.
 
+use std::collections::HashSet;
+
 use ljos_design::color::{Srgb, delta_e_ok};
 use ljos_design::limits::audit::{VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
 use ljos_engine::ObjectId;
@@ -19,7 +21,7 @@ use ljos_render::{
 
 use crate::Options;
 use crate::acting::Act;
-use crate::cx::{scene_rect, within};
+use crate::cx::{clipped_away, scene_rect, shown_items, shown_opacity, within};
 
 /// Pixels of a part of the scene.
 pub(crate) struct Picture {
@@ -128,20 +130,24 @@ pub(crate) fn changed(a: &Picture, b: &Picture) -> usize {
         .count()
 }
 
-/// Whether the window shows `item`'s own drawing: drawn over what is
-/// behind it, it changes something, so it is neither clipped away, nor
-/// transparent, nor the colour of what it is on; and what is drawn after
-/// it changes none of that, so no popup, dim or sibling covers it. An
-/// item the window does not show changes no pixel when its state
-/// changes, whatever it draws, so a rule that finds no change asks this
-/// before it blames the item.
+/// Whether the window shows `item`: it is not clipped away, not drawn
+/// with an opacity of 0, and what is drawn after it, a popup, its dim or
+/// a sibling, does not cover it. An item the window does not show
+/// changes no pixel when its state changes, whatever it draws, so a rule
+/// that finds no change asks this before it blames the item.
 ///
-/// Only the pixels its own drawing shows in count as covered, and only
-/// in its box, not in the margin a rule draws around it: a neighbour
-/// drawn after it against its edge, or a badge over the part of its box
-/// it leaves empty, covers none of it.
+/// Where its own drawing shows over what is behind it, only those pixels
+/// count as covered; where it draws nothing that shows (a MouseArea or a
+/// bare Item laid over a sibling's drawing), its box is what a user looks
+/// at, and an item that draws nothing is shown, not hidden. Either way
+/// only its box counts, not the margin a rule draws around it: a
+/// neighbour drawn after it against its edge covers none of it.
 pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
     let e = act.engine;
+    let cx = act.cx();
+    if clipped_away(&cx, item) || shown_opacity(e, item) <= 0.0 {
+        return false;
+    }
     let (Some(snapshot), Some(region)) = (act.scene.snapshot(), scene_rect(e, item)) else {
         return false;
     };
@@ -150,30 +156,50 @@ pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
             .item_of(p.node)
             .is_some_and(|i| within(e, i, item))
     };
-    let Some(last) = snapshot.items.iter().rposition(&own) else {
+    // What is drawn after the item: the items after it and all it holds,
+    // in the order the scene draws them.
+    let order = shown_items(&cx);
+    let Some(at) = order.iter().position(|i| *i == item) else {
         return false;
     };
-    // Against the backdrop alone, a white field on a grey popup would
-    // look like nothing; against what is drawn behind it, it shows.
+    let later: HashSet<ObjectId> = order[at + 1..]
+        .iter()
+        .copied()
+        .filter(|i| !within(e, *i, item))
+        .collect();
+    let start = match snapshot.items.iter().rposition(&own) {
+        Some(last) => last + 1,
+        None => snapshot
+            .items
+            .iter()
+            .position(|p| {
+                act.scene
+                    .item_of(p.node)
+                    .is_some_and(|i| later.contains(&i))
+            })
+            .unwrap_or(snapshot.items.len()),
+    };
+    // Against what is drawn behind it, not the bare backdrop: a white
+    // field on a grey popup shows.
     let upto = FrameSnapshot {
         frame: snapshot.frame,
         viewport: snapshot.viewport,
-        items: snapshot.items[..=last].to_vec(),
+        items: snapshot.items[..start].to_vec(),
         clips: snapshot.clips.clone(),
         stats: snapshot.stats,
     };
+    let seen = |x: Srgb, y: Srgb| delta_e_ok(x, y) >= VISIBLE_DELTA_E;
     let (Some(behind), Some(with)) = (
         painter.draw(&upto, region, |p| !own(p)),
         painter.draw(&upto, region, |_| true),
     ) else {
         return false;
     };
-    let seen = |x: Srgb, y: Srgb| delta_e_ok(x, y) >= VISIBLE_DELTA_E;
-    let mine: Vec<bool> = behind.pairs(&with).map(|(x, y)| seen(x, y)).collect();
+    let mut mine: Vec<bool> = behind.pairs(&with).map(|(x, y)| seen(x, y)).collect();
     if mine.iter().filter(|m| **m).count() < VISIBLE_CHANGE_MIN_PX {
-        return false;
+        mine.fill(true);
     }
-    let over: std::collections::HashSet<NodeId> = snapshot.items[last + 1..]
+    let over: HashSet<NodeId> = snapshot.items[start..]
         .iter()
         .filter(|p| !own(p))
         .map(|p| p.node)
