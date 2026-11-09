@@ -96,6 +96,100 @@ Feature: The design audit acts on the window to check colour, focus and motion
       Then the design audit reports "color-state-only"
       And the property "checked" of "bold" is false
 
+    # What the audit cannot see change it says nothing of: a toggle whose
+    # fill shows its state, but whose pixels are not on the screen, changes
+    # none of them when flipped.
+    Scenario: A toggle scrolled out of a clipping Flickable
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 240
+          color: "white"
+          Flickable {
+            y: 120; width: 300; height: 60
+            clip: true
+            contentWidth: 300; contentHeight: 400
+            contentY: 100
+            Button {
+              objectName: "bold"
+              text: "Bold"; checkable: true
+              background: Rectangle {
+                implicitWidth: 80; implicitHeight: 32
+                color: parent.checked ? "#1c71d8" : "white"
+                border.color: "#707070"
+              }
+              contentItem: Text {
+                text: parent.text
+                color: parent.checked ? "white" : "black"
+              }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "color-state-only"
+      And the property "checked" of "bold" is false
+
+    Scenario: A toggle that is fully transparent
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            objectName: "bold"
+            text: "Bold"; checkable: true
+            opacity: 0
+            background: Rectangle {
+              implicitWidth: 80; implicitHeight: 32
+              color: parent.checked ? "#1c71d8" : "white"
+              border.color: "#707070"
+            }
+            contentItem: Text {
+              text: parent.text
+              color: parent.checked ? "white" : "black"
+            }
+          }
+        }
+        """
+      Then the design audit does not report "color-state-only"
+      And the property "checked" of "bold" is false
+
+    Scenario: A toggle under an open modal popup
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            objectName: "bold"
+            text: "Bold"; checkable: true
+            background: Rectangle {
+              implicitWidth: 80; implicitHeight: 32
+              color: parent.checked ? "#1c71d8" : "white"
+              border.color: "#707070"
+            }
+            contentItem: Text {
+              text: parent.text
+              color: parent.checked ? "white" : "black"
+            }
+          }
+          Popup {
+            x: 0; y: 0; width: 300; height: 100
+            modal: true
+            Component.onCompleted: open()
+            background: Rectangle { color: "#f0f0f0" }
+          }
+        }
+        """
+      Then the design audit does not report "color-state-only"
+      And the property "checked" of "bold" is false
+
     Scenario: A toggle whose checked state is filled
       Given the QML:
         """qml

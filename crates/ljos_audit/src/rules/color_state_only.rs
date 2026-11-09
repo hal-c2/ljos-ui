@@ -12,7 +12,10 @@
 //! mark whose picture has not loaded), is a change of shape whatever its
 //! colours, and not reported. A button whose pixels do not change at all
 //! (a filled button whose fill stays the accent when checked) shows its
-//! state by nothing, and is reported too. Then the state is flipped
+//! state by nothing, and is reported too, but only when the button's own
+//! drawing is what the window shows: one scrolled out of a clipping
+//! Flickable, drawn with an opacity of 0 or covered by an open popup
+//! changes no pixel whatever it draws. Then the state is flipped
 //! back, and every other button's too, should the first have been one of
 //! an exclusive group.
 //!
@@ -25,6 +28,7 @@ use ljos_design::limits::NONTEXT_CONTRAST;
 use ljos_design::limits::audit::{VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
 use ljos_engine::ObjectId;
 use ljos_render::kurbo::Rect;
+use ljos_render::{NodeId, PaintItem};
 
 use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
@@ -70,6 +74,54 @@ fn reshaped(before: &[(ObjectId, Rect)], after: &[(ObjectId, Rect)]) -> bool {
 fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
     let snapshot = act.scene.snapshot()?.clone();
     painter.draw(&snapshot, region, |_| true)
+}
+
+/// How many pixels of two pictures of one region differ by a step anyone
+/// sees.
+fn changed(a: &Picture, b: &Picture) -> usize {
+    a.pairs(b)
+        .filter(|(x, y)| delta_e_ok(*x, *y) >= VISIBLE_DELTA_E)
+        .count()
+}
+
+/// Whether the window shows `b`'s own drawing over `region`: drawn alone
+/// it shows something, so it is neither clipped away nor transparent, and
+/// what is drawn after it changes none of that, so no popup, dim or
+/// sibling covers it. A button the window does not show changes no pixel
+/// when flipped, whatever it draws.
+fn shows(act: &Act, painter: &mut Painter, b: ObjectId, region: Rect) -> bool {
+    let e = act.engine;
+    let Some(snapshot) = act.scene.snapshot().cloned() else {
+        return false;
+    };
+    let own = |p: &PaintItem| act.scene.item_of(p.node).is_some_and(|i| within(e, i, b));
+    let Some(last) = snapshot.items.iter().rposition(&own) else {
+        return false;
+    };
+    let (Some(blank), Some(alone)) = (
+        painter.draw(&snapshot, region, |_| false),
+        painter.draw(&snapshot, region, own),
+    ) else {
+        return false;
+    };
+    if changed(&blank, &alone) < VISIBLE_CHANGE_MIN_PX {
+        return false;
+    }
+    let over: std::collections::HashSet<NodeId> = snapshot.items[last + 1..]
+        .iter()
+        .filter(|p| !own(p))
+        .map(|p| p.node)
+        .collect();
+    if over.is_empty() {
+        return true;
+    }
+    let (Some(all), Some(under)) = (
+        painter.draw(&snapshot, region, |_| true),
+        painter.draw(&snapshot, region, |p| !over.contains(&p.node)),
+    ) else {
+        return false;
+    };
+    changed(&all, &under) < VISIBLE_CHANGE_MIN_PX
 }
 
 pub(crate) fn check(act: &mut Act) {
@@ -126,8 +178,14 @@ pub(crate) fn check(act: &mut Act) {
             }
         }
         // Fewer pixels than a mark has: nothing that can be seen changed,
-        // which says the state no better than a tint does.
-        if changed < VISIBLE_CHANGE_MIN_PX || most + 0.005 < NONTEXT_CONTRAST {
+        // which says the state no better than a tint does, if what the
+        // window shows is the button. The state is back as it was, so the
+        // frame is the one `before` was drawn from.
+        if changed < VISIBLE_CHANGE_MIN_PX {
+            if shows(act, &mut painter, b, region) {
+                found.push((b, was, most, changed));
+            }
+        } else if most + 0.005 < NONTEXT_CONTRAST {
             found.push((b, was, most, changed));
         }
     }
@@ -138,21 +196,26 @@ pub(crate) fn check(act: &mut Act) {
         } else {
             ("unchecked", "checked")
         };
-        let message = if changed < VISIBLE_CHANGE_MIN_PX {
-            format!(
+        let (message, measured) = if changed < VISIBLE_CHANGE_MIN_PX {
+            let message = format!(
                 "{words} looks the same {from} and {to}: {changed} pixels change, so nothing \
                  shows its state; draw it with a mark, a shape or a weight, and a change of \
                  {NONTEXT_CONTRAST}:1"
+            );
+            (
+                message,
+                format!("{changed} px < {VISIBLE_CHANGE_MIN_PX} px"),
             )
         } else {
-            format!(
+            let message = format!(
                 "{words} looks the same {from} and {to} but for its colour: no pixel changes by \
                  more than {most:.2}:1, where a state shown by colour needs {}:1 and a change of \
                  shape, mark or weight as well",
                 NONTEXT_CONTRAST
-            )
+            );
+            (message, format!("{most:.2}:1 < {NONTEXT_CONTRAST}:1"))
         };
         let f = act.report("color-state-only", Some(b), message);
-        f.measured = Some(format!("{most:.2}:1 < {NONTEXT_CONTRAST}:1"));
+        f.measured = Some(measured);
     }
 }
