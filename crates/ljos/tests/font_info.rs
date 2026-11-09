@@ -216,3 +216,40 @@ fn an_effect_that_changes_the_fonts_while_they_are_told_ends_on_the_last() {
     assert_eq!(family_of(&first, own), bundled);
     assert_eq!(family_of(&second, other), bundled);
 }
+
+/// A FontInfo made while the text engine is still being read on another
+/// thread: making it and reading what needs no face does not wait for the
+/// engine, and once the engine is there it tells that engine's face and
+/// follows the engines after it.
+#[test]
+fn a_font_info_made_while_the_engine_is_being_made_follows_it_once_it_is_there() {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let (go, gate) = mpsc::channel::<()>();
+    // Held until the test lets it go: one that is joined before then waits
+    // out the timeout, and the engine is in use before it should be.
+    ljos_quick::set_text_engine_later(std::thread::spawn(move || {
+        let _ = gate.recv_timeout(Duration::from_secs(5));
+        ljos_quick::TextEngine::with_system_fonts()
+    }));
+    let engine = ljos::engine();
+    let root = common::create_main(
+        &engine,
+        "import QtQuick\nItem {\n\
+         FontInfo { id: mono; font.family: \"Liberation Mono\"; font.pixelSize: 20 }\n\
+         property int size: mono.pixelSize\n\
+         property string family: mono.family\n}\n",
+    );
+    assert_eq!(engine.read_by_name(root, "size").to_number(), 20.0);
+    assert!(
+        ljos_quick::text_engine_in_use().is_none(),
+        "waited for the engine before anything used it"
+    );
+
+    go.send(()).unwrap();
+    // fonts-liberation, which CI installs.
+    assert_eq!(family_of(&engine, root), "Liberation Mono");
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+    assert_ne!(family_of(&engine, root), "Liberation Mono");
+}

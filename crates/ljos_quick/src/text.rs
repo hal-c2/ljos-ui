@@ -90,6 +90,17 @@ pub fn text_engine_in_use() -> Option<SharedTextEngine> {
     ENGINE.with(|slot| slot.borrow().clone())
 }
 
+/// The UI thread's text engine, unless one is still being made on another
+/// thread: for what must not wait for it, such as a binding that only
+/// follows the fonts. It makes the bundled one if there is none yet, which
+/// waits for nothing.
+pub(crate) fn text_engine_unless_coming() -> Option<SharedTextEngine> {
+    if COMING.with(|c| c.borrow().is_some()) {
+        return None;
+    }
+    Some(text_engine())
+}
+
 /// Makes `engine` the UI thread's text engine, for example one made by
 /// [`TextEngine::with_system_fonts`]. What a font resolves to (`FontInfo`)
 /// follows it at once. A scene picks it up on its next frame and lays its
