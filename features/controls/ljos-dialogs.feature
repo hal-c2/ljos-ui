@@ -4,18 +4,19 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-dialogs-filedialog.html
 #   https://doc.qt.io/qt-6/qml-qtquick-dialogs-folderdialog.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# `Ljos.Controls` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
+# `Ljos.Controls` and `Ljos.Controls.Basic` are Ljós's own modules, and lowering a file to them is Ljós's: those scenarios are
 # `@ljos-only`. The file as written for Qt Quick Dialogs runs on both. Qt draws its own dialog
 # offscreen; accepting its file dialog with nothing chosen leaves the file empty, and its folder
 # dialog takes a folder of its own, so the Qt file reads the folder only before it opens. Ljós's
 # tests stand in for the system's dialog and choose in it.
 
-Feature: Ljós's file and folder dialogs, in Ljos.Controls
+Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Basic
   A file in Ljós's API takes its FileDialog and FolderDialog from
-  Ljos.Controls. They are the dialogs of QtQuick.Dialogs as they are:
+  Ljos.Controls, or from Ljos.Controls.Basic: the two styles have the same
+  dialogs. They are the dialogs of QtQuick.Dialogs as they are:
   opened, accepted or rejected, with what the user chose in
   selectedFile or selectedFolder. A file of Qt's that imports
-  QtQuick.Dialogs is lowered to Ljos.Controls with no other edit for
+  QtQuick.Dialogs is lowered to Ljos.Controls.Basic with no other edit for
   them; a dialog the module has not taken yet, or the dialogs under
   another name, keeps the file as it is written.
 
@@ -111,10 +112,10 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       And the property "selectedFolder" of "folder" is "file:///home/user/Music"
       And the property "log" of "root" is "file file:///home/user/notes.txt;folder file:///home/user/Music;"
 
-  Rule: Qt's dialogs are lowered to Ljos.Controls
+  Rule: Qt's dialogs are lowered to Ljos.Controls.Basic
 
     @ljos-only @headless
-    Scenario: A file of the dialogs is lowered, Ljos.Controls imported on the dialogs' line
+    Scenario: A file of the dialogs is lowered, Ljos.Controls.Basic imported on the dialogs' line
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -135,7 +136,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: root
           property url chosen
@@ -166,7 +167,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
 
         Button {
           text: "Open"
@@ -176,7 +177,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
         """
 
     @ljos-only @headless
-    Scenario: A dialog Ljos.Controls has not taken yet keeps the file
+    Scenario: A dialog Ljos.Controls.Basic has not taken yet keeps the file
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -189,12 +190,12 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:5:3: `ColorDialog` is not in Ljos.Controls yet
+        kept ./Main.qml:5:3: `ColorDialog` is not in Ljos.Controls.Basic yet
         1 files, 0 lowered, 1 kept
         """
 
     @ljos-only @headless
-    Scenario: An enum of a dialog Ljos.Controls has not taken yet keeps the file
+    Scenario: An enum of a dialog Ljos.Controls.Basic has not taken yet keeps the file
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -204,7 +205,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:3:30: `MessageDialog` is not in Ljos.Controls yet
+        kept ./Main.qml:3:30: `MessageDialog` is not in Ljos.Controls.Basic yet
         1 files, 0 lowered, 1 kept
         """
 
@@ -224,9 +225,9 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
         """
 
     # A Qt file finds a name its imports lack among the files beside it; the
-    # lowered file imports Ljos.Controls, and an import is found first.
+    # lowered file imports Ljos.Controls.Basic, and an import is found first.
     @ljos-only @headless
-    Scenario: A file of the project Ljos.Controls has a type of the same name for keeps the file
+    Scenario: A file of the project Ljos.Controls.Basic has a type of the same name for keeps the file
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -244,8 +245,8 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Button.qml:1:1: it is used with `Main.qml`, which is kept: `Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first
-        kept ./Main.qml:4:3: `Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first
+        kept ./Button.qml:1:1: it is used with `Main.qml`, which is kept: `Button` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `Button` that would be found first
+        kept ./Main.qml:4:3: `Button` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `Button` that would be found first
         2 files, 0 lowered, 2 kept
         """
 
@@ -277,7 +278,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         import "box.js" as Box
         Item {
           property int d: Box.helper()
@@ -286,7 +287,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
         """
 
     # Qt finds a name in the last import that has it. The lowered file has
-    # one `import Ljos.Controls`, on the line of the first of the dialogs and
+    # one `import Ljos.Controls.Basic`, on the line of the first of the dialogs and
     # the controls: a module of the project imported between that line and
     # the controls' would be found before Ljós's `Label`, where Qt finds
     # Basic's.
@@ -316,8 +317,8 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       When the author runs "ljos migrate app"
       Then the command prints:
         """
-        kept app/Gauges/Label.qml:1:1: it is used with `Main.qml`, which is kept: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first
-        kept app/Main.qml:6:3: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first
+        kept app/Gauges/Label.qml:1:1: it is used with `Main.qml`, which is kept: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls.Basic takes, would be found first
+        kept app/Main.qml:6:3: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls.Basic takes, would be found first
         2 files, 0 lowered, 2 kept
         """
 
@@ -343,7 +344,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           function size() { var Box = { w: 4 }; return Box.w }
           FileDialog { }

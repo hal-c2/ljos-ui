@@ -45,6 +45,8 @@ qt_types = { path = "../qt_types" }
 ljos_test = { path = "../ljos_test" }
 # Tests settle, find and click through the scene driver.
 ljos_drive = { path = "../ljos_drive" }
+# Ljós's style is held to the roles it derives in Rust.
+ljos_design = { path = "../ljos_design" }
 
 [features]
 # The viewers of `QtQuick.Pdf`, on the documents of `ljos_quick`.

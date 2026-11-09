@@ -1,0 +1,15 @@
+module Ljos.Controls
+singleton Theme 1.0 Theme.qml
+Button 1.0 Button.qml
+CheckBox 1.0 CheckBox.qml
+ComboBox 1.0 ComboBox.qml
+Icon 1.0 Icon.qml
+Label 1.0 Label.qml
+Menu 1.0 Menu.qml
+MenuItem 1.0 MenuItem.qml
+MenuSeparator 1.0 MenuSeparator.qml
+Slider 1.0 Slider.qml
+SpinBox 1.0 SpinBox.qml
+Switch 1.0 Switch.qml
+TextField 1.0 TextField.qml
+ToolTip 1.0 ToolTip.qml

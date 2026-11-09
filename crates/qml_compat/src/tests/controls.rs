@@ -1,10 +1,10 @@
-//! Tests of the controls: `QtQuick.Controls` lowered to `Ljos.Controls`.
+//! Tests of the controls: `QtQuick.Controls` lowered to `Ljos.Controls.Basic`.
 
 use super::*;
 
 #[test]
 fn qt_controls_are_lowered_to_ljos_controls() {
-    let lowered_text = "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\nItem {\n  Button { text: \"Save\"; ToolTip.text: \"Writes\" }\n  Label { color: \"red\" }\n}\n";
+    let lowered_text = "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\nItem {\n  Button { text: \"Save\"; ToolTip.text: \"Writes\" }\n  Label { color: \"red\" }\n}\n";
     for uri in QT_CONTROLS {
         let source = format!(
             "import QtQuick\nimport {uri} 2.15\nItem {{\n  Button {{ text: \"Save\"; ToolTip.text: \"Writes\" }}\n  Label {{ color: \"red\" }}\n}}\n"
@@ -31,7 +31,7 @@ fn the_controls_of_another_style_or_of_one_not_known_keep_the_file() {
     };
     assert_eq!(
         kept.reason,
-        "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic"
+        "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic"
     );
     assert_eq!(kept.at, "import QtQuick\n".len());
     assert_eq!(
@@ -50,7 +50,7 @@ fn both_imports_of_qt_controls_are_one_of_ljos_controls() {
     };
     assert_eq!(
         done.text,
-        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\n\nLabel { }\n"
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\n\nLabel { }\n"
     );
 }
 
@@ -58,13 +58,13 @@ fn both_imports_of_qt_controls_are_one_of_ljos_controls() {
 fn a_control_ljos_controls_has_not_taken_keeps_the_file() {
     assert_eq!(
         kept_for("import QtQuick\nimport QtQuick.Controls.Basic\nItem { Dial { } }\n"),
-        "`Dial` is not in Ljos.Controls yet"
+        "`Dial` is not in Ljos.Controls.Basic yet"
     );
     assert_eq!(
         kept_for(
             "import QtQuick\nimport QtQuick.Controls.Basic\nLabel { property int m: Dial.SnapAlways }\n"
         ),
-        "`Dial` is not in Ljos.Controls yet"
+        "`Dial` is not in Ljos.Controls.Basic yet"
     );
 }
 
@@ -86,7 +86,7 @@ fn a_rectangle_a_control_is_given_is_still_a_fill() {
         lowered(
             "import QtQuick\nimport QtQuick.Controls.Basic\nButton { background: Rectangle { color: \"red\" } }\n"
         ),
-        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\nButton { background: Rectangle { fill: \"red\" } }\n"
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\nButton { background: Rectangle { fill: \"red\" } }\n"
     );
     // What the style gave is an Item: it may be a Rectangle.
     assert_eq!(
@@ -97,11 +97,11 @@ fn a_rectangle_a_control_is_given_is_still_a_fill() {
     );
 }
 
-/// Every control a lowered file may name is one `Ljos.Controls` has, as
+/// Every control a lowered file may name is one `Ljos.Controls.Basic` has, as
 /// Qt's controls describe it.
 #[test]
 fn ljos_controls_has_what_qt_controls_have() {
-    let ljos = qt_types::module(CONTROLS).expect("Ljos.Controls is described");
+    let ljos = qt_types::module(CONTROLS).expect("Ljos.Controls.Basic is described");
     let qt = qt_types::module("QtQuick.Controls.Basic").expect("described");
     for name in [
         "AbstractButton",

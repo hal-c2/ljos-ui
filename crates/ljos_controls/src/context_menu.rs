@@ -18,7 +18,7 @@ use ljos_quick::{ContextMenuHook, ContextMenuReason, register_context_menu};
 use ljos_render::kurbo;
 
 use crate::menu::{self, Menu};
-use crate::style::BASIC;
+use crate::style::{BASIC, style_of};
 use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::util::{check, is_a, object, warn};
@@ -184,22 +184,6 @@ const ENTRIES: [Option<Entry>; 9] = [
         act: |e, o| call(e, o, "selectAll"),
     }),
 ];
-
-/// The library directory of the style `editor` is drawn by, Basic when
-/// it is none of the built-in styles'.
-fn style_of(e: &Engine, editor: ObjectId) -> String {
-    let mut cur = e.meta_of(editor);
-    while let Some(meta) = cur {
-        if let Some(key) = e.library_key_of(&meta)
-            && let Some((dir, _)) = key.as_str().rsplit_once('/')
-            && dir.starts_with("QtQuick/Controls/")
-        {
-            return dir.to_string();
-        }
-        cur = meta.base.clone();
-    }
-    BASIC.to_string()
-}
 
 /// One of the style's types, Basic's when the style has none of its own.
 fn make(e: &Engine, style: &str, name: &str, parent: ObjectId) -> Result<ObjectId, EngineError> {

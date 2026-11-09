@@ -7,15 +7,15 @@ fn qt_file_and_folder_dialogs_are_lowered_to_ljos_controls() {
     let body = "Item {\n  FileDialog { fileMode: FileDialog.OpenFiles; onAccepted: console.log(selectedFiles) }\n  FolderDialog { options: FolderDialog.ShowDirsOnly }\n}\n";
     assert_eq!(
         lowered(&format!("import QtQuick\nimport QtQuick.Dialogs\n{body}")),
-        format!("pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\n{body}")
+        format!("pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\n{body}")
     );
     // Imported with the controls, the dialogs' line is the second import of
-    // Ljos.Controls, and stays empty.
+    // Ljos.Controls.Basic, and stays empty.
     assert_eq!(
         lowered(&format!(
             "import QtQuick\nimport QtQuick.Dialogs\nimport QtQuick.Controls.Basic\n{body}"
         )),
-        format!("pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\n\n{body}")
+        format!("pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\n\n{body}")
     );
 }
 
@@ -26,14 +26,14 @@ fn a_dialog_ljos_controls_has_not_taken_or_the_dialogs_under_a_name_keep_the_fil
             kept_for(&format!(
                 "import QtQuick\nimport QtQuick.Dialogs\nItem {{ {dialog} {{ }} }}\n"
             )),
-            format!("`{dialog}` is not in Ljos.Controls yet")
+            format!("`{dialog}` is not in Ljos.Controls.Basic yet")
         );
     }
     assert_eq!(
         kept_for(
             "import QtQuick\nimport QtQuick.Dialogs\nItem { property int b: MessageDialog.Ok }\n"
         ),
-        "`MessageDialog` is not in Ljos.Controls yet"
+        "`MessageDialog` is not in Ljos.Controls.Basic yet"
     );
     assert_eq!(
         kept_for("import QtQuick\nimport QtQuick.Dialogs as D\nItem { D.FileDialog { } }\n"),
@@ -58,14 +58,14 @@ fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
             "import QtQuick\nimport QtQuick.Dialogs\nItem { Button { } FileDialog { } }\n",
             "Button"
         ),
-        "`Button` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `Button` that would be found first"
+        "`Button` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `Button` that would be found first"
     );
     assert_eq!(
         kept(
             "import QtQuick\nimport QtQuick.Controls.Basic\nItem { Label { } FileDialog { } }\n",
             "FileDialog"
         ),
-        "`FileDialog` is a file of the project, and Ljos.Controls, which the lowered file imports, has a `FileDialog` that would be found first"
+        "`FileDialog` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `FileDialog` that would be found first"
     );
     // Ljós's modules have names QtQuick has not (`Box`, `PointerArea`),
     // so what a lowered file imports can shadow a file too.
@@ -92,7 +92,7 @@ fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
         ),
         Outcome::Lowered(_)
     ));
-    // Without the controls, Ljos.Controls is not imported, and its `Button`
+    // Without the controls, Ljos.Controls.Basic is not imported, and its `Button`
     // shadows nothing.
     assert!(matches!(
         lower("import QtQuick\nItem { Button { } }\n", &only("Button")),
@@ -110,7 +110,7 @@ fn the_dialogs_with_the_controls_of_another_style_keep_the_file_for_the_style() 
     };
     assert_eq!(
         kept.reason,
-        "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic"
+        "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic"
     );
 }
 
@@ -120,7 +120,7 @@ fn the_dialogs_imported_before_the_controls_carry_the_import_of_ljos_controls() 
         lowered(
             "import QtQuick\nimport QtQuick.Dialogs\nimport QtQuick.Controls.Basic\nLabel { }\n"
         ),
-        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls\n\nLabel { }\n"
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\n\nLabel { }\n"
     );
 }
 
@@ -175,7 +175,7 @@ impl Locals for Gauges {
 }
 
 /// Qt finds a name in the last import that has it. The lowered file has
-/// one `import Ljos.Controls`, on the first line of the controls and the
+/// one `import Ljos.Controls.Basic`, on the first line of the controls and the
 /// dialogs, `Ljos.Ui` on `QtQuick`'s line and `Ljos.Layout` on
 /// `QtQuick.Layouts`'. An import of the project between the line a Qt
 /// type is found on and the one Ljós's takes means one type in Qt's file
@@ -186,19 +186,19 @@ fn an_import_of_the_project_between_qts_line_and_ljos_line_keeps_the_file() {
         Outcome::Kept(kept) => kept.reason,
         other => panic!("lowered: {other:?}"),
     };
-    // Basic's `Label` in Qt; lowered, `Gauges` is after `Ljos.Controls`.
+    // Basic's `Label` in Qt; lowered, `Gauges` is after `Ljos.Controls.Basic`.
     assert_eq!(
         kept(
             "import QtQuick\nimport QtQuick.Dialogs\nimport Gauges\nimport QtQuick.Controls.Basic\nItem { Label { color: \"red\" } }\n"
         ),
-        "`Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls takes, would be found first"
+        "`Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls.Basic takes, would be found first"
     );
     // The dialogs' `FileDialog` in Qt, as they are imported last.
     assert_eq!(
         kept(
             "import QtQuick\nimport QtQuick.Controls.Basic\nimport Gauges\nimport QtQuick.Dialogs\nItem { FileDialog { } }\n"
         ),
-        "`FileDialog` is Qt's, but in the lowered file the project's `FileDialog`, imported after the line Ljos.Controls takes, would be found first"
+        "`FileDialog` is Qt's, but in the lowered file the project's `FileDialog`, imported after the line Ljos.Controls.Basic takes, would be found first"
     );
     // The project's `Row` in Qt, imported after `QtQuick`; lowered,
     // `Ljos.Layout` takes `QtQuick.Layouts`' line, after `Gauges`.
@@ -220,7 +220,7 @@ fn an_import_of_the_project_between_qts_line_and_ljos_line_keeps_the_file() {
 #[test]
 fn an_import_of_the_project_after_the_dialogs_is_the_projects_wherever_the_controls_are() {
     // In Qt and lowered alike, `Gauges` is after the dialogs and the line
-    // `Ljos.Controls` takes: its `FileDialog` is a Rectangle, whose
+    // `Ljos.Controls.Basic` takes: its `FileDialog` is a Rectangle, whose
     // `color` is a fill.
     let Outcome::Lowered(lowered) = lower(
         "import QtQuick\nimport QtQuick.Dialogs\nimport Gauges\nimport QtQuick.Controls.Basic\nItem { FileDialog { color: \"red\" } }\n",

@@ -121,6 +121,172 @@ module Ljos.Blocks
 
 module Ljos.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
+	Button Ljos/Controls/Button.qml
+	CheckBox Ljos/Controls/CheckBox.qml
+	ComboBox Ljos/Controls/ComboBox.qml
+	Dialog QtQuick/Controls/Basic/Dialog.qml
+	FileDialog QtQuick.Dialogs.FileDialog
+	FolderDialog QtQuick.Dialogs.FolderDialog
+	Icon Ljos/Controls/Icon.qml
+	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
+	Label Ljos/Controls/Label.qml
+	Menu Ljos/Controls/Menu.qml
+	MenuItem Ljos/Controls/MenuItem.qml
+	MenuSeparator Ljos/Controls/MenuSeparator.qml
+	Popup QtQuick/Controls/Basic/Popup.qml
+	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
+	ScrollView QtQuick/Controls/Basic/ScrollView.qml
+	Slider Ljos/Controls/Slider.qml
+	SpinBox Ljos/Controls/SpinBox.qml
+	Switch Ljos/Controls/Switch.qml
+	TextArea QtQuick/Controls/Basic/TextArea.qml
+	TextField Ljos/Controls/TextField.qml
+	Theme Ljos/Controls/Theme.qml
+	ToolTip Ljos/Controls/ToolTip.qml
+	type Ljos/Controls/Button.qml Button
+		prototype QtQuick.Templates.Button named
+		prop primary QtQml.bool named
+		prop destructive QtQml.bool named
+		prop subtle QtQml.bool named
+		prop chevron QtQml.bool named
+		prop iconName QtQml.string named
+		prop iconSize QtQml.real named
+		prop filled QtQml.bool named readonly
+		prop fill QtQuick.color named readonly
+		prop ink QtQuick.color named readonly
+		signal primaryChanged
+		signal destructiveChanged
+		signal subtleChanged
+		signal chevronChanged
+		signal iconNameChanged
+		signal iconSizeChanged
+		signal filledChanged
+		signal fillChanged
+		signal inkChanged
+	type Ljos/Controls/CheckBox.qml CheckBox
+		prototype QtQuick.Templates.CheckBox named
+	type Ljos/Controls/ComboBox.qml ComboBox
+		prototype QtQuick.Templates.ComboBox named
+		prop outline QtQml.bool named
+		prop disabledRows QtQml.var named
+		prop markCurrent QtQml.bool named
+		prop iconName QtQml.string named
+		signal outlineChanged
+		signal disabledRowsChanged
+		signal markCurrentChanged
+		signal iconNameChanged
+	type Ljos/Controls/Icon.qml Icon
+		prototype QtQuick.Item named
+		prop name QtQml.string named
+		prop size QtQml.real named
+		prop color QtQuick.color named
+		prop strokeWidth QtQml.real named
+		prop filled QtQml.bool named
+		prop paths QtQml.var named readonly
+		signal nameChanged
+		signal sizeChanged
+		signal colorChanged
+		signal strokeWidthChanged
+		signal filledChanged
+		signal pathsChanged
+	type Ljos/Controls/Label.qml Label
+		prototype QtQuick.Templates.Label named
+	type Ljos/Controls/Menu.qml Menu
+		prototype QtQuick.Templates.Menu named
+		prop hasIcons QtQml.bool named readonly
+		signal hasIconsChanged
+	type Ljos/Controls/MenuItem.qml MenuItem
+		prototype QtQuick.Templates.MenuItem named
+		prop destructive QtQml.bool named
+		prop iconName QtQml.string named
+		prop shortcut QtQml.string named
+		prop iconSpace QtQml.bool named
+		prop ink QtQuick.color named readonly
+		signal destructiveChanged
+		signal iconNameChanged
+		signal shortcutChanged
+		signal iconSpaceChanged
+		signal inkChanged
+	type Ljos/Controls/MenuSeparator.qml MenuSeparator
+		prototype QtQuick.Templates.MenuSeparator named
+	type Ljos/Controls/Slider.qml Slider
+		prototype QtQuick.Templates.Slider named
+	type Ljos/Controls/SpinBox.qml SpinBox
+		prototype QtQuick.Templates.SpinBox named
+	type Ljos/Controls/Switch.qml Switch
+		prototype QtQuick.Templates.Switch named
+	type Ljos/Controls/TextField.qml TextField
+		prototype QtQuick.Templates.TextField named
+	type Ljos/Controls/Theme.qml Theme
+		prototype QtQml.QtObject named
+		is singleton
+		prop canvas QtQuick.color named
+		prop text QtQuick.color named
+		prop accent QtQuick.color named
+		prop surface QtQuick.color named
+		prop surfaceRaised QtQuick.color named
+		prop surfaceOverlay QtQuick.color named
+		prop border QtQuick.color named
+		prop accentSurface QtQuick.color named
+		prop fills QtQml.var named readonly
+		prop input QtQuick.color named
+		prop textMuted QtQuick.color named
+		prop placeholder QtQuick.color named
+		prop iconMuted QtQuick.color named
+		prop accentForeground QtQuick.color named
+		prop focus QtQuick.color named
+		prop errorForeground QtQuick.color named
+		prop warningForeground QtQuick.color named
+		prop dark QtQml.bool named readonly
+		prop radius QtQml.real named
+		prop radiusSmall QtQml.real named readonly
+		prop radiusLarge QtQml.real named readonly
+		prop controlHeight QtQml.int named
+		prop spacingSmall QtQml.int named readonly
+		prop spacing QtQml.int named readonly
+		prop fontSize QtQml.int named
+		prop fontSizeSmall QtQml.int named
+		prop iconSize QtQml.int named
+		prop iconSizeSmall QtQml.int named readonly
+		signal canvasChanged
+		signal textChanged
+		signal accentChanged
+		signal surfaceChanged
+		signal surfaceRaisedChanged
+		signal surfaceOverlayChanged
+		signal borderChanged
+		signal accentSurfaceChanged
+		signal fillsChanged
+		signal inputChanged
+		signal textMutedChanged
+		signal placeholderChanged
+		signal iconMutedChanged
+		signal accentForegroundChanged
+		signal focusChanged
+		signal errorForegroundChanged
+		signal warningForegroundChanged
+		signal darkChanged
+		signal radiusChanged
+		signal radiusSmallChanged
+		signal radiusLargeChanged
+		signal controlHeightChanged
+		signal spacingSmallChanged
+		signal spacingChanged
+		signal fontSizeChanged
+		signal fontSizeSmallChanged
+		signal iconSizeChanged
+		signal iconSizeSmallChanged
+		method stroke
+		method mix
+		method luminance
+		method contrast
+		method reach
+		method on
+	type Ljos/Controls/ToolTip.qml ToolTip
+		prototype QtQuick.Templates.ToolTip named
+
+module Ljos.Controls.Basic
+	AbstractButton QtQuick.Templates.AbstractButton
 	Button QtQuick/Controls/Basic/Button.qml
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml

@@ -60,8 +60,11 @@ pub use renames::{FONT_RENAMES, member_renames, type_renames};
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
 
-/// The module a lowered file imports its controls from.
-pub const CONTROLS: &str = "Ljos.Controls";
+/// The module a lowered file imports its controls from: Ljós's controls
+/// as Qt's Basic style draws them, so a lowered file looks as it did.
+/// `Ljos.Controls`, Ljós's own style, is the one a file written for Ljós
+/// imports (docs/DIALECT.md §4.16).
+pub const CONTROLS: &str = "Ljos.Controls.Basic";
 
 /// The modules of Qt's controls lowered to [`CONTROLS`]: the Basic style,
 /// and `QtQuick.Controls` where the program starts with Basic
@@ -547,7 +550,7 @@ struct Pass<'s> {
     imports: Vec<Import>,
     /// Which of [`imports`](Self::imports) is the line `import Ljos.Ui`
     /// takes in the lowered file, which `import Ljos.Core` and which
-    /// `import Ljos.Controls`: an import of the project after it is found
+    /// `import Ljos.Controls.Basic`: an import of the project after it is found
     /// before Ljós's type. `Ljos.Ui` takes `QtQuick`'s line, else
     /// `QtQml`'s; `Ljos.Core` takes `QtQml`'s, else `QtQuick`'s.
     ui_line: Option<usize>,
@@ -730,7 +733,7 @@ impl<'s> Pass<'s> {
                         &mut self.controls
                     };
                     found.get_or_insert(Controls { qt, ljos });
-                    // The dialogs are in Ljos.Controls, so their import is
+                    // The dialogs are in Ljos.Controls.Basic, so their import is
                     // one of the controls'.
                     if controls.is_empty() {
                         self.controls_line = Some(self.imports.len());

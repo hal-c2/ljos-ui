@@ -6,16 +6,16 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-dialog.html
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-itemdelegate.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# `Ljos.Controls` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
+# `Ljos.Controls.Basic` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
 # `@ljos-only`. The file as written for Qt Quick Controls runs on both, and the file in Ljós's API
 # is held to its numbers. The shapes are those of a list with a context menu and of a confirmation
 # dialog, written here as cases of their own.
 
 Feature: Ljós's controls: menus, dialogs and item delegates
-  Ljos.Controls has the menu, its items and separators, the dialog and
+  Ljos.Controls.Basic has the menu, its items and separators, the dialog and
   the item delegate of Qt Quick Controls' Basic style, opened, chosen
   from and closed as they are. A file of Qt's that uses them is lowered
-  to Ljos.Controls with no other edit for them.
+  to Ljos.Controls.Basic with no other edit for them.
 
   Rule: A menu and an item delegate are Qt's
 
@@ -60,7 +60,7 @@ Feature: Ljós's controls: menus, dialogs and item delegates
       Given the QML:
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: root; objectName: "root"
           width: 300; height: 240
@@ -169,7 +169,7 @@ Feature: Ljós's controls: menus, dialogs and item delegates
       Given the QML:
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: root; objectName: "root"
           width: 300; height: 240
@@ -233,7 +233,7 @@ Feature: Ljós's controls: menus, dialogs and item delegates
       Then the property "rejects" of "root" is 1
       And the property "visible" of "dialog" is false
 
-  Rule: Qt's menus and dialogs are lowered to Ljos.Controls
+  Rule: Qt's menus and dialogs are lowered to Ljos.Controls.Basic
 
     @ljos-only @headless
     Scenario: A file of menus and dialogs is lowered
@@ -257,7 +257,7 @@ Feature: Ljós's controls: menus, dialogs and item delegates
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 160; fill: "white"
           ItemDelegate { width: 200; text: "Notes.txt"; onClicked: menu.open() }
@@ -290,7 +290,7 @@ Feature: Ljós's controls: menus, dialogs and item delegates
       Given the file "List.qml":
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: list
           property string chosen: ""
