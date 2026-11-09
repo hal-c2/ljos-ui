@@ -574,6 +574,14 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    fn enum_home(&self, ty: EngineType, name: &str) -> Option<EngineType> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle.enum_home(ty, name).map(EngineType::Qt),
+            // A native type is no other's base here: what it has, it has.
+            EngineType::Native(i) => self.native(i).enumeration(name).is_some().then_some(ty),
+        }
+    }
+
     fn enum_is_flags(&self, ty: EngineType, name: &str) -> bool {
         match ty {
             EngineType::Qt(ty) => QtTypeOracle.enum_is_flags(ty, name),

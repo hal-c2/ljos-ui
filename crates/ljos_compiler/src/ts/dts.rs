@@ -460,13 +460,59 @@ impl Api {
         names
     }
 
+    /// The properties `ty` inherits that hold something else on it than on
+    /// its base, with what they hold on it: an enum `ty` declares again
+    /// (`TextEdit.HAlignment`, which justifies, for the
+    /// `horizontalAlignment` of the base both editors share). An interface
+    /// cannot declare an inherited member with another type, so `ty`
+    /// extends its base without them.
+    fn held_again(&self, ty: &'static Type) -> Vec<(&'static Property, String)> {
+        let Some(base) = ty.prototype() else {
+            return Vec::new();
+        };
+        let own: HashSet<&str> = members_of(ty).collect();
+        let mut seen = HashSet::new();
+        let mut again = Vec::new();
+        let mut at = Some(base);
+        while let Some(found) = at {
+            let parts = [Some(found), found.member_extension()];
+            for property in parts.into_iter().flatten().flat_map(|t| &t.properties) {
+                if own.contains(property.name) || !seen.insert(property.name) {
+                    continue;
+                }
+                // Only the enum is read from the type that has the member;
+                // what else it holds is named alike on both.
+                let held = self.enum_type(property.type_name, Some(ty));
+                if held.is_none() || held == self.enum_type(property.type_name, Some(base)) {
+                    continue;
+                }
+                if let Some(here) = self.property_type(property, ty) {
+                    again.push((property, here));
+                }
+            }
+            at = found.prototype();
+        }
+        again
+    }
+
     fn write_type(&self, out: &mut String, ty: &'static Type) {
         let Some(name) = self.name_of(ty) else {
             return;
         };
         let generic = is_component(ty);
         let base = ty.prototype().and_then(|p| self.name_of(p));
-        let extends = base.map(|p| format!(" extends {p}")).unwrap_or_default();
+        let again = self.held_again(ty);
+        let extends = match base {
+            Some(p) if !again.is_empty() => {
+                let names: Vec<String> = again
+                    .iter()
+                    .map(|(property, _)| format!("\"{}\"", property.name))
+                    .collect();
+                format!(" extends Omit<{p}, {}>", names.join(" | "))
+            }
+            Some(p) => format!(" extends {p}"),
+            None => String::new(),
+        };
         let head = if generic {
             let made = base.unwrap_or("unknown");
             format!("interface {name}<T = {made}>{extends} {{")
@@ -495,6 +541,14 @@ impl Api {
                 };
                 let _ = writeln!(out, "    {readonly}{}: {ts};", member(property.name));
             }
+        }
+        for (property, ts) in &again {
+            let readonly = if property.is_readonly {
+                "readonly "
+            } else {
+                ""
+            };
+            let _ = writeln!(out, "    {readonly}{}: {ts};", member(property.name));
         }
         if generic {
             out.push_str("    createObject(parent: Item, props?: Partial<T>): T;\n");

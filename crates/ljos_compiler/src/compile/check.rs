@@ -660,19 +660,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 name: name.into(),
             }));
         }
-        if written.is_empty() || !oracle.has_enum(owner, written) {
+        if written.is_empty() {
             return None;
         }
         // The enum is named by the type that declares it: `Text.VAlignment`,
-        // not that of a type built on it.
-        let mut home = owner;
-        let mut ty = owner;
-        while let Some(next) = oracle.prototype(ty) {
-            if oracle.has_enum(next, written) {
-                home = next;
-            }
-            ty = next;
-        }
+        // not that of a type built on it, but `TextEdit.HAlignment`, which
+        // `TextEdit` declares again, for the `horizontalAlignment` it has
+        // from the base it shares with `TextInput`.
+        let home = oracle.enum_home(owner, written)?;
         let object = self.obj(Obj::Native(home));
         Some(self.arena.intern(Kind::Enum {
             object,
