@@ -81,6 +81,7 @@ Feature: The font of a Text
           property bool pointsArePlatformPixels: points.font.pixelSize === Math.floor(18 * perPoint + 1e-9)
           property bool pointsAreThosePixels: points.width === pixels.width && points.height === pixels.height
           Text { id: points; text: "Hello world"; font.pointSize: 18 }
+          // Text is drawn at the rounded size even though the read truncates: 22.5 px draws as 23.
           Text { id: pixels; text: "Hello world"; font.pixelSize: Math.round(18 * root.perPoint) }
         }
         """
