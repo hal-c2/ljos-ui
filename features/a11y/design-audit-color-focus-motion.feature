@@ -277,6 +277,26 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit reports "color-state-only" on the "button" named "Bold"
 
+    # A toggle that draws nothing of its own, over what a sibling draws,
+    # shows its state by nothing.
+    Scenario: A toggle that draws nothing over a sibling's drawing
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Rectangle { width: 80; height: 32; color: "#1c71d8" }
+          Button {
+            text: "Bold"; checkable: true
+            background: Item { implicitWidth: 80; implicitHeight: 32 }
+            contentItem: Item {}
+          }
+        }
+        """
+      Then the design audit reports "color-state-only" on the "button" named "Bold"
+
     Scenario: A toggle whose checked state is filled
       Given the QML:
         """qml
@@ -609,6 +629,56 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit reports "focus-indicator-missing" on the "button" named "Bold"
       And the design audit reports "focus-indicator-missing" on the "button" named "Italic"
+
+    # A stop that draws nothing of its own is where focus is least seen:
+    # what shows it is its box, and focus changes nothing in it.
+    Scenario: A delegate whose MouseArea takes focus and draws nothing
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Item {
+            width: 240; height: 40
+            Rectangle {
+              anchors.fill: parent; color: "#e0e0e0"
+              Label { anchors.centerIn: parent; text: "Inbox" }
+            }
+            MouseArea {
+              anchors.fill: parent
+              activeFocusOnTab: true
+              Accessible.role: Accessible.Button
+              Accessible.name: "Inbox"
+            }
+          }
+        }
+        """
+      Then the design audit reports "focus-indicator-missing" on the "button" named "Inbox"
+
+    Scenario: A bare item that takes focus over a sibling's drawing
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Rectangle {
+            width: 240; height: 40; color: "#e0e0e0"
+            Label { anchors.centerIn: parent; text: "Inbox" }
+          }
+          Item {
+            width: 240; height: 40
+            activeFocusOnTab: true
+            Accessible.role: Accessible.Button
+            Accessible.name: "Inbox"
+            Keys.onPressed: (event) => { event.accepted = true }
+          }
+        }
+        """
+      Then the design audit reports "focus-indicator-missing" on the "button" named "Inbox"
 
     Scenario: A button with no focus ring that is fully transparent
       Given the QML:
