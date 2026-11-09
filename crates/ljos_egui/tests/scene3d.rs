@@ -1,7 +1,9 @@
 //! A 3D view drawn on egui-wgpu's own device, in egui's own pass, over
 //! what egui drew under it.
 
-use std::sync::Arc;
+use std::io::Write;
+use std::ops::Deref;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use egui_kittest::Harness;
 use egui_kittest::wgpu::{WgpuTestRenderer, create_render_state, default_wgpu_setup};
@@ -60,9 +62,41 @@ fn blue() -> Color {
     Color::rgb(0x40 as f32 / 255.0, 0x80 as f32 / 255.0, 1.0)
 }
 
-/// egui's renderer for tests, with the 3D resources on it; `None`, said,
-/// where the machine has no adapter at all.
-fn render_state() -> Option<egui_wgpu::RenderState> {
+/// egui's renderer for a test, held for the whole test.
+///
+/// Tests take turns, as `ljos_3d`'s own do (its `tests/device`): bringing
+/// up wgpu's Vulkan and GL backends on a software driver from several
+/// threads at once, while others draw and tear their devices down, killed
+/// `cargo test` with SIGSEGV on lavapipe and printed nothing (CI run
+/// 42704856052). nextest runs each test in a process of its own and never
+/// met it; `cargo test` runs them on threads of one.
+struct Gpu {
+    // Declared before the turn, so the device is gone before the next test
+    // makes its own.
+    state: egui_wgpu::RenderState,
+    _turn: MutexGuard<'static, ()>,
+}
+
+impl Deref for Gpu {
+    type Target = egui_wgpu::RenderState;
+    fn deref(&self) -> &egui_wgpu::RenderState {
+        &self.state
+    }
+}
+
+/// The calling test's turn on egui's renderer for tests, with the 3D
+/// resources on it; `None`, said, where the machine has no adapter at all.
+fn render_state() -> Option<Gpu> {
+    static TURN: Mutex<()> = Mutex::new(());
+    // A test that failed holding its turn has dropped its device all the
+    // same; the next one may go.
+    let turn = TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    // A crash inside the driver prints nothing of its own, and the harness
+    // holds back what a test prints until it ends: the last such line
+    // names the test a crash was in.
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("a test");
+    let _ = writeln!(std::io::stderr(), "scene3d: {test} takes the device");
     let state = std::panic::catch_unwind(|| {
         create_render_state(
             default_wgpu_setup(),
@@ -72,7 +106,7 @@ fn render_state() -> Option<egui_wgpu::RenderState> {
     match state {
         Ok(state) => {
             Scene3dResources::install(&state);
-            Some(state)
+            Some(Gpu { state, _turn: turn })
         }
         Err(_) => {
             eprintln!("SKIPPED: no wgpu adapter for egui's test renderer");

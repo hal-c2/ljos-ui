@@ -3,7 +3,8 @@
 //! the view is gone.
 #![cfg(feature = "offscreen3d")]
 
-use std::sync::Arc;
+use std::io::Write;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use ljos_render::kurbo::{Rect, Size};
 use ljos_render::ljos_3d::offscreen::Offscreen;
@@ -11,14 +12,33 @@ use ljos_render::ljos_3d::{Background, Color, Environment, Scene};
 use ljos_render::scene3d::View3dOp;
 use ljos_render::{DisplayListBuilder, FrameView, NodeId, RenderTree, VelloCpuReference};
 
-/// No adapter (a machine with no GPU driver and no software Vulkan or GL)
-/// is said, not failed: the view is not what is wrong there.
-fn has_adapter() -> bool {
+/// The calling test's turn on the GPU, held for the whole test; `None`
+/// where there is no adapter (a machine with no GPU driver and no software
+/// Vulkan or GL), which is said, not failed: the view is not what is wrong
+/// there.
+///
+/// Tests take turns, as `ljos_3d`'s own do (its `tests/device`): bringing
+/// up wgpu's Vulkan and GL backends on a software driver from several
+/// threads at once, while others draw and tear their devices down, killed
+/// `cargo test` with SIGSEGV on lavapipe and printed nothing (CI run
+/// 42694452192). nextest runs each test in a process of its own and never
+/// met it; `cargo test` runs them on threads of one.
+fn gpu_turn() -> Option<MutexGuard<'static, ()>> {
+    static TURN: Mutex<()> = Mutex::new(());
+    // A test that failed holding its turn has dropped its devices all the
+    // same; the next one may go.
+    let turn = TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    // A crash inside the driver prints nothing of its own, and the harness
+    // holds back what a test prints until it ends: the last such line
+    // names the test a crash was in.
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("a test");
+    let _ = writeln!(std::io::stderr(), "view3d: {test} takes the device");
     match Offscreen::new() {
-        Ok(_) => true,
+        Ok(_) => Some(turn),
         Err(e) => {
             eprintln!("SKIPPED: {e}");
-            false
+            None
         }
     }
 }
@@ -53,9 +73,7 @@ fn render(r: &mut VelloCpuReference, tree: &mut RenderTree, frame: u64) -> ljos_
 
 #[test]
 fn r_draws_a_view_where_it_is() {
-    if !has_adapter() {
-        return;
-    }
+    let Some(_turn) = gpu_turn() else { return };
     let mut tree = RenderTree::new();
     add_view(&mut tree, 1);
     let mut r = VelloCpuReference::default();
@@ -67,9 +85,7 @@ fn r_draws_a_view_where_it_is() {
 
 #[test]
 fn a_view_made_and_gone_again_and_again_keeps_one_picture_at_most() {
-    if !has_adapter() {
-        return;
-    }
+    let Some(_turn) = gpu_turn() else { return };
     let mut tree = RenderTree::new();
     let mut r = VelloCpuReference::default();
     for key in 0..32 {
@@ -128,9 +144,7 @@ mod b0 {
 
     #[test]
     fn a_painter_without_3d_gets_a_picture_that_goes_with_the_view() {
-        if !has_adapter() {
-            return;
-        }
+        let Some(_turn) = gpu_turn() else { return };
         let mut tree = RenderTree::new();
         let n = add_view(&mut tree, 7);
         let mut be = EpaintBackend::new();
