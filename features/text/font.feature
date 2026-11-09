@@ -75,7 +75,10 @@ Feature: The font of a Text
           objectName: "root"
           readonly property real perPoint: Screen.logicalPixelDensity * 25.4 / 72
           property bool hasDensity: perPoint > 0
-          property bool pointsArePlatformPixels: points.font.pixelSize === Math.round(18 * perPoint)
+          // A script's read of font.pixelSize truncates a point size (22.5
+          // px reads 22); the epsilon keeps a product a float error below a
+          // whole pixel from truncating one short.
+          property bool pointsArePlatformPixels: points.font.pixelSize === Math.floor(18 * perPoint + 1e-9)
           property bool pointsAreThosePixels: points.width === pixels.width && points.height === pixels.height
           Text { id: points; text: "Hello world"; font.pointSize: 18 }
           Text { id: pixels; text: "Hello world"; font.pixelSize: Math.round(18 * root.perPoint) }
