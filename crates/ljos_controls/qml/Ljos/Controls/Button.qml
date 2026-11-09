@@ -1,7 +1,9 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a compact button on the
 // theme's roles. `primary` and `destructive` fill it; `subtle` leaves it
 // on its ground until the pointer is over it; `chevron` says it opens
-// something; `iconName` puts an icon before the text. A checked button
+// something. Its icon (`icon.source`, or its action's) is drawn before
+// the text in the text's colour; `iconName`, one of the style's own
+// icons, wins over it. A checked button
 // has a ring inside its edge, so its state is not its colour alone.
 import QtQuick
 import QtQuick.Controls.impl
@@ -28,6 +30,10 @@ T.Button {
                                                        : Theme.accentForeground)
                                         : Theme.text
 
+    // A picture larger than the style's icons is made no larger.
+    icon.width: iconSize
+    icon.height: iconSize
+
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
@@ -50,9 +56,12 @@ T.Button {
 
     contentItem: Component {
         Item {
-            implicitWidth: (glyph.visible ? glyph.width + (label.text.length > 0 ? control.spacing : 0) : 0)
-                           + label.implicitWidth
-                           + (more.visible ? control.spacing + more.width : 0)
+            // What is drawn at the start: the style's own icon, else the
+            // button's or its action's.
+            readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
+            readonly property real start: mark ? mark.width + (label.text.length > 0 ? control.spacing : 0) : 0
+            readonly property real end: more.visible ? control.spacing + more.width : 0
+            implicitWidth: start + label.implicitWidth + end
             implicitHeight: Math.max(label.implicitHeight, control.iconSize)
 
             // Mirroring moves anchors only, so each part is placed for
@@ -68,6 +77,18 @@ T.Button {
                 color: control.ink
             }
 
+            // Text-less, it is the icon alone, taken from the button or the
+            // action it follows, and drawn in the ink unless `icon.color`
+            // says otherwise.
+            IconLabel {
+                id: picture
+                objectName: "picture"
+                visible: !glyph.visible && implicitWidth > 0
+                x: control.mirrored ? parent.width - width : 0
+                y: (parent.height - height) / 2
+                color: control.ink
+            }
+
             // The text as its mnemonic says: the letter after a lone "&"
             // underlined, "&&" one "&". The keys read `control.text` as
             // written. Its own icon is none; the one at the start is drawn
@@ -75,10 +96,8 @@ T.Button {
             IconLabel {
                 id: label
                 objectName: "label"
-                readonly property real start: glyph.visible ? glyph.width + (text.length > 0 ? control.spacing : 0) : 0
-                readonly property real end: more.visible ? control.spacing + more.width : 0
-                x: control.mirrored ? end : start
-                width: parent.width - start - end
+                x: control.mirrored ? parent.end : parent.start
+                width: parent.width - parent.start - parent.end
                 height: parent.height
                 icon.name: ""
                 icon.source: ""
@@ -87,7 +106,7 @@ T.Button {
                 color: control.ink
                 mirrored: control.mirrored
                 // Left is the start: a mirrored label sets it at the right.
-                alignment: (!glyph.visible && !more.visible ? Qt.AlignHCenter : Qt.AlignLeft)
+                alignment: (!parent.mark && !more.visible ? Qt.AlignHCenter : Qt.AlignLeft)
                            | Qt.AlignVCenter
             }
 

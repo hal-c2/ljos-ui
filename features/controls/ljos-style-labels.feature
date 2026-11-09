@@ -18,6 +18,98 @@ Feature: Ljós's own style: the icon and the text of a button and a menu row
   after a lone "&" is underlined and the "&" is not drawn, and "&&" is one
   "&". The keys still read the text as written.
 
+  Rule: A button shows the icon it is given
+
+    Background:
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Templates as T
+        import Ljos.Controls
+        Rectangle {
+          id: root; objectName: "root"
+          width: 320; height: 120; color: "#ffffff"
+          Component.onCompleted: {
+            Theme.canvas = "#ffffff"
+            Theme.text = "#000000"
+            Theme.accent = "#0066cc"
+          }
+          Button { id: bare; objectName: "bare"; x: 10; y: 10; icon.source: "red.png" }
+          Button { id: acting; objectName: "acting"; x: 60; y: 10; action: T.Action { icon.source: "red.png" } }
+          Button { objectName: "tinted"; x: 110; y: 10; icon.source: "red.png"; icon.color: "#0066cc" }
+          Button { objectName: "named"; x: 160; y: 10; iconName: "plus"; icon.source: "red.png" }
+          Button { id: plain; x: 10; y: 60; text: "Save" }
+          Button { id: pictured; x: 110; y: 60; text: "Save"; icon.source: "red.png" }
+          readonly property real roomForIcon: pictured.implicitContentWidth - plain.implicitContentWidth
+        }
+        """
+
+    @api-QtQuick.Controls.AbstractButton.icon.source
+    Scenario: A button's icon is drawn at its start, in its text's colour
+      Then the property "implicitContentWidth" of "bare" is 16
+      And the pixel at 26, 24 of the window is "#000000"
+
+    @api-QtQuick.Controls.AbstractButton.action
+    Scenario: A button shows the icon of its action
+      Then the property "implicitContentWidth" of "acting" is 16
+      And the pixel at 76, 24 of the window is "#000000"
+
+    @api-QtQuick.Controls.AbstractButton.icon.color
+    Scenario: A button's icon is drawn in the colour it is given
+      Then the pixel at 126, 24 of the window is "#0066cc"
+
+    Scenario: A button with text keeps the icon's room and a space before it
+      Then the property "roomForIcon" of "root" is 24
+
+    Scenario: The style's own icon wins over the button's
+      Then the property "implicitContentWidth" of "named" is 16
+      And the pixel at 176, 24 of the window is not "#ff0000"
+
+  Rule: A menu row shows the icon it is given, and the others keep its column
+
+    Background:
+      Given a 16 by 16 image file "red.png" filled with "#ff0000"
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Templates as T
+        import Ljos.Controls
+        Item {
+          width: 480; height: 240
+          Menu {
+            Component.onCompleted: open()
+            MenuItem { objectName: "open"; text: "Open"; icon.source: "red.png" }
+            MenuItem { objectName: "close"; text: "Close" }
+          }
+          Menu {
+            x: 240
+            Component.onCompleted: open()
+            MenuItem { objectName: "save"; action: T.Action { text: "Save"; icon.source: "red.png" } }
+            MenuItem { objectName: "quit"; text: "Quit" }
+          }
+          Menu {
+            y: 120
+            Component.onCompleted: open()
+            MenuItem { objectName: "undo"; text: "Undo" }
+          }
+        }
+        """
+
+    @api-QtQuick.Controls.AbstractButton.icon.source
+    Scenario: A row with an icon has it in the icons' column, and a row without keeps the column
+      Then the property "iconSpace" of "close" is true
+      And the property "contentItem.gutter" of "open" is 24
+      And the property "contentItem.gutter" of "close" is 24
+      And the property "iconSpace" of "undo" is false
+      And the property "contentItem.gutter" of "undo" is 0
+
+    @api-QtQuick.Controls.AbstractButton.action
+    Scenario: A row's action gives it its icon
+      Then the property "iconSpace" of "quit" is true
+      And the property "contentItem.gutter" of "save" is 24
+      And the property "contentItem.gutter" of "quit" is 24
+
   Rule: The text is drawn as its mnemonic says, and the keys read it as written
 
     Scenario: A button's "&" before a letter and its "&&" are not drawn

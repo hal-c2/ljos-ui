@@ -1,5 +1,6 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a row of a menu, with an
-// optional icon, the shortcut that runs it muted at the end, and a
+// optional icon (`iconName`, one of the style's own, wins over
+// `icon.source` and its action's), the shortcut that runs it muted at the end, and a
 // chevron where it opens a submenu.
 import QtQuick
 import QtQuick.Controls.impl
@@ -16,6 +17,10 @@ T.MenuItem {
     // up with the rows that do; on wherever another row of the menu has one.
     property bool iconSpace: menu !== null && menu.hasIcons === true
     readonly property color ink: destructive ? Theme.errorForeground : Theme.text
+
+    // A picture larger than the icons' column is made no larger.
+    icon.width: Theme.iconSize
+    icon.height: Theme.iconSize
 
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             implicitContentWidth + leftPadding + rightPadding)
@@ -45,7 +50,9 @@ T.MenuItem {
 
     contentItem: Component {
         Item {
-            readonly property real gutter: glyph.visible || control.iconSpace
+            // The style's own icon, else the row's or its action's.
+            readonly property Item mark: glyph.visible ? glyph : picture.visible ? picture : null
+            readonly property real gutter: mark || control.iconSpace
                                            ? iconSize + control.spacing : 0
             readonly property real end: (keys.visible ? keys.implicitWidth + control.spacing : 0)
                                         + (more.visible ? more.width + control.spacing : 0)
@@ -64,6 +71,17 @@ T.MenuItem {
                 x: control.mirrored ? parent.width - width : 0
                 y: (parent.height - height) / 2
                 name: control.iconName
+                color: control.destructive ? Theme.errorForeground : Theme.textMuted
+            }
+
+            // Text-less, it is the icon alone, centred in the icons' column.
+            IconLabel {
+                id: picture
+                objectName: "picture"
+                visible: !glyph.visible && implicitWidth > 0
+                x: control.mirrored ? parent.width - parent.iconSize + (parent.iconSize - width) / 2
+                                    : (parent.iconSize - width) / 2
+                y: (parent.height - height) / 2
                 color: control.destructive ? Theme.errorForeground : Theme.textMuted
             }
 
