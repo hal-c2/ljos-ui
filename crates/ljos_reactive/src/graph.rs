@@ -4507,6 +4507,15 @@ impl<V: Clone + 'static> Inner<V> {
             if reach.lifting && lift_own(&mut self.told, &mut self.noted, n, node) {
                 self.stats.lift_steps += 1;
             }
+            // A binding rebound or run again inside the queue is this
+            // change's, as what it reaches is (`propagate`): it comes out
+            // of it, and its hook, lifted, reads it as it is.
+            if reach.restamping
+                && node.state != NodeState::Clean
+                && waits_on(&self.waiting_changes, node.marked_by)
+            {
+                node.marked_by = self.marking;
+            }
             note(&mut self.noted, n, node);
         }
         if let Some(node) = self.nodes.get(n) {

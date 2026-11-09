@@ -1010,6 +1010,72 @@ fn in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_past_a_dependency
     );
 }
 
+/// [`in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_reads_what_it_made`]
+/// where the change made inside is the binding's own: rebound
+/// ([`Graph::bind`]) or made to run again ([`Graph::refresh`]). `b`
+/// reads `s`, and the handler batches writes of `s` and then `q`. `q`'s
+/// hook opens a queue that waits on both, so `b`'s hook waits below it,
+/// and gives `b` a binding of its own, or runs it again. `b`'s hook is
+/// told inside the queue and reads `b` as it now is, as `b`'s watcher
+/// after it does: the change made inside reached `b` itself.
+#[test]
+fn in_a_handler_ahead_a_hook_of_a_binding_rebound_or_run_again_inside_the_queue_reads_what_it_made()
+{
+    for rebind in [true, false] {
+        let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+        let r = g.root();
+        let x = g.property(r, 0).unwrap();
+        let s = g.property(r, 0).unwrap();
+        let q = g.property(r, 0).unwrap();
+        let b = g.binding(r, 0, move |g| g.get(s)).unwrap();
+        assert_eq!(g.get(b), 0);
+        // What `b`'s hook keeps of `b`.
+        let kept = Rc::new(Cell::new(None));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+        g.watch(r, b, move |_, &now| w.borrow_mut().push((now, k.get())))
+            .unwrap();
+        let hooked = Rc::new(RefCell::new(Vec::new()));
+        let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+        g.set_note_handler(move |n| {
+            h.borrow_mut().push(n);
+            if n == b {
+                k.set(Some(hooks.untrack(|| hooks.get(b))));
+            } else if n == q {
+                let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(2));
+                if rebind {
+                    hooks.bind(b, |_| 2).unwrap();
+                } else {
+                    hooks.refresh(b).unwrap();
+                }
+            }
+        });
+        g.set_noted(b).unwrap();
+        g.set_noted(q).unwrap();
+        g.watch_ahead(r, x, move |g, _| {
+            g.batch(|| {
+                g.set(s, 1);
+                g.set(q, 1);
+            });
+        })
+        .unwrap();
+
+        g.set(x, 1);
+
+        let made = if rebind { 2 } else { 1 };
+        assert_eq!(
+            *hooked.borrow(),
+            [q, b],
+            "each hook told once (rebound: {rebind})"
+        );
+        assert_eq!(
+            seen.borrow().first(),
+            Some(&(made, Some(made))),
+            "the hook and the watcher read `b` as the change inside made it (rebound: {rebind})"
+        );
+    }
+}
+
 /// A change made inside a queue that waits on changes gives what lies
 /// behind a binding it goes no further from its own stamp, where a change
 /// the queue waits on marked it
