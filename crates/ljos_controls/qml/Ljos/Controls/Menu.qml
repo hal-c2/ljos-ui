@@ -17,6 +17,18 @@ T.Menu {
         return false
     }
 
+    // The widest row's own width, so a long label or shortcut widens the
+    // menu (within the bounds below) instead of being cut short.
+    contentWidth: {
+        let widest = 0
+        for (let i = 0; i < count; i++) {
+            const item = itemAt(i)
+            if (item)
+                widest = Math.max(widest, item.implicitWidth)
+        }
+        return widest
+    }
+
     implicitWidth: Math.min(360, Math.max(220, contentWidth + leftPadding + rightPadding,
                                           implicitBackgroundWidth + leftInset + rightInset))
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,

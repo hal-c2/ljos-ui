@@ -1467,17 +1467,26 @@ and `ScrollView` are Basic's until the style draws its own, and
 
 The theme's roles are `canvas`, `surface`, `surfaceRaised`,
 `surfaceOverlay`, `input`, `border`, `text`, `textMuted`, `placeholder`,
-`iconMuted`, `accent`, `accentForeground`, `accentSurface`, `focus`,
-`errorForeground` and `warningForeground`. All are derived from three:
+`iconMuted`, `accent`, `accentForeground`, `accentSurface`, `accentHover`,
+`accentPressed`, `focus`, `link`, `errorForeground`, `warningForeground`,
+`destructive`, `destructiveForeground`, `destructiveHover` and
+`destructivePressed`. All are derived from three:
 `canvas`, `text` and `accent`, which follow `Ljos.Design`'s `Colors` in
 light and dark. The fills are the canvas mixed toward the text; each role
 that is read is then moved toward the text by `reach(from, to, against,
 ratio)` until it meets its WCAG ratio against every fill it is drawn on:
-3:1 for `input` and `focus` against `surfaceRaised`, 4.5:1 for `textMuted`
-and `placeholder`, 3:1 for `iconMuted`, 4.5:1 for the error and warning
-colours, and `accentForeground` is black or white, whichever is further
-from the accent. `ljos_design::roles` derives the same in Rust, and its
-tests hold every palette of `Ljos.Design` to the ratios. Every role is a
+3:1 for `input` on every ground, 3:1 for `focus` on every fill (a
+highlighted row's `accentSurface` too), 4.5:1 for `link` on every ground,
+4.5:1 for `textMuted` and `placeholder`, 3:1 for `iconMuted`, 4.5:1 for
+the error and warning colours, and `accentForeground` is black or white,
+whichever is further from the accent. A filled button's hovered and
+pressed fills are moved away from its text (`shade`), so a state only adds
+contrast, and a checked button has a ring in its text's colour inside its
+edge, so its state is not its colour alone; a checkable one is padded
+for the ring whether checked or not. `ljos_design::roles` derives
+the same in Rust; its `PROMISES` list every pair of roles the style draws
+one on the other, and its tests hold every palette of `Ljos.Design`, and
+apps' own three colours, to them. Every role is a
 property an app may set (`Theme.input = "#b00020"`); a role set is the one
 drawn, and the others still follow the three.
 

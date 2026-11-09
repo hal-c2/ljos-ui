@@ -31,7 +31,9 @@ T.CheckBox {
             readonly property bool marked: control.checkState !== Qt.Unchecked
             color: marked ? Theme.accent : Theme.surfaceRaised
             border.width: 1
-            border.color: marked ? Theme.accent : Theme.input
+            // The accent has no ratio on the ground; the focus colour, the
+            // accent made 3:1 on every fill, keeps the box's edge there.
+            border.color: marked ? Theme.focus : Theme.input
 
             Icon {
                 x: (parent.width - width) / 2

@@ -6,7 +6,12 @@
 //! other colour from those three and know each one is legible. So each
 //! role is a mix of the three, and each role something is read on is then
 //! moved toward the text colour, a step at a time, until it meets its WCAG
-//! ratio against every fill it is drawn on ([`reach`]).
+//! ratio against every fill it is drawn on ([`reach`]). A fill that
+//! something is drawn on in a state (a button hovered or pressed) is moved
+//! away from what is drawn on it, so a state can only add contrast.
+//! [`PROMISES`] lists every pair of roles the style draws one on the
+//! other, and [`UNPROMISED`] the few it draws with no ratio and why; a
+//! test holds every role to one of the two.
 //!
 //! The style's `Theme` singleton (`crates/ljos_controls/qml/Ljos/Controls/
 //! Theme.qml`) does the same arithmetic in a binding, so a theme set while
@@ -53,7 +58,7 @@ pub const ERROR_SEED: Srgb = Srgb::new(229.0 / 255.0, 72.0 / 255.0, 77.0 / 255.0
 pub const WARNING_SEED: Srgb = Srgb::new(217.0 / 255.0, 119.0 / 255.0, 6.0 / 255.0);
 
 /// The roles, by the names the `Theme` singleton has.
-pub const NAMES: [&str; 16] = [
+pub const NAMES: [&str; 23] = [
     "canvas",
     "surface",
     "surfaceRaised",
@@ -67,9 +72,16 @@ pub const NAMES: [&str; 16] = [
     "accent",
     "accentForeground",
     "accentSurface",
+    "accentHover",
+    "accentPressed",
     "focus",
+    "link",
     "errorForeground",
     "warningForeground",
+    "destructive",
+    "destructiveForeground",
+    "destructiveHover",
+    "destructivePressed",
 ];
 
 /// Every role's colour. Each field may be set after [`derive`], as an app
@@ -89,9 +101,16 @@ pub struct Roles {
     pub accent: Srgb,
     pub accent_foreground: Srgb,
     pub accent_surface: Srgb,
+    pub accent_hover: Srgb,
+    pub accent_pressed: Srgb,
     pub focus: Srgb,
+    pub link: Srgb,
     pub error_foreground: Srgb,
     pub warning_foreground: Srgb,
+    pub destructive: Srgb,
+    pub destructive_foreground: Srgb,
+    pub destructive_hover: Srgb,
+    pub destructive_pressed: Srgb,
 }
 
 /// `a` moved `t` of the way to `b`, each channel rounded to 8 bits as the
@@ -128,6 +147,18 @@ pub fn on(c: Srgb) -> Srgb {
     }
 }
 
+/// How far a hovered and a pressed fill move from their colour, away from
+/// what is drawn on them.
+pub const HOVER_SHADE: f32 = 0.08;
+pub const PRESSED_SHADE: f32 = 0.16;
+
+/// `fill` moved `t` of the way away from `ink`: toward black under a light
+/// ink, toward white under a dark one. Every channel moves the same way, so
+/// the luminance moves away from the ink's and the ratio only grows.
+pub fn shade(fill: Srgb, ink: Srgb, t: f32) -> Srgb {
+    mix(fill, on(ink), t)
+}
+
 /// Every role from the three colours.
 pub fn derive(base: Base) -> Roles {
     let Base {
@@ -144,12 +175,19 @@ pub fn derive(base: Base) -> Roles {
     // highlighted menu row included; the most lifted one is the hardest.
     let fills = [g, surface, surface_raised, surface_overlay, accent_surface];
     let grounds = [g, surface, surface_raised, surface_overlay];
+    let accent_foreground = on(a);
+    let error_foreground = reach(ERROR_SEED, t, &fills, TEXT_CONTRAST);
+    // A destructive button is filled with the error colour; what is on it is
+    // chosen against that fill, as the accent's is.
+    let destructive_foreground = on(error_foreground);
     Roles {
         canvas: g,
         surface,
         surface_raised,
         surface_overlay,
-        input: reach(border, t, &[surface_raised], NONTEXT_CONTRAST),
+        // The edge of a field and a button, a switch's track and a slider's
+        // handle, on whatever ground the control is put.
+        input: reach(border, t, &grounds, NONTEXT_CONTRAST),
         border,
         text: t,
         text_muted: reach(mix(g, t, 0.62), t, &fills, TEXT_CONTRAST),
@@ -157,12 +195,21 @@ pub fn derive(base: Base) -> Roles {
         placeholder: reach(mix(g, t, 0.5), t, &[surface_raised], TEXT_CONTRAST),
         icon_muted: reach(mix(g, t, 0.45), t, &fills, NONTEXT_CONTRAST),
         accent: a,
-        accent_foreground: on(a),
+        accent_foreground,
         accent_surface,
-        // A ring is drawn around a control on any ground.
-        focus: reach(a, t, &grounds, NONTEXT_CONTRAST),
-        error_foreground: reach(ERROR_SEED, t, &fills, TEXT_CONTRAST),
+        accent_hover: shade(a, accent_foreground, HOVER_SHADE),
+        accent_pressed: shade(a, accent_foreground, PRESSED_SHADE),
+        // A ring around a control on any ground, and the check of a row
+        // that is highlighted.
+        focus: reach(a, t, &fills, NONTEXT_CONTRAST),
+        // Text in a label or a pane, which are not highlighted.
+        link: reach(a, t, &grounds, TEXT_CONTRAST),
+        error_foreground,
         warning_foreground: reach(WARNING_SEED, t, &fills, TEXT_CONTRAST),
+        destructive: error_foreground,
+        destructive_foreground,
+        destructive_hover: shade(error_foreground, destructive_foreground, HOVER_SHADE),
+        destructive_pressed: shade(error_foreground, destructive_foreground, PRESSED_SHADE),
     }
 }
 
@@ -183,9 +230,10 @@ const FILLS: &[&str] = &[
 ];
 const GROUNDS: &[&str] = &["canvas", "surface", "surfaceRaised", "surfaceOverlay"];
 
-/// What [`derive`] promises. `text` on the fills holds when the text and
-/// ground given have it; the rest hold for any three colours whose text
-/// is legible on the ground.
+/// What [`derive`] promises: every pair of roles the style draws one on
+/// the other. `text` on the fills holds when the text and ground given
+/// have it; the rest hold for any three colours whose text is legible on
+/// the ground.
 pub const PROMISES: &[Promise] = &[
     Promise {
         role: "text",
@@ -194,13 +242,18 @@ pub const PROMISES: &[Promise] = &[
     },
     Promise {
         role: "input",
-        against: &["surfaceRaised"],
+        against: GROUNDS,
         ratio: NONTEXT_CONTRAST,
     },
     Promise {
         role: "focus",
-        against: GROUNDS,
+        against: FILLS,
         ratio: NONTEXT_CONTRAST,
+    },
+    Promise {
+        role: "link",
+        against: GROUNDS,
+        ratio: TEXT_CONTRAST,
     },
     Promise {
         role: "textMuted",
@@ -227,11 +280,30 @@ pub const PROMISES: &[Promise] = &[
         against: FILLS,
         ratio: TEXT_CONTRAST,
     },
+    // A filled button's text, icon and checked mark in each of its states.
     Promise {
         role: "accentForeground",
-        against: &["accent"],
+        against: &["accent", "accentHover", "accentPressed"],
         ratio: TEXT_CONTRAST,
     },
+    Promise {
+        role: "destructiveForeground",
+        against: &["destructive", "destructiveHover", "destructivePressed"],
+        ratio: TEXT_CONTRAST,
+    },
+];
+
+/// The pairs the style draws with no ratio promised, and why none is
+/// needed. Every role is in a promise or here.
+pub const UNPROMISED: &[(&str, &str)] = &[
+    (
+        "border",
+        "a separator and a popup's edge: a popup is set apart by its fill and shadow, and a separator is decoration",
+    ),
+    (
+        "accent",
+        "a checked switch's track and a slider's filled groove: the thumb's place shows the value, and the thumb has its own edge",
+    ),
 ];
 
 impl Roles {
@@ -251,9 +323,16 @@ impl Roles {
             "accent" => self.accent,
             "accentForeground" => self.accent_foreground,
             "accentSurface" => self.accent_surface,
+            "accentHover" => self.accent_hover,
+            "accentPressed" => self.accent_pressed,
             "focus" => self.focus,
+            "link" => self.link,
             "errorForeground" => self.error_foreground,
             "warningForeground" => self.warning_foreground,
+            "destructive" => self.destructive,
+            "destructiveForeground" => self.destructive_foreground,
+            "destructiveHover" => self.destructive_hover,
+            "destructivePressed" => self.destructive_pressed,
             _ => return None,
         })
     }
@@ -327,43 +406,82 @@ mod tests {
         assert_eq!(reach(Srgb::BLACK, Srgb::WHITE, &[bg], 4.5), Srgb::BLACK);
     }
 
-    /// Every palette of `Ljos.Design`, light and dark, gives three colours
-    /// whose derived roles keep every promise.
+    /// Every role is drawn on or under another in a promise, or is listed
+    /// as drawn with none, so a role added later cannot skip the check.
     #[test]
-    fn the_roles_of_every_palette_keep_their_ratios() {
-        for hue in (0..360).step_by(30) {
-            for scheme in Scheme::ALL {
-                let p = palette(Seed::hue(hue as f32), scheme, Contrast::Normal);
-                let roles = derive(Base::from_palette(&p).unwrap());
-                let broken = roles.broken();
-                assert!(broken.is_empty(), "hue {hue} {}: {broken:?}", scheme.name());
+    fn every_role_is_promised_or_said_why_not() {
+        for n in NAMES {
+            let promised = PROMISES
+                .iter()
+                .any(|p| p.role == n || p.against.contains(&n));
+            let unpromised = UNPROMISED.iter().any(|&(r, _)| r == n);
+            assert!(promised || unpromised, "{n} is in no promise");
+        }
+        for p in PROMISES {
+            assert!(NAMES.contains(&p.role), "{}", p.role);
+            for b in p.against {
+                assert!(NAMES.contains(b), "{b}");
             }
         }
     }
 
-    /// Three colours of an app's own, from near-black to near-white
-    /// grounds with a legible text, keep the promises too.
+    /// The three colours of every palette of `Ljos.Design` (every hue,
+    /// light and dark, normal and high contrast) and of apps' own (near-white
+    /// to near-black grounds, accents from yellow to mid-grey) keep every
+    /// promise: every pair the style draws, in every state of a fill.
     #[test]
-    fn the_roles_of_any_legible_three_keep_their_ratios() {
+    fn every_pair_the_style_draws_keeps_its_ratio() {
+        let mut bases = Vec::new();
+        for hue in (0..360).step_by(15) {
+            for scheme in Scheme::ALL {
+                for contrast in Contrast::ALL {
+                    let p = palette(Seed::hue(hue as f32), scheme, contrast);
+                    let name = format!("hue {hue} {} {contrast:?}", scheme.name());
+                    bases.push((name, Base::from_palette(&p).unwrap()));
+                }
+            }
+        }
         let grounds = [
             "#ffffff", "#f4f1ea", "#e8eef7", "#101014", "#1e1e2e", "#000000",
         ];
         let accents = [
-            "#0066cc", "#ffcc00", "#e5484d", "#22c55e", "#7c3aed", "#888888",
+            "#0066cc", "#ffcc00", "#e5484d", "#22c55e", "#7c3aed", "#777777", "#888888", "#ffffff",
+            "#000000",
         ];
         for g in grounds {
             let ground = hex(g);
-            let text = on(ground);
-            let text = mix(text, ground, 0.1);
+            let text = mix(on(ground), ground, 0.1);
             for a in accents {
-                let roles = derive(Base {
-                    ground,
-                    text,
-                    accent: hex(a),
-                });
-                let broken = roles.broken();
-                assert!(broken.is_empty(), "{g} {a}: {broken:?}");
+                let accent = hex(a);
+                bases.push((
+                    format!("{g} {a}"),
+                    Base {
+                        ground,
+                        text,
+                        accent,
+                    },
+                ));
             }
+        }
+        for (name, base) in bases {
+            let broken = derive(base).broken();
+            assert!(broken.is_empty(), "{name}: {broken:?}");
+        }
+    }
+
+    /// A state fill only gains contrast with what is drawn on it.
+    #[test]
+    fn a_shaded_fill_moves_away_from_its_ink() {
+        for a in ["#777777", "#888888", "#0066cc", "#ffcc00", "#e5484d"] {
+            let fill = hex(a);
+            let ink = on(fill);
+            let at_rest = wcag_contrast(ink, fill);
+            let hover = wcag_contrast(ink, shade(fill, ink, HOVER_SHADE));
+            let pressed = wcag_contrast(ink, shade(fill, ink, PRESSED_SHADE));
+            assert!(
+                at_rest <= hover && hover <= pressed,
+                "{a}: {at_rest} {hover} {pressed}"
+            );
         }
     }
 
