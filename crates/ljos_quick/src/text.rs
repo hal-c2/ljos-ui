@@ -70,7 +70,10 @@ pub fn text_engine() -> SharedTextEngine {
         let engine = coming
             .join()
             .unwrap_or_else(|_| TextEngine::with_system_fonts());
-        return set_text_engine(engine);
+        let generation = engine.generation();
+        let shared = install(engine);
+        crate::font_set::arrived(generation);
+        return shared;
     }
     ENGINE.with(|slot| {
         Rc::clone(
@@ -88,11 +91,19 @@ pub fn text_engine_in_use() -> Option<SharedTextEngine> {
 }
 
 /// Makes `engine` the UI thread's text engine, for example one made by
-/// [`TextEngine::with_system_fonts`]. A scene picks it up on its next frame
-/// and lays its text out again; install it before the first frame, or call
+/// [`TextEngine::with_system_fonts`]. What a font resolves to (`FontInfo`)
+/// follows it at once. A scene picks it up on its next frame and lays its
+/// text out again; install it before the first frame, or call
 /// [`crate::QuickScene::refresh_text`] to ask for that frame.
 pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
     COMING.with(|c| c.borrow_mut().take());
+    let generation = engine.generation();
+    let shared = install(engine);
+    crate::font_set::changed(Some(generation));
+    shared
+}
+
+fn install(engine: TextEngine) -> SharedTextEngine {
     let shared = Rc::new(RefCell::new(engine));
     ENGINE.with(|slot| *slot.borrow_mut() = Some(Rc::clone(&shared)));
     shared
@@ -105,6 +116,9 @@ pub fn set_text_engine(engine: TextEngine) -> SharedTextEngine {
 pub fn set_text_engine_later(making: JoinHandle<TextEngine>) {
     ENGINE.with(|slot| *slot.borrow_mut() = None);
     COMING.with(|c| *c.borrow_mut() = Some(making));
+    // Told now, without waiting for it: what follows the fonts asks for
+    // the engine when it is read next, and that waits.
+    crate::font_set::changed(None);
 }
 
 /// Every font family the UI thread's text engine can lay text out with,
@@ -405,7 +419,6 @@ impl Text {
         if t.rich.is_none() {
             let measured = Measured {
                 generation: te.borrow().generation(),
-                engine: Rc::downgrade(&te),
                 inputs: t,
             };
             cx.engine.with_mut(cx.this, |x: &mut Text| {
@@ -1273,10 +1286,10 @@ pub(crate) fn unfollow(engine: &Engine, obj: ObjectId) {
 #[derive(Debug)]
 pub(crate) struct Measured {
     inputs: TextInputs,
-    /// The text engine that measured it, and its fonts then: a font loaded
-    /// after the text was completed (a `FontLoader` completed after it) may
-    /// set the same inputs in another font.
-    engine: std::rc::Weak<RefCell<TextEngine>>,
+    /// The fonts of the text engine that measured it: a font loaded after
+    /// the text was completed (a `FontLoader` completed after it), or
+    /// another engine, may set the same inputs in another font. No two
+    /// engines share a generation.
     generation: u64,
 }
 
@@ -1294,10 +1307,8 @@ pub(crate) fn completion_measured(engine: &Engine, obj: ObjectId, t: &TextInputs
     m.inputs == *t
         && text_engine_in_use().is_some_and(|te| {
             // Measured again when the engine is in use: never wrong.
-            std::ptr::eq(m.engine.as_ptr(), Rc::as_ptr(&te))
-                && te
-                    .try_borrow()
-                    .is_ok_and(|te| te.generation() == m.generation)
+            te.try_borrow()
+                .is_ok_and(|te| te.generation() == m.generation)
         })
 }
 

@@ -327,7 +327,7 @@ impl FontInfo {
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (engine, me) = (cx.engine, cx.this);
         let face = move |e: &Engine| {
-            crate::font_loader::follow_fonts(e);
+            crate::font_set::follow(e);
             let style = read_style(e, me, Self::FONT.index);
             text_engine().borrow_mut().face_info(&style)
         };
