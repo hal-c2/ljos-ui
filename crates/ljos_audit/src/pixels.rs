@@ -136,8 +136,10 @@ pub(crate) fn changed(a: &Picture, b: &Picture) -> usize {
 /// changes, whatever it draws, so a rule that finds no change asks this
 /// before it blames the item.
 ///
-/// It is asked of the item's box, not of the margin a rule draws around
-/// it: a neighbour drawn after it, in a ring's margin, covers none of it.
+/// Only the pixels its own drawing shows in count as covered, and only
+/// in its box, not in the margin a rule draws around it: a neighbour
+/// drawn after it against its edge, or a badge over the part of its box
+/// it leaves empty, covers none of it.
 pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
     let e = act.engine;
     let (Some(snapshot), Some(region)) = (act.scene.snapshot(), scene_rect(e, item)) else {
@@ -166,7 +168,9 @@ pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
     ) else {
         return false;
     };
-    if changed(&behind, &with) < VISIBLE_CHANGE_MIN_PX {
+    let seen = |x: Srgb, y: Srgb| delta_e_ok(x, y) >= VISIBLE_DELTA_E;
+    let mine: Vec<bool> = behind.pairs(&with).map(|(x, y)| seen(x, y)).collect();
+    if mine.iter().filter(|m| **m).count() < VISIBLE_CHANGE_MIN_PX {
         return false;
     }
     let over: std::collections::HashSet<NodeId> = snapshot.items[last + 1..]
@@ -183,7 +187,15 @@ pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
     ) else {
         return false;
     };
-    changed(&all, &under) < VISIBLE_CHANGE_MIN_PX
+    if all.width != under.width || all.height != under.height {
+        return false;
+    }
+    let covered = all
+        .pairs(&under)
+        .zip(&mine)
+        .filter(|((x, y), m)| **m && seen(*x, *y))
+        .count();
+    covered < VISIBLE_CHANGE_MIN_PX
 }
 
 #[cfg(test)]

@@ -190,6 +190,93 @@ Feature: The design audit acts on the window to check colour, focus and motion
       Then the design audit does not report "color-state-only"
       And the property "checked" of "bold" is false
 
+    # A neighbour drawn after a toggle, against its edge, does not cover
+    # it: in a toolbar of toggles every one is looked at, not only the last.
+    Scenario: Two toggles side by side whose fill stays the same
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Row {
+            spacing: 0
+            Button {
+              text: "Bold"; checkable: true
+              background: Rectangle {
+                implicitWidth: 80; implicitHeight: 32
+                color: "#1c71d8"; border.color: "#0b4fa8"
+              }
+              contentItem: Text { text: parent.text; color: "white" }
+            }
+            Button {
+              text: "Italic"; checkable: true
+              background: Rectangle {
+                implicitWidth: 80; implicitHeight: 32
+                color: "#1c71d8"; border.color: "#0b4fa8"
+              }
+              contentItem: Text { text: parent.text; color: "white" }
+            }
+          }
+        }
+        """
+      Then the design audit reports "color-state-only" on the "button" named "Bold"
+      And the design audit reports "color-state-only" on the "button" named "Italic"
+
+    Scenario: Two toggles side by side whose edges fall between pixels
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Row {
+            spacing: 0
+            Button {
+              text: "Bold"; checkable: true
+              background: Rectangle {
+                implicitWidth: 80.5; implicitHeight: 32
+                color: "#1c71d8"; border.color: "#0b4fa8"
+              }
+              contentItem: Text { text: parent.text; color: "white" }
+            }
+            Button {
+              text: "Italic"; checkable: true
+              background: Rectangle {
+                implicitWidth: 80.5; implicitHeight: 32
+                color: "#1c71d8"; border.color: "#0b4fa8"
+              }
+              contentItem: Text { text: parent.text; color: "white" }
+            }
+          }
+        }
+        """
+      Then the design audit reports "color-state-only" on the "button" named "Bold"
+      And the design audit reports "color-state-only" on the "button" named "Italic"
+
+    # What is drawn after a toggle over the part of its box it leaves
+    # empty covers none of what it draws.
+    Scenario: A toggle with a badge over the empty end of its box
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            text: "Bold"; checkable: true
+            width: 200; height: 32
+            background: Item {}
+            contentItem: Text { text: parent.text; color: "black" }
+          }
+          Rectangle { x: 120; width: 80; height: 32; color: "#e0e0e0" }
+        }
+        """
+      Then the design audit reports "color-state-only" on the "button" named "Bold"
+
     Scenario: A toggle whose checked state is filled
       Given the QML:
         """qml
