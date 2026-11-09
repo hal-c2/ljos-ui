@@ -211,7 +211,7 @@ impl Drop for LjosBackend {
         // without the fonts this one's FontLoaders registered, as a
         // program of its own would.
         let registered =
-            ljos_quick::text_engine_in_use().is_some_and(|t| t.borrow().generation() != 0);
+            ljos_quick::text_engine_in_use().is_some_and(|t| t.borrow().fonts_changed_since_made());
         if self.system_fonts || registered {
             ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
         }

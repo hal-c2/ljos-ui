@@ -27,6 +27,7 @@ mod flipable;
 pub mod focus;
 mod font_enums;
 mod font_loader;
+mod font_set;
 mod gradient;
 mod handlers;
 mod image;
