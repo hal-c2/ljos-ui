@@ -360,7 +360,7 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
             s(x.scalar, y.scalar) && s(x.x, y.x) && s(x.y, y.y) && s(x.z, y.z)
         }
         (Value::Font(x), Value::Font(y)) => {
-            x.family == y.family
+            x.same_families_and_maps(y)
                 && d(x.point_size, y.point_size)
                 && x.pixel_size == y.pixel_size
                 && x.weight == y.weight
@@ -378,7 +378,6 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
                 && x.prefer_shaping == y.prefer_shaping
                 && x.context_font_merging == y.context_font_merging
                 && x.prefer_typo_line_metrics == y.prefer_typo_line_metrics
-                && x.rare == y.rare
         }
         _ => false,
     }
@@ -387,6 +386,13 @@ fn typed_equal(a: &Value, b: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_family_written_alone_over_a_list_is_the_family_set() {
+        let (written, set) = crate::value::tests::a_family_written_over_a_list();
+        let (a, b) = (Value::Font(written.into()), Value::Font(set.into()));
+        assert!(equals(&a, &b, true) == Some(true));
+    }
 
     fn n(x: f64) -> Value {
         Value::Real(x)

@@ -702,7 +702,7 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
             d(x.x, y.x) && d(x.y, y.y) && d(x.width, y.width) && d(x.height, y.height)
         }
         (Value::Font(x), Value::Font(y)) => {
-            x.family == y.family
+            x.same_families_and_maps(y)
                 && d(x.point_size, y.point_size)
                 && x.pixel_size == y.pixel_size
                 && x.weight == y.weight
@@ -720,7 +720,6 @@ pub(super) fn same(a: &Value, b: &Value) -> bool {
                 && x.prefer_shaping == y.prefer_shaping
                 && x.context_font_merging == y.context_font_merging
                 && x.prefer_typo_line_metrics == y.prefer_typo_line_metrics
-                && x.rare == y.rare
         }
         (Value::Vector2d(x), Value::Vector2d(y)) => s(x.x, y.x) && s(x.y, y.y),
         (Value::Vector3d(x), Value::Vector3d(y)) => s(x.x, y.x) && s(x.y, y.y) && s(x.z, y.z),
@@ -1119,6 +1118,13 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_family_written_alone_over_a_list_is_the_family_set() {
+        let (written, set) = crate::value::tests::a_family_written_over_a_list();
+        let (a, b) = (Value::Font(written.into()), Value::Font(set.into()));
+        assert!(same(&a, &b));
+    }
 
     #[test]
     fn records_are_the_same_by_their_fields_alone() {

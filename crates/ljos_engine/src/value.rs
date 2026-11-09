@@ -27,6 +27,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use ljos_runtime::font_family::names_only_itself;
 use ljos_runtime::{Platform, pixels_to_points, points_to_pixels};
 
 use crate::atom::Atom;
@@ -342,7 +343,11 @@ pub struct Rect {
 ///
 /// This is the value, not a loaded face: `ljos_text` resolves it to a font
 /// handle at layout time.
-#[derive(Clone, Debug, PartialEq)]
+///
+/// Two fonts are equal when they name the same families
+/// ([`Font::family_list`]) and every other field is equal: a family
+/// written alone over a list of one name is the font that names it.
+#[derive(Clone, Debug)]
 pub struct Font {
     /// The first of the font's families ([`Font::families`]). Writing it
     /// alone leaves the ones after it; [`Font::set_family`] is what QML's
@@ -388,12 +393,63 @@ pub struct Font {
     pub unwritten: Unwritten,
 }
 
+impl PartialEq for Font {
+    fn eq(&self, other: &Self) -> bool {
+        // Named in full, so that a field added to the font is compared.
+        let Font {
+            family: _,
+            point_size,
+            pixel_size,
+            weight,
+            italic,
+            underline,
+            strikeout,
+            letter_spacing,
+            word_spacing,
+            capitalization,
+            hinting_preference,
+            scale_with_system,
+            style_name,
+            overline,
+            kerning,
+            prefer_shaping,
+            context_font_merging,
+            prefer_typo_line_metrics,
+            rare: _,
+            unwritten,
+        } = self;
+        self.same_families_and_maps(other)
+            && *point_size == other.point_size
+            && *pixel_size == other.pixel_size
+            && *weight == other.weight
+            && *italic == other.italic
+            && *underline == other.underline
+            && *strikeout == other.strikeout
+            && *letter_spacing == other.letter_spacing
+            && *word_spacing == other.word_spacing
+            && *capitalization == other.capitalization
+            && *hinting_preference == other.hinting_preference
+            && *scale_with_system == other.scale_with_system
+            && *style_name == other.style_name
+            && *overline == other.overline
+            && *kerning == other.kerning
+            && *prefer_shaping == other.prefer_shaping
+            && *context_font_merging == other.context_font_merging
+            && *prefer_typo_line_metrics == other.prefer_typo_line_metrics
+            && *unwritten == other.unwritten
+    }
+}
+
 /// What few fonts set, held apart from what every font has: a font that
 /// sets none of it keeps one empty pointer, 8 bytes where it would keep 48,
 /// and every text, control and font property holds a font. Read and written
 /// through [`Font`]'s methods, which keep it empty when nothing in it is
 /// set, so two fonts that set none of it are equal.
-#[derive(Clone, Debug, Default, PartialEq)]
+///
+/// It does not compare: what its list of families means depends on
+/// [`Font::family`], which may be written alone, so fonts compare through
+/// [`Font::fallback_families`].
+#[derive(Clone, Debug, Default)]
 pub struct FontRare(Option<Arc<Rare>>);
 
 #[derive(Clone, Debug, PartialEq)]
@@ -736,7 +792,23 @@ impl Font {
     /// each one name; `None` when the family is one family text
     /// ([`FamilyList::rest`]). An empty list follows a list of one name.
     pub fn fallback_families(&self) -> Option<&Arc<[Atom]>> {
-        self.rare.0.as_ref()?.fallback_families.as_ref()
+        let rest = self.rare.0.as_ref()?.fallback_families.as_ref()?;
+        // The family may have been written alone over a list of one name:
+        // a plain name is then a family text, as `set_family` keeps it.
+        if rest.is_empty() && names_only_itself(&self.family) {
+            return None;
+        }
+        Some(rest)
+    }
+
+    /// Whether the two name the same families and keep the same
+    /// `font.features` and `font.variableAxes`: what of a font is more than
+    /// its plain fields, for a comparison that takes those one by one.
+    pub(crate) fn same_families_and_maps(&self, other: &Font) -> bool {
+        self.family == other.family
+            && self.fallback_families() == other.fallback_families()
+            && self.features() == other.features()
+            && self.variable_axes() == other.variable_axes()
     }
 
     /// `font.features`: the JS map as assigned, `Undefined` when never.
@@ -1487,7 +1559,7 @@ impl From<ObjectId> for Value {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1495,6 +1567,32 @@ mod tests {
         let f = Font::default();
         assert_eq!(f.family.as_str(), Font::DEFAULT_FAMILY);
         assert_eq!((f.read_point_size(), f.read_pixel_size()), (9.0, 12));
+    }
+
+    /// A font given a list of one empty name, then a family written
+    /// alone, against the same family set as `font.family` sets it.
+    pub(crate) fn a_family_written_over_a_list() -> (Font, Font) {
+        let mut written = Font::fallback();
+        written.set_families(&[Atom::EMPTY]);
+        written.family = "Liberation Mono".into();
+        let mut set = Font::fallback();
+        set.set_family("Liberation Mono".into());
+        (written, set)
+    }
+
+    #[test]
+    fn a_family_written_alone_over_a_list_of_one_name_is_that_family() {
+        let (written, set) = a_family_written_over_a_list();
+        assert_eq!(written.family_list(), set.family_list());
+        assert_eq!(written.fallback_families(), None);
+        assert_eq!(written, set);
+        // A family text that names more than itself stays a list of one.
+        let mut listed = written.clone();
+        listed.family = "A, B".into();
+        let mut text = set.clone();
+        text.set_family("A, B".into());
+        assert_ne!(listed, text);
+        assert_eq!(listed.family_list(), FamilyList::list(&["A, B".into()]));
     }
 
     #[test]
