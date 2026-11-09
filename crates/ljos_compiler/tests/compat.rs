@@ -178,9 +178,9 @@ fn a_style_chosen_while_lowering_lowers_the_controls_again() {
     project.set_compat(true);
     assert!(lowered(&project, "Main"), "{:?}", project.lowering("Main"));
     let main = project.source("Main").expect("Main");
-    assert!(main.contains("import Ljos.Controls"), "{main}");
+    assert!(main.contains("import Ljos.Controls.Basic"), "{main}");
 
-    // `import QtQuick.Controls` is Fusion now, which Ljos.Controls is not.
+    // `import QtQuick.Controls` is Fusion now, which Ljos.Controls.Basic is not.
     project.set_controls_style(style("Fusion"));
     let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
         panic!("Main is kept: {:?}", project.lowering("Main"));

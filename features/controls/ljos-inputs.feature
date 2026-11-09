@@ -6,16 +6,16 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-spinbox.html
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-slider.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# `Ljos.Controls` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
+# `Ljos.Controls.Basic` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
 # `@ljos-only`. The file as written for Qt Quick Controls runs on both, and the file in Ljós's API
 # is held to its numbers. The shape is that of a settings form, written here as a case of its own.
 # The oracle cannot move the pointer over a popup, so the combo box is chosen from with its keys.
 
 Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sliders
-  Ljos.Controls has the check box, switch, combo box, spin box and
+  Ljos.Controls.Basic has the check box, switch, combo box, spin box and
   slider of Qt Quick Controls' Basic style, set with the pointer and the
   keys as they are. A file of Qt's that uses them is lowered to
-  Ljos.Controls with no other edit for them.
+  Ljos.Controls.Basic with no other edit for them.
 
   Rule: The inputs are Qt's
 
@@ -74,7 +74,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
       Given the QML:
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: root; objectName: "root"
           width: 300; height: 300
@@ -170,7 +170,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
       Then the property "value" of "zoom" is 0.75
       And the property "moves" of "root" is 1
 
-  Rule: Qt's inputs are lowered to Ljos.Controls
+  Rule: Qt's inputs are lowered to Ljos.Controls.Basic
 
     @ljos-only @headless
     Scenario: A file of inputs is lowered
@@ -196,7 +196,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 260; fill: "white"
           CheckBox { y: 0; text: "Wrap" }
@@ -259,7 +259,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
         """qml
         import Ljos.Ui
         import Ljos.Layout
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Column {
           CheckBox { text: "Wrap" }
           Switch { text: "Dark" }

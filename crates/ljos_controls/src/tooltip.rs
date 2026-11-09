@@ -21,8 +21,9 @@ use ljos_engine::{
 };
 
 use crate::containers::Page;
+use crate::ljos_style;
 use crate::popup::{self, Popup, close_policy};
-use crate::style::BASIC;
+use crate::style::{BASIC, style_of};
 use crate::util::{check, flag, is_a, object, warn};
 
 /// What a tool tip remembers that QML does not see.
@@ -333,39 +334,58 @@ fn attacher() -> MetaRef {
     MetaRef::Static(ToolTip::static_meta())
 }
 
-/// The shared tool tips of an engine, by the window they are for. One
-/// that was made before its users were in a window has no window yet.
+/// The shared tool tips of an engine, by the window they are for and the
+/// style that draws them. One that was made before its users were in a
+/// window has no window yet.
 #[derive(Default)]
-struct SharedTips(RefCell<Vec<(Option<ObjectId>, ObjectId)>>);
+struct SharedTips(RefCell<Vec<(Option<ObjectId>, String, ObjectId)>>);
 
-/// The tool tip that `owner` shares with the other items of its window,
-/// made if there is none. In a binding it follows the item to another
-/// window.
+/// The tool tip that `owner` shares with the other items of its window
+/// drawn in its style, made if there is none. In a binding it follows the
+/// item to another window.
 fn shared_for(e: &Engine, owner: ObjectId) -> Option<ObjectId> {
     let top = ljos_quick::window_of(e, owner);
     e.untrack(|| {
+        // A control of Ljós's style shows the style's tip; any other item
+        // Basic's, as it did before there was a second look.
+        let style = match style_of(e, owner) {
+            s if s == ljos_style::DIRECTORY => s,
+            _ => BASIC.to_string(),
+        };
         let shared = e.extension::<SharedTips>();
         {
             let mut tips = shared.0.borrow_mut();
-            tips.retain(|(window, tip)| e.is_alive(*tip) && window.is_none_or(|w| e.is_alive(w)));
-            if let Some((_, tip)) = tips.iter().find(|(window, _)| *window == top) {
-                return Some(*tip);
+            tips.retain(|(window, _, tip)| {
+                e.is_alive(*tip) && window.is_none_or(|w| e.is_alive(w))
+            });
+            let mut first = None;
+            let mut unplaced = None;
+            for entry in tips.iter_mut().filter(|(_, s, _)| *s == style) {
+                if entry.0 == top {
+                    return Some(entry.2);
+                }
+                first.get_or_insert(entry.2);
+                if entry.0.is_none() && unplaced.is_none() {
+                    unplaced = Some(entry);
+                }
             }
             // The one made before there was a window is the first
             // window's; an item outside every window uses what there is.
-            if let Some(entry) = tips.iter_mut().find(|(window, _)| window.is_none()) {
+            if let Some(entry) = unplaced {
                 entry.0 = top;
-                return Some(entry.1);
+                return Some(entry.2);
             }
             if top.is_none()
-                && let Some((_, tip)) = tips.first()
+                && let Some(tip) = first
             {
-                return Some(*tip);
+                return Some(tip);
             }
         }
-        // The style's tool tip; the bare template if there is no style.
+        // The style's tool tip; Basic's, then the bare template, when it
+        // cannot be made.
         let made = e
-            .create_from_url(&format!("{BASIC}/ToolTip"), None, Vec::new())
+            .create_from_url(&format!("{style}/ToolTip"), None, Vec::new())
+            .or_else(|_| e.create_from_url(&format!("{BASIC}/ToolTip"), None, Vec::new()))
             .or_else(|_| {
                 let tip = e.create_native_incomplete(ToolTip::default(), None)?;
                 e.complete(tip)?;
@@ -373,7 +393,7 @@ fn shared_for(e: &Engine, owner: ObjectId) -> Option<ObjectId> {
             });
         match made {
             Ok(tip) if is_a::<ToolTip>(e, tip) => {
-                shared.0.borrow_mut().push((top, tip));
+                shared.0.borrow_mut().push((top, style, tip));
                 Some(tip)
             }
             Ok(other) => {

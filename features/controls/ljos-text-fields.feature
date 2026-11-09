@@ -4,16 +4,16 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-textarea.html
 #   https://doc.qt.io/qt-6/qml-qtquick-textinput.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# `Ljos.Controls` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
+# `Ljos.Controls.Basic` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
 # `@ljos-only`. The file as written for Qt Quick Controls runs on both, and the file in Ljós's API
 # is held to its numbers. The shape is that of a form with a name, a search and a note, written
 # here as a case of its own.
 
 Feature: Ljós's controls: text fields
-  Ljos.Controls has the text field and the text area of Qt Quick
+  Ljos.Controls.Basic has the text field and the text area of Qt Quick
   Controls' Basic style, edited as they are: a field says when it is
   edited, accepted and done with, and an area takes lines. A file of
-  Qt's that uses them is lowered to Ljos.Controls with no other edit for
+  Qt's that uses them is lowered to Ljos.Controls.Basic with no other edit for
   them.
 
   Rule: A text field and a text area are Qt's
@@ -66,7 +66,7 @@ Feature: Ljós's controls: text fields
       Given the QML:
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: root; objectName: "root"
           width: 300; height: 200
@@ -148,7 +148,7 @@ Feature: Ljós's controls: text fields
       And the property "lineCount" of "note" is 2
       And the property "finished" of "root" is 2
 
-  Rule: Qt's text fields are lowered to Ljos.Controls
+  Rule: Qt's text fields are lowered to Ljos.Controls.Basic
 
     @ljos-only @headless
     Scenario: A file of text fields is lowered
@@ -171,7 +171,7 @@ Feature: Ljós's controls: text fields
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 160; fill: "white"
           TextField { x: 10; y: 10; width: 200; text: "Ada"; color: "#204080" }
@@ -212,7 +212,7 @@ Feature: Ljós's controls: text fields
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         TextArea { text: "one two"; wrapMode: TextEdit.Wrap }
         """
 
@@ -233,7 +233,7 @@ Feature: Ljós's controls: text fields
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         TextField { echoMode: TextInput.Password }
         """
 
@@ -254,7 +254,7 @@ Feature: Ljós's controls: text fields
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         TextField { validator: IntValidator { bottom: 0 } }
         """
 
@@ -263,7 +263,7 @@ Feature: Ljós's controls: text fields
       Given the file "Form.qml":
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: form
           property string name: ""
@@ -284,7 +284,7 @@ Feature: Ljós's controls: text fields
       Given the file "Form.qml":
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           TextField { placeholderText: "Name"; Accessible.name: "Name" }
         }
@@ -300,7 +300,7 @@ Feature: Ljós's controls: text fields
       Given the file "Form.qml":
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           TextField { placeholderText: "Name" }
         }

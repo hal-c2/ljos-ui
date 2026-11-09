@@ -8,18 +8,19 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-scrollview.html
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html
 # Verified on Qt 6.11.2 (qml6, offscreen).
-# `Ljos.Controls` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
+# `Ljos.Controls.Basic` is Ljós's own module, and lowering a file to it is Ljós's: those scenarios are
 # `@ljos-only`. The file as written for Qt Quick Controls runs on both, and the file in Ljós's API
 # is held to its numbers. The shapes are those of a settings pane and of a panel with a scrolled
 # list, written here as cases of their own.
 
-Feature: Ljós's controls: the module Ljos.Controls
-  A file written in Ljós's API imports its controls from Ljos.Controls:
-  a Label, a Button and the AbstractButton under it, the attached
+Feature: Ljós's controls as Basic draws them: the module Ljos.Controls.Basic
+  A file written in Ljós's API that wants Qt's Basic look imports its
+  controls from Ljos.Controls.Basic (Ljos.Controls is Ljós's own style,
+  features/controls/ljos-style.feature): a Label, a Button and the AbstractButton under it, the attached
   ToolTip, a ScrollView and its ScrollBar, and a Popup. They are the
   controls of Qt Quick Controls' Basic style, made, drawn and taking
   input as they are, so a file of Qt's that imports QtQuick.Controls or
-  its Basic style is lowered to Ljos.Controls with no other edit for
+  its Basic style is lowered to Ljos.Controls.Basic with no other edit for
   them; a control the module has not taken yet keeps the file as it is
   written.
 
@@ -66,7 +67,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       Given the QML:
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: root; objectName: "root"
           width: 240; height: 160
@@ -172,7 +173,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       Given the QML:
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           width: 240; height: 200
           ScrollView {
@@ -229,7 +230,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       And 300 milliseconds pass
       Then the property "visible" of "popup" is false
 
-  Rule: Qt's controls are lowered to Ljos.Controls
+  Rule: Qt's controls are lowered to Ljos.Controls.Basic
 
     @ljos-only @headless
     Scenario: A file of the controls is lowered, and draws the same
@@ -257,7 +258,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 160; fill: "white"
           Button { x: 10; y: 10; text: "Save"; ToolTip.text: "Writes the file" }
@@ -304,7 +305,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       And the file "Main.qml" is:
         """qml
         pragma Scripts: JavaScript; import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Label { text: "Ready" }
         """
 
@@ -319,12 +320,12 @@ Feature: Ljós's controls: the module Ljos.Controls
       When the author runs "ljos migrate --style Fusion ."
       Then the command prints:
         """
-        kept ./Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic
+        kept ./Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic
         1 files, 0 lowered, 1 kept
         """
 
     @ljos-only @headless
-    Scenario: A control Ljos.Controls has not taken yet keeps the file
+    Scenario: A control Ljos.Controls.Basic has not taken yet keeps the file
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -337,12 +338,12 @@ Feature: Ljós's controls: the module Ljos.Controls
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:5:3: `Dial` is not in Ljos.Controls yet
+        kept ./Main.qml:5:3: `Dial` is not in Ljos.Controls.Basic yet
         1 files, 0 lowered, 1 kept
         """
 
     @ljos-only @headless
-    Scenario: An enum of a control Ljos.Controls has not taken yet keeps the file
+    Scenario: An enum of a control Ljos.Controls.Basic has not taken yet keeps the file
       Given the file "Main.qml":
         """qml
         import QtQuick
@@ -352,7 +353,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Main.qml:3:44: `Dial` is not in Ljos.Controls yet
+        kept ./Main.qml:3:44: `Dial` is not in Ljos.Controls.Basic yet
         1 files, 0 lowered, 1 kept
         """
 
@@ -385,7 +386,7 @@ Feature: Ljós's controls: the module Ljos.Controls
       Given the file "Pane.qml":
         """qml
         import Ljos.Ui
-        import Ljos.Controls
+        import Ljos.Controls.Basic
         Item {
           id: pane
           property int saves: 0

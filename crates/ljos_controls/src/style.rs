@@ -38,6 +38,23 @@ pub(crate) const FUSION: &str = "QtQuick/Controls/Fusion";
 /// The directory of the Universal style in the pack.
 pub(crate) const UNIVERSAL: &str = "QtQuick/Controls/Universal";
 
+/// The library directory of the style `obj` is drawn by: that of the
+/// first type of it, or of a type it is built on, that a style has, and
+/// Basic's when there is none.
+pub(crate) fn style_of(e: &Engine, obj: ObjectId) -> String {
+    let mut cur = e.meta_of(obj);
+    while let Some(meta) = cur {
+        if let Some(key) = e.library_key_of(&meta)
+            && let Some((dir, _)) = key.as_str().rsplit_once('/')
+            && (dir.starts_with("QtQuick/Controls/") || dir == crate::ljos_style::DIRECTORY)
+        {
+            return dir.to_string();
+        }
+        cur = meta.base.clone();
+    }
+    BASIC.to_string()
+}
+
 /// Whether an object declared at `location` (as
 /// [`ljos_engine::Engine::declared_at`] gives it) was declared by a style
 /// file, not by an application.

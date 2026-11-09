@@ -212,7 +212,7 @@ fn without_a_style_the_controls_are_those_of_the_environment() {
     assert_eq!(status, 0, "{err}");
     assert_eq!(
         out,
-        "kept app/Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls is Basic\n1 files, 0 lowered, 1 kept\n"
+        "kept app/Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic\n1 files, 0 lowered, 1 kept\n"
     );
 }
 

@@ -56,7 +56,7 @@ pub struct Migrate {
     write: bool,
     /// The controls style the program starts with, which is what
     /// `import QtQuick.Controls` means: a file that imports it is lowered
-    /// only where that is Basic, the style `Ljos.Controls` draws. Without
+    /// only where that is Basic, the style `Ljos.Controls.Basic` draws. Without
     /// it, the style a program started here would get
     /// (`QT_QUICK_CONTROLS_STYLE`, `QT_QUICK_CONTROLS_CONF`, the platform's).
     #[arg(long, value_name = "NAME")]

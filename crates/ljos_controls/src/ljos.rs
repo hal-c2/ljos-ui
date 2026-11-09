@@ -1,4 +1,6 @@
-//! `Ljos.Controls`: the controls of Ljós's own API (docs/DIALECT.md §4.16).
+//! `Ljos.Controls.Basic`: the controls of Ljós's own API as Qt's Basic
+//! style draws them (docs/DIALECT.md §4.16). `Ljos.Controls` is the same
+//! controls in Ljós's own style ([`crate::ljos_style`]).
 //!
 //! The module grows a slice at a time, and a control is in it only once
 //! the compat pass can lower a file of Qt's that uses it. Each is the
@@ -17,10 +19,10 @@ use crate::style::BASIC;
 use crate::util;
 
 /// The module's name, as a file imports it.
-pub const MODULE: &str = "Ljos.Controls";
+pub const MODULE: &str = "Ljos.Controls.Basic";
 
 /// The controls the module has that the Basic style draws.
-const DRAWN: &[&str] = &[
+pub(crate) const DRAWN: &[&str] = &[
     "Button",
     "CheckBox",
     "ComboBox",

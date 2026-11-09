@@ -4122,6 +4122,7 @@ version = "0.0.0"
 dependencies = [
  "ljos_a11y",
  "ljos_compiler",
+ "ljos_design",
  "ljos_design_qml",
  "ljos_drive",
  "ljos_engine",
