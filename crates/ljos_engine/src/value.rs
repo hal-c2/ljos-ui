@@ -30,6 +30,7 @@ use std::sync::Arc;
 use ljos_runtime::{Platform, pixels_to_points, points_to_pixels};
 
 use crate::atom::Atom;
+use crate::family_list::FamilyList;
 use crate::ids::ObjectId;
 use crate::number::{number_to_string, string_to_number};
 use crate::types::TypeTag;
@@ -345,7 +346,8 @@ pub struct Rect {
 pub struct Font {
     /// The first of the font's families ([`Font::families`]). Writing it
     /// alone leaves the ones after it; [`Font::set_family`] is what QML's
-    /// `font.family` does, and makes it the only one.
+    /// `font.family` does, and makes it the only one. How the font names
+    /// its families is [`Font::family_list`].
     pub family: Atom,
     pub point_size: f64,
     pub pixel_size: i32,
@@ -476,8 +478,10 @@ impl ApplicationFont {
     }
 
     fn lay_on(&self, font: &mut Font) {
-        font.family = self.family.clone();
-        font.set_fallbacks(self.fallback_families.clone());
+        font.set_family_list(FamilyList::from_parts(
+            self.family.clone(),
+            self.fallback_families.clone(),
+        ));
         font.point_size = self.point_size;
         font.pixel_size = self.pixel_size;
         font.weight = self.weight;
@@ -694,46 +698,43 @@ impl Font {
     /// The families in the order they are tried (`QFont::families`): the
     /// family, then the fallbacks. Empty when the font names none.
     pub fn families(&self) -> impl Iterator<Item = &Atom> {
-        let listed = self.fallback_families();
-        let fallbacks = listed.map_or(&[][..], |l| &**l);
-        // A list keeps an empty first family, as QFont does.
-        (!self.family.is_empty() || listed.is_some())
-            .then_some(&self.family)
-            .into_iter()
-            .chain(fallbacks)
+        crate::family_list::names_of(&self.family, self.fallback_families())
+    }
+
+    /// How the font names its families: one family text or a list.
+    pub fn family_list(&self) -> FamilyList {
+        FamilyList::from_parts(self.family.clone(), self.fallback_families().cloned())
+    }
+
+    /// Names the families as `list` does. Every way of naming them comes
+    /// through here.
+    pub fn set_family_list(&mut self, list: FamilyList) {
+        let (first, rest) = list.into_parts();
+        self.family = first;
+        self.set_fallbacks(rest);
     }
 
     /// Names one family, which becomes the whole list
     /// (`QFont::setFamily`).
     pub fn set_family(&mut self, family: Atom) {
-        self.family = family;
-        self.set_fallbacks(None);
+        self.set_family_list(FamilyList::family(family));
     }
 
     /// Names the families in the order they are tried
     /// (`QFont::setFamilies`): the first is the family. None leaves the
     /// family empty, which is the default one where text is laid out.
     pub fn set_families(&mut self, families: &[Atom]) {
-        let (family, rest) = match families.split_first() {
-            Some((first, rest)) => (first.clone(), rest),
-            None => (Atom::EMPTY, &[][..]),
-        };
-        // One empty name is a list of one, which QFont tells from none: it
-        // is kept as an empty list after the family.
-        let listed = !rest.is_empty() || families.len() == 1 && family.is_empty();
-        self.family = family;
-        self.set_fallbacks(listed.then(|| rest.into()));
+        self.set_family_list(FamilyList::list(families));
     }
 
     /// Takes the families of `other`, all of them.
     pub fn set_families_of(&mut self, other: &Font) {
-        self.family = other.family.clone();
-        self.set_fallbacks(other.fallback_families().cloned());
+        self.set_family_list(other.family_list());
     }
 
-    /// The families after [`Font::family`], in the order they are tried;
-    /// `None` when the font names one, or none. An empty list follows a
-    /// family that is one empty name.
+    /// The families after [`Font::family`], in the order they are tried,
+    /// each one name; `None` when the family is one family text
+    /// ([`FamilyList::rest`]). An empty list follows a list of one name.
     pub fn fallback_families(&self) -> Option<&Arc<[Atom]>> {
         self.rare.0.as_ref()?.fallback_families.as_ref()
     }
@@ -774,7 +775,7 @@ impl Font {
         }
     }
 
-    pub(crate) fn set_fallbacks(&mut self, fallbacks: Option<Arc<[Atom]>>) {
+    fn set_fallbacks(&mut self, fallbacks: Option<Arc<[Atom]>>) {
         if fallbacks.is_none() && self.rare.0.is_none() {
             return;
         }
