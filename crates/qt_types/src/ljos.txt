@@ -3191,6 +3191,7 @@ module QtQuick
 		enum Style StyleNormal=0 StyleItalic=1 StyleOblique=2
 	type QtQuick.FontInfo FontInfo
 		prototype QtQml.QtObject named
+		enum Style StyleNormal=0 StyleItalic=1 StyleOblique=2
 		prop font QtQuick.font named
 		prop family QtQml.string named readonly
 		prop styleName QtQml.string named readonly
@@ -3200,7 +3201,7 @@ module QtQuick
 		prop weight QtQml.int named readonly
 		prop bold QtQml.bool named readonly
 		prop fixedPitch QtQml.bool named readonly
-		prop style QtQml.int named readonly
+		prop style Style readonly
 		signal fontChanged
 		signal familyChanged
 		signal styleNameChanged

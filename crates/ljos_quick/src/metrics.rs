@@ -288,7 +288,14 @@ impl TextMetrics {
 /// family now resolves to. The system's fixed-pitch face is what the family
 /// `"monospace"` resolves to.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "QtQuick", name = "FontInfo", extends = QtObject)]
+// Qt's `FontInfo.style` is a `Font.Style`; a property's enum is one its
+// own type has, so `FontInfo` has `Style` too (`FontInfo.StyleItalic`).
+#[qml(
+    module = "QtQuick",
+    name = "FontInfo",
+    extends = QtObject,
+    enums = crate::font_enums::style_enum
+)]
 pub struct FontInfo {
     #[qml(base)]
     pub object: QtObject,
@@ -317,7 +324,7 @@ pub struct FontInfo {
     #[qml(notify, readonly)]
     pub fixed_pitch: bool,
     /// `Font.StyleNormal` (0) or `Font.StyleItalic` (1).
-    #[qml(notify, readonly)]
+    #[qml(notify, readonly, enumeration = "Style")]
     pub style: i32,
 }
 
