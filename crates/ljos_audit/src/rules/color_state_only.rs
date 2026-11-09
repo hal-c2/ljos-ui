@@ -10,7 +10,9 @@
 //! two states differ by hue or a faint tint. A state shown by where a part
 //! is, or by a part that shows only in it (a switch's handle that moves, a
 //! mark whose picture has not loaded), is a change of shape whatever its
-//! colours, and not reported. Then the state is flipped
+//! colours, and not reported. A button whose pixels do not change at all
+//! (a filled button whose fill stays the accent when checked) shows its
+//! state by nothing, and is reported too. Then the state is flipped
 //! back, and every other button's too, should the first have been one of
 //! an exclusive group.
 //!
@@ -123,23 +125,33 @@ pub(crate) fn check(act: &mut Act) {
                 most = most.max(wcag_contrast(x, y));
             }
         }
-        if changed >= VISIBLE_CHANGE_MIN_PX && most + 0.005 < NONTEXT_CONTRAST {
-            found.push((b, was, most));
+        // Fewer pixels than a mark has: nothing that can be seen changed,
+        // which says the state no better than a tint does.
+        if changed < VISIBLE_CHANGE_MIN_PX || most + 0.005 < NONTEXT_CONTRAST {
+            found.push((b, was, most, changed));
         }
     }
-    for (b, was, most) in found {
+    for (b, was, most, changed) in found {
         let words = crate::cx::words(&act.cx(), b);
         let (from, to) = if was {
             ("checked", "unchecked")
         } else {
             ("unchecked", "checked")
         };
-        let message = format!(
-            "{words} looks the same {from} and {to} but for its colour: no pixel changes by \
-             more than {most:.2}:1, where a state shown by colour needs {}:1 and a change of \
-             shape, mark or weight as well",
-            NONTEXT_CONTRAST
-        );
+        let message = if changed < VISIBLE_CHANGE_MIN_PX {
+            format!(
+                "{words} looks the same {from} and {to}: {changed} pixels change, so nothing \
+                 shows its state; draw it with a mark, a shape or a weight, and a change of \
+                 {NONTEXT_CONTRAST}:1"
+            )
+        } else {
+            format!(
+                "{words} looks the same {from} and {to} but for its colour: no pixel changes by \
+                 more than {most:.2}:1, where a state shown by colour needs {}:1 and a change of \
+                 shape, mark or weight as well",
+                NONTEXT_CONTRAST
+            )
+        };
         let f = act.report("color-state-only", Some(b), message);
         f.measured = Some(format!("{most:.2}:1 < {NONTEXT_CONTRAST}:1"));
     }

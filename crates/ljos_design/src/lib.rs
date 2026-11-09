@@ -292,7 +292,7 @@ pub const RULES: &[Rule] = &[
         Color,
         Warning,
         Runtime,
-        "A control's states (on and off, selected or not) differ only by hue or tint.",
+        "A control's states (on and off, selected or not) differ only by hue or tint, or do not differ at all.",
         "Change shape, fill, an icon or weight as well, and say the state in its accessible name or state.",
     ),
     r(

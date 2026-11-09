@@ -95,7 +95,7 @@ Sources: https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html
 <a id="color-state-only"></a>
 ### `color-state-only`
 
-**Warning, runtime.** A control's states (on and off, selected or not) differ only by hue or tint. About 1 in 12 men cannot tell red from green, and nobody can in grey scale.
+**Warning, runtime.** A control's states (on and off, selected or not) differ only by hue or tint, or do not differ at all (a filled toggle whose fill stays the accent when checked). About 1 in 12 men cannot tell red from green, and nobody can in grey scale.
 
 ```qml
 // Bad: green for on, grey for off
