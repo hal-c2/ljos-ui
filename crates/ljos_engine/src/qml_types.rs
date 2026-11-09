@@ -140,14 +140,6 @@ impl Engine {
             }
         }
         let meta = meta.ok();
-        if let Some(m) = &meta {
-            self.inner
-                .loader
-                .borrow_mut()
-                .qml_types
-                .keys
-                .insert(meta_address(m), Atom::intern(key));
-        }
         self.inner
             .registry
             .borrow_mut()
@@ -160,6 +152,25 @@ impl Engine {
     pub fn library_key_of(&self, meta: &MetaRef) -> Option<Atom> {
         let l = self.inner.loader.borrow();
         l.qml_types.keys.get(&meta_address(meta)).cloned()
+    }
+
+    /// Records that `meta` is the type the file `file` defines, when that
+    /// file is a library's. Kept where the type is made, not where a module
+    /// names it: a library file that names a sibling of its own directory
+    /// (a style's ComboBox its TextField) reaches the sibling by its file,
+    /// and the type is the library's all the same.
+    pub(crate) fn note_library_type(&self, file: &Rc<LoadedFile>, meta: &MetaRef) {
+        let mut l = self.inner.loader.borrow_mut();
+        let types = &mut l.qml_types;
+        if types
+            .files
+            .get(&file.key)
+            .is_some_and(|f| Rc::ptr_eq(f, file))
+        {
+            types
+                .keys
+                .insert(meta_address(meta), Atom::intern(&file.key));
+        }
     }
 
     fn qml_type_meta(&self, key: &str) -> Result<MetaRef, EngineError> {
