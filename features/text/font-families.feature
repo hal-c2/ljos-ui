@@ -116,13 +116,21 @@ Feature: A font's list of families
     And the QML:
       """qml
       import QtQuick
-      Text {
-        objectName: "t"; text: "Hamburgefonstiv"; font.pixelSize: 20
-        font.families: ["No Such Family Ljos", "Liberation Mono"]
+      Item {
+        objectName: "root"
+        Text {
+          objectName: "t"; text: "Hamburgefonstiv"; font.pixelSize: 20
+          font.families: ["No Such Family Ljos", "Liberation Mono"]
+        }
+        Text {
+          objectName: "made"; text: "Hamburgefonstiv"
+          font: Qt.font({ families: ["No Such Family Ljos", "Liberation Mono"], pixelSize: 20 })
+        }
       }
       """
     When 100 milliseconds pass
     Then the property "contentWidth" of "t" is 180
+    And the property "contentWidth" of "made" is 180
 
   Scenario: A name of the list is one family, whatever characters it holds
     Given the application uses the fonts installed on the system
@@ -140,13 +148,25 @@ Feature: A font's list of families
           id: quoted; text: "Hamburgefonstiv"; font.pixelSize: 20
           font.families: ["\"Liberation Mono\"", "Liberation Serif"]
         }
+        Text {
+          id: madeComma; text: "Hamburgefonstiv"
+          font: Qt.font({ families: ["No Such Family Ljos, Liberation Mono", "Liberation Serif"], pixelSize: 20 })
+        }
+        Text {
+          id: madeQuoted; text: "Hamburgefonstiv"
+          font: Qt.font({ families: ["\"Liberation Mono\"", "Liberation Serif"], pixelSize: 20 })
+        }
         property bool commaOne: comma.contentWidth === serif.contentWidth
         property bool quotedOne: quoted.contentWidth === serif.contentWidth
+        property bool madeCommaOne: madeComma.contentWidth === serif.contentWidth
+        property bool madeQuotedOne: madeQuoted.contentWidth === serif.contentWidth
       }
       """
     When 100 milliseconds pass
     Then the property "commaOne" of "root" is true
     And the property "quotedOne" of "root" is true
+    And the property "madeCommaOne" of "root" is true
+    And the property "madeQuotedOne" of "root" is true
 
   Scenario: Every family of the list is kept as it is written
     Given the QML:
@@ -265,14 +285,10 @@ Feature: A font's list of families
       Item {
         objectName: "root"
         Text { id: mono; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "Liberation Mono" }
-        Text {
-          id: comma; text: "Hamburgefonstiv"; font.pixelSize: 20
-          font.families: ["No Such Family Ljos, Liberation Mono"]
-        }
-        Text {
-          id: quoted; text: "Hamburgefonstiv"; font.pixelSize: 20
-          font.families: ["\"Liberation Mono\""]
-        }
+        Text { id: comma; text: "Hamburgefonstiv"; font.pixelSize: 20
+               font.families: ["No Such Family Ljos, Liberation Mono"] }
+        Text { id: quoted; text: "Hamburgefonstiv"; font.pixelSize: 20
+               font.families: ["\"Liberation Mono\""] }
         Text {
           id: madeComma; text: "Hamburgefonstiv"
           font: Qt.font({ families: ["No Such Family Ljos, Liberation Mono"], pixelSize: 20 })
