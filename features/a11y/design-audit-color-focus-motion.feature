@@ -75,6 +75,27 @@ Feature: The design audit acts on the window to check colour, focus and motion
       Then the design audit reports "color-state-only"
       And the property "checked" of "bold" is false
 
+    # Nothing changing at all is no better than a change of tint: no one can
+    # see the state.
+    Scenario: A toggle that looks the same checked and unchecked
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            objectName: "bold"
+            text: "Bold"; checkable: true
+            background: Rectangle { implicitWidth: 80; implicitHeight: 32; color: "#1c71d8" }
+            contentItem: Text { text: parent.text; color: "white" }
+          }
+        }
+        """
+      Then the design audit reports "color-state-only"
+      And the property "checked" of "bold" is false
+
     Scenario: A toggle whose checked state is filled
       Given the QML:
         """qml
