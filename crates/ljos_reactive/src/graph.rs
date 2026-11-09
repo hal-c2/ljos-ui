@@ -3988,14 +3988,6 @@ fn lift_own<V>(told: &mut Waiting, noted: &mut Waiting, n: NodeId, node: &mut No
     true
 }
 
-/// Moves `n`, waiting in `list` at `at` below the floor for the level
-/// under an own queue, to its top. A change made inside the queue reached
-/// it, and its watchers move into the queue with that change: told below,
-/// it would be told after they run, and they would read what it keeps up
-/// to date as it was. The entry it leaves is a dead id, skipped when it
-/// comes up, so it is told once and the floors below stay where they are.
-/// Nothing below a floor is taken off its list while the floor stands, so
-/// `at` still holds `n`: lifting each costs one step, however many wait.
 /// Whether `change` is one an own queue waits on ([`Graph::own_queue`]).
 fn waits_on(waiting: &[(Change, Change)], change: Change) -> bool {
     waiting
@@ -4018,6 +4010,14 @@ struct Reach {
     waited_on: bool,
 }
 
+/// Moves `n`, waiting in `list` at `at` below the floor for the level
+/// under an own queue, to its top. A change made inside the queue reached
+/// it, and its watchers move into the queue with that change: told below,
+/// it would be told after they run, and they would read what it keeps up
+/// to date as it was. The entry it leaves is a dead id, skipped when it
+/// comes up, so it is told once and the floors below stay where they are.
+/// Nothing below a floor is taken off its list while the floor stands, so
+/// `at` still holds `n`: lifting each costs one step, however many wait.
 fn lift(list: &mut Waiting, n: NodeId, at: &mut u32) {
     let i = *at as usize;
     if i < list.floor.len.min(list.ids.len()) {
