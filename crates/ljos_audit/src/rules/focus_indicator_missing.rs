@@ -9,6 +9,10 @@
 //! (`VISIBLE_CHANGE_MIN_PX` changed by `VISIBLE_DELTA_E`) shows nothing.
 //! It is looked at at once, and again when what focus started has
 //! run, so a caret that shows at once and a ring that fades in both count.
+//! A stop is reported only when its own drawing is what the window shows:
+//! one scrolled out of a clipping Flickable, drawn with an opacity of 0 or
+//! covered by an open popup or its dim changes no pixel with focus,
+//! whatever it draws.
 //!
 //! Only a stop whose look the application draws is held to it: an item
 //! it declares, or a control it gives a part of its own (`background`,
@@ -19,8 +23,7 @@
 //! Focus is put back as it was, for the reason it had. Moving it runs the
 //! application's `onActiveFocusChanged`, as Tab would.
 
-use ljos_design::color::delta_e_ok;
-use ljos_design::limits::audit::{FOCUS_MARGIN_PX, VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
+use ljos_design::limits::audit::{FOCUS_MARGIN_PX, VISIBLE_CHANGE_MIN_PX};
 use ljos_engine::{Engine, ObjectId, Value, WriteKind};
 use ljos_quick::Item;
 use ljos_quick::focus::{FocusReason, force_active_focus};
@@ -29,7 +32,7 @@ use ljos_render::kurbo::Rect;
 use crate::acting::{Act, hold_focus, restore_focus};
 use crate::cx::{clipped_away, declared_by_app, is_a, scene_rect, shown_items};
 use crate::focus_walk::rounds;
-use crate::pixels::{Painter, Picture, backdrop};
+use crate::pixels::{Painter, Picture, backdrop, changed, shows};
 
 /// No audit focuses more than this many stops.
 const MOST: usize = 64;
@@ -59,15 +62,6 @@ fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
 fn has_active_focus(e: &Engine, item: ObjectId) -> bool {
     e.untrack(|| e.read(item, Item::ACTIVE_FOCUS.index))
         .to_boolean()
-}
-
-fn changed(a: &Picture, b: &Picture) -> usize {
-    if a.width != b.width || a.height != b.height {
-        return usize::MAX;
-    }
-    a.pairs(b)
-        .filter(|(x, y)| delta_e_ok(*x, *y) >= VISIBLE_DELTA_E)
-        .count()
 }
 
 pub(crate) fn check(act: &mut Act) {
@@ -119,7 +113,9 @@ pub(crate) fn check(act: &mut Act) {
             act.finish();
             most = most.max(draw(act, &mut painter, region).map_or(0, |p| changed(&before, &p)));
         }
-        if most < VISIBLE_CHANGE_MIN_PX {
+        // The stop still has focus, so the frame is the one the last
+        // picture was drawn from.
+        if most < VISIBLE_CHANGE_MIN_PX && shows(act, &mut painter, stop) {
             found.push((stop, most));
         }
     }

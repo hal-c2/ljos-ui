@@ -465,6 +465,140 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit does not report "focus-indicator-missing"
 
+    # A button the application draws, with nothing that shows focus: where
+    # the window shows it, the audit reports it; where the window does not
+    # show its drawing, focus changes no pixel whatever it draws, and the
+    # audit says nothing of it.
+    Scenario: A button the application draws with no focus ring
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            objectName: "bold"
+            text: "Bold"
+            background: Rectangle {
+              implicitWidth: 80; implicitHeight: 32
+              color: "white"; border.color: "#707070"
+            }
+            contentItem: Text { text: parent.text; color: "black" }
+          }
+        }
+        """
+      Then the design audit reports "focus-indicator-missing" on the "button" named "Bold"
+
+    # A neighbour drawn after the button, inside the margin a ring would be
+    # drawn in, does not cover it.
+    Scenario: Two buttons side by side with no focus ring
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Row {
+            Button {
+              text: "Bold"
+              background: Rectangle {
+                implicitWidth: 80; implicitHeight: 32
+                color: "#e0e0e0"; border.color: "#707070"
+              }
+              contentItem: Text { text: parent.text; color: "black" }
+            }
+            Button {
+              text: "Italic"
+              background: Rectangle {
+                implicitWidth: 80; implicitHeight: 32
+                color: "#e0e0e0"; border.color: "#707070"
+              }
+              contentItem: Text { text: parent.text; color: "black" }
+            }
+          }
+        }
+        """
+      Then the design audit reports "focus-indicator-missing" on the "button" named "Bold"
+      And the design audit reports "focus-indicator-missing" on the "button" named "Italic"
+
+    Scenario: A button with no focus ring that is fully transparent
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            objectName: "bold"
+            text: "Bold"
+            opacity: 0
+            background: Rectangle {
+              implicitWidth: 80; implicitHeight: 32
+              color: "white"; border.color: "#707070"
+            }
+            contentItem: Text { text: parent.text; color: "black" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-indicator-missing"
+
+    Scenario: A button with no focus ring under an open modal popup
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 100
+          color: "white"
+          Button {
+            objectName: "bold"
+            text: "Bold"
+            background: Rectangle {
+              implicitWidth: 80; implicitHeight: 32
+              color: "white"; border.color: "#707070"
+            }
+            contentItem: Text { text: parent.text; color: "black" }
+          }
+          Popup {
+            x: 0; y: 0; width: 300; height: 100
+            modal: true
+            Component.onCompleted: open()
+            background: Rectangle { color: "#f0f0f0" }
+          }
+        }
+        """
+      Then the design audit does not report "focus-indicator-missing"
+
+    Scenario: A button with no focus ring scrolled out of a clipping Flickable
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 300; height: 240
+          color: "white"
+          Flickable {
+            y: 120; width: 300; height: 60
+            clip: true
+            contentWidth: 300; contentHeight: 400
+            contentY: 100
+            Button {
+              objectName: "bold"
+              text: "Bold"
+              background: Rectangle {
+                implicitWidth: 80; implicitHeight: 32
+                color: "white"; border.color: "#707070"
+              }
+              contentItem: Text { text: parent.text; color: "black" }
+            }
+          }
+        }
+        """
+      Then the design audit does not report "focus-indicator-missing"
+
     Scenario: Focus is where it was after the audit
       Given the QML:
         """qml
