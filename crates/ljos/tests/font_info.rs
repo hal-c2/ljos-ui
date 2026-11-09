@@ -67,3 +67,132 @@ fn a_font_info_follows_the_text_engine_it_is_given() {
     ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
     assert_eq!(family(), bundled);
 }
+
+/// The test font of the scenarios, whose one face is fixed-pitch.
+fn alternate_font() -> std::path::PathBuf {
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../features/text/fonts/LjosAlternateTest-Regular.ttf")
+        .canonicalize()
+        .unwrap()
+}
+
+/// A root whose `family` follows a FontInfo of `family`.
+fn following(engine: &Engine, family: &str) -> ObjectId {
+    let root = common::create_main(
+        engine,
+        &format!(
+            "import QtQuick\nItem {{\n\
+             FontInfo {{ id: info; font.family: \"{family}\" }}\n\
+             property string family: info.family\n}}\n"
+        ),
+    );
+    // Read once, so that it has cached what it resolves to now.
+    let _ = engine.read_by_name(root, "family");
+    root
+}
+
+fn family_of(engine: &Engine, root: ObjectId) -> String {
+    engine
+        .to_js_string(&engine.read_by_name(root, "family"))
+        .to_string()
+}
+
+/// One engine's FontLoader tells another engine on the thread, whose
+/// effect reads its FontInfo at once: that effect may lay text out, and
+/// sees the face just loaded.
+#[test]
+fn an_engine_that_reads_its_font_info_when_another_loads_a_font_sees_it() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+    let reader = ljos::engine();
+    let root = following(&reader, "Ljos Alternate Test");
+    assert_ne!(family_of(&reader, root), "Ljos Alternate Test");
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let told = Rc::clone(&seen);
+    reader
+        .effect(move |e| told.borrow_mut().push(family_of(e, root)))
+        .unwrap();
+
+    let loader = ljos::engine();
+    let url = format!("file://{}", alternate_font().display());
+    common::create_main(
+        &loader,
+        &format!("import QtQuick\nFontLoader {{ source: \"{url}\" }}\n"),
+    );
+    assert_eq!(
+        seen.borrow().last().map(String::as_str),
+        Some("Ljos Alternate Test")
+    );
+}
+
+/// An effect of one engine that reads another engine's FontInfo while the
+/// set of fonts changes sees the fonts there are now: every engine is told
+/// before any effect runs.
+#[test]
+fn an_effect_reading_another_engine_s_font_info_sees_the_new_fonts() {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+    let first = ljos::engine();
+    let own = following(&first, "Liberation Mono");
+    let second = ljos::engine();
+    let other = following(&second, "Liberation Mono");
+    let bundled = family_of(&second, other);
+    assert_ne!(
+        bundled, "Liberation Mono",
+        "only the bundled fonts at first"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let told = Rc::clone(&seen);
+    let of = second.clone();
+    first
+        .effect(move |e| {
+            // Its own, which makes it run when the fonts change.
+            let _ = family_of(e, own);
+            told.borrow_mut().push(family_of(&of, other));
+        })
+        .unwrap();
+
+    // fonts-liberation, which CI installs.
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+    assert_eq!(
+        seen.borrow().last().map(String::as_str),
+        Some("Liberation Mono"),
+        "{seen:?}"
+    );
+}
+
+/// An effect that changes the fonts again while engines are being told of a
+/// change: every engine ends on the fonts of the last change.
+#[test]
+fn an_effect_that_changes_the_fonts_while_they_are_told_ends_on_the_last() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+    let first = ljos::engine();
+    let own = following(&first, "Liberation Mono");
+    let second = ljos::engine();
+    let other = following(&second, "Liberation Mono");
+    let bundled = family_of(&second, other);
+
+    let swapped = Rc::new(Cell::new(false));
+    let once = Rc::clone(&swapped);
+    first
+        .effect(move |e| {
+            if family_of(e, own) == "Liberation Mono" && !once.replace(true) {
+                ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+            }
+        })
+        .unwrap();
+
+    // fonts-liberation, which CI installs.
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::with_system_fonts());
+    assert!(swapped.get(), "the effect saw the system's fonts");
+    assert_eq!(family_of(&first, own), bundled);
+    assert_eq!(family_of(&second, other), bundled);
+}
