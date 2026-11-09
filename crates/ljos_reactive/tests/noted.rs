@@ -338,6 +338,57 @@ fn a_hook_a_change_inside_the_queue_makes_dirty_is_told_inside_it() {
     );
 }
 
+/// [`a_hook_a_change_inside_the_queue_reaches_is_told_inside_it`] where
+/// what the queue sees first of the change is a binding's result: `b`
+/// reads `s`, and the batch writes `s` and then `q`, so `b` waits to be
+/// brought up to date, noted below the queue `q`'s hook opens. That queue
+/// waits on nothing, and the hook reads `b`. The result is a change the
+/// queue does not wait on, and it reaches `b`'s watcher, which runs inside
+/// the queue at the next flush, an unrelated write's: `b`'s hook is told
+/// before it, and the watcher reads what the hook keeps.
+#[test]
+fn a_hook_of_a_binding_read_inside_the_queue_is_told_inside_it() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let unrelated = g.property(r, 0).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    assert_eq!(g.get(b), 0);
+    // What `b`'s hook keeps: the value of `b` it was last told of.
+    let kept = Rc::new(Cell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, b, move |_, &now| w.borrow_mut().push((now, k.get())))
+        .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            k.set(hooks.untrack(|| hooks.get(b)));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far());
+            assert_eq!(hooks.untrack(|| hooks.get(b)), 1);
+            hooks.set(unrelated, 1);
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(1, 1)],
+        "the watcher reads what the hook keeps as of the value it reads"
+    );
+}
+
 /// Many noted bindings of one source wait below the queue a hook opens,
 /// and a write inside it changes that source again: each hook is lifted
 /// by looking at its own entry, not by searching the ones below the

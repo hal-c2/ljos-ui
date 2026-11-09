@@ -4501,22 +4501,31 @@ impl<V: Clone + 'static> Inner<V> {
         };
         let reach = self.begin_change(of);
         let mut stack = std::mem::take(&mut self.mark_stack);
-        if !result && let Some(node) = self.nodes.get_mut(n) {
-            // A binding's own result was noted by the mark that made it
-            // dirty, as a told effect is.
+        if let Some(node) = self.nodes.get_mut(n) {
+            // The node's own hook or telling comes along, as what the
+            // change reaches does (`propagate`). A binding's result too: the
+            // mark that made it dirty noted it, maybe below an own queue
+            // that does not wait on that mark's change, and what the result
+            // reaches is told inside it. Left below, the hook would be told
+            // after the watchers it reaches there, which read the binding
+            // as the hook does not yet keep it.
             if reach.lifting && lift_own(&mut self.told, &mut self.noted, n, node) {
                 self.stats.lift_steps += 1;
             }
-            // A binding rebound or run again inside the queue is this
-            // change's, as what it reaches is (`propagate`): it comes out
-            // of it, and its hook, lifted, reads it as it is.
-            if reach.restamping
-                && node.state != NodeState::Clean
-                && waits_on(&self.waiting_changes, node.marked_by)
-            {
-                node.marked_by = self.marking;
+            if !result {
+                // A binding rebound or run again inside the queue is this
+                // change's, as what it reaches is (`propagate`): it comes
+                // out of it, and its hook, lifted, reads it as it is.
+                if reach.restamping
+                    && node.state != NodeState::Clean
+                    && waits_on(&self.waiting_changes, node.marked_by)
+                {
+                    node.marked_by = self.marking;
+                }
+                // A binding's own result was noted by the mark that made
+                // it dirty, as a told effect is.
+                note(&mut self.noted, n, node);
             }
-            note(&mut self.noted, n, node);
         }
         if let Some(node) = self.nodes.get(n) {
             let stamp = node.read_stamp;

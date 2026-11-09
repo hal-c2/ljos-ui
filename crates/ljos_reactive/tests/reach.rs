@@ -4,8 +4,8 @@
 //! A batch writes some sources and `q`, noted. `q`'s hook opens a queue of
 //! its own and makes one or two changes in it: a write, a disposal, a
 //! reader lost ([`Graph::readers_lost`]), a binding run again
-//! ([`Graph::refresh`]) or given its own again ([`Graph::bind`]), which
-//! come alone. Every hook and told effect that
+//! ([`Graph::refresh`]), given its own again ([`Graph::bind`]) or read,
+//! which come alone. Every hook and told effect that
 //! waits below the queue and that such a change reaches is told inside
 //! it, before any effect runs there after that change: what the effect
 //! reads, the hook keeps up to date. One no change made inside reaches
@@ -35,7 +35,7 @@
 //! The cases are independent, so they share the cores, each core running
 //! its cases one after another on a graph of its own, each case in a
 //! scope that goes when it ends; the reference works in sets of bits, as
-//! the graphs are this small. That keeps the five million cases inside
+//! the graphs are this small. That keeps the nearly six million cases inside
 //! a debug build's time.
 
 use std::cell::{Cell, RefCell};
@@ -78,6 +78,10 @@ impl Props {
 
     fn minus(self, other: Self) -> Self {
         Props(self.0 & !other.0)
+    }
+
+    fn and(self, other: Self) -> Self {
+        Props(self.0 & other.0)
     }
 
     fn meets(self, other: Self) -> bool {
@@ -173,6 +177,9 @@ enum Op {
     Refresh(usize),
     /// A binding, given a binding that reads what its own did.
     Rebind(usize),
+    /// A binding, read, and then an unrelated property written, whose
+    /// flush runs what reading it brought into the queue.
+    Pull(usize),
 }
 
 /// What the queue `q`'s hook opens leaves waiting.
@@ -306,11 +313,82 @@ impl Case {
         seen.bindings()
     }
 
+    /// The bindings the writes before the queue opens leave to be brought
+    /// up to date, by whether the queue waits on the change that marked
+    /// each, the first write that reached it: `[not waited on, waited
+    /// on]`.
+    fn first_marks(&self) -> [Props; 2] {
+        let mut out = [self.left(), Props::default()];
+        let mut marked = out[0];
+        let writes = self.before.iter().map(|&s| (s, self.since == Since::Batch));
+        let last = self.after.map(|a| (a, self.since != Since::Now));
+        for (s, waited) in writes.chain(last) {
+            let first = self.reach(s).bindings().minus(marked);
+            out[usize::from(waited)] = out[usize::from(waited)].union(first);
+            marked = marked.union(first);
+        }
+        out
+    }
+
+    /// The bindings still to be brought up to date when the queue opens.
+    /// The hooks of what only the write after `q` reached are told before
+    /// it opens, and a hook that reads its property brings what that
+    /// reads up to date.
+    fn pending(&self) -> Props {
+        let [unwaited, waited] = self.first_marks();
+        let mut out = unwaited.union(waited);
+        if self.hooks_read
+            && let Some(a) = self.after
+        {
+            let mut early = self.reach(a);
+            for &s in self.before {
+                early = early.minus(self.reach(s));
+            }
+            for p in early.iter() {
+                out = out.minus(self.upstream(p));
+            }
+        }
+        out
+    }
+
+    /// The bindings reading `b` inside the queue brings up to date: `b`
+    /// and what each of those reads, as far as they are still to be. One
+    /// a waited change marked reads as it was in a handler ahead, which
+    /// brings nothing up to date.
+    fn pulled(&self, b: usize) -> Props {
+        let mut reads = self.reads;
+        if let Some((k, p)) = self.adopted {
+            reads[k] = reads[k].with(p);
+        }
+        let pending = self.pending().minus(self.waiting());
+        let mut seen = Props::of(&[b]);
+        for i in (0..BINDINGS).rev() {
+            if seen.has(SOURCES + i) && pending.has(SOURCES + i) {
+                seen = seen.union(reads[i]);
+            }
+        }
+        seen.bindings().and(pending)
+    }
+
     /// What `op` reaches of what can wait.
     fn reached(&self, op: Op) -> Entries {
         let (props, gone) = match op {
             Op::Write(s) | Op::ReadersLost(s) | Op::Refresh(s) | Op::Rebind(s) => {
                 (self.reach_inside(s), None)
+            }
+            // Reading it brings it and what it reads up to date: each
+            // result of those a change the queue does not wait on marked is
+            // a change it does not wait on either. What a hook or an
+            // effect that reads one of them then reads in turn reaches
+            // more, which this does not count.
+            Op::Pull(b) => {
+                let [unwaited, _] = self.first_marks();
+                let reached = self
+                    .pulled(b)
+                    .and(unwaited)
+                    .iter()
+                    .fold(Props::default(), |m, y| m.union(self.reach_inside(y)));
+                (reached, None)
             }
             Op::Dispose(d) => (self.reach_inside(d).without(d), Some(d)),
         };
@@ -353,17 +431,13 @@ impl Case {
         (self.before.len() + 1 + usize::from(self.after.is_some())) as u8
     }
 
-    /// The bindings the changes the queue waits on reached, which read as
+    /// The bindings the changes the queue waits on marked, which read as
     /// they were in a handler ahead.
     fn waiting(&self) -> Props {
-        if !self.ahead || self.since != Since::Batch {
+        if !self.ahead {
             return Props::default();
         }
-        let mut out = Props::default();
-        for &s in self.before.iter().chain(&self.after) {
-            out = out.union(self.reach(s).bindings());
-        }
-        out.minus(self.left())
+        self.first_marks()[1]
     }
 }
 
@@ -532,6 +606,11 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
                     let body = Rc::clone(&bodies[b - SOURCES]);
                     hooks.bind(index[b], move |g| body(g)).unwrap();
                 }
+                Op::Pull(b) => {
+                    hooks.untrack(|| hooks.try_get(index[b]));
+                    // Unlike any value `written` leaves.
+                    hooks.set(unrelated, -1);
+                }
             }
         }
         drop(own);
@@ -688,7 +767,7 @@ fn graphs() -> Vec<[Props; BINDINGS]> {
 }
 
 /// The changes made inside that come alone: every one ([`OPS`]).
-const SINGLES: usize = 2 * PROPS + 2 * BINDINGS;
+const SINGLES: usize = 2 * PROPS + 3 * BINDINGS;
 
 /// Every change made inside alone, then every pair of writes and readers
 /// lost, which leave what they change there.
@@ -703,6 +782,7 @@ static OPS: LazyLock<Vec<Vec<Op>>> = LazyLock::new(|| {
         .chain((0..PROPS).map(Op::Dispose))
         .chain((SOURCES..PROPS).map(Op::Refresh))
         .chain((SOURCES..PROPS).map(Op::Rebind))
+        .chain((SOURCES..PROPS).map(Op::Pull))
         .map(|op| vec![op])
         .collect();
     debug_assert_eq!(ops.len(), SINGLES);
@@ -849,7 +929,7 @@ struct Tally {
     total: usize,
     failed: usize,
     /// By the last change made inside: a write, a disposal, a reader lost,
-    /// a binding run again or given its own again.
+    /// a binding run again, given its own again or read.
     by_op: [usize; 4],
     /// The first failures, described.
     shown: Vec<String>,
@@ -889,7 +969,7 @@ fn sweep(space: &Space) {
         failed,
         0,
         "{failed} of {total} cases failed (last change a write: {}, a disposal: {}, a reader \
-         lost: {}, a binding run again or rebound: {}); the first:\n{}",
+         lost: {}, a binding run again, rebound or read: {}); the first:\n{}",
         by_op[0],
         by_op[1],
         by_op[2],
@@ -1007,6 +1087,10 @@ fn the_cases_review_found_are_among_them() {
         (
             "a binding rebound inside the queue, in a handler ahead",
             case([&[0], &[0], &[0]], Since::Batch, true, 0, &[Op::Rebind(2)]),
+        ),
+        (
+            "a binding read inside the queue, its watcher run there by an unrelated write",
+            case([&[0], &[0], &[0]], Since::Now, false, 0, &[Op::Pull(2)]),
         ),
     ];
     let failed: Vec<String> = found
