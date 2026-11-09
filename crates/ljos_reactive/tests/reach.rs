@@ -3,7 +3,9 @@
 //!
 //! A batch writes some sources and `q`, noted. `q`'s hook opens a queue of
 //! its own and makes one or two changes in it: a write, a disposal, a
-//! reader lost ([`Graph::readers_lost`]). Every hook and told effect that
+//! reader lost ([`Graph::readers_lost`]), a binding run again
+//! ([`Graph::refresh`]) or given its own again ([`Graph::bind`]), which
+//! come alone. Every hook and told effect that
 //! waits below the queue and that such a change reaches is told inside
 //! it, before any effect runs there after that change: what the effect
 //! reads, the hook keeps up to date. One no change made inside reaches
@@ -33,8 +35,8 @@
 //! The cases are independent, so they share the cores, each core running
 //! its cases one after another on a graph of its own, each case in a
 //! scope that goes when it ends; the reference works in sets of bits, as
-//! the graphs are this small. That keeps the three and a half million
-//! cases inside a debug build's time.
+//! the graphs are this small. That keeps the five million cases inside
+//! a debug build's time.
 
 use std::cell::{Cell, RefCell};
 use std::fmt::{self, Write as _};
@@ -167,6 +169,10 @@ enum Op {
     Write(usize),
     Dispose(usize),
     ReadersLost(usize),
+    /// A binding, run again as it is.
+    Refresh(usize),
+    /// A binding, given a binding that reads what its own did.
+    Rebind(usize),
 }
 
 /// What the queue `q`'s hook opens leaves waiting.
@@ -303,7 +309,9 @@ impl Case {
     /// What `op` reaches of what can wait.
     fn reached(&self, op: Op) -> Entries {
         let (props, gone) = match op {
-            Op::Write(s) | Op::ReadersLost(s) => (self.reach_inside(s), None),
+            Op::Write(s) | Op::ReadersLost(s) | Op::Refresh(s) | Op::Rebind(s) => {
+                (self.reach_inside(s), None)
+            }
             Op::Dispose(d) => (self.reach_inside(d).without(d), Some(d)),
         };
         let mut out = Entries::hooks(props).union(Entries::told(props));
@@ -398,6 +406,9 @@ impl Bench {
     }
 }
 
+/// What a binding makes of its sources, shared by each binding given it.
+type Body = Rc<dyn Fn(&Graph<i64>) -> i64>;
+
 /// Runs `case` in scope `r` of `g`.
 fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
     let log = Rc::new(RefCell::new(Vec::with_capacity(64)));
@@ -422,6 +433,8 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
     };
     let mut ids: Vec<NodeId> = (0..SOURCES).map(|_| g.property(r, 0).unwrap()).collect();
     let mut readers: Vec<Rc<Cell<Option<Reader>>>> = Vec::new();
+    // What each binding makes of its sources: `Op::Rebind` gives it again.
+    let mut bodies: Vec<Body> = Vec::new();
     let linked = Rc::new(Cell::new(false));
     for (k, reads) in case.reads.into_iter().enumerate() {
         let from: Vec<NodeId> = reads.iter().map(|x| ids[x]).collect();
@@ -431,19 +444,20 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
             .map(|(_, p)| (Rc::clone(&linked), ids[p]));
         let reader = Rc::new(Cell::new(None));
         let me = Rc::clone(&reader);
-        let b = g
-            .binding(r, 0, move |g| {
-                me.set(g.reader());
-                if let Some((linked, dep)) = &dep
-                    && linked.get()
-                {
-                    g.try_get(*dep);
-                }
-                from.iter().map(|&n| g.try_get(n).unwrap_or(0)).sum()
-            })
-            .unwrap();
+        let body: Body = Rc::new(move |g| {
+            me.set(g.reader());
+            if let Some((linked, dep)) = &dep
+                && linked.get()
+            {
+                g.try_get(*dep);
+            }
+            from.iter().map(|&n| g.try_get(n).unwrap_or(0)).sum()
+        });
+        let run = Rc::clone(&body);
+        let b = g.binding(r, 0, move |g| run(g)).unwrap();
         ids.push(b);
         readers.push(reader);
+        bodies.push(body);
     }
     let q = g.property(r, 0).unwrap();
     let unrelated = g.property(r, 0).unwrap();
@@ -513,6 +527,11 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
                     hooks.dispose(index[d]).unwrap();
                 }
                 Op::ReadersLost(b) => hooks.readers_lost(readers[b - SOURCES].get()),
+                Op::Refresh(b) => hooks.refresh(index[b]).unwrap(),
+                Op::Rebind(b) => {
+                    let body = Rc::clone(&bodies[b - SOURCES]);
+                    hooks.bind(index[b], move |g| body(g)).unwrap();
+                }
             }
         }
         drop(own);
@@ -668,8 +687,11 @@ fn graphs() -> Vec<[Props; BINDINGS]> {
     out
 }
 
-/// Every change made inside alone, then every pair of the ones that
-/// leave what they change there.
+/// The changes made inside that come alone: every one ([`OPS`]).
+const SINGLES: usize = 2 * PROPS + 2 * BINDINGS;
+
+/// Every change made inside alone, then every pair of writes and readers
+/// lost, which leave what they change there.
 static OPS: LazyLock<Vec<Vec<Op>>> = LazyLock::new(|| {
     let changes: Vec<Op> = (0..SOURCES)
         .map(Op::Write)
@@ -679,8 +701,11 @@ static OPS: LazyLock<Vec<Vec<Op>>> = LazyLock::new(|| {
         .iter()
         .copied()
         .chain((0..PROPS).map(Op::Dispose))
+        .chain((SOURCES..PROPS).map(Op::Refresh))
+        .chain((SOURCES..PROPS).map(Op::Rebind))
         .map(|op| vec![op])
         .collect();
+    debug_assert_eq!(ops.len(), SINGLES);
     for &a in &changes {
         for &b in &changes {
             ops.push(vec![a, b]);
@@ -713,11 +738,10 @@ const AFTERS: [Option<usize>; 3] = [None, Some(0), Some(1)];
 impl Space {
     /// Every case of `reads`, into `out`.
     fn cases(&self, reads: [Props; BINDINGS], out: &mut Vec<Case>) {
-        let singles = 2 * PROPS;
         let ops = if self.pairs {
             &OPS[..]
         } else {
-            &OPS[..singles]
+            &OPS[..SINGLES]
         };
         let mut adoptions = vec![None];
         if self.adopt {
@@ -824,8 +848,9 @@ fn what_a_change_inside_an_own_queue_reaches_is_told_inside_it_however_many_came
 struct Tally {
     total: usize,
     failed: usize,
-    /// By the last change made inside: a write, a disposal, a reader lost.
-    by_op: [usize; 3],
+    /// By the last change made inside: a write, a disposal, a reader lost,
+    /// a binding run again or given its own again.
+    by_op: [usize; 4],
     /// The first failures, described.
     shown: Vec<String>,
 }
@@ -864,10 +889,11 @@ fn sweep(space: &Space) {
         failed,
         0,
         "{failed} of {total} cases failed (last change a write: {}, a disposal: {}, a reader \
-         lost: {}); the first:\n{}",
+         lost: {}, a binding run again or rebound: {}); the first:\n{}",
         by_op[0],
         by_op[1],
         by_op[2],
+        by_op[3],
         shown.concat()
     );
 }
@@ -887,7 +913,8 @@ fn tally(space: &Space, graphs: &[[Props; BINDINGS]]) -> Tally {
                 let kind = match case.ops.last() {
                     Some(Op::Write(_)) => 0,
                     Some(Op::Dispose(_)) => 1,
-                    _ => 2,
+                    Some(Op::ReadersLost(_)) => 2,
+                    _ => 3,
                 };
                 out.by_op[kind] += 1;
                 if out.shown.len() < SHOWN {
@@ -976,6 +1003,10 @@ fn the_cases_review_found_are_among_them() {
             "a hook told once the queue drops, in a handler ahead, reading a binding only \
              the batch reached",
             case([&[0], &[0], &[0]], Since::Batch, true, 0, &[Op::Write(1)]),
+        ),
+        (
+            "a binding rebound inside the queue, in a handler ahead",
+            case([&[0], &[0], &[0]], Since::Batch, true, 0, &[Op::Rebind(2)]),
         ),
     ];
     let failed: Vec<String> = found
