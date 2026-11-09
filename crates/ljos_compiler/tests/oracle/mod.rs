@@ -19,6 +19,9 @@ struct Ty {
     default: Option<&'static str>,
     attached: Option<&'static str>,
     enums: Vec<(&'static str, Vec<(&'static str, i64)>)>,
+    /// the type, in no module, that describes what the runtime adds to this
+    /// one, as Ljós's own description of a Qt type is beside Qt's table
+    added: Option<&'static str>,
 }
 
 #[derive(Debug)]
@@ -242,6 +245,22 @@ impl Runtime {
                 methods: vec!["label"],
                 ..Ty::default()
             },
+            // A type whose description lacks what the runtime adds to it,
+            // and the description of what it adds.
+            Ty {
+                name: "Meter",
+                module: "Ljos.Ui",
+                prototype: Some("Item"),
+                added: Some("MeterAdded"),
+                ..Ty::default()
+            },
+            Ty {
+                name: "MeterAdded",
+                properties: vec![p("notches", "int")],
+                methods: vec!["ticks"],
+                returns: vec![("ticks", "real")],
+                ..Ty::default()
+            },
         ]);
         Runtime { types }
     }
@@ -377,6 +396,20 @@ impl TypeOracle for Runtime {
                 .filter(|(name, _)| scope.is_none_or(|scope| scope == *name))
                 .find_map(|(_, keys)| keys.iter().find(|(k, _)| *k == key).map(|(_, v)| *v))
         })
+    }
+
+    fn adds_member(&self, ty: usize, name: &str) -> bool {
+        self.additions(ty).into_iter().any(|added| {
+            let added = &self.types[added];
+            added.properties.iter().any(|p| p.0 == name) || added.methods.contains(&name)
+        })
+    }
+
+    fn additions(&self, ty: usize) -> Vec<usize> {
+        self.chain(ty)
+            .filter_map(|ty| ty.added)
+            .filter_map(|name| self.named(name))
+            .collect()
     }
 
     fn module(&self, ty: usize) -> Option<String> {
