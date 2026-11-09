@@ -143,8 +143,20 @@ fn registering_a_font_invalidates_everything() {
     .unwrap();
     let names = e.register_font(bytes).unwrap();
     assert_eq!(names, ["Liberation Sans"]);
-    assert_eq!(e.generation(), before + 1);
+    assert_ne!(e.generation(), before);
     assert_eq!(e.stats().layouts, 0);
+}
+
+#[test]
+fn no_two_engines_share_a_generation() {
+    // What keeps a layout by generation alone (a rich document's blocks)
+    // must not take one engine's for another's.
+    let mut a = TextEngine::new();
+    let b = TextEngine::new();
+    assert_ne!(a.generation(), b.generation());
+    a.set_default_family("Liberation Sans");
+    assert_ne!(a.generation(), b.generation());
+    assert!(a.fonts_changed_since_made() && !b.fonts_changed_since_made());
 }
 
 #[test]
@@ -152,9 +164,10 @@ fn a_default_family_applies_to_styles_that_name_none() {
     let mut e = TextEngine::new();
     let before = e.generation();
     e.set_default_family("Liberation Sans");
-    assert_eq!(e.generation(), before + 1);
+    let changed = e.generation();
+    assert_ne!(changed, before);
     e.set_default_family("Liberation Sans");
-    assert_eq!(e.generation(), before + 1, "no change, no invalidation");
+    assert_eq!(e.generation(), changed, "no change, no invalidation");
     let l = e.layout("Hello", &TextStyle::default(), &LayoutParams::default());
     assert!(l.natural_width > 20.0);
 }
