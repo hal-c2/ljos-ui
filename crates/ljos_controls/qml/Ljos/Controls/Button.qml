@@ -4,6 +4,7 @@
 // something; `iconName` puts an icon before the text. A checked button
 // has a ring inside its edge, so its state is not its colour alone.
 import QtQuick
+import QtQuick.Controls.impl
 import QtQuick.Templates as T
 import Ljos.Design
 
@@ -67,7 +68,11 @@ T.Button {
                 color: control.ink
             }
 
-            Text {
+            // The text as its mnemonic says: the letter after a lone "&"
+            // underlined, "&&" one "&". The keys read `control.text` as
+            // written. Its own icon is none; the one at the start is drawn
+            // beside it.
+            IconLabel {
                 id: label
                 objectName: "label"
                 readonly property real start: glyph.visible ? glyph.width + (text.length > 0 ? control.spacing : 0) : 0
@@ -75,13 +80,15 @@ T.Button {
                 x: control.mirrored ? end : start
                 width: parent.width - start - end
                 height: parent.height
+                icon.name: ""
+                icon.source: ""
                 text: control.text
                 font: control.font
                 color: control.ink
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignVCenter
-                horizontalAlignment: !glyph.visible && !more.visible ? Text.AlignHCenter
-                                     : control.mirrored ? Text.AlignRight : Text.AlignLeft
+                mirrored: control.mirrored
+                // Left is the start: a mirrored label sets it at the right.
+                alignment: (!glyph.visible && !more.visible ? Qt.AlignHCenter : Qt.AlignLeft)
+                           | Qt.AlignVCenter
             }
 
             Icon {
