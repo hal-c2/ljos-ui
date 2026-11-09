@@ -133,7 +133,7 @@ pub(crate) fn check(act: &mut Act) {
         // window shows is the button. The state is back as it was, so the
         // frame is the one `before` was drawn from.
         if changed < VISIBLE_CHANGE_MIN_PX {
-            if shows(act, &mut painter, b, region) {
+            if shows(act, &mut painter, b) {
                 found.push((b, was, most, changed));
             }
         } else if most + 0.005 < NONTEXT_CONTRAST {

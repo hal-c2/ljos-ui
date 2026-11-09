@@ -19,7 +19,7 @@ use ljos_render::{
 
 use crate::Options;
 use crate::acting::Act;
-use crate::cx::within;
+use crate::cx::{scene_rect, within};
 
 /// Pixels of a part of the scene.
 pub(crate) struct Picture {
@@ -128,15 +128,19 @@ pub(crate) fn changed(a: &Picture, b: &Picture) -> usize {
         .count()
 }
 
-/// Whether the window shows `item`'s own drawing over `region`: drawn
-/// alone it shows something, so it is neither clipped away nor
-/// transparent, and what is drawn after it changes none of that, so no
-/// popup, dim or sibling covers it. An item the window does not show
-/// changes no pixel when its state changes, whatever it draws, so a rule
-/// that finds no change asks this before it blames the item.
-pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId, region: Rect) -> bool {
+/// Whether the window shows `item`'s own drawing: drawn over what is
+/// behind it, it changes something, so it is neither clipped away, nor
+/// transparent, nor the colour of what it is on; and what is drawn after
+/// it changes none of that, so no popup, dim or sibling covers it. An
+/// item the window does not show changes no pixel when its state
+/// changes, whatever it draws, so a rule that finds no change asks this
+/// before it blames the item.
+///
+/// It is asked of the item's box, not of the margin a rule draws around
+/// it: a neighbour drawn after it, in a ring's margin, covers none of it.
+pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
     let e = act.engine;
-    let Some(snapshot) = act.scene.snapshot().cloned() else {
+    let (Some(snapshot), Some(region)) = (act.scene.snapshot(), scene_rect(e, item)) else {
         return false;
     };
     let own = |p: &PaintItem| {
@@ -147,13 +151,22 @@ pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId, region: Re
     let Some(last) = snapshot.items.iter().rposition(&own) else {
         return false;
     };
-    let (Some(blank), Some(alone)) = (
-        painter.draw(&snapshot, region, |_| false),
-        painter.draw(&snapshot, region, own),
+    // Against the backdrop alone, a white field on a grey popup would
+    // look like nothing; against what is drawn behind it, it shows.
+    let upto = FrameSnapshot {
+        frame: snapshot.frame,
+        viewport: snapshot.viewport,
+        items: snapshot.items[..=last].to_vec(),
+        clips: snapshot.clips.clone(),
+        stats: snapshot.stats,
+    };
+    let (Some(behind), Some(with)) = (
+        painter.draw(&upto, region, |p| !own(p)),
+        painter.draw(&upto, region, |_| true),
     ) else {
         return false;
     };
-    if changed(&blank, &alone) < VISIBLE_CHANGE_MIN_PX {
+    if changed(&behind, &with) < VISIBLE_CHANGE_MIN_PX {
         return false;
     }
     let over: std::collections::HashSet<NodeId> = snapshot.items[last + 1..]
@@ -165,8 +178,8 @@ pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId, region: Re
         return true;
     }
     let (Some(all), Some(under)) = (
-        painter.draw(&snapshot, region, |_| true),
-        painter.draw(&snapshot, region, |p| !over.contains(&p.node)),
+        painter.draw(snapshot, region, |_| true),
+        painter.draw(snapshot, region, |p| !over.contains(&p.node)),
     ) else {
         return false;
     };
