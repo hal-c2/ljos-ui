@@ -997,13 +997,10 @@ fn unescaped(value: &str) -> Cow<'_, str> {
     while let Some(at) = rest.find('&') {
         out.push_str(&rest[..at]);
         let after = &rest[at + 1..];
-        let named = after
-            .find(';')
-            .and_then(|end| Some((entity::decode(&after[..end])?, end)));
-        match named {
-            Some((c, end)) => {
+        match attr_reference(after) {
+            Some((c, len)) => {
                 out.push(c);
-                rest = &after[end + 1..];
+                rest = &after[len..];
             }
             None => {
                 out.push('&');
@@ -1013,6 +1010,22 @@ fn unescaped(value: &str) -> Cow<'_, str> {
     }
     out.push_str(rest);
     Cow::Owned(out)
+}
+
+/// The character the reference after an attribute's `&` names, and the
+/// bytes it takes, `;` included. Only a name's characters come before the
+/// `;`, so a bare `&` costs its name and not a scan to the next `;`; `+` is
+/// one because Qt 6.12 reads `&#+65;` as `A`.
+fn attr_reference(after: &str) -> Option<(char, usize)> {
+    let name_len = after
+        .find(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '#' | '+')))
+        .unwrap_or(after.len());
+    #[cfg(test)]
+    tests::SCANNED.with(|n| n.set(n.get() + name_len + 1));
+    if !after[name_len..].starts_with(';') {
+        return None;
+    }
+    Some((entity::decode(&after[..name_len])?, name_len + 1))
 }
 
 /// Where a tag ends: at the first `>` outside a quoted attribute value.
@@ -1622,6 +1635,38 @@ mod tests {
                 .iter()
                 .all(|s| s.style.color.as_deref() == Some("green"))
         );
+    }
+
+    thread_local! {
+        /// Bytes `attr_reference` has looked at, to show each `&` costs
+        /// only its name.
+        pub(super) static SCANNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn an_attribute_reference_is_a_name_and_its_semicolon() {
+        // Each verified on Qt 6.12 as a font-family's quoted name.
+        assert_eq!(unescaped("&amp;"), "&");
+        assert_eq!(unescaped("&amp"), "&amp");
+        assert_eq!(unescaped("&#0065;&#x41;"), "AA");
+        // Qt reads a number with a plus sign, as Rust's parse does.
+        assert_eq!(unescaped("&#+65;&#x+41;"), "AA");
+        assert_eq!(unescaped("a&b&c&amp;d"), "a&b&c&d");
+        for literal in ["&B'x;", "&a mp;", "&#6 5;", "&#-65;", "&#65.0;", "&#65&"] {
+            assert_eq!(unescaped(literal), literal);
+        }
+        assert_eq!(attr_reference("B'x;"), None);
+        assert_eq!(attr_reference("amp;rest"), Some(('&', 4)));
+    }
+
+    #[test]
+    fn each_ampersand_in_an_attribute_looks_only_at_its_name() {
+        let value = "ab&".repeat(10_000) + "&amp;";
+        SCANNED.with(|n| n.set(0));
+        assert_eq!(unescaped(&value), "ab&".repeat(10_000) + "&");
+        // A scan to the one `;` at the end would look at ~1.5e8 bytes.
+        let scanned = SCANNED.with(std::cell::Cell::get);
+        assert!(scanned <= 2 * value.len(), "{scanned} bytes looked at");
     }
 
     #[test]
