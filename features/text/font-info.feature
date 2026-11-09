@@ -68,6 +68,36 @@ Feature: What a font resolves to
     And the property "family" of "info" is "Ljos Alternate Test"
     And the property "fixedPitch" of "info" is true
 
+  Scenario: A loader's handler of its status sees the face it loaded
+    Given the font file "LjosAlternateTest-Regular.ttf"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property string familyAtFirst
+        property string familyAtReady
+        property bool fixedAtReady
+        FontInfo { id: info; font.family: "Ljos Alternate Test" }
+        FontLoader {
+          id: loader
+          onStatusChanged: if (status === FontLoader.Ready) {
+            root.familyAtReady = info.family
+            root.fixedAtReady = info.fixedPitch
+          }
+        }
+        Component.onCompleted: {
+          familyAtFirst = info.family
+          loader.source = "LjosAlternateTest-Regular.ttf"
+        }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "familyAtFirst" of "root" is not "Ljos Alternate Test"
+    And the property "familyAtReady" of "root" is "Ljos Alternate Test"
+    And the property "fixedAtReady" of "root" is true
+
   Scenario: A monospace family is fixed-pitch and a proportional one is not
     Given the application uses the fonts installed on the system
     And the QML:
