@@ -84,9 +84,18 @@ fn font_with(base: &Font, f: &CharFormat) -> Font {
     font.underline |= i.underline;
     font.strikeout |= i.strike;
     if let Some(family) = &i.family {
-        // A run that names its family names that one alone, as a style
+        // A run that names its families names those alone, as a style
         // span does.
-        font.set_family(Atom::from(&**family));
+        match &i.fallback_families {
+            Some(rest) => {
+                let names: Vec<Atom> = std::iter::once(family)
+                    .chain(rest.iter())
+                    .map(|n| Atom::from(&**n))
+                    .collect();
+                font.set_families(&names);
+            }
+            None => font.set_family(Atom::from(&**family)),
+        }
     }
     let base_px = text_style(base).pixel_size;
     let px = i.pixel_size.unwrap_or(base_px) * i.scale;
@@ -353,8 +362,13 @@ fn set_font(engine: &Engine, edit: ObjectId, font: &Font) {
         inline.italic = font.italic;
         inline.underline = font.underline;
         inline.strike = font.strikeout;
-        inline.family = (!font.family.is_empty() && font.family != base.family)
-            .then(|| Arc::from(font.family.as_str()));
+        let named = !font.family.is_empty()
+            && (font.family != base.family || font.fallback_families() != base.fallback_families());
+        inline.family = named.then(|| Arc::from(font.family.as_str()));
+        inline.fallback_families = font
+            .fallback_families()
+            .filter(|rest| named && !rest.is_empty())
+            .map(|rest| Arc::new(rest.iter().map(|n| Arc::from(n.as_str())).collect()));
         if (px - base_px * inline.scale).abs() > 0.01 {
             inline.pixel_size = Some(px / inline.scale.max(0.01));
         }
