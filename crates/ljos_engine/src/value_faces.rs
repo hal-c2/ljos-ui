@@ -24,6 +24,7 @@ use ljos_js::rquickjs::Object;
 use ljos_js::{JsFault, JsHost, JsValue, ValueKind};
 
 use crate::atom::Atom;
+use crate::family_list::FamilyList;
 use crate::value::{Font, Value};
 use crate::value_types::{Quaternion, Vector2d, Vector3d, Vector4d};
 
@@ -125,36 +126,12 @@ pub(crate) fn to_js(v: &Value) -> Option<JsValue> {
                 JsValue::Bool(font.prefer_typo_line_metrics),
                 handle(font.features()),
                 handle(font.variable_axes()),
-                JsValue::String(fallbacks_text(font)),
+                // `family` above is the first of these.
+                JsValue::String(font.family_list().rest_text()),
             ],
         ),
         _ => return None,
     })
-}
-
-/// The families after a font's first, as they cross to JS: one text, which
-/// keeps a font's fields plain values JS compares by what they hold. It is
-/// a JSON array, empty when there are none, so a name that is empty or has
-/// a line break in it comes back as it went, as QFont keeps it.
-fn fallbacks_text(font: &Font) -> String {
-    match font.fallback_families() {
-        Some(names) => {
-            let names: Vec<&str> = names.iter().map(|a| &**a).collect();
-            serde_json::to_string(&names).unwrap_or_default()
-        }
-        None => String::new(),
-    }
-}
-
-/// What [`fallbacks_text`] made, back.
-fn fallbacks_of(v: Option<&JsValue>) -> Option<std::sync::Arc<[Atom]>> {
-    match v {
-        Some(JsValue::String(text)) if !text.is_empty() => {
-            let names: Vec<String> = serde_json::from_str(text).ok()?;
-            Some(names.iter().map(|n| Atom::from(n.as_str())).collect())
-        }
-        _ => None,
-    }
 }
 
 /// A map of a font that came back from JS.
@@ -225,7 +202,11 @@ pub(crate) fn from_js(kind: ValueKind, fields: &[JsValue]) -> Value {
                 rare: Default::default(),
                 unwritten: Default::default(),
             };
-            font.set_fallbacks(fallbacks_of(fields.get(20)));
+            let rest = match fields.get(20) {
+                Some(JsValue::String(text)) => text.as_str(),
+                _ => "",
+            };
+            font.set_family_list(FamilyList::from_js(font.family.clone(), rest));
             font.set_features(kept(fields.get(18)));
             font.set_variable_axes(kept(fields.get(19)));
             Value::Font(std::sync::Arc::new(font))
@@ -651,20 +632,29 @@ pub(crate) const FACES: &str = r##"
       if (v !== v) throw new Error("Cannot assign double to int");
       return (v < 0 ? -Math.round(-v) : Math.round(v)) | 0;
     };
+    // `FamilyList` (family_list.rs) as a font's two fields: the first
+    // family, and the names after it as a JSON array when the font lists
+    // them, of any length, or "" when the first is one family text. Made
+    // only by these two, which give what is the same font one form, as
+    // `FamilyList::family` and `FamilyList::list` do.
+    // `names_only_itself` in ljos_runtime: no comma, no quote or space
+    // (Rust's `char::is_whitespace`) at either end, and not empty.
+    const edge = /[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"']/;
+    const namesOnlyItself = (n) => n !== "" && !n.includes(",") && !edge.test(n[0]) && !edge.test(n[n.length - 1]);
+    const listed = (first, rest) => rest.length === 0 && namesOnlyItself(first)
+      ? [first, ""] : [first, JSON.stringify(rest)];
+    const ofFamily = (text) => (text === "" ? listed("", []) : [text, ""]);
+    const ofList = (names) => (names.length === 0 ? ["", ""] : listed(names[0], names.slice(1)));
+    const named = (o, [first, rest]) => change.call(change.call(o, "family", first), "__ljos_fallbacks", rest);
     hide(font.proto, "__ljos_with", function (member, value, script) {
       if (member === "size") member = "pixelSize";
       if (member === "bold") return change.call(this, "weight", value ? 700 : 400);
       // One family is the whole list, as QFont::setFamily makes it.
-      if (member === "family") {
-        return change.call(change.call(this, "family", value), "__ljos_fallbacks", "");
-      }
+      if (member === "family") return named(this, ofFamily(String(value)));
       if (member === "families") {
         const names = value === undefined || value === null ? []
           : typeof value === "string" ? [value] : Array.from(value, String);
-        const next = change.call(this, "family", names.length > 0 ? names[0] : "");
-        // One empty name is a list of one, kept apart from none (`Font::set_families`).
-        const listed = names.length > 1 || names.length === 1 && names[0] === "";
-        return change.call(next, "__ljos_fallbacks", listed ? JSON.stringify(names.slice(1)) : "");
+        return named(this, ofList(names));
       }
       // One size, as `Value::with_member` keeps it.
       // Qt keeps the size it had for one of none, and holds a weight

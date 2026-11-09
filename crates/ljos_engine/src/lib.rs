@@ -56,6 +56,8 @@ mod diagnostic_url;
 pub use diagnostic_url::diagnostic_url;
 mod engine;
 mod error;
+mod family_list;
+pub use family_list::FamilyList;
 mod fault;
 mod followed_files;
 mod foreign;
