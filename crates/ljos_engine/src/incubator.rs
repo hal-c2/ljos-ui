@@ -1322,6 +1322,9 @@ impl Engine {
         } else {
             base
         };
+        if roots && matches!(def.kind, ComponentKind::File) {
+            self.note_library_type(file, &meta);
+        }
         file.metas
             .borrow_mut()
             .insert((comp.0, obj as u32), meta.clone());
