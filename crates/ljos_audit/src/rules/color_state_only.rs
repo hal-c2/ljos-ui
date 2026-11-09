@@ -28,14 +28,13 @@ use ljos_design::limits::NONTEXT_CONTRAST;
 use ljos_design::limits::audit::{VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
 use ljos_engine::ObjectId;
 use ljos_render::kurbo::Rect;
-use ljos_render::{NodeId, PaintItem};
 
 use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
 use crate::cx::{
     declared_by_app, is_a, scene_rect, shown_items, shown_opacity, takes_focus, within,
 };
-use crate::pixels::{Painter, Picture, backdrop};
+use crate::pixels::{Painter, Picture, backdrop, shows};
 
 /// No audit flips more than this many buttons: a long list of check
 /// boxes says the same of each.
@@ -74,54 +73,6 @@ fn reshaped(before: &[(ObjectId, Rect)], after: &[(ObjectId, Rect)]) -> bool {
 fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
     let snapshot = act.scene.snapshot()?.clone();
     painter.draw(&snapshot, region, |_| true)
-}
-
-/// How many pixels of two pictures of one region differ by a step anyone
-/// sees.
-fn changed(a: &Picture, b: &Picture) -> usize {
-    a.pairs(b)
-        .filter(|(x, y)| delta_e_ok(*x, *y) >= VISIBLE_DELTA_E)
-        .count()
-}
-
-/// Whether the window shows `b`'s own drawing over `region`: drawn alone
-/// it shows something, so it is neither clipped away nor transparent, and
-/// what is drawn after it changes none of that, so no popup, dim or
-/// sibling covers it. A button the window does not show changes no pixel
-/// when flipped, whatever it draws.
-fn shows(act: &Act, painter: &mut Painter, b: ObjectId, region: Rect) -> bool {
-    let e = act.engine;
-    let Some(snapshot) = act.scene.snapshot().cloned() else {
-        return false;
-    };
-    let own = |p: &PaintItem| act.scene.item_of(p.node).is_some_and(|i| within(e, i, b));
-    let Some(last) = snapshot.items.iter().rposition(&own) else {
-        return false;
-    };
-    let (Some(blank), Some(alone)) = (
-        painter.draw(&snapshot, region, |_| false),
-        painter.draw(&snapshot, region, own),
-    ) else {
-        return false;
-    };
-    if changed(&blank, &alone) < VISIBLE_CHANGE_MIN_PX {
-        return false;
-    }
-    let over: std::collections::HashSet<NodeId> = snapshot.items[last + 1..]
-        .iter()
-        .filter(|p| !own(p))
-        .map(|p| p.node)
-        .collect();
-    if over.is_empty() {
-        return true;
-    }
-    let (Some(all), Some(under)) = (
-        painter.draw(&snapshot, region, |_| true),
-        painter.draw(&snapshot, region, |p| !over.contains(&p.node)),
-    ) else {
-        return false;
-    };
-    changed(&all, &under) < VISIBLE_CHANGE_MIN_PX
 }
 
 pub(crate) fn check(act: &mut Act) {
