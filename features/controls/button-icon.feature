@@ -262,6 +262,10 @@ Feature: The icon of a button
             objectName: "acting"; x: 200
             action: Action { icon.source: "red.png"; icon.color: "#0000ff" }
           }
+          Button {
+            objectName: "plainlyActing"; x: 200; y: 50
+            action: Action { icon.source: "red.png" }
+          }
         }
         """
 
@@ -307,3 +311,8 @@ Feature: The icon of a button
       Then the property "icon.color" of "acting" is "#0000ff"
       And the property "implicitContentWidth" of "acting" is 16
       And the pixel at 250, 20 of the window is "#0000ff"
+
+    @api-QtQuick.Controls.AbstractButton.action
+    Scenario: A button draws its action's icon in its text's colour where the action gives none
+      Then the property "icon.color" of "plainlyActing" is "#00000000"
+      And the pixel at 250, 70 of the window is "#26282a"
