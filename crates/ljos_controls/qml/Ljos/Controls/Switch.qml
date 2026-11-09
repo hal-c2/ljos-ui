@@ -79,6 +79,7 @@ T.Switch {
 
             Text {
                 id: label
+                objectName: "label"
                 readonly property real gap: control.indicator
                                             ? control.indicator.width + control.spacing : 0
                 x: control.mirrored ? 0 : gap
@@ -89,6 +90,9 @@ T.Switch {
                 color: Theme.text
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
+                // A label inherits no mirroring from its control unless an
+                // app says childrenInherit, so its side is set from the control's.
+                horizontalAlignment: control.mirrored ? Text.AlignRight : Text.AlignLeft
             }
         }
     }

@@ -54,9 +54,13 @@ T.Button {
                            + (more.visible ? control.spacing + more.width : 0)
             implicitHeight: Math.max(label.implicitHeight, control.iconSize)
 
+            // Mirroring moves anchors only, so each part is placed for
+            // either direction.
             Icon {
                 id: glyph
+                objectName: "glyph"
                 visible: control.iconName.length > 0
+                x: control.mirrored ? parent.width - width : 0
                 y: (parent.height - height) / 2
                 name: control.iconName
                 size: control.iconSize
@@ -65,21 +69,26 @@ T.Button {
 
             Text {
                 id: label
-                x: glyph.visible ? glyph.width + (text.length > 0 ? control.spacing : 0) : 0
-                width: parent.width - x - (more.visible ? control.spacing + more.width : 0)
+                objectName: "label"
+                readonly property real start: glyph.visible ? glyph.width + (text.length > 0 ? control.spacing : 0) : 0
+                readonly property real end: more.visible ? control.spacing + more.width : 0
+                x: control.mirrored ? end : start
+                width: parent.width - start - end
                 height: parent.height
                 text: control.text
                 font: control.font
                 color: control.ink
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
-                horizontalAlignment: glyph.visible || more.visible ? Text.AlignLeft : Text.AlignHCenter
+                horizontalAlignment: !glyph.visible && !more.visible ? Text.AlignHCenter
+                                     : control.mirrored ? Text.AlignRight : Text.AlignLeft
             }
 
             Icon {
                 id: more
+                objectName: "more"
                 visible: control.chevron
-                x: parent.width - width
+                x: control.mirrored ? 0 : parent.width - width
                 y: (parent.height - height) / 2
                 name: "chevron-down"
                 size: Theme.iconSizeSmall
