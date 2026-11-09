@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::ops::Range;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use icu_segmenter::LineSegmenter;
 use icu_segmenter::options::{LineBreakOptions, LineBreakStrictness, LineBreakWordOption};
@@ -721,6 +722,14 @@ impl Families {
     }
 }
 
+/// The next generation of any engine of the process: one counter for all
+/// of them, so that a generation names one set of fonts in one engine.
+static GENERATIONS: AtomicU64 = AtomicU64::new(1);
+
+fn next_generation() -> u64 {
+    GENERATIONS.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Lays out text. One per scene, or one shared by several scenes.
 pub struct TextEngine {
     fcx: FontContext,
@@ -734,6 +743,8 @@ pub struct TextEngine {
     frame: u64,
     keep_frames: u64,
     generation: u64,
+    /// The generation it was made with.
+    made: u64,
     stats: CacheStats,
     /// What laying out cost since it was last taken, while it is timed.
     timed: Option<TextTimes>,
@@ -2667,6 +2678,7 @@ impl TextEngine {
         } else {
             fonts::font_context(false)
         };
+        let generation = next_generation();
         let mut engine = Self {
             fcx,
             lcx: LayoutContext::new(),
@@ -2687,7 +2699,8 @@ impl TextEngine {
             styles: FxHashMap::default(),
             frame: 0,
             keep_frames: KEEP_FRAMES,
-            generation: 0,
+            generation,
+            made: generation,
             stats: CacheStats::default(),
             timed: None,
         };
@@ -2766,9 +2779,18 @@ impl TextEngine {
     }
 
     /// Changes whenever the set of fonts changes; text laid out under another
-    /// generation has to be laid out again.
+    /// generation has to be laid out again. No two engines of the process
+    /// share one, so what keeps a layout by its generation alone never
+    /// takes another engine's for its own, and an engine that replaces
+    /// another is never mistaken for it.
     pub fn generation(&self) -> u64 {
         self.generation
+    }
+
+    /// Whether the set of fonts changed since the engine was made: a font
+    /// was registered or the default family set.
+    pub fn fonts_changed_since_made(&self) -> bool {
+        self.generation != self.made
     }
 
     /// The families named are of fonts the engine holds itself, which the
@@ -2783,7 +2805,7 @@ impl TextEngine {
     }
 
     fn fonts_changed(&mut self) {
-        self.generation += 1;
+        self.generation = next_generation();
         self.families.first_fonts.borrow_mut().clear();
         self.families
             .coverage

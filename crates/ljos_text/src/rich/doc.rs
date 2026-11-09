@@ -1525,6 +1525,22 @@ mod tests {
     }
 
     #[test]
+    fn a_document_laid_out_by_one_engine_is_laid_out_again_by_another() {
+        // Both engines are fresh, so neither has changed its fonts: what
+        // tells them apart is that their generations never repeat.
+        let (mut first, mut second) = (TextEngine::new(), TextEngine::new());
+        let mut d = doc("<p>one</p><p>two</p>", TextFormat::Rich);
+        d.layout_simple(&mut first, &params(20.0));
+        assert_eq!(d.stats().laid_out, 2);
+        d.layout_simple(&mut second, &params(20.0));
+        assert_eq!(
+            d.stats().laid_out,
+            4,
+            "another engine's layouts are its own"
+        );
+    }
+
+    #[test]
     fn appended_markdown_is_parsed_from_the_block_before_its_last_line() {
         let options = ParseOptions::default();
         let mut d = doc("# Title\n\nfirst\n\nsecond", TextFormat::Markdown);
