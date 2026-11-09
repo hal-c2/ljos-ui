@@ -1663,15 +1663,16 @@ impl QuickScene {
     fn follow_text_engine(&mut self) {
         let current = text::text_engine();
         let generation = current.borrow().generation();
+        // What follows the set of fonts was told already, unless a host
+        // changed the engine's fonts on the engine itself, which may have
+        // been before this scene was made, at the generation it started at.
+        crate::font_set::seen(generation);
         if generation == self.text_generation {
             return;
         }
         self.text = current;
         self.text_generation = generation;
         self.refresh_text();
-        // What follows the set of fonts was told already, unless a host
-        // changed the engine's fonts on the engine itself.
-        crate::font_set::seen(generation);
     }
 
     /// Called (unborrowed, at most once per frame) when the scene goes from
