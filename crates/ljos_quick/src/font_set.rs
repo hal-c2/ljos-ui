@@ -85,31 +85,57 @@ pub(crate) fn follow(e: &Engine) {
 /// `now` (the text engine's generation; `None` for one still being made).
 /// What follows it is worked out again when it is next read, so nothing
 /// that reads it after this returns sees the fonts there were before.
+///
+/// Every engine is told before any effect runs: the writes happen inside
+/// the batches of all of them, and their effects run as the batches close.
+/// An effect of one engine that reads another's `FontInfo` then sees the
+/// fonts there are now, not what that engine had cached. No borrow of the
+/// text engine or of the followers is held while effects run, so one may
+/// lay text out, and one may change the fonts again: that call is told to
+/// every engine in turn, and an engine whose batch is still open runs its
+/// effects once, when it closes.
 pub(crate) fn changed(now: Option<u64>) {
     TOLD.set(now);
     let n = CHANGES.get() + 1;
     CHANGES.set(n);
-    for e in followers() {
-        let Some(set) = e.extension::<FontSetOf>().0.get() else {
-            continue;
-        };
-        if e.is_alive(set)
-            && let Err(err) = write_computed(&e, set, FontSet::CHANGES.index, Value::Real(n as f64))
-        {
-            e.log(LogLevel::Warning, "qml", format!("{err}"));
+    let engines = followers();
+    batched(&engines, || {
+        for e in &engines {
+            let Some(set) = e.extension::<FontSetOf>().0.get() else {
+                continue;
+            };
+            if e.is_alive(set)
+                && let Err(err) =
+                    write_computed(e, set, FontSet::CHANGES.index, Value::Real(n as f64))
+            {
+                e.log(LogLevel::Warning, "qml", format!("{err}"));
+            }
         }
+    });
+}
+
+/// Runs `f` inside the batch of every one of `engines`, so that their
+/// effects wait until it has returned.
+fn batched(engines: &[Engine], f: impl FnOnce()) {
+    match engines.split_first() {
+        Some((e, rest)) => e.batch(|| batched(rest, f)),
+        None => f(),
     }
 }
 
 /// [`changed`], for a change to the UI thread's text engine itself (a font
 /// it registered).
 pub(crate) fn fonts_changed() {
-    changed(Some(text_engine().borrow().generation()));
+    // Out of the borrow before anyone is told: what they run lays text out.
+    let generation = text_engine().borrow().generation();
+    changed(Some(generation));
 }
 
 /// The text engine was found at `generation`, by something that looks on
 /// frames that run anyway (a scene): a host that registered a font on the
-/// engine itself is followed from then on. Nothing when the followers know.
+/// engine itself is followed from then on. Nothing when the followers were
+/// told of it; what they were told is the measure, not what the one looking
+/// saw last, which may be a change no one was told of.
 pub(crate) fn seen(generation: u64) {
     if TOLD.get() != Some(generation) {
         changed(Some(generation));
