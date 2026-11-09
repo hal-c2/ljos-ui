@@ -1668,3 +1668,30 @@ fn a_squeezed_control_of_the_style_is_not_an_overflow_of_its_content() {
     );
     assert!(report.is_clean(), "\n{report}");
 }
+
+/// A toggle that changes no pixel when flipped is measured by the pixels
+/// that changed, not by a contrast no pixel has.
+#[test]
+fn a_toggle_that_changes_nothing_is_measured_in_pixels() {
+    let source = page(
+        r##"    Button {
+        text: "Bold"; checkable: true
+        background: Rectangle { implicitWidth: 80; implicitHeight: 32; color: "#1c71d8" }
+        contentItem: Text { text: parent.text; color: "white" }
+    }"##,
+    );
+    let options = Options::desktop().only(&["color-state-only"]).unwrap();
+    let report = audit_with(&source, &options);
+    assert_eq!(report.findings.len(), 1, "\n{report}");
+    assert_eq!(
+        report.findings[0].measured.as_deref(),
+        Some(
+            format!(
+                "0 px < {} px",
+                ljos_design::limits::audit::VISIBLE_CHANGE_MIN_PX
+            )
+            .as_str()
+        ),
+        "\n{report}"
+    );
+}
