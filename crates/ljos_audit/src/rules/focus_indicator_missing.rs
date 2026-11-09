@@ -30,9 +30,9 @@ use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_render::kurbo::Rect;
 
 use crate::acting::{Act, hold_focus, restore_focus};
-use crate::cx::{clipped_away, declared_by_app, is_a, scene_rect, shown_items};
+use crate::cx::{clipped_away, declared_by_app, is_a, scene_rect};
 use crate::focus_walk::rounds;
-use crate::pixels::{Painter, Picture, backdrop, changed, shows};
+use crate::pixels::{DrawOrder, Painter, Picture, backdrop, changed, shows};
 
 /// No audit focuses more than this many stops.
 const MOST: usize = 64;
@@ -68,16 +68,17 @@ pub(crate) fn check(act: &mut Act) {
     act.rest();
     let e = act.engine;
     let Some(root) = act.scene.root() else { return };
-    let stops: Vec<(ObjectId, ObjectId)> = {
+    let (stops, order): (Vec<(ObjectId, ObjectId)>, DrawOrder) = {
         let cx = act.cx();
-        let drawn: std::collections::HashSet<ObjectId> = shown_items(&cx).into_iter().collect();
-        rounds(&cx)
+        let order = DrawOrder::new(&cx);
+        let stops = rounds(&cx)
             .into_iter()
             .flat_map(|(scope, round)| round.into_iter().map(move |s| (scope.unwrap_or(root), s)))
-            .filter(|(_, s)| drawn.contains(s) && !clipped_away(&cx, *s))
+            .filter(|(_, s)| order.contains(*s) && !clipped_away(&cx, *s))
             .filter(|(_, s)| drawn_by_app(e, *s))
             .take(MOST)
-            .collect()
+            .collect();
+        (stops, order)
     };
     if stops.is_empty() {
         return;
@@ -115,7 +116,7 @@ pub(crate) fn check(act: &mut Act) {
         }
         // The stop still has focus, so the frame is the one the last
         // picture was drawn from.
-        if most < VISIBLE_CHANGE_MIN_PX && shows(act, &mut painter, stop) {
+        if most < VISIBLE_CHANGE_MIN_PX && shows(act, &mut painter, &order, stop) {
             found.push((stop, most));
         }
     }
