@@ -732,6 +732,59 @@ Feature: The design audit checks layout and content in the live tree
         """
       Then the design audit reports "layout-popup-fit" at line 7
 
+    Scenario: A dialog of no size that holds only a header
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 700; height: 500
+          color: "white"
+          Dialog {
+            Component.onCompleted: open()
+            width: 0; height: 0
+            header: Label { text: "Saved"; padding: 12 }
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
+    Scenario: A dialog of no size that holds only a footer
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 700; height: 500
+          color: "white"
+          Dialog {
+            Component.onCompleted: open()
+            width: 0; height: 0
+            standardButtons: Dialog.Ok
+          }
+        }
+        """
+      Then the design audit reports "layout-popup-fit" at line 7
+
+    Scenario: A dialog that holds only a header and has room for it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        import QtQuick.Layouts
+        Rectangle {
+          width: 700; height: 500
+          color: "white"
+          Dialog {
+            Component.onCompleted: open()
+            header: Label { text: "Saved"; padding: 12 }
+          }
+        }
+        """
+      Then the design audit does not report "layout-popup-fit"
+
     Scenario: A popup drawn at twice its size whose scroller reaches all it holds
       Given the QML:
         """qml
