@@ -74,3 +74,22 @@ fn the_nearest_declaration_says_what_a_method_gives() {
         gives("s", "a number")
     );
 }
+
+/// What the runtime adds to a type its description lacks (beside Qt's
+/// table, `font.size` and `Screen.points`) holds and gives what the
+/// description of the addition says, as a member the type has does.
+#[test]
+fn what_the_runtime_adds_is_typed_by_its_description() {
+    assert_eq!(
+        errors("Meter", "readonly property string s: g.ticks()"),
+        gives("s", "a number")
+    );
+    assert_eq!(
+        errors("Meter", "readonly property string s: g.notches"),
+        gives("s", "a number")
+    );
+    assert_eq!(
+        errors("Meter", "readonly property real r: g.ticks() + g.notches"),
+        []
+    );
+}
