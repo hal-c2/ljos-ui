@@ -671,6 +671,26 @@ impl<'a> Writer<'_, 'a, '_> {
             Some(native) => (native, false),
             None => ("QtObject".to_string(), true),
         };
+        // A member the object declares again shadows the one its type has,
+        // whatever that one holds (`property Card top` beside Qt's table,
+        // whose `Item.top` is an anchor line): its type is the object's.
+        let shadowed: Vec<String> = match self.native_type(index) {
+            Some(native) if !open => declared
+                .properties
+                .iter()
+                .map(|(name, ..)| name)
+                .chain(declared.signals.iter().map(|(name, ..)| name))
+                .chain(declared.functions.iter().map(|(name, _)| name))
+                .filter(|name| self.api.has_member(native, name))
+                .map(|name| format!("{name:?}"))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let extends = if shadowed.is_empty() {
+            extends
+        } else {
+            format!("Omit<{extends}, {}>", shadowed.join(" | "))
+        };
         self.out.line(
             &format!("interface __O{index} extends {extends} {{"),
             origin,

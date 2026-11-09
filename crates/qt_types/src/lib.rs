@@ -417,6 +417,13 @@ impl Type {
         Some(&table().types[index])
     }
 
+    /// The class whose enums are the type's too, of either kind: beside
+    /// Qt's table, `Qt.Key_W` is a key of the namespace that extends the
+    /// `Qt` singleton, not of the singleton itself.
+    pub fn enum_extension(&self) -> Option<&'static Type> {
+        Some(&table().types[self.extension?])
+    }
+
     /// Whether Ljós adds a member called `name` to the type or to one it
     /// inherits, where Qt's table describes them: the runtime has it,
     /// though Qt does not.

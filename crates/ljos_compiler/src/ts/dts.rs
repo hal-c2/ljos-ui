@@ -265,6 +265,26 @@ impl Api {
         self.exported.get(name).copied()
     }
 
+    /// Whether `ty`, or what it inherits, has a member called `name`.
+    pub fn has_member(&self, ty: &'static Type, name: &str) -> bool {
+        let mut at = Some(ty);
+        while let Some(found) = at {
+            for own in [Some(found), found.member_extension()]
+                .into_iter()
+                .flatten()
+            {
+                if own.properties.iter().any(|p| p.name == name)
+                    || own.signals.iter().any(|s| s.name == name)
+                    || own.methods.contains(&name)
+                {
+                    return true;
+                }
+            }
+            at = found.prototype();
+        }
+        false
+    }
+
     /// What TypeScript calls the type.
     pub fn name_of(&self, ty: &Type) -> Option<&str> {
         self.names.get(ty.class).map(String::as_str)
@@ -305,7 +325,12 @@ impl Api {
     }
 
     fn resolved(&self, name: &str, owner: Option<&'static Type>) -> Option<String> {
-        if let Some(ty) = qt_types::type_of_class(name)
+        // Only Qt's description names a type by a bare class. A file, and
+        // Ljós's own table, name it as QML does, and beside Qt's table a
+        // QML name can be another type's class: `QtObject` is the class of
+        // the `Qt` singleton there.
+        if owner.is_some_and(|owner| !owner.is_own)
+            && let Some(ty) = qt_types::type_of_class(name)
             && let Some(found) = self.object_type(ty)
         {
             return Some(found);
@@ -371,10 +396,7 @@ impl Api {
             None => owner,
         };
         while let Some(found) = ty {
-            let enumeration = found
-                .enums
-                .iter()
-                .find(|e| e.name == short || e.alias == Some(short));
+            let enumeration = enums_of(found).find(|e| e.name == short || e.alias == Some(short));
             if let Some(enumeration) = enumeration {
                 if enumeration.is_flag || enumeration.alias == Some(short) {
                     return Some("number".to_string());
@@ -527,7 +549,7 @@ impl Api {
     /// The type's enums, and what a singleton is: a namespace named as the
     /// interface is, which TypeScript merges with it.
     fn write_namespace(&self, out: &mut String, ty: &'static Type, name: &str) {
-        let enums: Vec<&Enum> = ty.enums.iter().collect();
+        let enums: Vec<&Enum> = enums_of(ty).collect();
         if enums.is_empty() && !ty.is_singleton {
             return;
         }
@@ -685,6 +707,19 @@ interface String {
 /// in what it creates.
 fn is_component(ty: &Type) -> bool {
     ty.name == "Component" && qt_types::module("QtQml").is_some_and(|qml| qml.has(ty))
+}
+
+/// The enums a file reaches through `ty`'s name: its own, then those of
+/// its extension that it has no enum of the same name for (`Qt.Key_W`,
+/// whose enum beside Qt's table is the namespace's that extends `Qt`).
+fn enums_of(ty: &'static Type) -> impl Iterator<Item = &'static Enum> {
+    let extension = ty.enum_extension().into_iter().flat_map(|extension| {
+        extension
+            .enums
+            .iter()
+            .filter(|e| !ty.enums.iter().any(|own| own.name == e.name))
+    });
+    ty.enums.iter().chain(extension)
 }
 
 fn is_word(name: &str) -> bool {
@@ -866,6 +901,50 @@ mod tests {
         let body = &declarations[start..];
         let body = &body[..body.find("\n}\n").expect("closed")];
         assert!(body.contains("\n    const LeftToRight: Flow;"), "{body}");
+    }
+
+    #[test]
+    fn the_keys_of_qt_are_declared_on_qt() {
+        // Beside Qt's table they are the namespace's that extends `Qt`.
+        let declarations = Api::of(API).expect("Ljos.Ui").declarations();
+        let start = declarations
+            .find("\ndeclare namespace Qt {")
+            .expect("Qt's enums are declared");
+        let body = &declarations[start..];
+        let body = &body[..body.find("\n}\n").expect("closed")];
+        assert!(body.contains("\n    const Key_W: "), "no Qt.Key_W");
+        assert!(
+            body.contains("\n    const ControlModifier: "),
+            "no Qt.ControlModifier"
+        );
+    }
+
+    #[test]
+    fn a_name_a_file_writes_is_a_qml_name_not_a_class() {
+        // Beside Qt's table, `QtObject` is the class of the `Qt` singleton;
+        // a file of `Ljos.Ui` alone cannot name QtQml's `QtObject` either way.
+        let api = Api::of(API).expect("Ljos.Ui");
+        assert!(matches!(
+            api.written_type("QtObject"),
+            Some(Written::Unnamed(word)) if word == "QtObject"
+        ));
+        // What `PointerArea` hands a handler is QtQml's `QtObject`.
+        let area = api.named("PointerArea").expect("PointerArea");
+        let clicked = area
+            .signals
+            .iter()
+            .find(|s| s.name == "clicked")
+            .expect("clicked");
+        let qt = api
+            .qt
+            .and_then(|qt| api.name_of(qt))
+            .expect("Qt is declared");
+        assert_ne!(api.parameters(clicked, area), format!("mouse: {qt}"));
+        let object = qt_types::module("QtQml")
+            .and_then(|m| m.type_named("QtObject"))
+            .and_then(|ty| api.name_of(ty))
+            .expect("QtObject is declared");
+        assert_eq!(api.parameters(clicked, area), format!("mouse: {object}"));
     }
 
     #[test]
