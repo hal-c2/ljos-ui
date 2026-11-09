@@ -15,7 +15,12 @@ pub(super) const MAXIMUM_LENGTH: i32 = 32767;
 
 /// `TextInput` (QtQuick).
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick", name = "TextInput", extends = TextEditor)]
+#[qml(
+    module = "QtQuick",
+    name = "TextInput",
+    extends = TextEditor,
+    enums = super::input_enums
+)]
 pub struct TextInput {
     #[qml(base)]
     pub editor: TextEditor,

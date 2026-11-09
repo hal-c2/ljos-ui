@@ -16,7 +16,12 @@ use crate::item::is_unset;
 
 /// `TextEdit` (QtQuick).
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick", name = "TextEdit", extends = TextEditor)]
+#[qml(
+    module = "QtQuick",
+    name = "TextEdit",
+    extends = TextEditor,
+    enums = super::edit_enums
+)]
 pub struct TextEdit {
     #[qml(base)]
     pub editor: TextEditor,
