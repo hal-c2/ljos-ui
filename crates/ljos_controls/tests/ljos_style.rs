@@ -68,7 +68,7 @@ fn hex(v: &Value) -> String {
     }
 }
 
-/// The QML theme and the Rust derivation give the same sixteen colours
+/// The QML theme and the Rust derivation give the same colours, every role,
 /// for the same three, in light and in dark.
 #[test]
 fn the_theme_derives_what_rust_derives() {
@@ -132,6 +132,51 @@ Rectangle {
     }
 }
 "##;
+
+/// Every colour a control of the style draws is a role of the theme, so
+/// the ratios `roles::PROMISES` holds are the ones drawn: a shade worked
+/// out in a control (`Qt.darker` of the accent) or a colour written in
+/// one would have none.
+#[test]
+fn the_style_draws_only_the_themes_roles() {
+    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/qml/Ljos/Controls");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        if !name.ends_with(".qml") || name == "Theme.qml" {
+            continue;
+        }
+        seen += 1;
+        let source = std::fs::read_to_string(&path).unwrap();
+        for (n, line) in source.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            for worked in [
+                "Qt.darker(",
+                "Qt.lighter(",
+                "Qt.tint(",
+                "Qt.hsla(",
+                "Qt.hsva(",
+            ] {
+                assert!(!code.contains(worked), "{name}:{}: {worked} {line}", n + 1);
+            }
+            // A shadow's rgba is decoration, drawn under the popup's edge.
+            if code.contains("Qt.rgba(") {
+                assert!(
+                    code.contains("Qt.rgba(0, 0, 0,"),
+                    "{name}:{}: {line}",
+                    n + 1
+                );
+            }
+            assert!(
+                !code.contains("\"#"),
+                "{name}:{}: a colour written in: {line}",
+                n + 1
+            );
+        }
+    }
+    assert!(seen > 10, "{seen} files");
+}
 
 #[test]
 fn every_control_passes_the_audit_in_both_schemes() {

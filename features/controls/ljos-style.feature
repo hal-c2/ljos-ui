@@ -46,7 +46,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
       And the property "background.color" of "send" is "#0066cc"
       And the property "implicitHeight" of "field" is 28
       And the property "background.color" of "field" is "#ededed"
-      And the property "background.border.color" of "field" is "#868686"
+      And the property "background.border.color" of "field" is "#808080"
       And the property "placeholderTextColor" of "field" is "#6a6a6a"
 
     Scenario: A file that wants Basic's look imports Ljos.Controls.Basic
@@ -81,23 +81,30 @@ Feature: Ljós's own style: the controls of Ljos.Controls
       Then the property "role" of "root" is "<color>"
 
       Examples:
-        | role              | color   |
-        | canvas            | #ffffff |
-        | surface           | #f5f5f5 |
-        | surfaceRaised     | #ededed |
-        | surfaceOverlay    | #e6e6e6 |
-        | border            | #d6d6d6 |
-        | input             | #868686 |
-        | text              | #000000 |
-        | textMuted         | #575757 |
-        | placeholder       | #6a6a6a |
-        | iconMuted         | #707070 |
-        | accent            | #0066cc |
-        | accentForeground  | #ffffff |
-        | accentSurface     | #bdcfe1 |
-        | focus             | #0066cc |
-        | errorForeground   | #9b3134 |
-        | warningForeground | #824704 |
+        | role                  | color   |
+        | canvas                | #ffffff |
+        | surface               | #f5f5f5 |
+        | surfaceRaised         | #ededed |
+        | surfaceOverlay        | #e6e6e6 |
+        | border                | #d6d6d6 |
+        | input                 | #808080 |
+        | text                  | #000000 |
+        | textMuted             | #575757 |
+        | placeholder           | #6a6a6a |
+        | iconMuted             | #707070 |
+        | accent                | #0066cc |
+        | accentForeground      | #ffffff |
+        | accentSurface         | #bdcfe1 |
+        | accentHover           | #005ebc |
+        | accentPressed         | #0056ab |
+        | focus                 | #0066cc |
+        | link                  | #0063c7 |
+        | errorForeground       | #9b3134 |
+        | warningForeground     | #824704 |
+        | destructive           | #9b3134 |
+        | destructiveForeground | #ffffff |
+        | destructiveHover      | #8f2d30 |
+        | destructivePressed    | #82292c |
 
     Scenario: A dark ground, a light text and a violet give their own roles
       Given the QML:
@@ -120,9 +127,9 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         }
         """
       Then the property "raised" of "root" is "#2c2c3c"
-      And the property "input" of "root" is "#757582"
+      And the property "input" of "root" is "#7d7d8a"
       And the property "muted" of "root" is "#a4a4af"
-      And the property "focus" of "root" is "#9461ee"
+      And the property "focus" of "root" is "#9969ee"
       And the property "error" of "root" is "#e58b92"
 
     Scenario Outline: In <scheme>, the roles follow Ljos.Design's palette and meet their ratios
@@ -166,7 +173,160 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         | light  |
         | dark   |
 
-  Rule: An app may set any role itself
+  Rule: What is drawn on a fill stays legible in every state of it
+
+    # A mid-grey accent is the hardest: black and white are each only a little
+    # over 4.5:1 on it, so a shade toward the ink would take the text under.
+    Scenario Outline: A <kind> button <state> keeps its text at 4.5:1 on a mid-grey accent
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 240; height: 120
+          Component.onCompleted: {
+            Theme.canvas = "#ffffff"
+            Theme.text = "#000000"
+            Theme.accent = "#777777"
+          }
+          Button { id: b; objectName: "b"; x: 10; y: 10; width: 100; text: "Send"; <kind>: true; checkable: true }
+          readonly property real ratio: Theme.contrast(b.ink, b.background.color)
+        }
+        """
+      When <step>
+      And 200 milliseconds pass
+      Then the property "ratio" of "root" is at least 4.5
+
+      Examples:
+        | kind        | state   | step                                                 |
+        | primary     | hovered | the user moves the pointer to 30, 24                 |
+        | primary     | pressed | the user presses the pointer at 30, 24               |
+        | primary     | checked | the property "checked" of "b" is set to true         |
+        | destructive | hovered | the user moves the pointer to 30, 24                 |
+        | destructive | pressed | the user presses the pointer at 30, 24               |
+        | destructive | checked | the property "checked" of "b" is set to true         |
+
+    Scenario Outline: A link is 4.5:1 on every ground, on <canvas> with <accent>
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          Component.onCompleted: {
+            Theme.canvas = "<canvas>"
+            Theme.text = "<text>"
+            Theme.accent = "<accent>"
+          }
+          Label { id: l; text: "\u003ca href='https://ljos.dev'>more\u003c/a>" }
+          readonly property real least: Math.min(
+            Theme.contrast(l.linkColor, Theme.canvas), Theme.contrast(l.linkColor, Theme.surface),
+            Theme.contrast(l.linkColor, Theme.surfaceRaised), Theme.contrast(l.linkColor, Theme.surfaceOverlay))
+        }
+        """
+      Then the property "least" of "root" is at least 4.5
+
+      Examples:
+        | canvas  | text    | accent  |
+        | #ffffff | #000000 | #888888 |
+        | #ffffff | #000000 | #ffcc00 |
+        | #1e1e2e | #e6e6f0 | #7c3aed |
+        | #000000 | #ffffff | #0066cc |
+
+    # The focus colour is a ring on the grounds, the edge of a field or a combo
+    # box that is hovered or open, and the check of a highlighted row.
+    Scenario Outline: The focus colour is 3:1 on every fill, a highlighted row's too, on <canvas> with <accent>
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          Component.onCompleted: {
+            Theme.canvas = "<canvas>"
+            Theme.text = "<text>"
+            Theme.accent = "<accent>"
+          }
+          readonly property real selected: Theme.contrast(Theme.focus, Theme.accentSurface)
+          readonly property real least: Math.min(
+            Theme.contrast(Theme.focus, Theme.canvas), Theme.contrast(Theme.focus, Theme.surface),
+            Theme.contrast(Theme.focus, Theme.surfaceRaised), Theme.contrast(Theme.focus, Theme.surfaceOverlay))
+        }
+        """
+      Then the property "selected" of "root" is at least 3
+      And the property "least" of "root" is at least 3
+
+      Examples:
+        | canvas  | text    | accent  |
+        | #ffffff | #000000 | #888888 |
+        | #ffffff | #000000 | #0066cc |
+        | #1e1e2e | #e6e6f0 | #7c3aed |
+        | #000000 | #ffffff | #888888 |
+
+  Rule: A checked button shows it by more than its colour
+
+    Scenario Outline: A checkable <kind> button passes the design audit, in <scheme>
+      Given the system setting "color scheme" is "<scheme>"
+      And the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Rectangle {
+          width: 240; height: 120; color: Theme.canvas
+          Button { x: 16; y: 16; text: "Bold"; checkable: true; <set> }
+        }
+        """
+      Then the design audit finds nothing
+
+      Examples:
+        | kind        | set               | scheme |
+        | plain       | objectName: "b"   | light  |
+        | plain       | objectName: "b"   | dark   |
+        | primary     | primary: true     | light  |
+        | primary     | primary: true     | dark   |
+        | destructive | destructive: true | light  |
+        | destructive | destructive: true | dark   |
+        | subtle      | subtle: true      | light  |
+        | subtle      | subtle: true      | dark   |
+
+    Scenario: A checked button that is filled has a mark in its text's colour
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Controls
+        Item {
+          width: 240; height: 120
+          Component.onCompleted: {
+            Theme.canvas = "#ffffff"
+            Theme.text = "#000000"
+            Theme.accent = "#0066cc"
+          }
+          Button { objectName: "b"; x: 10; y: 10; text: "Bold"; primary: true; checkable: true }
+        }
+        """
+      Then the property "visible" of "checkedMark" is false
+      When the property "checked" of "b" is set to true
+      Then the property "visible" of "checkedMark" is true
+      And the property "border.color" of "checkedMark" is "#ffffff"
+
+    Scenario: A checkable button keeps room for its mark inside its edge, checked or not
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          width: 240; height: 120
+          Button { objectName: "b"; x: 10; y: 10; text: "Bold"; checkable: true }
+          Button { objectName: "p"; x: 10; y: 60; text: "Bold" }
+        }
+        """
+      Then the property "leftPadding" of "b" is 12
+      And the property "rightPadding" of "b" is 12
+      And the property "leftPadding" of "p" is 8
+      When the property "checked" of "b" is set to true
+      Then the property "leftPadding" of "b" is 12
 
     Scenario: A role set by the app is the one the controls draw with
       Given the QML:
@@ -444,6 +604,53 @@ Feature: Ljós's own style: the controls of Ljos.Controls
       Then the property "text" of "keys" is "Ctrl+X"
       And the property "color" of "keys" is "#575757"
       And the property "visible" of "keys" is true
+
+  Rule: A menu is as wide as its widest row, within bounds
+
+    Scenario: A long row widens the menu to fit it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 640; height: 400
+          Menu {
+            id: menu; objectName: "menu"
+            Component.onCompleted: open()
+            MenuItem { id: long; text: "Show the whole path of the file"; shortcut: "Ctrl+Shift+P" }
+            MenuItem { text: "Cut" }
+          }
+          readonly property bool fits: menu.contentWidth === long.implicitWidth
+        }
+        """
+      Then the property "fits" of "root" is true
+      And the property "width" of "menu" is at least 240
+      And the property "width" of "menu" is at most 360
+
+    Scenario: A menu of short rows keeps its least width, and one of very long rows its most
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Controls
+        Item {
+          width: 900; height: 400
+          Menu {
+            objectName: "short"
+            Component.onCompleted: open()
+            MenuItem { text: "Cut" }
+          }
+          Menu {
+            objectName: "wide"
+            Component.onCompleted: open()
+            MenuItem { text: "A row whose text goes on far past what any menu should be as wide as" }
+          }
+        }
+        """
+      Then the property "width" of "short" is 220
+      And the property "width" of "wide" is 360
 
   Rule: The tool tip of a control is drawn in the control's style
 

@@ -5,6 +5,6 @@ import QtQuick.Templates as T
 
 T.Label {
     color: Theme.text
-    linkColor: Theme.focus
+    linkColor: Theme.link
     font.pixelSize: Theme.fontSize
 }

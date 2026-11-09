@@ -1,7 +1,8 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a compact button on the
 // theme's roles. `primary` and `destructive` fill it; `subtle` leaves it
 // on its ground until the pointer is over it; `chevron` says it opens
-// something; `iconName` puts an icon before the text.
+// something; `iconName` puts an icon before the text. A checked button
+// has a ring inside its edge, so its state is not its colour alone.
 import QtQuick
 import QtQuick.Templates as T
 import Ljos.Design
@@ -16,8 +17,13 @@ T.Button {
     property string iconName: ""
     property real iconSize: Theme.iconSize
     readonly property bool filled: primary || destructive
-    readonly property color fill: destructive ? Theme.errorForeground : Theme.accent
-    readonly property color ink: filled ? (destructive ? Theme.on(Theme.errorForeground)
+    // Each state's fill is a role, so its ratio with the ink is promised.
+    readonly property color fill: destructive
+                                  ? (down ? Theme.destructivePressed
+                                     : hovered ? Theme.destructiveHover : Theme.destructive)
+                                  : (down ? Theme.accentPressed
+                                     : hovered ? Theme.accentHover : Theme.accent)
+    readonly property color ink: filled ? (destructive ? Theme.destructiveForeground
                                                        : Theme.accentForeground)
                                         : Theme.text
 
@@ -26,7 +32,9 @@ T.Button {
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,
                              implicitContentHeight + topPadding + bottomPadding)
 
-    padding: Theme.spacing
+    // A checkable one keeps room for the ring a check draws inside its
+    // edge, whether checked or not, so checking it does not resize it.
+    padding: control.checkable ? Theme.spacing + 4 : Theme.spacing
     topPadding: 0
     bottomPadding: 0
     spacing: Theme.spacing
@@ -85,14 +93,27 @@ T.Button {
             implicitWidth: Theme.controlHeight
             implicitHeight: Theme.controlHeight
             radius: Theme.radius
-            color: control.filled
-                   ? (control.down ? Qt.darker(control.fill, 1.15)
-                      : control.hovered ? Qt.lighter(control.fill, 1.08) : control.fill)
+            color: control.filled ? control.fill
                    : control.down || control.hovered || control.checked ? Theme.accentSurface
                    : control.subtle ? "transparent" : Theme.surfaceRaised
             // A ring where the keyboard is, when a key brought it there.
             border.width: control.filled || control.subtle ? 0 : 1
             border.color: Theme.input
+            // Checked: a ring in the ink, inside the edge. A filled button's
+            // fill stays the accent when checked, and an unfilled one's is
+            // the same as hovered, so the ring is what says it.
+            Rectangle {
+                objectName: "checkedMark"
+                x: 3
+                y: 3
+                width: parent.width - 6
+                height: parent.height - 6
+                radius: Math.max(0, parent.radius - 3)
+                color: "transparent"
+                border.width: 2
+                border.color: control.ink
+                visible: control.checked
+            }
             // Outside the part, against the canvas: a part filled with the
             // accent would hide a ring drawn on its own edge.
             Rectangle {

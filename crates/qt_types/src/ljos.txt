@@ -229,14 +229,22 @@ module Ljos.Controls
 		prop border QtQuick.color named
 		prop accentSurface QtQuick.color named
 		prop fills QtQml.var named readonly
+		prop grounds QtQml.var named readonly
 		prop input QtQuick.color named
 		prop textMuted QtQuick.color named
 		prop placeholder QtQuick.color named
 		prop iconMuted QtQuick.color named
 		prop accentForeground QtQuick.color named
 		prop focus QtQuick.color named
+		prop link QtQuick.color named
 		prop errorForeground QtQuick.color named
 		prop warningForeground QtQuick.color named
+		prop accentHover QtQuick.color named
+		prop accentPressed QtQuick.color named
+		prop destructive QtQuick.color named
+		prop destructiveForeground QtQuick.color named
+		prop destructiveHover QtQuick.color named
+		prop destructivePressed QtQuick.color named
 		prop dark QtQml.bool named readonly
 		prop radius QtQml.real named
 		prop radiusSmall QtQml.real named readonly
@@ -257,14 +265,22 @@ module Ljos.Controls
 		signal borderChanged
 		signal accentSurfaceChanged
 		signal fillsChanged
+		signal groundsChanged
 		signal inputChanged
 		signal textMutedChanged
 		signal placeholderChanged
 		signal iconMutedChanged
 		signal accentForegroundChanged
 		signal focusChanged
+		signal linkChanged
 		signal errorForegroundChanged
 		signal warningForegroundChanged
+		signal accentHoverChanged
+		signal accentPressedChanged
+		signal destructiveChanged
+		signal destructiveForegroundChanged
+		signal destructiveHoverChanged
+		signal destructivePressedChanged
 		signal darkChanged
 		signal radiusChanged
 		signal radiusSmallChanged
@@ -281,6 +297,7 @@ module Ljos.Controls
 		method luminance
 		method contrast
 		method reach
+		method shade
 		method on
 	type Ljos/Controls/ToolTip.qml ToolTip
 		prototype QtQuick.Templates.ToolTip named

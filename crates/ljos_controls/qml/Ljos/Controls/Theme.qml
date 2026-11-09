@@ -25,16 +25,28 @@ QtObject {
     property color border: mix(canvas, text, 0.16)
     property color accentSurface: mix(surfaceOverlay, accent, 0.18)
 
-    // What is read, made legible on the fills it is drawn on.
+    // What is read, made legible on the fills it is drawn on. A highlighted
+    // row is a fill too; a label or a pane is only ever on a ground.
     readonly property var fills: [canvas, surface, surfaceRaised, surfaceOverlay, accentSurface]
-    property color input: reach(border, text, [surfaceRaised], 3)
+    readonly property var grounds: [canvas, surface, surfaceRaised, surfaceOverlay]
+    property color input: reach(border, text, grounds, 3)
     property color textMuted: reach(mix(canvas, text, 0.62), text, fills, 4.5)
     property color placeholder: reach(mix(canvas, text, 0.5), text, [surfaceRaised], 4.5)
     property color iconMuted: reach(mix(canvas, text, 0.45), text, fills, 3)
     property color accentForeground: on(accent)
-    property color focus: reach(accent, text, [canvas, surface, surfaceRaised, surfaceOverlay], 3)
+    property color focus: reach(accent, text, fills, 3)
+    property color link: reach(accent, text, grounds, 4.5)
     property color errorForeground: reach(Qt.rgba(229 / 255, 72 / 255, 77 / 255, 1), text, fills, 4.5)
     property color warningForeground: reach(Qt.rgba(217 / 255, 119 / 255, 6 / 255, 1), text, fills, 4.5)
+
+    // A filled button's fill in each state, moved away from its ink so the
+    // ink only gains contrast as the button is hovered and pressed.
+    property color accentHover: shade(accent, accentForeground, 0.08)
+    property color accentPressed: shade(accent, accentForeground, 0.16)
+    property color destructive: errorForeground
+    property color destructiveForeground: on(destructive)
+    property color destructiveHover: shade(destructive, destructiveForeground, 0.08)
+    property color destructivePressed: shade(destructive, destructiveForeground, 0.16)
 
     readonly property bool dark: luminance(canvas) < luminance(text)
 
@@ -89,6 +101,11 @@ QtObject {
                 return c
         }
         return to
+    }
+
+    // `fill` moved `t` of the way away from `ink`.
+    function shade(fill: color, ink: color, t: real): color {
+        return mix(fill, on(ink), t)
     }
 
     // Black or white, whichever has more contrast with `c`.
