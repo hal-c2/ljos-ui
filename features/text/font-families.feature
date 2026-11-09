@@ -132,6 +132,30 @@ Feature: A font's list of families
     Then the property "contentWidth" of "t" is 180
     And the property "contentWidth" of "made" is 180
 
+  Scenario: What a font resolves to is the first family of its list the system has
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        FontInfo { objectName: "listed"; font.families: ["No Such Family Ljos", "Liberation Mono"] }
+        FontInfo {
+          objectName: "comma"
+          font.families: ["No Such Family Ljos, Liberation Mono", "Liberation Serif"]
+        }
+        FontInfo {
+          objectName: "made"
+          font: Qt.font({ families: ["No Such Family Ljos", "Liberation Mono"] })
+        }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "family" of "listed" is "Liberation Mono"
+    And the property "fixedPitch" of "listed" is true
+    And the property "family" of "comma" is "Liberation Serif"
+    And the property "fixedPitch" of "comma" is false
+    And the property "family" of "made" is "Liberation Mono"
+
   Scenario: A name of the list is one family, whatever characters it holds
     Given the application uses the fonts installed on the system
     And the QML:
