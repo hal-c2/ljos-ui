@@ -492,7 +492,8 @@ fn check(case: &Case, events: &[Event]) -> Result<(), String> {
     }
     // What a change made inside has reached so far, and the bindings the
     // changes the queue waits on reached that none made inside has: what
-    // reads one of those may read it as it was.
+    // reads one of those while the queue stands may read it as it was.
+    // Once it drops, nothing waits, and everything reads as it is.
     let mut inside = Props::default();
     let waiting = case.waiting();
     for (at, e) in events.iter().enumerate() {
@@ -503,7 +504,7 @@ fn check(case: &Case, events: &[Event]) -> Result<(), String> {
             && got.is_some()
             && got != truth
         {
-            let as_it_was = at > open
+            let as_it_was = (open + 1..dropped).contains(&at)
                 && case
                     .upstream(p)
                     .iter()
@@ -850,6 +851,11 @@ fn the_cases_review_found_are_among_them() {
         (
             "a write inside the queue, in a handler ahead",
             case([&[0], &[0], &[0]], Since::Batch, true, 0, &[Op::Write(0)]),
+        ),
+        (
+            "a hook told once the queue drops, in a handler ahead, reading a binding only \
+             the batch reached",
+            case([&[0], &[0], &[0]], Since::Batch, true, 0, &[Op::Write(1)]),
         ),
     ];
     let failed: Vec<String> = found
