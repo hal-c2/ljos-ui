@@ -27,6 +27,7 @@
 //! Malformed input never panics (see `tests/rich_fuzz.rs`).
 
 mod auto;
+mod css;
 mod doc;
 mod editing;
 mod entity;
@@ -55,7 +56,7 @@ pub use select::SelectionScope;
 
 pub(crate) use doc::column_widths;
 
-use crate::style::{BoxAlign, StyleSpan, TextStyle};
+use crate::style::{BoxAlign, FamilyList, StyleSpan, TextStyle};
 
 /// How the source of a document is read (Qt's `Text.textFormat`, with
 /// `AutoText` resolved by [`TextFormat::detect`]).
@@ -123,8 +124,12 @@ pub struct Inline {
     pub decoration_color: Option<Arc<str>>,
     /// The address of the link this text belongs to. Never followed here.
     pub link: Option<Arc<str>>,
-    /// A family the document named (`font-family`), the first of a list.
+    /// The family the document named (`font-family`), the first of its
+    /// list.
     pub family: Option<Arc<str>>,
+    /// The families of that list after `family`, tried in order for the
+    /// face.
+    pub fallback_families: Option<FamilyList>,
     /// A size in pixels the document gave (`font-size: 20px`); `scale`
     /// still applies on top of it.
     pub pixel_size: Option<f32>,
@@ -149,6 +154,7 @@ impl Default for Inline {
             decoration_color: None,
             link: None,
             family: None,
+            fallback_families: None,
             pixel_size: None,
             in_points: false,
         }
@@ -178,6 +184,11 @@ impl Inline {
                 Some(family) => Some(Arc::clone(family)),
                 None => self.mono.then(|| Arc::from(MONOSPACE)),
             },
+            fallback_families: self
+                .family
+                .as_ref()
+                .and(self.fallback_families.as_ref())
+                .cloned(),
         }
     }
 }
@@ -201,6 +212,7 @@ impl Hash for Inline {
             &self.decoration_color,
             &self.link,
             &self.family,
+            &self.fallback_families,
             self.pixel_size.map(f32::to_bits),
         )
             .hash(state);

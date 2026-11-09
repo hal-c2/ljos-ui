@@ -840,7 +840,14 @@ fn shape(
     let span_names: Vec<Option<Vec<FontFamilyName<'_>>>> = ranged
         .spans
         .iter()
-        .map(|s| s.family.as_deref().map(|f| families.stack_of(f.into())))
+        .map(|s| {
+            s.family.as_deref().map(|family| {
+                families.stack_of(Asked {
+                    family,
+                    rest: s.fallback_families.as_ref(),
+                })
+            })
+        })
         .collect();
     let size = usable_size(style.pixel_size);
     let finite = |v: f32| if v.is_finite() { v } else { 0.0 };

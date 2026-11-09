@@ -31,6 +31,7 @@ use std::fmt::Write as _;
 use std::ops::Range;
 use std::sync::Arc;
 
+use super::css;
 use super::doc::HAlign;
 use super::html::scale_keyword;
 use super::styled::{Marker, marker_text};
@@ -901,10 +902,12 @@ impl RichText {
     pub fn html(&self, font: &DocFont) -> String {
         let mut out = String::new();
         write_head(&mut out);
+        let mut family = String::new();
+        css::write_families(&mut family, [font.family.as_str()]);
         let _ = writeln!(
             out,
-            "<body style=\" font-family:'{}'; font-size:{}px; font-weight:{}; font-style:{};\">",
-            escape_attr(&font.family),
+            "<body style=\" font-family:{}; font-size:{}px; font-weight:{}; font-style:{};\">",
+            escape_attr(&family),
             num(font.pixel_size),
             num(font.weight),
             if font.italic { "italic" } else { "normal" },
@@ -1469,7 +1472,13 @@ fn span_style(f: &CharFormat) -> String {
     let i = &f.inline;
     let mut s = String::new();
     if let Some(family) = &i.family {
-        let _ = write!(s, " font-family:'{}';", escape_attr(family));
+        let rest = i.fallback_families.iter().flat_map(|r| r.iter());
+        let mut families = String::new();
+        css::write_families(
+            &mut families,
+            std::iter::once(family).chain(rest).map(|n| &**n),
+        );
+        let _ = write!(s, " font-family:{};", escape_attr(&families));
     } else if i.mono {
         s.push_str(" font-family:'monospace';");
     }
@@ -1546,6 +1555,7 @@ fn escape_attr(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('"', "&quot;")
         .replace('<', "&lt;")
+        .replace('>', "&gt;")
 }
 
 #[cfg(test)]

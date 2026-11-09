@@ -29,13 +29,15 @@
 //! is only a colour nobody can read. The font properties an editor writes
 //! when it saves rich text are read too, so that what it wrote reads back:
 //! `font-weight`, `font-style`, `font-size` (pixels, points or a keyword)
-//! and the first family of `font-family`. Every other property is left
+//! and the families of `font-family` ([`super::css`]). Every other property is left
 //! out. The background of a block is the block's (filled across the
 //! document behind its lines), not its letters'; that of a table or a
 //! table cell (its `bgcolor` too) is the table's or the cell's.
 
+use std::borrow::Cow;
 use std::sync::Arc;
 
+use super::css;
 use super::doc::HAlign;
 use super::entity;
 use super::flow::{CellBuf, Ctx, Flow, table_block};
@@ -389,13 +391,13 @@ impl<'a> Parser<'a> {
             return;
         }
         if !self.sheet.is_empty() {
-            let classes = attrs.get("class").unwrap_or("");
-            for css in self.sheet.matching(name, classes) {
+            let classes = attrs.get("class").unwrap_or_default();
+            for css in self.sheet.matching(name, &classes) {
                 self.apply_css(&css);
             }
         }
         if let Some(css) = attrs.get("style") {
-            self.apply_css(css);
+            self.apply_css(&css);
             if let Some(open) = self.open.last_mut()
                 && open.boxed
             {
@@ -440,14 +442,14 @@ impl<'a> Parser<'a> {
             "small" => self.push(name, |o| o.style.scale *= 0.8),
             "sub" | "sup" => self.push(name, |o| o.style.scale *= 2.0 / 3.0),
             "font" => {
-                let size = attrs.get("size").and_then(font_size);
+                let size = attrs.get("size").and_then(|s| font_size(&s));
                 let color = attrs.get("color").filter(|c| !c.is_empty());
                 self.push(name, |o| {
                     if let Some(scale) = size {
                         o.style.scale = scale;
                     }
                     if let Some(color) = color {
-                        o.style.color = Some(Arc::from(color));
+                        o.style.color = Some(Arc::from(&*color));
                     }
                 });
             }
@@ -461,7 +463,7 @@ impl<'a> Parser<'a> {
                         o.style.undecorated = false;
                         o.style.color = None;
                     }
-                    o.style.link = href.map(Arc::from);
+                    o.style.link = href.as_deref().map(Arc::from);
                 });
             }
             "br" if self.open.last().is_some_and(|o| o.empty) => {}
@@ -500,7 +502,7 @@ impl<'a> Parser<'a> {
                 let ctx = Ctx {
                     margin_top: 12.0,
                     margin_bottom: 12.0,
-                    align: attrs.get("align").and_then(align),
+                    align: attrs.get("align").as_deref().and_then(align),
                     ..Ctx::default()
                 };
                 self.open_box(name, ctx, |o| o.always = true);
@@ -519,7 +521,7 @@ impl<'a> Parser<'a> {
                 let ctx = Ctx {
                     margin_top,
                     margin_bottom,
-                    align: attrs.get("align").and_then(align),
+                    align: attrs.get("align").as_deref().and_then(align),
                     kind: Some(BlockKind::Heading(level)),
                     ..Ctx::default()
                 };
@@ -545,7 +547,7 @@ impl<'a> Parser<'a> {
             "ul" | "ol" => {
                 self.imply_end("p", &[]);
                 let depth = self.open.iter().filter(|o| o.list.is_some()).count();
-                let marker = list_marker(name == "ol", attrs.get("type"), depth);
+                let marker = list_marker(name == "ol", attrs.get("type").as_deref(), depth);
                 let ctx = Ctx {
                     margin_top: 12.0,
                     margin_bottom: 12.0,
@@ -609,7 +611,7 @@ impl<'a> Parser<'a> {
                     align: if name == "center" {
                         Some(HAlign::Center)
                     } else {
-                        attrs.get("align").and_then(align)
+                        attrs.get("align").as_deref().and_then(align)
                     },
                     ..Ctx::default()
                 };
@@ -662,6 +664,7 @@ impl<'a> Parser<'a> {
             background: background_of(attrs),
             width: attrs
                 .get("width")
+                .as_deref()
                 .map(str::trim)
                 .filter(|w| !w.is_empty())
                 .map(Arc::from),
@@ -729,7 +732,7 @@ impl<'a> Parser<'a> {
             alt: Arc::from(attrs.get("alt").unwrap_or_default()),
             width: size("width"),
             height: size("height"),
-            align: match attrs.get("align") {
+            align: match attrs.get("align").as_deref() {
                 Some("top") => BoxAlign::Top,
                 Some("middle") => BoxAlign::Middle,
                 _ => BoxAlign::Baseline,
@@ -752,7 +755,7 @@ impl<'a> Parser<'a> {
 /// the whole style says nothing.
 fn apply_style(open: &mut Open, css: &str) {
     let css = without_comments(css);
-    for (i, declaration) in css.split(';').enumerate() {
+    for (i, declaration) in css::declarations(&css).enumerate() {
         let declaration = declaration.trim();
         if declaration.is_empty() {
             continue;
@@ -806,11 +809,14 @@ fn apply_style(open: &mut Open, css: &str) {
                     style.in_points = value.trim().to_ascii_lowercase().ends_with("pt");
                 }
             }
+            // A list: the first family is the one the text names, the
+            // rest are tried after it for the face, as in Qt.
             "font-family" => {
-                let first = value.split(',').next().unwrap_or_default();
-                let family = first.trim().trim_matches(['\'', '"']).trim();
-                if !family.is_empty() {
-                    style.family = Some(Arc::from(family));
+                if let Some(mut names) = css::families(value) {
+                    let rest = names.split_off(1);
+                    style.family = names.pop().map(Arc::from);
+                    style.fallback_families = (!rest.is_empty())
+                        .then(|| Arc::new(rest.into_iter().map(Arc::from).collect()));
                 }
             }
             "text-decoration" => {
@@ -840,12 +846,13 @@ fn apply_style(open: &mut Open, css: &str) {
 fn background_of(attrs: &Attrs<'_>) -> Option<Arc<str>> {
     let mut out = attrs
         .get("bgcolor")
+        .as_deref()
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .map(Arc::from);
     if let Some(css) = attrs.get("style") {
-        let css = without_comments(css);
-        for declaration in css.split(';') {
+        let css = without_comments(&css);
+        for declaration in css::declarations(&css) {
             let Some((name, value)) = declaration.split_once(':') else {
                 continue;
             };
@@ -868,7 +875,7 @@ fn background_of(attrs: &Attrs<'_>) -> Option<Arc<str>> {
 /// With `background`, a colour behind the box too.
 fn apply_box_style(ctx: &mut Ctx, css: &str, background: bool) {
     let css = without_comments(css);
-    for declaration in css.split(';') {
+    for declaration in css::declarations(&css) {
         let Some((name, value)) = declaration.split_once(':') else {
             continue;
         };
@@ -953,7 +960,7 @@ fn css_pixels(value: &str) -> Option<f32> {
 }
 
 /// `css` without its `/* comments */`. One that never ends takes the rest.
-pub(super) fn without_comments(css: &str) -> std::borrow::Cow<'_, str> {
+pub(super) fn without_comments(css: &str) -> Cow<'_, str> {
     if !css.contains("/*") {
         return css.into();
     }
@@ -977,6 +984,35 @@ fn important(value: &str) -> &str {
         Some((before, word)) if word.trim().eq_ignore_ascii_case("important") => before.trim_end(),
         _ => value,
     }
+}
+
+/// `value` with each `&name;` that names a character read as it. Unlike in
+/// text, Qt 6.12 reads one in an attribute only with its semicolon.
+fn unescaped(value: &str) -> Cow<'_, str> {
+    if !value.contains('&') {
+        return Cow::Borrowed(value);
+    }
+    let mut out = String::with_capacity(value.len());
+    let mut rest = value;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 1..];
+        let named = after
+            .find(';')
+            .and_then(|end| Some((entity::decode(&after[..end])?, end)));
+        match named {
+            Some((c, end)) => {
+                out.push(c);
+                rest = &after[end + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    Cow::Owned(out)
 }
 
 /// Where a tag ends: at the first `>` outside a quoted attribute value.
@@ -1076,7 +1112,13 @@ fn list_marker(ordered: bool, kind: Option<&str>, depth: usize) -> Marker {
 struct Attrs<'a>(&'a str);
 
 impl<'a> Attrs<'a> {
-    fn get(&self, name: &str) -> Option<&'a str> {
+    /// The value of `name`, its character references read as Qt reads
+    /// them: what an editor escapes when it writes an attribute comes back.
+    fn get(&self, name: &str) -> Option<Cow<'a, str>> {
+        self.raw(name).map(unescaped)
+    }
+
+    fn raw(&self, name: &str) -> Option<&'a str> {
         let mut rest = self.0;
         loop {
             rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
