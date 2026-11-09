@@ -78,9 +78,12 @@ impl<'a> Act<'a> {
 
     /// Lets every animation the last change started run to its end, or
     /// for as long as the audit waits for one.
-    /// One frame that long after the last is enough: each animation steps
-    /// by the time that passed, and is at its end.
+    /// The change settles first, where it is made: a binding it makes stale
+    /// is evaluated in a frame, and a `Behavior` on what it binds starts
+    /// only then, at that time. One frame that long after is then enough:
+    /// each animation steps by the time that passed, and is at its end.
     pub(crate) fn finish(&mut self) {
+        self.settle();
         let wait = ljos_design::limits::audit::ANIMATION_WAIT_MS;
         self.now += Duration::from_millis(u64::from(wait));
         self.scene.frame(self.engine, self.now);
