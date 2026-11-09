@@ -22,11 +22,11 @@
 # not Liberation Mono and the text is 179.766 pixels wide, as in the
 # desktop's default font, not 180. One empty name is a list too:
 # setFamilies({""}) lists "" and equals setFamily(""), and is not
-# setFamilies({}), which lists none. A list of one plain name equals
-# setFamily of it. Where Qt reads a lone family as one name too, a
-# font.family in Ljós is read as a style sheet writes one, commas and quotes
-# and all, so a list of one name with a comma or quotes in it is not the
-# family of that text there.
+# setFamilies({}), which lists none. A lone family is one name as well:
+# setFamily("No Such Family Ljos, Liberation Mono") and setFamily of
+# "\"A\"" each list that one name and equal setFamilies of it, so a list of
+# one name, whatever it holds, is that family (font-substitution.feature
+# has how such a family is set).
 # Ljós gives QML the member QFont has; runs on Ljós only.
 # LjosSymbolsTest-Regular.ttf ("Ljos Symbols Test") has U+F8F0 at 600 units
 # of 1000, LjosAlternateTest-Regular.ttf ("Ljos Alternate Test") the same
@@ -312,3 +312,24 @@ Feature: A font's list of families
     And the property "madeQuotedMono" of "root" is false
     And the property "quotedName" of "root" is "\"Liberation Mono\""
     And the property "madeQuotedName" of "root" is "\"Liberation Mono\""
+
+  Scenario: A family written alone is one name, whatever characters it holds
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: comma; font.family: "No Such Family Ljos, Liberation Mono" }
+        Text { id: listed; font.families: ["No Such Family Ljos, Liberation Mono"] }
+        property string all: comma.font.families.join("|")
+        property int count: comma.font.families.length
+        property bool bound: comma.font === listed.font
+        property bool made: Qt.font({ family: "A, B" }) === Qt.font({ families: ["A, B"] })
+        property bool quoted: Qt.font({ family: "\"A\"" }) === Qt.font({ families: ["\"A\""] })
+      }
+      """
+    Then the property "all" of "root" is "No Such Family Ljos, Liberation Mono"
+    And the property "count" of "root" is 1
+    And the property "bound" of "root" is true
+    And the property "made" of "root" is true
+    And the property "quoted" of "root" is true

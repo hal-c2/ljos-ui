@@ -75,3 +75,59 @@ Feature: A font family that is not installed
     When 100 milliseconds pass
     Then the property "height" of "named" is 18
     And the property "baselineOffset" of "named" is 14.484375
+
+  # Qt 6.12 (qml6 and QFont, offscreen, Linux): a lone family is one name,
+  # whatever it holds. setFamily("No Such Family Ljos, Liberation Mono")
+  # reads back as written, lists that one name and equals setFamilies of it,
+  # and QFontInfo names the face fontconfig puts in place of the whole name,
+  # not Liberation Mono: here JetBrainsMono Nerd Font, 179.765625 pixels
+  # wide where Liberation Mono is 180, as for "No Such Family Ljos Liberation
+  # Mono" and "\"Liberation Mono\"" (fontconfig guesses a fixed-pitch face
+  # for a missing name holding "Mono"). Only font.families is a list.
+  @qt-parity
+  Scenario: A family with a comma in it is one family the system lacks
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text { id: comma; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "No Such Family Ljos, Liberation Mono" }
+        Text { id: quoted; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "\"Liberation Mono\"" }
+        Text { id: missing; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "No Such Family Ljos Liberation Mono" }
+        Text { id: mono; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "Liberation Mono" }
+        property bool commaMissing: comma.contentWidth === missing.contentWidth && comma.height === missing.height
+        property bool quotedMissing: quoted.contentWidth === missing.contentWidth && quoted.height === missing.height
+        property bool commaMono: comma.contentWidth === mono.contentWidth
+        property string written: comma.font.family
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "commaMissing" of "root" is true
+    And the property "quotedMissing" of "root" is true
+    And the property "commaMono" of "root" is false
+    And the property "written" of "root" is "No Such Family Ljos, Liberation Mono"
+
+  @qt-parity
+  Scenario: A font Qt.font makes names a family with a comma in it as one family
+    Given the application uses the fonts installed on the system
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        Text {
+          id: made; text: "Hamburgefonstiv"
+          font: Qt.font({ family: "No Such Family Ljos, Liberation Mono", pixelSize: 20 })
+        }
+        Text { id: missing; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "No Such Family Ljos Liberation Mono" }
+        Text { id: mono; text: "Hamburgefonstiv"; font.pixelSize: 20; font.family: "Liberation Mono" }
+        property bool madeMissing: made.contentWidth === missing.contentWidth && made.height === missing.height
+        property bool madeMono: made.contentWidth === mono.contentWidth
+        property string written: Qt.font({ family: "A, B" }).family
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "madeMissing" of "root" is true
+    And the property "madeMono" of "root" is false
+    And the property "written" of "root" is "A, B"

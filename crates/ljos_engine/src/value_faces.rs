@@ -634,14 +634,11 @@ pub(crate) const FACES: &str = r##"
     };
     // `FamilyList` (family_list.rs) as a font's two fields: the first
     // family, and the names after it as a JSON array when the font lists
-    // them, of any length, or "" when the first is one family text. Made
-    // only by these two, which give what is the same font one form, as
-    // `FamilyList::family` and `FamilyList::list` do.
-    // `names_only_itself` in ljos_runtime: no comma, no quote or space
-    // (Rust's `char::is_whitespace`) at either end, and not empty.
-    const edge = /[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000"']/;
-    const namesOnlyItself = (n) => n !== "" && !n.includes(",") && !edge.test(n[0]) && !edge.test(n[n.length - 1]);
-    const listed = (first, rest) => rest.length === 0 && namesOnlyItself(first)
+    // more than its first or one empty name, or "" when the first is the
+    // one family. Made only by these two, which give what is the same font
+    // one form, as `FamilyList::family` and `FamilyList::list` do: a name
+    // alone is that family whatever it holds, as in Qt.
+    const listed = (first, rest) => rest.length === 0 && first !== ""
       ? [first, ""] : [first, JSON.stringify(rest)];
     const ofFamily = (text) => (text === "" ? listed("", []) : [text, ""]);
     const ofList = (names) => (names.length === 0 ? ["", ""] : listed(names[0], names.slice(1)));
