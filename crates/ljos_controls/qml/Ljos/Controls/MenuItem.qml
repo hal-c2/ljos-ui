@@ -53,9 +53,14 @@ T.MenuItem {
             implicitWidth: gutter + label.implicitWidth + end
             implicitHeight: Math.max(label.implicitHeight, Theme.iconSize)
 
+            // Mirroring moves anchors only: the icon's column is at the
+            // start of the row, and the shortcut, the check's room and the
+            // chevron at its end, on either side.
             Icon {
                 id: glyph
+                objectName: "glyph"
                 visible: control.iconName.length > 0
+                x: control.mirrored ? parent.width - width : 0
                 y: (parent.height - height) / 2
                 name: control.iconName
                 color: control.destructive ? Theme.errorForeground : Theme.textMuted
@@ -63,7 +68,8 @@ T.MenuItem {
 
             Text {
                 id: label
-                x: parent.gutter
+                objectName: "label"
+                x: control.mirrored ? parent.end : parent.gutter
                 width: parent.width - parent.gutter - parent.end
                 height: parent.height
                 text: control.text
@@ -71,13 +77,15 @@ T.MenuItem {
                 color: control.ink
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: control.mirrored ? Text.AlignRight : Text.AlignLeft
             }
 
             Text {
                 id: keys
                 objectName: "keys"
                 visible: control.shortcut.length > 0 && control.subMenu === null
-                x: parent.width - width - (control.checkable ? Theme.iconSize + control.spacing : 0)
+                readonly property real checkSpace: control.checkable ? Theme.iconSize + control.spacing : 0
+                x: control.mirrored ? checkSpace : parent.width - width - checkSpace
                 height: parent.height
                 text: control.shortcut
                 font.family: control.font.family
@@ -89,7 +97,7 @@ T.MenuItem {
             Icon {
                 id: more
                 visible: control.subMenu !== null
-                x: parent.width - width
+                x: control.mirrored ? 0 : parent.width - width
                 y: (parent.height - height) / 2
                 name: control.mirrored ? "chevron-left" : "chevron-right"
                 size: Theme.iconSizeSmall
