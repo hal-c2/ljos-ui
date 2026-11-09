@@ -331,13 +331,27 @@ pub(crate) fn scene_rect(engine: &Engine, item: ObjectId) -> Option<Rect> {
     if !(w.is_finite() && h.is_finite()) {
         return None;
     }
-    let corners = [(0.0, 0.0), (w, 0.0), (0.0, h), (w, h)]
-        .map(|(x, y)| ljos_quick::map_to_scene(engine, item, Point::new(x, y)));
-    let mut r = Rect::from_points(corners[0], corners[3]);
-    for c in corners {
-        r = r.union_pt(c);
-    }
-    Some(r)
+    Some(scene_box(engine, item, Rect::new(0.0, 0.0, w, h)))
+}
+
+/// The box in the scene around a rect in an item's own coordinates, as
+/// the item and everything it is in are drawn: moved, scaled, rotated.
+/// Lengths an item reads off itself (its padding, how far it scrolls,
+/// what its text needs) are in its own coordinates, and only mean scene
+/// pixels once mapped here.
+pub(crate) fn scene_box(engine: &Engine, item: ObjectId, local: Rect) -> Rect {
+    let corners = [
+        (local.x0, local.y0),
+        (local.x1, local.y0),
+        (local.x0, local.y1),
+        (local.x1, local.y1),
+    ]
+    .map(|(x, y)| ljos_quick::map_to_scene(engine, item, Point::new(x, y)));
+    corners[1..]
+        .iter()
+        .fold(Rect::from_points(corners[0], corners[0]), |r, c| {
+            r.union_pt(*c)
+        })
 }
 
 /// Whether nothing of the item is on screen: it lies wholly outside the
