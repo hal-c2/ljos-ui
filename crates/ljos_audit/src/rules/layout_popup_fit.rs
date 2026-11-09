@@ -14,17 +14,21 @@
 //! Out of reach is read from the scene as it is laid out, not worked out
 //! again here: layouts, anchors, loaders and positioners have already put
 //! every item where it is. What the popup holds is in reach when the
-//! popup shows it, inside its padding and what clips it, or when a
-//! scroller around it can bring it there: one the pointer, the wheel or
-//! a scroll bar moves along that axis, as far as its content goes.
+//! popup shows it, inside its padding (a dialog's header and footer
+//! anywhere in its box) and what clips it, or when a scroller around it
+//! can bring it there: one the pointer, the wheel or a scroll bar moves
+//! along that axis, as far as its content goes. All of it is measured in
+//! the scene, as it is drawn there, scaled and rotated.
 
-use ljos_controls::{Drawer, ToolTip, item_popup, scrolled_by_bar};
+use ljos_controls::{Dialog, Drawer, ToolTip, item_popup, scrolled_by_bar};
 use ljos_design::limits::POPUP_MIN_FILL;
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::{Text, TextEdit, TextInput, child_items, flickable};
-use ljos_render::kurbo::{Point, Rect};
+use ljos_render::kurbo::Rect;
 
-use crate::cx::{Cx, is_a, number, overhang, overhang_words, scene_rect, shown_items, slack, trim};
+use crate::cx::{
+    Cx, is_a, number, overhang, overhang_words, scene_box, scene_rect, shown_items, slack, trim,
+};
 
 /// Where along an axis something can be seen, in the scene: from the
 /// first to the second. Nowhere when the first is past the second.
@@ -48,21 +52,28 @@ fn spans(r: Rect) -> [Span; 2] {
 /// a shown item drawn past what reaches it along some axis.
 fn out_of_reach(cx: &Cx, popup: ObjectId, frame: ObjectId, content: ObjectId) -> Option<ObjectId> {
     let engine = cx.engine;
-    // What the popup shows of its content: its box inside its padding,
-    // mapped as the popup is drawn, scaled and all.
     let (w, h) = (
         number(engine, popup, "width"),
         number(engine, popup, "height"),
     );
     let pad = |name| number(engine, popup, name).max(0.0);
-    let corners = [
-        Point::new(pad("leftPadding"), pad("topPadding")),
-        Point::new(w - pad("rightPadding"), h - pad("bottomPadding")),
-    ]
-    .map(|p| ljos_quick::map_to_scene(engine, frame, p));
-    let shows = spans(Rect::from_points(corners[0], corners[1]));
-    let mut budget = crate::cx::DEPTH;
+    // The content is shown inside the padding; a dialog's header and
+    // footer run across the whole of its box, outside the padding.
+    let inside = Rect::new(
+        pad("leftPadding"),
+        pad("topPadding"),
+        w - pad("rightPadding"),
+        h - pad("bottomPadding"),
+    );
+    let shows = spans(scene_box(engine, frame, inside));
+    let whole = spans(scene_box(engine, frame, Rect::new(0.0, 0.0, w, h)));
     let mut stack = vec![(content, shows)];
+    stack.extend(
+        header_and_footer(engine, popup)
+            .into_iter()
+            .map(|bar| (bar, whole)),
+    );
+    let mut budget = crate::cx::DEPTH;
     while let Some((o, reach)) = stack.pop() {
         budget = budget.checked_sub(1)?;
         if !shown(engine, o) || cx.scene.is_culled(o) {
@@ -71,7 +82,7 @@ fn out_of_reach(cx: &Cx, popup: ObjectId, frame: ObjectId, content: ObjectId) ->
         let Some(rect) = scene_rect(engine, o) else {
             continue;
         };
-        if let Some(drawn) = drawn(engine, o, rect)
+        if let Some(drawn) = drawn(engine, o)
             && (0..2).any(|axis| {
                 drawn[axis][0] < reach[axis][0] - slack()
                     || drawn[axis][1] > reach[axis][1] + slack()
@@ -92,7 +103,7 @@ fn out_of_reach(cx: &Cx, popup: ObjectId, frame: ObjectId, content: ObjectId) ->
 /// alone. A line of input scrolls itself to its cursor, so it draws in
 /// its box. `None` for an item that neither has nor needs a length on
 /// some axis: it draws nothing, and what it holds is measured on its own.
-fn drawn(engine: &Engine, o: ObjectId, rect: Rect) -> Option<[Span; 2]> {
+fn drawn(engine: &Engine, o: ObjectId) -> Option<[Span; 2]> {
     let size = [number(engine, o, "width"), number(engine, o, "height")];
     let n = |name| number(engine, o, name);
     let needs = if is_a::<Text>(engine, o) || is_a::<TextEdit>(engine, o) {
@@ -107,22 +118,12 @@ fn drawn(engine: &Engine, o: ObjectId, rect: Rect) -> Option<[Span; 2]> {
     } else {
         [n("implicitWidth"), n("implicitHeight")]
     };
-    let mut out = spans(rect);
-    for (axis, span) in out.iter_mut().enumerate() {
-        let length = size[axis].max(needs[axis]);
-        if length.is_nan() || length <= 0.0 {
-            return None;
-        }
-        // In the scene's pixels, as the item is drawn there.
-        let shown_as = span[1] - span[0];
-        let scale = if size[axis] > 0.0 && shown_as > 0.0 {
-            shown_as / size[axis]
-        } else {
-            1.0
-        };
-        span[1] = span[1].max(span[0] + length * scale);
+    let length = [0, 1].map(|axis| size[axis].max(needs[axis]));
+    if length.iter().any(|l| l.is_nan() || *l <= 0.0) {
+        return None;
     }
-    Some(out)
+    let local = Rect::new(0.0, 0.0, length[0], length[1]);
+    Some(spans(scene_box(engine, o, local)))
 }
 
 /// Where what is inside `o` can be seen, given where `o` itself can: no
@@ -133,25 +134,44 @@ fn reach_inside(engine: &Engine, o: ObjectId, rect: Rect, reach: [Span; 2]) -> [
         .untrack(|| engine.read_by_name(o, "clip"))
         .to_boolean();
     let own = spans(rect);
-    let scroller = flickable::is_flickable(engine, o);
+    // Its box, grown by as much as a scroller has left to scroll before
+    // and after where it is now along each axis it scrolls, in its own
+    // coordinates; mapped, how much further that brings its content into
+    // view in the scene's.
+    let mut moves = Rect::new(
+        0.0,
+        0.0,
+        number(engine, o, "width"),
+        number(engine, o, "height"),
+    );
+    if flickable::is_flickable(engine, o) {
+        for horizontal in [true, false] {
+            if !scrolls(engine, o, horizontal) {
+                continue;
+            }
+            let at = engine.untrack(|| flickable::axis_state(engine, o, horizontal));
+            let (before, after) = (
+                (at.position - at.min).max(0.0),
+                (at.max - at.position).max(0.0),
+            );
+            if horizontal {
+                (moves.x0, moves.x1) = (moves.x0 - before, moves.x1 + after);
+            } else {
+                (moves.y0, moves.y1) = (moves.y0 - before, moves.y1 + after);
+            }
+        }
+    }
+    let brought = spans(scene_box(engine, o, moves));
     let mut out = reach;
     for (axis, span) in out.iter_mut().enumerate() {
-        let horizontal = axis == 0;
         let seen = meet(reach[axis], own[axis]);
-        let along = if scroller && scrolls(engine, o, horizontal) {
-            if seen[0] > seen[1] {
-                NOWHERE
-            } else {
-                // The content moves by as much as the scroller has left to
-                // scroll before and after where it is now.
-                let at = engine.untrack(|| flickable::axis_state(engine, o, horizontal));
-                [
-                    seen[0] - (at.position - at.min),
-                    seen[1] + (at.max - at.position),
-                ]
-            }
+        let along = if seen[0] > seen[1] {
+            NOWHERE
         } else {
-            seen
+            [
+                seen[0] - (own[axis][0] - brought[axis][0]).max(0.0),
+                seen[1] + (brought[axis][1] - own[axis][1]).max(0.0),
+            ]
         };
         *span = if clips {
             along
@@ -167,6 +187,19 @@ fn reach_inside(engine: &Engine, o: ObjectId, rect: Rect, reach: [Span; 2]) -> [
 /// whether attached to it or to the view it is the content of.
 fn scrolls(engine: &Engine, f: ObjectId, horizontal: bool) -> bool {
     flickable::can_scroll(engine, f, horizontal) || scrolled_by_bar(engine, f, horizontal)
+}
+
+/// A dialog's header and footer, which count toward its implicit size as
+/// its content does.
+fn header_and_footer(engine: &Engine, popup: ObjectId) -> Vec<ObjectId> {
+    if !is_a::<Dialog>(engine, popup) {
+        return Vec::new();
+    }
+    [Dialog::HEADER.index, Dialog::FOOTER.index]
+        .into_iter()
+        .filter_map(|p| engine.untrack(|| engine.read(popup, p)).as_object())
+        .filter(|o| engine.is_alive(*o))
+        .collect()
 }
 
 fn shown(engine: &Engine, o: ObjectId) -> bool {
