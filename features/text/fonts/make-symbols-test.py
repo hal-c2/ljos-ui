@@ -16,6 +16,11 @@ font whose tracking a shaper applies, as San Francisco has): 100 units of
 1000 more between characters at 12 points, 100 fewer at 24, interpolated
 between.
 
+Also writes LjosEvenTest-Regular.ttf, the same characters in family "Ljos
+Even Test" at 600 and 601 units: a monospace face with one character a unit
+off, as some hand-tuned and patched monospace fonts have. fontconfig still
+calls it monospace, and Qt fixed-pitch.
+
 Run it from this directory: `python3 make-symbols-test.py`. Only the standard
 library is used, so the file can be made again anywhere.
 """
@@ -127,7 +132,7 @@ def cmap_table():
     return header + f4 + f12
 
 
-def build(family, advance=None, tracked=False) -> bytes:
+def build(family, advance=None, tracked=False, advances=None) -> bytes:
     glyf = b""
     loca = [0]
     outlines = [None] + [g[2] for g in GLYPHS]
@@ -135,7 +140,7 @@ def build(family, advance=None, tracked=False) -> bytes:
         if points:
             glyf += glyph(points)
         loca.append(len(glyf))
-    advances = [NOTDEF_ADVANCE] + [advance or g[1] for g in GLYPHS]
+    advances = [NOTDEF_ADVANCE] + (advances or [advance or g[1] for g in GLYPHS])
     all_points = [p for g in GLYPHS for p in g[2]]
     x_min = min(p[0] for p in all_points)
     x_max = max(p[0] for p in all_points)
@@ -198,3 +203,5 @@ if __name__ == "__main__":
         f.write(build("Ljos Alternate Test", advance=500))
     with open("LjosTrackTest-Regular.ttf", "wb") as f:
         f.write(build("Ljos Track Test", tracked=True))
+    with open("LjosEvenTest-Regular.ttf", "wb") as f:
+        f.write(build("Ljos Even Test", advances=[600, 601]))

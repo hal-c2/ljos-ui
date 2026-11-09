@@ -11,7 +11,10 @@
 # Ljos Alternate Test and Liberation Mono and none for the others), which
 # is what Qt reports; Noto Sans Mono, whose characters are of three widths,
 # is not fixed-pitch there either, and JetBrains Mono's Nerd Font, whose
-# `post` table does not say so, is. Qt's QML has no systemFont: the family
+# `post` table does not say so, is. "As far" allows what fontconfig allows:
+# within a 33rd of the larger of a character's advance and the first
+# character's, so Ljos Even Test, at 600 and 601 units, is fixed-pitch
+# (spacing 100), and a face at 600 and 619 is not. Qt's QML has no systemFont: the family
 # "monospace" resolves to the face the system names fixed-pitch
 # (`fc-match monospace`), and FontInfo tells which it is.
 # The weight and italics are those the font asks for, as in Qt, where a
@@ -46,6 +49,20 @@ Feature: What a font resolves to
     And the property "family" of "one" is "Ljos Alternate Test"
     And the property "fixedPitch" of "two" is false
     And the property "family" of "two" is "Ljos Symbols Test"
+
+  Scenario: A face with one character a unit wider than the rest is fixed-pitch
+    Given the font file "LjosEvenTest-Regular.ttf"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        FontLoader { source: "LjosEvenTest-Regular.ttf" }
+        FontInfo { objectName: "even"; font.family: "Ljos Even Test" }
+      }
+      """
+    When 100 milliseconds pass
+    Then the property "fixedPitch" of "even" is true
+    And the property "family" of "even" is "Ljos Even Test"
 
   Scenario: A font registered later is the face its family resolves to from then on
     Given the font file "LjosAlternateTest-Regular.ttf"
