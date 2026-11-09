@@ -171,10 +171,14 @@ module Ljos.Controls
 		prop disabledRows QtQml.var named
 		prop markCurrent QtQml.bool named
 		prop iconName QtQml.string named
+		prop startSpace QtQml.real named readonly
+		prop endSpace QtQml.real named readonly
 		signal outlineChanged
 		signal disabledRowsChanged
 		signal markCurrentChanged
 		signal iconNameChanged
+		signal startSpaceChanged
+		signal endSpaceChanged
 	type Ljos/Controls/Icon.qml Icon
 		prototype QtQuick.Item named
 		prop name QtQml.string named

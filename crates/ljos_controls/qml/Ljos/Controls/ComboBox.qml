@@ -1,7 +1,8 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a select. Without a frame by
 // default, as a picker in a toolbar is; `outline` gives it a field's edge.
 // Its rows are on the overlay surface, the current one checked, and the
-// list opens upward where the window has no room below.
+// list opens upward where the window has no room below. An `editable` one
+// is a field, framed as `outline` gives, with a text field's edit menu.
 import QtQuick
 import QtQuick.Effects
 import QtQuick.Templates as T
@@ -22,9 +23,13 @@ T.ComboBox {
                              Math.max(implicitContentHeight, implicitIndicatorHeight)
                              + topPadding + bottomPadding)
 
+    // The icon's room is at the start and the chevron's at the end, which
+    // mirroring swaps.
+    readonly property real startSpace: Theme.spacing + (iconName.length > 0 ? Theme.iconSize + Theme.spacing : 0)
+    readonly property real endSpace: Theme.spacing + Theme.iconSizeSmall + Theme.spacingSmall
     padding: 0
-    leftPadding: Theme.spacing + (iconName.length > 0 ? Theme.iconSize + Theme.spacing : 0)
-    rightPadding: Theme.spacing + Theme.iconSizeSmall + Theme.spacingSmall
+    leftPadding: mirrored ? endSpace : startSpace
+    rightPadding: mirrored ? startSpace : endSpace
     hoverEnabled: true
     font.pixelSize: Theme.fontSize
     font.weight: Font.Medium
@@ -54,6 +59,8 @@ T.ComboBox {
 
                 Text {
                     id: label
+                    objectName: "rowLabel"
+                    x: control.mirrored ? Theme.spacing + Theme.iconSize : 0
                     width: parent.width - Theme.spacing - Theme.iconSize
                     height: parent.height
                     text: row.text
@@ -61,10 +68,12 @@ T.ComboBox {
                     color: Theme.text
                     elide: Text.ElideRight
                     verticalAlignment: Text.AlignVCenter
+                    horizontalAlignment: control.mirrored ? Text.AlignRight : Text.AlignLeft
                 }
 
                 Icon {
-                    x: parent.width - width
+                    objectName: "check"
+                    x: control.mirrored ? 0 : parent.width - width
                     y: (parent.height - height) / 2
                     visible: row.chosen
                     name: "check"
@@ -91,14 +100,41 @@ T.ComboBox {
         }
     }
 
+    // A field, as every style's combo box has, so an editable one is typed
+    // in with the field's keys, validator and edit menu (the style's own
+    // TextField gives the style's own menu). One that is not editable shows
+    // its row in a label instead, which can be cut short where it does not
+    // fit, as a field's text cannot.
     contentItem: Component {
-        Item {
+        TextField {
+            id: field
             implicitWidth: label.implicitWidth
             implicitHeight: label.implicitHeight
+            padding: 0
+            background: null
+            // The combo box is dimmed when it is disabled; the field is
+            // disabled whenever the combo box is not editable.
+            opacity: 1
+
+            text: control.editable ? control.editText : ""
+            enabled: control.editable
+            autoScroll: control.editable
+            // The keys move through the rows while the popup is open.
+            readOnly: control.down
+            inputMethodHints: control.inputMethodHints
+            validator: control.validator
+            selectByMouse: control.selectTextByMouse
+            font: control.font
+            horizontalAlignment: control.mirrored ? TextInput.AlignRight : TextInput.AlignLeft
+
+            // The combo box speaks for its text.
+            Accessible.ignored: !control.editable
+            Accessible.name: control.Accessible.name
 
             Icon {
+                objectName: "glyph"
                 visible: control.iconName.length > 0
-                x: -(Theme.iconSize + Theme.spacing)
+                x: control.mirrored ? parent.width + Theme.spacing : -(Theme.iconSize + Theme.spacing)
                 y: (parent.height - height) / 2
                 name: control.iconName
                 color: Theme.textMuted
@@ -106,6 +142,8 @@ T.ComboBox {
 
             Text {
                 id: label
+                objectName: "label"
+                visible: !control.editable
                 width: parent.width
                 height: parent.height
                 text: control.displayText
@@ -113,6 +151,7 @@ T.ComboBox {
                 color: Theme.text
                 elide: Text.ElideRight
                 verticalAlignment: Text.AlignVCenter
+                horizontalAlignment: control.mirrored ? Text.AlignRight : Text.AlignLeft
             }
         }
     }
@@ -122,10 +161,14 @@ T.ComboBox {
             implicitWidth: 120
             implicitHeight: Theme.controlHeight
             radius: Theme.radius
+            // A field has the keyboard however it got it, so an editable one
+            // shows it whenever it has it, as a text field does.
+            readonly property bool ring: control.visualFocus || control.editable && control.activeFocus
+            readonly property bool framed: control.outline || control.editable
             color: control.down || control.hovered || control.popup.visible ? Theme.accentSurface
-                 : control.outline ? Theme.surfaceRaised : "transparent"
-            border.width: control.visualFocus ? 2 : control.outline ? 1 : 0
-            border.color: control.visualFocus ? Theme.focus : Theme.input
+                 : framed ? Theme.surfaceRaised : "transparent"
+            border.width: ring ? 2 : framed ? 1 : 0
+            border.color: ring ? Theme.focus : Theme.input
         }
     }
 
