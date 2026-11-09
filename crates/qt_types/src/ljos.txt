@@ -301,6 +301,7 @@ module Ljos.Controls
 		method luminance
 		method contrast
 		method reach
+		method lift
 		method shade
 		method on
 	type Ljos/Controls/ToolTip.qml ToolTip

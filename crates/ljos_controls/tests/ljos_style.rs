@@ -77,6 +77,9 @@ fn the_theme_derives_what_rust_derives() {
         ("#1e1e2e", "#e6e6f0", "#7c3aed"),
         ("#fafaf7", "#1b1b18", "#c2410c"),
         ("#0b0d10", "#f2f4f8", "#22c55e"),
+        // A text only just legible on its ground, which holds the fills back.
+        ("#ffffff", "#767676", "#888888"),
+        ("#000000", "#757575", "#888888"),
     ];
     for (ground, text, accent) in bases {
         let props: String = roles::NAMES

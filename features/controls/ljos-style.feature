@@ -207,6 +207,41 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         | destructive | pressed | the user presses the pointer at 30, 24               |
         | destructive | checked | the property "checked" of "b" is set to true         |
 
+    # #767676 is 4.54:1 on white and #757575 4.56:1 on black: a fill lifted its
+    # whole way toward such a text would take it, and the muted text and the
+    # placeholder reached toward it, under 4.5:1.
+    Scenario Outline: A text only just legible on <canvas> keeps it, and its muted text and placeholder, on every fill
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          Component.onCompleted: {
+            Theme.canvas = "<canvas>"
+            Theme.text = "<text>"
+            Theme.accent = "<accent>"
+          }
+          function least(c) {
+            return Math.min(Theme.contrast(c, Theme.canvas), Theme.contrast(c, Theme.surface),
+                            Theme.contrast(c, Theme.surfaceRaised), Theme.contrast(c, Theme.surfaceOverlay),
+                            Theme.contrast(c, Theme.accentSurface))
+          }
+          readonly property real text: least(Theme.text)
+          readonly property real muted: least(Theme.textMuted)
+          readonly property real placeholder: Theme.contrast(Theme.placeholder, Theme.surfaceRaised)
+        }
+        """
+      Then the property "text" of "root" is at least 4.5
+      And the property "muted" of "root" is at least 4.5
+      And the property "placeholder" of "root" is at least 4.5
+
+      Examples:
+        | canvas  | text    | accent  |
+        | #ffffff | #767676 | #888888 |
+        | #000000 | #757575 | #888888 |
+        | #ffffff | #767676 | #0066cc |
+
     Scenario Outline: A link is 4.5:1 on every ground, on <canvas> with <accent>
       Given the QML:
         """qml

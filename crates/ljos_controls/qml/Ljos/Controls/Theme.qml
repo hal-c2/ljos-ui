@@ -18,12 +18,13 @@ QtObject {
     property color accent: Colors.accent
 
     // Lifted toward the text: a little for a pane, more for a field or a
-    // button, most for a menu.
-    property color surface: mix(canvas, text, 0.04)
-    property color surfaceRaised: mix(canvas, text, 0.07)
-    property color surfaceOverlay: mix(canvas, text, 0.10)
+    // button, most for a menu; each only as far as the text stays legible
+    // on it (lift). Nothing is read on a border.
+    property color surface: lift(canvas, text, 0.04)
+    property color surfaceRaised: lift(canvas, text, 0.07)
+    property color surfaceOverlay: lift(canvas, text, 0.10)
     property color border: mix(canvas, text, 0.16)
-    property color accentSurface: mix(surfaceOverlay, accent, 0.18)
+    property color accentSurface: lift(surfaceOverlay, accent, 0.18)
 
     // What is read, made legible on the fills it is drawn on. A highlighted
     // row is a fill too; a label or a pane is only ever on a ground.
@@ -101,6 +102,16 @@ QtObject {
                 return c
         }
         return to
+    }
+
+    // `from` moved `t` of the way toward `toward`, but only as far as the
+    // text keeps 4.5:1 on it; the whole way where the text has no 4.5:1 on
+    // `from` to keep.
+    function lift(from: color, toward: color, t: real): color {
+        const full = mix(from, toward, t)
+        if (contrast(text, from) < 4.5)
+            return full
+        return reach(full, from, [text], 4.5)
     }
 
     // `fill` moved `t` of the way away from `ink`.
