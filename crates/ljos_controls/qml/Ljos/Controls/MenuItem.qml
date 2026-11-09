@@ -2,6 +2,7 @@
 // optional icon, the shortcut that runs it muted at the end, and a
 // chevron where it opens a submenu.
 import QtQuick
+import QtQuick.Controls.impl
 import QtQuick.Templates as T
 
 T.MenuItem {
@@ -66,18 +67,23 @@ T.MenuItem {
                 color: control.destructive ? Theme.errorForeground : Theme.textMuted
             }
 
-            Text {
+            // The text as its mnemonic says, a submenu's title too; the
+            // keys read `control.text` as written. Its own icon is none:
+            // the one in the icons' column is drawn beside it.
+            IconLabel {
                 id: label
                 objectName: "label"
                 x: control.mirrored ? parent.end : parent.gutter
                 width: parent.width - parent.gutter - parent.end
                 height: parent.height
+                icon.name: ""
+                icon.source: ""
                 text: control.text
                 font: control.font
                 color: control.ink
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignVCenter
-                horizontalAlignment: control.mirrored ? Text.AlignRight : Text.AlignLeft
+                mirrored: control.mirrored
+                // Left is the start: a mirrored label sets it at the right.
+                alignment: Qt.AlignLeft | Qt.AlignVCenter
             }
 
             Text {

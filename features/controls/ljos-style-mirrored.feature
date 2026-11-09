@@ -90,7 +90,10 @@ Feature: Ljós's own style, mirrored
       And the property "x" of "glyph" is 180
       And the property "x" of "keys" is 24
       And the property "x" of "label" is at least 60
-      And the property "horizontalAlignment" of "label" is 2
+      # At its start (Qt.AlignLeft | Qt.AlignVCenter): a mirrored label
+      # sets its start at the right.
+      And the property "mirrored" of "label" is true
+      And the property "alignment" of "label" is 129
 
     Scenario: A row that is not mirrored has its icon at the left and its shortcut before the check
       Given the QML:
@@ -111,7 +114,9 @@ Feature: Ljós's own style, mirrored
       Then the property "indicator.x" of "wrap" is 188
       And the property "x" of "glyph" is 0
       And the property "x" of "label" is 24
-      And the property "horizontalAlignment" of "label" is 1
+      # At its start (Qt.AlignLeft | Qt.AlignVCenter), the left.
+      And the property "mirrored" of "label" is false
+      And the property "alignment" of "label" is 129
 
     # A menu's delegate is used for its submenus' rows too, so a checked
     # delegate has a check and a chevron in the same row.
@@ -163,7 +168,10 @@ Feature: Ljós's own style, mirrored
       And the property "x" of "more" is 0
       And the property "x" of "label" is 20
       And the property "width" of "label" is 60
-      And the property "horizontalAlignment" of "label" is 2
+      # At its start (Qt.AlignLeft | Qt.AlignVCenter): a mirrored label
+      # sets its start at the right.
+      And the property "mirrored" of "label" is true
+      And the property "alignment" of "label" is 129
 
     Scenario Outline: A mirrored <control>'s label is set against its indicator at the right
       Given the QML:
