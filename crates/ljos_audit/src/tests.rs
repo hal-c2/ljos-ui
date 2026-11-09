@@ -1927,10 +1927,27 @@ fn a_toggle_that_changes_nothing_is_measured_in_pixels() {
     );
 }
 
-/// Steps through the item tree `focus-indicator-missing` takes over a
-/// list of `rows` delegates whose MouseArea takes focus and draws
-/// nothing, and how many of them it reports.
-fn steps_over_rows(rows: usize) -> (usize, usize) {
+/// A row of the lists the cost tests build: what the stop that draws
+/// nothing is, in a delegate 20 high with a grey fill.
+const ROW_STOP: &str = r##"MouseArea {
+                    anchors.fill: parent
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Row " + index
+                }"##;
+
+/// A checkable button whose look does not change with its state.
+const ROW_TOGGLE: &str = r##"AbstractButton {
+                    anchors.fill: parent
+                    checkable: true
+                    text: "Row " + index
+                    background: Rectangle { color: "#c0c0c0" }
+                }"##;
+
+/// Steps through the item tree `rule` takes over a list of `rows`
+/// delegates, each holding `row` over a grey fill, and how many of them
+/// it reports.
+fn steps_over_rows(rule: &str, row: &str, rows: usize) -> (usize, usize) {
     let height = rows * 20;
     let source = format!(
         r##"import QtQuick
@@ -1944,12 +1961,7 @@ Rectangle {{
             Item {{
                 width: 240; height: 20
                 Rectangle {{ anchors.fill: parent; color: "#e0e0e0" }}
-                MouseArea {{
-                    anchors.fill: parent
-                    activeFocusOnTab: true
-                    Accessible.role: Accessible.Button
-                    Accessible.name: "Row " + index
-                }}
+                {row}
             }}
         }}
     }}
@@ -1961,9 +1973,7 @@ Rectangle {{
     let mut s = QuickScene::new(kurbo::Size::new(300.0, height as f64));
     s.set_root(&e, root).unwrap();
     s.frame(&e, Time::ZERO);
-    let options = Options::desktop()
-        .only(&["focus-indicator-missing"])
-        .unwrap();
+    let options = Options::desktop().only(&[rule]).unwrap();
     crate::cx::STEPS.with(|c| c.set(0));
     let report = audit(&e, &mut s, Time::ZERO, &options);
     (
@@ -1979,9 +1989,26 @@ Rectangle {{
 fn whether_a_stop_shows_costs_the_same_per_row() {
     // Both under the most stops the check acts on, so twice the rows is
     // twice the stops it asks about.
-    let (small, found) = steps_over_rows(32);
+    let (small, found) = steps_over_rows("focus-indicator-missing", ROW_STOP, 32);
     assert_eq!(found, 32);
-    let (large, found) = steps_over_rows(64);
+    let (large, found) = steps_over_rows("focus-indicator-missing", ROW_STOP, 64);
+    assert_eq!(found, 64);
+    eprintln!("steps: 32 rows {small}, 64 rows {large}");
+    assert!(
+        large * 2 <= small * 5,
+        "32 rows take {small} steps, 64 take {large}: more than linear"
+    );
+}
+
+/// Where the parts of a toggle are, before it is flipped and after, is
+/// asked of the toggle's own items, not of the whole tree once per
+/// toggle: twice the rows, about twice the steps.
+#[test]
+fn where_a_toggle_s_parts_are_costs_the_same_per_row() {
+    // Both under the most buttons the check flips.
+    let (small, found) = steps_over_rows("color-state-only", ROW_TOGGLE, 32);
+    assert_eq!(found, 32);
+    let (large, found) = steps_over_rows("color-state-only", ROW_TOGGLE, 64);
     assert_eq!(found, 64);
     eprintln!("steps: 32 rows {small}, 64 rows {large}");
     assert!(

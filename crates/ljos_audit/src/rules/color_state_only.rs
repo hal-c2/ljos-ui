@@ -31,9 +31,7 @@ use ljos_render::kurbo::Rect;
 
 use super::controls::{checked, hold_checked, restore_checked, set_checked};
 use crate::acting::Act;
-use crate::cx::{
-    declared_by_app, is_a, scene_rect, shown_items, shown_opacity, takes_focus, within,
-};
+use crate::cx::{declared_by_app, is_a, scene_rect, shown_inside, shown_opacity, takes_focus};
 use crate::pixels::{DrawOrder, Painter, Picture, backdrop, shows};
 
 /// No audit flips more than this many buttons: a long list of check
@@ -44,12 +42,14 @@ const MOST: usize = 64;
 /// shape: under that, a rounding of the layout.
 const MOVED_PX: f64 = 1.0;
 
-/// Where every part of `b` that shows is, in the scene.
+/// Where every part of `b` that shows is, in the scene. Asked of `b`'s
+/// own items, before the flip and after it, so what a flip shows or hides
+/// is seen, without a walk of the whole scene for each button.
 fn places(act: &Act, b: ObjectId) -> Vec<(ObjectId, Rect)> {
     let e = act.engine;
-    shown_items(&act.cx())
+    shown_inside(&act.cx(), b)
         .into_iter()
-        .filter(|i| *i != b && within(e, *i, b) && shown_opacity(e, *i) > 0.0)
+        .filter(|i| *i != b && shown_opacity(e, *i) > 0.0)
         .filter_map(|i| scene_rect(e, i).map(|r| (i, r)))
         .collect()
 }

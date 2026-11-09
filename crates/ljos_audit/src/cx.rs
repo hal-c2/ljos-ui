@@ -8,6 +8,7 @@ use std::rc::Rc;
 use ljos_a11y::{NodeData, NodeKey, Role, role_word};
 use ljos_engine::{Engine, MetaRef, ObjectId, QmlType};
 use ljos_quick::{Accessible, AccessibleAttached, Item, QuickScene, Text};
+use ljos_render::NodeId;
 use ljos_render::kurbo::{Point, Rect};
 
 use crate::Options;
@@ -284,6 +285,62 @@ pub(crate) fn shown_items(cx: &Cx) -> Vec<ObjectId> {
         stack.extend(node.children().iter().rev().copied());
     }
     out
+}
+
+/// The items [`shown_items`] lists that are `outer` or [`within`] it,
+/// found from `outer`'s own items rather than by a walk of the whole
+/// tree: a check that asks it of every button of a long list asks each
+/// only of that button's parts. In no particular order.
+pub(crate) fn shown_inside(cx: &Cx, outer: ObjectId) -> Vec<ObjectId> {
+    let tree = cx.scene.render_tree();
+    let root = tree.root();
+    // Whether the walk down from the root reaches a node: it and every
+    // node above it are visible, and none is the item of a culled row.
+    // Each node is decided once, so the items of one row share the walk
+    // up to it.
+    let mut reached: HashMap<NodeId, bool> = HashMap::new();
+    let mut reaches = |start: NodeId| -> bool {
+        let mut path = Vec::new();
+        let mut cur = Some(start);
+        let mut answer = false;
+        while let Some(id) = cur {
+            if let Some(&known) = reached.get(&id) {
+                answer = known;
+                break;
+            }
+            step();
+            path.push(id);
+            let Some(node) = tree.node(id) else { break };
+            let culled = cx
+                .scene
+                .item_of(id)
+                .filter(|i| cx.engine.is_alive(*i))
+                .is_some_and(|i| cx.scene.is_culled(i));
+            if !node.visible() || culled || path.len() > DEPTH {
+                break;
+            }
+            if id == root {
+                answer = true;
+                break;
+            }
+            cur = node.parent();
+        }
+        // A node the walk stopped at hides those below it; one it passed
+        // through is reached exactly when the node above it is.
+        for id in path {
+            reached.insert(id, answer);
+        }
+        answer
+    };
+    inside(cx.engine, outer)
+        .into_iter()
+        .filter(|i| cx.engine.is_alive(*i))
+        .filter(|i| {
+            cx.scene
+                .node_of(*i)
+                .is_some_and(|n| cx.scene.item_of(n) == Some(*i) && reaches(n))
+        })
+        .collect()
 }
 
 /// Whether the item is shown and enabled, as focus asks.
