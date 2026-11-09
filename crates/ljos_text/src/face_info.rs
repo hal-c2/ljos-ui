@@ -65,19 +65,65 @@ fn read(font: &FontData) -> FaceInfo {
 /// that does not move the pen, a combining mark, does not count.
 fn fixed_pitch(face: &FontRef<'_>) -> bool {
     let metrics = face.glyph_metrics(Size::unscaled(), LocationRef::default());
-    let mut width = None;
-    for (_, glyph) in face.charmap().mappings() {
-        if glyph == GlyphId::NOTDEF {
-            continue;
-        }
-        let Some(advance) = metrics.advance_width(glyph).filter(|a| *a > 0.0) else {
-            continue;
-        };
-        match width {
-            None => width = Some(advance),
-            Some(w) if w == advance => {}
-            Some(_) => return false,
-        }
+    one_width(
+        face.charmap()
+            .mappings()
+            .filter(|(_, glyph)| *glyph != GlyphId::NOTDEF)
+            .filter_map(|(_, glyph)| metrics.advance_width(glyph))
+            .filter(|advance| *advance > 0.0),
+    )
+}
+
+/// Whether advances, in the order of their characters, are all of one
+/// width. Hand-tuned and patched monospace fonts have a character or two a
+/// unit off, so as in fontconfig, which is what Qt reports, an advance is
+/// that width while it is within a 33rd of the larger of the two. The
+/// width is the first character's, not the narrowest: a 1030 then 1000
+/// then 1060 is one width, 1000 then 1060 then 1030 is not (`fc-query` and
+/// qml6 agree on both).
+fn one_width(mut advances: impl Iterator<Item = f32>) -> bool {
+    let Some(width) = advances.next() else {
+        return false;
+    };
+    advances.all(|advance| (advance - width).abs() <= advance.max(width) / 33.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::one_width;
+
+    fn one(advances: &[f32]) -> bool {
+        one_width(advances.iter().copied())
     }
-    width.is_some()
+
+    // Each answer is fontconfig's spacing and Qt's fixedPitch for a face
+    // made with these advances, in units of 1000 an em.
+    #[test]
+    fn an_advance_within_a_33rd_of_the_larger_is_the_same_width() {
+        assert!(one(&[600.0, 601.0]));
+        assert!(one(&[600.0, 618.0]));
+        assert!(!one(&[600.0, 619.0]));
+        assert!(one(&[1000.0, 1031.0]));
+        assert!(!one(&[1000.0, 1032.0]));
+        assert!(one(&[1000.0, 970.0]));
+        assert!(!one(&[1000.0, 969.0]));
+    }
+
+    #[test]
+    fn the_width_is_the_first_characters() {
+        assert!(one(&[1030.0, 1000.0, 1060.0]));
+        assert!(!one(&[1000.0, 1060.0, 1030.0]));
+        assert!(!one(&[1000.0, 1030.0, 1060.0]));
+    }
+
+    #[test]
+    fn two_widths_one_twice_the_other_are_not_fixed_pitch() {
+        assert!(!one(&[500.0, 1000.0]));
+        assert!(!one(&[600.0, 700.0]));
+    }
+
+    #[test]
+    fn a_face_with_nothing_that_moves_the_pen_is_not_fixed_pitch() {
+        assert!(!one(&[]));
+    }
 }
