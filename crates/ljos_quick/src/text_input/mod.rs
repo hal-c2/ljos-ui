@@ -112,8 +112,10 @@ pub mod input_method_hint {
     pub const FORMATTED_NUMBERS_ONLY: i32 = 0x20000;
 }
 
-/// The enums of `TextInput` and `TextEdit` (`TextInput.Password`,
-/// `TextEdit.Wrap`).
+/// The enums `TextInput` and `TextEdit` both have (`TextInput.Wrap`,
+/// `TextEdit.SelectWords`). Each has the rest itself, as Qt's two types
+/// do: only `TextEdit` justifies and has a text format, only `TextInput`
+/// echoes and places its cursor on a character.
 pub(crate) fn editor_enums() -> EnumTable {
     vec![
         (
@@ -122,7 +124,6 @@ pub(crate) fn editor_enums() -> EnumTable {
                 ("AlignLeft", align::LEFT),
                 ("AlignRight", align::RIGHT),
                 ("AlignHCenter", align::H_CENTER),
-                ("AlignJustify", align::JUSTIFY),
             ]),
         ),
         (
@@ -144,19 +145,33 @@ pub(crate) fn editor_enums() -> EnumTable {
             ]),
         ),
         (
+            "SelectionMode",
+            keys(&[
+                ("SelectCharacters", selection_mode::SELECT_CHARACTERS),
+                ("SelectWords", selection_mode::SELECT_WORDS),
+            ]),
+        ),
+        (
+            "RenderType",
+            keys(&[
+                ("QtRendering", 0),
+                ("NativeRendering", 1),
+                ("CurveRendering", 2),
+            ]),
+        ),
+    ]
+}
+
+/// The enums only `TextInput` has (`TextInput.Password`).
+pub(crate) fn input_enums() -> EnumTable {
+    vec![
+        (
             "EchoMode",
             keys(&[
                 ("Normal", echo_mode::NORMAL),
                 ("NoEcho", echo_mode::NO_ECHO),
                 ("Password", echo_mode::PASSWORD),
                 ("PasswordEchoOnEdit", echo_mode::PASSWORD_ECHO_ON_EDIT),
-            ]),
-        ),
-        (
-            "SelectionMode",
-            keys(&[
-                ("SelectCharacters", selection_mode::SELECT_CHARACTERS),
-                ("SelectWords", selection_mode::SELECT_WORDS),
             ]),
         ),
         (
@@ -169,6 +184,22 @@ pub(crate) fn editor_enums() -> EnumTable {
                 ("CursorOnCharacter", cursor_position::ON_CHARACTER),
             ]),
         ),
+    ]
+}
+
+/// The enums only `TextEdit` has (`TextEdit.RichText`), and its
+/// `HAlignment`, which justifies too (`TextEdit.AlignJustify`).
+pub(crate) fn edit_enums() -> EnumTable {
+    vec![
+        (
+            "HAlignment",
+            keys(&[
+                ("AlignLeft", align::LEFT),
+                ("AlignRight", align::RIGHT),
+                ("AlignHCenter", align::H_CENTER),
+                ("AlignJustify", align::JUSTIFY),
+            ]),
+        ),
         (
             "TextFormat",
             keys(&[
@@ -176,14 +207,6 @@ pub(crate) fn editor_enums() -> EnumTable {
                 ("RichText", text_format::RICH_TEXT),
                 ("AutoText", text_format::AUTO_TEXT),
                 ("MarkdownText", text_format::MARKDOWN_TEXT),
-            ]),
-        ),
-        (
-            "RenderType",
-            keys(&[
-                ("QtRendering", 0),
-                ("NativeRendering", 1),
-                ("CurveRendering", 2),
             ]),
         ),
     ]

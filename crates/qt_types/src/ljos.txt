@@ -4658,6 +4658,8 @@ module QtQuick
 		method saveAs
 	type QtQuick.TextEdit TextEdit
 		prototype QtQuick.TextEditorBase
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
+		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3
 		prop lineCount QtQml.int named readonly
 		prop paintedWidth QtQml.real named readonly
 		prop paintedHeight QtQml.real named readonly
@@ -4688,6 +4690,8 @@ module QtQuick
 		method getFormattedText returns:string
 	type QtQuick.TextInput TextInput
 		prototype QtQuick.TextEditorBase
+		enum EchoMode Normal=0 NoEcho=1 Password=2 PasswordEchoOnEdit=3
+		enum CursorPosition CursorBetweenCharacters=0 CursorOnCharacter=1
 		prop displayText QtQml.string named readonly
 		prop echoMode EchoMode
 		prop passwordCharacter QtQml.string named
@@ -5499,13 +5503,10 @@ module QtQuick
 	type QtQuick.TextEditorBase TextEditorBase
 		prototype QtQuick.Item named
 		is uncreatable
-		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4 AlignJustify=8
+		enum HAlignment AlignLeft=1 AlignRight=2 AlignHCenter=4
 		enum VAlignment AlignTop=32 AlignBottom=64 AlignVCenter=128
 		enum WrapMode NoWrap=0 WordWrap=1 WrapAnywhere=3 WrapAtWordBoundaryOrAnywhere=4 Wrap=4
-		enum EchoMode Normal=0 NoEcho=1 Password=2 PasswordEchoOnEdit=3
 		enum SelectionMode SelectCharacters=0 SelectWords=1
-		enum CursorPosition CursorBetweenCharacters=0 CursorOnCharacter=1
-		enum TextFormat PlainText=0 RichText=1 AutoText=2 MarkdownText=3
 		enum RenderType QtRendering=0 NativeRendering=1 CurveRendering=2
 		prop text QtQml.string named
 		prop color QtQuick.color named
