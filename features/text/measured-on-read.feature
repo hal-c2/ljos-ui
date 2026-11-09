@@ -7,8 +7,8 @@
 Feature: A text's size is new as soon as what it follows is
   A script that gives a text another text or font and then asks how large
   it is gets the new size at once, without waiting for a frame. That holds
-  for a text nobody sees: a hidden one, an empty one, and a field's
-  placeholder, whose height the field takes.
+  for a shown text and for one nobody sees: a hidden one, an empty one, and
+  a field's placeholder, whose height the field takes.
 
   Background:
     Given the QML:
@@ -50,9 +50,5 @@ Feature: A text's size is new as soon as what it follows is
   Scenario: An empty field's height is new as soon as its font is
     Then the property "fieldFresh" of "root" is true
 
-  # A shown text that is not empty is measured by the frame's polish; its
-  # sizes reading new at once waits for the text polish to leave the graph
-  # (the delegate track's dirty bits).
-  @backlog
   Scenario: A shown text's width is new as soon as its text is
     Then the property "shownFresh" of "root" is true
