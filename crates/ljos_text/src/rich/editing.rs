@@ -1873,4 +1873,13 @@ mod tests {
         assert_eq!(spans[0].range, 1..5);
         assert_eq!(spans[0].weight, 700.0);
     }
+
+    #[test]
+    fn an_attribute_escapes_what_would_end_or_open_markup() {
+        assert_eq!(escape_attr("A&B<C>"), "A&amp;B&lt;C&gt;");
+        assert_eq!(escape_attr("\"O'Brien\""), "&quot;O'Brien&quot;");
+        // An `&` already escaped is escaped again, to read back as written.
+        assert_eq!(escape_attr("&amp;"), "&amp;amp;");
+        assert_eq!(escape_attr("plain"), "plain");
+    }
 }
