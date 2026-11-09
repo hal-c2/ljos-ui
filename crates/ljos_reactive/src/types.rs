@@ -280,6 +280,10 @@ pub struct Stats {
     /// and the nodes looked at past one it goes no further from, for what
     /// waits there.
     pub lift_steps: u64,
+    /// The nodes looked at past one a change made inside an own queue that
+    /// waits on changes goes no further from, for a stamp of a change it
+    /// waits on ([`crate::Graph::own_queue`]).
+    pub restamp_steps: u64,
 }
 
 /// What the live nodes are, by kind: what a budget test pins, so a change

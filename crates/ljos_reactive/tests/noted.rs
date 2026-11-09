@@ -1,7 +1,7 @@
 //! `Graph::set_noted`: a property whose changes the note handler is told
 //! of, once the change has spread, in place of an effect that reads it.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use ljos_reactive::{Graph, NodeId};
@@ -935,4 +935,125 @@ fn in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_reads_what_it_mad
         "the hook and the watcher read `b` as the change inside made it, \
          and the hook `c` as it was"
     );
+}
+
+/// [`in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_reads_what_it_made`]
+/// past a dependency adopted inside the queue ([`Graph::adopt_readers`]).
+/// `m` reads `s` and `i` reads `m`; a write of `s` before the handler
+/// leaves both to be brought up to date, marked by a change no queue waits
+/// on. The handler batches writes of `v` and then `q`; `b` reads `v`.
+/// `q`'s hook opens a queue that waits on both, so `b`'s hook waits below
+/// it, makes `i` a source of `b`, which reads it from then on, and writes
+/// `s` again. That change goes no further than `m`, dirty already, and
+/// reaches `b` past `i` all the same: `b`'s hook is told inside the queue
+/// and reads `b` as it now is, as `s`'s watcher after it does.
+#[test]
+fn in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_past_a_dependency_adopted_there_reads_what_it_made()
+ {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let x = g.property(r, 0).unwrap();
+    let s = g.property(r, 0).unwrap();
+    let v = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let i = g.binding(r, 0, move |g| g.get(m)).unwrap();
+    let (linked, reader) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(None)));
+    let (l, me) = (Rc::clone(&linked), Rc::clone(&reader));
+    let b = g
+        .binding(r, 0, move |g| {
+            me.set(g.reader());
+            g.get(v) + if l.get() { g.get(i) } else { 0 }
+        })
+        .unwrap();
+    assert_eq!((g.get(i), g.get(b)), (0, 0));
+    g.set(s, 5);
+    // What `b`'s hook keeps of `b`.
+    let kept = Rc::new(Cell::new(None));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, s, move |g, _| {
+        let now = g.untrack(|| g.get(b));
+        w.borrow_mut().push((now, k.get()));
+    })
+    .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            k.set(Some(hooks.untrack(|| hooks.get(b))));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(2));
+            linked.set(true);
+            hooks.adopt_readers(i, reader.get());
+            hooks.set(s, 2);
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+    g.watch_ahead(r, x, move |g, _| {
+        g.batch(|| {
+            g.set(v, 1);
+            g.set(q, 1);
+        });
+    })
+    .unwrap();
+
+    g.set(x, 1);
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        seen.borrow().first(),
+        Some(&(3, Some(3))),
+        "the hook and the watcher read `b` as the change inside made it"
+    );
+}
+
+/// A change made inside a queue that waits on changes gives what lies
+/// behind a binding it goes no further from its own stamp, where a change
+/// the queue waits on marked it
+/// ([`in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_reads_what_it_made`]).
+/// Once it has, nothing behind that binding is left to give it, and the
+/// next change that stops there looks behind it no more. `m` reads `s`,
+/// and a thousand bindings read `m`. The batch writes `s` and `q`; `q`'s
+/// hook opens a queue that waits on both and writes `s` a hundred times.
+#[test]
+fn restamping_past_a_dirty_binding_goes_past_it_once_in_a_queue() {
+    const FAN: usize = 1000;
+    const WRITES: i64 = 100;
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let s = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let m = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let fan: Vec<_> = (0..FAN)
+        .map(|_| g.binding(r, 0, move |g| g.get(m)).unwrap())
+        .collect();
+    for &k in &fan {
+        g.get(k);
+    }
+    let hooks = Rc::clone(&g);
+    g.set_note_handler(move |n| {
+        if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(2));
+            for w in 2..2 + WRITES {
+                hooks.set(s, w);
+            }
+        }
+    });
+    g.set_noted(q).unwrap();
+    let before = g.stats().restamp_steps;
+
+    g.batch(|| {
+        g.set(s, 1);
+        g.set(q, 1);
+    });
+
+    let steps = g.stats().restamp_steps - before;
+    assert!(
+        steps <= 2 * FAN as u64,
+        "{steps} steps to give {FAN} bindings behind one a change inside {WRITES} times"
+    );
+    assert_eq!(g.get(fan[FAN - 1]), WRITES + 1);
 }
