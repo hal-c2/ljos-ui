@@ -38,7 +38,7 @@ pub(crate) struct SlotGuard(Arc<AtomicUsize>);
 
 impl SlotGuard {
     fn take(slots: &Arc<AtomicUsize>) -> Result<SlotGuard, SurfaceError> {
-        let taken = slots.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+        let taken = slots.try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
             (n < MAX_SNAPSHOT_JOBS).then_some(n + 1)
         });
         match taken {

@@ -140,11 +140,9 @@ impl VirtualClock {
     pub fn advance(&self, d: Duration) {
         let us = duration_micros(d);
         // A saturating add keeps the clock monotonic even on absurd input.
-        let _ = self
-            .now
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |v| {
-                Some(v.saturating_add(us))
-            });
+        self.now.update(Ordering::AcqRel, Ordering::Acquire, |v| {
+            v.saturating_add(us)
+        });
     }
 
     pub fn advance_ms(&self, ms: u64) {
