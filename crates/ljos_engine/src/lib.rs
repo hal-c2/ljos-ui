@@ -135,7 +135,9 @@ pub use delegates::{DelegateHost, Delegates, RemovalOrder};
 pub use delegates::{Made, Urgency, ViewDelegates, ViewHost};
 pub use describe::{QtNamespaceEnum, VALUE_TYPES, ValueType, qt_namespace};
 pub use devtools::{BindingGraph, DependencyReport, EvalJson, MAX_EVAL_TIME};
-pub use engine::{DestroyListener, Engine, IncubatedListener, OverrideContent, ParentListener};
+pub use engine::{
+    DestroyListener, Engine, IncubatedListener, OverrideContent, ParentListener, WeakEngine,
+};
 pub use error::{EngineError, JsError};
 pub use fault::{FaultReport, StackFrame, TakenBy, fault_kind};
 pub use followed_files::{FollowedFiles, file_identity};

@@ -212,6 +212,23 @@ impl std::fmt::Debug for Engine {
     }
 }
 
+/// See [`Engine::downgrade`].
+#[derive(Clone)]
+pub struct WeakEngine(Weak<Inner>);
+
+impl WeakEngine {
+    /// The engine, while it is alive.
+    pub fn upgrade(&self) -> Option<Engine> {
+        self.0.upgrade().map(Engine::from_inner)
+    }
+}
+
+impl std::fmt::Debug for WeakEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("WeakEngine")
+    }
+}
+
 /// An override (`Binding {}`, `PropertyChanges`) content.
 pub enum OverrideContent {
     Value(Value),
@@ -353,6 +370,13 @@ impl Engine {
     /// Rebuilds a handle inside a closure the engine installed.
     pub(crate) fn from_inner(inner: Rc<Inner>) -> Engine {
         Engine { inner }
+    }
+
+    /// A handle that does not keep the engine alive, for what is told of
+    /// a change on the thread (one per engine there) and must not outlive
+    /// the engines it tells.
+    pub fn downgrade(&self) -> WeakEngine {
+        WeakEngine(Rc::downgrade(&self.inner))
     }
 
     /// The reactive graph, for runtime crates (freezing scopes, stats).
