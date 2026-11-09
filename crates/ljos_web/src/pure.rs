@@ -19,13 +19,24 @@ pub fn css_color(r: f32, g: f32, b: f32, a: f32) -> String {
     )
 }
 
-/// A CSS `font` value.
+/// A CSS `font` value. The family is one name whatever it holds, as in
+/// Qt, so it is written as one CSS string with its backslashes, quotes and
+/// line breaks escaped, not dropped: a raw line break (LF, CR or FF) ends a
+/// CSS string, and the browser then refuses the whole value.
 pub fn css_font(family: &str, pixel_size: f32, weight: f32, italic: bool) -> String {
     let style = if italic { "italic " } else { "" };
     let family = if family.is_empty() {
         "sans-serif".to_owned()
     } else {
-        format!("\"{}\"", family.replace('"', ""))
+        format!(
+            "\"{}\"",
+            family
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\a ")
+                .replace('\r', "\\d ")
+                .replace('\u{c}', "\\c ")
+        )
     };
     format!("{style}{} {pixel_size}px {family}", weight.round() as u32)
 }
@@ -124,7 +135,15 @@ mod tests {
         assert_eq!(css_font("", 12.0, 400.0, false), "400 12px sans-serif");
         assert_eq!(
             css_font("A \"B\"", 9.5, 700.0, true),
-            "italic 700 9.5px \"A B\""
+            r#"italic 700 9.5px "A \"B\"""#
+        );
+        assert_eq!(
+            css_font("A, B\\\nC", 12.0, 400.0, false),
+            r#"400 12px "A, B\\\a C""#
+        );
+        assert_eq!(
+            css_font("A\r\nB\u{c}C", 12.0, 400.0, false),
+            r#"400 12px "A\d \a B\c C""#
         );
     }
 
