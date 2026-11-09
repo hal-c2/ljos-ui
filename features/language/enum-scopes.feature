@@ -27,6 +27,8 @@ Feature: Where a script reads an enumeration from
           property int scoped: ScrollBar.Policy.AlwaysOff
           property int closes: Popup.CloseOnEscape | Popup.CloseOnPressOutside
           property string nowhere: typeof Text.Nowhere + " " + typeof Font.Nowhere
+          property string editors: [typeof TextInput.AlignJustify, typeof TextEdit.Password,
+                                    TextEdit.AlignJustify, TextInput.AlignRight].join(" ")
           Text { objectName: "label"; font.weight: Font.DemiBold }
         }
         """
@@ -48,6 +50,11 @@ Feature: Where a script reads an enumeration from
 
     Scenario: A name that is no key is undefined
       Then the property "nowhere" of "root" is "undefined undefined"
+      And the log has no warnings
+
+    # Only `TextEdit` justifies and only `TextInput` echoes; both align right.
+    Scenario: Each editor has its own keys and those they share
+      Then the property "editors" of "root" is "undefined undefined 8 2"
       And the log has no warnings
 
   Rule: A key is read through the namespace of an import
