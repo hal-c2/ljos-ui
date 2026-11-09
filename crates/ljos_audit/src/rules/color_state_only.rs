@@ -34,7 +34,7 @@ use crate::acting::Act;
 use crate::cx::{
     declared_by_app, is_a, scene_rect, shown_items, shown_opacity, takes_focus, within,
 };
-use crate::pixels::{Painter, Picture, backdrop, shows};
+use crate::pixels::{DrawOrder, Painter, Picture, backdrop, shows};
 
 /// No audit flips more than this many buttons: a long list of check
 /// boxes says the same of each.
@@ -78,10 +78,13 @@ fn draw(act: &Act, painter: &mut Painter, region: Rect) -> Option<Picture> {
 pub(crate) fn check(act: &mut Act) {
     act.rest();
     let e = act.engine;
-    let (buttons, all): (Vec<ObjectId>, Vec<ObjectId>) = {
+    let (buttons, all, order): (Vec<ObjectId>, Vec<ObjectId>, DrawOrder) = {
         let cx = act.cx();
-        let all: Vec<ObjectId> = shown_items(&cx)
-            .into_iter()
+        let order = DrawOrder::new(&cx);
+        let all: Vec<ObjectId> = order
+            .items()
+            .iter()
+            .copied()
             .filter(|i| is_a::<AbstractButton>(e, *i))
             .collect();
         let buttons = all
@@ -94,7 +97,7 @@ pub(crate) fn check(act: &mut Act) {
             })
             .take(MOST)
             .collect();
-        (buttons, all)
+        (buttons, all, order)
     };
     let mut painter = Painter::new(backdrop(e, act.options));
     let mut found = Vec::new();
@@ -133,7 +136,7 @@ pub(crate) fn check(act: &mut Act) {
         // window shows is the button. The state is back as it was, so the
         // frame is the one `before` was drawn from.
         if changed < VISIBLE_CHANGE_MIN_PX {
-            if shows(act, &mut painter, b) {
+            if shows(act, &mut painter, &order, b) {
                 found.push((b, was, most, changed));
             }
         } else if most + 0.005 < NONTEXT_CONTRAST {

@@ -1926,3 +1926,66 @@ fn a_toggle_that_changes_nothing_is_measured_in_pixels() {
         "\n{report}"
     );
 }
+
+/// Steps through the item tree `focus-indicator-missing` takes over a
+/// list of `rows` delegates whose MouseArea takes focus and draws
+/// nothing, and how many of them it reports.
+fn steps_over_rows(rows: usize) -> (usize, usize) {
+    let height = rows * 20;
+    let source = format!(
+        r##"import QtQuick
+import QtQuick.Controls.Basic
+Rectangle {{
+    width: 300; height: {height}
+    color: "white"
+    Column {{
+        Repeater {{
+            model: {rows}
+            Item {{
+                width: 240; height: 20
+                Rectangle {{ anchors.fill: parent; color: "#e0e0e0" }}
+                MouseArea {{
+                    anchors.fill: parent
+                    activeFocusOnTab: true
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Row " + index
+                }}
+            }}
+        }}
+    }}
+}}
+"##
+    );
+    let e = engine();
+    let root = load(&e, &source);
+    let mut s = QuickScene::new(kurbo::Size::new(300.0, height as f64));
+    s.set_root(&e, root).unwrap();
+    s.frame(&e, Time::ZERO);
+    let options = Options::desktop()
+        .only(&["focus-indicator-missing"])
+        .unwrap();
+    crate::cx::STEPS.with(|c| c.set(0));
+    let report = audit(&e, &mut s, Time::ZERO, &options);
+    (
+        crate::cx::STEPS.with(std::cell::Cell::get),
+        report.findings.len(),
+    )
+}
+
+/// Whether the window shows a stop that draws nothing is asked of the
+/// draw order once per check, not of the whole tree once per stop: twice
+/// the rows, about twice the steps.
+#[test]
+fn whether_a_stop_shows_costs_the_same_per_row() {
+    // Both under the most stops the check acts on, so twice the rows is
+    // twice the stops it asks about.
+    let (small, found) = steps_over_rows(32);
+    assert_eq!(found, 32);
+    let (large, found) = steps_over_rows(64);
+    assert_eq!(found, 64);
+    eprintln!("steps: 32 rows {small}, 64 rows {large}");
+    assert!(
+        large * 2 <= small * 5,
+        "32 rows take {small} steps, 64 take {large}: more than linear"
+    );
+}

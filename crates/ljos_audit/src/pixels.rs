@@ -8,7 +8,7 @@
 //! opaque and has one colour; at one physical pixel to a logical pixel,
 //! which is what the guidelines measure in.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ljos_design::color::{Srgb, delta_e_ok};
 use ljos_design::limits::audit::{VISIBLE_CHANGE_MIN_PX, VISIBLE_DELTA_E};
@@ -21,7 +21,7 @@ use ljos_render::{
 
 use crate::Options;
 use crate::acting::Act;
-use crate::cx::{clipped_away, scene_rect, shown_items, shown_opacity, within};
+use crate::cx::{Cx, clipped_away, inside, scene_rect, shown_items, shown_opacity};
 
 /// Pixels of a part of the scene.
 pub(crate) struct Picture {
@@ -130,6 +130,37 @@ pub(crate) fn changed(a: &Picture, b: &Picture) -> usize {
         .count()
 }
 
+/// The items the scene shows, in the order it draws them, and where each
+/// is in that order: taken once for a check that asks [`shows`] of many
+/// items, not once for each.
+pub(crate) struct DrawOrder {
+    items: Vec<ObjectId>,
+    /// The first and the last place of each item in `items`.
+    at: HashMap<ObjectId, (usize, usize)>,
+}
+
+impl DrawOrder {
+    pub(crate) fn new(cx: &Cx) -> Self {
+        let items = shown_items(cx);
+        let mut at = HashMap::with_capacity(items.len());
+        for (n, i) in items.iter().enumerate() {
+            at.entry(*i)
+                .and_modify(|(_, last)| *last = n)
+                .or_insert((n, n));
+        }
+        DrawOrder { items, at }
+    }
+
+    /// The items, parents first.
+    pub(crate) fn items(&self) -> &[ObjectId] {
+        &self.items
+    }
+
+    pub(crate) fn contains(&self, item: ObjectId) -> bool {
+        self.at.contains_key(&item)
+    }
+}
+
 /// Whether the window shows `item`: it is not clipped away, not drawn
 /// with an opacity of 0, and what is drawn after it, a popup, its dim or
 /// a sibling, does not cover it. An item the window does not show
@@ -142,7 +173,9 @@ pub(crate) fn changed(a: &Picture, b: &Picture) -> usize {
 /// at, and an item that draws nothing is shown, not hidden. Either way
 /// only its box counts, not the margin a rule draws around it: a
 /// neighbour drawn after it against its edge covers none of it.
-pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
+///
+/// `order` is the scene's draw order, taken when the check began.
+pub(crate) fn shows(act: &Act, painter: &mut Painter, order: &DrawOrder, item: ObjectId) -> bool {
     let e = act.engine;
     let cx = act.cx();
     if clipped_away(&cx, item) || shown_opacity(e, item) <= 0.0 {
@@ -151,31 +184,26 @@ pub(crate) fn shows(act: &Act, painter: &mut Painter, item: ObjectId) -> bool {
     let (Some(snapshot), Some(region)) = (act.scene.snapshot(), scene_rect(e, item)) else {
         return false;
     };
+    let mine_items = inside(e, item);
     let own = |p: &PaintItem| {
         act.scene
             .item_of(p.node)
-            .is_some_and(|i| within(e, i, item))
+            .is_some_and(|i| mine_items.contains(&i))
     };
-    // What is drawn after the item: the items after it and all it holds,
-    // in the order the scene draws them.
-    let order = shown_items(&cx);
-    let Some(at) = order.iter().position(|i| *i == item) else {
+    let Some(&(at, _)) = order.at.get(&item) else {
         return false;
     };
-    let later: HashSet<ObjectId> = order[at + 1..]
-        .iter()
-        .copied()
-        .filter(|i| !within(e, *i, item))
-        .collect();
     let start = match snapshot.items.iter().rposition(&own) {
         Some(last) => last + 1,
+        // What is drawn after the item: the first paint of an item after
+        // it in the order the scene draws them, and not inside it.
         None => snapshot
             .items
             .iter()
             .position(|p| {
-                act.scene
-                    .item_of(p.node)
-                    .is_some_and(|i| later.contains(&i))
+                act.scene.item_of(p.node).is_some_and(|i| {
+                    order.at.get(&i).is_some_and(|(_, last)| *last > at) && !mine_items.contains(&i)
+                })
             })
             .unwrap_or(snapshot.items.len()),
     };

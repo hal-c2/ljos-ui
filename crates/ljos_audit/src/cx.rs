@@ -2,7 +2,7 @@
 //! ways of naming and placing an item.
 
 use std::cell::OnceCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use ljos_a11y::{NodeData, NodeKey, Role, role_word};
@@ -15,6 +15,20 @@ use crate::finding::{Bounds, Finding};
 
 /// A tree deeper than this is a cycle someone built by hand.
 pub(crate) const DEPTH: usize = 4096;
+
+#[cfg(test)]
+thread_local! {
+    /// Steps taken through the item tree, up or down: what a test counts
+    /// to pin a check's cost to the scene's size without timing it.
+    pub(crate) static STEPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// One step through the item tree.
+#[inline]
+pub(crate) fn step() {
+    #[cfg(test)]
+    STEPS.with(|s| s.set(s.get() + 1));
+}
 
 /// A node of the accessibility tree, with its parent.
 pub(crate) type Node = (NodeKey, NodeKey, NodeData);
@@ -254,6 +268,7 @@ pub(crate) fn shown_items(cx: &Cx) -> Vec<ObjectId> {
     let mut out = Vec::new();
     let mut stack = vec![tree.root()];
     while let Some(id) = stack.pop() {
+        step();
         let Some(node) = tree.node(id) else { continue };
         if !node.visible() {
             continue;
@@ -283,6 +298,7 @@ pub(crate) fn ancestors(engine: &Engine, item: ObjectId) -> impl Iterator<Item =
     let mut depth = 0;
     std::iter::from_fn(move || {
         let here = cur.filter(|_| depth < DEPTH)?;
+        step();
         depth += 1;
         cur = engine.visual_parent(here);
         Some(here)
@@ -292,6 +308,28 @@ pub(crate) fn ancestors(engine: &Engine, item: ObjectId) -> impl Iterator<Item =
 /// Whether `inner` is `outer` or lies inside it.
 pub(crate) fn within(engine: &Engine, inner: ObjectId, outer: ObjectId) -> bool {
     inner == outer || ancestors(engine, inner).any(|a| a == outer)
+}
+
+/// `outer` and every item inside it: the items [`within`] it, found by
+/// one walk down rather than a walk up from each item asked about.
+pub(crate) fn inside(engine: &Engine, outer: ObjectId) -> HashSet<ObjectId> {
+    let mut out = HashSet::from([outer]);
+    let mut level = vec![outer];
+    // As deep as `within` walks up, and no deeper.
+    for _ in 0..DEPTH {
+        if level.is_empty() {
+            break;
+        }
+        level = level
+            .iter()
+            .flat_map(|i| engine.visual_children(*i))
+            .filter(|c| {
+                step();
+                out.insert(*c)
+            })
+            .collect();
+    }
+    out
 }
 
 /// Whether `inner` is `outer` or belongs to it, as the author wrote it: a
