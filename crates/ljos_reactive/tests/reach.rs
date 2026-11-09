@@ -24,13 +24,17 @@
 //! ahead or not, three queues (no change waits, the last waits, the
 //! batch's all wait), and every change or pair of changes made inside,
 //! after as many changes counted as would bring a narrower count round, or
-//! none.
+//! none. Past what changes the graph makes, the cases also: write a
+//! source before the batch, leaving the bindings that read it dirty under
+//! a change no queue waits on; and give a binding a dependency inside the
+//! queue ([`Graph::adopt_readers`]), so that what a change made inside
+//! reaches grows while the queue stands.
 //!
 //! The cases are independent, so they share the cores, each core running
 //! its cases one after another on a graph of its own, each case in a
 //! scope that goes when it ends; the reference works in sets of bits, as
-//! the graphs are this small. That keeps the two million cases inside a
-//! debug build's time.
+//! the graphs are this small. That keeps the three and a half million
+//! cases inside a debug build's time.
 
 use std::cell::{Cell, RefCell};
 use std::fmt::{self, Write as _};
@@ -68,6 +72,10 @@ impl Props {
 
     fn union(self, other: Self) -> Self {
         Props(self.0 | other.0)
+    }
+
+    fn minus(self, other: Self) -> Self {
+        Props(self.0 & !other.0)
     }
 
     fn meets(self, other: Self) -> bool {
@@ -190,6 +198,15 @@ struct Case {
     /// Changes counted inside the queue after those, before `ops`,
     /// without being made ([`Graph::count_changes`]).
     counted: Change,
+    /// A source written before the batch, while nothing is noted: what it
+    /// reaches is left to be brought up to date, marked by a change no
+    /// queue waits on, unless an effect on every property reads it then.
+    early: Option<usize>,
+    /// A binding, by its index, and a property made before it that it
+    /// reads from the time the queue opens, adopted there
+    /// ([`Graph::adopt_readers`]): the property's changes reach it from
+    /// then on. What it makes of it is not in its value.
+    adopted: Option<(usize, usize)>,
     ops: &'static [Op],
 }
 
@@ -235,17 +252,41 @@ impl Model {
 }
 
 impl Case {
-    /// `from` and every property that reads it, however far. A binding
-    /// reads only what was made before it, so one pass in that order
-    /// sees all.
+    /// `from` and every property that reads it, however far, before the
+    /// queue opens. A binding reads only what was made before it, so one
+    /// pass in that order sees all.
     fn reach(&self, from: usize) -> Props {
+        self.reach_with(self.reads, from)
+    }
+
+    /// [`Case::reach`] once the queue is open, the dependency adopted.
+    fn reach_inside(&self, from: usize) -> Props {
+        let mut reads = self.reads;
+        if let Some((k, p)) = self.adopted {
+            reads[k] = reads[k].with(p);
+        }
+        self.reach_with(reads, from)
+    }
+
+    fn reach_with(&self, reads: [Props; BINDINGS], from: usize) -> Props {
         let mut seen = Props::of(&[from]);
-        for (i, &reads) in self.reads.iter().enumerate() {
+        for (i, &reads) in reads.iter().enumerate() {
             if reads.meets(seen) {
                 seen = seen.with(SOURCES + i);
             }
         }
         seen
+    }
+
+    /// The bindings the early write leaves to be brought up to date: a
+    /// change that reaches one goes no further, and what lies past it the
+    /// write reached too, so what a later change marks is what it reaches
+    /// but these.
+    fn left(&self) -> Props {
+        match self.early {
+            Some(e) if !self.watched => self.reach(e).bindings(),
+            _ => Props::default(),
+        }
     }
 
     /// The bindings among `p` and everything it reads, however far.
@@ -262,8 +303,8 @@ impl Case {
     /// What `op` reaches of what can wait.
     fn reached(&self, op: Op) -> Entries {
         let (props, gone) = match op {
-            Op::Write(s) | Op::ReadersLost(s) => (self.reach(s), None),
-            Op::Dispose(d) => (self.reach(d).without(d), Some(d)),
+            Op::Write(s) | Op::ReadersLost(s) => (self.reach_inside(s), None),
+            Op::Dispose(d) => (self.reach_inside(d).without(d), Some(d)),
         };
         let mut out = Entries::hooks(props).union(Entries::told(props));
         // The told effect of what goes still reads it.
@@ -274,17 +315,30 @@ impl Case {
     }
 
     /// What waits below the queue when it opens: the hooks of what the
-    /// writes before `q` reached, pushed before `q`'s, and every told
-    /// effect the batch reached, told after the hooks.
+    /// writes before `q` marked, pushed before `q`'s, and every told
+    /// effect of what the batch marked, told after the hooks.
     fn below(&self) -> Entries {
+        let left = self.left();
         let mut out = Entries::default();
         for &s in self.before {
-            out = out.union(Entries::hooks(self.reach(s)));
+            out = out.union(Entries::hooks(self.reach(s).minus(left)));
         }
         for &s in self.before.iter().chain(&self.after) {
-            out = out.union(Entries::told(self.reach(s)));
+            out = out.union(Entries::told(self.reach(s).minus(left)));
         }
         out
+    }
+
+    /// What the early write reaches past the dependency adopted, and
+    /// reaches only when a binding it left is brought up to date inside the
+    /// queue: a change the queue does not wait on, as one made inside is
+    /// not, so what it reaches there may be told there.
+    fn reached_late(&self) -> Entries {
+        let Some(e) = self.early else {
+            return Entries::default();
+        };
+        let past = self.reach_inside(e).minus(self.reach(e));
+        Entries::hooks(past).union(Entries::told(past))
     }
 
     fn writes(&self) -> u8 {
@@ -301,7 +355,7 @@ impl Case {
         for &s in self.before.iter().chain(&self.after) {
             out = out.union(self.reach(s).bindings());
         }
-        out
+        out.minus(self.left())
     }
 }
 
@@ -368,13 +422,23 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
     };
     let mut ids: Vec<NodeId> = (0..SOURCES).map(|_| g.property(r, 0).unwrap()).collect();
     let mut readers: Vec<Rc<Cell<Option<Reader>>>> = Vec::new();
-    for reads in case.reads {
+    let linked = Rc::new(Cell::new(false));
+    for (k, reads) in case.reads.into_iter().enumerate() {
         let from: Vec<NodeId> = reads.iter().map(|x| ids[x]).collect();
+        let dep = case
+            .adopted
+            .filter(|&(b, _)| b == k)
+            .map(|(_, p)| (Rc::clone(&linked), ids[p]));
         let reader = Rc::new(Cell::new(None));
         let me = Rc::clone(&reader);
         let b = g
             .binding(r, 0, move |g| {
                 me.set(g.reader());
+                if let Some((linked, dep)) = &dep
+                    && linked.get()
+                {
+                    g.try_get(*dep);
+                }
                 from.iter().map(|&n| g.try_get(n).unwrap_or(0)).sum()
             })
             .unwrap();
@@ -406,6 +470,9 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
             .unwrap();
         }
     }
+    if let Some(e) = case.early {
+        g.set(ids[e], fresh(e));
+    }
     // Weak: the graph keeps its handler, and a strong handle would keep
     // the graph alive.
     let (weak, l, index) = (Rc::downgrade(g), Rc::clone(&log), ids.clone());
@@ -433,6 +500,10 @@ fn case_in(g: &Rc<Graph<i64>>, r: ScopeId, case: Case) -> Vec<Event> {
             hooks.set(unrelated, i64::from(v));
         }
         hooks.count_changes(case.counted);
+        if let Some((k, p)) = case.adopted {
+            linked.set(true);
+            hooks.adopt_readers(index[p], readers[k].get());
+        }
         for (k, &op) in case.ops.iter().enumerate() {
             l.borrow_mut().push(Event::Op(k));
             match op {
@@ -551,7 +622,11 @@ fn check(case: &Case, events: &[Event]) -> Result<(), String> {
         ));
     }
     if case.since == Since::Batch
-        && let Some(x) = told.and(below).minus(reached).first()
+        && let Some(x) = told
+            .and(below)
+            .minus(reached)
+            .minus(case.reached_late())
+            .first()
     {
         return Err(format!(
             "{x:?}, which no change made inside reached, was told inside"
@@ -620,9 +695,15 @@ struct Space {
     counted: &'static [Change],
     /// Pairs of changes made inside, as well as each alone.
     pairs: bool,
-    /// Hooks that do not read and no effect on every property, as well as
-    /// both.
-    all_hooks: bool,
+    /// Whether hooks read their property, one run for each.
+    hooks_read: &'static [bool],
+    /// Whether an effect reads every property, one run for each.
+    watched: &'static [bool],
+    /// Sources written before the batch ([`Case::early`]), one run for
+    /// each.
+    early: &'static [Option<usize>],
+    /// Every dependency a binding can adopt, as well as none.
+    adopt: bool,
 }
 
 /// The other orders and the other source are the same graphs relabelled.
@@ -638,32 +719,43 @@ impl Space {
         } else {
             &OPS[..singles]
         };
-        let flags: &[bool] = if self.all_hooks {
-            &[false, true]
-        } else {
-            &[true]
-        };
+        let mut adoptions = vec![None];
+        if self.adopt {
+            for (k, read) in reads.iter().enumerate() {
+                adoptions.extend(
+                    (0..SOURCES + k)
+                        .filter(|&p| !read.has(p))
+                        .map(|p| Some((k, p))),
+                );
+            }
+        }
         out.clear();
-        for &hooks_read in flags {
-            for &watched in flags {
-                for before in BATCHES {
-                    for after in AFTERS {
-                        for since in [Since::Now, Since::Last, Since::Batch] {
-                            for ahead in [false, true] {
-                                for &counted in self.counted {
-                                    for ops in ops {
-                                        out.push(Case {
-                                            reads,
-                                            hooks_read,
-                                            watched,
-                                            before,
-                                            after,
-                                            since,
-                                            ahead,
-                                            written: 0,
-                                            counted,
-                                            ops,
-                                        });
+        for &hooks_read in self.hooks_read {
+            for &watched in self.watched {
+                for &early in self.early {
+                    for &adopted in &adoptions {
+                        for before in BATCHES {
+                            for after in AFTERS {
+                                for since in [Since::Now, Since::Last, Since::Batch] {
+                                    for ahead in [false, true] {
+                                        for &counted in self.counted {
+                                            for ops in ops {
+                                                out.push(Case {
+                                                    reads,
+                                                    hooks_read,
+                                                    watched,
+                                                    before,
+                                                    after,
+                                                    since,
+                                                    ahead,
+                                                    written: 0,
+                                                    counted,
+                                                    early,
+                                                    adopted,
+                                                    ops,
+                                                });
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -680,7 +772,27 @@ fn what_a_change_inside_an_own_queue_reaches_is_told_inside_it_for_every_small_g
     sweep(&Space {
         counted: &[0],
         pairs: true,
-        all_hooks: true,
+        hooks_read: &[false, true],
+        watched: &[false, true],
+        early: &[None],
+        adopt: false,
+    });
+}
+
+/// The small graphs again, past what a source written before the batch
+/// left to be brought up to date, under a change no queue waits on, and
+/// with every dependency a binding can adopt when the queue opens. A
+/// change made inside reaches what lies past both, whatever state each is
+/// in, and in a handler ahead what it reaches reads as it is.
+#[test]
+fn what_a_change_inside_an_own_queue_reaches_is_told_inside_it_past_what_was_left_or_adopted() {
+    sweep(&Space {
+        counted: &[0],
+        pairs: false,
+        hooks_read: &[true],
+        watched: &[false],
+        early: &[None, Some(0), Some(1)],
+        adopt: true,
     });
 }
 
@@ -700,7 +812,10 @@ fn what_a_change_inside_an_own_queue_reaches_is_told_inside_it_however_many_came
     sweep(&Space {
         counted: &[ROUND - 5, ROUND - 4, ROUND - 3, ROUND - 2, ROUND - 1],
         pairs: false,
-        all_hooks: false,
+        hooks_read: &[true],
+        watched: &[true],
+        early: &[None],
+        adopt: false,
     });
 }
 
@@ -795,7 +910,10 @@ fn changes_counted_are_as_unrelated_writes() {
     let space = Space {
         counted: &[0],
         pairs: false,
-        all_hooks: false,
+        hooks_read: &[true],
+        watched: &[true],
+        early: &[None],
+        adopt: false,
     };
     let mut cases = Vec::new();
     space.cases(
@@ -827,6 +945,8 @@ fn the_cases_review_found_are_among_them() {
         ahead,
         written,
         counted: 0,
+        early: None,
+        adopted: None,
         ops,
     };
     let found = [

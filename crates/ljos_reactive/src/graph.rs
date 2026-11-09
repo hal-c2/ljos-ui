@@ -81,10 +81,35 @@ struct Prop<V> {
     /// lift ([`lift`]) finds its entry without searching. In room the
     /// flags beside it leave.
     noted_at: u32,
-    /// A lift walk ([`Inner::lift_behind`]) went past it in the innermost
-    /// own queue, and no edge was made since: what waited behind it then
-    /// is lifted, and nothing comes to wait below a floor while it stands.
-    lifted_past: bool,
+    /// The walks of the innermost own queue that went past it ([`Past`]).
+    past: Past,
+}
+
+/// Which walks went past a property in the innermost own queue, as bits:
+/// a node has no room for a byte more.
+#[derive(Clone, Copy, Default)]
+struct Past(u8);
+
+impl Past {
+    /// A lift walk ([`Inner::lift_behind`]) went past it, and no edge was
+    /// made since: what waited behind it then is lifted, and nothing
+    /// comes to wait below a floor while it stands.
+    const LIFTED: u8 = 1 << 0;
+    /// A restamp walk ([`Inner::restamp_behind`]) went past it, and
+    /// nothing behind it came to wait since.
+    const RESTAMPED: u8 = 1 << 1;
+
+    fn has(self, bit: u8) -> bool {
+        self.0 & bit != 0
+    }
+
+    fn set(&mut self, bit: u8, on: bool) {
+        if on {
+            self.0 |= bit;
+        } else {
+            self.0 &= !bit;
+        }
+    }
 }
 
 /// The layers over a property's base, behind a box that only a property
@@ -438,6 +463,9 @@ struct Inner<V> {
     /// The properties a lift walk ([`Inner::lift_behind`]) went past in
     /// the innermost own queue, to be walked again in the next.
     lift_walked: Vec<NodeId>,
+    /// The properties a restamp walk ([`Inner::restamp_behind`]) went
+    /// past in the innermost own queue.
+    restamp_walked: Vec<NodeId>,
     /// Scratch for [`Inner::lift_behind`], kept for its room.
     lift_stack: Vec<NodeId>,
     /// Who is told of them ([`Graph::set_note_handler`]).
@@ -677,6 +705,7 @@ impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
             i.told.floor = floors.told;
             i.noted.floor = floors.noted;
             i.forget_lift_walks();
+            i.forget_restamp_walks();
         }
         let Some(left) = i.queues.pop() else {
             return;
@@ -868,6 +897,7 @@ impl<V: Clone + 'static> Graph<V> {
                 told: Waiting::default(),
                 noted: Waiting::default(),
                 lift_walked: Vec::new(),
+                restamp_walked: Vec::new(),
                 lift_stack: Vec::new(),
                 note_handler: None,
                 change: 0,
@@ -1178,7 +1208,7 @@ impl<V: Clone + 'static> Graph<V> {
                 host: false,
                 placed: false,
                 noted_at: 0,
-                lifted_past: false,
+                past: Past::default(),
             }),
             Some(value),
             NodeState::Clean,
@@ -1212,7 +1242,7 @@ impl<V: Clone + 'static> Graph<V> {
                     host: false,
                     placed: false,
                     noted_at: 0,
-                    lifted_past: false,
+                    past: Past::default(),
                 }),
                 Some(initial),
                 NodeState::Dirty,
@@ -2357,6 +2387,7 @@ impl<V: Clone + 'static> Graph<V> {
                 if node.is_eager(all) {
                     enqueue(&mut i.queues, n, node);
                 }
+                i.waiting_again(n);
                 i.mark_observers(n, NodeState::Check);
             }
         }
@@ -3281,6 +3312,7 @@ impl<V: Clone + 'static> Graph<V> {
             noted: i.noted.open(),
         };
         i.forget_lift_walks();
+        i.forget_restamp_walks();
         LevelGuard(self, open, Some(below))
     }
 
@@ -3773,6 +3805,7 @@ impl<V: Clone + 'static> Graph<V> {
                         if node.is_eager(all) {
                             enqueue(&mut i.queues, n, node);
                         }
+                        i.waiting_again(n);
                     }
                 } else {
                     // Panicked: keep the old edges so the node still hears
@@ -3789,6 +3822,7 @@ impl<V: Clone + 'static> Graph<V> {
                         node.state = NodeState::Clean;
                     } else {
                         node.state = NodeState::Dirty;
+                        i.waiting_again(n);
                         i.mark_observers(n, NodeState::Check);
                     }
                 }
@@ -3979,6 +4013,9 @@ struct Reach {
     /// The bindings it reaches that a change the queue waits on marked
     /// are its own ([`Inner::restamp_behind`]).
     restamping: bool,
+    /// The queue waits on it: what it marks waits behind whatever a
+    /// restamp walk went past ([`Inner::restamp_behind`]).
+    waited_on: bool,
 }
 
 fn lift(list: &mut Waiting, n: NodeId, at: &mut u32) {
@@ -4244,6 +4281,7 @@ impl<V: Clone + 'static> Inner<V> {
         if node.is_eager(all) {
             enqueue(&mut self.queues, n, node);
         }
+        self.waiting_again(n);
         self.mark_observers(n, NodeState::Check);
     }
 
@@ -4255,6 +4293,7 @@ impl<V: Clone + 'static> Inner<V> {
         if node.is_eager(all) {
             enqueue(&mut self.queues, n, node);
         }
+        self.waiting_again(n);
         self.mark_observers(n, NodeState::Check);
     }
 
@@ -4307,6 +4346,7 @@ impl<V: Clone + 'static> Inner<V> {
         Reach {
             lifting: inside && self.told.floor.below + self.noted.floor.below > 0,
             restamping: inside && !self.waiting_changes.is_empty(),
+            waited_on: !inside,
         }
     }
 
@@ -4315,9 +4355,15 @@ impl<V: Clone + 'static> Inner<V> {
     /// a change the queue waits on reached it first: the change made
     /// inside reached it too, and in a handler ahead it reads as it is,
     /// as do the hooks it lifts. What a change the queue waits on reached
-    /// and the one made inside did not keeps reading as it was. Only that
-    /// is walked: what lies past a node marked by a change that does not
-    /// wait was marked when it was, or before.
+    /// and the one made inside did not keeps reading as it was. The walk
+    /// goes everywhere the change would have, past a node that is clean or
+    /// that a change that does not wait marked as well: a dependency
+    /// adopted inside the queue puts a binding the queue waits on behind
+    /// one marked before it opened. Each property is gone past once in an
+    /// own queue ([`Past::RESTAMPED`]), so a cycle or a diamond ends,
+    /// and a change that reaches it again walks nothing: behind it nothing
+    /// waits, and only an edge, or a node a change the queue waits on
+    /// marks again, brings anything that does ([`Inner::waiting_again`]).
     fn restamp_behind(&mut self, from: NodeId) {
         let mut stack = std::mem::take(&mut self.lift_stack);
         stack.push(from);
@@ -4325,17 +4371,55 @@ impl<V: Clone + 'static> Inner<V> {
             let Some(node) = self.nodes.get_mut(n) else {
                 continue;
             };
+            // `from`'s own was restamped where the change met it.
             if n != from {
-                if node.state == NodeState::Clean
-                    || !waits_on(&self.waiting_changes, node.marked_by)
+                self.stats.restamp_steps += 1;
+                if node.state != NodeState::Clean && waits_on(&self.waiting_changes, node.marked_by)
                 {
-                    continue;
+                    node.marked_by = self.marking;
                 }
-                node.marked_by = self.marking;
             }
+            let Kind::Property(p) = &mut node.kind else {
+                continue;
+            };
+            if p.past.has(Past::RESTAMPED) {
+                continue;
+            }
+            p.past.set(Past::RESTAMPED, true);
+            self.restamp_walked.push(n);
             stack.extend(node.observers.iter().map(|o| o.node));
         }
+        stack.clear();
         self.lift_stack = stack;
+    }
+
+    /// Lets [`Inner::restamp_behind`] go past every property again: what
+    /// the queue waits on changed, or something behind a property it went
+    /// past may wait on it now.
+    fn forget_restamp_walks(&mut self) {
+        for n in self.restamp_walked.drain(..) {
+            if let Some(Node {
+                kind: Kind::Property(p),
+                ..
+            }) = self.nodes.get_mut(n)
+            {
+                p.past.set(Past::RESTAMPED, false);
+            }
+        }
+    }
+
+    /// `n` became non-clean without a change marking it, under the stamp
+    /// it had: if a change the queue waits on made that, it waits again,
+    /// maybe behind a property a restamp walk went past.
+    fn waiting_again(&mut self, n: NodeId) {
+        if !self.restamp_walked.is_empty()
+            && self
+                .nodes
+                .get(n)
+                .is_some_and(|node| waits_on(&self.waiting_changes, node.marked_by))
+        {
+            self.forget_restamp_walks();
+        }
     }
 
     /// Lifts ([`lift_own`]) what waits below the floors behind `from`, a
@@ -4346,7 +4430,7 @@ impl<V: Clone + 'static> Inner<V> {
     /// they would read what it keeps up to date as it was. Nothing is
     /// marked: the walk goes everywhere the change would have, whatever
     /// state each node is in. Each property is gone past once in an own
-    /// queue (`Prop::lifted_past`), so a cycle or a diamond ends, and a
+    /// queue ([`Past::LIFTED`]), so a cycle or a diamond ends, and a
     /// change that reaches it again walks nothing: nothing comes to wait
     /// below a floor while it stands, and what is past a property only
     /// grows with an edge, which forgets the walks ([`Inner::edge_added`]).
@@ -4368,10 +4452,10 @@ impl<V: Clone + 'static> Inner<V> {
             let Kind::Property(p) = &mut node.kind else {
                 continue;
             };
-            if p.lifted_past {
+            if p.past.has(Past::LIFTED) {
                 continue;
             }
-            p.lifted_past = true;
+            p.past.set(Past::LIFTED, true);
             self.lift_walked.push(n);
             stack.extend(node.observers.iter().map(|o| o.node));
         }
@@ -4389,17 +4473,21 @@ impl<V: Clone + 'static> Inner<V> {
                 ..
             }) = self.nodes.get_mut(n)
             {
-                p.lifted_past = false;
+                p.past.set(Past::LIFTED, false);
             }
         }
     }
 
     /// An edge was made: what lies past its source, and what is past every
     /// property behind that, has grown, and a walk that went past them
-    /// ([`Inner::lift_behind`]) did not see what grew.
+    /// ([`Inner::lift_behind`], [`Inner::restamp_behind`]) did not see
+    /// what grew.
     fn edge_added(&mut self) {
         if !self.lift_walked.is_empty() {
             self.forget_lift_walks();
+        }
+        if !self.restamp_walked.is_empty() {
+            self.forget_restamp_walks();
         }
     }
 
@@ -4474,6 +4562,7 @@ impl<V: Clone + 'static> Inner<V> {
         // through (below), so a cycle of them is passed once.
         self.tick += 1;
         let pass = self.tick;
+        let mut waits_again = false;
         while let Some((m, st, from_stamp)) = stack.pop() {
             let Some(node) = self.nodes.get_mut(m) else {
                 continue;
@@ -4580,6 +4669,15 @@ impl<V: Clone + 'static> Inner<V> {
                     // what it waits on still came from the change that
                     // reached it.
                     node.marked_by = self.marking;
+                    // An effect is behind a property, which may have been
+                    // gone past; a property gone past, past which nothing
+                    // waited, has something now.
+                    waits_again |= reach.waited_on
+                        && !self.restamp_walked.is_empty()
+                        && match &node.kind {
+                            Kind::Property(p) => p.past.has(Past::RESTAMPED),
+                            Kind::Effect(_) | Kind::Told { .. } => true,
+                        };
                 } else if !through_walk {
                     // What lies past is marked already, by this change or
                     // one before it.
@@ -4604,6 +4702,9 @@ impl<V: Clone + 'static> Inner<V> {
                     self.restamp_behind(m);
                 }
             }
+        }
+        if waits_again {
+            self.forget_restamp_walks();
         }
     }
 
