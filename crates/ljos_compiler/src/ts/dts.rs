@@ -265,24 +265,11 @@ impl Api {
         self.exported.get(name).copied()
     }
 
-    /// Whether `ty`, or what it inherits, has a member called `name`.
+    /// Whether `ty`, or what it inherits, has a member called `name`: the
+    /// same members the declarations of `ty` and its ancestors are written
+    /// from, so a file's `Omit` of them matches what is declared.
     pub fn has_member(&self, ty: &'static Type, name: &str) -> bool {
-        let mut at = Some(ty);
-        while let Some(found) = at {
-            for own in [Some(found), found.member_extension()]
-                .into_iter()
-                .flatten()
-            {
-                if own.properties.iter().any(|p| p.name == name)
-                    || own.signals.iter().any(|s| s.name == name)
-                    || own.methods.contains(&name)
-                {
-                    return true;
-                }
-            }
-            at = found.prototype();
-        }
-        false
+        members_of(ty).any(|member| member == name) || self.inherited(ty).contains(name)
     }
 
     /// What TypeScript calls the type.
@@ -467,14 +454,7 @@ impl Api {
         let mut names = HashSet::new();
         let mut at = ty.prototype();
         while let Some(found) = at {
-            for own in [Some(found), found.member_extension()]
-                .into_iter()
-                .flatten()
-            {
-                names.extend(own.properties.iter().map(|p| p.name));
-                names.extend(own.signals.iter().map(|s| s.name));
-                names.extend(own.methods.iter().copied());
-            }
+            names.extend(members_of(found));
             at = found.prototype();
         }
         names
@@ -707,6 +687,19 @@ interface String {
 /// in what it creates.
 fn is_component(ty: &Type) -> bool {
     ty.name == "Component" && qt_types::module("QtQml").is_some_and(|qml| qml.has(ty))
+}
+
+/// The names of the members a type declares itself: its own and those of
+/// the class that extends it with members.
+fn members_of(ty: &'static Type) -> impl Iterator<Item = &'static str> {
+    [Some(ty), ty.member_extension()]
+        .into_iter()
+        .flatten()
+        .flat_map(|own| {
+            let properties = own.properties.iter().map(|p| p.name);
+            let signals = own.signals.iter().map(|s| s.name);
+            properties.chain(signals).chain(own.methods.iter().copied())
+        })
 }
 
 /// The enums a file reaches through `ty`'s name: its own, then those of
