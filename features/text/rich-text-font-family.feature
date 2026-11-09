@@ -132,7 +132,7 @@ Feature: The families rich text names
         | No Such Family Ljos, Liberation Mono | font-family:'No Such Family Ljos, Liberation Mono';  |
         | O'Brien, X                           | font-family:&quot;O'Brien, X&quot;;                  |
         | A; B                                 | font-family:'A; B';                                  |
-        | A&B<C                                | font-family:'A&amp;B&lt;C';                          |
+        | A&B<C>                               | font-family:'A&amp;B&lt;C&gt;';                      |
 
     Scenario: Families a comma parts are written and read back in order
       When the method "list" of "root" is called with "No Such Family Ljos, Liberation Mono"
