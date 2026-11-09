@@ -209,7 +209,12 @@ impl Drop for LjosBackend {
         // The text engine belongs to the thread, which runs the next
         // scenario too: that one starts with the bundled font again, and
         // without the fonts this one's FontLoaders registered, as a
-        // program of its own would.
+        // program of its own would. The application ends first: putting
+        // the fonts back tells whatever follows them, and a handler of
+        // this scenario's that ran then could load a font into the
+        // fresh engine.
+        self.inspector = None;
+        self.live = None;
         let registered =
             ljos_quick::text_engine_in_use().is_some_and(|t| t.borrow().fonts_changed_since_made());
         if self.system_fonts || registered {
@@ -2002,6 +2007,55 @@ Item {
         let mut read: Vec<&str> = project.declarations().map(|(path, _)| path).collect();
         read.sort_unstable();
         assert_eq!(read, ["logic/calc.d.ts"]);
+    }
+
+    /// A scenario's fonts end with it, whatever its handlers do when the
+    /// fonts are put back: the next scenario, on the same thread, starts
+    /// with the bundled font only. A handler that loads the font again
+    /// when its family stops resolving to it would otherwise load it into
+    /// the fresh engine, as the scenario ends.
+    #[test]
+    fn a_scenario_s_handlers_load_no_fonts_once_it_has_ended() {
+        let family = || ljos_engine::Font {
+            family: "Ljos Alternate Test".into(),
+            ..ljos_engine::Font::default()
+        };
+        let name = "LjosAlternateTest-Regular.ttf";
+        let font = std::fs::read(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../features/text/fonts")
+                .join(name),
+        )
+        .unwrap();
+        ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+        let mut b = LjosBackend::new();
+        b.as_files().unwrap().resource(name, &font).unwrap();
+        b.load(
+            &[file(
+                "Main.qml",
+                r#"import QtQuick
+Item {
+    objectName: "root"
+    FontInfo { id: info; font.family: "Ljos Alternate Test" }
+    property string family: info.family
+    FontLoader { source: "LjosAlternateTest-Regular.ttf" }
+    FontLoader { id: again }
+    onFamilyChanged: if (family !== "Ljos Alternate Test") again.source = "LjosAlternateTest-Regular.ttf"
+}
+"#,
+            )],
+            "Main.qml",
+        )
+        .unwrap();
+        b.advance(100).unwrap();
+        assert_eq!(
+            b.get("root", "family").unwrap(),
+            json!("Ljos Alternate Test")
+        );
+
+        drop(b);
+        let next = ljos_quick::font_info(&family());
+        assert_ne!(&*next.family, "Ljos Alternate Test", "{next:?}");
     }
 
     #[test]
