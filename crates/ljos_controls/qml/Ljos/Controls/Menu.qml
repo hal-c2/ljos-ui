@@ -7,11 +7,17 @@ import QtQuick.Templates as T
 T.Menu {
     id: control
 
-    // Whether any row has an icon, so the others keep its column.
+    // Whether any row has an icon, so the others keep its column: one of
+    // the style's own, or the row's or its action's picture (`icon`
+    // reads the action's where the row follows one).
     readonly property bool hasIcons: {
         for (let i = 0; i < count; i++) {
             const item = itemAt(i)
-            if (item && item.iconName !== undefined && item.iconName.length > 0)
+            if (!item)
+                continue
+            if (item.iconName !== undefined && item.iconName.length > 0)
+                return true
+            if (item.icon !== undefined && ("" + item.icon.source).length > 0)
                 return true
         }
         return false
