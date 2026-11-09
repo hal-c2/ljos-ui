@@ -1234,7 +1234,19 @@ fn followed(engine: &Engine, obj: ObjectId, f: &Follow) {
     let sink = f.sink.borrow().clone();
     match sink {
         Some(sink) => sink(engine, obj, t),
-        None => *f.last.borrow_mut() = Some(t),
+        None => {
+            // Changed since its completion, and no scene shows it yet (a
+            // script gave it a text as its parent was completed): its
+            // sizes are new when one is read, as a shown text's are.
+            let moved = (f.last.borrow().as_ref()).is_some_and(|was| !was.lays_out_as(&t));
+            let due = moved.then(|| t.clone());
+            *f.last.borrow_mut() = Some(t);
+            if let Some(t) = due
+                && let Err(err) = engine.untrack(|| measure_on_read(engine, obj, t))
+            {
+                engine.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
+            }
+        }
     }
 }
 
@@ -1338,7 +1350,41 @@ const MEASURED: [PropIndex; 7] = [
 #[derive(Debug)]
 pub(crate) struct Due {
     inputs: TextInputs,
-    values: Option<[Value; 7]>,
+    values: Option<Made>,
+    /// What whoever follows the sizes was last told they are, while it is
+    /// still to be told of `inputs` ([`measure_by_polish`]): the polish
+    /// that writes them tells it of each that moved, also of one a read
+    /// made in between, which is made without a change notification.
+    told: Option<[Value; 7]>,
+}
+
+/// What a read measured a text's sizes as ([`Due::values`]), in the fonts
+/// of the text engine then.
+#[derive(Debug)]
+struct Made {
+    values: [Value; 7],
+    engine: std::rc::Weak<RefCell<TextEngine>>,
+    generation: u64,
+}
+
+impl Made {
+    fn of(t: &TextInputs, te: &SharedTextEngine) -> Self {
+        let values = measured_values(t, te);
+        Made {
+            values,
+            engine: Rc::downgrade(te),
+            generation: te.borrow().generation(),
+        }
+    }
+
+    /// Whether `te` would measure them the same: it is the engine that
+    /// did, and no font came or went since.
+    fn stands_in(&self, te: &SharedTextEngine) -> bool {
+        std::ptr::eq(self.engine.as_ptr(), Rc::as_ptr(te))
+            && te
+                .try_borrow()
+                .is_ok_and(|te| te.generation() == self.generation)
+    }
 }
 
 /// Lays `t` out and says what that makes each of [`MEASURED`].
@@ -1365,21 +1411,74 @@ fn write_measured(
     t: &TextInputs,
     te: &SharedTextEngine,
 ) -> Result<(), EngineError> {
-    // Borrowed for the layout only: the writes below run bindings.
-    let values = measured_values(t, te);
-    // What was to be measured on a read is measured now: written over,
-    // not read first, which would measure the older inputs.
-    let due = engine.with_mut(obj, |x: &mut Text| x.due.take())?.is_some();
+    let due = engine.with_mut(obj, |x: &mut Text| x.due.take())?;
+    // A read since these inputs came laid them out already. A document
+    // changes inside (a picture arrives) without changing its inputs, so
+    // it is laid out again ([`TextInputs::lays_out_as`]).
+    let values = match due.as_deref() {
+        Some(Due {
+            inputs,
+            values: Some(made),
+            ..
+        }) if inputs.lays_out_as(t) && made.stands_in(te) => made.values.clone(),
+        // Borrowed for the layout only: the writes below run bindings.
+        _ => measured_values(t, te),
+    };
+    let told = due.as_ref().and_then(|d| d.told.as_ref());
     engine.batch(|| {
-        for (p, v) in MEASURED.into_iter().zip(values) {
-            if due && engine.is_made_on_read(obj, p) {
+        for (at, (p, v)) in MEASURED.into_iter().zip(values).enumerate() {
+            if due.is_some() && engine.is_made_on_read(obj, p) {
+                // Still to be made: written over, not read first, which
+                // would measure the inputs it was due with.
                 engine.write_internal(obj, p, v, ljos_engine::WriteKind::Imperative)?;
+            } else if told.is_some_and(|was| !was[at].change_equals(&v))
+                && engine.untrack(|| engine.read(obj, p)).change_equals(&v)
+            {
+                // A read made it quietly: whoever follows it is told now.
+                engine.notify(obj, p)?;
             } else {
                 write_computed(engine, obj, p, v)?;
             }
         }
         Ok(())
     })
+}
+
+/// Lays the shown Text `obj` out with `t` by the next frame's polish, which
+/// tells whatever follows its sizes once however often a script changes it
+/// before then, and when one of its sizes is read before that, at once: as
+/// on qml6, a script that changes a text reads its new size in the next
+/// statement. The read's layout is the polish's.
+pub(crate) fn measure_by_polish(
+    engine: &Engine,
+    obj: ObjectId,
+    t: TextInputs,
+) -> Result<(), EngineError> {
+    let had = engine.with_mut(obj, |x: &mut Text| {
+        x.measured = None;
+        x.due.take()
+    })?;
+    let told = match had {
+        // Still to be told of the inputs before these.
+        Some(d) if d.told.is_some() => d.told,
+        // Told of the last inputs ([`measure_on_read`]) and not read
+        // since: it reads again anyway.
+        Some(d) if d.values.is_none() => None,
+        // Read before any maker is in place, so these are the values it
+        // holds.
+        _ => Some(MEASURED.map(|p| engine.untrack(|| engine.read(obj, p)))),
+    };
+    engine.with_mut(obj, |x: &mut Text| {
+        x.due = Some(Box::new(Due {
+            inputs: t,
+            values: None,
+            told,
+        }));
+    })?;
+    for p in MEASURED {
+        engine.make_on_read_by(obj, p, made_on_read)?;
+    }
+    Ok(())
 }
 
 /// Measures the Text `obj` with `t` when one of its sizes is next read,
@@ -1397,6 +1496,7 @@ pub(crate) fn measure_on_read(
         x.due = Some(Box::new(Due {
             inputs: t,
             values: None,
+            told: None,
         }));
     })?;
     for p in MEASURED {
@@ -1419,10 +1519,13 @@ fn made_on_read(engine: &Engine, obj: ObjectId, p: PropIndex) -> Value {
     let (Some(at), Some(mut due)) = (at, due) else {
         return engine.read(obj, p);
     };
-    let values = due
-        .values
-        .get_or_insert_with(|| measured_values(&due.inputs, &text_engine()));
-    let v = values[at].clone();
+    let te = text_engine();
+    let made = match due.values.take() {
+        Some(m) if m.stands_in(&te) => m,
+        _ => Made::of(&due.inputs, &te),
+    };
+    let v = made.values[at].clone();
+    due.values = Some(made);
     let _ = engine.with_mut(obj, |x: &mut Text| x.due = Some(due));
     v
 }
