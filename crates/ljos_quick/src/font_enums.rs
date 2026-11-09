@@ -48,11 +48,16 @@ fn font_enums() -> EnumTable {
                 ("PreferFullHinting", 3),
             ],
         ),
-        (
-            "Style",
-            vec![("StyleNormal", 0), ("StyleItalic", 1), ("StyleOblique", 2)],
-        ),
+        style_enum().remove(0),
     ]
+}
+
+/// `Font.Style`, which `FontInfo.style` holds too.
+pub(crate) fn style_enum() -> EnumTable {
+    vec![(
+        "Style",
+        vec![("StyleNormal", 0), ("StyleItalic", 1), ("StyleOblique", 2)],
+    )]
 }
 
 pub(crate) fn register(engine: &Engine) {

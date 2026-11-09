@@ -69,6 +69,8 @@ const FOREIGN: &[(&str, bool)] = &[
     ("QQuickTabBar::Position", false),
     ("QQuickStackView::Status", false),
     ("QQuickDrag::DragType", false),
+    // `Font.Style`, which `FontInfo.style` holds.
+    ("QQuickFontEnums::Style", false),
     // QtQuick.Dialogs: the options are declared on classes of QtGui.
     ("QColorDialogOptions::ColorDialogOptions", true),
     ("QFileDialogOptions::FileDialogOptions", true),
