@@ -4180,10 +4180,10 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     // A new text was measured as it was completed; laid out as it still
     // is, it is not polished to be measured again.
     let measured = text::completion_measured(e, obj, &t);
-    let (same, same_layout, shown) = match shared.borrow().marks.get(obj) {
+    let (same, same_layout, shown, known) = match shared.borrow().marks.get(obj) {
         Some(m) => match &m.text {
-            Some(was) => (**was == t, was.lays_out_as(&t), m.text_shown),
-            None => (false, false, m.text_shown),
+            Some(was) => (**was == t, was.lays_out_as(&t), m.text_shown, true),
+            None => (false, false, m.text_shown, false),
         },
         // Not shown by the scene.
         None => return,
@@ -4226,6 +4226,16 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
             e.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
         }
         return;
+    }
+    // One the scene laid out before is changed by a script or a binding,
+    // which may read its new size in the next statement. A new one (a
+    // view's new row) is laid out by its first frame's polish, which no
+    // read comes before but its completion's.
+    if polish
+        && known
+        && let Err(err) = e.untrack(|| text::measure_by_polish(e, obj, t.clone()))
+    {
+        e.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
     }
     let t = Rc::new(t);
     if !polish && !shown {
