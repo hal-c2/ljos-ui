@@ -190,7 +190,8 @@ are quoted side by side below:
 |---|---|---|
 | `Ljos.Ui` | items, visuals, gestures, states, text, images; the views (`Repeater`, `ListView`) | `QtQuick` |
 | `Ljos.Layout` | `Box`, `Row`, `Column`, `Grid`, `Flow`, `Pages`; `Layout.*` | `QtQuick.Layouts`, positioners |
-| `Ljos.Controls` | the controls, built on `Ljos.Design` roles; today Basic's; `FileDialog`, `FolderDialog` (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic`, `QtQuick.Dialogs` |
+| `Ljos.Controls` | the controls in Ljós's own style, drawn with the roles of its `Theme`; `FileDialog`, `FolderDialog` (§4.16) | — |
+| `Ljos.Controls.Basic` | the same controls as Qt's Basic style draws them; `FileDialog`, `FolderDialog` (§4.16) | `QtQuick.Controls`, `QtQuick.Controls.Basic`, `QtQuick.Dialogs` |
 | `Ljos.Models` | `ListModel`, `ListElement`, `Instantiator`, `XmlModel`, `FolderModel`, `TreeModel`; keyed views | `QtQml.Models`, `XmlListModel`, `FolderListModel` |
 | `Ljos.Core` | `Timer`, `Component`, `Connections`, `Binding`, `Clock`, `Instant`, `Locale`, `App`, `Random`, value types (§4.3) | `QtQml`, the `Qt` namespace |
 | `Ljos.Design` | `Theme` roles: colour, space, type, radius, motion (§4.12) | `palette`, `Material.*`, hand-rolled `Style` singletons |
@@ -1399,10 +1400,10 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 | `Qt.labs.platform`, `StandardPaths` | `Ljos.Platform` | mechanical |
 | `WorkerScript` | — | DECISION: kept (0 uses); a TS worker module later |
 | `Canvas`, `Shape` | the same | none; `QtQuick.Shapes` import lowered (§4.2) |
-| `QtQuick.Controls.Basic` | `Ljos.Controls` | mechanical, for the controls the module has (§4.16) |
-| `QtQuick.Controls` | `Ljos.Controls` | mechanical where the program starts with Basic; kept with another style (§4.16) |
+| `QtQuick.Controls.Basic` | `Ljos.Controls.Basic` | mechanical, for the controls the module has (§4.16) |
+| `QtQuick.Controls` | `Ljos.Controls.Basic` | mechanical where the program starts with Basic; kept with another style (§4.16) |
 | `QtQuick.Controls.Material`, `.Fusion`, `.Universal`, `.impl`, `QtQuick.Templates` | — | DECISION: kept (a style's own API, or the parts a style is built from) |
-| `QtQuick.Dialogs` | `Ljos.Controls` | mechanical for `FileDialog` and `FolderDialog`; kept for the others (§4.16) |
+| `QtQuick.Dialogs` | `Ljos.Controls.Basic` | mechanical for `FileDialog` and `FolderDialog`; kept for the others (§4.16) |
 
 ### 4.15 What this changes for the engine
 
@@ -1439,7 +1440,9 @@ renames are theirs: they follow when those types are in `Ljos.Ui`.
 
 ### 4.16 Controls
 
-A file in Ljós's API imports its controls from `Ljos.Controls`:
+A file in Ljós's API imports its controls from `Ljos.Controls`, and gets
+Ljós's own style: compact controls (28 px high, 13 px type, a radius of 8)
+drawn with the roles of one `Theme` singleton:
 
 ```qml
 import Ljos.Ui
@@ -1447,11 +1450,47 @@ import Ljos.Controls
 
 Item {
     Button { text: "Save"; ToolTip.text: "Writes the file"; ToolTip.delay: 500 }
+    Button { text: "Send"; primary: true }
     Label { text: "Ready" }
 }
 ```
 
-The module grows a slice at a time. Each control in it is the Basic
+The style has `Button` (`primary`, `destructive`, `subtle`, `chevron`,
+`iconName`), `Switch`, `CheckBox`, `ComboBox` (`outline`), `TextField`,
+`SpinBox`, `Slider`, `Menu`, `MenuItem` (`shortcut`, `iconSpace`,
+`destructive`, `iconName`), `MenuSeparator`, `Label`, `ToolTip` and `Icon`
+(Lucide's marks, under Lucide's ISC licence). It has every control
+`Ljos.Controls.Basic` has, so a file moves from one to the other by its
+import alone: `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`
+and `ScrollView` are Basic's until the style draws its own, and
+`FileDialog` and `FolderDialog` are the same types in both.
+
+The theme's roles are `canvas`, `surface`, `surfaceRaised`,
+`surfaceOverlay`, `input`, `border`, `text`, `textMuted`, `placeholder`,
+`iconMuted`, `accent`, `accentForeground`, `accentSurface`, `focus`,
+`errorForeground` and `warningForeground`. All are derived from three:
+`canvas`, `text` and `accent`, which follow `Ljos.Design`'s `Colors` in
+light and dark. The fills are the canvas mixed toward the text; each role
+that is read is then moved toward the text by `reach(from, to, against,
+ratio)` until it meets its WCAG ratio against every fill it is drawn on:
+3:1 for `input` and `focus` against `surfaceRaised`, 4.5:1 for `textMuted`
+and `placeholder`, 3:1 for `iconMuted`, 4.5:1 for the error and warning
+colours, and `accentForeground` is black or white, whichever is further
+from the accent. `ljos_design::roles` derives the same in Rust, and its
+tests hold every palette of `Ljos.Design` to the ratios. Every role is a
+property an app may set (`Theme.input = "#b00020"`); a role set is the one
+drawn, and the others still follow the three.
+
+Motion is `Ljos.Design`'s `Motion`: a pressed button gives a little
+(`Motion.pressScale`), a switch's thumb slides in `Motion.moveSmall` and a
+menu fades in. With reduced motion nothing moves and a change still shows:
+the button keeps its size and its fill says it is pressed, and the thumb is
+at its end at once while the track's colour still fades. Each control has
+a ring of the `focus` role where a key brought the keyboard, and the style
+passes `ljos_audit` in light and dark.
+
+A file that wants Qt's Basic look imports `Ljos.Controls.Basic`. It grows a
+slice at a time. Each control in it is the Basic
 style's, as `QtQuick.Controls.Basic` has it: the same style file over the
 same template, made, drawn and taking input as Qt's, so a lowered file and
 the file as written are the same program and draw the same pixels. What
@@ -1467,7 +1506,7 @@ compat pass lowers a file only when every control it names is there.
 | K5 | `FileDialog`, `FolderDialog` (`QtQuick.Dialogs`') | built |
 
 Lowering (§6.1): `import QtQuick.Controls.Basic` becomes
-`import Ljos.Controls` on its line, and a second import of the controls
+`import Ljos.Controls.Basic` on its line, and a second import of the controls
 becomes an empty line. `import QtQuick.Controls` is the style the program
 starts with (`QT_QUICK_CONTROLS_STYLE`, then the file
 `QT_QUICK_CONTROLS_CONF` names, then the platform's: Fusion on Linux), so
@@ -1475,31 +1514,43 @@ it is lowered only where that is Basic. `ljos migrate --style NAME` says
 what the program starts with; without it, migrate takes what a program
 started there would get. A control the module has not taken yet, or one of
 its enums (`Dial.SnapAlways`), keeps the file with "`Dial` is not in
-Ljos.Controls yet". A `Rectangle` given to a control (`background:`) is
+Ljos.Controls.Basic yet". A `Rectangle` given to a control (`background:`) is
 still a `Rectangle`, so its `color` becomes `fill`; a member read off what
 the style gave (`b.background.color`) keeps the file, because that may be
 a `Rectangle`.
 
-Cost: none at run time. The module registers the files the Basic style
-already compiled, under a second name.
+Cost: `Ljos.Controls.Basic` costs nothing at run time: it registers the
+files the Basic style already compiled, under a second name. Ljós's style
+is compiled with the controls; its `Theme` is one object, and a role is a
+binding that is evaluated again only when one of the three it reads
+changes.
 
 The file and folder dialogs are `QtQuick.Dialogs`' own types, registered
-in `Ljos.Controls` under a second name: the system's dialog where it has
+in `Ljos.Controls` and `Ljos.Controls.Basic` under a second name: the system's dialog where it has
 one, else the dialog Ljós draws. `import QtQuick.Dialogs` is lowered as
-one more import of the controls: it becomes `import Ljos.Controls` on its
+one more import of the controls: it becomes `import Ljos.Controls.Basic` on its
 line when the file imports no other controls, and an empty line when it
 does. `ColorDialog`, `FontDialog` and `MessageDialog`, and their enums
 (`MessageDialog.Ok`), keep the file with "`ColorDialog` is not in
-Ljos.Controls yet"; the dialogs under a name (`as D`) keep it as an aliased
-controls import does. Since the lowered file imports `Ljos.Controls`, a file of
+Ljos.Controls.Basic yet"; the dialogs under a name (`as D`) keep it as an aliased
+controls import does. Since the lowered file imports `Ljos.Controls.Basic`, a file of
 the project named as one of its types (`Button.qml` beside a file of
 dialogs) keeps the file (§6.3).
 
-DECISION: the dialogs come into `Ljos.Controls` as they are, not into a
+DECISION: the dialogs come into the controls as they are, not into a
 module of their own; Qt's names stay, since §4.14 renames none of them.
 
-DECISION: `Ljos.Controls` draws Basic, not `Ljos.Design` roles. Building
-on the roles is a rewrite of the style, so it stays in M6.
+DECISION: a file chooses its style by its import, and nothing else:
+`import Ljos.Controls` is Ljós's style, `import Ljos.Controls.Basic` is
+Basic's. There is no style setting to read at start, so a file draws the
+same wherever it runs, and a tool reads the style off the file. The compat
+pass and `ljos migrate` lower Qt's Basic controls to
+`Ljos.Controls.Basic`, so a lowered file keeps the look it had; moving it
+to Ljós's style is one edit, its import.
+
+DECISION: the roles' fills lift toward the text in both schemes (a light
+canvas darkens, a dark one lightens), so `surfaceRaised` is always further
+from the canvas than `surface`, and one derivation serves light and dark.
 
 DECISION: the controls keep Qt's member and enum names
 (`ScrollBar.AlwaysOn`, `Label.color` as the glyph colour, as on `Text`)
@@ -1783,7 +1834,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | Kept because | Phase |
 |---|---|
 | A type or module the API has not taken (`Column`, `Behavior`, `Dial`, `QtQuick.Controls.Fusion`, …) | Lowered as the API grows (M1, M6) |
-| `import QtQuick.Controls` in a program that starts with a style other than Basic | Lowered once `Ljos.Controls` has that style (M6) |
+| `import QtQuick.Controls` in a program that starts with a style other than Basic | Lowered once Ljós has that style's controls (M6) |
 | A module of the project whose types are native (C++ with no QML file here) | Kept while its types are not described to the pass |
 | A module of the project imported under a name (`import Gauges as G`) | Kept until the pass follows a qualified type |
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
@@ -1791,7 +1842,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | `.bold` of a font read or written by a script, `font.bold` with `font.weight` (in any form), `font.pointSize`, or a font member read off a `font`, `var` or `alias` whose type is not known (§4.13) | Kept until the pass knows more types (M4) and `Screen` lands (M1) |
 | A `.qml` URL built at run time (template literal, concatenation) | Kept when the file is seen. A group tie through it is missed (risk R1) |
 | `property var` whose type is not known | Kept. A person types it, or makes it `property unknown` and decodes it (§4.4) |
-| A name the file's Qt imports lack (a file of the project, or one the context gives) that a Ljós module the lowered file imports has (`Box.qml` beside a file, which `Ljos.Ui` would shadow; `Button.qml` beside one that imports `QtQuick.Dialogs`, which `Ljos.Controls` would) | Kept for good. An import is found before the files beside it, so lowering would change the type; renaming the project's file is the author's call |
+| A name the file's Qt imports lack (a file of the project, or one the context gives) that a Ljós module the lowered file imports has (`Box.qml` beside a file, which `Ljos.Ui` would shadow; `Button.qml` beside one that imports `QtQuick.Dialogs`, which `Ljos.Controls.Basic` would) | Kept for good. An import is found before the files beside it, so lowering would change the type; renaming the project's file is the author's call |
 | An import of the program's own types with no description of them, or a type the description lacks | Lowered once the program describes it (`ljostypes.json`) |
 | A member Ljós renames, on a program's type built on the toolkit type that has it (`color` of a type built on `Rectangle`) | Lowered once a program's types get Ljós faces |
 
@@ -1850,7 +1901,7 @@ not 114:
 |---|---:|
 | a file of its group is kept | 73 |
 | `QtQuick.Controls.Fusion` (15), `.impl` (7), `.Material` (5) | 27 |
-| a control not in `Ljos.Controls` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `Pane`, `Page` (1 each) | 13 |
+| a control not in `Ljos.Controls.Basic` yet: `StackView` (4), `ApplicationWindow` (4), `RoundButton` (3), `Pane`, `Page` (1 each) | 13 |
 
 With `QtQuick.Dialogs` lowered (K5), each example with `--style Basic` is
 495 files, 14 lowered, 471 kept, as it was at K1's last commit (which
