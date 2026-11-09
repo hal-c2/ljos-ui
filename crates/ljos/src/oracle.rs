@@ -685,6 +685,17 @@ impl TypeOracle for EngineOracle {
         }
     }
 
+    fn additions(&self, ty: EngineType) -> Vec<EngineType> {
+        match ty {
+            EngineType::Qt(ty) => QtTypeOracle
+                .additions(ty)
+                .into_iter()
+                .map(EngineType::Qt)
+                .collect(),
+            EngineType::Native(_) => Vec::new(),
+        }
+    }
+
     fn unknown_type_note(&self, name: &str) -> Option<&'static str> {
         QtTypeOracle.unknown_type_note(name)
     }

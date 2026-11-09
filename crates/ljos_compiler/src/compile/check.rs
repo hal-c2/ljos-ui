@@ -640,7 +640,13 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             });
             return Some(Own { ty, written: None });
         }
-        None
+        // Beside Qt's table, what the runtime adds to one of Qt's types
+        // (`font.size`, `Screen.points`) is in Ljós's own description of
+        // it, and holds there what it holds without Qt's table.
+        oracle
+            .additions(ty)
+            .into_iter()
+            .find_map(|added| self.native_member(added, name))
     }
 
     /// The enum a property of `owner` declared as `written` holds.

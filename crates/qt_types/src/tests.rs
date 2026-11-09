@@ -569,6 +569,35 @@ fn ljos_adds_members_to_qt_types() {
     assert!(!font.adds("sparkle"));
 }
 
+/// What Ljós adds to one of Qt's types holds what Ljós's own table says it
+/// does, so a script that reads it is typed beside Qt's table as it is
+/// without it: `font.size` is an `int`, `Screen.points` gives a `real`
+/// (`features/text/ljos-text-names.feature`,
+/// `features/language/ljos-ui-items.feature`).
+#[test]
+fn what_ljos_adds_holds_what_its_table_says() {
+    let quick = module("QtQuick").unwrap();
+    let font = quick.type_named("font").unwrap();
+    let screen = quick.type_named("Screen").unwrap().attached().unwrap();
+    if !has_qt_table() {
+        assert!(font.additions().is_empty() && screen.additions().is_empty());
+        assert!(font.property("size").is_some());
+        assert_eq!(screen.method_returns("points"), Some("real"));
+        return;
+    }
+    assert!(font.property("size").is_none() && font.adds("size"));
+    let size = font
+        .additions()
+        .into_iter()
+        .find_map(|ty| ty.property("size"));
+    assert_eq!(size.map(|size| size.type_name), Some("int"));
+    assert!(!screen.has_method("points") && screen.adds("points"));
+    let points = (screen.additions().into_iter()).find_map(|ty| ty.method_returns("points"));
+    assert_eq!(points, Some("real"));
+    // What Qt has stays Qt's: the additions are looked in only after it.
+    assert!(!font.adds("pixelSize"));
+}
+
 /// A style's part that Qt's table names but does not describe has what the
 /// type Ljós's own file builds it on has: a `CheckIndicator` is a
 /// `Rectangle`, so `height` is its own.

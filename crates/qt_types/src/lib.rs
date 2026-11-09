@@ -141,7 +141,7 @@ mod tests;
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
 };
 
 /// Whether Qt's own description of its types was compiled in. Without it
@@ -375,10 +375,11 @@ pub struct Type {
     /// The extension is there for its enums only (`Qt.AlignLeft`).
     extension_is_namespace: bool,
     attached: Option<usize>,
-    /// What Ljós's own table gives the type that Qt's does not: the
+    /// What Ljós's own table says of the type where Qt's describes it: the
     /// properties, signals and methods the runtime adds to one of Qt's
-    /// types (`font.scaleWithSystem`).
-    added: Vec<&'static str>,
+    /// types (`font.scaleWithSystem`) are there, with what they hold, and
+    /// so are the ones Qt's lists too, which are Qt's ([`Type::additions`]).
+    added: Vec<Arc<Type>>,
     /// Of a QML file Qt's table names but does not describe (the parts of
     /// a style, `CheckIndicator`), the type Ljós's own file is built on:
     /// the runtime has what that has.
@@ -394,6 +395,16 @@ pub struct Type {
 }
 
 impl Type {
+    /// Gives back the room the lists grew while they were read.
+    fn shrink(&mut self) {
+        self.enums.shrink_to_fit();
+        self.properties.shrink_to_fit();
+        self.signals.shrink_to_fit();
+        self.methods.shrink_to_fit();
+        self.method_returns.shrink_to_fit();
+        self.added.shrink_to_fit();
+    }
+
     pub fn prototype(&self) -> Option<&'static Type> {
         self.prototype.map(|index| &table().types[index])
     }
@@ -415,15 +426,31 @@ impl Type {
         if self.property(name).is_some() || self.signal(name).is_some() || self.has_method(name) {
             return false;
         }
-        self.added.contains(&name)
-            || self.prototype().is_some_and(|ty| ty.adds(name))
-            || self.stands_on.is_some_and(|index| {
-                let ty = &table().types[index];
-                ty.property(name).is_some()
-                    || ty.signal(name).is_some()
-                    || ty.has_method(name)
-                    || ty.adds(name)
-            })
+        self.additions().into_iter().any(|ty| {
+            ty.property(name).is_some() || ty.signal(name).is_some() || ty.has_method(name)
+        })
+    }
+
+    /// Where Qt's table describes the type, the types that say what Ljós
+    /// adds to it, nearest first: Ljós's own description of the type and
+    /// of what it inherits, each without what that inherits, and of a
+    /// style's part Qt's table names but does not describe, the type
+    /// Ljós's file builds it on. A member one of them has and the type
+    /// lacks is one the runtime adds ([`Type::adds`]), and it holds what
+    /// that description says (`font.size` an `int`, `Screen.points` gives
+    /// a `real`), so a script that reads it is typed beside Qt's table as
+    /// it is without it. Empty for a type of Ljós's own table.
+    pub fn additions(&'static self) -> Vec<&'static Type> {
+        let mut found: Vec<&'static Type> = self.added.iter().map(|ty| &**ty).collect();
+        if let Some(prototype) = self.prototype() {
+            found.extend(prototype.additions());
+        }
+        if let Some(index) = self.stands_on {
+            let base = &table().types[index];
+            found.push(base);
+            found.extend(base.additions());
+        }
+        found
     }
 
     /// Whether the type is, or inherits, one of `classes`. The same type has
@@ -702,11 +729,7 @@ impl Table {
     /// lives as long as the program, and that room was about half of it.
     fn shrink(&mut self) {
         for ty in &mut self.types {
-            ty.enums.shrink_to_fit();
-            ty.properties.shrink_to_fit();
-            ty.signals.shrink_to_fit();
-            ty.methods.shrink_to_fit();
-            ty.added.shrink_to_fit();
+            ty.shrink();
         }
         for module in self.modules.values_mut() {
             module.imports.shrink_to_fit();
@@ -824,19 +847,28 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             (0, _) => {}
             (1, "import") if passed_over => {}
             (1, "type") if passed_over => {
-                over.classes.insert(word(), over.types.len());
-                over.types.push(OverType::default());
+                let (class, name) = (word(), word());
+                over.classes.insert(class, over.types.len());
+                over.types.push(OverType {
+                    ty: new_type(class, name, true, module),
+                    attached: None,
+                    prototype: None,
+                });
             }
             (1, name) if passed_over => over.exports.push((module, name, word())),
             (_, member) if passed_over => {
-                let Some(ty) = over.types.last_mut() else {
+                let Some(at) = over.types.len().checked_sub(1) else {
                     continue;
                 };
+                let ty = &mut over.types[at];
                 match member {
-                    "prop" | "signal" | "method" => ty.names.push(word()),
                     "attached" => ty.attached = Some(word()),
                     "prototype" => ty.prototype = Some((word(), word() == "named")),
-                    _ => {}
+                    _ => {
+                        if read_member(&mut ty.ty, member, words) {
+                            over.named.push((at, ty.ty.properties.len() - 1));
+                        }
+                    }
                 }
             }
             (1, "import") => {
@@ -858,32 +890,7 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             (1, "type") => {
                 let (class, name) = (word(), word());
                 table.classes.insert(class, table.types.len());
-                table.types.push(Type {
-                    name: if name.is_empty() { class } else { name },
-                    class,
-                    is_own,
-                    module,
-                    qml_file: class.ends_with(".qml").then_some(class),
-                    is_singleton: false,
-                    // What has a QML name is exported; `is` takes the rest back.
-                    is_creatable: !name.is_empty(),
-                    is_value: false,
-                    has_custom_parser: false,
-                    enums: Vec::new(),
-                    properties: Vec::new(),
-                    signals: Vec::new(),
-                    methods: Vec::new(),
-                    method_returns: Vec::new(),
-                    default_property: None,
-                    prototype: None,
-                    extension: None,
-                    extension_is_namespace: false,
-                    attached: None,
-                    added: Vec::new(),
-                    stands_on: None,
-                    is_unlisted: false,
-                    is_built: is_own,
-                });
+                table.types.push(new_type(class, name, is_own, module));
             }
             (1, name) => exports.push((module, name, word())),
             (_, member) => {
@@ -911,68 +918,11 @@ fn read(qt: &'static str, own: &'static str) -> Table {
                             ty.is_creatable &= flag == "parser";
                         }
                     }
-                    "enum" | "flags" => {
-                        let name = word();
-                        let (name, alias) = match name.split_once('=') {
-                            Some((name, alias)) => (name, Some(alias)),
-                            None => (name, None),
-                        };
-                        let keys = words.map(|key| match key.split_once('=') {
-                            Some((key, number)) => (key, number.parse().ok()),
-                            None => (key, None),
-                        });
-                        let is_flag = member == "flags";
-                        ty.enums.push(Enum {
-                            name,
-                            alias,
-                            is_flag,
-                            keys: keys.collect(),
-                        });
-                    }
-                    "prop" => {
-                        let (name, type_name) = (word(), word());
-                        let flags: Vec<&str> = words.collect();
-                        if flags.contains(&"named") {
-                            named.push((index, ty.properties.len()));
-                        }
-                        ty.properties.push(Property {
-                            name,
-                            type_name,
-                            is_list: flags.contains(&"list"),
-                            is_readonly: flags.contains(&"readonly"),
-                            is_pointer: flags.contains(&"pointer"),
-                            is_required: flags.contains(&"required"),
-                            has_reset: flags.contains(&"reset"),
-                            is_component: class::COMPONENT.contains(&type_name),
-                            // Qt's table has no word for it: there it is
-                            // the property of that name and type.
-                            is_script: flags.contains(&"script")
-                                || (type_name == "QQmlScriptString" && name == "script"),
-                        });
-                    }
-                    "signal" => {
-                        let name = word();
-                        // Only the first `:`: a C++ type has `::` in it.
-                        let (parameters, parameter_types) = words
-                            .map(|word| {
-                                let (name, ty) = word.split_once(':').unwrap_or((word, ""));
-                                (if name == "_" { "" } else { name }, ty)
-                            })
-                            .unzip();
-                        ty.signals.push(Signal {
-                            name,
-                            parameters,
-                            parameter_types,
-                        });
-                    }
-                    "method" => {
-                        let name = word();
-                        ty.methods.push(name);
-                        if let Some(returns) = words.find_map(|w| w.strip_prefix("returns:")) {
-                            ty.method_returns.push((name, returns));
+                    _ => {
+                        if read_member(ty, member, words) {
+                            named.push((index, ty.properties.len() - 1));
                         }
                     }
-                    _ => {}
                 }
             }
         }
@@ -1023,6 +973,33 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             _ => ty.attached = to,
         }
     }
+    // What a passed-over type's property holds is named as the other
+    // properties are, and is Qt's type of that name (`QtQml.int` is `int`).
+    for (at, property) in over.named {
+        let meant = table.type_meant(over.types[at].ty.properties[property].type_name);
+        if let Some(class) = meant.map(|index| table.types[index].class) {
+            let property = &mut over.types[at].ty.properties[property];
+            property.type_name = class;
+            property.is_component = class::COMPONENT.contains(&class);
+        }
+    }
+    let (described, over_links): (Vec<Arc<Type>>, Vec<_>) = over
+        .types
+        .into_iter()
+        .map(|mut over| {
+            over.ty.shrink();
+            (Arc::new(over.ty), (over.attached, over.prototype))
+        })
+        .unzip();
+    let add = |ty: &mut Type, own: usize| {
+        if !ty
+            .added
+            .iter()
+            .any(|added| Arc::ptr_eq(added, &described[own]))
+        {
+            ty.added.push(Arc::clone(&described[own]));
+        }
+    };
     for uri in &over.modules {
         let Some(module) = table.modules.get(uri) else {
             continue;
@@ -1049,10 +1026,10 @@ fn read(qt: &'static str, own: &'static str) -> Table {
         let Some(own) = over.classes.get(class) else {
             continue;
         };
-        let ty = &over.types[*own];
-        table.types[index].added.extend(&ty.names);
+        let (attached, prototype) = over_links[*own];
+        add(&mut table.types[index], *own);
         if table.types[index].qml_file.is_some() && table.types[index].prototype.is_none() {
-            let base = ty.prototype.and_then(|(class, named)| {
+            let base = prototype.and_then(|(class, named)| {
                 if named {
                     table.type_meant(class)
                 } else {
@@ -1062,9 +1039,9 @@ fn read(qt: &'static str, own: &'static str) -> Table {
             table.types[index].stands_on = base;
         }
         // What one attaches is the same type of the other: `Accessible.`.
-        let attached = ty.attached.and_then(|class| over.classes.get(class));
+        let attached = attached.and_then(|class| over.classes.get(class));
         if let (Some(own), Some(to)) = (attached, table.types[index].attached) {
-            table.types[to].added.extend(&over.types[*own].names);
+            add(&mut table.types[to], *own);
         }
     }
     table.shrink();
@@ -1072,10 +1049,9 @@ fn read(qt: &'static str, own: &'static str) -> Table {
 }
 
 /// A type of a passed-over module.
-#[derive(Default)]
 struct OverType {
-    /// The names of its members.
-    names: Vec<&'static str>,
+    /// Its members, as Ljós's own table describes them.
+    ty: Type,
     /// The class it attaches.
     attached: Option<&'static str>,
     /// The class it is built on, and whether that is a QML name.
@@ -1091,4 +1067,113 @@ struct PassedOver {
     exports: Vec<(&'static str, &'static str, &'static str)>,
     /// The modules passed over.
     modules: Vec<&'static str>,
+    /// The properties of `types` whose type is `named`: the type and the
+    /// property, by index.
+    named: Vec<(usize, usize)>,
+}
+
+/// A type of the class `class`, named `name` where it has a QML name, of
+/// the module `module`, with nothing in it yet.
+fn new_type(class: &'static str, name: &'static str, is_own: bool, module: &'static str) -> Type {
+    Type {
+        name: if name.is_empty() { class } else { name },
+        class,
+        is_own,
+        module,
+        qml_file: class.ends_with(".qml").then_some(class),
+        is_singleton: false,
+        // What has a QML name is exported; `is` takes the rest back.
+        is_creatable: !name.is_empty(),
+        is_value: false,
+        has_custom_parser: false,
+        enums: Vec::new(),
+        properties: Vec::new(),
+        signals: Vec::new(),
+        methods: Vec::new(),
+        method_returns: Vec::new(),
+        default_property: None,
+        prototype: None,
+        extension: None,
+        extension_is_namespace: false,
+        attached: None,
+        added: Vec::new(),
+        stands_on: None,
+        is_unlisted: false,
+        is_built: is_own,
+    }
+}
+
+/// Reads a member of a type, the `enum`, `flags`, `prop`, `signal` or
+/// `method` line `member` begins and `words` goes on with, into `ty`. True
+/// for a property whose type is `named`, which only the exports can turn
+/// into a class.
+fn read_member(
+    ty: &mut Type,
+    member: &str,
+    mut words: std::str::SplitAsciiWhitespace<'static>,
+) -> bool {
+    let mut word = || words.next().unwrap_or("");
+    match member {
+        "enum" | "flags" => {
+            let name = word();
+            let (name, alias) = match name.split_once('=') {
+                Some((name, alias)) => (name, Some(alias)),
+                None => (name, None),
+            };
+            let keys = words.map(|key| match key.split_once('=') {
+                Some((key, number)) => (key, number.parse().ok()),
+                None => (key, None),
+            });
+            let is_flag = member == "flags";
+            ty.enums.push(Enum {
+                name,
+                alias,
+                is_flag,
+                keys: keys.collect(),
+            });
+        }
+        "prop" => {
+            let (name, type_name) = (word(), word());
+            let flags: Vec<&str> = words.collect();
+            ty.properties.push(Property {
+                name,
+                type_name,
+                is_list: flags.contains(&"list"),
+                is_readonly: flags.contains(&"readonly"),
+                is_pointer: flags.contains(&"pointer"),
+                is_required: flags.contains(&"required"),
+                has_reset: flags.contains(&"reset"),
+                is_component: class::COMPONENT.contains(&type_name),
+                // Qt's table has no word for it: there it is
+                // the property of that name and type.
+                is_script: flags.contains(&"script")
+                    || (type_name == "QQmlScriptString" && name == "script"),
+            });
+            return flags.contains(&"named");
+        }
+        "signal" => {
+            let name = word();
+            // Only the first `:`: a C++ type has `::` in it.
+            let (parameters, parameter_types) = words
+                .map(|word| {
+                    let (name, ty) = word.split_once(':').unwrap_or((word, ""));
+                    (if name == "_" { "" } else { name }, ty)
+                })
+                .unzip();
+            ty.signals.push(Signal {
+                name,
+                parameters,
+                parameter_types,
+            });
+        }
+        "method" => {
+            let name = word();
+            ty.methods.push(name);
+            if let Some(returns) = words.find_map(|w| w.strip_prefix("returns:")) {
+                ty.method_returns.push((name, returns));
+            }
+        }
+        _ => {}
+    }
+    false
 }

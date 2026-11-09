@@ -148,6 +148,14 @@ pub trait TypeOracle {
         false
     }
 
+    /// The types that describe what the runtime adds to `ty`, nearest
+    /// first, each read without what it inherits: of a member
+    /// [`adds_member`](Self::adds_member) answers for, what it holds or
+    /// gives. Empty where nothing is added.
+    fn additions(&self, _ty: Self::Type) -> Vec<Self::Type> {
+        Vec::new()
+    }
+
     /// What a message about `name`, a type that no import of the file has,
     /// should add: set when the oracle cannot tell a type nobody has from
     /// one it was not told about.
@@ -488,6 +496,10 @@ impl TypeOracle for QtTypeOracle {
 
     fn adds_member(&self, ty: QtType, name: &str) -> bool {
         ty.0.adds(name)
+    }
+
+    fn additions(&self, ty: QtType) -> Vec<QtType> {
+        ty.0.additions().into_iter().map(QtType).collect()
     }
 
     fn reads_checked(&self, _ty: QtType) -> bool {
