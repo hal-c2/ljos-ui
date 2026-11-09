@@ -525,48 +525,53 @@ fn follow_action(
     })?;
     state.action.set(Some((action, conn)));
 
-    let mut mine = state.follows_action.get();
-    let mut follow = |bit: u8, prop: PropIndex, from: PropIndex| -> Result<(), EngineError> {
-        if mine & bit != 0 || is_unset(engine, obj, prop) {
-            mine |= bit;
-            engine.bind(obj, prop, move |e| {
-                if e.is_alive(action) {
-                    e.read(action, from)
-                } else {
-                    e.untrack(|| e.read(obj, prop))
-                }
-            })?;
-        }
-        Ok(())
-    };
-    follow(
-        follows::TEXT,
-        AbstractButton::TEXT.index,
-        Action::TEXT.index,
-    )?;
-    follow(
-        follows::CHECKABLE,
-        AbstractButton::CHECKABLE.index,
-        Action::CHECKABLE.index,
-    )?;
-    follow(
-        follows::CHECKED,
-        AbstractButton::CHECKED.index,
-        Action::CHECKED.index,
-    )?;
-    follow(follows::ENABLED, Item::ENABLED.index, Action::ENABLED.index)?;
+    let mut pairs = vec![
+        (
+            follows::TEXT,
+            AbstractButton::TEXT.index,
+            Action::TEXT.index,
+        ),
+        (
+            follows::CHECKABLE,
+            AbstractButton::CHECKABLE.index,
+            Action::CHECKABLE.index,
+        ),
+        (
+            follows::CHECKED,
+            AbstractButton::CHECKED.index,
+            Action::CHECKED.index,
+        ),
+        (follows::ENABLED, Item::ENABLED.index, Action::ENABLED.index),
+    ];
     // The size of the icon stays the button's own (Qt 6.11.2, by running
     // qml6): an action says which picture, not how large.
     for (bit, leaf) in ICON_LEAVES {
-        let (Ok(own), Ok(theirs)) = (
+        if let (Ok(own), Ok(theirs)) = (
             engine.property_index(obj, leaf),
             engine.property_index(action, leaf),
-        ) else {
-            continue;
-        };
-        follow(bit, own, theirs)?;
+        ) {
+            pairs.push((bit, own, theirs));
+        }
     }
+    let mut mine = state.follows_action.get();
+    pairs.retain(|&(bit, prop, _)| mine & bit != 0 || is_unset(engine, obj, prop));
+    for &(bit, ..) in &pairs {
+        mine |= bit;
+    }
+    // Known before any binding below runs: each one wakes whoever reads
+    // the button's icon, and a reader told by `icon_giver` that the leaf
+    // is the button's own would take the binding for something written,
+    // an unset colour for transparent.
     state.follows_action.set(mine);
+    for (_, prop, from) in pairs {
+        engine.bind(obj, prop, move |e| {
+            if e.is_alive(action) {
+                e.read(action, from)
+            } else {
+                e.untrack(|| e.read(obj, prop))
+            }
+        })?;
+    }
     Ok(())
 }
 
