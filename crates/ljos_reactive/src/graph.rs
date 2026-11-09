@@ -12,8 +12,9 @@ use smallvec::SmallVec;
 use crate::slots::Slots;
 
 use crate::types::{
-    BindingFn, Census, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options, OverrideId,
-    OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats, WriteKind,
+    BindingFn, Census, Change, Diagnostic, EffectFn, NodeId, NodeKind, NodeState, Options,
+    OverrideId, OverrideValue, Provenance, ReactiveError, Reader, RestoreMode, ScopeId, Stats,
+    WriteKind,
 };
 
 /// One end of a dependency edge, stored on both nodes.
@@ -315,9 +316,12 @@ struct Node<V> {
     /// running when its binding was replaced is not put back.
     binding_gen: u32,
     /// The change ([`Inner::change`]) that took it from what it was last
-    /// brought up to date with. One byte, in room the flags leave: a wrap
-    /// only makes a long-dirty binding read as it was in a handler ahead.
-    marked_by: u8,
+    /// brought up to date with, or the last one made inside an own queue
+    /// that reached it since, if one the queue waits on did first
+    /// ([`Inner::restamp_behind`]). Never wraps: what reads as it was
+    /// ([`Graph::read_as_it_was`]) and what an own queue tells inside it
+    /// go by which change is which.
+    marked_by: Change,
     /// Nested noted property hooks holding this observer back.
     note_holds: u16,
 }
@@ -438,16 +442,17 @@ struct Inner<V> {
     lift_stack: Vec<NodeId>,
     /// Who is told of them ([`Graph::set_note_handler`]).
     note_handler: Option<Rc<dyn Fn(NodeId)>>,
-    /// Counts the changes that mark observers, wrapping: what a node's
-    /// `marked_by` is told of.
-    change: u8,
+    /// Counts the changes that mark observers: what a node's `marked_by`
+    /// is told of.
+    change: Change,
     /// The change the marks being passed on are of.
-    marking: u8,
+    marking: Change,
     /// While a [`Graph::watch_ahead`] handler runs: the change it is told
     /// of. A binding that change reached reads as it was.
-    ahead: Option<u8>,
-    /// The changes waiting for a [`LevelGuard`] to be told.
-    waiting_changes: Vec<u8>,
+    ahead: Option<Change>,
+    /// The changes waiting for a [`LevelGuard`] to be told, an own queue's
+    /// run of them each: those after the first and up to the last.
+    waiting_changes: Vec<(Change, Change)>,
     /// What was read so, to be brought up to date when the flush has run
     /// what it had to, as Qt's bindings are once their change has spread:
     /// the next change reads them as they were then. Kept for the next.
@@ -791,7 +796,7 @@ impl<V: Clone + 'static> Drop for WalksAside<'_, V> {
 
 /// Puts back the change an enclosing [`Graph::watch_ahead`] handler was
 /// told of, on every exit.
-struct AheadGuard<'g, V: Clone + 'static>(&'g Graph<V>, Option<u8>);
+struct AheadGuard<'g, V: Clone + 'static>(&'g Graph<V>, Option<Change>);
 
 impl<V: Clone + 'static> Drop for AheadGuard<'_, V> {
     fn drop(&mut self) {
@@ -1739,7 +1744,7 @@ impl<V: Clone + 'static> Graph<V> {
         let change = g.ahead?;
         let node = g.nodes.get(n)?;
         let bound = matches!(&node.kind, Kind::Property(p) if p.is_bound());
-        let as_it_was = node.marked_by == change || g.waiting_changes.contains(&node.marked_by);
+        let as_it_was = node.marked_by == change || waits_on(&g.waiting_changes, node.marked_by);
         if !bound || !as_it_was || node.state == NodeState::Computing {
             return None;
         }
@@ -3234,8 +3239,10 @@ impl<V: Clone + 'static> Graph<V> {
         }
     }
 
-    /// How far the changes have counted, for [`Graph::own_queue`]. Wraps.
-    pub fn changes_so_far(&self) -> u8 {
+    /// How far the changes have counted, for [`Graph::own_queue`]. A count
+    /// of 64 bits does not wrap in the life of a program: at a billion
+    /// changes a second, it would take centuries.
+    pub fn changes_so_far(&self) -> Change {
         self.inner.borrow().change
     }
 
@@ -3249,14 +3256,16 @@ impl<V: Clone + 'static> Graph<V> {
     /// told when it drops: a hook run inside would read its own change as
     /// it was. One a change made inside the queue reaches is told inside
     /// it, before what that change sets off there.
-    pub fn own_queue(&self, since: u8) -> LevelGuard<'_, V> {
+    pub fn own_queue(&self, since: Change) -> LevelGuard<'_, V> {
         let mut i = self.inner.borrow_mut();
         i.queues.push(Queue::new());
         let open = i.waiting_changes.len();
-        let mut change = since;
-        while change != i.change {
-            change = change.wrapping_add(1);
-            i.waiting_changes.push(change);
+        // One counted back past the first change is from before it: none
+        // waits that came before the first.
+        let since = since.min(i.change);
+        if since < i.change {
+            let now = i.change;
+            i.waiting_changes.push((since, now));
         }
         let below = Floors {
             told: i.told.open(),
@@ -3944,6 +3953,25 @@ fn lift_own<V>(told: &mut Waiting, noted: &mut Waiting, n: NodeId, node: &mut No
 /// comes up, so it is told once and the floors below stay where they are.
 /// Nothing below a floor is taken off its list while the floor stands, so
 /// `at` still holds `n`: lifting each costs one step, however many wait.
+/// Whether `change` is one an own queue waits on ([`Graph::own_queue`]).
+fn waits_on(waiting: &[(Change, Change)], change: Change) -> bool {
+    waiting
+        .iter()
+        .any(|&(since, until)| since < change && change <= until)
+}
+
+/// What a change [`Inner::begin_change`] stamped does to what a change an
+/// own queue waits on left.
+#[derive(Clone, Copy)]
+struct Reach {
+    /// It lifts the hooks and told effects it reaches that wait below the
+    /// queue's floors ([`lift_own`]).
+    lifting: bool,
+    /// The bindings it reaches that a change the queue waits on marked
+    /// are its own ([`Inner::restamp_behind`]).
+    restamping: bool,
+}
+
 fn lift(list: &mut Waiting, n: NodeId, at: &mut u32) {
     let i = *at as usize;
     if i < list.floor.len.min(list.ids.len()) {
@@ -4245,25 +4273,60 @@ impl<V: Clone + 'static> Inner<V> {
         record_read_of(n, &mut nodes[n], frames, stats);
     }
 
-    /// Stamps the change about to spread, and says whether it lifts what
-    /// waits below the floors of `told` and `noted` ([`lift`]). Every mark
-    /// that enters the graph comes through here, a write, a disposal or a
+    /// Stamps the change about to spread, and says what it does to what
+    /// a change an own queue waits on left ([`Reach`]). Every mark that
+    /// enters the graph comes through here, a write, a disposal or a
     /// reader lost alike, so none spreads under the stamp of a change the
     /// queue waits on. `of` is the change a binding's new result belongs
-    /// to; anything else is a change of its own. One made inside the
-    /// innermost own queue lifts what it reaches; one the queue waits on
-    /// leaves it there, to be told when the queue drops; and with nothing
-    /// waiting below a floor, no change looks at all.
-    fn begin_change(&mut self, of: Option<u8>) -> bool {
-        self.marking = match of {
-            Some(change) => change,
+    /// to; anything else is a change of its own, counted afresh, and so
+    /// one no queue waits on. One made inside an own queue lifts what it
+    /// reaches and makes the bindings it reaches read as they are; one the
+    /// queue waits on leaves them, to be told when the queue drops; and
+    /// with nothing waiting, no change looks at all.
+    fn begin_change(&mut self, of: Option<Change>) -> Reach {
+        let inside = match of {
+            Some(change) => {
+                self.marking = change;
+                !waits_on(&self.waiting_changes, change)
+            }
             None => {
-                self.change = self.change.wrapping_add(1);
-                self.change
+                self.change += 1;
+                self.marking = self.change;
+                true
             }
         };
-        self.told.floor.below + self.noted.floor.below > 0
-            && !self.waiting_changes.contains(&self.marking)
+        Reach {
+            lifting: inside && self.told.floor.below + self.noted.floor.below > 0,
+            restamping: inside && !self.waiting_changes.is_empty(),
+        }
+    }
+
+    /// Gives what lies behind `from`, a node a change made inside an own
+    /// queue reached and went no further from, that change's stamp, where
+    /// a change the queue waits on reached it first: the change made
+    /// inside reached it too, and in a handler ahead it reads as it is,
+    /// as do the hooks it lifts. What a change the queue waits on reached
+    /// and the one made inside did not keeps reading as it was. Only that
+    /// is walked: what lies past a node marked by a change that does not
+    /// wait was marked when it was, or before.
+    fn restamp_behind(&mut self, from: NodeId) {
+        let mut stack = std::mem::take(&mut self.lift_stack);
+        stack.push(from);
+        while let Some(n) = stack.pop() {
+            let Some(node) = self.nodes.get_mut(n) else {
+                continue;
+            };
+            if n != from {
+                if node.state == NodeState::Clean
+                    || !waits_on(&self.waiting_changes, node.marked_by)
+                {
+                    continue;
+                }
+                node.marked_by = self.marking;
+            }
+            stack.extend(node.observers.iter().map(|o| o.node));
+        }
+        self.lift_stack = stack;
     }
 
     /// Lifts ([`lift_own`]) what waits below the floors behind `from`, a
@@ -4339,12 +4402,12 @@ impl<V: Clone + 'static> Inner<V> {
             Some(node) if result => Some(node.marked_by),
             _ => None,
         };
-        let lifting = self.begin_change(of);
+        let reach = self.begin_change(of);
         let mut stack = std::mem::take(&mut self.mark_stack);
         if !result && let Some(node) = self.nodes.get_mut(n) {
             // A binding's own result was noted by the mark that made it
             // dirty, as a told effect is.
-            if lifting && lift_own(&mut self.told, &mut self.noted, n, node) {
+            if reach.lifting && lift_own(&mut self.told, &mut self.noted, n, node) {
                 self.stats.lift_steps += 1;
             }
             note(&mut self.noted, n, node);
@@ -4372,7 +4435,7 @@ impl<V: Clone + 'static> Inner<V> {
         // Passed on as it is: every write of a property comes here, most
         // with one observer, and the stack was taken out and put back
         // twice for it.
-        self.propagate(&mut stack, lifting);
+        self.propagate(&mut stack, reach);
         self.mark_stack = stack;
     }
 
@@ -4384,18 +4447,19 @@ impl<V: Clone + 'static> Inner<V> {
         if self.mark_stack.is_empty() {
             return;
         }
-        let lifting = self.begin_change(None);
+        let reach = self.begin_change(None);
         let mut stack = std::mem::take(&mut self.mark_stack);
-        self.propagate(&mut stack, lifting);
+        self.propagate(&mut stack, reach);
         self.mark_stack = stack;
     }
 
     /// [`Inner::propagate_marks`] of `stack`, taken out of `mark_stack`,
-    /// for a change [`Inner::begin_change`] stamped. `lifting` is what it
-    /// said. Where the change meets what waits below an own queue's floor
-    /// is here, at one place for every node it reaches, and at one more
-    /// for every node it goes no further from ([`Inner::lift_behind`]).
-    fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>, lifting: bool) {
+    /// for a change [`Inner::begin_change`] stamped. `reach` is what it
+    /// said. Where the change meets what a change an own queue waits on
+    /// left is here, at one place for every node it reaches, and at one
+    /// more for every node it goes no further from ([`Inner::lift_behind`],
+    /// [`Inner::restamp_behind`]).
+    fn propagate(&mut self, stack: &mut Vec<(NodeId, NodeState, u64)>, reach: Reach) {
         let all = self.options.eager;
         // Stamps the nodes on a walk this pass carried a binding's result
         // through (below), so a cycle of them is passed once.
@@ -4406,9 +4470,16 @@ impl<V: Clone + 'static> Inner<V> {
                 continue;
             };
             // Its hook or its telling, if it waits below an own queue,
-            // comes along, whatever the node is doing.
-            if lifting && lift_own(&mut self.told, &mut self.noted, m, node) {
+            // comes along, whatever the node is doing; and, if a change
+            // the queue waits on marked it, it is this change's now.
+            if reach.lifting && lift_own(&mut self.told, &mut self.noted, m, node) {
                 self.stats.lift_steps += 1;
+            }
+            if reach.restamping
+                && node.state != NodeState::Clean
+                && waits_on(&self.waiting_changes, node.marked_by)
+            {
+                node.marked_by = self.marking;
             }
             let passed_on = 'node: {
                 if self.wave_origin == Some(m) {
@@ -4516,8 +4587,13 @@ impl<V: Clone + 'static> Inner<V> {
                 );
                 true
             };
-            if !passed_on && lifting {
-                self.lift_behind(m);
+            if !passed_on {
+                if reach.lifting {
+                    self.lift_behind(m);
+                }
+                if reach.restamping {
+                    self.restamp_behind(m);
+                }
             }
         }
     }
@@ -4752,8 +4828,11 @@ mod tests {
         assert_eq!(std::mem::size_of::<Edges>(), 32);
         // A value of two words with room for `None` in them, as the
         // engine's is: an override's id beside it and the flags as bits
-        // took a node from 216 bytes to 200.
-        assert!(std::mem::size_of::<Node<(Box<u8>, u64)>>() <= 200);
-        assert!(std::mem::size_of::<Node<[u64; 2]>>() <= 208);
+        // took a node from 216 bytes to 200. The change that marked it
+        // took 8 back: as one byte it wrapped after 256 changes, and an own
+        // queue took a change it did not wait on for one it did. The byte
+        // it had was the last spare one, so any wider count costs 8.
+        assert!(std::mem::size_of::<Node<(Box<u8>, u64)>>() <= 208);
+        assert!(std::mem::size_of::<Node<[u64; 2]>>() <= 216);
     }
 }

@@ -915,7 +915,7 @@ impl<'e> Pass<'e> {
     }
 
     /// Whether it has children to go on to.
-    fn go_below(&mut self, e: &'e Engine, prepare: bool, since: u8) -> bool {
+    fn go_below(&mut self, e: &'e Engine, prepare: bool, since: ljos_reactive::Change) -> bool {
         self.children = e.visual_children(self.obj);
         self.next = 0;
         self.children_prepare = prepare;
