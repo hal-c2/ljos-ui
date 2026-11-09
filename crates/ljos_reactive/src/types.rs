@@ -17,6 +17,11 @@ slotmap::new_key_type! {
     pub struct ScopeId;
 }
 
+/// A change counted by [`Graph::changes_so_far`], for
+/// [`Graph::own_queue`]: one past another is later. 64 bits, so the count
+/// never comes round to one a queue still waits on.
+pub type Change = u64;
+
 /// One run of a binding or effect, as [`Graph::reader`] gives it: a read
 /// it made can be handed to a node made later ([`Graph::adopt_readers`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

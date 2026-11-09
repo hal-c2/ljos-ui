@@ -821,3 +821,118 @@ fn a_told_effect_behind_a_binding_a_change_inside_the_queue_makes_dirty_is_told_
         "told before the effects of the change, once"
     );
 }
+
+/// A change counted after as many others as the counter holds is a
+/// change of its own all the same. The batch writes `p`, then `q`, both
+/// noted; `q`'s hook opens a queue that waits on `q`'s change, so `p`'s
+/// hook waits below it. 255 writes of an unrelated `u` inside the queue
+/// count the changes round to where a counter of a byte stood at `q`'s,
+/// and then `p` is written again: that change is made inside the queue
+/// and reaches `p`, so `p`'s hook is told inside it, before `p`'s watcher
+/// runs there and reads `p` with what the hook keeps of it.
+#[test]
+fn a_hook_a_change_inside_the_queue_reaches_is_told_inside_it_however_many_came_before() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let p = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let u = g.property(r, 0).unwrap();
+    let kept = Rc::new(RefCell::new(0));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, p, move |g, _| {
+        let now = g.untrack(|| g.get(p));
+        w.borrow_mut().push((now, *k.borrow()));
+    })
+    .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == p {
+            *k.borrow_mut() = hooks.untrack(|| hooks.get(p));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(1));
+            for v in 1..=255 {
+                hooks.set(u, v);
+            }
+            hooks.set(p, 2);
+        }
+    });
+    g.set_noted(p).unwrap();
+    g.set_noted(q).unwrap();
+
+    g.batch(|| {
+        g.set(p, 1);
+        g.set(q, 1);
+    });
+
+    assert_eq!(*hooked.borrow(), [q, p], "each hook told once");
+    assert_eq!(
+        *seen.borrow(),
+        [(2, 2)],
+        "the watcher reads what the hook keeps as of the value it reads"
+    );
+}
+
+/// In a handler ahead ([`Graph::watch_ahead`]), a binding a change made
+/// inside an own queue reaches reads as it is, though a change the queue
+/// waits on reached it first; one only those reached reads as it was.
+/// The handler batches writes of `s`, `v` and then `q`; `b` reads `s` and
+/// `c` reads `v`. `q`'s hook opens a queue that waits on all three, so
+/// `b`'s hook waits below it, and writes `s` again: that reaches `b`, so
+/// `b`'s hook is told inside the queue and reads `b` as it now is, as
+/// `s`'s watcher after it does, run as a root is, outside the handler.
+/// `c`, which nothing made inside reaches, the hook reads as it was.
+#[test]
+fn in_a_handler_ahead_a_hook_a_change_inside_the_queue_reaches_reads_what_it_made() {
+    let g: Rc<Graph<i64>> = Rc::new(Graph::new());
+    let r = g.root();
+    let x = g.property(r, 0).unwrap();
+    let s = g.property(r, 0).unwrap();
+    let v = g.property(r, 0).unwrap();
+    let q = g.property(r, 0).unwrap();
+    let b = g.binding(r, 0, move |g| g.get(s)).unwrap();
+    let c = g.binding(r, 0, move |g| g.get(v)).unwrap();
+    assert_eq!((g.get(b), g.get(c)), (0, 0));
+    // What `b`'s hook keeps: `b` and `c` as it reads them.
+    let kept = Rc::new(RefCell::new((0, 0)));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let (k, w) = (Rc::clone(&kept), Rc::clone(&seen));
+    g.watch(r, s, move |g, _| {
+        let now = g.untrack(|| g.get(b));
+        w.borrow_mut().push((now, *k.borrow()));
+    })
+    .unwrap();
+    let hooked = Rc::new(RefCell::new(Vec::new()));
+    let (hooks, k, h) = (Rc::clone(&g), Rc::clone(&kept), Rc::clone(&hooked));
+    g.set_note_handler(move |n| {
+        h.borrow_mut().push(n);
+        if n == b {
+            *k.borrow_mut() = hooks.untrack(|| (hooks.get(b), hooks.get(c)));
+        } else if n == q {
+            let _own = hooks.own_queue(hooks.changes_so_far().wrapping_sub(3));
+            hooks.set(s, 2);
+        }
+    });
+    g.set_noted(b).unwrap();
+    g.set_noted(q).unwrap();
+    g.watch_ahead(r, x, move |g, _| {
+        g.batch(|| {
+            g.set(s, 1);
+            g.set(v, 1);
+            g.set(q, 1);
+        });
+    })
+    .unwrap();
+
+    g.set(x, 1);
+
+    assert_eq!(*hooked.borrow(), [q, b], "each hook told once");
+    assert_eq!(
+        seen.borrow().first(),
+        Some(&(2, (2, 0))),
+        "the hook and the watcher read `b` as the change inside made it, \
+         and the hook `c` as it was"
+    );
+}

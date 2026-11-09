@@ -589,15 +589,16 @@ fn bytes_a_thousand_instances_keep() {
     // pointer leave 24 bytes less each (20.8, 23.1 and 11.1 kB before),
     // and a text style's pointer to its list of families gives back 16
     // bytes for each copy of the style an instance keeps (48 one-line,
-    // 16 wrapped and plain).
-    // The rest is mostly the graph's nodes, the objects and the text's
-    // runs.
+    // 16 wrapped and plain). A node's count of the change that marked it,
+    // 64 bits where a byte wrapped, is 8 bytes a node (20.8, 23.1 and
+    // 11.1 kB before). The rest is mostly the graph's nodes, the objects
+    // and the text's runs.
     assert_eq!(
         kept,
         Kept {
-            one_line: 20808,
-            wrapped: 23140,
-            plain: 11114,
+            one_line: 20898,
+            wrapped: 23205,
+            plain: 11131,
         }
     );
 }
