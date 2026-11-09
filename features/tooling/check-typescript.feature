@@ -130,6 +130,44 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
         Holder.qml:3:11: error: Cannot find name 'QtObject'. Did you mean 'QObject'? [TS2552]
         """
 
+    # `TextEdit` declares the `HAlignment` of the base it shares with `TextInput` again,
+    # with `AlignJustify`, as Qt's `TextEdit` alone has it: the `horizontalAlignment` it
+    # inherits holds its own.
+    Scenario: A property holds the enum its type declares again
+      Given the file "Page.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          TextEdit { id: body; horizontalAlignment: TextEdit.AlignJustify }
+          function left(): void { body.horizontalAlignment = TextEdit.AlignLeft }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+      When the files are checked with TypeScript
+      Then TypeScript reports nothing
+
+    Scenario: A key only another type's enum has is no key of the type
+      Given the file "Field.qml":
+        """qml
+        import Ljos.Ui
+        TextInput {
+          horizontalAlignment: TextInput.AlignJustify
+        }
+        """
+      When the files are checked with TypeScript
+      Then the check reports the lines:
+        """
+        Field.qml:3:42: error: `AlignJustify` has no type: the type TextInput has no member of that name [ts-no-any]
+        """
+      And TypeScript reports the lines:
+        """
+        Field.qml:3:42: error: Property 'AlignJustify' does not exist on type 'typeof TextInput'. [TS2339]
+        """
+
     Scenario: A type of the project's own a file writes is found, for TypeScript too
       Given the file "Card.qml":
         """qml

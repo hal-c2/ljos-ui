@@ -61,6 +61,28 @@ fn a_scoped_key_is_the_key_of_that_enum() {
     assert!(!qt.has_enum_key(network, Some("Reachability"), "WiFi"));
 }
 
+/// Qt's `TextEdit` declares an `HAlignment` that justifies and Qt's
+/// `TextInput` one that does not. Ljós's editors share a base whose
+/// `HAlignment` does not, which `TextEdit` declares again: the enum is
+/// still `TextEdit`'s, and `TextInput`'s is not.
+#[test]
+fn an_enum_is_named_by_the_nearest_type_that_declares_it() {
+    let qt = QtTypeOracle;
+    let edit = qt
+        .module_type("QtQuick", "TextEdit")
+        .expect("QtQuick has a TextEdit");
+    let input = qt
+        .module_type("QtQuick", "TextInput")
+        .expect("QtQuick has a TextInput");
+    assert_eq!(qt.enum_home(edit, "HAlignment"), Some(edit));
+    let home = qt
+        .enum_home(input, "HAlignment")
+        .expect("a TextInput has an HAlignment");
+    assert!(!qt.has_enum_key(home, Some("HAlignment"), "AlignJustify"));
+    assert!(qt.has_enum_key(edit, Some("HAlignment"), "AlignJustify"));
+    assert_eq!(qt.enum_home(edit, "Nothing"), None);
+}
+
 #[test]
 fn the_table_names_the_type_of_a_property_and_the_module_of_a_type() {
     let qt = QtTypeOracle;

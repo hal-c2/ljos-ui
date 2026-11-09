@@ -62,6 +62,28 @@ pub trait TypeOracle {
     /// Whether `Type.name` is an enum of the type, of `Type.name.Key`.
     fn has_enum(&self, ty: Self::Type, name: &str) -> bool;
 
+    /// The type the enum `name` of `ty` is named by: the nearest of `ty`
+    /// and the types it is built on that declares the enum itself. A type
+    /// may declare an enum its base has again, with other keys
+    /// (`TextEdit.HAlignment` justifies, the base both editors share does
+    /// not); a property it inherits that holds the enum then holds its
+    /// own. An oracle that cannot tell a declared enum from an inherited
+    /// one names it by the farthest type that has it.
+    fn enum_home(&self, ty: Self::Type, name: &str) -> Option<Self::Type> {
+        if !self.has_enum(ty, name) {
+            return None;
+        }
+        let mut home = ty;
+        let mut at = ty;
+        while let Some(next) = self.prototype(at) {
+            if self.has_enum(next, name) {
+                home = next;
+            }
+            at = next;
+        }
+        Some(home)
+    }
+
     /// Whether a property that holds the enum `name` of the type holds
     /// several keys at once (`Qt.Alignment`), so that a string written for
     /// it may name more than one. An oracle that cannot tell says it may.
@@ -397,6 +419,10 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn has_enum(&self, ty: QtType, name: &str) -> bool {
+        self.enum_home(ty, name).is_some()
+    }
+
+    fn enum_home(&self, ty: QtType, name: &str) -> Option<QtType> {
         let mut ty = Some(ty.0);
         while let Some(found) = ty {
             if found
@@ -404,11 +430,11 @@ impl TypeOracle for QtTypeOracle {
                 .iter()
                 .any(|enumeration| enumeration.name == name || enumeration.alias == Some(name))
             {
-                return true;
+                return Some(QtType(found));
             }
             ty = found.prototype();
         }
-        false
+        None
     }
 
     fn enum_is_flags(&self, ty: QtType, name: &str) -> bool {
