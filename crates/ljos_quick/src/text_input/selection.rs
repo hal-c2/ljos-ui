@@ -84,7 +84,9 @@ fn font_with(base: &Font, f: &CharFormat) -> Font {
     font.underline |= i.underline;
     font.strikeout |= i.strike;
     if let Some(family) = &i.family {
-        font.family = Atom::from(&**family);
+        // A run that names its family names that one alone, as a style
+        // span does.
+        font.set_family(Atom::from(&**family));
     }
     let base_px = text_style(base).pixel_size;
     let px = i.pixel_size.unwrap_or(base_px) * i.scale;
