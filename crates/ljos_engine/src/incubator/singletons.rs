@@ -575,6 +575,23 @@ impl Engine {
     pub(crate) fn singleton_handle(&self, ty: &TypeRef, ctx: Option<ContextId>) -> usize {
         let all = self.extension::<Singletons>();
         let found = all.index.borrow().get(ty).copied();
+        // A module written in QML names its singleton by its file, and a
+        // file importing the module by the module: both are one object.
+        let found = found.or_else(|| {
+            let Kind::File(key) = self.singleton_kind(ty) else {
+                return None;
+            };
+            let file = TypeRef::Component {
+                file: key,
+                inline: None,
+            };
+            if file == *ty {
+                return None;
+            }
+            let i = self.singleton_handle(&file, None);
+            all.index.borrow_mut().insert(ty.clone(), i);
+            Some(i)
+        });
         let base = match found {
             Some(i) => i,
             None => {
