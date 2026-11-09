@@ -299,6 +299,39 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         | #1e1e2e | #e6e6f0 | #7c3aed |
         | #000000 | #ffffff | #888888 |
 
+  Rule: A spin box's step buttons look as usable as they are
+
+    # The box says which of its buttons can step (`enabled` of each
+    # indicator): a reversed range steps both ways, and one that wraps
+    # steps on at its ends.
+    Scenario Outline: A spin box from <from> to <to> at <value>, wrapping <wrap>, draws its plus in <up> and its minus in <down>
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          width: 240; height: 120
+          Component.onCompleted: {
+            Theme.canvas = "#ffffff"
+            Theme.text = "#000000"
+            Theme.accent = "#0066cc"
+          }
+          SpinBox { x: 10; y: 10; from: <from>; to: <to>; value: <value>; wrap: <wrap> }
+        }
+        """
+      Then the property "color" of "increase" is "<up>"
+      And the property "color" of "decrease" is "<down>"
+
+      Examples:
+        | from | to | value | wrap  | up      | down    |
+        | 0    | 10 | 5     | false | #000000 | #000000 |
+        | 0    | 10 | 10    | false | #707070 | #000000 |
+        | 0    | 10 | 0     | false | #000000 | #707070 |
+        | 10   | 5  | 7     | false | #000000 | #000000 |
+        | 10   | 5  | 5     | false | #707070 | #000000 |
+        | 0    | 10 | 10    | true  | #000000 | #000000 |
+        | 0    | 10 | 0     | true  | #000000 | #000000 |
+
   Rule: A checked button shows it by more than its colour
 
     Scenario Outline: A checkable <kind> button passes the design audit, in <scheme>

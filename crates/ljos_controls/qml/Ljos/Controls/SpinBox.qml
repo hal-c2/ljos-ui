@@ -49,11 +49,14 @@ T.SpinBox {
             color: control.up.pressed || control.up.hovered ? Theme.accentSurface : "transparent"
 
             Icon {
+                objectName: "increase"
                 x: (parent.width - width) / 2
                 y: (parent.height - height) / 2
                 name: "plus"
                 size: 14
-                color: control.value < control.to ? Theme.text : Theme.iconMuted
+                // The box says whether this button can step (a reversed
+                // range, a wrapping one); the icon shows that.
+                color: parent.enabled ? Theme.text : Theme.iconMuted
             }
         }
     }
@@ -69,11 +72,12 @@ T.SpinBox {
             color: control.down.pressed || control.down.hovered ? Theme.accentSurface : "transparent"
 
             Icon {
+                objectName: "decrease"
                 x: (parent.width - width) / 2
                 y: (parent.height - height) / 2
                 name: "minus"
                 size: 14
-                color: control.value > control.from ? Theme.text : Theme.iconMuted
+                color: parent.enabled ? Theme.text : Theme.iconMuted
             }
         }
     }
