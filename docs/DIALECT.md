@@ -1472,7 +1472,9 @@ The theme's roles are `canvas`, `surface`, `surfaceRaised`,
 `destructive`, `destructiveForeground`, `destructiveHover` and
 `destructivePressed`. All are derived from three:
 `canvas`, `text` and `accent`, which follow `Ljos.Design`'s `Colors` in
-light and dark. The fills are the canvas mixed toward the text; each role
+light and dark. The fills are the canvas mixed toward the text, each only
+as far as the text keeps 4.5:1 on it (`lift`), so a text only just
+legible on the canvas leaves room for the roles reached toward it; each role
 that is read is then moved toward the text by `reach(from, to, against,
 ratio)` until it meets its WCAG ratio against every fill it is drawn on:
 3:1 for `input` on every ground, 3:1 for `focus` on every fill (a
@@ -1558,8 +1560,8 @@ pass and `ljos migrate` lower Qt's Basic controls to
 to Ljós's style is one edit, its import.
 
 DECISION: the roles' fills lift toward the text in both schemes (a light
-canvas darkens, a dark one lightens), so `surfaceRaised` is always further
-from the canvas than `surface`, and one derivation serves light and dark.
+canvas darkens, a dark one lightens), so `surfaceRaised` is never nearer
+the canvas than `surface`, and one derivation serves light and dark.
 
 DECISION: the controls keep Qt's member and enum names
 (`ScrollBar.AlwaysOn`, `Label.color` as the glyph colour, as on `Text`)

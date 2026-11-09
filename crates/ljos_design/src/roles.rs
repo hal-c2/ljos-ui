@@ -4,7 +4,8 @@
 //! needs fewer colours, and an app that brings its own ground, text and
 //! accent (from a brand, or from `Ljos.Design`'s palette) should get every
 //! other colour from those three and know each one is legible. So each
-//! role is a mix of the three, and each role something is read on is then
+//! role is a mix of the three (a fill lifted only as far as the text stays
+//! legible on it, [`lift`]), and each role something is read on is then
 //! moved toward the text colour, a step at a time, until it meets its WCAG
 //! ratio against every fill it is drawn on ([`reach`]). A fill that
 //! something is drawn on in a state (a button hovered or pressed) is moved
@@ -159,6 +160,20 @@ pub fn shade(fill: Srgb, ink: Srgb, t: f32) -> Srgb {
     mix(fill, on(ink), t)
 }
 
+/// `from` moved `t` of the way toward `toward`, but only as far as `text`
+/// keeps [`TEXT_CONTRAST`] on it: a fill something is read on is a ground
+/// for the text first. A text only just legible on its ground leaves the
+/// fills little room, and every role reached toward the text then still
+/// has a colour that meets its ratio. Where `text` has no such ratio on
+/// `from` there is nothing to keep, and the fill moves its whole way.
+pub fn lift(from: Srgb, toward: Srgb, text: Srgb, t: f32) -> Srgb {
+    let full = mix(from, toward, t);
+    if wcag_contrast(text, from) < TEXT_CONTRAST {
+        return full;
+    }
+    reach(full, from, &[text], TEXT_CONTRAST)
+}
+
 /// Every role from the three colours.
 pub fn derive(base: Base) -> Roles {
     let Base {
@@ -166,11 +181,12 @@ pub fn derive(base: Base) -> Roles {
         text: t,
         accent: a,
     } = base;
-    let surface = mix(g, t, 0.04);
-    let surface_raised = mix(g, t, 0.07);
-    let surface_overlay = mix(g, t, 0.10);
+    let surface = lift(g, t, t, 0.04);
+    let surface_raised = lift(g, t, t, 0.07);
+    let surface_overlay = lift(g, t, t, 0.10);
+    // Nothing is read on a border.
     let border = mix(g, t, 0.16);
-    let accent_surface = mix(surface_overlay, a, 0.18);
+    let accent_surface = lift(surface_overlay, a, t, 0.18);
     // Muted text, icons and the semantic colours sit on any fill, a
     // highlighted menu row included; the most lifted one is the hardest.
     let fills = [g, surface, surface_raised, surface_overlay, accent_surface];
@@ -467,6 +483,38 @@ mod tests {
             let broken = derive(base).broken();
             assert!(broken.is_empty(), "{name}: {broken:?}");
         }
+    }
+
+    /// A text only just legible on its ground (#767676 is 4.54:1 on white,
+    /// #757575 4.56:1 on black) stays legible on every fill, and so do the
+    /// muted text and the placeholder drawn from it: a fill is lifted
+    /// toward the text only as far as the text keeps its ratio.
+    #[test]
+    fn a_text_only_just_legible_on_its_ground_keeps_every_promise() {
+        for (g, t, a) in [
+            ("#ffffff", "#767676", "#888888"),
+            ("#000000", "#757575", "#888888"),
+            ("#ffffff", "#767676", "#0066cc"),
+        ] {
+            let base = Base {
+                ground: hex(g),
+                text: hex(t),
+                accent: hex(a),
+            };
+            let broken = derive(base).broken();
+            assert!(broken.is_empty(), "{g} {t} {a}: {broken:?}");
+        }
+    }
+
+    /// A text with room to spare lifts the fills by their whole amount.
+    #[test]
+    fn a_fill_is_lifted_its_whole_way_when_the_text_allows() {
+        let r = derive(Base {
+            ground: Srgb::WHITE,
+            text: hex("#1a1a1a"),
+            accent: hex("#0066cc"),
+        });
+        assert_eq!(r.surface_overlay, mix(Srgb::WHITE, hex("#1a1a1a"), 0.10));
     }
 
     /// A state fill only gains contrast with what is drawn on it.
