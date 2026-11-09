@@ -115,7 +115,7 @@ pub(super) fn take_values(engine: &Engine, obj: ObjectId) -> Result<(), EngineEr
         let mut font = engine.get(obj, FontDialog::SELECTED_FONT)?;
         let family = read(engine, popup, "family").to_js_string();
         if !family.trim().is_empty() {
-            font.family = ljos_engine::Atom::from(family.trim());
+            font.set_family(ljos_engine::Atom::from(family.trim()));
         }
         font.weight = if read(engine, popup, "bold").to_boolean() {
             700
