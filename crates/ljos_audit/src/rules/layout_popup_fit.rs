@@ -48,17 +48,54 @@ fn spans(r: Rect) -> [Span; 2] {
     [[r.x0, r.x1], [r.y0, r.y1]]
 }
 
+/// One part of what a popup holds, and where it is shown: its content
+/// inside the padding, a dialog's header and footer across the whole of
+/// its box, outside the padding.
+#[derive(Clone, Copy)]
+struct Held {
+    item: ObjectId,
+    in_padding: bool,
+}
+
+/// What a popup holds: its content, and a dialog's header and footer,
+/// which count toward its implicit size as its content does. Every check
+/// of the rule walks this one list, so none can judge the popup by a part
+/// of what it holds.
+fn held(engine: &Engine, popup: ObjectId) -> Vec<Held> {
+    let content = engine
+        .untrack(|| engine.read_by_name(popup, "contentItem"))
+        .as_object()
+        .map(|item| Held {
+            item,
+            in_padding: true,
+        });
+    let bars = if is_a::<Dialog>(engine, popup) {
+        vec![Dialog::HEADER.index, Dialog::FOOTER.index]
+    } else {
+        Vec::new()
+    };
+    content
+        .into_iter()
+        .chain(bars.into_iter().filter_map(|p| {
+            let item = engine.untrack(|| engine.read(popup, p)).as_object()?;
+            Some(Held {
+                item,
+                in_padding: false,
+            })
+        }))
+        .filter(|h| engine.is_alive(h.item))
+        .collect()
+}
+
 /// Something the popup holds that cannot be seen however it is scrolled:
 /// a shown item drawn past what reaches it along some axis.
-fn out_of_reach(cx: &Cx, popup: ObjectId, frame: ObjectId, content: ObjectId) -> Option<ObjectId> {
+fn out_of_reach(cx: &Cx, popup: ObjectId, frame: ObjectId, held: &[Held]) -> Option<ObjectId> {
     let engine = cx.engine;
     let (w, h) = (
         number(engine, popup, "width"),
         number(engine, popup, "height"),
     );
     let pad = |name| number(engine, popup, name).max(0.0);
-    // The content is shown inside the padding; a dialog's header and
-    // footer run across the whole of its box, outside the padding.
     let inside = Rect::new(
         pad("leftPadding"),
         pad("topPadding"),
@@ -67,12 +104,10 @@ fn out_of_reach(cx: &Cx, popup: ObjectId, frame: ObjectId, content: ObjectId) ->
     );
     let shows = spans(scene_box(engine, frame, inside));
     let whole = spans(scene_box(engine, frame, Rect::new(0.0, 0.0, w, h)));
-    let mut stack = vec![(content, shows)];
-    stack.extend(
-        header_and_footer(engine, popup)
-            .into_iter()
-            .map(|bar| (bar, whole)),
-    );
+    let mut stack: Vec<_> = held
+        .iter()
+        .map(|h| (h.item, if h.in_padding { shows } else { whole }))
+        .collect();
     let mut budget = crate::cx::DEPTH;
     while let Some((o, reach)) = stack.pop() {
         budget = budget.checked_sub(1)?;
@@ -189,19 +224,6 @@ fn scrolls(engine: &Engine, f: ObjectId, horizontal: bool) -> bool {
     flickable::can_scroll(engine, f, horizontal) || scrolled_by_bar(engine, f, horizontal)
 }
 
-/// A dialog's header and footer, which count toward its implicit size as
-/// its content does.
-fn header_and_footer(engine: &Engine, popup: ObjectId) -> Vec<ObjectId> {
-    if !is_a::<Dialog>(engine, popup) {
-        return Vec::new();
-    }
-    [Dialog::HEADER.index, Dialog::FOOTER.index]
-        .into_iter()
-        .filter_map(|p| engine.untrack(|| engine.read(popup, p)).as_object())
-        .filter(|o| engine.is_alive(*o))
-        .collect()
-}
-
 fn shown(engine: &Engine, o: ObjectId) -> bool {
     engine
         .untrack(|| engine.read_by_name(o, "visible"))
@@ -223,10 +245,12 @@ fn name_of(engine: &Engine, popup: ObjectId) -> String {
     }
 }
 
-/// A descendant of `content` that is shown and has a size: something a
-/// popup of no size hides.
-fn something_shown(engine: &Engine, content: ObjectId) -> Option<ObjectId> {
-    let mut stack = child_items(engine, content);
+/// Something the popup holds that is shown and draws: what a popup of no
+/// size hides. What draws is told as out of reach tells it, text by its
+/// lines, since a dialog of no size gives its header and footer no width
+/// either.
+fn something_shown(engine: &Engine, held: &[Held]) -> Option<ObjectId> {
+    let mut stack: Vec<_> = held.iter().map(|h| h.item).collect();
     let mut seen = 0;
     while let Some(o) = stack.pop() {
         seen += 1;
@@ -236,7 +260,7 @@ fn something_shown(engine: &Engine, content: ObjectId) -> Option<ObjectId> {
         if !shown(engine, o) {
             continue;
         }
-        if number(engine, o, "width") > 0.0 && number(engine, o, "height") > 0.0 {
+        if drawn(engine, o).is_some() {
             return Some(o);
         }
         stack.extend(child_items(engine, o));
@@ -279,11 +303,9 @@ pub(crate) fn check(cx: &mut Cx) {
             f.measured = Some(format!("past {past}"));
             continue;
         }
-        let content = engine
-            .untrack(|| engine.read_by_name(popup, "contentItem"))
-            .as_object();
+        let held = held(engine, popup);
         if (aw <= slack() || ah <= slack())
-            && let Some(shows) = content.and_then(|c| something_shown(engine, c))
+            && let Some(shows) = something_shown(engine, &held)
         {
             let message = format!(
                 "{what} is {has} px and shows nothing of what it holds, such as {}",
@@ -297,7 +319,7 @@ pub(crate) fn check(cx: &mut Cx) {
             continue;
         }
         let asks_more = cw - aw > slack() || ch - ah > slack();
-        if asks_more && content.is_none_or(|c| out_of_reach(cx, popup, item, c).is_some()) {
+        if asks_more && (held.is_empty() || out_of_reach(cx, popup, item, &held).is_some()) {
             let message = format!(
                 "{what} is {has} px where what it holds asks for {asks}, and nothing in it \
                  scrolls through the rest"
