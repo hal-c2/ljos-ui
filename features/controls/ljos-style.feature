@@ -576,6 +576,33 @@ Feature: Ljós's own style: the controls of Ljos.Controls
       And the property "chosen" of "row0" is true
       And the property "chosen" of "row1" is false
 
+    Scenario: The row of a menu that the keys are on has an edge in the focus colour
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          width: 320; height: 240
+          Component.onCompleted: {
+            Theme.canvas = "#ffffff"
+            Theme.text = "#000000"
+            Theme.accent = "#0066cc"
+          }
+          Menu {
+            objectName: "menu"
+            Component.onCompleted: open()
+            MenuItem { objectName: "cut"; text: "Cut" }
+            MenuItem { objectName: "copy"; text: "Copy" }
+          }
+        }
+        """
+      Then the property "background.border.width" of "cut" is 0
+      When the user presses "Down"
+      Then the property "highlighted" of "cut" is true
+      And the property "background.border.width" of "cut" is 2
+      And the property "background.border.color" of "cut" is "#0066cc"
+      And the property "background.border.width" of "copy" is 0
+
   Rule: Reduced motion moves nothing, and a change still shows
 
     Scenario: A switch's thumb slides to its end
