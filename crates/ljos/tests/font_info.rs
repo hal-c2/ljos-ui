@@ -166,6 +166,26 @@ fn an_effect_reading_another_engine_s_font_info_sees_the_new_fonts() {
     );
 }
 
+/// A host that registers a font on the text engine itself, before it makes
+/// the scene: the scene's first frame finds the change no one was told of.
+#[test]
+fn a_font_registered_on_the_engine_before_the_scene_is_followed_on_its_first_frame() {
+    ljos_quick::set_text_engine(ljos_quick::TextEngine::new());
+    let engine = ljos::engine();
+    let root = following(&engine, "Ljos Alternate Test");
+    assert_ne!(family_of(&engine, root), "Ljos Alternate Test");
+
+    let bytes = std::fs::read(alternate_font()).unwrap();
+    ljos_quick::text_engine()
+        .borrow_mut()
+        .register_font_faces(bytes)
+        .unwrap();
+    let mut scene = ljos_quick::QuickScene::new(ljos::item::kurbo::Size::new(100.0, 100.0));
+    scene.set_root(&engine, root).unwrap();
+    scene.frame(&engine, Time::ZERO);
+    assert_eq!(family_of(&engine, root), "Ljos Alternate Test");
+}
+
 /// An effect that changes the fonts again while engines are being told of a
 /// change: every engine ends on the fonts of the last change.
 #[test]
