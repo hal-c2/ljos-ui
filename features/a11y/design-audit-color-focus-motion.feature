@@ -434,6 +434,79 @@ Feature: The design audit acts on the window to check colour, focus and motion
         """
       Then the design audit reports "focus-order"
 
+    Scenario: Tab from a page scrolled below its fold up to the header over it
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Flickable {
+            x: 20; y: 60; width: 200; height: 200
+            clip: true
+            contentHeight: page.height
+            Column {
+              id: page
+              spacing: 8
+              TextField { placeholderText: "Name" }
+              Item { width: 1; height: 300 }
+              ComboBox { model: ["Never", "Always"] }
+            }
+          }
+          Button { x: 20; y: 10; text: "Menu" }
+        }
+        """
+      Then the design audit reports "focus-order" on the "button" named "Menu"
+
+    Scenario: Tab from a button drawn over a page back up into the page
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Flickable {
+            anchors.fill: parent
+            contentHeight: page.height + 40
+            Column {
+              id: page
+              x: 20; y: 20; spacing: 8
+              TextField { id: name; placeholderText: "Name"; KeyNavigation.tab: add }
+              TextField { id: street; placeholderText: "Street" }
+              TextField { placeholderText: "City"; KeyNavigation.tab: name }
+            }
+          }
+          Button { id: add; x: 20; y: 240; text: "Add"; KeyNavigation.tab: street }
+        }
+        """
+      Then the design audit reports "focus-order" at line 13
+
+    Scenario: Tab from a page scrolled below its fold to a button drawn over the page's foot
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Rectangle {
+          width: 400; height: 300
+          color: "white"
+          Flickable {
+            anchors.fill: parent
+            contentHeight: page.height + 40
+            Column {
+              id: page
+              x: 20; y: 20; spacing: 8
+              TextField { placeholderText: "Name" }
+              Item { width: 1; height: 300 }
+              ComboBox { model: ["Never", "Always"] }
+            }
+          }
+          Button { x: 20; y: 250; width: 360; text: "Save" }
+        }
+        """
+      Then the design audit does not report "focus-order"
+
     Scenario: A dialog that Escape does not close
       Given the QML:
         """qml
