@@ -12,6 +12,7 @@ use icu_segmenter::options::{LineBreakOptions, LineBreakStrictness, LineBreakWor
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
 use ljos_runtime::Platform;
+use ljos_runtime::font_family::family_names;
 use parley::fontique::{Blob, CharmapIndex, FontWidth, GenericFamily, SourceInfo, Synthesis};
 use parley::setting::Tag;
 use parley::{
@@ -499,11 +500,6 @@ impl<'a> From<&'a str> for Asked<'a> {
     }
 }
 
-fn split_families(list: &str) -> impl Iterator<Item = &str> {
-    list.split(',')
-        .map(|part| part.trim().trim_matches(['"', '\'']))
-}
-
 /// [`Families::pinned`]'s first fonts: by family, and by the whole list for
 /// a text that lists its families.
 #[derive(Default)]
@@ -561,10 +557,10 @@ impl Families {
         match asked.rest {
             // `font.families`: each a name, whatever it holds.
             Some(rest) => add(&mut std::iter::once(asked.family).chain(rest.iter().map(|n| &**n))),
-            None => add(&mut split_families(asked.family)),
+            None => add(&mut family_names(asked.family)),
         }
         if let Some(family) = &self.default_family {
-            add(&mut split_families(family));
+            add(&mut family_names(family));
         }
         if self.system {
             names.push(FontFamilyName::Generic(GenericFamily::SystemUi));
