@@ -118,6 +118,10 @@ T.MenuItem {
             radius: Math.max(0, Theme.radiusLarge - Theme.spacingSmall)
             color: control.highlighted || control.hovered || control.visualFocus
                    ? Theme.accentSurface : "transparent"
+            // The row the keys are on: its fill alone is too near the
+            // menu's to tell it by, and the focus colour is 3:1 on both.
+            border.width: control.highlighted || control.visualFocus ? 2 : 0
+            border.color: Theme.focus
         }
     }
 }
