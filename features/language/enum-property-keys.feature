@@ -30,6 +30,7 @@ Feature: Every enumeration property takes its keys by name
         GridLayout { objectName: "GridLayout" }
         RowLayout { objectName: "RowLayout" }
         TextInput { objectName: "TextInput" }
+        TextEdit { objectName: "TextEdit" }
         Flickable { objectName: "Flickable" }
         TapHandler { objectName: "TapHandler" }
         ScrollBar { objectName: "ScrollBar" }
@@ -67,6 +68,8 @@ Feature: Every enumeration property takes its keys by name
       | RowLayout         | layoutDirection         | RightToLeft         | 1      |
       | TextInput         | echoMode                | Password            | 2      |
       | TextInput         | horizontalAlignment     | AlignRight          | 2      |
+      | TextEdit          | horizontalAlignment     | AlignJustify        | 8      |
+      | TextEdit          | textFormat              | RichText            | 1      |
       | Flickable         | boundsBehavior          | StopAtBounds        | 0      |
       | Flickable         | flickableDirection      | VerticalFlick       | 2      |
       | TapHandler        | gesturePolicy           | ReleaseWithinBounds | 2      |
@@ -88,6 +91,7 @@ Feature: Every enumeration property takes its keys by name
       | type              | property            | text          |
       | Text              | horizontalAlignment | AlignTop      |
       | Text              | elide               | Nowhere       |
+      | TextInput         | horizontalAlignment | AlignJustify  |
       | Image             | fillMode            | stretch       |
       | Row               | layoutDirection     | Horizontal    |
       | Flow              | flow                | RightToLeft   |
