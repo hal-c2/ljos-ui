@@ -27,7 +27,6 @@
 use std::fmt;
 use std::sync::Arc;
 
-use ljos_runtime::font_family::names_only_itself;
 use ljos_runtime::{Platform, pixels_to_points, points_to_pixels};
 
 use crate::atom::Atom;
@@ -757,7 +756,7 @@ impl Font {
         crate::family_list::names_of(&self.family, self.fallback_families())
     }
 
-    /// How the font names its families: one family text or a list.
+    /// How the font names its families: one family or a list.
     pub fn family_list(&self) -> FamilyList {
         FamilyList::from_parts(self.family.clone(), self.fallback_families().cloned())
     }
@@ -789,13 +788,14 @@ impl Font {
     }
 
     /// The families after [`Font::family`], in the order they are tried,
-    /// each one name; `None` when the family is one family text
-    /// ([`FamilyList::rest`]). An empty list follows a list of one name.
+    /// each one name; `None` when the family is the one family
+    /// ([`FamilyList::rest`]). An empty list follows a list of one empty
+    /// name.
     pub fn fallback_families(&self) -> Option<&Arc<[Atom]>> {
         let rest = self.rare.0.as_ref()?.fallback_families.as_ref()?;
-        // The family may have been written alone over a list of one name:
-        // a plain name is then a family text, as `set_family` keeps it.
-        if rest.is_empty() && names_only_itself(&self.family) {
+        // The family may have been written alone over a list of one empty
+        // name: a name is then the one family, as `set_family` keeps it.
+        if rest.is_empty() && !self.family.is_empty() {
             return None;
         }
         Some(rest)
@@ -1586,12 +1586,12 @@ pub(crate) mod tests {
         assert_eq!(written.family_list(), set.family_list());
         assert_eq!(written.fallback_families(), None);
         assert_eq!(written, set);
-        // A family text that names more than itself stays a list of one.
+        // Whatever the name holds: a family is one name, as in Qt.
         let mut listed = written.clone();
         listed.family = "A, B".into();
         let mut text = set.clone();
         text.set_family("A, B".into());
-        assert_ne!(listed, text);
+        assert_eq!(listed, text);
         assert_eq!(listed.family_list(), FamilyList::list(&["A, B".into()]));
     }
 

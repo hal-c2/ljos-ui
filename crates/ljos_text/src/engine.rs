@@ -12,7 +12,6 @@ use icu_segmenter::options::{LineBreakOptions, LineBreakStrictness, LineBreakWor
 use ljos_render::kurbo::Rect;
 use ljos_render::{Decorations, FontTables, GlyphRun, PositionedGlyph};
 use ljos_runtime::Platform;
-use ljos_runtime::font_family::family_names;
 use parley::fontique::{Blob, CharmapIndex, FontWidth, GenericFamily, SourceInfo, Synthesis};
 use parley::setting::Tag;
 use parley::{
@@ -492,8 +491,7 @@ impl<'a> Asked<'a> {
     }
 }
 
-/// One family as a QML file or a style sheet names it, which may be a
-/// comma-separated list of names, some quoted.
+/// One family, one name whatever it holds.
 impl<'a> From<&'a str> for Asked<'a> {
     fn from(family: &'a str) -> Self {
         Self { family, rest: None }
@@ -554,13 +552,13 @@ impl Families {
             }
             names.append(&mut substitutes);
         };
-        match asked.rest {
-            // `font.families`: each a name, whatever it holds.
-            Some(rest) => add(&mut std::iter::once(asked.family).chain(rest.iter().map(|n| &**n))),
-            None => add(&mut family_names(asked.family)),
-        }
+        // Each a name, whatever it holds: a family written alone with a
+        // comma in it is one family, as in Qt, and only `font.families`
+        // lists more than one.
+        let rest = asked.rest.map_or(&[][..], |r| &r[..]);
+        add(&mut std::iter::once(asked.family).chain(rest.iter().map(|n| &**n)));
         if let Some(family) = &self.default_family {
-            add(&mut family_names(family));
+            add(&mut std::iter::once(&**family));
         }
         if self.system {
             names.push(FontFamilyName::Generic(GenericFamily::SystemUi));

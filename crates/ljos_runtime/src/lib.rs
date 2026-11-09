@@ -15,14 +15,12 @@
 //! | [`memory`] | `MemoryPressure`, `Evictable`, byte budgets, `ByteLru` | 8.5 |
 //! | [`observe`] | named mailboxes and their counters, for an observer | 3.4, 19.4 |
 //! | [`platform`] | points to pixels and the starting font, per platform | 7 |
-//! | [`font_family`] | the names one family text lists, as a style sheet writes them | 7 |
 //!
 //! Nothing in this crate polls or sleeps: the only things that wake the UI
 //! thread are the shell's event loop and the inbox's wake hook.
 
 pub mod budget;
 pub mod fault;
-pub mod font_family;
 pub mod frame_scheduler;
 pub mod inbox;
 pub mod job;

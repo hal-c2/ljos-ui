@@ -2,32 +2,29 @@
 
 use std::sync::Arc;
 
-use ljos_runtime::font_family::names_only_itself;
-
 use crate::Atom;
 
 /// How a font names its families: what `font.families` lists
 /// (`QFont::families`) and what its text is laid out with.
 ///
-/// It is either one family text, `font.family`, read as a style sheet
-/// writes a family (commas and quotes and all), or a list,
-/// `font.families`, each of whose names is one family whatever it holds.
-/// Which of the two it is holds for a list of any length, so a list of one
-/// name with a comma in it stays that one name, and one empty name stays a
-/// list of one. What is the same font either way has one form: a list of
-/// one plain name is that name as a family text, and an empty family text
-/// is the list of one empty name, as QFont has `setFamily("")` equal
-/// `setFamilies({""})`. Two fonts compare by it, in Rust and in JS alike.
+/// Every name is one family whatever it holds, commas and quotes and all,
+/// whether `font.family` named it alone or `font.families` listed it, as
+/// in Qt: `setFamily("A, B")` lists the one name "A, B". What is the same
+/// font either way has one form: a list of one name is that name as a
+/// family, and an empty family is the list of one empty name, as QFont has
+/// `setFamily("")` equal `setFamilies({""})`, which is not
+/// `setFamilies({})`, the list of none. Two fonts compare by it, in Rust
+/// and in JS alike.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FamilyList {
     first: Atom,
-    /// `Some`: a list, and the names after `first`. `None`: `first` is a
-    /// family text, and an empty one names none.
+    /// `Some`: a list, and the names after `first`. `None`: `first` is
+    /// the one family, and an empty one names none.
     rest: Option<Arc<[Atom]>>,
 }
 
 impl FamilyList {
-    /// `font.family` (`QFont::setFamily`): one family text.
+    /// `font.family` (`QFont::setFamily`): one family, whatever it holds.
     pub fn family(text: Atom) -> Self {
         if text.is_empty() {
             return Self::listed(text, Arc::from([]));
@@ -59,9 +56,10 @@ impl FamilyList {
     }
 
     fn listed(first: Atom, rest: Arc<[Atom]>) -> Self {
-        // A plain name alone is the same as that name for a family, kept
-        // as one so the two are one value, with no list to hold.
-        if rest.is_empty() && names_only_itself(&first) {
+        // A name alone is the same as that name for a family, kept as one
+        // so the two are one value, with no list to hold. Only an empty
+        // name needs the list: alone it names none.
+        if rest.is_empty() && !first.is_empty() {
             return Self { first, rest: None };
         }
         Self {
@@ -75,8 +73,8 @@ impl FamilyList {
         &self.first
     }
 
-    /// The names after the first when the font lists its families, each one
-    /// name; `None` when the first is a family text.
+    /// The names after the first when the font lists more than one family
+    /// or one empty name; `None` when the first is the one family.
     pub fn rest(&self) -> Option<&Arc<[Atom]>> {
         self.rest.as_ref()
     }
@@ -91,9 +89,9 @@ impl FamilyList {
     }
 
     /// The names after the first as they cross to JS beside it: a JSON
-    /// array when the font lists its families, of any length, and nothing
-    /// when the first is a family text. JSON keeps an empty name, or one
-    /// with a line break in it, as it was.
+    /// array when the font lists more than its first, or one empty name,
+    /// and nothing when the first is the one family. JSON keeps an empty
+    /// name, or one with a line break in it, as it was.
     pub(crate) fn rest_text(&self) -> String {
         match &self.rest {
             Some(rest) => {
@@ -116,7 +114,7 @@ impl FamilyList {
 }
 
 /// [`FamilyList::names`] of the two parts. A list keeps an empty first
-/// family, as QFont does; an empty family text names none.
+/// family, as QFont does; an empty family alone names none.
 pub(crate) fn names_of<'a>(
     first: &'a Atom,
     rest: Option<&'a Arc<[Atom]>>,
@@ -136,16 +134,16 @@ mod tests {
     }
 
     #[test]
-    fn a_list_stays_a_list_at_every_length() {
+    fn a_list_of_one_name_is_that_family_whatever_it_holds() {
         let a = |s: &str| Atom::from(s);
         let none = FamilyList::list(&[]);
         assert_eq!(names(&none), Vec::<&str>::new());
         assert_eq!(none, FamilyList::from_js(Atom::EMPTY, &none.rest_text()));
-        for one in ["", "A, B", "\"A\"", " A"] {
+        for one in ["A", "A, B", "\"A\"", " A", "A,"] {
             let l = FamilyList::list(&[a(one)]);
+            assert_eq!(l, FamilyList::family(a(one)), "{one:?}");
             assert_eq!(names(&l), [one], "{one:?}");
-            assert!(l.rest().is_some(), "{one:?} is listed");
-            assert_eq!(l.rest_text(), "[]");
+            assert_eq!(l.rest(), None, "{one:?}");
             assert_eq!(l, FamilyList::from_js(a(one), &l.rest_text()));
         }
         let many = FamilyList::list(&[a("A, B"), a(""), a("C")]);
@@ -154,18 +152,14 @@ mod tests {
     }
 
     #[test]
-    fn what_is_the_same_font_either_way_is_one_value() {
+    fn one_empty_name_is_a_list_of_one_not_of_none() {
         let a = |s: &str| Atom::from(s);
-        assert_eq!(FamilyList::family(a("")), FamilyList::list(&[a("")]));
-        assert_ne!(FamilyList::family(a("")), FamilyList::list(&[]));
-        assert_eq!(FamilyList::family(a("A")), FamilyList::list(&[a("A")]));
-        assert_eq!(FamilyList::family(a("A")).rest(), None);
-        // A family text with a comma lists more than one name where text is
-        // laid out; the list of it names one.
-        assert_ne!(
-            FamilyList::family(a("A, B")),
-            FamilyList::list(&[a("A, B")])
-        );
+        let blank = FamilyList::list(&[a("")]);
+        assert_eq!(FamilyList::family(a("")), blank);
+        assert_ne!(blank, FamilyList::list(&[]));
+        assert_eq!(names(&blank), [""]);
+        assert_eq!(blank.rest_text(), "[]");
+        assert_eq!(blank, FamilyList::from_js(Atom::EMPTY, &blank.rest_text()));
         assert_eq!(
             FamilyList::from_parts(a("A"), Some(Arc::from([]))),
             FamilyList::family(a("A"))

@@ -11,11 +11,11 @@ pub type FamilyList = Arc<Vec<Arc<str>>>;
 /// A resolved font request, in logical pixels.
 #[derive(Clone, Debug)]
 pub struct TextStyle {
-    /// Family name. Empty means the engine's default family.
+    /// Family name, one name whatever it holds. Empty means the engine's
+    /// default family.
     pub family: Arc<str>,
     /// The families tried after `family`, in order, before the engine's
-    /// own (`font.families`). Each is one name whatever it holds, and so is
-    /// `family` when there are any.
+    /// own (`font.families`). Each is one name whatever it holds.
     pub fallback_families: Option<FamilyList>,
     /// Font size in logical pixels.
     pub pixel_size: f32,
