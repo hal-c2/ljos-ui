@@ -3246,6 +3246,15 @@ impl<V: Clone + 'static> Graph<V> {
         self.inner.borrow().change
     }
 
+    /// Counts `n` changes as made, as `n` writes of a property nothing
+    /// reads, notes or watches would count them, without making them: for
+    /// a test that needs the count far along, further than real writes
+    /// reach in its time.
+    #[doc(hidden)]
+    pub fn count_changes(&self, n: Change) {
+        self.inner.borrow_mut().change += n;
+    }
+
     /// A queue of its own for what changes from here on ([`LevelGuard`]):
     /// who changes many properties one after the other, and wants what each
     /// reaches run after the ones below it, opens one for each. The changes
