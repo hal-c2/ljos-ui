@@ -19,7 +19,7 @@ use std::cell::{Cell, RefCell};
 use ljos_engine::{Engine, LogLevel, ObjectId, QmlObject, Value, WeakEngine};
 
 use crate::item::write_computed;
-use crate::text::text_engine;
+use crate::text::{text_engine, text_engine_unless_coming};
 
 thread_local! {
     /// The engines of this thread that follow the set of fonts.
@@ -66,11 +66,15 @@ pub(crate) fn follow(e: &Engine) {
             };
             of.0.set(Some(set));
             let others = followers();
-            if others.is_empty() {
-                // The first follower follows the fonts there are now; a
-                // later one takes the generation the others were told of,
-                // so that a change none was told of yet is told to all.
-                TOLD.set(Some(text_engine().borrow().generation()));
+            // The first follower follows the fonts there are now; a later
+            // one takes the generation the others were told of, so that a
+            // change none was told of yet is told to all. An engine still
+            // being made is not waited for: following is not a use of it,
+            // and it says its generation when it is installed (`arrived`).
+            if others.is_empty()
+                && let Some(te) = text_engine_unless_coming()
+            {
+                TOLD.set(Some(te.borrow().generation()));
             }
             if !others.iter().any(|o| Engine::ptr_eq(o, e)) {
                 FOLLOWERS.with(|f| f.borrow_mut().push(e.downgrade()));
@@ -146,4 +150,39 @@ pub(crate) fn seen(generation: u64) {
 /// follows the fonts was told when it was asked for, and reads it next.
 pub(crate) fn arrived(generation: u64) {
     TOLD.set(Some(generation));
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::text::{set_text_engine_later, text_engine_in_use};
+
+    /// A binding that follows the fonts while the text engine is still
+    /// being read on another thread does not wait for it: only a use of
+    /// the engine does.
+    #[test]
+    fn following_the_fonts_while_the_engine_is_being_made_does_not_wait_for_it() {
+        let (go, gate) = mpsc::channel::<()>();
+        // Held until the test lets it go. A follow that joined it would
+        // wait out the timeout and find the engine installed.
+        set_text_engine_later(std::thread::spawn(move || {
+            let _ = gate.recv_timeout(Duration::from_secs(5));
+            ljos_text::TextEngine::new()
+        }));
+        let e = Engine::new();
+        crate::register(&e);
+        follow(&e);
+        assert!(
+            text_engine_in_use().is_none(),
+            "follow waited for the engine being made"
+        );
+        assert_eq!(TOLD.get(), None, "told of an engine that is not there");
+
+        go.send(()).unwrap();
+        let generation = text_engine().borrow().generation();
+        assert_eq!(TOLD.get(), Some(generation), "the engine that arrived");
+    }
 }
