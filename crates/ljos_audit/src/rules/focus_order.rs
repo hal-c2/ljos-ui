@@ -13,9 +13,11 @@
 //! Rows are what overlap vertically by `limits::keyboard::ROW_OVERLAP` of
 //! the shorter; a column is what overlaps horizontally at all.
 //!
-//! A stop inside a scroller the other stop is not in is placed where the
-//! scroller is: its laid-out place may be far below the fold, but it is
-//! read where the scroller is read.
+//! A stop inside a scroller the other stop is not in is read inside the
+//! scroller's viewport: its laid-out place may be far below the fold, but
+//! Tab scrolls it in at the viewport's foot, and one above the fold at its
+//! head. A stop already in view is read where it is drawn, so a stop drawn
+//! over the viewport is still compared with what lies under it.
 
 use ljos_design::limits::keyboard::ROW_OVERLAP;
 use ljos_render::kurbo::Rect;
@@ -44,13 +46,34 @@ fn scrollers(engine: &Engine, item: ObjectId) -> Vec<ObjectId> {
 }
 
 /// Where the stop is read beside another: its own place when both lie in
-/// the same scrollers, otherwise the place of the outermost scroller it
-/// lies in and the other does not.
+/// the same scrollers, otherwise its place brought into the viewport of the
+/// outermost scroller it lies in and the other does not.
 fn read_at(engine: &Engine, at: Rect, own: &[ObjectId], other: &[ObjectId]) -> Rect {
     let shared = own.iter().zip(other).take_while(|(a, b)| a == b).count();
     own.get(shared)
         .and_then(|s| scene_rect(engine, *s))
-        .unwrap_or(at)
+        .map_or(at, |view| into_view(at, view))
+}
+
+/// `at` moved the least that brings it inside `view`, as scrolling to it
+/// would; a stop larger than the view on an axis is read as the view there.
+fn into_view(at: Rect, view: Rect) -> Rect {
+    fn axis(lo: f64, hi: f64, v_lo: f64, v_hi: f64) -> (f64, f64) {
+        if hi - lo >= v_hi - v_lo {
+            return (v_lo, v_hi);
+        }
+        let by = if lo < v_lo {
+            v_lo - lo
+        } else if hi > v_hi {
+            v_hi - hi
+        } else {
+            0.0
+        };
+        (lo + by, hi + by)
+    }
+    let (x0, x1) = axis(at.x0, at.x1, view.x0, view.x1);
+    let (y0, y1) = axis(at.y0, at.y1, view.y0, view.y1);
+    Rect::new(x0, y0, x1, y1)
 }
 
 pub(crate) fn check(cx: &mut Cx) {
@@ -68,11 +91,14 @@ pub(crate) fn check(cx: &mut Cx) {
         for pair in placed.windows(2) {
             let ((from, a, sa), (to, b, sb)) = (&pair[0], &pair[1]);
             let (from, to) = (*from, *to);
-            let (a, b) = (read_at(e, *a, sa, sb), read_at(e, *b, sb, sa));
-            // Nested stops (a field inside a spin box) are one place.
-            if a.contains_rect(b) || b.contains_rect(a) {
+            // Nested stops (a field inside a spin box) are one place. Asked
+            // of where they are laid out: read inside a viewport, a stop
+            // could land inside one drawn over that viewport without
+            // being part of it.
+            if a.contains_rect(*b) || b.contains_rect(*a) {
                 continue;
             }
+            let (a, b) = (read_at(e, *a, sa, sb), read_at(e, *b, sb, sa));
             if !own(from) && !own(to) {
                 continue;
             }
