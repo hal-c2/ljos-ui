@@ -109,7 +109,19 @@ pub struct StyleSpan {
     pub strikeout: bool,
     /// Another family; none keeps the layout's.
     pub family: Option<Arc<str>>,
+    /// The families tried after `family`, in order, before the engine's
+    /// own. Only with a `family`.
+    pub fallback_families: Option<FamilyList>,
 }
+
+/// What a [`StyleSpan`] is compared and hashed by; floats by bit pattern.
+type SpanBits<'a> = (
+    Range<usize>,
+    u32,
+    [u32; 2],
+    [bool; 3],
+    (Option<&'a str>, Option<&'a FamilyList>),
+);
 
 impl StyleSpan {
     /// A span that changes nothing but the tag, to start from.
@@ -123,16 +135,17 @@ impl StyleSpan {
             underline: base.underline,
             strikeout: base.strikeout,
             family: None,
+            fallback_families: None,
         }
     }
 
     /// The whole style of the span's text, in a layout whose own is `base`.
     pub fn style(&self, base: &TextStyle) -> TextStyle {
         TextStyle {
-            // A part that names its family names that one alone.
+            // A part that names its family names its own list alone.
             family: self.family.clone().unwrap_or_else(|| base.family.clone()),
             fallback_families: match self.family {
-                Some(_) => None,
+                Some(_) => self.fallback_families.clone(),
                 None => base.fallback_families.clone(),
             },
             pixel_size: self.pixel_size,
@@ -145,13 +158,13 @@ impl StyleSpan {
         }
     }
 
-    fn bits(&self) -> (Range<usize>, u32, [u32; 2], [bool; 3], Option<&str>) {
+    fn bits(&self) -> SpanBits<'_> {
         (
             self.range.clone(),
             self.tag,
             [self.pixel_size.to_bits(), self.weight.to_bits()],
             [self.italic, self.underline, self.strikeout],
-            self.family.as_deref(),
+            (self.family.as_deref(), self.fallback_families.as_ref()),
         )
     }
 }
