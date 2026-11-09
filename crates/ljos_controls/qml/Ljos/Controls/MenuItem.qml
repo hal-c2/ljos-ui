@@ -96,8 +96,12 @@ T.MenuItem {
 
             Icon {
                 id: more
+                objectName: "more"
                 visible: control.subMenu !== null
-                x: control.mirrored ? 0 : parent.width - width
+                // Past the check's room, as the shortcut is: the menu's
+                // delegate draws its submenus' rows too, checked or not.
+                readonly property real checkSpace: control.checkable ? Theme.iconSize + control.spacing : 0
+                x: control.mirrored ? checkSpace : parent.width - width - checkSpace
                 y: (parent.height - height) / 2
                 name: control.mirrored ? "chevron-left" : "chevron-right"
                 size: Theme.iconSizeSmall

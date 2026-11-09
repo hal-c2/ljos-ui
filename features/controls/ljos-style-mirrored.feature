@@ -113,6 +113,35 @@ Feature: Ljós's own style, mirrored
       And the property "x" of "label" is 24
       And the property "horizontalAlignment" of "label" is 1
 
+    # A menu's delegate is used for its submenus' rows too, so a checked
+    # delegate has a check and a chevron in the same row.
+    Scenario Outline: A checked submenu row <how> has its chevron past the check's room
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          width: 320; height: 240
+          Menu {
+            Component.onCompleted: open()
+            delegate: MenuItem {
+              objectName: "row"; checkable: true; checked: true
+              LayoutMirroring.enabled: <mirrored>
+            }
+            Menu { title: "Recent" }
+          }
+        }
+        """
+      Then the property "subMenu" of "row" is not null
+      And the property "contentItem.width" of "row" is 196
+      And the property "indicator.x" of "row" is <check>
+      And the property "x" of "more" is <chevron>
+
+      Examples:
+        | how          | mirrored | check | chevron |
+        | mirrored     | true     | 8     | 24      |
+        | not mirrored | false    | 188   | 160     |
+
   Rule: A button and a labelled control lay out from the right
 
     Scenario: A mirrored button has its icon at the right and its chevron at the left
