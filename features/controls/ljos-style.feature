@@ -544,6 +544,38 @@ Feature: Ljós's own style: the controls of Ljos.Controls
       Then the property "background.border.width" of "field" is 2
       And the property "background.border.color" of "field" is "#0066cc"
 
+    # A highlighted row's fill, accentSurface, is only 1.28:1 on the popup's
+    # surfaceOverlay for these three, so the row the keys are on has an edge
+    # in the focus colour, which is 3:1 on both.
+    Scenario: The row of a combo box's popup that the keys are on has an edge in the focus colour
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 240; height: 200
+          Component.onCompleted: {
+            Theme.canvas = "#ffffff"
+            Theme.text = "#000000"
+            Theme.accent = "#0066cc"
+          }
+          ComboBox { id: c; objectName: "c"; width: 160; model: ["One", "Two", "Three"] }
+          readonly property real ratio: Math.min(Theme.contrast(Theme.focus, Theme.surfaceOverlay),
+                                                 Theme.contrast(Theme.focus, Theme.accentSurface))
+        }
+        """
+      When the user touches 70, 14
+      And the user presses "Down"
+      Then the property "highlightedIndex" of "c" is 1
+      And the property "background.border.width" of "row1" is 2
+      And the property "background.border.color" of "row1" is "#0066cc"
+      And the property "background.border.width" of "row0" is 0
+      And the property "ratio" of "root" is at least 3
+      # The check stays on the current row, which Return has not changed.
+      And the property "chosen" of "row0" is true
+      And the property "chosen" of "row1" is false
+
   Rule: Reduced motion moves nothing, and a change still shows
 
     Scenario: A switch's thumb slides to its end

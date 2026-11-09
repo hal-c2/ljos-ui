@@ -37,6 +37,7 @@ T.ComboBox {
 
     delegate: T.ItemDelegate {
         id: row
+        objectName: "row" + index
         width: ListView.view ? ListView.view.width : control.width
         implicitHeight: Theme.controlHeight
         text: control.textAt(index)
@@ -86,6 +87,11 @@ T.ComboBox {
             Rectangle {
                 radius: Math.max(0, Theme.radiusLarge - Theme.spacingSmall)
                 color: row.highlighted || row.hovered ? Theme.accentSurface : "transparent"
+                // The row Return would choose: its fill alone is too near
+                // the popup's to tell it by, and the focus colour is 3:1 on
+                // both. The check stays on the current row.
+                border.width: row.highlighted ? 2 : 0
+                border.color: Theme.focus
             }
         }
     }
