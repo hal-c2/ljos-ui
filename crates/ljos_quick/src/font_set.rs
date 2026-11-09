@@ -28,7 +28,7 @@ thread_local! {
     /// the engine is still being made on another thread.
     static TOLD: Cell<Option<u64>> = const { Cell::new(None) };
     /// How many changes they were told of, which their [`FontSet`] says.
-    static CHANGES: Cell<u64> = const { Cell::new(0) };
+    static CHANGES: Cell<i32> = const { Cell::new(0) };
 }
 
 /// What a binding that follows the set of fonts reads: one per engine,
@@ -36,9 +36,12 @@ thread_local! {
 #[derive(Debug, Default, QmlObject)]
 #[qml(name = "FontSet", uncreatable)]
 pub struct FontSet {
-    /// How many times the set of fonts changed on this thread.
+    /// How many times the set of fonts changed on this thread, wrapping as
+    /// the counters of `bump_node` do: a write skips a value equal to the
+    /// one there is, and a wrapping count is never equal to the last, so
+    /// no change goes untold however many came before.
     #[qml(notify, readonly)]
-    pub changes: f64,
+    pub changes: i32,
 }
 
 #[derive(Default)]
@@ -60,7 +63,7 @@ pub(crate) fn follow(e: &Engine) {
     let set = match of.0.get().filter(|o| e.is_alive(*o)) {
         Some(set) => set,
         None => {
-            let changes = CHANGES.get() as f64;
+            let changes = CHANGES.get();
             let Ok(set) = e.create_native_incomplete(FontSet { changes }, None) else {
                 return;
             };
@@ -100,7 +103,7 @@ pub(crate) fn follow(e: &Engine) {
 /// effects once, when it closes.
 pub(crate) fn changed(now: Option<u64>) {
     TOLD.set(now);
-    let n = CHANGES.get() + 1;
+    let n = CHANGES.get().wrapping_add(1);
     CHANGES.set(n);
     let engines = followers();
     batched(&engines, || {
@@ -109,8 +112,7 @@ pub(crate) fn changed(now: Option<u64>) {
                 continue;
             };
             if e.is_alive(set)
-                && let Err(err) =
-                    write_computed(e, set, FontSet::CHANGES.index, Value::Real(n as f64))
+                && let Err(err) = write_computed(e, set, FontSet::CHANGES.index, Value::Int(n))
             {
                 e.log(LogLevel::Warning, "qml", format!("{err}"));
             }
@@ -184,5 +186,27 @@ mod tests {
         go.send(()).unwrap();
         let generation = text_engine().borrow().generation();
         assert_eq!(TOLD.get(), Some(generation), "the engine that arrived");
+    }
+
+    /// What follows the fonts is told of every change, however many came
+    /// before: the count it reads never stays the same from one to the
+    /// next, so a write that skips an equal value never skips one.
+    #[test]
+    fn a_change_is_told_however_many_came_before() {
+        use std::rc::Rc;
+
+        CHANGES.set(i32::MAX);
+        let e = Engine::new();
+        crate::register(&e);
+        let runs = Rc::new(Cell::new(0));
+        let ran = Rc::clone(&runs);
+        e.effect(move |e| {
+            follow(e);
+            ran.set(ran.get() + 1);
+        })
+        .unwrap();
+        assert_eq!(runs.get(), 1);
+        changed(Some(1));
+        assert_eq!(runs.get(), 2, "the change was not told");
     }
 }
