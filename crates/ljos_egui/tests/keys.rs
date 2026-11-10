@@ -309,6 +309,42 @@ fn a_held_key_and_its_modifiers_are_told() {
     );
 }
 
+// egui tells a modifier key only as a change of the modifiers, and typed
+// text says nothing of them: the pass's own state is what is held.
+#[test]
+fn the_modifiers_held_follow_the_pass_without_a_key_event() {
+    let s = scene();
+    let mut h = alone(&s);
+    let held = || ljos_quick::keys::keyboard_modifiers(&s.engine);
+    // What native code run for the key would see.
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let saw = Rc::clone(&seen);
+    ljos_quick::keys::add_key_filter(&s.engine, move |e, _, _| {
+        saw.borrow_mut()
+            .push(ljos_quick::keys::keyboard_modifiers(e));
+        false
+    });
+    let shift = ljos_quick::Modifiers::SHIFT;
+    pass(&mut h, [Event::ModifiersChanged(Modifiers::SHIFT)]);
+    assert_eq!(held(), shift);
+    pass(&mut h, [Event::ModifiersChanged(Modifiers::NONE)]);
+    pass(
+        &mut h,
+        [
+            Event::ModifiersChanged(Modifiers::SHIFT),
+            Event::Text("A".to_owned()),
+        ],
+    );
+    assert_eq!(
+        log(),
+        ["one press 0x41 \"A\" 0", "one release 0x41 \"A\" 0"]
+    );
+    assert_eq!(*seen.borrow(), [shift, shift]);
+    assert_eq!(held(), shift);
+    pass(&mut h, [Event::ModifiersChanged(Modifiers::NONE)]);
+    assert_eq!(held(), ljos_quick::Modifiers::empty());
+}
+
 #[test]
 fn an_accepted_key_is_gone_from_egui_s_input_and_the_others_stay() {
     let s = scene();

@@ -452,6 +452,14 @@ impl QuickScene {
     /// then the item with active focus and its parents. Returns whether anything
     /// accepted it, so the host knows which keys are still its own.
     pub fn key_event(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
+        super::modifiers::note_key(engine, ev);
+        self.key_event_from_text(engine, ev)
+    }
+
+    /// [`QuickScene::key_event`] for a key the host made of text the
+    /// platform typed, which says nothing of the modifiers held: they
+    /// stay as the last event left them.
+    pub fn key_event_from_text(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
         self.note_input();
         self.root()
             .is_some_and(|root| deliver_key(engine, root, ev))

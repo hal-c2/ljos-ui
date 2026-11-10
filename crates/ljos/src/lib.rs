@@ -251,11 +251,16 @@ pub use app::{App, create_root};
 #[cfg(not(target_arch = "wasm32"))]
 pub mod window;
 
-/// Key events as a host delivers them, and the application-wide key
-/// filters that see each before a window's shortcuts and focused item.
+/// Key events as a host delivers them, the application-wide key filters
+/// that see each before a window's shortcuts and focused item, and the
+/// modifiers held as the last key, pointer or wheel event said
+/// ([`keys::keyboard_modifiers`]), for code run from a handler that has
+/// no event at hand.
 #[cfg(not(target_arch = "wasm32"))]
 pub mod keys {
-    pub use ljos_quick::keys::{KeyFilter, KeyFilterId, add_key_filter, key, remove_key_filter};
+    pub use ljos_quick::keys::{
+        KeyFilter, KeyFilterId, add_key_filter, key, keyboard_modifiers, remove_key_filter,
+    };
     pub use ljos_quick::{KeyEvent, KeyKind, Modifiers};
 }
 

@@ -12,6 +12,7 @@ mod dispatch;
 mod event;
 mod filter;
 pub mod key;
+mod modifiers;
 mod sequence;
 mod shortcut;
 mod standard;
@@ -21,6 +22,7 @@ pub use attached::{KeyNavigation, KeyNavigationAttached, Keys, KeysAttached, pri
 pub use dispatch::{KeyItem, deliver_key, register_key_item, tab_target};
 pub use event::KeyEventObject;
 pub use filter::{KeyFilter, KeyFilterId, add_key_filter, remove_key_filter};
+pub use modifiers::{keyboard_modifiers, set_keyboard_modifiers};
 pub use sequence::{KeyChord, KeySequence, MAX_CHORDS, Platform};
 pub use shortcut::{Shortcut, queue_shortcut_at, shortcut_context, shortcut_ticket};
 pub use standard::{
@@ -29,4 +31,5 @@ pub use standard::{
 pub use text_input::{Surrounding, TextInputClient, register_text_input_client, text_input_client};
 
 pub(crate) use dispatch::{register, tab_direction};
+pub(crate) use modifiers::note_pointer;
 pub(crate) use shortcut::reset as reset_shortcuts;

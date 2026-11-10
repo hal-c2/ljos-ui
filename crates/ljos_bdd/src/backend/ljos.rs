@@ -23,7 +23,7 @@ use ljos_a11y::NodeKey;
 use ljos_compiler::{Project, compile_file, failure_reason};
 use ljos_drive::{Advance, Chord, DriveError, DriveState, Driver, Host, Wheel, parse_modifiers};
 use ljos_engine::{Engine, EngineError, MapSource, ObjectId, Value as QmlValue};
-use ljos_quick::{Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene};
+use ljos_quick::{Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent};
 use ljos_render::RasterConfig;
 use ljos_render::kurbo::{self, Point};
 use ljos_runtime::{Clock as _, VirtualClock};
@@ -1393,6 +1393,25 @@ impl Input for LjosBackend {
         })
     }
 
+    // The move to where the wheel turns holds the keys too, as a mouse
+    // moved with Ctrl down does.
+    fn wheel_holding(&mut self, modifiers: &str, at: (f64, f64), by: super::WheelBy) -> Result<()> {
+        self.input(|b| {
+            let held = parse_modifiers(modifiers).map_err(failed)?;
+            b.live()?.drive(|d| {
+                let t = d.now();
+                let buttons = d.state.buttons;
+                d.send_pointer(&PointerEvent::moved(at.0, at.1, buttons, t).with_modifiers(held));
+                let ev = match by {
+                    super::WheelBy::Notches(x, y) => WheelEvent::notches(at.0, at.1, x, y, t),
+                    super::WheelBy::Pixels(x, y) => WheelEvent::pixels(at.0, at.1, x, y, t),
+                };
+                d.send_wheel(&ev.with_modifiers(held));
+                d.settle()
+            })
+        })
+    }
+
     fn type_text(&mut self, text: &str) -> Result<()> {
         self.input(|b| b.live()?.drive(|d| d.type_text(text)))
     }
@@ -1834,6 +1853,13 @@ impl Probes for LjosBackend {
             .ok_or_else(|| BackendError::Failed("text measures were not being counted".into()))?;
         self.live()?.settle()?;
         Ok(ljos_quick::texts_measured() - from)
+    }
+
+    fn keyboard_modifiers(&mut self) -> Result<i64> {
+        let live = self.live()?;
+        Ok(i64::from(
+            ljos_quick::keys::keyboard_modifiers(&live.engine).bits(),
+        ))
     }
 
     fn pointer_cursor(&mut self) -> Result<i64> {
