@@ -45,6 +45,12 @@ Feature: White space in rich text
         function wide() { measure(edit) }
         function again() { other.text = edit.text; show(other) }
         function againWide() { other.text = edit.text; measure(other) }
+        function bare(h) {
+          return h.replace(/^[\s\S]*<body[^>]*>\n?/, "").replace(/<\/body>[\s\S]*$/, "")
+            .replace(/ style="(?! font-family:'monospace';")[^"]*"/g, "").split("\"").join("'").split("\n").join("~").split("\u00a0").join("_")
+        }
+        function written() { out = bare(edit.text) }
+        function againWritten() { other.text = edit.text; out = bare(other.text) }
         property string markdown
         onMarkdownChanged: md.text = markdown.split("~").join("\n")
         function markdownWide() { measure(md) }
@@ -386,3 +392,48 @@ Feature: White space in rich text
       When the property "html" of "root" is set to "<p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>"
       And the method "againWide" of "root" is called
       Then the property "out" of "root" is "within the item"
+
+  Rule: A paragraph that does not wrap is written as a pre
+
+    The HTML a TextEdit writes has a paragraph that does not wrap, from
+    nowrap or pre, in a table cell or out of one, as a `pre` element with
+    the paragraph's own format and no font of its own; a space nowrap made
+    one that does not break stays so (shown as "_"). A heading that does
+    not wrap is a `pre` too, and so is an item of a list, inside an `li`
+    that is not closed; every item starts a line. A paragraph that wraps,
+    pre-wrap or pre-line, is a `p`, even one a `pre` element made. Read
+    back, such a `pre` is set in a monospace font and wraps, as every
+    paragraph of a TextEdit's own HTML does. The HTML below is shown
+    without its style attributes, but for a monospace font.
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "written" of "root" is called
+      Then the property "out" of "root" is "<written>"
+
+      Examples:
+        | case                             | html                                                                         | written                                                                                              |
+        | A nowrap paragraph               | <p style='white-space:nowrap'>x y</p>                                        | <pre>x_y</pre>                                                                                       |
+        | A pre paragraph                  | <p style='white-space:pre'>x y</p>                                           | <pre>x y</pre>                                                                                       |
+        | A pre-wrap paragraph wraps       | <p style='white-space:pre-wrap'>x y</p>                                      | <p>x y</p>                                                                                           |
+        | A pre-line paragraph wraps       | <p style='white-space:pre-line'>x y</p>                                      | <p>x y</p>                                                                                           |
+        | Between paragraphs that wrap     | <p>a</p><p style='white-space:nowrap'>x y</p><p>b</p>                        | <p>a</p>~<pre>x_y</pre>~<p>b</p>                                                                     |
+        | It keeps its alignment           | <p align='center' style='white-space:nowrap'>x y</p>                         | <pre align='center'>x_y</pre>                                                                        |
+        | Its text keeps its formats       | <p style='white-space:nowrap'><b>x</b> y</p>                                 | <pre><span>x</span>_y</pre>                                                                          |
+        | A div                            | <div style='white-space:nowrap'>x y</div>                                    | <pre>x_y</pre>                                                                                       |
+        | A heading                        | <h2 style='white-space:nowrap'>x y</h2>                                      | <pre><span>x_y</span></pre>                                                                          |
+        | An item of a list, in an open li | <ul><li>a</li><li style='white-space:nowrap'>x y</li></ul>                   | <ul>~<li>a</li>~<li><pre>x_y</pre></ul>                                                              |
+        | A pre that wraps                 | <pre style='white-space:pre-wrap'>x y</pre>                                  | <p><span style=' font-family:'monospace';'>x y</span></p>                                            |
+        | A pre element keeps its font     | <pre>x y</pre>                                                               | <pre><span style=' font-family:'monospace';'>x y</span></pre>                                        |
+        | A cell that does not wrap        | <table><tr><td style='white-space:nowrap'>x y</td></tr></table>              | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre>x_y</pre></td></tr></table>        |
+        | A paragraph of a cell            | <table><tr><td><p style='white-space:nowrap'>x</p><p>y</p></td></tr></table> | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre>x</pre>~<p>y</p></td></tr></table> |
+
+    Scenario Outline: Read back, <case> is monospace and wraps
+      When the property "html" of "root" is set to "<html>"
+      And the method "againWritten" of "root" is called
+      Then the property "out" of "root" is "<written>"
+
+      Examples:
+        | case               | html                                  | written                                                   |
+        | a nowrap paragraph | <p style='white-space:nowrap'>x y</p> | <p><span style=' font-family:'monospace';'>x_y</span></p> |
+        | a pre element      | <pre>x y</pre>                        | <p><span style=' font-family:'monospace';'>x y</span></p> |
