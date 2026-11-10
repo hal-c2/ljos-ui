@@ -232,6 +232,23 @@ Feature: Paragraphs in the cells of a rich TextEdit
         | [p]xy&nbsp;[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]               | 3  | Ctrl+Delete    | 3 [xy_#cd]                 |
         | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]&nbsp;cd[/p]               | 7  | Ctrl+Backspace | 6 [xy=ab=_cd]              |
 
+  Rule: Deleting a word stops at the start and the end of a paragraph
+
+    Scenario Outline: <keys> at <at> of <doc> stops at the paragraph's edge
+      When the property "html" of "root" is set to "<doc>"
+      And the method "typing" of "root" is called with <at>
+      And the user presses "<keys>"
+      And the method "typed" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | doc                                                           | at | keys           | text           |
+        | [p]xy[/p][p]&nbsp;cd[/p]                                      | 4  | Ctrl+Backspace | 3 [xy#cd]      |
+        | [p]xy[/p][p]&nbsp;cd[/p]                                      | 2  | Ctrl+Delete    | 2 [xy_cd]      |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]&nbsp;cd[/p]   | 8  | Ctrl+Backspace | 7 [xy=ab=#cd]  |
+        | [table][tr][td]ab[p]&nbsp;cd[/p][/td][/tr][/table]            | 5  | Ctrl+Backspace | 4 [=ab#cd=]    |
+        | [table][tr][td]ab[p]&nbsp;cd[/p][/td][/tr][/table]            | 3  | Ctrl+Delete    | 3 [=ab_cd=]    |
+
   Rule: What is copied has a line feed between the paragraphs of a cell
 
     Scenario Outline: Copying <from> to <to> of <doc> copies <out>
