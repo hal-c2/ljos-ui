@@ -4245,8 +4245,9 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
         e.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
     }
     let polish = polish && !now;
-    // Kept before it is laid out now: the handlers that runs may change
-    // it again, and what they change it to is the one to keep.
+    // A handler the layout runs may change the text again. The follow
+    // effect that called this is running, so it is not re-entered: it
+    // runs again after this returns and keeps that text over this one.
     let inputs = now.then(|| t.clone());
     let t = Rc::new(t);
     if !polish && !shown {

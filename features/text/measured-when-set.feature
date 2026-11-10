@@ -220,3 +220,29 @@ Feature: A shown text's sizes are new in the statement after it changes
     And the property "follow" of "root" is 2
     When 50 milliseconds pass
     Then the property "follow" of "root" is 2
+
+  Scenario: A handler of a text's size that changes the text again has the last word
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property string log: ""
+        function said() { return t.text + " " + (t.contentWidth === ref.contentWidth) }
+        function change() {
+          t.text = "Hamburgefonstiv"
+          root.log = said()
+          // The same text as the one the handler replaced.
+          t.text = "Hamburgefonstiv"
+          root.log += ", again " + said()
+        }
+        Text { id: t; text: "hi"; onContentWidthChanged: if (text !== "b") text = "b" }
+        Text { id: ref; y: 100; text: "b" }
+        property bool fresh: t.text === "b" && t.contentWidth === ref.contentWidth
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    Then the property "log" of "root" is "b true, again b true"
+    When 50 milliseconds pass
+    Then the property "fresh" of "root" is true
