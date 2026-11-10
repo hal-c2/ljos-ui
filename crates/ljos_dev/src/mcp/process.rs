@@ -207,10 +207,14 @@ mod tests {
             "{spun} µs in {took:?}"
         );
         // The process counts every thread's time, this one's included,
-        // and its threads together run no faster than every CPU.
+        // and its threads together run no faster than every CPU. Where the
+        // process counts in clock ticks (procfs: utime and stime, 10 ms
+        // each) and the thread in microseconds (schedstat), each of the
+        // two is cut down to its tick on its own: a reading is up to two
+        // ticks short of the thread's.
         let used = Process::now().cpu_us.unwrap() - process;
         assert!(
-            used + 10_000 >= spun,
+            used + 20_000 >= spun,
             "{used} µs of the process, {spun} of the thread"
         );
         let cpus = std::thread::available_parallelism().map_or(1, |n| n.get()) as u64;
