@@ -160,6 +160,11 @@ fn observer_has(w: &mut LjosWorld, locator: String) -> StepResult {
     observer_matches(w, &unquoted(&locator), true)
 }
 
+#[then(regex = r#"^the observer does not have "((?:[^"\\]|\\.)+)"$"#)]
+fn observer_does_not_have(w: &mut LjosWorld, locator: String) -> StepResult {
+    observer_matches(w, &unquoted(&locator), false)
+}
+
 fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResult {
     w.each(|b| {
         let probes = b.probes()?;
