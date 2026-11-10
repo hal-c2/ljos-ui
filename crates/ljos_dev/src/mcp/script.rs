@@ -154,12 +154,14 @@ impl Thresholds {
         min_run_ms: Option<f64>,
         min_share: Option<f64>,
     ) -> Result<Self, SurfaceError> {
-        let run = min_run_ms.unwrap_or(MIN_RUN_MS);
-        if !run.is_finite() || run < 0.0 {
-            return Err(SurfaceError::invalid_argument(format!(
-                "`min_run_ms` is a time of at least 0 milliseconds, not {run}"
-            )));
-        }
+        let ms = min_run_ms.unwrap_or(MIN_RUN_MS);
+        // Refuses NaN, infinity, a negative time and one too long for a
+        // `Duration`, which would otherwise panic on the UI thread.
+        let run = Duration::try_from_secs_f64(ms / 1000.0).map_err(|_| {
+            SurfaceError::invalid_argument(format!(
+                "`min_run_ms` is a time of at least 0 milliseconds, not {ms}"
+            ))
+        })?;
         let share = min_share.unwrap_or(MIN_SHARE_PERCENT);
         if !share.is_finite() || !(0.0..=100.0).contains(&share) {
             return Err(SurfaceError::invalid_argument(format!(
@@ -167,7 +169,7 @@ impl Thresholds {
             )));
         }
         Ok(Self {
-            run: Duration::from_secs_f64(run / 1000.0),
+            run,
             share: share / 100.0,
         })
     }
@@ -455,6 +457,8 @@ mod tests {
         assert!(Thresholds::of(Some(0.0), Some(0.0)).is_ok());
         assert!(Thresholds::of(Some(-1.0), None).is_err());
         assert!(Thresholds::of(Some(f64::NAN), None).is_err());
+        assert!(Thresholds::of(Some(f64::INFINITY), None).is_err());
+        assert!(Thresholds::of(Some(1e30), None).is_err());
         assert!(Thresholds::of(None, Some(100.5)).is_err());
     }
 

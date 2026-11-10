@@ -195,8 +195,9 @@ Feature: An agent is told where script time costs and what is cheaper
       And the refusal mentions "<says>"
 
       Examples:
-        | args                                | says               |
-        | {"script": true, "min_run_ms": -1}  | min_run_ms         |
-        | {"script": true, "min_share": 101}  | min_share          |
-        | {"bindings": true, "min_run_ms": 1} | go with `script`   |
-        | {"script": true, "bindings": true}  | one of             |
+        | args                                 | says             |
+        | {"script": true, "min_run_ms": -1}   | min_run_ms       |
+        | {"script": true, "min_run_ms": 1e30} | min_run_ms       |
+        | {"script": true, "min_share": 101}   | min_share        |
+        | {"bindings": true, "min_run_ms": 1}  | go with `script` |
+        | {"script": true, "bindings": true}   | one of           |
