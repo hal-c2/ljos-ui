@@ -1350,10 +1350,12 @@ impl QmlView {
         // as a key event, and the pass's last word on them comes after the
         // events that carried their own. A pass without one says nothing:
         // windows share the engine, and one without the keyboard is told
-        // of no modifiers while another has them.
-        if events
-            .iter()
-            .any(|e| matches!(e, Event::ModifiersChanged(_)))
+        // of no modifiers while another has them, even in a
+        // `ModifiersChanged` as it loses the keyboard.
+        if keyed
+            && events
+                .iter()
+                .any(|e| matches!(e, Event::ModifiersChanged(_)))
         {
             set_keyboard_modifiers(&self.engine, mods);
         }
