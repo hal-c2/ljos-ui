@@ -40,6 +40,12 @@ use crate::style::{BoxAlign, InlineObject, StyleSpan, TextStyle};
 
 /// Ends a paragraph.
 pub const PARAGRAPH: char = '\n';
+
+/// What the HTML of a paragraph that does not wrap says of it. Read back
+/// it wraps all the same, as in Qt 6.11: the HTML is the editor's, whose
+/// mark has every white-space read as written
+/// (features/text/rich-text-white-space.feature).
+const NO_WRAP: &str = " white-space:pre;";
 /// Breaks a line inside a paragraph.
 pub const LINE_BREAK: char = '\u{2028}';
 /// Stands for an image.
@@ -104,6 +110,9 @@ pub struct BlockFormat {
     /// The colour behind the paragraph, as written.
     pub background: Option<Arc<str>>,
     pub align: Option<HAlign>,
+    /// The paragraph breaks its lines only at its line breaks, however
+    /// narrow the item (a `pre` or `nowrap` one, see [`super::Block`]).
+    pub no_wrap: bool,
     /// The paragraph is a row of a table: its cells are set apart by [`CELL`].
     pub table: Option<TableRow>,
 }
@@ -230,6 +239,10 @@ pub struct CellFormat {
     pub background: Option<Arc<str>>,
     /// A `th`.
     pub header: bool,
+    /// The cell breaks its lines only at its line breaks. A cell read with
+    /// some of its paragraphs that wrap and some that don't keeps them all
+    /// from wrapping: its column is as wide as the widest one anyway.
+    pub no_wrap: bool,
 }
 
 impl Default for BlockFormat {
@@ -245,6 +258,7 @@ impl Default for BlockFormat {
             list: None,
             background: None,
             align: None,
+            no_wrap: false,
             table: None,
         }
     }
@@ -291,6 +305,7 @@ impl BlockFormat {
             list: None,
             background: block.background.clone(),
             align: block.align,
+            no_wrap: block.no_wrap,
             table: None,
         }
     }
@@ -320,6 +335,7 @@ impl BlockFormat {
                     .map(|c| CellFormat {
                         background: c.background.as_deref().and_then(resolve),
                         header: c.header,
+                        no_wrap: !c.no_wrap.is_empty(),
                     })
                     .collect();
                 Arc::new(Self {
@@ -1008,7 +1024,7 @@ impl RichText {
             let _ = write!(
                 out,
                 " style=\"{}margin-top:{}px; margin-bottom:{}px; margin-left:{}px; \
-                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}\">",
+                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}{}\">",
                 if empty {
                     "-qt-paragraph-type:empty; "
                 } else {
@@ -1023,6 +1039,12 @@ impl RichText {
                     .as_deref()
                     .map(|c| format!(" background-color:{c};"))
                     .unwrap_or_default(),
+                // A pre says so itself.
+                if block.no_wrap && block.kind != BlockKind::Code {
+                    NO_WRAP
+                } else {
+                    ""
+                },
             );
             if fragment && index == 0 {
                 out.push_str("<!--StartFragment-->");
@@ -1100,8 +1122,12 @@ impl RichText {
                     }
                     out.push_str(
                         " style=\" margin-top:0px; margin-bottom:0px; margin-left:0px; \
-                         margin-right:0px; -qt-block-indent:0; text-indent:0px;\">",
+                         margin-right:0px; -qt-block-indent:0; text-indent:0px;",
                     );
+                    if format.is_some_and(|f| f.no_wrap) {
+                        out.push_str(NO_WRAP);
+                    }
+                    out.push_str("\">");
                     self.write_inline(out, cell);
                     out.push_str("</p>");
                 }

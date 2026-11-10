@@ -33,6 +33,14 @@
 //! out. The background of a block is the block's (filled across the
 //! document behind its lines), not its letters'; that of a table or a
 //! table cell (its `bgcolor` too) is the table's or the cell's.
+//!
+//! `white-space` says what becomes of spaces and line feeds, and a block
+//! or a table cell that is `pre` or `nowrap` (a `<pre>` too) breaks its
+//! lines only at its line breaks ([`Block::no_wrap`]). Of a `td`'s style only
+//! `white-space` is read. HTML with the mark an editor writes,
+//! `<meta name="qrichtext" content="1">`, anywhere in it, is read as
+//! Qt 6.11 reads it: every space and tab is text, no line feed is,
+//! `white-space` is not read and every block wraps.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -70,22 +78,28 @@ struct Open {
 }
 
 /// How white space in the text of an element is read, after its CSS
-/// `white-space`. That `pre` and `nowrap` do not wrap their lines at all is
-/// not here: whether a line wraps is the item's `wrapMode`, for every block.
+/// `white-space`, and whether the lines of a block of it wrap.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum WhiteSpace {
     /// `normal`: a run of white space is one space, and none at the start
     /// of a line.
     #[default]
     Collapse,
-    /// `nowrap`: as `normal`, but the one space is a no-break space, so the
-    /// line does not wrap at it (measured on Qt 6.11).
+    /// `nowrap`: as `normal`, but the one space is a no-break space (measured
+    /// on Qt 6.11), and a block of it does not wrap.
     NoWrap,
-    /// `pre`, `pre-wrap` and `<pre>`: every space is kept, and a line feed
-    /// ends the paragraph.
-    Keep,
+    /// `pre` and `<pre>`: every space is kept, a line feed ends the
+    /// paragraph, and a block of it does not wrap.
+    Pre,
+    /// `pre-wrap`: as `pre`, but the lines wrap.
+    PreWrap,
     /// `pre-line`: spaces collapse, a line feed ends the paragraph.
     Lines,
+    /// All of a document an editor wrote (`<meta name="qrichtext"
+    /// content="1">`), whatever its elements say: every space and tab is
+    /// kept, a line feed is not text at all, and every line wraps (measured
+    /// on Qt 6.11). It writes what it means with tags.
+    Verbatim,
 }
 
 impl WhiteSpace {
@@ -93,10 +107,26 @@ impl WhiteSpace {
         match value.to_ascii_lowercase().as_str() {
             "normal" => Some(Self::Collapse),
             "nowrap" => Some(Self::NoWrap),
-            "pre" | "pre-wrap" => Some(Self::Keep),
+            "pre" => Some(Self::Pre),
+            "pre-wrap" => Some(Self::PreWrap),
             "pre-line" => Some(Self::Lines),
             _ => None,
         }
+    }
+
+    fn collapses(self) -> bool {
+        matches!(self, Self::Collapse | Self::NoWrap | Self::Lines)
+    }
+
+    /// A line feed ends the paragraph.
+    fn keeps_line_feeds(self) -> bool {
+        matches!(self, Self::Pre | Self::PreWrap | Self::Lines)
+    }
+
+    /// A block of it wraps its lines where the item wraps them; one that
+    /// does not breaks a line only where the text says so.
+    fn wraps(self) -> bool {
+        !matches!(self, Self::NoWrap | Self::Pre)
     }
 }
 
@@ -111,6 +141,10 @@ struct TableState {
     width: Option<Arc<str>>,
     /// How many elements were open when the table started.
     depth: usize,
+    /// What the table's style says, which its rows inherit.
+    white_space: WhiteSpace,
+    /// What the row's style says, which its cells inherit.
+    row_white_space: WhiteSpace,
 }
 
 struct Parser<'a> {
@@ -128,27 +162,44 @@ struct Parser<'a> {
     /// after its start tag is not part of its text (measured on Qt 6.11,
     /// as HTML has it for `<pre>`).
     skip_line_feed: bool,
+    /// The document is an editor's: its white space is
+    /// [`WhiteSpace::Verbatim`].
+    verbatim: bool,
+    /// The editor's mark was found after text it changes: the document is
+    /// read again from the start.
+    again: bool,
 }
 
 pub(crate) fn parse(source: &str) -> Vec<Block> {
-    let mut p = Parser {
-        src: source,
-        at: 0,
-        flow: Flow::default(),
-        buf: InlineBuf::default(),
-        open: Vec::new(),
-        table: None,
-        opened: 0,
-        sheet: Sheet::default(),
-        skip_line_feed: false,
-    };
-    p.run();
-    p.finish()
+    let mut verbatim = false;
+    loop {
+        let mut p = Parser {
+            src: source,
+            at: 0,
+            flow: Flow::default(),
+            buf: InlineBuf::default(),
+            open: Vec::new(),
+            table: None,
+            opened: 0,
+            sheet: Sheet::default(),
+            skip_line_feed: false,
+            verbatim,
+            again: false,
+        };
+        p.run();
+        // Measured on Qt 6.11: the mark counts wherever it is. An editor
+        // writes it first, so a document is read twice only when someone
+        // put it last.
+        if !p.again {
+            return p.finish();
+        }
+        verbatim = true;
+    }
 }
 
 impl<'a> Parser<'a> {
     fn run(&mut self) {
-        while self.at < self.src.len() {
+        while self.at < self.src.len() && !self.again {
             let rest = &self.src[self.at..];
             let Some(special) = rest.find(['<', '&']) else {
                 self.text(rest);
@@ -191,17 +242,50 @@ impl<'a> Parser<'a> {
     }
 
     fn white_space(&self) -> WhiteSpace {
-        self.open.last().map(|o| o.white_space).unwrap_or_default()
+        self.open.last().map_or_else(
+            || self.white_space_of(None),
+            |o| self.white_space_of(Some(o)),
+        )
+    }
+
+    /// What white space in `open` is, `None` being the document.
+    fn white_space_of(&self, open: Option<&Open>) -> WhiteSpace {
+        if self.verbatim {
+            WhiteSpace::Verbatim
+        } else {
+            open.map(|o| o.white_space).unwrap_or_default()
+        }
     }
 
     /// Where text goes: the open table cell, or the block being collected.
     /// None inside a table but outside its cells, where text is dropped.
     fn target(&mut self) -> Option<&mut InlineBuf> {
+        let no_wrap = self.table.as_ref().is_some_and(|t| t.cell) && !self.cell_line_wraps();
         match &mut self.table {
-            Some(t) if t.cell => t.rows.last_mut()?.last_mut().map(|c| &mut c.0),
+            Some(t) if t.cell => {
+                let cell = t.rows.last_mut()?.last_mut()?;
+                if no_wrap {
+                    let line = cell.buf.text.rfind('\n').map_or(0, |i| i + 1);
+                    if cell.no_wrap.last() != Some(&line) {
+                        cell.no_wrap.push(line);
+                    }
+                }
+                Some(&mut cell.buf)
+            }
             Some(_) => None,
             None => Some(&mut self.buf),
         }
+    }
+
+    /// Whether the line of the open cell text goes to now wraps: a cell has
+    /// no boxes, so it is the innermost block in it, or the cell, that says.
+    fn cell_line_wraps(&self) -> bool {
+        let depth = self.table.as_ref().map_or(0, |t| t.depth);
+        let block = self.open[depth.min(self.open.len())..]
+            .iter()
+            .rev()
+            .find(|o| is_block(&o.name) || matches!(&*o.name, "td" | "th"));
+        block.is_none_or(|o| self.white_space_of(Some(o)).wraps())
     }
 
     fn text(&mut self, s: &str) {
@@ -213,7 +297,27 @@ impl<'a> Parser<'a> {
             return;
         }
         let white_space = self.white_space();
-        if matches!(white_space, WhiteSpace::Collapse | WhiteSpace::NoWrap) {
+        if white_space == WhiteSpace::Verbatim {
+            // Qt 6.11 gives white space between blocks to the block before
+            // (hal-c2/ljos-ui#282); here it is no text, as where
+            // spaces collapse, so it makes no paragraph of its own.
+            let between = self.buf.is_empty()
+                && self.table.is_none()
+                && self.open.last().is_none_or(|o| {
+                    o.boxed && matches!(&*o.name, "div" | "ul" | "ol" | "blockquote" | "dl")
+                });
+            if between && s.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r')) {
+                return;
+            }
+            let style = self.style();
+            if let Some(buf) = self.target() {
+                for line in s.split(['\n', '\r']) {
+                    buf.push(line, &style);
+                }
+            }
+            return;
+        }
+        if !white_space.keeps_line_feeds() {
             self.collapsed(s, white_space);
             return;
         }
@@ -221,13 +325,13 @@ impl<'a> Parser<'a> {
             if i > 0 {
                 self.line_feed(white_space);
             }
-            if white_space == WhiteSpace::Keep {
+            if white_space.collapses() {
+                self.collapsed(line, white_space);
+            } else {
                 let style = self.style();
                 if let Some(buf) = self.target() {
                     buf.push(line, &style);
                 }
-            } else {
-                self.collapsed(line, white_space);
             }
         }
     }
@@ -303,7 +407,19 @@ impl<'a> Parser<'a> {
         let name_len = rest
             .find(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))
             .unwrap_or(rest.len());
-        match entity::decode(&rest[..name_len]) {
+        let name = &rest[..name_len];
+        match entity::decode(name) {
+            // Measured on Qt 6.11: in an editor's document not even a
+            // line feed written as a reference is text, nor a carriage
+            // return, which is no character elsewhere.
+            Some('\n') if self.verbatim => {
+                let semicolon = usize::from(rest[name_len..].starts_with(';'));
+                self.at += 1 + name_len + semicolon;
+            }
+            None if self.verbatim && entity::is_carriage_return(name) => {
+                let semicolon = usize::from(rest[name_len..].starts_with(';'));
+                self.at += 1 + name_len + semicolon;
+            }
             Some(c) => {
                 let style = self.style();
                 if let Some(buf) = self.target() {
@@ -396,15 +512,9 @@ impl<'a> Parser<'a> {
         if self.open.len() >= MAX_DEPTH {
             return;
         }
-        let mut open = Open {
-            name: name.into(),
-            style: self.style(),
-            boxed: false,
-            white_space: self.white_space(),
-            empty: false,
-            always: false,
-            list: None,
-        };
+        let mut open = Open::new(name);
+        open.style = self.style();
+        open.white_space = self.white_space();
         change(&mut open);
         self.open.push(open);
         self.opened = self.opened.wrapping_add(1);
@@ -497,11 +607,40 @@ impl<'a> Parser<'a> {
                 open.empty = css.contains("-qt-paragraph-type:empty");
             }
         }
-        // A block in a table cell is not a box, but its line feed goes too.
-        self.skip_line_feed = self.open.last().is_some_and(|o| {
-            (o.boxed || is_block(&o.name))
-                && matches!(o.white_space, WhiteSpace::Keep | WhiteSpace::Lines)
-        });
+        let Some(open) = self.open.last() else {
+            return;
+        };
+        let white_space = self.white_space_of(Some(open));
+        // A block in a table cell is not a box, nor is the cell, but their
+        // line feed goes too.
+        self.skip_line_feed =
+            (open.boxed || is_block(&open.name) || matches!(&*open.name, "td" | "th"))
+                && white_space.keeps_line_feeds();
+        // It is the block that does not wrap, not the text in it: a span
+        // that says `pre` wraps with its paragraph (measured on Qt 6.11).
+        if open.boxed
+            && let Some(ctx) = self.flow.innermost_mut()
+        {
+            ctx.no_wrap = !white_space.wraps();
+        }
+    }
+
+    /// What white space in an element `name` with `attrs` would be, opened
+    /// in one where it is `inherited`: by the rules of the style sheet that
+    /// match it, then its own style.
+    fn white_space_for(&self, name: &str, attrs: &Attrs<'_>, inherited: WhiteSpace) -> WhiteSpace {
+        let mut probe = Open::new(name);
+        probe.white_space = inherited;
+        if !self.sheet.is_empty() {
+            let classes = attrs.get("class").unwrap_or_default();
+            for css in self.sheet.matching(name, &classes) {
+                apply_style(&mut probe, &css);
+            }
+        }
+        if let Some(css) = attrs.get("style") {
+            apply_style(&mut probe, &css);
+        }
+        probe.white_space
     }
 
     /// Apply a style to the element just opened, as its `style` attribute.
@@ -509,6 +648,15 @@ impl<'a> Parser<'a> {
         let Some(open) = self.open.last_mut() else {
             return;
         };
+        // Of a cell's style only its white space is of its text here; its
+        // background is the cell's ([`background_of`]).
+        if &*open.name == "td" {
+            let mut probe = Open::new("td");
+            probe.white_space = open.white_space;
+            apply_style(&mut probe, css);
+            open.white_space = probe.white_space;
+            return;
+        }
         apply_style(open, css);
         if open.boxed {
             let in_table = self.table.is_some();
@@ -567,6 +715,13 @@ impl<'a> Parser<'a> {
             "br" if self.open.last().is_some_and(|o| o.empty) => {}
             "br" => self.line_break(),
             "img" => self.image(attrs),
+            "meta" if !self.verbatim && is_editors_mark(attrs) => {
+                self.verbatim = true;
+                self.again = self.opened > 0
+                    || !self.buf.is_empty()
+                    || self.table.is_some()
+                    || self.flow.any_block();
+            }
             // Structure without a look of its own, and tags that stand alone.
             "html" | "body" | "head" | "meta" | "link" | "tbody" | "thead" | "tfoot" | "tr"
             | "td" | "th" | "caption" | "table" => {}
@@ -583,7 +738,7 @@ impl<'a> Parser<'a> {
                 } else if name == "pre" {
                     self.push(name, |o| {
                         o.style.mono = true;
-                        o.white_space = WhiteSpace::Keep;
+                        o.white_space = WhiteSpace::Pre;
                     });
                 } else if name != "hr" {
                     self.push(name, |_| {});
@@ -638,7 +793,7 @@ impl<'a> Parser<'a> {
                 };
                 self.open_box(name, ctx, |o| {
                     o.always = true;
-                    o.white_space = WhiteSpace::Keep;
+                    o.white_space = WhiteSpace::Pre;
                     o.style.mono = true;
                 });
             }
@@ -767,7 +922,12 @@ impl<'a> Parser<'a> {
                 .filter(|w| !w.is_empty())
                 .map(Arc::from),
             depth: self.open.len(),
+            white_space: self.white_space_for("table", attrs, self.white_space()),
+            row_white_space: WhiteSpace::default(),
         });
+        if let Some(t) = &mut self.table {
+            t.row_white_space = t.white_space;
+        }
     }
 
     /// Tags that mean something else inside a table. False for the others.
@@ -780,6 +940,11 @@ impl<'a> Parser<'a> {
                 t.cell = false;
                 t.rows.push(Vec::new());
                 self.open.truncate(t.depth);
+                let inherited = t.white_space;
+                let white_space = self.white_space_for(name, attrs, inherited);
+                if let Some(t) = &mut self.table {
+                    t.row_white_space = white_space;
+                }
                 true
             }
             "td" | "th" => {
@@ -788,13 +953,21 @@ impl<'a> Parser<'a> {
                 }
                 let header = name == "th";
                 if let Some(row) = t.rows.last_mut() {
-                    row.push((InlineBuf::default(), header, background_of(attrs)));
+                    row.push(CellBuf {
+                        header,
+                        background: background_of(attrs),
+                        ..CellBuf::default()
+                    });
                 }
                 t.cell = true;
                 self.open.truncate(t.depth);
-                if header {
-                    self.push(name, |o| o.style.bold = true);
-                }
+                let white_space = t.row_white_space;
+                // An element of its own, so that the rules of a style sheet
+                // and its style say what white space in it is.
+                self.push(name, |o| {
+                    o.style.bold = header;
+                    o.white_space = white_space;
+                });
                 true
             }
             // A table in a table is read as more rows of the outer one.
@@ -851,6 +1024,35 @@ impl<'a> Parser<'a> {
 /// order they are written, and one of a property nobody knows or one that
 /// is no `name: value` is passed over. Unless that one is the first: then
 /// the whole style says nothing.
+impl Open {
+    fn new(name: &str) -> Self {
+        Self {
+            name: name.into(),
+            style: Inline::default(),
+            boxed: false,
+            white_space: WhiteSpace::default(),
+            empty: false,
+            always: false,
+            list: None,
+        }
+    }
+}
+
+/// `<meta name="qrichtext" content="1">`, which an editor writes for its
+/// document. Measured on Qt 6.11: the name and the value as written, and
+/// the name first.
+fn is_editors_mark(attrs: &Attrs<'_>) -> bool {
+    let mut named = false;
+    for (key, value) in attrs.pairs() {
+        if key.eq_ignore_ascii_case("name") {
+            named = value == "qrichtext";
+        } else if key.eq_ignore_ascii_case("content") {
+            return named && value == "1";
+        }
+    }
+    false
+}
+
 fn apply_style(open: &mut Open, css: &str) {
     let css = without_comments(css);
     for (i, declaration) in css::declarations(&css).enumerate() {
@@ -1236,48 +1438,52 @@ impl<'a> Attrs<'a> {
     }
 
     fn raw(&self, name: &str) -> Option<&'a str> {
+        self.pairs()
+            .find(|(key, _)| key.eq_ignore_ascii_case(name))
+            .map(|(_, value)| value)
+    }
+
+    /// Every attribute and its value as written, in order.
+    fn pairs(&self) -> impl Iterator<Item = (&'a str, &'a str)> {
         let mut rest = self.0;
-        loop {
-            rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
-            if rest.is_empty() {
-                return None;
-            }
-            let key_len = rest
-                .find(|c: char| c.is_ascii_whitespace() || c == '=' || c == '/')
-                .unwrap_or(rest.len());
-            // A stray `=` is skipped so the scan always moves on.
-            if key_len == 0 {
-                rest = &rest[1..];
-                continue;
-            }
-            let key = &rest[..key_len];
-            let after = rest[key_len..].trim_start();
-            let Some(value) = after.strip_prefix('=') else {
-                // An attribute without a value.
-                if key.eq_ignore_ascii_case(name) {
-                    return Some("");
+        std::iter::from_fn(move || {
+            loop {
+                rest = rest.trim_start_matches(|c: char| c.is_ascii_whitespace() || c == '/');
+                if rest.is_empty() {
+                    return None;
                 }
-                rest = after;
-                continue;
-            };
-            let value = value.trim_start();
-            let (value, next) = match value.chars().next() {
-                Some(q @ ('"' | '\'')) => match value[1..].find(q) {
-                    Some(end) => (&value[1..1 + end], &value[end + 2..]),
-                    None => (&value[1..], ""),
-                },
-                _ => {
-                    let end = value
-                        .find(|c: char| c.is_ascii_whitespace())
-                        .unwrap_or(value.len());
-                    (&value[..end], &value[end..])
+                let key_len = rest
+                    .find(|c: char| c.is_ascii_whitespace() || c == '=' || c == '/')
+                    .unwrap_or(rest.len());
+                // A stray `=` is skipped so the scan always moves on.
+                if key_len == 0 {
+                    rest = &rest[1..];
+                    continue;
                 }
-            };
-            if key.eq_ignore_ascii_case(name) {
-                return Some(value);
+                let key = &rest[..key_len];
+                let after = rest[key_len..].trim_start();
+                let Some(value) = after.strip_prefix('=') else {
+                    // An attribute without a value.
+                    rest = after;
+                    return Some((key, ""));
+                };
+                let value = value.trim_start();
+                let (value, next) = match value.chars().next() {
+                    Some(q @ ('"' | '\'')) => match value[1..].find(q) {
+                        Some(end) => (&value[1..1 + end], &value[end + 2..]),
+                        None => (&value[1..], ""),
+                    },
+                    _ => {
+                        let end = value
+                            .find(|c: char| c.is_ascii_whitespace())
+                            .unwrap_or(value.len());
+                        (&value[..end], &value[end..])
+                    }
+                };
+                rest = next;
+                return Some((key, value));
             }
-            rest = next;
-        }
+        })
     }
 }
 
@@ -1620,6 +1826,143 @@ mod tests {
         assert_eq!(b.text, "a\nb");
         // A table that never ends still is one.
         assert_eq!(texts("<table><tr><td>a<td>b"), ["a\tb"]);
+    }
+
+    #[test]
+    fn pre_and_nowrap_blocks_do_not_wrap() {
+        let no_wrap =
+            |source: &str| -> Vec<bool> { parse(source).into_iter().map(|b| b.no_wrap).collect() };
+        assert_eq!(no_wrap("<p>a</p><pre>b</pre>"), [false, true]);
+        assert_eq!(
+            no_wrap(
+                "<p style=\"white-space:pre\">a</p><p style=\"white-space:nowrap\">b</p>\
+                 <p style=\"white-space:pre-wrap\">c</p><p style=\"white-space:pre-line\">d</p>"
+            ),
+            [true, true, false, false]
+        );
+        // The block says it, inherited or its own; a span inside cannot.
+        assert_eq!(
+            no_wrap(
+                "<div style=\"white-space:nowrap\"><p>a</p></div><h3 style=\"white-space:pre\">b</h3>"
+            ),
+            [true, true]
+        );
+        assert_eq!(
+            no_wrap("<p><span style=\"white-space:nowrap\">a</span></p>"),
+            [false]
+        );
+        assert_eq!(
+            no_wrap("<ul><li style=\"white-space:nowrap\">a</li></ul>"),
+            [true]
+        );
+        // A table is no block that wraps or not; its cells say.
+        assert_eq!(
+            no_wrap("<table style=\"white-space:nowrap\"><tr><td>a</td></tr></table>"),
+            [false]
+        );
+    }
+
+    #[test]
+    fn a_cell_says_its_white_space_and_which_lines_do_not_wrap() {
+        // Ranges as pairs: clippy reads a one-range vec as a typo.
+        let cell = |source: &str| -> (String, Vec<(usize, usize)>) {
+            let b = parse(source).remove(0);
+            let t = b.table.expect("a table");
+            let no_wrap = t.cells[0]
+                .no_wrap
+                .iter()
+                .map(|r| (r.start, r.end))
+                .collect();
+            (b.text, no_wrap)
+        };
+        let table = |td: &str| format!("<table><tr>{td}</tr></table>");
+        assert_eq!(
+            cell(&table("<td style=\"white-space:nowrap\">a   b</td>")),
+            ("a\u{a0}b".into(), vec![(0, 4)])
+        );
+        assert_eq!(
+            cell(&table("<td style=\"white-space:pre-wrap\">a   b</td>")),
+            ("a   b".into(), vec![])
+        );
+        assert_eq!(
+            cell(&table("<th style=\"white-space:pre\">a   b</th>")),
+            ("a   b".into(), vec![(0, 5)])
+        );
+        // From a rule, the row or the table.
+        assert_eq!(
+            cell(&format!(
+                "<style>td {{ white-space: pre }}</style>{}",
+                table("<td>a  b</td>")
+            )),
+            ("a  b".into(), vec![(0, 4)])
+        );
+        assert_eq!(
+            cell("<table><tr style=\"white-space:pre-wrap\"><td>a  b</td></tr></table>").0,
+            "a  b"
+        );
+        assert_eq!(
+            cell("<table style=\"white-space:nowrap\"><tr><td>a b</td></tr></table>").1,
+            [(0, 4)]
+        );
+        // A cell's own colour stays the cell's, not its text's.
+        let b = &parse(&table("<td style=\"background-color:red\">a</td>"))[0];
+        assert!(b.spans.iter().all(|s| s.style.background.is_none()));
+        // Only the lines of a paragraph that does not wrap.
+        assert_eq!(
+            cell(&table(
+                "<td><p>aa</p><p style=\"white-space:nowrap\">b c</p><p>d</p></td>"
+            )),
+            ("aa\nb\u{a0}c\nd".into(), vec![(3, 7)])
+        );
+        // In a pre-wrap cell, a line feed right after its start tag is no
+        // text; after an inline one it is.
+        assert_eq!(
+            cell(&table("<td style=\"white-space:pre-wrap\">\na</td>")).0,
+            "a"
+        );
+        assert_eq!(
+            cell(&table("<td style=\"white-space:pre-wrap\"><b>\na</b></td>")).0,
+            "\na"
+        );
+    }
+
+    #[test]
+    fn the_editors_mark_has_every_space_read_as_written() {
+        let mark = "<meta name=\"qrichtext\" content=\"1\" />";
+        let with = |body: &str| texts(&format!("{mark}{body}"));
+        assert_eq!(with("<p>  a \t b</p>"), ["  a \t b"]);
+        // No line feed is text, not even one written as a reference.
+        assert_eq!(with("<p>a\nb\r\nc&#10;d&#13;e</p>"), ["abcde"]);
+        assert_eq!(with("<p>a&#9;&nbsp;b</p>"), ["a\t\u{a0}b"]);
+        assert_eq!(with("<p>a  <br>  b</p>"), ["a  \n  b"]);
+        // white-space and style sheets are not read, and everything wraps.
+        let b = &parse(&format!(
+            "{mark}<style>p {{ white-space: nowrap }}</style><p style=\"white-space:pre\">a  b</p><pre>c</pre>"
+        ));
+        assert_eq!(b[0].text, "a  b");
+        assert!(b.iter().all(|b| !b.no_wrap));
+        let b = &parse(&format!(
+            "{mark}<table><tr><td style=\"white-space:nowrap\">a  b</td></tr></table>"
+        ))[0];
+        assert_eq!(b.text, "a  b");
+        assert!(
+            b.table.as_ref().expect("a table").cells[0]
+                .no_wrap
+                .is_empty()
+        );
+        // White space between blocks makes no paragraph.
+        assert_eq!(with("<p>a</p>\n  <p>b</p>\n"), ["a", "b"]);
+        assert_eq!(with("<ul>\n  <li>a</li>\n</ul>"), ["a"]);
+        // The mark counts wherever it stands, outside a comment.
+        assert_eq!(texts(&format!("<p>a  b</p>{mark}")), ["a  b"]);
+        assert_eq!(texts(&format!("<!-- {mark} --><p>a  b</p>")), ["a b"]);
+        // Its name first, its content exactly 1, and the name as written.
+        let meta = |meta: &str| texts(&format!("{meta}<p>a  b</p>"));
+        assert_eq!(meta("<meta name=qrichtext content=1>"), ["a  b"]);
+        assert_eq!(meta("<meta content=\"1\" name=\"qrichtext\">"), ["a b"]);
+        assert_eq!(meta("<meta name=\"qrichtext\" content=\"2\">"), ["a b"]);
+        assert_eq!(meta("<meta name=\"qrichtext\" content=\" 1\">"), ["a b"]);
+        assert_eq!(meta("<meta name=\"QRICHTEXT\" content=\"1\">"), ["a b"]);
     }
 
     #[test]

@@ -415,7 +415,13 @@ impl RichDoc {
                 LayoutParams {
                     width: width.filter(|_| wraps).map(|w| (w - inset).max(1.0)),
                     height: None,
-                    wrap: params.layout.wrap,
+                    // Aligned when it is placed, so a block that does not
+                    // wrap is laid out once for any width.
+                    wrap: if block.no_wrap {
+                        WrapMode::NoWrap
+                    } else {
+                        params.layout.wrap
+                    },
                     elide: crate::style::ElideMode::None,
                     max_lines: 0,
                     line_height: params.layout.line_height,
@@ -1089,7 +1095,12 @@ fn lay_table(
         let mut mins = vec![0.0_f64; table.columns];
         for cell in &table.cells {
             let layout = lay_range(engine, block, cell.range.clone(), style, &words, sizes);
-            let widest = layout.lines.iter().map(|l| l.width).fold(0.0, f64::max);
+            let mut widest = layout.lines.iter().map(|l| l.width).fold(0.0, f64::max);
+            // A line that does not wrap is as narrow as its column can be.
+            for line in &cell.no_wrap {
+                let layout = lay_range(engine, block, line.clone(), style, &cell_params, sizes);
+                widest = widest.max(layout.natural_width);
+            }
             if let Some(w) = mins.get_mut(cell.column) {
                 *w = w.max(widest.ceil());
             }
@@ -1254,6 +1265,53 @@ mod tests {
         width: 400.0,
         align: HAlign::Left,
     };
+
+    #[test]
+    fn pre_and_nowrap_blocks_and_cells_break_only_where_told() {
+        let mut engine = TextEngine::new();
+        let (_, abc) = base(&mut engine);
+        let narrow = DocParams {
+            style: TextStyle::sized(20.0),
+            layout: LayoutParams {
+                width: Some(2.0 * abc),
+                wrap: WrapMode::WrapAnywhere,
+                ..LayoutParams::default()
+            },
+        };
+        let text = "abc abc abc abc";
+        let lay = |engine: &mut TextEngine, source: &str| {
+            doc(source, TextFormat::Rich).layout_simple(engine, &narrow)
+        };
+        // A rich document counts no lines: a block is as tall as the
+        // same block holding one word when it is one line.
+        let one_line = |engine: &mut TextEngine, wrapper: &str| {
+            let tall = lay(engine, &wrapper.replace("{}", text)).content_height;
+            tall == lay(engine, &wrapper.replace("{}", "abc")).content_height
+        };
+        assert!(!one_line(&mut engine, "<p>{}</p>"));
+        assert!(lay(&mut engine, &format!("<p>{text}</p>")).content_width <= 2.0 * abc);
+        for wrapper in [
+            "<pre>{}</pre>",
+            "<p style=\"white-space:nowrap\">{}</p>",
+            "<table><tr><td style=\"white-space:nowrap\">{}</td></tr></table>",
+        ] {
+            assert!(one_line(&mut engine, wrapper), "{wrapper}");
+            let m = lay(&mut engine, &wrapper.replace("{}", text));
+            assert!(m.content_width > 2.0 * abc, "{wrapper}");
+        }
+        // A line break still breaks, and only it.
+        let nowrap = |body: &str| format!("<p style=\"white-space:nowrap\">{body}</p>");
+        assert!(one_line(&mut engine, &nowrap("{}<br>x")));
+        assert!(
+            lay(&mut engine, &nowrap("abc<br>x")).content_height
+                > lay(&mut engine, &nowrap("abc")).content_height
+        );
+        // Beside a cell that does not wrap, one that does still wraps.
+        assert!(!one_line(
+            &mut engine,
+            "<table><tr><td style=\"white-space:nowrap\">x</td><td>{}</td></tr></table>"
+        ));
+    }
 
     #[test]
     fn styled_text_wants_the_line_after_its_last_break_but_does_not_show_it() {

@@ -474,6 +474,13 @@ impl TextEngine {
             })
             .collect();
         let columns = cells.iter().map(Vec::len).max().unwrap_or(0);
+        let no_wrap = |r: usize, c: usize| {
+            tables
+                .get(r)
+                .and_then(|t| t.no_wrap.get(c))
+                .copied()
+                .unwrap_or(false)
+        };
         let mut laid: Vec<Vec<LaidCell>> = Vec::with_capacity(cells.len());
         for row in &cells {
             let mut out = Vec::with_capacity(row.len());
@@ -494,8 +501,13 @@ impl TextEngine {
         let widths = if room.is_some_and(|room| maxs.iter().sum::<f64>() > room) {
             let words = BreakClass::of(WrapMode::WordWrap);
             let mut mins = vec![0.0_f64; columns];
-            for row in &cells {
+            for (r, row) in cells.iter().enumerate() {
                 for (c, bytes) in row.iter().enumerate() {
+                    // A cell that does not wrap needs all of its width.
+                    if no_wrap(r, c) {
+                        mins[c] = mins[c].max(f64::from(laid[r][c].1).ceil());
+                        continue;
+                    }
                     let (lines, _) = self.cell(
                         text,
                         style,
@@ -515,7 +527,7 @@ impl TextEngine {
             let widths = column_widths(&mins, &maxs, room);
             for (r, row) in cells.iter().enumerate() {
                 for (c, bytes) in row.iter().enumerate() {
-                    if f64::from(laid[r][c].1) > widths[c] {
+                    if f64::from(laid[r][c].1) > widths[c] && !no_wrap(r, c) {
                         let max = Some(widths[c] as f32);
                         laid[r][c] =
                             self.cell(text, style, ranged, bytes.clone(), class, max, fallback);
@@ -801,7 +813,7 @@ impl TextEngine {
                         objects: &objects,
                         strut: ranged.strut,
                     };
-                    let max_advance = limit_of(block).map(|w| w as f32);
+                    let max_advance = limit_of(block).filter(|_| !block.no_wrap).map(|w| w as f32);
                     let (mut lines, width) =
                         self.paragraph(&text[cut], style, &part, class, max_advance, fallback);
                     let inset = if blocks.is_some() { inset(block) } else { 0.0 };
@@ -1382,5 +1394,74 @@ mod tests {
         assert_eq!(narrow.lines[0].top, 0.0);
         assert_eq!(last.top + last.height, narrow.content_height);
         assert_eq!(narrow.caret(text.len()).x, narrow.content_width);
+    }
+
+    #[test]
+    fn a_paragraph_that_does_not_wrap_breaks_only_at_its_line_breaks() {
+        let still = EditBlock {
+            no_wrap: true,
+            ..EditBlock::default()
+        };
+        let text = "two words here\ntwo words here\u{2028}x";
+        let params = EditParams {
+            width: Some(40.0),
+            wrap: WrapMode::WrapAnywhere,
+        };
+        let l = TextEngine::new().edit_layout_blocks(
+            text,
+            &TextStyle::default(),
+            &Ranged::NONE,
+            &params,
+            &[EditBlock::default(), still],
+        );
+        let of = |range: std::ops::Range<usize>| {
+            l.lines
+                .iter()
+                .filter(|line| range.contains(&line.range.start))
+                .count()
+        };
+        assert!(of(0..15) > 1, "the first wraps: {:?}", l.lines);
+        assert_eq!(of(15..text.len()), 2, "{:?}", l.lines);
+        assert!(l.content_width > 40.0);
+    }
+
+    #[test]
+    fn a_cell_that_does_not_wrap_keeps_its_column_wide() {
+        let row = |no_wrap: Vec<bool>| EditBlock {
+            table: Some(EditTable {
+                border: 1.0,
+                no_wrap,
+                ..EditTable::default()
+            }),
+            ..EditBlock::default()
+        };
+        let text = "\nab ab ab\u{1f}cd cd cd\n";
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let lay = |engine: &mut TextEngine, width: Option<f64>, no_wrap: Vec<bool>| {
+            let blocks = [EditBlock::default(), row(no_wrap), EditBlock::default()];
+            let params = EditParams {
+                width,
+                wrap: WrapMode::WordWrap,
+            };
+            engine.edit_layout_blocks(text, &style, &Ranged::NONE, &params, &blocks)
+        };
+        let wide = lay(&mut engine, None, vec![]);
+        let room = Some(wide.natural_width - 30.0);
+        let wraps = lay(&mut engine, room, vec![]);
+        assert!(wraps.lines.len() > wide.lines.len());
+        // The first cell stays one line; the second wraps in what is left.
+        let still = lay(&mut engine, room, vec![true]);
+        let first = still
+            .lines
+            .iter()
+            .filter(|line| (1..9).contains(&line.range.start))
+            .count();
+        assert_eq!(first, 1, "{:?}", still.lines);
+        assert!(still.lines.len() > wide.lines.len());
+        // Neither wraps: the table is wider than the room.
+        let neither = lay(&mut engine, room, vec![true, true]);
+        assert_eq!(neither.lines.len(), wide.lines.len());
+        assert_eq!(neither.content_width, wide.natural_width);
     }
 }

@@ -13,9 +13,9 @@
 
 use std::sync::Arc;
 
-use pulldown_cmark::{Event, Options, Parser, Tag};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
-use super::flow::{Ctx, Flow, table_block};
+use super::flow::{CellBuf, Ctx, Flow, table_block};
 use super::styled::HEADING_SCALE;
 use super::{Block, BlockKind, Inline, InlineBuf, InlineImage, ParseOptions, Parsed};
 use crate::style::BoxAlign;
@@ -249,9 +249,12 @@ impl Reader {
                     style: false,
                 }
             }
-            Tag::CodeBlock(_) => {
+            Tag::CodeBlock(code) => {
                 self.open_box(Ctx {
                     kind: Some(BlockKind::Code),
+                    // Measured on Qt 6.11: a fenced block does not wrap, an
+                    // indented one does.
+                    no_wrap: matches!(code, CodeBlockKind::Fenced(_)),
                     ..Ctx::default()
                 });
                 self.push_style(|s| s.mono = true);
@@ -372,7 +375,15 @@ impl Reader {
                 // pixels around each cell's text.
                 let rows = rows
                     .into_iter()
-                    .map(|row| row.into_iter().map(|(b, h)| (b, h, None)).collect())
+                    .map(|row| {
+                        row.into_iter()
+                            .map(|(buf, header)| CellBuf {
+                                buf,
+                                header,
+                                ..CellBuf::default()
+                            })
+                            .collect()
+                    })
                     .collect();
                 let (buf, table) = table_block(rows, 1.0, 2.0, 2.5);
                 if table.cells.is_empty() {

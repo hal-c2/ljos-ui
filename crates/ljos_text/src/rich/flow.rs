@@ -28,6 +28,9 @@ pub(crate) struct Ctx {
     /// A list item: blocks inside take their marker from it, never from an
     /// item further out.
     pub(crate) item: bool,
+    /// Text directly inside breaks its lines only where it says so
+    /// ([`Block::no_wrap`]); boxes inside say it again for themselves.
+    pub(crate) no_wrap: bool,
     /// No block inside took the top margin yet.
     pub(super) top_pending: bool,
     /// A block was made inside.
@@ -76,6 +79,11 @@ impl Flow {
         self.ctxs.iter().rev().find_map(|c| c.kind)
     }
 
+    /// Whether a block was made yet.
+    pub(crate) fn any_block(&self) -> bool {
+        !self.blocks.is_empty()
+    }
+
     /// Whether the innermost box has a block yet.
     pub(crate) fn any(&self) -> bool {
         self.ctxs.last().is_some_and(|c| c.any)
@@ -112,6 +120,8 @@ impl Flow {
             block.marker = item.marker.take();
         }
         block.kind = kind.or(inherited).unwrap_or(BlockKind::Paragraph);
+        // A table's cells say it for their own lines.
+        block.no_wrap = table.is_none() && self.ctxs.last().is_some_and(|c| c.no_wrap);
         block.table = table;
         block.source_start = self.source_start;
         let mut block = buf.into_block(block);
@@ -139,8 +149,15 @@ impl Flow {
     }
 }
 
-/// A cell as read: its text, whether it is a header, and its background.
-pub(crate) type CellBuf = (InlineBuf, bool, Option<Arc<str>>);
+/// A cell as read.
+#[derive(Default)]
+pub(crate) struct CellBuf {
+    pub(crate) buf: InlineBuf,
+    pub(crate) header: bool,
+    pub(crate) background: Option<Arc<str>>,
+    /// Where the lines of it that do not wrap start, in its text, in order.
+    pub(crate) no_wrap: Vec<usize>,
+}
 
 /// The text of a table and where its cells are in it: cells of a row are
 /// set apart by tabs, rows by line breaks.
@@ -158,18 +175,30 @@ pub(crate) fn table_block(
             buf.text.push('\n');
         }
         columns = columns.max(row_cells.len());
-        for (column, (cell, header, background)) in row_cells.into_iter().enumerate() {
+        for (column, cell) in row_cells.into_iter().enumerate() {
             if column > 0 {
                 buf.text.push('\t');
             }
             let start = buf.text.len();
-            buf.append(cell);
+            let end = start + cell.buf.text.len();
+            let no_wrap = cell
+                .no_wrap
+                .iter()
+                .map(|&line| {
+                    let line_end = cell.buf.text[line..]
+                        .find('\n')
+                        .map_or(end, |i| start + line + i);
+                    start + line..line_end
+                })
+                .collect();
+            buf.append(cell.buf);
             cells.push(super::Cell {
                 row,
                 column,
-                range: start..buf.text.len(),
-                header,
-                background,
+                range: start..end,
+                header: cell.header,
+                background: cell.background,
+                no_wrap,
             });
         }
     }
