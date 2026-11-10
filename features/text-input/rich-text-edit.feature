@@ -111,6 +111,27 @@ Feature: Editing rich text in a TextEdit
       And the method "html" of "root" is called
       Then the property "out" of "root" is "<p>a<span style=' font-weight:700;'>bold</span>c</p>"
 
+    Scenario: A paragraph joined to the one before keeps that one's format
+      When the property "text" of "edit" is set to "<h1>x</h1><p>b</p>"
+      And the property "cursorPosition" of "edit" is set to 2
+      And the user presses "Backspace"
+      And the method "html" of "root" is called
+      Then the property "out" of "root" is "<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:xx-large; font-weight:700;'>x</span>b</h1>"
+
+    Scenario: Backspace joins a paragraph to an empty one with its own format
+      When the property "text" of "edit" is set to "<p style='-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px;'><br /></p><h1>b</h1>"
+      And the property "cursorPosition" of "edit" is set to 1
+      And the user presses "Backspace"
+      And the method "html" of "root" is called
+      Then the property "out" of "root" is "<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:xx-large; font-weight:700;'>b</span></h1>"
+
+    Scenario: Delete joins an empty paragraph to the next with that one's format
+      When the property "text" of "edit" is set to "<p style='-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px;'><br /></p><h1>b</h1>"
+      And the property "cursorPosition" of "edit" is set to 0
+      And the user presses "Delete"
+      And the method "html" of "root" is called
+      Then the property "out" of "root" is "<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:xx-large; font-weight:700;'>b</span></h1>"
+
     Scenario: A selection across paragraphs reads with a paragraph separator
       When the property "cursorPosition" of "edit" is set to 3
       And the user presses "Return"
