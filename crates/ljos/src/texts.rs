@@ -20,7 +20,9 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use ljos_compiler::{Project, compile_file, compile_text};
-use ljos_engine::{ComponentSource, Engine, MapSource, QmlText, QmlTextCompiler, QmlTextError};
+use ljos_engine::{
+    ComponentSource, Engine, MapSource, QmlText, QmlTextCompiler, QmlTextError, WeakEngine,
+};
 use ljos_ir::CompiledFile;
 use ljos_js::Bytecode;
 use qml_front::TypeOracle;
@@ -33,9 +35,19 @@ pub(crate) struct DiskTexts {
     state: Rc<RefCell<State>>,
 }
 
+/// The native types a text is compiled against.
+enum Oracle {
+    Ready(EngineOracle),
+    /// Those of the engine when its first text is made. Describing every
+    /// registered type loads each style library's files and builds their
+    /// types, megabytes a program that makes no text never needs. Weak: the
+    /// engine holds the compiler.
+    Later(WeakEngine),
+}
+
 struct State {
     dirs: Vec<PathBuf>,
-    oracle: EngineOracle,
+    oracle: Oracle,
     project: Option<Project<EngineOracle>>,
     /// Every directory read, with its time when it was read.
     stamps: Vec<(PathBuf, Option<SystemTime>)>,
@@ -51,6 +63,15 @@ struct State {
 
 impl DiskTexts {
     pub(crate) fn new(dirs: &[&Path], oracle: EngineOracle) -> Self {
+        Self::with_oracle(dirs, Oracle::Ready(oracle))
+    }
+
+    /// Against the types `engine` has when its first text is made.
+    pub(crate) fn of_engine(dirs: &[&Path], engine: &Engine) -> Self {
+        Self::with_oracle(dirs, Oracle::Later(engine.downgrade()))
+    }
+
+    fn with_oracle(dirs: &[&Path], oracle: Oracle) -> Self {
         Self {
             state: Rc::new(RefCell::new(State {
                 dirs: dirs.iter().map(|d| d.to_path_buf()).collect(),
@@ -86,8 +107,22 @@ impl DiskTexts {
             state: Rc::clone(&self.state),
         });
         let state = self.state;
-        let compiler: QmlTextCompiler =
-            Rc::new(move |text: QmlText<'_>| state.borrow_mut().compile(text));
+        let compiler: QmlTextCompiler = Rc::new(move |text: QmlText<'_>| {
+            // Described with the state let go: describing a type loads
+            // files, and nothing it reaches may find the state held.
+            let later = match &state.borrow().oracle {
+                Oracle::Later(engine) => Some(engine.clone()),
+                Oracle::Ready(_) => None,
+            };
+            if let Some(engine) = later {
+                let engine = engine
+                    .upgrade()
+                    .ok_or_else(|| plain("the engine is gone".to_owned()))?;
+                let oracle = EngineOracle::from_engine(&engine);
+                state.borrow_mut().oracle = Oracle::Ready(oracle);
+            }
+            state.borrow_mut().compile(text)
+        });
         engine.set_qml_text_compiler(Some(compiler));
     }
 }
@@ -144,8 +179,11 @@ impl State {
     fn fresh(&mut self) -> Result<&mut Project<EngineOracle>, String> {
         if self.stale() {
             let roots: Vec<&Path> = self.dirs.iter().map(PathBuf::as_path).collect();
+            let Oracle::Ready(oracle) = &self.oracle else {
+                return Err("the types of the engine were not read".to_owned());
+            };
             let mut project =
-                Project::load_roots(&roots, self.oracle.clone()).map_err(|e| e.to_string())?;
+                Project::load_roots(&roots, oracle.clone()).map_err(|e| e.to_string())?;
             let mut dirs = Vec::new();
             for root in &self.dirs {
                 directories(root, &mut dirs);
@@ -337,6 +375,42 @@ pub(crate) fn text_errors<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_types_of_the_engine_are_described_at_the_first_text_not_at_the_start() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(
+            dir.path().join("Main.qml"),
+            "import QtQuick\nItem {\n    property string made: \"\"\n    \
+             function make(text) { made = Qt.createQmlObject(text, this, \"inline.qml\").objectName }\n}\n",
+        )
+        .expect("write");
+        let engine = crate::engine();
+        let source = crate::compile::compile_dirs(
+            &[dir.path()],
+            Some(&engine),
+            crate::compile::OnError::Fail,
+        )
+        .expect("compile");
+        engine.set_component_source(source);
+        let texts = DiskTexts::of_engine(&[dir.path()], &engine);
+        let state = Rc::clone(&texts.state);
+        texts.install_over(&engine);
+        let root = engine
+            .create_from_url("Main", None, Vec::new())
+            .expect("Main");
+        assert!(matches!(state.borrow().oracle, Oracle::Later(_)));
+
+        let text = "import QtQuick\nItem { objectName: \"made\" }";
+        engine
+            .invoke_by_name(root, "make", &[ljos_engine::Value::from(text)])
+            .expect("make");
+        assert_eq!(
+            engine.read_by_name(root, "made").to_js_string().as_ref(),
+            "made"
+        );
+        assert!(matches!(state.borrow().oracle, Oracle::Ready(_)));
+    }
 
     #[test]
     fn a_directory_beside_a_text_reads_only_the_declarations_of_its_javascript() {
