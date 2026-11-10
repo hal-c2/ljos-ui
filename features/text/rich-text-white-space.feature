@@ -309,7 +309,7 @@ Feature: White space in rich text
         | No-break spaces are kept as they are                     | <p>a</p>&nbsp;&nbsp;<p>b</p>                                   | [a__#b]  |
         | One no-break space after a block's end tag is nothing    | <p>a</p>&nbsp;<p>b</p>                                         | [a#b]    |
         | Before a table it goes to the paragraph                  | <p>a</p>  <table><tr><td>x</td></tr></table>                   | [a =x=]  |
-        | After a table it is nothing                              | <table><tr><td>x</td></tr></table>  b                          | [=x=b]   |
+        | After a table it is nothing                              | <table><tr><td>x</td></tr></table>  <p>b</p>                   | [=x=#b]  |
         | Between cells it is nothing                              | <table><tr><td>a</td>  <td>b</td></tr>  </table>               | [=a=b=]  |
         | pre keeps it as written                                  | <div style='white-space:pre'><p>a</p>  <p>b</p></div>          | [a  #b]  |
         | A line feed in pre starts a paragraph                    | <div style='white-space:pre'><p>a</p>~~~<p>b</p></div>         | [a####b] |
