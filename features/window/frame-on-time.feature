@@ -7,13 +7,15 @@
 @ljos-only @desktop
 Feature: A frame is drawn in the wake its time comes in
   A window that animates draws a frame at a time of its own: no sooner
-  than the display would have shown the last one. When that time comes
-  the UI thread wakes, asks the platform to let the window draw, and the
-  platform lets it later in the same wake, after the input that came with
-  it. Asked only as the wake ended, the yes came in a wake of its own,
-  one more each frame, and the frame a little later. A message that
-  wakes the thread once the time has come, such as an agent's request,
-  asks the same way.
+  than the display would have shown the last one. The window asks for
+  the frame a little before its time, so that a display a little faster
+  than the window thinks is not missed one frame in twenty; the platform
+  lets it draw once the display has taken the last frame, in the wake
+  that brings that news, after the input that came with it. A wake asked
+  for before the window may draw again is put off to when it may, so no
+  wake between two frames finds nothing to do. A message that wakes the
+  thread once the time has come, such as an agent's request, asks the
+  same way.
 
   Background:
     Given the QML:
@@ -30,7 +32,7 @@ Feature: A frame is drawn in the wake its time comes in
       }
       """
 
-  Scenario: The wake at a frame's time draws the frame
+  Scenario: An animation's frame is drawn once the display has taken the last one
     When the agent calls the tool "app_frames" with:
       """json
       {"wakes": true, "record": true}
@@ -40,5 +42,5 @@ Feature: A frame is drawn in the wake its time comes in
       """json
       {"wakes": true, "max": 30}
       """
-    Then the answer's text contains "woke by animation, deadline, requested_redraw; led to drawn"
-    And the answer does not contain "led to redraw asked"
+    Then the answer's text contains "woke by animation, requested_redraw; led to drawn"
+    And the answer does not contain "woke by deadline; led to nothing"
