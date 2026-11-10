@@ -592,6 +592,39 @@ fn a_display_a_little_faster_than_it_said_shows_every_animation_frame() {
 }
 
 #[test]
+fn the_next_animation_frame_is_asked_for_in_time_for_the_display() {
+    let s = scene();
+    let clock = Arc::new(VirtualClock::new());
+    let mut h = harness(&s, Some(Arc::clone(&clock)));
+    let moved = animate_every_frame(&mut h, &s);
+    // A pass that began 0.4 ms late still asks for the next frame before
+    // the display's next refresh, and not a whole frame after it began:
+    // a host that waits as long as it is asked, then for the display,
+    // keeps the display's rhythm.
+    clock.advance(Duration::from_micros(16_667 + 400));
+    h.step();
+    let start = moved.get();
+    assert_eq!(
+        repaint_delay(&h),
+        Duration::from_micros(16_667) - Duration::from_secs(1) / 120,
+        "asked for at the animation's time, the pass would be late"
+    );
+    // On a 62 Hz display, frames 16.1 ms apart: each pass asks for the
+    // next before that display frame, which a host that waits as long as
+    // it is asked and then for the display runs, and each runs the scene.
+    let refresh = Duration::from_micros(16_100);
+    for _ in 0..60 {
+        assert!(
+            repaint_delay(&h) < refresh,
+            "asked for after the display's frame"
+        );
+        clock.advance(refresh);
+        h.step();
+    }
+    assert_eq!(moved.get() - start, 60, "a display frame showed no step");
+}
+
+#[test]
 fn a_pass_more_than_half_a_frame_early_does_not_run_the_scene() {
     let s = scene();
     let clock = Arc::new(VirtualClock::new());
