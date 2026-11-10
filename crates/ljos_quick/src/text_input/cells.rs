@@ -11,7 +11,7 @@
 use std::ops::Range;
 
 use ljos_text::rich::{CELL, CELL_PARAGRAPH, LINE_BREAK, TableCell};
-use ljos_text::{byte_to_utf16, utf16_to_byte};
+use ljos_text::{TextModel, byte_to_utf16, utf16_to_byte};
 
 use super::base::State;
 
@@ -70,6 +70,59 @@ pub(crate) fn snap(s: &mut State) {
         s.model.select(a, c);
     }
     s.cell_anchor = (a != real).then_some((real, a));
+}
+
+/// What Ctrl with Backspace or Delete does over a table's edge.
+pub(crate) enum OverEdge {
+    /// From a cell out of its table: nothing.
+    Stays,
+    /// From one cell into another: the cells are selected, to be emptied.
+    Cells,
+    /// From outside a table into it: this span (anchor, cursor, in UTF-16
+    /// units) takes in the whole table, to go as a selection does.
+    Span(usize, usize),
+}
+
+/// Ctrl with Backspace or Delete, taking the text from the cursor `to`
+/// where it says, over a table's edge as Qt 6.11 does
+/// (features/text-input/rich-text-cell-paragraphs.feature): the span is
+/// taken as a selection into a table is. `None` where the span crosses no
+/// table's edge.
+pub(crate) fn word_over_edge(
+    s: &mut State,
+    to: impl FnOnce(&TextModel, usize) -> usize,
+) -> Option<OverEdge> {
+    super::rich::sync_doc(s);
+    let doc = &s.rich.as_ref()?.doc;
+    let text = s.model.text();
+    if doc.text() != text || s.model.has_selection() {
+        return None;
+    }
+    let cursor = s.model.cursor();
+    let to = to(&s.model, cursor);
+    let (at, end) = (s.model.cursor_byte(), utf16_to_byte(text, to));
+    let span = at.min(end)..at.max(end);
+    let crosses = text[span.clone()]
+        .char_indices()
+        .any(|(i, _)| doc.is_table_edge(span.start + i));
+    if !crosses {
+        return None;
+    }
+    if let Some(cell) = doc.cell_at(at)
+        && doc.cell_at(end).is_none_or(|other| other.rows != cell.rows)
+    {
+        return Some(OverEdge::Stays);
+    }
+    s.cell_anchor = None;
+    s.model.select(cursor, to);
+    snap(s);
+    if selected(s).is_some() {
+        return Some(OverEdge::Cells);
+    }
+    let span = (s.model.anchor(), s.model.cursor());
+    s.model.select(cursor, cursor);
+    s.cell_anchor = None;
+    Some(OverEdge::Span(span.0, span.1))
 }
 
 /// Where Shift with Left or Right takes the cursor in a table: along a row

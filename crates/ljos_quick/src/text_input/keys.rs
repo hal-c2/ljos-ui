@@ -609,6 +609,15 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
                 m.delete_forward()
             });
         }
+        // A word over a table's edge goes as Qt 6.11 has it.
+        Action::DeleteStartOfWord
+            if ops::delete_word_over_table_edge(engine, obj, |m, at| {
+                if shows { m.prev_word(at) } else { 0 }
+            }) => {}
+        Action::DeleteEndOfWord
+            if ops::delete_word_over_table_edge(engine, obj, |m, at| {
+                if shows { m.next_word(at) } else { m.len() }
+            }) => {}
         Action::DeleteStartOfWord => {
             delete_to(|m, at, shows| if shows { m.prev_word(at) } else { 0 });
         }
