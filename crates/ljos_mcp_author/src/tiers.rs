@@ -482,12 +482,29 @@ fn clipped(text: &str) -> String {
 /// What an author can do about an expression the binding VM does not run,
 /// when no form of it is known that the VM does.
 fn advice(reason: &tier1::Reason, kind: Kind) -> String {
+    let mut text = form_advice(reason);
+    match kind {
+        Kind::Handler | Kind::Function => text.push_str(
+            " In a handler or a function this seldom matters: it runs when it is called, \
+             not each time a property changes.",
+        ),
+        _ => text.push_str(
+            " It matters where the binding is evaluated often: in a delegate, or on every \
+             frame of an animation.",
+        ),
+    }
+    text
+}
+
+/// What else helps, for the reason the compiler gives. Unlike [`advice`] it
+/// does not guess whether the time matters: a script-cost hint measured it.
+fn form_advice(reason: &tier1::Reason) -> String {
     let what = if reason.detail.is_empty() {
         reason.kind.to_owned()
     } else {
         format!("`{}`", reason.detail)
     };
-    let mut text = match reason.kind {
+    match reason.kind {
         "method call" => format!(
             "A method of a value ({what}) is JavaScript's to run, and no other form means the \
              same. If the result is read often, keep it in a property of its own, so it is \
@@ -529,18 +546,7 @@ fn advice(reason: &tier1::Reason, kind: Kind) -> String {
              JavaScript is correct, only slower to evaluate.",
             reason
         ),
-    };
-    match kind {
-        Kind::Handler | Kind::Function => text.push_str(
-            " In a handler or a function this seldom matters: it runs when it is called, \
-             not each time a property changes.",
-        ),
-        _ => text.push_str(
-            " It matters where the binding is evaluated often: in a delegate, or on every \
-             frame of an animation.",
-        ),
     }
-    text
 }
 
 /// The compiler's word on `proposal` in place of the value of `row`: the
@@ -716,8 +722,17 @@ fn chosen(
     Ok(picked)
 }
 
-fn explain(project: &Project, args: &TierArgs) -> Result<TierOut, SurfaceError> {
-    let path = project.confine(&args.file)?;
+/// A file read and compiled, for its tiers.
+struct Loaded {
+    shown: String,
+    key: String,
+    source: String,
+    compiler: Compiler,
+    compiled: ljos_compiler::Compiled,
+}
+
+fn load(project: &Project, file: &str) -> Result<Loaded, SurfaceError> {
+    let path = project.confine(file)?;
     let shown = project.display(&path);
     let Some(key) = shown.strip_suffix(".qml").filter(|_| path.is_file()) else {
         return Err(SurfaceError::invalid_argument(format!(
@@ -774,6 +789,25 @@ fn explain(project: &Project, args: &TierArgs) -> Result<TierOut, SurfaceError> 
             .unwrap_or_else(|| "no diagnostics".to_owned());
         to_checker(first, details)
     })?;
+    Ok(Loaded {
+        // Before `shown`, which it borrows from.
+        key: key.to_owned(),
+        shown,
+        source,
+        compiler,
+        compiled,
+    })
+}
+
+fn explain(project: &Project, args: &TierArgs) -> Result<TierOut, SurfaceError> {
+    let Loaded {
+        shown,
+        key,
+        source,
+        mut compiler,
+        compiled,
+    } = load(project, &args.file)?;
+    let key = key.as_str();
     let errors = error_count(&compiled);
     let file = &compiled.file;
     let tiers = Tiers::of(file);
@@ -900,6 +934,159 @@ fn explain(project: &Project, args: &TierArgs) -> Result<TierOut, SurfaceError> 
     })
 }
 
+/// Which cheaper form [`cheaper_forms`] found, best first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CheaperKind {
+    /// The verified rewrite `binding_tier_explain` offers.
+    Rewrite,
+    /// The declaration a `decl-*` lint names on the same lines.
+    Declarative,
+    /// Neither: the compiler's reason, and what an author can do.
+    Neither,
+}
+
+/// A form cheaper than the JavaScript written at one place.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheaperForm {
+    pub kind: CheaperKind,
+    /// What to do, in the words of the tool or lint that found it.
+    pub text: String,
+    /// A rewrite: what to write instead.
+    pub source: Option<String>,
+    /// A rewrite: the tier it runs in, `0` or `1`.
+    pub tier: Option<&'static str>,
+    /// A declarative form: the lint's code and guideline.
+    pub code: Option<String>,
+    pub guide: Option<String>,
+    /// Why the compiler leaves the expression to JavaScript
+    /// (`method call (join)`), when it says.
+    pub reason: Option<String>,
+}
+
+/// Where a binding or handler is written: 1-based, as the engine says it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub line: u32,
+    pub column: u32,
+}
+
+/// The cheapest form known for the expression at each place of `file`
+/// (relative to the project root): the verified rewrite, else the
+/// declarative form a `decl-*` lint names, else what the compiler says
+/// about it. `None` for a place with no expression on its line. The file
+/// is compiled once, and once more for each rewrite that is checked.
+pub fn cheaper_forms(
+    project: &Project,
+    file: &str,
+    places: &[Place],
+) -> Result<Vec<Option<CheaperForm>>, SurfaceError> {
+    let Loaded {
+        key,
+        source,
+        mut compiler,
+        compiled,
+        ..
+    } = load(project, file)?;
+    let errors = error_count(&compiled);
+    let tiers = Tiers::of(&compiled.file);
+    let rows = rows(&compiled.file, &source);
+    let lines = Lines::of(&source);
+    let mut declarative: Option<Vec<crate::Diagnostic>> = None;
+    let mut found = Vec::with_capacity(places.len());
+    for place in places {
+        let args = TierArgs {
+            file: file.to_owned(),
+            line: Some(place.line),
+            column: Some(place.column),
+            property: None,
+            cursor: None,
+        };
+        let Some(row) = chosen(&args, file, &rows, &lines)
+            .ok()
+            .and_then(|picked| picked.first().copied())
+            .map(|i| &rows[i])
+        else {
+            found.push(None);
+            continue;
+        };
+        let reason = row.expr.and_then(|expr| match tiers.tier(expr) {
+            (Tier::Js, reason) => Some(reason.cloned().unwrap_or(tier1::Reason {
+                kind: "expression",
+                detail: String::new(),
+            })),
+            _ => None,
+        });
+        if row.kind == Kind::Binding
+            && reason.is_some()
+            && let Some(proposal) = rewrite::propose(&source, row.start)
+            && let Some(tier) = verified(&mut compiler, &key, &source, row, &proposal, errors)
+        {
+            found.push(Some(CheaperForm {
+                kind: CheaperKind::Rewrite,
+                text: format!(
+                    "Write `{}`: it means the same and runs in tier {} ({}).",
+                    proposal.source,
+                    tier_name(tier),
+                    proposal.note
+                ),
+                source: Some(proposal.source),
+                tier: Some(tier_name(tier)),
+                code: None,
+                guide: None,
+                reason: None,
+            }));
+            continue;
+        }
+        // The lints read the file as a whole; only when a place has no
+        // rewrite are they run, and then once.
+        let lints = declarative.get_or_insert_with(|| {
+            let path = project.root().join(file);
+            crate::FrontEnd::lint(&crate::QmlFrontEnd::new(project.root()), &[path])
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|d| d.code.starts_with("decl-"))
+                .collect()
+        });
+        let (first, last) = (
+            lines.line(row.from),
+            lines.line(row.end.saturating_sub(1).max(row.start)),
+        );
+        if let Some(d) = lints.iter().find(|d| first <= d.line && d.line <= last) {
+            found.push(Some(CheaperForm {
+                kind: CheaperKind::Declarative,
+                text: match &d.fix {
+                    Some(fix) => format!("{} {fix}", d.message),
+                    None => d.message.clone(),
+                },
+                source: None,
+                tier: None,
+                code: Some(d.code.clone()),
+                guide: d.guide.clone(),
+                reason: None,
+            }));
+            continue;
+        }
+        found.push(reason.map(|reason| CheaperForm {
+            kind: CheaperKind::Neither,
+            text: form_advice(&reason),
+            source: None,
+            tier: None,
+            code: None,
+            guide: None,
+            reason: Some(reason.to_string()),
+        }));
+    }
+    Ok(found)
+}
+
+fn tier_name(tier: Tier) -> &'static str {
+    match tier {
+        Tier::Zero => "0",
+        Tier::One => "1",
+        Tier::Js => "js",
+    }
+}
+
 pub(crate) const DESCRIPTION: &str = "Say which tier each binding, handler and function of a QML file runs in (0: property path, 1: binding VM, js: JavaScript), why, and a cheaper form that means the same when one exists. Narrow with `line` (and `column`) or `property` (`width`, `label.width`, `onClicked`).";
 
 pub(crate) fn handler(project: &Arc<Project>) -> ToolHandler {
@@ -910,6 +1097,44 @@ pub(crate) fn handler(project: &Arc<Project>) -> ToolHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cheaper_form_is_the_rewrite_then_the_declaration_then_the_reason() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(
+            root.path().join("Main.qml"),
+            "import QtQuick\n\
+             Item {\n\
+             \x20   property int count: 3\n\
+             \x20   scale: (function() { return count / 2 })()\n\
+             \x20   property real level: 0\n\
+             \x20   property string shown: \"\"\n\
+             \x20   onLevelChanged: shown = level.toFixed(1)\n\
+             \x20   property string label: [\"a\", \"b\"].join(count)\n\
+             }\n",
+        )
+        .unwrap();
+        let project = Project::open(root.path()).unwrap();
+        let at = |line| Place { line, column: 5 };
+        let found = cheaper_forms(&project, "Main.qml", &[at(4), at(7), at(8), at(1)]).unwrap();
+        let rewrite = found[0].as_ref().unwrap();
+        assert_eq!(rewrite.kind, CheaperKind::Rewrite);
+        assert_eq!(rewrite.source.as_deref(), Some("count / 2"));
+        let declarative = found[1].as_ref().unwrap();
+        assert_eq!(declarative.kind, CheaperKind::Declarative);
+        assert_eq!(declarative.code.as_deref(), Some("decl-mirror-handler"));
+        let neither = found[2].as_ref().unwrap();
+        assert_eq!(neither.kind, CheaperKind::Neither);
+        assert!(
+            neither
+                .reason
+                .as_deref()
+                .unwrap()
+                .starts_with("method call")
+        );
+        // Nothing has a value on the import's line.
+        assert_eq!(found[3], None);
+    }
 
     #[test]
     fn a_member_starts_at_its_name() {
