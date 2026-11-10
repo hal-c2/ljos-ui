@@ -180,6 +180,31 @@ enum Next {
     End,
 }
 
+/// How far the reader is past the last table it made. Measured on Qt 6.11
+/// (hal-c2/ljos-ui#287): every table has a paragraph after it. Text goes
+/// into it; a block starts after it and leaves it empty; an empty block
+/// right after it is nothing, but where the document ends there it leaves
+/// a paragraph of its own.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum AfterTable {
+    #[default]
+    No,
+    /// A table was the last thing made: text read now goes into the
+    /// paragraph after it.
+    Table,
+    /// A block was started after it: the paragraph after the table goes
+    /// before the first block made.
+    Block,
+    /// As [`AfterTable::Block`], and an empty block was dropped.
+    Dropped,
+}
+
+impl AfterTable {
+    fn in_block(self) -> bool {
+        matches!(self, Self::Block | Self::Dropped)
+    }
+}
+
 /// Where the text read now is, if not in a block.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Between {
@@ -226,6 +251,7 @@ struct Parser<'a> {
     /// `<html>` and `<body>` are open: their end tags end something.
     html_open: bool,
     body_open: bool,
+    after_table: AfterTable,
 }
 
 pub(crate) fn parse(source: &str) -> Vec<Block> {
@@ -250,6 +276,7 @@ pub(crate) fn parse(source: &str) -> Vec<Block> {
             container_line_feed: false,
             html_open: false,
             body_open: false,
+            after_table: AfterTable::No,
         };
         p.run();
         // Measured on Qt 6.11: the mark counts wherever it is. An editor
@@ -290,6 +317,10 @@ impl<'a> Parser<'a> {
             self.close_top();
         }
         self.flush(false);
+        if self.after_table == AfterTable::Dropped {
+            self.flow.push_paragraph();
+            self.flow.push_paragraph();
+        }
         let mut blocks = self.flow.finish();
         if blocks.is_empty() {
             // Empty text is still a line, as in every format.
@@ -371,7 +402,14 @@ impl<'a> Parser<'a> {
                 }
             }
             Some(_) => {}
-            None => f(&mut self.buf),
+            None => {
+                let (len, images) = (self.buf.text.len(), self.buf.images.len());
+                f(&mut self.buf);
+                let landed = self.buf.text.len() != len || self.buf.images.len() != images;
+                if landed && self.after_table == AfterTable::Table {
+                    self.after_table = AfterTable::No;
+                }
+            }
         }
     }
 
@@ -861,6 +899,7 @@ impl<'a> Parser<'a> {
             return;
         }
         self.flush(false);
+        self.block_after_table();
         self.between = Between::Text;
         self.flow.open(ctx);
         self.push(name, |o| {
@@ -874,7 +913,24 @@ impl<'a> Parser<'a> {
     fn flush(&mut self, always: bool) {
         let buf = std::mem::take(&mut self.buf);
         if !buf.is_empty() || always {
+            self.before_block();
             self.flow.emit(buf, None, None);
+        }
+    }
+
+    /// A block starts: if it is the first after a table, it starts after
+    /// the paragraph that follows the table.
+    fn block_after_table(&mut self) {
+        if self.after_table == AfterTable::Table {
+            self.after_table = AfterTable::Block;
+        }
+    }
+
+    /// A block other than a table is made now. After a table it is the
+    /// paragraph that follows the table, unless a block was started.
+    fn before_block(&mut self) {
+        if std::mem::take(&mut self.after_table).in_block() {
+            self.flow.push_paragraph();
         }
     }
 
@@ -891,7 +947,13 @@ impl<'a> Parser<'a> {
             self.flow.close();
             return;
         }
-        self.flush(open.always && !self.flow.any());
+        let always = open.always && !self.flow.any();
+        if always && self.buf.is_empty() && !open.empty && self.after_table.in_block() {
+            self.after_table = AfterTable::Dropped;
+            self.flow.close();
+            return;
+        }
+        self.flush(always);
         self.flow.close();
     }
 
@@ -1099,6 +1161,8 @@ impl<'a> Parser<'a> {
                 self.flush(false);
                 // Measured on Qt 6.11: a rule takes no white space after it.
                 self.between = Between::Text;
+                self.block_after_table();
+                self.before_block();
                 self.flow
                     .emit(InlineBuf::default(), Some(BlockKind::Rule), None);
             }
@@ -1297,6 +1361,7 @@ impl<'a> Parser<'a> {
     fn start_table(&mut self, attrs: &Attrs<'_>) {
         self.imply_end("p", &[]);
         self.flush(false);
+        self.after_table = AfterTable::No;
         self.between = Between::Text;
         let number = |name, default: f32| {
             attrs
@@ -1390,6 +1455,7 @@ impl<'a> Parser<'a> {
             return;
         }
         self.flow.emit(buf, Some(BlockKind::Table), Some(table));
+        self.after_table = AfterTable::Table;
     }
 
     fn image(&mut self, attrs: &Attrs<'_>) {
@@ -2793,6 +2859,41 @@ mod tests {
         ] {
             assert_eq!(texts(&source), expected, "{source:?}");
         }
+    }
+
+    /// Measured on Qt 6.11 (hal-c2/ljos-ui#287).
+    #[test]
+    fn a_table_has_a_paragraph_after_it() {
+        let t = "<table><tr><td>a</td></tr></table>";
+        let after = |rest: &str| texts(&format!("{t}{rest}"));
+        // A block after it starts after that paragraph, which stays empty.
+        assert_eq!(after("<p>b</p>"), ["a", "", "b"]);
+        assert_eq!(after("<ul><li>b</li></ul>"), ["a", "", "b"]);
+        assert_eq!(after("<p>b</p><p>c</p>"), ["a", "", "b", "c"]);
+        assert_eq!(texts(&format!("<div>{t}</div><p>b</p>")), ["a", "", "b"]);
+        // Text goes into it.
+        assert_eq!(after("b"), ["a", "b"]);
+        assert_eq!(after("  b<p>c</p>"), ["a", "b", "c"]);
+        // An empty block right after it is nothing, unless the document
+        // ends there.
+        assert_eq!(after("<p></p><p></p><h1></h1><p>b</p>"), ["a", "", "b"]);
+        assert_eq!(after("<p></p>"), ["a", "", ""]);
+        assert_eq!(after(""), ["a"]);
+        // An empty paragraph an editor wrote is one, as a rule is.
+        assert_eq!(
+            after("<p style='-qt-paragraph-type:empty'><br /></p><p>b</p>"),
+            ["a", "", "", "b"]
+        );
+        let rule = parse(&format!("{t}<hr><p>b</p>"));
+        let kinds: Vec<_> = rule.iter().map(|b| b.kind).collect();
+        assert_eq!(kinds, [BlockKind::Table, Paragraph, Rule, Paragraph]);
+        // It has none of the format of the block after it.
+        let shapes = shape(&format!("{t}<p>b</p>"));
+        assert_eq!(
+            shapes[1],
+            (Paragraph, String::new(), (0.0, 0.0), (0.0, 0.0))
+        );
+        assert_eq!(shapes[2].2, (12.0, 12.0));
     }
 
     #[test]
