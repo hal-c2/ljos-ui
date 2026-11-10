@@ -181,7 +181,10 @@ pub struct Comparison {
     pub now_date: String,
     pub cells: Vec<Cell>,
     /// `app runtime profile gesture` of each run the earlier report had
-    /// and this one has not: not measured, so not compared.
+    /// and this one has not, and `app runtime profile gesture: metric` of
+    /// each value it had and this one's runs have none of (the app never
+    /// drew, no frame was seen): not measured, so not compared. A metric
+    /// that is gone may be the worst a run can do, so it is said.
     pub missing: Vec<String>,
 }
 
@@ -251,7 +254,18 @@ pub fn compare(base: &Report, now: &Report) -> Comparison {
             continue;
         }
         for check in CHECKS {
-            let (Some(b), Some(n)) = (value(base, k, check), value(now, k, check)) else {
+            let Some(b) = value(base, k, check) else {
+                continue;
+            };
+            let Some(n) = value(now, k, check) else {
+                out.missing.push(format!(
+                    "{} {} {} {}: {}",
+                    k.0,
+                    k.1,
+                    k.2,
+                    k.3.name(),
+                    check.name
+                ));
                 continue;
             };
             let margin = check.margin.of(b);
@@ -353,5 +367,26 @@ mod tests {
         };
         assert!((m.of(100.0) - 45.0).abs() < 1e-9);
         assert!((m.of(0.0) - 20.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_metric_the_new_run_lacks_is_listed_as_not_measured() {
+        let base: Report =
+            serde_json::from_str(include_str!("../../../bench/baseline/desktop.json")).unwrap();
+        let mut now = base.clone();
+        let app = now.runs[0].app.clone();
+        for r in now.runs.iter_mut().filter(|r| r.app == app) {
+            r.first_frame_ms = None;
+        }
+        let c = compare(&base, &now);
+        let lost = format!(
+            "{app} {} {} {}: first frame",
+            now.runs[0].runtime,
+            now.runs[0].profile,
+            now.runs[0].gesture.name()
+        );
+        assert!(c.missing.contains(&lost), "{:?}", c.missing);
+        assert!(c.worse().is_empty());
+        assert!(markdown(&c).contains(&format!("- {lost}")));
     }
 }
