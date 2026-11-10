@@ -2820,6 +2820,9 @@ impl Engine {
                 _ => at,
             }
         };
+        // Only here does a binding or handler run its own script: the
+        // tiers above are compiled code (profile.rs).
+        let _script = self.profile_script();
         self.run_js_naming(label, what, |s| {
             let mut a: Vec<JsValue> = Vec::with_capacity(b.params.len() + args.len());
             for (k, p) in b.params.iter().enumerate() {

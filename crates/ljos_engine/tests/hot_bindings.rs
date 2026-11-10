@@ -128,3 +128,62 @@ Item {
     assert!(cycle.contains(&"q"), "{cycle:?}");
     assert_eq!(l.times, 1);
 }
+
+const SCRIPTED: &str = r#"
+import QtQuick
+Item {
+  objectName: "root"
+  property int base: 1
+  property int cheap: base + 1
+  property real spun: { var s = 0; for (var i = 0; i < 20000; i++) s += i % 7; return s + base }
+  property int other: 0
+  property real fromOther: { var t = 0; for (var i = 0; i < 20000; i++) t += i % 3; return t + other }
+  onBaseChanged: { var s = []; s.push(base); other = s.length + base }
+}
+"#;
+
+#[test]
+fn only_what_runs_in_script_spends_script_time() {
+    let h = engine();
+    let root = h.load(SCRIPTED);
+    h.engine.set_profiled(true);
+    h.set(root, "base", Value::Int(2));
+    assert_eq!(h.num(root, "cheap"), 3.0);
+    assert_eq!(h.num(root, "other"), 3.0);
+    // A binding nothing reads waits until it is read.
+    assert!(h.num(root, "spun") > 0.0);
+    assert!(h.num(root, "fromOther") > 0.0);
+    let p = h.engine.profile();
+    let entry = |name: &str| {
+        p.entries
+            .iter()
+            .find(|e| e.name == name)
+            .unwrap_or_else(|| panic!("{name} ran"))
+    };
+    // The binding VM runs `base + 1`: no script.
+    let cheap = entry("cheap");
+    assert_eq!(cheap.runs, 1);
+    assert_eq!(cheap.script_runs, 0);
+    assert!(cheap.script.is_zero());
+    for name in ["spun", "fromOther", "onBaseChanged"] {
+        let e = entry(name);
+        assert_eq!(e.script_runs, e.runs, "{name}");
+        assert!(!e.script.is_zero(), "{name}");
+        assert!(e.longest_script <= e.script, "{name}");
+        // What its writes set off is measured on its own, not as its
+        // script.
+        assert!(e.script <= e.own, "{name}: {:?} > {:?}", e.script, e.own);
+        assert!(e.total <= p.busy, "{name}");
+    }
+}
+
+#[test]
+fn script_time_is_not_counted_until_profiled() {
+    let h = engine();
+    let root = h.load(SCRIPTED);
+    h.set(root, "base", Value::Int(2));
+    h.engine.set_profiled(true);
+    let p = h.engine.profile();
+    assert!(p.entries.is_empty());
+    assert!(p.busy.is_zero());
+}

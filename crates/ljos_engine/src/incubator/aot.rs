@@ -814,7 +814,10 @@ impl Engine {
         let outer = st.spy.replace(Some(Vec::new()));
         let outer_nest = st.nest.replace(0);
         st.spying.set(true);
-        let js = self.eval_expr_as(inst, expr, hint, args, propagate, kept);
+        let js = {
+            let _check = self.profile_cross_check();
+            self.eval_expr_as(inst, expr, hint, args, propagate, kept)
+        };
         let js_plain = js.as_ref().map(|v| self.plain(v));
         st.skip.borrow_mut().truncate(depth);
         let dynamic_reads = spy.map(|spy| {
