@@ -4055,6 +4055,7 @@ dependencies = [
  "ljos_controls",
  "ljos_design",
  "ljos_design_qml",
+ "ljos_dev",
  "ljos_engine",
  "ljos_folderlistmodel",
  "ljos_gallery_backends",
@@ -4088,6 +4089,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "url",
  "windows-sys 0.52.0",
 ]
 

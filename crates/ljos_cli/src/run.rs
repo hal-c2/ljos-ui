@@ -627,6 +627,9 @@ impl Run {
             Some(project) => entry_in(&self.file, project)?,
             None => entry(&self.file)?,
         };
+        if self.mcp.is_some() {
+            crate::script_cost::register(&dir);
+        }
         let config = ShellConfig::new(format!("{key}.qml"));
         let config = match self.size {
             Some((w, h)) => config.with_size(w, h),

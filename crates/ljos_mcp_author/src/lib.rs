@@ -34,3 +34,4 @@ pub use ledger::{ApiStatus, Ledger, LedgerError, LedgerRow, MemberKind};
 pub use lints::{DECLARATIVE, IMPLEMENTED, Lint, lint, lints};
 pub use project::{Project, ProjectError};
 pub use server::{AuthorServer, serve_stdio};
+pub use tiers::{CheaperForm, CheaperKind, Place, cheaper_forms};

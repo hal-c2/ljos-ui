@@ -30,6 +30,7 @@ mod observe;
 mod parent;
 mod render;
 mod run;
+mod script_cost;
 mod shaders;
 mod stderr;
 mod stdout;
