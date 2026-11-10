@@ -1,7 +1,8 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtqml-component.html#incubateObject-method
 #   https://doc.qt.io/qt-6/qml-qtqml-component.html#createObject-method
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 and 6.12.0 (qml6, offscreen); the scenario marked
+# @qt-diverges says where the two differ and which one Ljós follows.
 
 @qt-parity
 Feature: What incubateObject says of the properties it is given
@@ -75,8 +76,9 @@ Feature: What incubateObject says of the properties it is given
       Then the property "r" of "root/kid" is 7
       And the log has no warnings
 
-  Rule: A path that leads nowhere is told by the component's file alone
+  Rule: A path that leads nowhere is told by the calling file alone
 
+    # Whose file that is: initial-property-unresolved-path.feature.
     Scenario: incubateObject cannot resolve the path
       When the method "make" of "root" is called with {"nope.x": 1, "n": 4}
       Then the property "n" of "root/kid" is 4
@@ -84,8 +86,20 @@ Feature: What incubateObject says of the properties it is given
 
     Scenario: createObject says nothing of it
       When the method "create" of "root" is called with {"nope.x": 1, "n": 4}
-      Then the property "n" of "root/kid" is 4
+      Then the log has no warnings
+
+    # Qt 6.11.2 makes the object with the other properties set; Qt 6.12.0
+    # completes it, destroys it and gives back null. Ljós follows 6.12.
+    @qt-diverges
+    Scenario Outline: createObject makes no object of <path>
+      When the method "create" of "root" is called with {"<path>": 1, "n": 4}
+      Then the object "root/kid" does not exist
       And the log has no warnings
+
+      Examples:
+        | path   |
+        | nope.x |
+        | n.x    |
 
   Rule: A required property left out ends the incubation in Error, and nothing is said
 

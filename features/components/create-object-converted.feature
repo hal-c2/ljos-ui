@@ -2,7 +2,8 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-component.html#createObject-method
 #   https://doc.qt.io/qt-6/qtqml-syntax-propertybinding.html
 #   https://doc.qt.io/qt-6/qml-color.html
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 and 6.12.0 (qml6, offscreen); the scenarios marked
+# @qt-diverges say where the two differ and which one Ljós follows.
 # Found by ljos-fuzz (creation), buckets value:load-handlers:bool, value:step:bool,
 # value:step:number, value:step:text-number, value:load-handlers:invalid-qt,
 # value:load-handlers:nan-ljos, value:onChanged+onCompleted:empty-qt and
@@ -12,8 +13,7 @@
 Feature: What createObject makes of its initial properties
   An initial property is converted to the property's type as a value from outside QML is:
   a string "0" is false, a number is rounded to an int, a bool too, and what is no colour is an invalid
-  one. One that cannot be converted at all is told, and the property loses its binding and
-  keeps its type's default.
+  one. One that cannot be converted at all is told, and createObject gives back no object.
 
   Background:
     Given the QML:
@@ -37,7 +37,7 @@ Feature: What createObject makes of its initial properties
         }
         function give(props) {
           var o = typed.createObject(root, props)
-          seen = [o.b, o.i, o.c.valid, o.r].join(",")
+          seen = o === null ? "none" : [o.b, o.i, o.c.valid, o.r].join(",")
         }
         function giveNaN() { give({i: NaN}) }
       }
@@ -59,14 +59,24 @@ Feature: What createObject makes of its initial properties
       | colour | c    | false   | true,0,false,6 |
       | colour | c    | 3       | true,0,false,6 |
 
-  Scenario: An initial int given NaN is told, and stays 0
+  Scenario: An initial int given NaN is told
     When the method "giveNaN" of "root" is called
-    Then the property "seen" of "root" is "true,0,true,6"
-    And the log has a warning matching "Could not set initial property i"
+    Then the log has a warning matching "Could not set initial property i"
 
-  Scenario: An initial property that cannot be converted leaves its type's default
+  Scenario: An initial property that cannot be converted is told
     When the method "give" of "root" is called with {"r": ""}
-    Then the property "seen" of "root" is "true,0,true,0"
-    And the log has a warning matching "Could not set initial property r"
-    When the property "n" of "root" is set to 4
-    Then the property "log" of "root" is ""
+    Then the log has a warning matching "Could not set initial property r"
+
+  # Qt 6.11.2 makes the object with the int at 0; Qt 6.12.0 completes it,
+  # destroys it and gives back null. Ljós follows 6.12.
+  @qt-diverges
+  Scenario: An initial int given NaN leaves no object
+    When the method "giveNaN" of "root" is called
+    Then the property "seen" of "root" is "none"
+
+  # Qt 6.11.2 makes the object with the real at 0 and its binding gone;
+  # Qt 6.12.0 completes it, destroys it and gives back null. Ljós follows 6.12.
+  @qt-diverges
+  Scenario: An initial real given "" leaves no object
+    When the method "give" of "root" is called with {"r": ""}
+    Then the property "seen" of "root" is "none"
