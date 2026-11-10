@@ -21,7 +21,6 @@ use ljos_engine::{
 };
 
 use crate::containers::Page;
-use crate::ljos_style;
 use crate::popup::{self, Popup, close_policy};
 use crate::style::{BASIC, style_of};
 use crate::util::{check, flag, is_a, object, warn};
@@ -346,12 +345,10 @@ struct SharedTips(RefCell<Vec<(Option<ObjectId>, String, ObjectId)>>);
 fn shared_for(e: &Engine, owner: ObjectId) -> Option<ObjectId> {
     let top = ljos_quick::window_of(e, owner);
     e.untrack(|| {
-        // A control of Ljós's style shows the style's tip; any other item
-        // Basic's, as it did before there was a second look.
-        let style = match style_of(e, owner) {
-            s if s == ljos_style::DIRECTORY => s,
-            _ => BASIC.to_string(),
-        };
+        // A control shows its own style's tip, as Qt's Fusion button
+        // shows Fusion's (measured on Qt 6.11.2 and 6.12.0,
+        // `tooltip.feature`); an item of no style shows Basic's.
+        let style = style_of(e, owner);
         let shared = e.extension::<SharedTips>();
         {
             let mut tips = shared.0.borrow_mut();
