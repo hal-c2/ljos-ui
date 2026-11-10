@@ -7,6 +7,7 @@
 //! it was given, so a window that is hidden and shown again draws at
 //! once.
 
+use std::cell::Cell;
 use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
@@ -367,10 +368,18 @@ impl Painter {
                 if !wgpu_presents(frame) {
                     return Steps::default();
                 }
+                if painter.render_state().is_none() {
+                    // No device yet, and so no surface: nothing is shown.
+                    return Steps {
+                        lost: true,
+                        ..Steps::default()
+                    };
+                }
                 let upload = wgpu_upload(painter, pending);
                 #[cfg(target_os = "macos")]
                 crate::srgb_layer::tag(window);
                 let started = std::time::Instant::now();
+                WGPU_DROPPED.set(false);
                 // egui-wgpu draws and presents in one call, and times only
                 // the waits inside it: for the surface's next texture, the
                 // submit and the present.
@@ -399,7 +408,7 @@ impl Painter {
                     gpu_3d,
                     gpu_post,
                     moved: false,
-                    lost: false,
+                    lost: WGPU_DROPPED.take(),
                 }
             }
             #[cfg(gl_painter)]
@@ -664,6 +673,13 @@ pub(crate) fn attach(
     Ok(why)
 }
 
+thread_local! {
+    /// Whether egui-wgpu's last paint on this thread got no surface
+    /// texture, and so presented nothing. Windows are painted on the UI
+    /// thread, one at a time, and the painter asks inside the paint.
+    static WGPU_DROPPED: Cell<bool> = const { Cell::new(false) };
+}
+
 /// A wgpu painter for the windows of `ctx`. The first one (`gpu` is
 /// `None`) picks the device when it is given its window.
 fn wgpu_painter(
@@ -685,7 +701,14 @@ fn wgpu_painter(
         }),
         _ => WgpuSetup::CreateNew(create_new(display)),
     };
+    let act_on = WgpuConfiguration::default().on_surface_status;
     let config = WgpuConfiguration {
+        // egui-wgpu draws no frame when the surface gives it no texture,
+        // and says nothing of it but to this.
+        on_surface_status: Arc::new(move |status| {
+            WGPU_DROPPED.set(true);
+            act_on(status)
+        }),
         surface: SurfaceConfig {
             // ARCHITECTURE.md §7.2 step 12: a frame waits for the display
             // and none is torn or dropped. It is also what keeps a window
@@ -694,7 +717,6 @@ fn wgpu_painter(
             desired_maximum_frame_latency: Some(2),
         },
         wgpu_setup,
-        ..WgpuConfiguration::default()
     };
     let options = RendererOptions {
         // B0 antialiases its own edges (feathering).

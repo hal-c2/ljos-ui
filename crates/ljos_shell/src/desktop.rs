@@ -255,6 +255,21 @@ fn view_of_mut<'a, M: Send + 'static>(
     }
 }
 
+/// What a pass put on the screen, whichever painter drew it.
+#[derive(Clone, Copy)]
+#[cfg_attr(
+    not(feature = "mcp"),
+    expect(dead_code, reason = "what a pass drew is told only to the inspector")
+)]
+enum Shown {
+    /// No picture: the window shows the one before, or the painter could
+    /// not draw into it (`lost`). The pass is paced as one undrawn.
+    Nothing { lost: bool },
+    /// A picture, whole or `part` of it. `steps.lost` when it was drawn but
+    /// did not reach the window.
+    Drawn { part: bool, steps: present::Steps },
+}
+
 /// Shows a window once there is a picture in it.
 fn show_when_drawn(
     host: &mut Control<'_>,
@@ -1383,171 +1398,193 @@ impl<M: Send + 'static> Desktop<M> {
         let clear = view.backdrop().unwrap_or(slot.clear);
         let wake = view.wakes_in();
         let now = Instant::now();
-        if let Painter::Cpu(painter) = painter {
-            // egui's pictures are never drawn: the scene is.
-            slot.pending.clear();
-            let Some(snapshot) = view.scene().snapshot() else {
-                slot.not_drawn(now, wake);
-                return;
-            };
-            let [r, g, b, a] = clear.to_array();
-            let clear = ljos_render::Rgba::from_premul(
-                f32::from(r) / 255.0,
-                f32::from(g) / 255.0,
-                f32::from(b) / 255.0,
-                f32::from(a) / 255.0,
-            );
-            if self.painter_automatic && crate::cpu::leaves_out(snapshot, !shapes.is_empty(), clear)
-            {
-                // Not drawn: the window is drawn by GL in the next pass.
-                self.to_gl = true;
-                repaints.request(slot.key, now);
-                return;
-            }
-            let mut warn = |what: String| engine.log(LogLevel::Warning, CATEGORY, what);
-            let drew = painter.draw(
-                snapshot,
-                pixels_per_point,
-                clear,
-                !shapes.is_empty(),
-                &surface.window,
-                &mut warn,
-            );
-            if !drew {
-                slot.not_drawn(now, wake);
-                #[cfg(feature = "mcp")]
-                if let Some(w) = self.wake.as_mut() {
-                    w.unchanged += 1;
-                }
-                return;
-            }
-            #[cfg(feature = "mcp")]
-            if slot.view.is_none() && !self.drawn_once {
-                app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());
-            }
-            // An X server drops what is put in a window it has not mapped.
-            // It says so with a redraw, but one that may come together with
-            // a pass the scene asked for: nothing then tells that redraw
-            // from any other, and the window would stay black.
-            if !surface.shown {
-                painter.forget();
-            }
-            show_when_drawn(host, surface, &mut slot.activate, screens_stale);
-            slot.drawn(began, Instant::now());
-            #[cfg(feature = "mcp")]
-            if let Some(w) = self.wake.as_mut() {
-                w.drawn += 1;
-            }
-            if !std::mem::replace(&mut self.drawn_once, true) {
-                self.heap_trim = Some(Instant::now() + HEAP_TRIM_AFTER);
-            }
-            return;
-        }
-        // Where a pass changed the picture is worked out for a painter that
-        // draws all of it too while a client follows items in it.
-        #[cfg(feature = "mcp")]
-        let follows = slot.view.is_none() && app.watches_items();
-        #[cfg(not(feature = "mcp"))]
-        let follows = false;
-        let change = if painter.wants_areas() || follows {
-            slot.shown.change(&shapes, pixels_per_point, clear)
-        } else {
-            slot.shown.whole_change(&shapes, pixels_per_point, clear)
-        };
-        #[cfg(feature = "mcp")]
-        let changed = follows.then(|| change.boxes());
-        let change = if painter.wants_areas() {
-            change.with(painter.resampled(&shapes, &slot.pending, pixels_per_point))
-        } else {
-            change.whole()
-        };
-        let frame = painter.frame(change, &slot.pending, pixels_per_point);
         // The root's always: its view is the application's. Another
         // window's only while a client records frames.
         #[cfg(feature = "mcp")]
-        let mut meter = if slot.view.is_none() {
+        let measured = if slot.view.is_none() {
             app.inspected()
         } else {
             app.records_frames()
-        }
-        .then(|| Meter::new(&frame, &slot.pending));
+        };
+        #[cfg(feature = "mcp")]
+        let mut meter: Option<Meter> = None;
+        let shown = if let Painter::Cpu(painter) = painter {
+            // egui's pictures are never drawn: the scene is.
+            slot.pending.clear();
+            match view.scene().snapshot() {
+                None => Shown::Nothing { lost: false },
+                Some(snapshot) => {
+                    let [r, g, b, a] = clear.to_array();
+                    let clear = ljos_render::Rgba::from_premul(
+                        f32::from(r) / 255.0,
+                        f32::from(g) / 255.0,
+                        f32::from(b) / 255.0,
+                        f32::from(a) / 255.0,
+                    );
+                    if self.painter_automatic
+                        && crate::cpu::leaves_out(snapshot, !shapes.is_empty(), clear)
+                    {
+                        // Not drawn: the window is drawn by GL in the next
+                        // pass, which is the one told about.
+                        self.to_gl = true;
+                        repaints.request(slot.key, now);
+                        return;
+                    }
+                    #[cfg(feature = "mcp")]
+                    {
+                        meter = measured.then(|| Meter::new(&slot.pending));
+                    }
+                    let mut warn = |what: String| engine.log(LogLevel::Warning, CATEGORY, what);
+                    let drew = painter.draw(
+                        snapshot,
+                        pixels_per_point,
+                        clear,
+                        !shapes.is_empty(),
+                        &surface.window,
+                        &mut warn,
+                    );
+                    // An X server drops what is put in a window it has not
+                    // mapped. It says so with a redraw, but one that may
+                    // come together with a pass the scene asked for:
+                    // nothing then tells that redraw from any other, and
+                    // the window would stay black.
+                    if matches!(drew, crate::cpu::Drew::Shown { .. }) && !surface.shown {
+                        painter.forget();
+                    }
+                    match drew {
+                        crate::cpu::Drew::Nothing => Shown::Nothing { lost: false },
+                        crate::cpu::Drew::Lost => Shown::Nothing { lost: true },
+                        crate::cpu::Drew::Shown { whole, steps } => Shown::Drawn {
+                            part: !whole,
+                            steps,
+                        },
+                    }
+                }
+            }
+        } else {
+            // Where a pass changed the picture is worked out for a painter
+            // that draws all of it too while a client follows items in it.
+            #[cfg(feature = "mcp")]
+            let follows = slot.view.is_none() && app.watches_items();
+            #[cfg(not(feature = "mcp"))]
+            let follows = false;
+            let change = if painter.wants_areas() || follows {
+                slot.shown.change(&shapes, pixels_per_point, clear)
+            } else {
+                slot.shown.whole_change(&shapes, pixels_per_point, clear)
+            };
+            #[cfg(feature = "mcp")]
+            let changed = follows.then(|| change.boxes());
+            let change = if painter.wants_areas() {
+                change.with(painter.resampled(&shapes, &slot.pending, pixels_per_point))
+            } else {
+                change.whole()
+            };
+            let frame = painter.frame(change, &slot.pending, pixels_per_point);
+            #[cfg(feature = "mcp")]
+            {
+                meter = measured.then(|| Meter::new(&slot.pending));
+            }
+            if frame == Frame::Nothing {
+                painter.paint(
+                    pixels_per_point,
+                    clear,
+                    &frame,
+                    &[],
+                    &mut slot.pending,
+                    &surface.window,
+                );
+                Shown::Nothing { lost: false }
+            } else {
+                let kept = slot.shown.keep(shapes, pixels_per_point, clear);
+                painter.views_shown(kept);
+                let shapes = if let Frame::Part(areas) = &frame {
+                    let mut part = kept.to_vec();
+                    present::clip_to(&mut part, areas, pixels_per_point);
+                    painter.prepare(&part, pixels_per_point)
+                } else {
+                    painter.prepare(kept, pixels_per_point)
+                };
+                let primitives = present::tessellate(&slot.ctx, shapes, pixels_per_point);
+                #[cfg(feature = "mcp")]
+                if let Some(meter) = meter.as_mut() {
+                    meter.built();
+                }
+                let steps = painter.paint(
+                    pixels_per_point,
+                    clear,
+                    &frame,
+                    &primitives,
+                    &mut slot.pending,
+                    &surface.window,
+                );
+                // DebugView's numbers: a pass with no reading keeps the last.
+                #[cfg(feature = "quick3d")]
+                if let Some(scene) = steps.gpu_3d {
+                    let post = steps.gpu_post.unwrap_or_default();
+                    ljos_3d::stats::set_gpu_seconds(
+                        Some((scene + post).as_secs_f64()),
+                        steps.gpu_post.map(|p| p.as_secs_f64()),
+                    );
+                }
+                if steps.lost {
+                    // Kept as shown by the pass that drew it, and it never
+                    // was.
+                    slot.shown.forget();
+                }
+                #[cfg(feature = "mcp")]
+                if let Some(changed) = changed {
+                    app.record_changed(&engine, changed.as_deref());
+                }
+                Shown::Drawn {
+                    part: matches!(frame, Frame::Part(_)),
+                    steps,
+                }
+            }
+        };
+
+        // Every painter's pass ends here, so that the inspector is told
+        // of each the same way: a paint is a picture that reached the
+        // window, once.
         #[cfg(feature = "mcp")]
         let asked = slot.asked.take();
-        if frame == Frame::Nothing {
-            painter.paint(
-                pixels_per_point,
-                clear,
-                &frame,
-                &[],
-                &mut slot.pending,
-                &surface.window,
-            );
+        #[cfg(feature = "mcp")]
+        if let Some(meter) = meter {
+            use ljos_dev::mcp::Drawn;
+            let (drawn, asked, steps) = match shown {
+                Shown::Nothing { lost } => (
+                    if lost { Drawn::Lost } else { Drawn::Unchanged },
+                    None,
+                    present::Steps::default(),
+                ),
+                Shown::Drawn { part, steps } => (
+                    if steps.lost {
+                        Drawn::Lost
+                    } else if part {
+                        Drawn::Part
+                    } else {
+                        Drawn::Whole
+                    },
+                    asked,
+                    steps,
+                ),
+            };
+            let report = meter.report(drawn, asked, steps);
+            match slot.view {
+                None => app.record_paint(&report),
+                Some(_) => app.record_window_paint(slot.window, &report),
+            }
+        }
+        if let Shown::Nothing { .. } = shown {
             slot.not_drawn(now, wake);
             #[cfg(feature = "mcp")]
             if let Some(w) = self.wake.as_mut() {
                 w.unchanged += 1;
             }
-            #[cfg(feature = "mcp")]
-            if let Some(meter) = meter {
-                let report = meter.report(None, present::Steps::default());
-                match slot.view {
-                    None => app.record_paint(&report),
-                    Some(_) => app.record_window_paint(slot.window, &report),
-                }
-            }
             return;
         }
-        let kept = slot.shown.keep(shapes, pixels_per_point, clear);
-        painter.views_shown(kept);
-        let shapes = if let Frame::Part(areas) = &frame {
-            let mut part = kept.to_vec();
-            present::clip_to(&mut part, areas, pixels_per_point);
-            painter.prepare(&part, pixels_per_point)
-        } else {
-            painter.prepare(kept, pixels_per_point)
-        };
-        let primitives = present::tessellate(&slot.ctx, shapes, pixels_per_point);
-        #[cfg(feature = "mcp")]
-        if let Some(meter) = meter.as_mut() {
-            meter.built();
-        }
-        let steps = painter.paint(
-            pixels_per_point,
-            clear,
-            &frame,
-            &primitives,
-            &mut slot.pending,
-            &surface.window,
-        );
-        // DebugView's numbers: a pass with no reading keeps the last.
-        #[cfg(feature = "quick3d")]
-        if let Some(scene) = steps.gpu_3d {
-            let post = steps.gpu_post.unwrap_or_default();
-            ljos_3d::stats::set_gpu_seconds(
-                Some((scene + post).as_secs_f64()),
-                steps.gpu_post.map(|p| p.as_secs_f64()),
-            );
-        }
-        if steps.lost {
-            // Kept as shown by the pass that drew it, and it never was.
-            slot.shown.forget();
-        }
-        #[cfg(not(feature = "mcp"))]
-        let _ = steps;
-        #[cfg(feature = "mcp")]
-        if let Some(changed) = changed {
-            app.record_changed(&engine, changed.as_deref());
-        }
-        #[cfg(feature = "mcp")]
-        if let Some(meter) = meter.take_if(|_| slot.view.is_some()) {
-            app.record_window_paint(slot.window, &meter.report(asked, steps));
-        }
-        #[cfg(feature = "mcp")]
-        if let Some(meter) = meter {
-            app.record_paint(&meter.report(asked, steps));
-        }
-        // As the CPU path does: the root's first frame is a step of the
-        // start-up whether or not a client was inspecting then.
+        // The root's first frame is a step of the start-up whether or not
+        // a client was inspecting then.
         #[cfg(feature = "mcp")]
         if slot.view.is_none() && !self.drawn_once {
             app.record_startup(ljos_dev::mcp::StartupStep::FirstFrame, self.began.elapsed());

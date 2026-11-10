@@ -20,6 +20,7 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
 
 use egui_winit::winit::event_loop::OwnedDisplayHandle;
 use egui_winit::winit::window::Window;
@@ -27,6 +28,22 @@ use ljos_render::{
     DrawOp, FrameSnapshot, FrameView, PixelRect, Rgba, VelloCpuReference, frame_damage,
     merge_damage,
 };
+
+/// What a frame drawn on the processor came to.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum Drew {
+    /// Nothing changed and no frame was owed: nothing was shown.
+    Nothing,
+    /// Nothing reached the window: it has no buffer yet, gave none, or
+    /// would not show the one drawn.
+    Lost,
+    /// Shown, drawn `whole` or only where its buffer lacked the picture;
+    /// `steps` times the drawing and the present.
+    Shown {
+        whole: bool,
+        steps: crate::present::Steps,
+    },
+}
 
 /// How many past frames' changes are kept for a buffer that old. Wayland's
 /// back buffer is two frames old; X11's image one.
@@ -156,11 +173,10 @@ impl CpuPainter {
         }
     }
 
-    /// Draws what changed of `snapshot` since the last frame and shows it.
-    /// False when nothing changed and no frame was owed, and nothing was
-    /// shown. `warn` is told, once in the process, what is not drawn, and
-    /// what went wrong; `egui_draws` is whether egui had anything of its
-    /// own to draw.
+    /// Draws what changed of `snapshot` since the last frame and shows it,
+    /// and says what came of it. `warn` is told, once in the process,
+    /// what is not drawn, and what went wrong; `egui_draws` is whether
+    /// egui had anything of its own to draw.
     pub(crate) fn draw(
         &mut self,
         snapshot: &Arc<FrameSnapshot>,
@@ -169,12 +185,12 @@ impl CpuPainter {
         egui_draws: bool,
         window: &Window,
         warn: &mut dyn FnMut(String),
-    ) -> bool {
+    ) -> Drew {
         if let Some(trouble) = self.trouble.take() {
             warn(format!("drawn on the processor: {trouble}"));
         }
         let (Some(surface), Some((w, h))) = (self.surface.as_mut(), self.size) else {
-            return false;
+            return Drew::Lost;
         };
         let (width, height) = (w.get(), h.get());
         let whole = PixelRect::whole(width, height);
@@ -185,7 +201,7 @@ impl CpuPainter {
             _ => vec![whole],
         };
         if changed.is_empty() && !self.owed {
-            return false;
+            return Drew::Nothing;
         }
         if !SAID_SHADER.load(Ordering::Relaxed) && has_shader(snapshot) {
             SAID_SHADER.store(true, Ordering::Relaxed);
@@ -203,7 +219,7 @@ impl CpuPainter {
                 warn(format!(
                     "drawn on the processor: no buffer to draw into: {e}"
                 ));
-                return false;
+                return Drew::Lost;
             }
         };
         // The buffer lacks what changed since it was last drawn.
@@ -217,6 +233,7 @@ impl CpuPainter {
             }
             merge_damage(parts, width, height)
         };
+        let started = Instant::now();
         self.renderer.set_background(clear);
         let view = FrameView::new(snapshot, scale);
         for part in &parts {
@@ -225,6 +242,7 @@ impl CpuPainter {
                 Err(e) => warn(format!("drawn on the processor: {e}")),
             }
         }
+        let drawn = Instant::now();
         window.pre_present_notify();
         let damage: Vec<softbuffer::Rect> = changed.iter().filter_map(to_rect).collect();
         if let Err(e) = buffer.present_with_damage(&damage) {
@@ -232,14 +250,20 @@ impl CpuPainter {
                 "drawn on the processor: the window cannot be shown: {e}"
             ));
             self.forget();
-            return false;
+            return Drew::Lost;
         }
+        let steps = crate::present::Steps {
+            draw: Some(drawn - started),
+            present: Some(drawn.elapsed()),
+            ..crate::present::Steps::default()
+        };
+        let whole = parts == [whole];
         self.owed = false;
         self.whole = self.whole.saturating_sub(1);
         self.history.push_front(changed);
         self.history.truncate(HISTORY);
         self.last = Some((Arc::clone(snapshot), scale, clear));
-        true
+        Drew::Shown { whole, steps }
     }
 }
 

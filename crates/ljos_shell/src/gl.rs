@@ -635,7 +635,11 @@ impl GlPainter {
         window: &Window,
     ) -> Steps {
         let Some(gw) = self.window.as_mut() else {
-            return Steps::default();
+            // No window to draw into: nothing is shown.
+            return Steps {
+                lost: true,
+                ..Steps::default()
+            };
         };
         if !self.gl.make_current(Some((gw.id, &gw.surface))) {
             say_lost("its GL surface cannot be made current");
