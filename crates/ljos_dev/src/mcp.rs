@@ -73,6 +73,7 @@ mod redact;
 mod reload;
 mod room;
 mod rust_heap;
+mod script;
 mod surface;
 mod timeline;
 mod tools;
@@ -117,6 +118,7 @@ pub use memory::WindowMemory;
 pub use observe::ProcessSource;
 pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
 pub use rust_heap::CountingAlloc;
+pub use script::{Cheaper, CheaperForm, ScriptAdvisor, ScriptPlace, set_script_advisor};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};
 pub use wakes::HostWake;
 pub use watch::{PointerSeen, Rest};
@@ -1210,6 +1212,13 @@ impl Inspector {
                     Ok(self
                         .hot
                         .answer(engine, args.sort.unwrap_or_default(), args.max))
+                }
+                timeline::Mode::Script => {
+                    let t = script::Thresholds::of(args.min_run_ms, args.min_share)?;
+                    if let Some(record) = args.record {
+                        self.hot.ask(engine, record, args.holder.as_deref())?;
+                    }
+                    Ok(script::answer(engine, self.hot.recording(), t, args.max))
                 }
                 timeline::Mode::Growth => {
                     if let Some(record) = args.record {

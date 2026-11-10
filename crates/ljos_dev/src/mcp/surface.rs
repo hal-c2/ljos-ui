@@ -374,6 +374,7 @@ impl InspectorSurface {
             Kind::Objects(a) if a.model.is_some() || a.mark => a.holder.clone(),
             _ => None,
         };
+        let advises = matches!(&kind, Kind::Frames(a) if a.script);
         let answer = self.ask(kind, per_copy, ctx).await;
         if let Some(a) = processes {
             return match answer {
@@ -391,6 +392,9 @@ impl InspectorSurface {
         let mut reply = answer?;
         if let Some(holder) = holds {
             self.holders.holds(&holder);
+        }
+        if advises {
+            reply = super::script::advise(reply).await;
         }
         if let Some(waited) = waited {
             reply.structured["reload"]["waited"] = json!(waited);

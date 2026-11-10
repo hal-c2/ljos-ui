@@ -33,8 +33,9 @@ use super::room::{self, Room};
 
 pub const FRAMES: &str = "\
 A timeline of every window's frames: `record` starts or stops it; each says what woke it and \
-where its time went, pass by pass. Modes instead: `wakes`, `bindings` (hot bindings, loops), \
-`growth` (instances per component over time), `export` (a trace file). `since` takes `next_since`.";
+where its time went. Modes instead: `wakes`, `bindings` (hot bindings, loops), `script` \
+(costly JS, cheaper form), `growth` (instances per component), `export` (a trace file). \
+`since` takes `next_since`.";
 
 /// The most frames kept: ten seconds at 60 Hz.
 pub const MAX_KEPT: usize = 600;
@@ -83,6 +84,21 @@ pub struct FramesArgs {
     /// (less what ran nested in them), `runs` or the `longest` run.
     #[serde(default)]
     pub sort: Option<super::hot::HotSort>,
+    /// Hints instead where bindings and handlers spend their time in
+    /// JavaScript, read from the recording `bindings` makes (`record`
+    /// starts or stops it): each with where it is written, what its
+    /// script cost and a cheaper form. Never errors: script is allowed.
+    #[serde(default)]
+    pub script: bool,
+    /// With `script`: hint one run that spent this long in script, in
+    /// milliseconds (default 2, an eighth of a 60 Hz frame).
+    #[serde(default)]
+    pub min_run_ms: Option<f64>,
+    /// With `script`: hint script that took this share of what all
+    /// bindings and handlers took, in percent (default 10), and at least
+    /// 1 ms in all.
+    #[serde(default)]
+    pub min_share: Option<f64>,
     /// The instances and bytes of each component over time instead, those
     /// that keep growing first. `record` starts or stops sampling.
     #[serde(default)]
@@ -101,6 +117,7 @@ impl FramesArgs {
         let modes = [
             self.wakes.then_some(Mode::Wakes),
             self.bindings.then_some(Mode::Bindings),
+            self.script.then_some(Mode::Script),
             self.growth.then_some(Mode::Growth),
             self.export.as_deref().map(Mode::Export),
         ];
@@ -108,7 +125,8 @@ impl FramesArgs {
         let mode = asked.next().unwrap_or(Mode::Frames);
         if asked.next().is_some() {
             return Err(SurfaceError::invalid_argument(
-                "`app_frames`: ask for one of `wakes`, `bindings`, `growth` and `export` at a time",
+                "`app_frames`: ask for one of `wakes`, `bindings`, `script`, `growth` and `export` \
+                 at a time",
             ));
         }
         if (self.wake.is_some() || self.last_input) && !matches!(mode, Mode::Wakes) {
@@ -126,6 +144,12 @@ impl FramesArgs {
                 "`app_frames`: `sort` goes with `bindings`",
             ));
         }
+        if (self.min_run_ms.is_some() || self.min_share.is_some()) && !matches!(mode, Mode::Script)
+        {
+            return Err(SurfaceError::invalid_argument(
+                "`app_frames`: `min_run_ms` and `min_share` go with `script`",
+            ));
+        }
         if matches!(mode, Mode::Export(_)) && self.record.is_some() {
             return Err(SurfaceError::invalid_argument(
                 "`app_frames`: `export` writes what is recorded; `record` goes without it",
@@ -141,6 +165,7 @@ pub(crate) enum Mode<'a> {
     Frames,
     Wakes,
     Bindings,
+    Script,
     Growth,
     Export(&'a str),
 }
