@@ -196,3 +196,27 @@ Feature: A shown text's sizes are new in the statement after it changes
     Then the property "log" of "root" is "set 0, narrower 1"
     When 50 milliseconds pass
     Then the property "told" of "root" is 1
+
+  Scenario: A binding on a text's line count follows a change after a read between two changes
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property int follow: subject.lineCount
+        property int seen: 0
+        function change() {
+          subject.text = "a\nb"
+          // Read between two changes that leave the line count the same.
+          root.seen = subject.lineCount
+          subject.text = "c\nd"
+        }
+        Text { id: subject; text: "a" }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    Then the property "seen" of "root" is 2
+    And the property "follow" of "root" is 2
+    When 50 milliseconds pass
+    Then the property "follow" of "root" is 2
