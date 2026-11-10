@@ -345,6 +345,86 @@ fn the_modifiers_held_follow_the_pass_without_a_key_event() {
     assert_eq!(held(), ljos_quick::Modifiers::empty());
 }
 
+// A click and Shift let go of in one pass: the pass ends with what egui
+// says after both, not with what the release carried.
+#[test]
+fn a_pass_ends_with_its_last_word_on_the_modifiers() {
+    let s = scene();
+    let mut h = alone(&s);
+    let at = h.get_by_role_and_label(Role::Button, "Two").rect().center();
+    let button = |pressed| Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::SHIFT,
+    };
+    pass(&mut h, [Event::PointerMoved(at)]);
+    pass(
+        &mut h,
+        [Event::ModifiersChanged(Modifiers::SHIFT), button(true)],
+    );
+    assert_eq!(
+        ljos_quick::keys::keyboard_modifiers(&s.engine),
+        ljos_quick::Modifiers::SHIFT
+    );
+    pass(
+        &mut h,
+        [button(false), Event::ModifiersChanged(Modifiers::NONE)],
+    );
+    assert_eq!(
+        ljos_quick::keys::keyboard_modifiers(&s.engine),
+        ljos_quick::Modifiers::empty()
+    );
+}
+
+/// A second window on the same engine, as the shell opens them.
+fn another_window(s: &Scene) -> Scene {
+    let root = make::<Item>(&s.engine, None);
+    s.engine.set(root, Item::WIDTH, 200.0).unwrap();
+    s.engine.set(root, Item::HEIGHT, 80.0).unwrap();
+    Scene {
+        engine: Rc::clone(&s.engine),
+        root,
+        one: root,
+        two: root,
+        saves: Rc::clone(&s.saves),
+    }
+}
+
+// The windows of an application share one engine, and egui tells one
+// without the keyboard of no modifiers: its passes, pointer moves and
+// wheel turns say nothing of those held in the window that has it.
+#[test]
+fn a_window_without_the_keyboard_leaves_the_modifiers_held_alone() {
+    let s = scene();
+    let mut front = alone(&s);
+    let other = another_window(&s);
+    let mut behind = alone(&other);
+    behind.input_mut().focused = false;
+    pass(&mut front, [Event::ModifiersChanged(Modifiers::SHIFT)]);
+    let at = egui::Pos2::new(40.0, 40.0);
+    pass(
+        &mut behind,
+        [
+            Event::PointerMoved(at),
+            Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Line,
+                delta: Vec2::new(0.0, -1.0),
+                phase: egui::TouchPhase::Move,
+                source: egui::MouseWheelSource::Unknown,
+                modifiers: Modifiers::NONE,
+            },
+        ],
+    );
+    behind.step();
+    assert!(behind.state().view.stats().pointer_events > 0);
+    assert!(behind.state().view.stats().wheel_events > 0);
+    assert_eq!(
+        ljos_quick::keys::keyboard_modifiers(&s.engine),
+        ljos_quick::Modifiers::SHIFT
+    );
+}
+
 #[test]
 fn an_accepted_key_is_gone_from_egui_s_input_and_the_others_stay() {
     let s = scene();
