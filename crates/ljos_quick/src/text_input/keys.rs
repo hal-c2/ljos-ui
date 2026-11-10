@@ -384,12 +384,41 @@ fn plan(engine: &Engine, obj: ObjectId, st: &SharedState, ev: &KeyEvent) -> Plan
     }
 }
 
-/// Whether the editor wants the key before a `Shortcut` gets it.
+/// Whether the editor wants the key before a `Shortcut` gets it: only a
+/// common editing key it would act on. Any other key it acts on, such as
+/// Ctrl+K deleting to the end of the line, is a `Shortcut`'s first and
+/// reaches [`press`] only when no `Shortcut` takes it, as in Qt
+/// (`features/text-input/shortcut-override.feature`).
 pub(super) fn shortcut_override(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
     let Some(st) = ops::ready(engine, obj) else {
         return false;
     };
-    !matches!(plan(engine, obj, &st, ev), Plan::Pass | Plan::Accept)
+    match plan(engine, obj, &st, ev) {
+        Plan::Pass | Plan::Accept => false,
+        // A key that types is the editor's whatever its modifiers: AltGr
+        // arrives as Ctrl+Alt.
+        Plan::Type(_) => true,
+        Plan::Keep | Plan::Move { .. } | Plan::Do(_) => common(engine, ev, st.borrow().multi),
+    }
+}
+
+/// The keys every editor keeps from a `Shortcut`: the clipboard, undo and
+/// redo, Select All, the cursor moves and selections, and any key with
+/// no modifier but Shift.
+fn common(engine: &Engine, ev: &KeyEvent, multi: bool) -> bool {
+    ((ev.modifiers & CHORD_MODIFIERS) - Modifiers::SHIFT).is_empty()
+        || action_of(engine, ev, multi).is_some_and(|action| {
+            matches!(
+                action,
+                Action::Move(..)
+                    | Action::SelectAll
+                    | Action::Copy
+                    | Action::Cut
+                    | Action::Paste
+                    | Action::Undo
+                    | Action::Redo
+            )
+        })
 }
 
 pub(super) fn press(engine: &Engine, obj: ObjectId, ev: &KeyEvent) -> bool {
