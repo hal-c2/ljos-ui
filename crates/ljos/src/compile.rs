@@ -217,7 +217,7 @@ pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled
 /// Gives `Qt.createQmlObject` on `engine` a compiler (development only,
 /// the `dev-qml` feature): a text is compiled as a file at the place the
 /// script names for it, against the files under `dirs` and the native
-/// types registered on `engine` now, so it finds the types beside that
+/// types registered on `engine` when the first text is made, so it finds the types beside that
 /// place as a file there would. [`App::qml_dirs`](crate::App::qml_dirs)
 /// does this itself; an engine whose components came from
 /// [`compile_dirs`] or [`compile_quiet`] (a harness, a
@@ -226,13 +226,14 @@ pub fn compile_quiet(dirs: &[&Path], engine: Option<&Engine>) -> Result<Compiled
 /// `qml_dirs`, so a text or a file placed outside `dirs` finds the files
 /// beside it, and a file added since the start is found.
 ///
-/// The directories are read when the first text is made, not before:
-/// most programs never make an object from text. A program without
+/// The directories are read, and the engine's types described, when the
+/// first text is made, not before: most programs never make an object
+/// from text. A program without
 /// the feature has no compiler, and the call is an error its script can
 /// catch.
 #[cfg(feature = "dev-qml")]
 pub fn install_text_compiler(engine: &Engine, dirs: &[&Path]) {
-    crate::texts::DiskTexts::new(dirs, EngineOracle::from_engine(engine)).install_over(engine);
+    crate::texts::DiskTexts::of_engine(dirs, engine).install_over(engine);
 }
 
 /// A compiler for a host that installs it itself
