@@ -10,7 +10,7 @@
 
 use std::ops::Range;
 
-use ljos_text::rich::{CELL, TableCell};
+use ljos_text::rich::{CELL, CELL_PARAGRAPH, TableCell};
 use ljos_text::{byte_to_utf16, utf16_to_byte};
 
 use super::base::State;
@@ -131,7 +131,10 @@ pub(crate) fn copied_text(s: &mut State) -> String {
             out.push('\n');
             out
         }
-        (None, Some(_)) => s.model.selected_text().replace(CELL, "\n"),
+        (None, Some(_)) => s
+            .model
+            .selected_text()
+            .replace([CELL, CELL_PARAGRAPH], "\n"),
         _ => s.model.selected_text().to_owned(),
     }
 }

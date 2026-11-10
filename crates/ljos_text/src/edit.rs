@@ -137,9 +137,9 @@ pub struct EditTable {
     pub background: Option<std::sync::Arc<str>>,
     /// The colour behind each cell of the row, inside its padding.
     pub cells: Vec<Option<std::sync::Arc<str>>>,
-    /// Which cells of the row break their lines only at their line breaks;
-    /// one missing wraps.
-    pub no_wrap: Vec<bool>,
+    /// Which paragraphs of each cell of the row break their lines only at
+    /// their line breaks; one missing wraps.
+    pub no_wrap: Vec<Vec<bool>>,
 }
 
 /// A table of an [`EditLayout`]: where its rows and columns are, for a

@@ -204,6 +204,40 @@ pub(crate) struct CellBuf {
     pub(crate) background: Option<Arc<str>>,
     /// Where the lines of it that do not wrap start, in its text, in order.
     pub(crate) no_wrap: Vec<usize>,
+    /// Where in its text the line feeds are that end a paragraph of it, in
+    /// order ([`super::Cell::paragraphs`]).
+    pub(crate) paragraphs: Vec<usize>,
+    /// What the paragraph that text goes to holds so far.
+    pub(crate) paragraph: CellParagraph,
+}
+
+/// The last paragraph of a cell as read. Measured on Qt 6.11
+/// (hal-c2/ljos-ui#283): a block that starts in a paragraph that only a
+/// tag opened takes that paragraph, in any other it starts one; a kept line
+/// feed always starts one, but right after a block's end, where it ends
+/// nothing; what comes after a block's end, but a div's, starts one; and a cell's last paragraph is none if a kept line feed
+/// opened it and nothing came after.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CellParagraph {
+    /// Nothing, and the start of the cell or of a block opened it.
+    #[default]
+    Opened,
+    /// Nothing, and a kept line feed opened it.
+    Fed,
+    /// Something landed in it.
+    Filled,
+    /// A block in it ended after something landed.
+    Ended,
+    /// As [`Self::Ended`], and a kept line feed came right after the end.
+    EndFed,
+}
+
+impl CellBuf {
+    /// End the paragraph text goes to and start another.
+    pub(crate) fn break_paragraph(&mut self) {
+        self.paragraphs.push(self.buf.text.len());
+        self.buf.push("\n", &super::Inline::default());
+    }
 }
 
 /// The text of a table and where its cells are in it: cells of a row are
@@ -222,12 +256,18 @@ pub(crate) fn table_block(
             buf.text.push('\n');
         }
         columns = columns.max(row_cells.len());
-        for (column, cell) in row_cells.into_iter().enumerate() {
+        for (column, mut cell) in row_cells.into_iter().enumerate() {
             if column > 0 {
                 buf.text.push('\t');
             }
             let start = buf.text.len();
+            if cell.paragraph == CellParagraph::Fed
+                && let Some(at) = cell.paragraphs.pop()
+            {
+                cell.buf.truncate(at);
+            }
             let end = start + cell.buf.text.len();
+            let paragraphs = cell.paragraphs.iter().map(|&at| start + at).collect();
             let no_wrap = cell
                 .no_wrap
                 .iter()
@@ -246,6 +286,7 @@ pub(crate) fn table_block(
                 header: cell.header,
                 background: cell.background,
                 no_wrap,
+                paragraphs,
             });
         }
     }

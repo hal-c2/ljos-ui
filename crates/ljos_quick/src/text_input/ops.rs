@@ -256,6 +256,12 @@ pub(crate) fn empty_cells(engine: &Engine, obj: ObjectId, kind: EditKind) -> Opt
     Some(removed)
 }
 
+/// Backspace or Delete at a table's edge, which does nothing: whether it
+/// was one ([`super::rich::at_table_edge`]).
+pub(crate) fn at_table_edge(engine: &Engine, obj: ObjectId, forward: bool) -> bool {
+    ready(engine, obj).is_some_and(|st| super::rich::at_table_edge(&mut st.borrow_mut(), forward))
+}
+
 /// Backspace at the start of a list item: the item leaves its list, or
 /// then its indent goes, before the paragraph joins the one before.
 pub(crate) fn outdent(engine: &Engine, obj: ObjectId) -> bool {
