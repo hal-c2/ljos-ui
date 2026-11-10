@@ -23,6 +23,7 @@ Feature: White space in rich text
   cell.
   The HTML a TextEdit writes says `white-space: pre-wrap` for its
   paragraphs, so its spaces read back as they were.
+  White space between blocks is at the end of the block before it.
 
   Background:
     Given the QML:
@@ -30,14 +31,14 @@ Feature: White space in rich text
       import QtQuick
       Item {
         id: root; objectName: "root"; width: 300; height: 200
-        property string html
-        property string out
+        property string html; property string out
         onHtmlChanged: edit.text = html.split("~").join("\n")
         function show(e) {
           const t = e.getText(0, e.length)
           out = "[" + t.split("\u2028").join("/").split("\u2029").join("#").split("\u00a0").join("_").replace(/[\ufdd0\ufdd1]/g, "=") + "]"
         }
         function plain() { show(edit) }
+        function spaceBold() { const h = edit.getFormattedText(1, 2).replace(/[\s\S]*<body[^>]*>/, ""); out = /font-weight:\s*(bold|[6-9]00)/.test(h) ? "bold" : "not bold" }
         function lines() { out = edit.lineCount > 1 ? "wraps" : "one line" }
         function anywhere() { edit.wrapMode = TextEdit.Wrap; lines() }
         function measure(e) { out = e.contentWidth > e.width ? "wider than the item" : "within the item" }
@@ -277,6 +278,82 @@ Feature: White space in rich text
         | A Text wraps a paragraph after a kept line feed in a nowrap cell        | <table><tr><td style='white-space:nowrap'><span style='white-space:pre-wrap'>~</span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>            | within the item     |
         | A Text wraps one after kept spaces                                      | <table><tr><td style='white-space:nowrap'><span style='white-space:pre-wrap'>  </span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>           | within the item     |
         | A Text wraps one after a kept line feed in a nowrap div                 | <table><tr><td><div style='white-space:nowrap'><span style='white-space:pre-wrap'>~</span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></div></td></tr></table> | within the item     |
+
+  Rule: White space between blocks goes to the block before
+
+    White space after a block ends, before the next one has text, is at
+    the end of the block before: one space where spaces collapse, unless
+    that block ends in a space or a line break already, and as it was
+    written where they are kept. It has the format of where it was
+    written. One character of it, right after the end tag of a block that
+    was open, is nothing when a tag follows it. A comment eats the white
+    space after it where spaces collapse. Between the cells of a table,
+    and after a table, it is nothing.
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "plain" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | case                                                     | html                                                                   | text       |
+        | Two spaces between paragraphs end the first with one     | <p>a</p>  <p>b</p>                                                     | [a #b]     |
+        | So do a line feed and spaces                             | <p>a</p>~  <p>b</p>                                                    | [a #b]     |
+        | One space after a block's end tag is nothing             | <p>a</p> <p>b</p>                                                      | [a#b]      |
+        | So is one line feed                                      | <p>a</p>~<p>b</p>                                                      | [a#b]      |
+        | One line feed at the end is a space                      | <p>a</p>~                                                              | [a ]       |
+        | An end tag that closes nothing is no tag                 | <p>a</p>~</b>                                                          | [a ]       |
+        | After an inline tag one is a space                       | <p>a</p><b></b>~<p>b</p>                                               | [a #b]     |
+        | Before an inline tag one is nothing                      | <p>a</p>~<b>b</b>                                                      | [a#b]      |
+        | Not after a block that ends in a space                   | <p>a </p>  <p>b</p>                                                    | [a #b]     |
+        | Nor after one that ends in a line break                  | <p>a<br></p>  <p>b</p>                                                 | [a/#b]     |
+        | After a list it goes to its last item                    | <ul><li>a</li></ul>  <p>b</p>                                          | [a #b]     |
+        | In a list, to the item before                            | <ul><li>a<ul><li>b</li></ul>  </li></ul>                               | [a#b ]     |
+        | At the end of the document too                           | <p>a</p>~<p>b</p>~~                                                    | [a#b ]     |
+        | Before an empty paragraph too                            | <p>a</p>  <p></p>                                                      | [a #]      |
+        | Text after a block is a block of its own                 | <p>a</p>  b                                                            | [a#b]      |
+        | After a block's start tag it is nothing                  | <p>x</p><div>  <p>a</p></div>                                          | [x#a]      |
+        | A comment eats the white space after it                  | <p>a<!-- -->  b</p>                                                    | [ab]       |
+        | White space before a comment counts for the tag after it | <p>a</p> <!-- x --><p>b</p>                                            | [a#b]      |
+        | No-break spaces are kept as they are                     | <p>a</p>&nbsp;&nbsp;<p>b</p>                                           | [a__#b]    |
+        | One no-break space after a block's end tag is nothing    | <p>a</p>&nbsp;<p>b</p>                                                 | [a#b]      |
+        | Before a table it goes to the paragraph                  | <p>a</p>  <table><tr><td>x</td></tr></table>                           | [a =x=]    |
+        | After a table it is nothing                              | <table><tr><td>x</td></tr></table>  b                                  | [=x=b]     |
+        | Between cells it is nothing                              | <table><tr><td>a</td>  <td>b</td></tr>  </table>                       | [=a=b=]    |
+        | pre keeps it as written                                  | <div style='white-space:pre'><p>a</p>  <p>b</p></div>                  | [a  #b]    |
+        | A line feed in pre starts a paragraph                    | <div style='white-space:pre'><p>a</p>~~~<p>b</p></div>                 | [a####b]   |
+        | One line feed after a block's end tag is nothing in pre  | <div style='white-space:pre'><p>a</p>~<p>b</p></div>                   | [a#b]      |
+        | pre-wrap leaves out line feeds before an end tag         | <div style='white-space:pre-wrap'><p>a</p>~~</div><p>b</p>             | [a#b]      |
+        | and keeps the spaces there                               | <div style='white-space:pre-wrap'><p>a</p>  </div>                     | [a  ]      |
+        | After the start tag of a pre div it is a block           | <div style='white-space:pre'>  <p>a</p></div>                          | [  #a]     |
+        | pre-line collapses it                                    | <div style='white-space:pre-line'><p>a</p>  <p>b</p></div>             | [a #b]     |
+        | nowrap makes it a space that does not break              | <div style='white-space:nowrap'><p>a</p>  <p>b</p></div>               | [a_#b]     |
+
+    Scenario Outline: The space between blocks has the format it was written in: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "spaceBold" of "root" is called
+      Then the property "out" of "root" is "<bold>"
+
+      Examples:
+        | case                         | html                                                     | bold     |
+        | in a bold div                | <div style='font-weight:bold'><p>a</p>  <p>b</p></div> | bold     |
+        | after bold text, not bold    | <p><b>a</b></p>  <p>b</p>                                | not bold |
+
+    Scenario Outline: With the editor's mark: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "plain" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | case                                        | html                                                                              | text      |
+        | It is kept as written, without line feeds   | <meta name='qrichtext' content='1'><p>a</p>~  <p>b</p>                            | [a  #b]   |
+        | One character after a block's end tag too   | <meta name='qrichtext' content='1'><p>a</p> <p>b</p>                              | [a#b]     |
+        | Before an end tag too                       | <meta name='qrichtext' content='1'><p>a</p>  </body>                              | [a  ]     |
+        | After the start tag of a div it is a block  | <meta name='qrichtext' content='1'><div>  <p>a</p></div>                          | [  #a]    |
+        | After the start tag of a list it is nothing | <meta name='qrichtext' content='1'><ul>  <li>a</li></ul>                          | [a]       |
+        | Between cells it goes to the cell before    | <meta name='qrichtext' content='1'><table><tr><td>a</td>  <td>b</td></tr></table> | [=a  =b=] |
+        | After a table it goes to the block after    | <meta name='qrichtext' content='1'><table><tr><td>a</td></tr></table>  <p>b</p>   | [=a=  #b] |
+        | A comment is no text and eats nothing       | <meta name='qrichtext' content='1'><p>a</p><!-- -->  <p>b</p>                     | [a  #b]   |
 
   Rule: The HTML a TextEdit writes reads back with its spaces
 
