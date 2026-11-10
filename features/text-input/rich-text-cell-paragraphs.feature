@@ -12,18 +12,20 @@
 
 @qt-parity @api-QtQuick.TextEdit.textFormat
 Feature: Paragraphs in the cells of a rich TextEdit
-  A cell of a table holds paragraphs of its own. A block that starts after
-  text in the cell starts one, and so does text after a block's end, but
-  not after a div's: the text goes on in the div's paragraph. A block that
-  starts a cell, or follows an empty one, starts none. A line feed that is
-  kept starts one. Between two paragraphs of a cell the plain text has
-  U+2029, as between paragraphs outside a table. Return in a cell adds a
-  paragraph to it, Backspace at the start of one joins it to the one
-  before and Delete at the end of one joins the next to it; the joined
-  paragraph keeps the format of the first. Every paragraph of a cell is
-  written back as a `<p>` of its own, and each wraps as it says. What is
-  copied has a line feed between the paragraphs of a cell and at a line
-  break.
+  A cell of a table holds paragraphs of its own. A block that starts
+  after text in the cell starts one, and so does text after a block's
+  end, but not after a div's: the text goes on in the div's paragraph. A
+  block that starts a cell, or follows an empty one, starts none. A line
+  feed that is kept starts one. Between two paragraphs of a cell the
+  plain text has U+2029, as between paragraphs outside a table. Return
+  in a cell adds a paragraph to it, Backspace at the start of one joins
+  it to the one before and Delete at the end of one joins the next to
+  it; the joined paragraph keeps the format of the first. Deleting a
+  word never takes the cursor out of its table: from one cell into
+  another it empties both, and from outside into a table it takes the
+  whole table. Every paragraph of a cell is written back as a `<p>` of
+  its own, and each wraps as it says. What is copied has a line feed
+  between the paragraphs of a cell and at a line break.
 
   Background:
     Given the QML:
@@ -193,6 +195,25 @@ Feature: Paragraphs in the cells of a rich TextEdit
       And the user presses "Backspace"
       And the method "wide" of "root" is called
       Then the property "out" of "root" is "wider than the item"
+
+  Rule: Deleting a word never leaves a cell's table, but empties the cells it reaches
+
+    Scenario Outline: <keys> at <at> of <doc> gives <text>
+      When the property "html" of "root" is set to "<doc>"
+      And the method "typing" of "root" is called with <at>
+      And the user presses "<keys>"
+      And the method "typed" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | doc                                                     | at | keys           | text           |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 1  | Ctrl+Backspace | 1 [=ab cd=ef=] |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 9  | Ctrl+Delete    | 9 [=ab cd=ef=] |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 4  | Ctrl+Backspace | 1 [=cd=ef=]    |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 6  | Ctrl+Delete    | 2 [===]        |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 7  | Ctrl+Backspace | 1 [===]        |
+        | [table][tr][td]ab[/td][/tr][tr][td]cd[/td][/tr][/table] | 4  | Ctrl+Backspace | 1 [===]        |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table]            | 2  | Ctrl+Delete    | 2 [xy]         |
 
   Rule: What is copied has a line feed between the paragraphs of a cell
 
