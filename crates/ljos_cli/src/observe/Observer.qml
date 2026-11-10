@@ -2348,6 +2348,14 @@ ApplicationWindow {
                                                     item.selectAll()
                                                 })
                                             }
+                                            // The Loader's focus, not the field's:
+                                            // a Loader is a focus scope, so the
+                                            // field keeps its focus inside it
+                                            // when another value's field takes
+                                            // focus. Not active focus either,
+                                            // which the window losing activation
+                                            // takes.
+                                            onFocusChanged: if (!focus && prop.typing) prop.done()
                                             sourceComponent: TextField {
                                                 id: field
                                                 topPadding: 4
@@ -2369,10 +2377,6 @@ ApplicationWindow {
                                                 text: prop.modelData.expression !== undefined
                                                     ? "=" + prop.modelData.expression
                                                     : objects.valueText(prop.modelData.value)
-                                                // Its focus, not its active focus,
-                                                // which the window losing activation
-                                                // takes.
-                                                onFocusChanged: if (!focus) prop.done()
                                                 onAccepted: {
                                                     var name = prop.modelData.name
                                                     var typed = text
