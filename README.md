@@ -1,8 +1,5 @@
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/ljos-dark.svg">
-    <img src="docs/brand/ljos.svg" alt="Ljós" width="252">
-  </picture>
+  <img src="docs/brand/ljos.svg" alt="Ljós" width="252">
 </p>
 
 # Ljós UI
