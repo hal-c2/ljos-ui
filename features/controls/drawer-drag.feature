@@ -19,13 +19,15 @@ Feature: Dragging a drawer in and out
       import QtQuick.Controls.Basic
       Item {
         id: root; objectName: "root"; width: 400; height: 300; property string log: ""; property string seen: ""
+        property string asShown: ""
         Button {
           x: 0; y: 100; width: 200; height: 100
           onClicked: root.log += "clicked "; onPressedChanged: root.log += "pressed" + pressed + " "
         }
         Drawer {
           id: d; objectName: "d"; width: 120; height: root.height
-          onAboutToShow: root.log += "aboutToShow "; onOpened: root.log += "opened "
+          onAboutToShow: { root.log += "aboutToShow "; root.asShown += visible + " " + position + " " }
+          onOpened: root.log += "opened "
           onAboutToHide: root.log += "aboutToHide "; onClosed: root.log += "closed "
         }
         Drawer { id: r; objectName: "r"; edge: Qt.RightEdge; width: 120; height: root.height }
@@ -112,3 +114,13 @@ Feature: Dragging a drawer in and out
     And 1 second passes
     Then the property "position" of "d" is 1
     And the property "log" of "root" is "opened "
+
+  @api-QtQuick.Controls.Popup.aboutToShow
+  Scenario: A drawer that is opened is visible as it says that it is about to show
+    When the method "open" of "d" is called
+    Then the property "asShown" of "root" is "true 0 "
+
+  @api-QtQuick.Controls.Popup.aboutToShow
+  Scenario: A drawer that is dragged in is visible as it says that it is about to show
+    When the user drags from 4, 150 to 100, 150
+    Then the property "asShown" of "root" is "true 0 "
