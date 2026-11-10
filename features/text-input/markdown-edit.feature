@@ -19,6 +19,7 @@ Feature: Editing Markdown in a TextEdit
         id: root; objectName: "root"; width: 300; height: 200
         property string out
         function markdown() { out = edit.text.split("\n").join("|") }
+        function read(t) { edit.text = t.split("~").join("\n"); markdown() }
         function plain() { out = edit.getText(0, edit.length).split("\u2029").join("|") }
         function fragment() { out = edit.getFormattedText(0, 6).split("\n").join("|") }
         function bolden() {
@@ -70,3 +71,30 @@ Feature: Editing Markdown in a TextEdit
     And the method "undo" of "edit" is called
     And the method "markdown" of "root" is called
     Then the property "out" of "root" is "a **bold** c||second *it*||"
+
+  Scenario Outline: A code block of "<text>" is written back as "<out>"
+    When the method "read" of "root" is called with "<text>"
+    Then the property "out" of "root" is "<out>"
+
+    Examples:
+      | text             | out                         |
+      | a~~    x y~      | a\|\|    x y\|\|            |
+      | a~~```~x y~```~  | a\|\|```\|x y\|```\|\|      |
+      | a~~    x~    y~  | a\|\|    x\|    y\|\|       |
+      | a~~    x~~    y~ | a\|\|    x\|    \|    y\|\| |
+      | a~~```~x~~y~```~ | a\|\|```\|x\|\|y\|```\|\|   |
+      | ```js~x~```~     | ```js\|x\|```\|\|           |
+      | ````~x~````~     | ```\|x\|```\|\|             |
+      | a~~    x~b~      | a\|\|    x\|\|b\|\|         |
+      | ```~x~```~b~ | ```\|x\|```\|b\|\| |
+      | ```js~x~```~~```py~y~```~ | ```js\|x\|y\|```\|\| |
+      | a~~    x~~```~y~```~ | a\|\|    x\|```\|y\|```\|\| |
+      | ```~x~```~~    y~ | ```\|x\|```\|    y\|\| |
+      | ```js  rest~x~```~ | ```js\|x\|```\|\| |
+
+  Scenario: Typing in an indented code block keeps it indented
+    When the method "read" of "root" is called with "a~~    x y~"
+    And the property "cursorPosition" of "edit" is set to 3
+    And the user types "z"
+    And the method "markdown" of "root" is called
+    Then the property "out" of "root" is "a||    xz y||"
