@@ -73,6 +73,8 @@ id, with a reference a click takes. The accessibility tree is not changed by it.
   A change that does not compile is now held back and the files are read again after a second
   quiet time. Only an error then is told, so the first part of such a save is no longer told
   (`a_file_closed_after_its_first_part_is_built_once_the_rest_is_written`).
+  Since then `corpus/standins/hangman` stands in for the module's native types, and its page
+  runs (docs/quick3d-corpus.md).
 
 The windows now take the root's size, as `qml6` opens them: clocks 640x320, hangman 320x480.
 

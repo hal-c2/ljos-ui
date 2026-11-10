@@ -1,0 +1,5 @@
+module examples.Hangman
+Hangman 1.0 Hangman.qml
+Store 1.0 Store.qml
+Product 1.0 Product.qml
+Transaction 1.0 Transaction.qml
