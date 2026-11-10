@@ -1265,6 +1265,14 @@ mod tests {
     }
 
     #[test]
+    fn overwrite_keeps_the_paragraph_separator_of_a_cell() {
+        let mut m = model("one\u{2029}two");
+        m.move_to(2, false);
+        m.overwrite("ab");
+        assert_eq!((m.text(), m.cursor()), ("onab\u{2029}two", 4));
+    }
+
+    #[test]
     fn paragraphs_end_at_line_breaks() {
         let m = model("ab\ncde\n");
         assert_eq!((m.paragraph_start(4), m.paragraph_end(4)), (3, 6));
