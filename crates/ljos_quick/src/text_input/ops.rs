@@ -284,11 +284,13 @@ pub(crate) fn delete_word_over_table_edge(
             empty_cells_of(engine, obj, &st, EditKind::Other);
         }
         Some(OverEdge::Span(anchor, cursor)) => {
-            // The line feed before the table is the paragraph left before
-            // the one after it: what goes is what follows that line feed,
-            // read from the span's end whichever way the word was taken.
+            // The document reads the edit off the change in text, where the
+            // line feeds around the table look alike. Read from the span's
+            // start, whichever way the word was taken, the edit starts at
+            // the line feed before the table, so the paragraph after the
+            // table never joins its last row.
             let how = How {
-                start: Some(anchor.max(cursor)),
+                start: Some(anchor.min(cursor)),
                 ..How::user(EditKind::Other)
             };
             edit(engine, obj, how, |m| {
