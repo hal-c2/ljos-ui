@@ -1,10 +1,10 @@
 //! A Wayland client of the compositor the applications run on: a virtual
-//! pointer that clicks them, and screencopy that sees each frame the
-//! compositor shows of them.
+//! pointer that clicks them, a virtual keyboard that types into them, and
+//! screencopy that sees each frame the compositor shows of them.
 //!
-//! Both are wlroots protocols, so sway offers them and an application does
-//! not know they are there. A headless sway's seat has no pointer of its
-//! own; the virtual pointer gives it one.
+//! sway offers all three, and an application does not know they are
+//! there. A headless sway's seat has no pointer or keyboard of its own;
+//! the virtual ones give it them.
 
 use std::{
     fs::OpenOptions,
@@ -22,6 +22,10 @@ use wayland_client::{
     Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum,
     globals::{GlobalListContents, registry_queue_init},
     protocol::{wl_buffer, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool},
+};
+use wayland_protocols_misc::zwp_virtual_keyboard_v1::client::{
+    zwp_virtual_keyboard_manager_v1::ZwpVirtualKeyboardManagerV1,
+    zwp_virtual_keyboard_v1::ZwpVirtualKeyboardV1,
 };
 use wayland_protocols_wlr::{
     screencopy::v1::client::{
@@ -86,6 +90,8 @@ wayland_client::delegate_noop!(State: wl_shm_pool::WlShmPool);
 wayland_client::delegate_noop!(State: ZwlrVirtualPointerManagerV1);
 wayland_client::delegate_noop!(State: ZwlrVirtualPointerV1);
 wayland_client::delegate_noop!(State: ZwlrScreencopyManagerV1);
+wayland_client::delegate_noop!(State: ZwpVirtualKeyboardManagerV1);
+wayland_client::delegate_noop!(State: ZwpVirtualKeyboardV1);
 
 impl Dispatch<ZwlrScreencopyFrameV1, ()> for State {
     fn event(
@@ -305,6 +311,125 @@ impl Pointer {
         self.mark();
         pump(&mut self.queue, &mut self.state, Duration::ZERO)
     }
+}
+
+/// The keymap the virtual keyboard types with: the compositor compiles it
+/// from the system's XKB data, as it would a plugged-in US keyboard's, so
+/// the keys below are evdev's numbers for a US layout.
+const KEYMAP: &str = "xkb_keymap {
+  xkb_keycodes { include \"evdev+aliases(qwerty)\" };
+  xkb_types { include \"complete\" };
+  xkb_compat { include \"complete\" };
+  xkb_symbols { include \"pc+us+inet(evdev)\" };
+};
+";
+
+/// The evdev key that types `c` on a US layout without a modifier.
+#[must_use]
+pub fn key_of(c: char) -> Option<u32> {
+    const ROWS: [(&str, u32); 3] = [("qwertyuiop", 16), ("asdfghjkl", 30), ("zxcvbnm", 44)];
+    match c {
+        ' ' => Some(57),
+        '\u{8}' => Some(14),
+        _ => ROWS.iter().find_map(|(row, first)| {
+            row.find(c)
+                .and_then(|i| u32::try_from(i).ok())
+                .map(|i| first + i)
+        }),
+    }
+}
+
+/// A keyboard the compositor treats as one plugged into its seat: what it
+/// types goes to the window with the keyboard focus.
+#[derive(Debug)]
+pub struct Keyboard {
+    queue: EventQueue<State>,
+    state: State,
+    keyboard: ZwpVirtualKeyboardV1,
+    started: Instant,
+    sent: Vec<u64>,
+}
+
+/// How long a client takes to hear of the new keyboard's keymap, past the
+/// compositor's round trip: a key sent before it is read with the old one.
+const KEYMAP_ARRIVES: Duration = Duration::from_millis(50);
+
+impl Keyboard {
+    /// # Errors
+    /// The compositor cannot be reached, has no virtual keyboards, or the
+    /// keymap cannot be handed to it.
+    pub fn new(display: &Path) -> Result<Self, Error> {
+        let conn = connect(display)?;
+        let (globals, mut queue) = registry_queue_init::<State>(&conn).map_err(protocol)?;
+        let qh = queue.handle();
+        let seat: wl_seat::WlSeat = globals
+            .bind(&qh, 1..=7, ())
+            .map_err(|_| Error::Missing("a seat"))?;
+        let manager: ZwpVirtualKeyboardManagerV1 = globals
+            .bind(&qh, 1..=1, ())
+            .map_err(|_| Error::Missing("zwp_virtual_keyboard_manager_v1"))?;
+        let keyboard = manager.create_virtual_keyboard(&seat, &qh, ());
+        let keymap = keymap_file()?;
+        let size = u32::try_from(KEYMAP.len() + 1).map_err(protocol)?;
+        // 1 is WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1.
+        keyboard.keymap(1, keymap.as_fd(), size);
+        keyboard.modifiers(0, 0, 0, 0);
+        let mut state = State::default();
+        queue.roundtrip(&mut state).map_err(protocol)?;
+        thread::sleep(KEYMAP_ARRIVES);
+        Ok(Self {
+            queue,
+            state,
+            keyboard,
+            started: Instant::now(),
+            sent: Vec::new(),
+        })
+    }
+
+    /// When each key was pressed, in nanoseconds of the clock screencopy
+    /// times frames by.
+    #[must_use]
+    pub fn sent(&self) -> &[u64] {
+        &self.sent
+    }
+
+    fn time(&self) -> u32 {
+        #[allow(clippy::cast_possible_truncation)]
+        let ms = self.started.elapsed().as_millis() as u32;
+        ms
+    }
+
+    /// Presses and lets go the evdev key `key`, held for `hold`: shorter
+    /// than the compositor's repeat delay, so it types once.
+    ///
+    /// # Errors
+    /// The compositor went away.
+    pub fn tap(&mut self, key: u32, hold: Duration) -> Result<(), Error> {
+        // 1 and 0 are wl_keyboard's pressed and released.
+        self.keyboard.key(self.time(), key, 1);
+        self.queue.flush().map_err(protocol)?;
+        self.sent.push(monotonic_ns());
+        thread::sleep(hold);
+        self.keyboard.key(self.time(), key, 0);
+        self.queue.flush().map_err(protocol)?;
+        pump(&mut self.queue, &mut self.state, Duration::ZERO)
+    }
+}
+
+/// [`KEYMAP`] in a sealed memory file, with the NUL the protocol counts.
+fn keymap_file() -> Result<std::os::fd::OwnedFd, Error> {
+    use std::{io::Write, os::fd::FromRawFd};
+    // SAFETY: a NUL-terminated name and flags memfd_create knows.
+    let fd = unsafe { libc::memfd_create(c"ljos-bench-keymap".as_ptr(), libc::MFD_CLOEXEC) };
+    if fd < 0 {
+        return Err(protocol(std::io::Error::last_os_error()));
+    }
+    // SAFETY: memfd_create returned a descriptor this frame alone owns.
+    let fd = unsafe { std::os::fd::OwnedFd::from_raw_fd(fd) };
+    let mut file = std::fs::File::from(fd);
+    file.write_all(KEYMAP.as_bytes()).map_err(protocol)?;
+    file.write_all(&[0]).map_err(protocol)?;
+    Ok(file.into())
 }
 
 /// `CLOCK_MONOTONIC` in nanoseconds: the clock wlroots stamps a

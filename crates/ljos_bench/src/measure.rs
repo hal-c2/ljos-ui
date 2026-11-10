@@ -23,7 +23,7 @@ use crate::{
     procfs,
     profile::Profile,
     sway::{Mapped, Sway},
-    wayland::{self, FrameCounter, Pointer},
+    wayland::{self, FrameCounter, Keyboard, Pointer},
 };
 
 mod frames;
@@ -47,7 +47,7 @@ pub enum Error {
 /// How an application is started on one runtime.
 #[derive(Clone, Debug)]
 pub struct Runtime {
-    /// `ljos` or `qt`.
+    /// `ljos`, `qt`, or a toolkit an app gives a command for.
     pub name: String,
     pub program: PathBuf,
     pub args: Vec<OsString>,
@@ -104,6 +104,36 @@ pub enum Gesture {
     Drag,
     /// The wheel turned down and up again in the middle of the window.
     Scroll,
+    /// Words typed into what has the keyboard focus, a key at a time at a
+    /// fast typist's pace; with click points, the first is clicked first,
+    /// to give a field the focus.
+    Type,
+    /// The window made smaller and back again by the compositor, a step
+    /// a frame, as a person dragging its corner would.
+    Resize,
+}
+
+impl Gesture {
+    /// The name `--gesture` takes and the report writes.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Click => "click",
+            Self::Drag => "drag",
+            Self::Scroll => "scroll",
+            Self::Type => "type",
+            Self::Resize => "resize",
+        }
+    }
+
+    /// Every gesture, in the order `--help` lists them.
+    pub const ALL: [Self; 5] = [
+        Self::Click,
+        Self::Drag,
+        Self::Scroll,
+        Self::Type,
+        Self::Resize,
+    ];
 }
 
 /// How a run ended.
@@ -382,6 +412,8 @@ fn span(
                 Gesture::Click => click_grid(display, sway, rect, points, time, w),
                 Gesture::Drag => drag(display, sway, rect, time, w),
                 Gesture::Scroll => scroll(display, sway, rect, time, w),
+                Gesture::Type => type_words(display, sway, rect, points, time, w),
+                Gesture::Resize => resize(sway, pid, rect, time, w),
             };
             clicks = Some(n);
             inputs = sent;
@@ -456,9 +488,9 @@ fn wait_until_still(
     };
     let (x, y, width, height) = rect;
     let (px, py) = match (gesture, points.first()) {
-        (Gesture::Click, Some(&point)) => at(rect, point),
-        (Gesture::Click, None) => (x + width / 10, y + height / 10),
-        (Gesture::Drag | Gesture::Scroll, _) => (x + width / 2, y + height / 2),
+        (Gesture::Click | Gesture::Type, Some(&point)) => at(rect, point),
+        (Gesture::Click | Gesture::Type, None) => (x + width / 10, y + height / 10),
+        (Gesture::Drag | Gesture::Scroll | Gesture::Resize, _) => (x + width / 2, y + height / 2),
     };
     let (px, py, extent) = on_layout(sway, rect, px, py)?;
     let start = Instant::now();
@@ -632,6 +664,104 @@ fn scroll(
         }
     }
     (notches, pointer.sent().to_vec())
+}
+
+/// What [`Gesture::Type`] types, over and over: lower-case words and
+/// spaces, which a US layout types without a modifier.
+const TYPED: &str = "the quick brown fox jumps over the lazy dog ";
+
+/// How often a key is pressed: 12.5 a second, a fast typist's pace.
+const KEY_EVERY: Duration = Duration::from_millis(80);
+
+/// Clicks the first of `points` (to give a field the focus), then types
+/// [`TYPED`] a key every [`KEY_EVERY`] over `time`.
+fn type_words(
+    display: &Path,
+    sway: &Sway,
+    rect: (i32, i32, i32, i32),
+    points: &[[f64; 2]],
+    time: Duration,
+    w: &mut Watch<'_>,
+) -> (u32, Vec<u64>) {
+    let start = Instant::now();
+    let mut sent = Vec::new();
+    let mut inputs = 0;
+    if let Some(&point) = points.first() {
+        let (px, py) = at(rect, point);
+        if let (Some((px, py, extent)), Ok(mut pointer)) =
+            (on_layout(sway, rect, px, py), Pointer::new(display))
+            && pointer.click(px, py, extent).is_ok()
+        {
+            inputs += 1;
+            sent.extend_from_slice(pointer.sent());
+        }
+    }
+    let Ok(mut keyboard) = Keyboard::new(display) else {
+        w.wait(time.saturating_sub(start.elapsed()));
+        return (inputs, sent);
+    };
+    let keys: Vec<u32> = TYPED.chars().filter_map(wayland::key_of).collect();
+    for key in keys.iter().cycle() {
+        let left = time.saturating_sub(start.elapsed());
+        if left.is_zero() || keyboard.tap(*key, Duration::from_millis(20)).is_err() {
+            break;
+        }
+        inputs += 1;
+        let next = KEY_EVERY.saturating_sub(Duration::from_millis(20));
+        if !w.wait(next.min(time.saturating_sub(start.elapsed()))) {
+            break;
+        }
+    }
+    sent.extend_from_slice(keyboard.sent());
+    (inputs, sent)
+}
+
+/// How often [`Gesture::Resize`] asks for a new size: once a frame at 30
+/// frames a second, about as often as a compositor passes a dragged
+/// corner on.
+const RESIZE_EVERY: Duration = Duration::from_millis(33);
+
+/// Makes the window of `pid` smaller and back, once every two seconds,
+/// down to 70 % of each side, a step every [`RESIZE_EVERY`] over `time`;
+/// then gives it its size back. It only shrinks, so the window stays
+/// inside the region whose frames are counted.
+fn resize(
+    sway: &Sway,
+    pid: u32,
+    (_, _, width, height): (i32, i32, i32, i32),
+    time: Duration,
+    w: &mut Watch<'_>,
+) -> (u32, Vec<u64>) {
+    let set = |w: i32, h: i32| {
+        sway.command(&format!(
+            "[pid={pid}] resize set width {w} px height {h} px"
+        ))
+    };
+    let start = Instant::now();
+    let mut steps = 0;
+    let mut sent = Vec::new();
+    while start.elapsed() < time {
+        // A triangle wave from 1 down to 0 and back, over two seconds.
+        let t = (start.elapsed().as_secs_f64() / 2.0).fract();
+        let wave = (2.0 * t - 1.0).abs();
+        let scale = 0.7 + 0.3 * wave;
+        #[allow(clippy::cast_possible_truncation)]
+        let (sw, sh) = (
+            (f64::from(width) * scale).round() as i32,
+            (f64::from(height) * scale).round() as i32,
+        );
+        sent.push(wayland::monotonic_ns());
+        if set(sw, sh).is_err() {
+            sent.pop();
+            break;
+        }
+        steps += 1;
+        if !w.wait(RESIZE_EVERY) {
+            break;
+        }
+    }
+    let _ = set(width, height);
+    (steps, sent)
 }
 
 fn install(pid: u32) -> Install {

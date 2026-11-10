@@ -6,7 +6,7 @@ use std::fmt::Write as _;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Motion,
+    Gesture, Motion,
     measure::{MinMemory, Outcome, Run, Span},
     profile::Profile,
 };
@@ -294,6 +294,14 @@ const METRICS: &[Metric] = &[
         value: |r| sent_per_s(r.load.as_ref()?),
     },
     Metric {
+        title: "CPU per frame sent while idle (ms; animations)",
+        value: |r| cpu_per_frame(r.idle.as_ref()?),
+    },
+    Metric {
+        title: "CPU per frame sent while driven (ms)",
+        value: |r| cpu_per_frame(r.load.as_ref()?),
+    },
+    Metric {
         title: "Median frame interval while driven (ms)",
         value: |r| r.load.as_ref()?.frames.as_ref()?.p50_ms,
     },
@@ -328,6 +336,14 @@ const METRICS: &[Metric] = &[
 fn sent_per_s(span: &Span) -> Option<f64> {
     let sent = span.frames.as_ref()?.committed?;
     (span.seconds > 0.0).then(|| sent as f64 / span.seconds)
+}
+
+/// The CPU the whole application used over `span` for each frame it sent:
+/// what a frame costs, all threads together, when frames are what it does.
+#[allow(clippy::cast_precision_loss)]
+fn cpu_per_frame(span: &Span) -> Option<f64> {
+    let sent = span.frames.as_ref()?.committed?;
+    (sent > 0).then(|| span.cpu_ms / sent as f64)
 }
 
 fn cell(v: Option<f64>) -> String {
@@ -409,10 +425,26 @@ pub fn markdown(report: &Report) -> String {
             runtimes.push(&r.runtime);
         }
     }
-    // Qt last: every other runtime is a ratio to it.
+    // Qt last: every other runtime is a ratio to it. Without Qt, the
+    // first runtime that is not Ljós is: the same window written for
+    // another toolkit.
     runtimes.sort_by_key(|r| *r == "qt");
-    let others: Vec<&str> = runtimes.iter().copied().filter(|r| *r != "qt").collect();
-    let has_qt = runtimes.contains(&"qt");
+    let reference = if runtimes.contains(&"qt") {
+        Some("qt")
+    } else {
+        runtimes.iter().copied().find(|r| *r != "ljos")
+    };
+    if let Some(reference) = reference {
+        runtimes.retain(|r| *r != reference);
+        runtimes.push(reference);
+    }
+    let others: Vec<&str> = runtimes
+        .iter()
+        .copied()
+        .filter(|r| Some(*r) != reference)
+        .collect();
+    let has_reference = reference.is_some();
+    let reference = reference.unwrap_or("qt");
     for profile in &report.profiles {
         let runs: Vec<&Run> = report
             .runs
@@ -422,12 +454,15 @@ pub fn markdown(report: &Report) -> String {
         if runs.is_empty() {
             continue;
         }
-        let mut apps: Vec<&str> = Vec::new();
+        // A row per application, or per application and gesture where it
+        // was driven with more than one (a long run made in parts).
+        let mut apps: Vec<(&str, Gesture)> = Vec::new();
         for r in &runs {
-            if !apps.contains(&r.app.as_str()) {
-                apps.push(&r.app);
+            if !apps.contains(&(r.app.as_str(), r.gesture)) {
+                apps.push((&r.app, r.gesture));
             }
         }
+        let several = |app: &str| apps.iter().filter(|(a, _)| *a == app).count() > 1;
         let l = &profile.limits;
         let _ = writeln!(
             out,
@@ -450,23 +485,27 @@ pub fn markdown(report: &Report) -> String {
                 let _ = write!(head, " {rt} |");
                 rule.push_str("---:|");
             }
-            if has_qt {
+            if has_reference {
                 for rt in &others {
-                    let _ = write!(head, " {rt}/qt |");
+                    let _ = write!(head, " {rt}/{reference} |");
                     rule.push_str("---:|");
                 }
             }
             let _ = writeln!(out, "{head}\n{rule}");
             let mut logs: Vec<Vec<f64>> = vec![Vec::new(); others.len()];
-            for app in &apps {
+            for &(app, gesture) in &apps {
                 let of = |rt: &str| -> Vec<&Run> {
                     runs.iter()
                         .copied()
-                        .filter(|r| r.app == *app && r.runtime == rt)
+                        .filter(|r| r.app == app && r.gesture == gesture && r.runtime == rt)
                         .collect()
                 };
                 let value = |rt: &str| median(of(rt).iter().filter_map(|r| (metric.value)(r)));
-                let mut row = format!("| {app} |");
+                let mut row = if several(app) {
+                    format!("| {app} ({}) |", gesture.name())
+                } else {
+                    format!("| {app} |")
+                };
                 for rt in &runtimes {
                     let all = of(rt);
                     let text = if all.is_empty() {
@@ -483,11 +522,11 @@ pub fn markdown(report: &Report) -> String {
                     };
                     let _ = write!(row, " {text} |");
                 }
-                if has_qt {
-                    let qt = value("qt");
+                if has_reference {
+                    let base = value(reference);
                     for (i, rt) in others.iter().enumerate() {
                         let mine = value(rt);
-                        let ratio = mine.zip(qt).and_then(|(a, b)| (b > 0.0).then(|| a / b));
+                        let ratio = mine.zip(base).and_then(|(a, b)| (b > 0.0).then(|| a / b));
                         if let Some(x) = ratio.filter(|x| *x > 0.0) {
                             logs[i].push(x.ln());
                         }
@@ -500,7 +539,7 @@ pub fn markdown(report: &Report) -> String {
                 }
                 let _ = writeln!(out, "{row}");
             }
-            if has_qt && logs.iter().any(|l| !l.is_empty()) {
+            if has_reference && logs.iter().any(|l| !l.is_empty()) {
                 let mut row = String::from("| *geometric mean* |");
                 for _ in &runtimes {
                     row.push_str(" |");

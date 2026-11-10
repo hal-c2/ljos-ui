@@ -1569,6 +1569,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "egui_glow",
+ "glow",
  "glutin",
  "glutin-winit",
  "image",
@@ -1781,6 +1782,7 @@ dependencies = [
  "bytemuck",
  "ecolor",
  "emath",
+ "epaint_default_fonts",
  "font-types",
  "harfrust",
  "log",
@@ -1795,6 +1797,12 @@ dependencies = [
  "unicode-segmentation",
  "vello_cpu 0.2.0",
 ]
+
+[[package]]
+name = "epaint_default_fonts"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cfc1cc505827f4c23eedc297975a0fd038268d41293f389dd8ff3b574aefab19"
 
 [[package]]
 name = "equivalent"
@@ -4020,6 +4028,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "wayland-client",
+ "wayland-protocols-misc",
  "wayland-protocols-wlr",
  "zbus",
 ]
@@ -4214,6 +4223,7 @@ name = "ljos_egui"
 version = "0.0.0"
 dependencies = [
  "accesskit_consumer",
+ "eframe",
  "egui",
  "egui-wgpu",
  "egui_kittest",
@@ -8820,6 +8830,19 @@ dependencies = [
  "bitflags 2.13.2",
  "wayland-backend",
  "wayland-client",
+ "wayland-scanner",
+]
+
+[[package]]
+name = "wayland-protocols-misc"
+version = "0.3.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6e9567599ef23e09b8dad6e429e5738d4509dfc46b3b21f32841a304d16b29c8"
+dependencies = [
+ "bitflags 2.13.2",
+ "wayland-backend",
+ "wayland-client",
+ "wayland-protocols",
  "wayland-scanner",
 ]
 

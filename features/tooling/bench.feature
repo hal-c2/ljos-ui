@@ -14,10 +14,11 @@ Feature: Measuring an application under a limit
   `ljos bench` starts an application inside a limit on memory and CPU and
   reports what it used as JSON: its peak and settled memory from the
   limit's own accounting, the CPU it took, and whether the kernel killed it
-  for want of memory. Under load it is clicked, dragged or scrolled, as
-  asked. On a compositor it times the first frame shown and the first
+  for want of memory. Under load it is clicked, dragged, scrolled, typed
+  into or resized, as asked. On a compositor it times the first frame shown and the first
   frame drawn in answer to the compositor once the window is up. It never measures an application that is not inside the limit it
-  asked for.
+  asked for. The same application written for another toolkit is measured
+  beside it the same way, and a report can be compared with an earlier one.
 
   Background:
     Given the file "Main.qml":
@@ -90,6 +91,8 @@ Feature: Measuring an application under a limit
         | click   |
         | drag    |
         | scroll  |
+        | type    |
+        | resize  |
 
     Scenario: The limit is asked for in the scope's own settings
       When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --memory-max 64M --cpus 4 --cpu-list 0-3 --cpu-factor 20 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
@@ -200,3 +203,62 @@ Feature: Measuring an application under a limit
       When the author runs "ljos bench --check-motion"
       Then the command exits with status 2
       And the command's output mentions "reduced motion is on"
+
+  Rule: The same application written for another toolkit is measured beside it
+
+    # A manifest's application may give a command for another runtime: the
+    # same window built with another toolkit, measured under the same limit
+    # and driven by the same input as `ljos run` and `qml6`.
+    Scenario: A runtime is the command an application gives for it
+      Given the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "commands": {"plain": ["./app.sh"]}}]}
+        """
+      When the author runs "ljos bench --manifest apps.json --runtime plain --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/app" equal to "main"
+      And the JSON file "out/report.json" has "/runs/0/runtime" equal to "plain"
+      And the JSON file "out/report.json" has "/runs/0/settled/memory_current" equal to 2097152
+
+    Scenario: A runtime no application gives a command for is refused
+      When the author runs "ljos bench Main.qml --runtime plain --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 2
+      And the command's output mentions "no runtime \"plain\""
+
+  Rule: A report compared with an earlier one says what moved by more than runs of one build do
+
+    # The margins are the noise docs/BENCHMARKS.md describes: memory may
+    # move by 10 % and 2 MiB between runs of one build before it counts.
+    Scenario: Memory that grew past the margin is worse
+      Given the author has run "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out before"
+      And the file "scope.sh":
+        """sh
+        #!/bin/sh
+        d="cg$(cut -d: -f3 /proc/self/cgroup)"
+        mkdir -p "$d"
+        echo $$ > "$d/cgroup.procs"
+        echo "${memory_max:-max}" > "$d/memory.max"
+        echo 0 > "$d/memory.swap.max"
+        echo "2000 10000" > "$d/cpu.max"
+        echo 0-3 > "$d/cpuset.cpus.effective"
+        echo 9437184 > "$d/memory.peak"
+        echo 8388608 > "$d/memory.current"
+        echo "oom 0" > "$d/memory.events"
+        echo "oom_kill 0" >> "$d/memory.events"
+        echo "usage_usec 25000" > "$d/cpu.stat"
+        echo "anon 1048576" > "$d/memory.stat"
+        echo "file 1048576" >> "$d/memory.stat"
+        """
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --compare before/report.json --out out"
+      Then the command exits with status 0
+      And the command's output mentions "1 cells worse"
+      And the command's output mentions "settled memory 2.00 → 8.00 MiB (margin 2.20)"
+      And the JSON file "out/compare.json" has "/cells/0/metric" equal to "settled memory"
+      And the JSON file "out/compare.json" has "/cells/0/verdict" equal to "worse"
+
+    Scenario: A report already made is compared without measuring again
+      Given the author has run "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      When the author runs "ljos bench --compare out/report.json --out out"
+      Then the command exits with status 0
+      And the command's output mentions "0 cells worse, 0 better, 0 not measured again"
+      And the JSON file "out/compare.json" has "/cells/0/verdict" equal to "same"

@@ -20,12 +20,14 @@ pub struct Bench {
     /// QML files to measure, each on its own.
     files: Vec<PathBuf>,
     /// A JSON manifest of applications: `{"apps": [{"id", "file",
-    /// "imports", "size", "ljos_args", "qt_args", "drive", "clicks"}]}`;
-    /// "clicks" are where to click, as fractions of the window, instead of
-    /// the grid.
+    /// "imports", "size", "ljos_args", "qt_args", "drive", "clicks",
+    /// "commands"}]}`; "clicks" are where to click, as fractions of the
+    /// window, instead of the grid; "commands" are the same application
+    /// written for other toolkits, `{"runtime": [program, args…]}`.
     #[arg(long)]
     manifest: Option<PathBuf>,
-    /// Runtimes, comma separated: `ljos` (`ljos run`) and `qt` (`qml6`).
+    /// Runtimes, comma separated: `ljos` (`ljos run`), `qt` (`qml6`), and
+    /// any other name a manifest's apps give a command for.
     #[arg(long, value_delimiter = ',', default_value = "ljos,qt")]
     runtime: Vec<String>,
     /// Profiles, comma separated: `desktop` (no limit) and `pi-zero`.
@@ -89,7 +91,9 @@ pub struct Bench {
     #[arg(long, default_value_t = 1)]
     rounds: u32,
     /// What drives the window under load: `click` (a grid of clicks over
-    /// it), `drag` (up and down from its middle) or `scroll` (the wheel).
+    /// it), `drag` (up and down from its middle), `scroll` (the wheel),
+    /// `type` (words typed into the focus, after clicking the first click
+    /// point if there is one) or `resize` (the window made smaller and back).
     #[arg(long, default_value = "click", value_parser = gesture)]
     gesture: Gesture,
     /// Measure each application this many times; the tables show the
@@ -115,6 +119,12 @@ pub struct Bench {
     /// a long run can be made in parts.
     #[arg(long)]
     append: bool,
+    /// Compare the report with an earlier `report.json` and write
+    /// `compare.md` and `compare.json` beside it: each cell that got worse
+    /// or better by more than runs of one build differ by. With no
+    /// applications to measure, compares the report already in `--out`.
+    #[arg(long, value_name = "REPORT")]
+    compare: Option<PathBuf>,
     /// Where `report.json`, `report.md` and the applications' logs go.
     #[arg(long, default_value = "target/bench")]
     out: PathBuf,
@@ -189,6 +199,16 @@ pub const REFUSED: i32 = 2;
 
 impl Bench {
     pub fn run(self) -> anyhow::Result<i32> {
+        // Nothing to measure: only the report already there, compared.
+        if self.files.is_empty()
+            && self.manifest.is_none()
+            && !self.check_motion
+            && let Some(base) = &self.compare
+        {
+            let out = absolute(&self.out)?;
+            let now = read_report(&out.join("report.json"))?;
+            return compare(base, &now, &out).map(|()| 0);
+        }
         // The applications' bus, which they read the setting on.
         let bus = self
             .app_env
@@ -229,8 +249,8 @@ impl Bench {
 
         for name in &self.runtime {
             anyhow::ensure!(
-                name == "ljos" || name == "qt",
-                "no runtime {name:?}: ljos or qt"
+                name == "ljos" || name == "qt" || apps.iter().any(|a| a.commands.contains_key(name)),
+                "no runtime {name:?}: ljos, qt, or one an app of the manifest gives a command for"
             );
         }
         let mut profiles = Vec::new();
@@ -303,9 +323,7 @@ impl Bench {
         let json = out.join("report.json");
         let md = out.join("report.md");
         let report = if self.append && json.exists() {
-            let text = std::fs::read_to_string(&json)?;
-            let mut old: ljos_bench::Report = serde_json::from_str(&text)
-                .with_context(|| format!("{} is not a bench report", json.display()))?;
+            let mut old = read_report(&json)?;
             old.extend(&plan.profiles, &plan.notes);
             old
         } else {
@@ -330,6 +348,9 @@ impl Bench {
                     self.out.join("report.json").display(),
                     self.out.join("report.md").display()
                 );
+                if let Some(base) = &self.compare {
+                    compare(base, &report, &out)?;
+                }
                 Ok(0)
             }
             Err(e @ ljos_bench::Error::Refused(_)) => {
@@ -342,10 +363,58 @@ impl Bench {
 }
 
 fn gesture(s: &str) -> Result<Gesture, String> {
-    match s {
-        "click" => Ok(Gesture::Click),
-        "drag" => Ok(Gesture::Drag),
-        "scroll" => Ok(Gesture::Scroll),
-        _ => Err(format!("{s}: the gestures are click, drag and scroll")),
+    Gesture::ALL
+        .into_iter()
+        .find(|g| g.name() == s)
+        .ok_or_else(|| {
+            let names: Vec<&str> = Gesture::ALL.iter().map(|g| g.name()).collect();
+            format!("{s}: the gestures are {}", names.join(", "))
+        })
+}
+
+fn read_report(path: &Path) -> anyhow::Result<ljos_bench::Report> {
+    let text =
+        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("{} is not a bench report", path.display()))
+}
+
+/// Writes `compare.md` and `compare.json` in `out` for `now` against the
+/// report at `base`, and says on stderr which cells got worse. A
+/// comparison reports; like the bench, it has no floors to fail.
+fn compare(base: &Path, now: &ljos_bench::Report, out: &Path) -> anyhow::Result<()> {
+    let base = read_report(base)?;
+    let c = ljos_bench::compare::compare(&base, now);
+    std::fs::create_dir_all(out)?;
+    std::fs::write(
+        out.join("compare.json"),
+        serde_json::to_string_pretty(&c)? + "\n",
+    )?;
+    std::fs::write(out.join("compare.md"), ljos_bench::compare::markdown(&c))?;
+    let worse = c.worse();
+    eprintln!(
+        "ljos bench: against the report of {}: {} cells worse, {} better, {} not measured again",
+        c.base_date,
+        worse.len(),
+        c.cells
+            .iter()
+            .filter(|x| x.verdict == ljos_bench::compare::Verdict::Better)
+            .count(),
+        c.missing.len()
+    );
+    for x in worse {
+        eprintln!(
+            "  worse: {} {} {} {}: {} {:.2} → {:.2} {} (margin {:.2})",
+            x.app,
+            x.runtime,
+            x.profile,
+            x.gesture.name(),
+            x.metric,
+            x.base,
+            x.now,
+            x.unit,
+            x.margin
+        );
     }
+    println!("wrote {}", out.join("compare.md").display());
+    Ok(())
 }
