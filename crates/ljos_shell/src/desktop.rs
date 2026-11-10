@@ -1758,6 +1758,14 @@ impl<M: Send + 'static> Desktop<M> {
         {
             slot.asked = earlier(slot.asked, Some(when));
         }
+        // A window on the screen is not drawn before its hold ends
+        // (`schedule`): the loop wakes then, and not once before it only
+        // to hear so. An animation asks for its next frame early, and
+        // woke the loop twice a frame.
+        let when = match slot.held {
+            Some(held) if slot.surface.is_some() && !slot.out_of_sight() => when.max(held),
+            _ => when,
+        };
         self.repaints.request(key, when);
     }
 
