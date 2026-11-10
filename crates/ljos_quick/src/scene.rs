@@ -3318,13 +3318,15 @@ impl QuickScene {
     /// item or handler took it.
     pub fn pointer_event(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         crate::keys::note_pointer(engine, ev);
-        self.made_pointer_event(engine, ev)
+        self.pointer_event_without_keyboard(engine, ev)
     }
 
-    /// [`QuickScene::pointer_event`] for one the scene made itself, of a
-    /// touch or for an assistive technology: it says nothing of the
-    /// keyboard, so the modifiers held stay as they were.
-    pub(crate) fn made_pointer_event(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+    /// [`QuickScene::pointer_event`] for an event whose modifiers say
+    /// nothing of the keyboard, so the modifiers held stay as they were:
+    /// one the scene made of a touch or for an assistive technology, or
+    /// one from a window without the keyboard, which the platform tells of
+    /// no modifiers while another window of the application has them.
+    pub fn pointer_event_without_keyboard(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
@@ -3462,8 +3464,27 @@ impl QuickScene {
         ev: &crate::input::WheelEvent,
         buttons: MouseButtons,
     ) -> bool {
-        self.note_input();
         crate::keys::set_keyboard_modifiers(engine, ev.modifiers);
+        self.offer_wheel(engine, ev, buttons)
+    }
+
+    /// [`QuickScene::wheel_event`] for an event whose modifiers say nothing
+    /// of the keyboard, as [`QuickScene::pointer_event_without_keyboard`].
+    pub fn wheel_event_without_keyboard(
+        &mut self,
+        engine: &Engine,
+        ev: &crate::input::WheelEvent,
+    ) -> bool {
+        self.offer_wheel(engine, ev, self.pointer.held)
+    }
+
+    fn offer_wheel(
+        &mut self,
+        engine: &Engine,
+        ev: &crate::input::WheelEvent,
+        buttons: MouseButtons,
+    ) -> bool {
+        self.note_input();
         let hits = self.hits(engine, ev.pos);
         crate::wheel::deliver(engine, &hits, ev, buttons)
     }

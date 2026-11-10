@@ -1135,14 +1135,9 @@ impl QmlView {
 
     fn deliver_input(&mut self, ui: &Ui, rect: Rect, now: Time) {
         let ctx = ui.ctx();
-        let (events, modifiers) = ui.input(|i| (i.events.clone(), i.modifiers));
+        let (events, modifiers, keyed) = ui.input(|i| (i.events.clone(), i.modifiers, i.focused));
         let os = ctx.os();
         let mods = map_modifiers(modifiers, os);
-        // egui tells a modifier key only as a change of the pass's
-        // modifiers, never as a key event, and typed text says nothing of
-        // them. The pass's events, given below, say it again for their own
-        // time.
-        set_keyboard_modifiers(&self.engine, mods);
         if events.is_empty() {
             self.show_cursor(ctx);
             self.keep_wheel(ui);
@@ -1259,7 +1254,7 @@ impl QmlView {
                     };
                     // What came before it has to have happened first.
                     for ev in out.drain(..) {
-                        self.scene.pointer_event(&self.engine, &ev);
+                        self.offer_pointer(keyed, &ev);
                         self.stats.pointer_events += 1;
                     }
                     if !touches.is_empty() {
@@ -1276,7 +1271,11 @@ impl QmlView {
                         time: now,
                     };
                     self.stats.wheel_events += 1;
-                    self.wheel_kept = self.scene.wheel_event(&self.engine, &ev);
+                    self.wheel_kept = if keyed {
+                        self.scene.wheel_event(&self.engine, &ev)
+                    } else {
+                        self.scene.wheel_event_without_keyboard(&self.engine, &ev)
+                    };
                     if self.wheel_kept {
                         self.stats.wheels_accepted += 1;
                     }
@@ -1344,9 +1343,20 @@ impl QmlView {
             self.scene.touch_event(&self.engine, &touches);
         }
         for ev in &out {
-            self.scene.pointer_event(&self.engine, ev);
+            self.offer_pointer(keyed, ev);
         }
         self.stats.pointer_events += (out.len() + touches.len()) as u64;
+        // egui tells a modifier key only as a change of the modifiers, never
+        // as a key event, and the pass's last word on them comes after the
+        // events that carried their own. A pass without one says nothing:
+        // windows share the engine, and one without the keyboard is told
+        // of no modifiers while another has them.
+        if events
+            .iter()
+            .any(|e| matches!(e, Event::ModifiersChanged(_)))
+        {
+            set_keyboard_modifiers(&self.engine, mods);
+        }
         self.show_cursor(ctx);
         self.keep_wheel(ui);
         for key in focuses {
@@ -1380,6 +1390,16 @@ impl QmlView {
 }
 
 impl QmlView {
+    /// A window without the keyboard is told of no modifiers, which says
+    /// nothing of those held for the application's other windows.
+    fn offer_pointer(&mut self, keyed: bool, ev: &PointerEvent) {
+        if keyed {
+            self.scene.pointer_event(&self.engine, ev);
+        } else {
+            self.scene.pointer_event_without_keyboard(&self.engine, ev);
+        }
+    }
+
     /// Files dragged over the window from another application go to the
     /// scene's DropAreas, as a drag with no source whose key is
     /// `text/uri-list`. egui says only that files hover and that they were

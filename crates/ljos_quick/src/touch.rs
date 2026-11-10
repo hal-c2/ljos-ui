@@ -191,7 +191,7 @@ impl QuickScene {
                     taker,
                     recognise: true,
                 };
-                self.made_pointer_event(engine, &pointer(PointerKind::Press, ev, ev.id))
+                self.pointer_event_without_keyboard(engine, &pointer(PointerKind::Press, ev, ev.id))
             }
             1 => {
                 self.touch.points.push(point);
@@ -250,7 +250,11 @@ impl QuickScene {
                     pos: p.now,
                     ..*ev
                 };
-                first && self.made_pointer_event(engine, &pointer(PointerKind::Move, &ev, ev.id))
+                first
+                    && self.pointer_event_without_keyboard(
+                        engine,
+                        &pointer(PointerKind::Move, &ev, ev.id),
+                    )
             }
             Owner::Handler {
                 distance,
@@ -308,12 +312,20 @@ impl QuickScene {
                     ..*ev
                 };
                 if canceled {
-                    self.made_pointer_event(engine, &pointer(PointerKind::Cancel, &ev, ev.id))
+                    self.pointer_event_without_keyboard(
+                        engine,
+                        &pointer(PointerKind::Cancel, &ev, ev.id),
+                    )
                 } else {
-                    let r =
-                        self.made_pointer_event(engine, &pointer(PointerKind::Release, &ev, ev.id));
+                    let r = self.pointer_event_without_keyboard(
+                        engine,
+                        &pointer(PointerKind::Release, &ev, ev.id),
+                    );
                     // A lifted finger does not hover.
-                    self.made_pointer_event(engine, &pointer(PointerKind::Leave, &ev, ev.id));
+                    self.pointer_event_without_keyboard(
+                        engine,
+                        &pointer(PointerKind::Leave, &ev, ev.id),
+                    );
                     r
                 }
             }
@@ -341,7 +353,7 @@ impl QuickScene {
             pos: first.now,
             ..*ev
         };
-        self.made_pointer_event(engine, &pointer(PointerKind::Cancel, &ev, ev.id));
+        self.pointer_event_without_keyboard(engine, &pointer(PointerKind::Cancel, &ev, ev.id));
     }
 }
 

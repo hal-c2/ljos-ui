@@ -7,8 +7,11 @@
 //! `wheel_event`), and the last one is what is seen, so a click with Shift
 //! held is Shift though no key event for Shift came. Events that say
 //! nothing of the keyboard leave it as it was: touches, a press by an
-//! assistive technology, a pointer cancelled or gone from the window, and
-//! the keys a host makes of typed text (`QuickScene::key_event_from_text`).
+//! assistive technology, a pointer cancelled or gone from the window, the
+//! keys a host makes of typed text (`QuickScene::key_event_from_text`), and
+//! pointer and wheel events from a window without the keyboard
+//! (`QuickScene::pointer_event_without_keyboard`). One engine may show
+//! several windows, and this is the application's, not one window's.
 //! See `features/input/keyboard-modifiers.feature`.
 
 use std::cell::Cell;
