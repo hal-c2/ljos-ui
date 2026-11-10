@@ -28,7 +28,7 @@ use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::introspect::SourcePlace;
 use crate::js::{JsState, obj_to_u64, u64_to_obj};
 use crate::loader::{LoadedFile, join_url};
-use crate::meta::MetaRef;
+use crate::meta::{MetaRef, PropertyFlags};
 use crate::object::QmlType;
 use crate::qtqml::Component;
 use crate::types::{TypeTag, Url};
@@ -73,6 +73,33 @@ struct Dynamic {
     texts: Cell<u64>,
     /// While a text is made: the properties it names that no type has.
     refused: RefCell<Option<Vec<String>>>,
+    /// The object `createObject` is making is not to be given back
+    /// ([`Engine::withholding`]).
+    withheld: Cell<bool>,
+}
+
+/// Where the name of an initial property leads.
+struct Reached {
+    obj: ObjectId,
+    prop: PropIndex,
+    /// The member of the value `prop` holds (`pixelSize` of `font`).
+    member: Option<String>,
+    /// `prop` is of what a type attaches (`Layout.fillWidth`).
+    attached: bool,
+}
+
+/// Why the name of an initial property leads nowhere.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Missing {
+    /// A plain name the object has no property of.
+    Property,
+    /// A path whose start is nothing with members: no property, a property
+    /// of a type without (`count.x` of an int, a `var`), an object, or no
+    /// attaching type.
+    Start,
+    /// A path to a group or an attached object that has no such member
+    /// (`border.nosuch`, `Layout.nosuch`).
+    Member,
 }
 
 /// The component instance whose script is running: its context, and the
@@ -231,11 +258,26 @@ impl Engine {
         CallingGuard { js: Some(js), prev }
     }
 
+    /// Runs `make`, the making of an object by `createObject`, and says
+    /// whether its initial properties withhold the object. Qt 6.12 (qml6)
+    /// completes an object it could not set a value on, or given a path
+    /// whose start has no members, then destroys it and gives back none.
+    /// What is made while `make` runs has its own say.
+    pub(crate) fn withholding<T>(&self, make: impl FnOnce() -> T) -> (T, bool) {
+        let state = self.extension::<Dynamic>();
+        let prev = state.withheld.replace(false);
+        let made = make();
+        (made, state.withheld.replace(prev))
+    }
+
     /// The initial properties of `createObject` and `incubateObject`. What
     /// cannot be set is a warning in Qt's words and the others are still
     /// set; a value made with `Qt.binding` is a binding, except on a member
     /// of a value when `createObject` sets it: that is given the value it
-    /// gives now. `url` is the component's.
+    /// gives now. `createObject` passes over in silence a name that leads
+    /// nowhere and a member a value, group or attached object does not
+    /// have, as Qt 6.12 does; `incubateObject` tells them. `url` is the
+    /// component's.
     pub(crate) fn initial_props(
         &self,
         url: &Atom,
@@ -252,34 +294,40 @@ impl Engine {
             Initial::Incubated(None) => (Some(At::File(url)), At::File(url)),
             _ => (None, At::File(url)),
         };
+        let withhold = || self.extension::<Dynamic>().withheld.set(true);
         for (name, v) in props {
-            let Some((obj, p, member)) = self.initial_target(root, name) else {
-                let path = name.contains('.');
-                match &at {
-                    Some(_) if path => {
-                        self.warn(format!("{caller}: Cannot resolve property \"{name}\"."));
+            let Reached {
+                obj,
+                prop: p,
+                member,
+                attached,
+            } = match self.initial_target(root, name) {
+                Ok(reached) => reached,
+                Err(missing) => {
+                    match (&at, missing) {
+                        (Some(at), Missing::Property) => self.warn(format!(
+                            "{at}: Error: Cannot assign to non-existent property \"{name}\""
+                        )),
+                        (Some(_), _) => {
+                            self.warn(format!("{caller}: Cannot resolve property \"{name}\"."));
+                        }
+                        (None, Missing::Start) => withhold(),
+                        (None, _) => {}
                     }
-                    Some(at) => self.warn(format!(
-                        "{at}: Error: Cannot assign to non-existent property \"{name}\""
-                    )),
-                    // createObject says nothing of a path that leads nowhere.
-                    None if path => {}
-                    None => {
-                        let ty = self
-                            .meta_of(root)
-                            .map(|m| m.name.to_string())
-                            .unwrap_or_default();
-                        self.warn(format!(
-                            "{url}: Setting initial properties failed: {ty} does not have a property called {name}"
-                        ));
-                    }
+                    continue;
                 }
-                continue;
             };
             let (ty, readonly) = self
                 .meta_of(obj)
                 .and_then(|m| m.property(p).map(|i| (i.ty.clone(), i.is_readonly())))
                 .unzip();
+            // A member a value does not have, as a member a group does not.
+            if at.is_none()
+                && let (Some(member), Some(ty)) = (&member, &ty)
+                && Value::Undefined.with_member(ty, member, v).is_none()
+            {
+                continue;
+            }
             // createObject sets a read-only property; incubateObject
             // assigns it, as a script would.
             if let (Some(at), None, Some(true)) = (at, &member, readonly) {
@@ -320,7 +368,13 @@ impl Engine {
                     self.assigned_type(v),
                     self.qt_type(ty)
                 )),
-                _ => self.warn(format!("{url}: Could not set initial property {name}")),
+                (Some(_), ..) => self.warn(format!("{url}: Could not set initial property {name}")),
+                // What an attached object cannot take keeps nothing back.
+                (None, ..) if attached => {}
+                (None, ..) => {
+                    self.warn(format!("{url}: Could not set initial property {name}"));
+                    withhold();
+                }
             }
         }
     }
@@ -405,33 +459,52 @@ impl Engine {
     /// the way (`border.width`), of what a type attaches to it
     /// (`Accessible.name`), or a member of a value (`font.pixelSize`), whose
     /// name is then given too.
-    fn initial_target(
-        &self,
-        root: ObjectId,
-        name: &str,
-    ) -> Option<(ObjectId, PropIndex, Option<String>)> {
+    fn initial_target(&self, root: ObjectId, name: &str) -> Result<Reached, Missing> {
+        let reached = |obj, prop, member, attached| Reached {
+            obj,
+            prop,
+            member,
+            attached,
+        };
         if let Some(p) = self.find_property(root, name) {
-            return Some((root, p, None));
+            return Ok(reached(root, p, None, false));
         }
         let mut path: Vec<String> = name.split('.').map(str::to_owned).collect();
         if path.len() < 2 {
-            return None;
+            return Err(Missing::Property);
         }
         let mut obj = root;
-        if path[0].starts_with(|c: char| c.is_ascii_uppercase()) {
+        let attached = path[0].starts_with(|c: char| c.is_ascii_uppercase());
+        if attached {
             // The component's imports are not at hand here; the type is
             // looked for in every module, as a script's `Qt` does.
-            obj = self.attached_by_name(root, "", &path[0])?;
+            obj = self
+                .attached_by_name(root, "", &path[0])
+                .ok_or(Missing::Start)?;
             path.remove(0);
         }
-        let (leaf, through) = path.split_last()?;
+        let (leaf, through) = path.split_last().ok_or(Missing::Start)?;
         if !through.is_empty()
             && let Some((t, _)) = self.value_target(obj, through)
         {
-            return Some((t.obj, t.prop, Some(leaf.clone())));
+            return Ok(reached(t.obj, t.prop, Some(leaf.clone()), attached));
         }
-        let t = self.member_target(obj, through, leaf).ok()?;
-        Some((t.obj, t.prop, None))
+        match self.member_target(obj, through, leaf) {
+            Ok(t) => Ok(reached(t.obj, t.prop, None, attached)),
+            Err(_) if attached || self.is_group(obj, &through[0]) => Err(Missing::Member),
+            Err(_) => Err(Missing::Start),
+        }
+    }
+
+    /// Whether `name` of `obj` is a group (`border` of a `Rectangle`).
+    fn is_group(&self, obj: ObjectId, name: &str) -> bool {
+        self.find_property(obj, name)
+            .zip(self.meta_of(obj))
+            .and_then(|(p, mm)| {
+                mm.property(p)
+                    .map(|i| i.flags.contains(PropertyFlags::GROUP))
+            })
+            .unwrap_or(false)
     }
 
     /// Sets the member `member` of the value `obj`'s `prop` holds, or binds

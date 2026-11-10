@@ -164,9 +164,8 @@ fn initial_properties_that_cannot_be_set_are_reported_one_by_one() {
         .eval_js("({ label: 'a', nope: 1, n: 'many', other: 5 })")
         .unwrap();
     h.engine.invoke_by_name(root, "make", &[props]).unwrap();
-    let kid = object(&h, root, "kid");
-    assert_eq!(string(&h, kid, "label"), "a");
-    assert_eq!(h.num(kid, "n"), 1.0, "a text that is no number is not 0");
+    // Qt 6.12 gives back no object; a name it does not have goes untold.
+    assert_eq!(h.get(root, "kid"), Value::Null);
     let mut warnings = h.warnings();
     warnings.sort();
     assert_eq!(
@@ -174,9 +173,18 @@ fn initial_properties_that_cannot_be_set_are_reported_one_by_one() {
         vec![
             "file:///Tag.qml: Could not set initial property n",
             "file:///Tag.qml: Could not set initial property other",
-            "file:///Tag.qml: Setting initial properties failed: Tag does not have a property called nope",
         ]
     );
+}
+
+#[test]
+fn initial_properties_it_does_not_have_are_passed_over() {
+    let (h, root) = made();
+    call(&h, root, "load", &["Tag.qml"]);
+    let props = h.engine.eval_js("({ label: 'a', nope: 1 })").unwrap();
+    h.engine.invoke_by_name(root, "make", &[props]).unwrap();
+    assert_eq!(string(&h, object(&h, root, "kid"), "label"), "a");
+    assert!(h.warnings().is_empty());
 }
 
 #[test]
