@@ -210,6 +210,8 @@ struct Scripted {
     template: Rc<Template>,
     parent: ObjectId,
     props: Vec<(String, Value)>,
+    /// Who gave `props`: a remake sets them as the call that made it did.
+    how: Initial,
 }
 
 /// How a root was made, to make it again.
@@ -891,8 +893,12 @@ impl Engine {
             return self.create_from_template_for_script(&template, parent, props, how);
         };
         st.scripting.set(true);
-        let made =
-            self.create_from_template_for_script(&template, Some(parent), props.clone(), how);
+        let made = self.create_from_template_for_script(
+            &template,
+            Some(parent),
+            props.clone(),
+            how.clone(),
+        );
         st.scripting.set(false);
         if let Ok(obj) = made
             && self.is_alive(obj)
@@ -906,6 +912,7 @@ impl Engine {
                     template,
                     parent,
                     props,
+                    how,
                 },
             );
         }
@@ -960,11 +967,18 @@ impl Engine {
                 .filter_map(|(k, v)| self.reload_translate(v.clone()).map(|v| (k.clone(), v)))
                 .collect();
             *st.forced.borrow_mut() = Some(path);
-            let made =
-                self.create_for_script(component, template, Some(parent), props, Initial::Created);
+            // What its call's properties would keep back now is not made
+            // again either (`Component::create_object`).
+            let (made, withheld) = self.withholding(|| {
+                self.create_for_script(component, template, Some(parent), props, s.how)
+            });
             st.forced.borrow_mut().take();
-            if let Err(e) = made {
-                self.warn(format!("{e}"));
+            match made {
+                Ok(o) if withheld => {
+                    self.destroy_now(o);
+                }
+                Ok(_) => {}
+                Err(e) => self.warn(format!("{e}")),
             }
         }
     }
