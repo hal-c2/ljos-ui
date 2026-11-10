@@ -22,6 +22,21 @@
 # Text's paintedWidth and paintedHeight read as its content size there;
 # Ljós's Text has neither yet. Each change signal is emitted inside the
 # statement that made the change, and a later frame changes nothing.
+#
+# Logged around `t.text = "Hamburgefonstiv"` on a shown Text with a
+# handler on each size and a Rectangle with `x: t.contentWidth`:
+#
+#   set | w 122.8 | iw 122.8 | cw 122.8 | x 122.8 | text | after x=122.8
+#
+# The same text again logs nothing; `font.pixelSize = 40` logs each size
+# that moved once (w, iw, ih, bo, cw, ch) before the next statement; a
+# wrapped Text made narrower logs lineCount 5 and a Rectangle with
+# `height: l.implicitHeight; y: l.lineCount` reads 95 and 5 at once. A
+# frame later nothing more is logged. A text's sizes change before its
+# `textChanged` there; that order is not asked for here. Under the
+# runner's font, a new text tells implicitWidth twice and implicitHeight
+# once, though the height comes out the same, so only the content sizes
+# are counted.
 
 @qt-parity @api-QtQuick.Text.contentWidth @api-QtQuick.Text.lineCount
 @api-QtQuick.Text.truncated @api-QtQuick.TextEdit.contentWidth
@@ -88,3 +103,96 @@ Feature: A shown text's sizes are new in the statement after it changes
       }
       """
     Then the property "fresh" of "root" is true
+
+  Scenario Outline: A binding on another item follows a text's <size> in the statement after it changes
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property var before; property var after
+        function change() {
+          root.before = other.x
+          <change>
+          root.after = other.x
+        }
+        <item> { id: subject; <start> }
+        Rectangle { id: other; x: subject.<size> }
+        <item> { id: ref; y: 100; <end> }
+        property bool moved: root.before !== root.after
+        property bool fresh: root.after === ref.<size>
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    Then the property "moved" of "root" is true
+    And the property "fresh" of "root" is true
+
+    Examples:
+      | item  | size           | start                                                | change                           | end                                                 |
+      | Text  | contentWidth   | text: "hi"                                           | subject.text = "Hamburgefonstiv" | text: "Hamburgefonstiv"                             |
+      | Text  | implicitWidth  | text: "hi"                                           | subject.text = "Hamburgefonstiv" | text: "Hamburgefonstiv"                             |
+      | Text  | implicitHeight | text: "hi"                                           | subject.font.pixelSize = 40      | text: "hi"; font.pixelSize: 40                      |
+      | Text  | lineCount      | width: 300; wrapMode: Text.Wrap; text: "a b c d e f" | subject.width = 20               | width: 20; wrapMode: Text.Wrap; text: "a b c d e f" |
+      | Label | contentWidth   | text: "hi"                                           | subject.text = "Hamburgefonstiv" | text: "Hamburgefonstiv"                             |
+
+  Scenario: A handler of a text's size runs inside the statement that changes it, once
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property int cw: 0; property int ch: 0
+        property string log: ""
+        function told() { return root.cw + " " + root.ch }
+        function change() {
+          // What the start-up layout told is not counted.
+          root.cw = 0; root.ch = 0
+          root.log = "set " + told()
+          t.text = "Hamburgefonstiv"
+          root.log += ", text " + told()
+          t.text = "Hamburgefonstiv"
+          root.log += ", again " + told()
+          t.font.pixelSize = 40
+          root.log += ", font " + told()
+        }
+        Text {
+          id: t; text: "hi"
+          onContentWidthChanged: root.cw++
+          onContentHeightChanged: root.ch++
+        }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    Then the property "log" of "root" is "set 0 0, text 1 0, again 1 0, font 2 1"
+    When 50 milliseconds pass
+    Then the property "cw" of "root" is 2
+    And the property "ch" of "root" is 1
+
+  Scenario: A handler of a wrapped text's line count runs inside the statement that narrows it
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property string log: ""
+        property int told: 0
+        function change() {
+          root.told = 0
+          root.log = "set " + root.told
+          t.width = 20
+          root.log += ", narrower " + root.told
+        }
+        Text {
+          id: t; width: 300; wrapMode: Text.Wrap; text: "a b c d e f"
+          onLineCountChanged: root.told++
+        }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    Then the property "log" of "root" is "set 0, narrower 1"
+    When 50 milliseconds pass
+    Then the property "told" of "root" is 1
