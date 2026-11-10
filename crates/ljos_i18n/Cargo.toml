@@ -1,6 +1,6 @@
 [package]
 name = "ljos_i18n"
-description = "Localisation for Ljós: Qt-compatible catalogues, plural rules, .ts import and export, the .ljl runtime format and locale data"
+description = "Localisation for Ljós: translation catalogues, plural rules, .ts import and export, the .ljl runtime format and locale data"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

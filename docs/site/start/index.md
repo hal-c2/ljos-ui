@@ -1,6 +1,6 @@
 ---
 title: What is Ljós?
-description: Ljós is a general-purpose Rust UI toolkit that runs QML natively on desktop and mobile.
+description: Ljós is a Rust UI toolkit for malleable software, apps that people and their agents can reshape while they run.
 section: start
 order: 1
 ---
@@ -11,15 +11,61 @@ This page explains what Ljós is, what it gives you when you build an interface 
 
 ## Overview
 
-*Ljós* is Icelandic for "light". It is a general-purpose Rust UI toolkit that runs QML and aims for compatibility with Qt Quick and Qt Quick Controls. It renders through `egui`, runs JavaScript with `rquickjs`, and targets desktop and mobile under the MIT licence.
+*Ljós* is Icelandic for "light". It is a Rust UI toolkit for malleable software: apps that people and their agents can reshape while they run. Interfaces are declarative, scripts are typed TypeScript, and every part of a running app can be observed and driven. Existing QML runs as a way in.
 
-Ljós is for developers and teams who want to write declarative user interfaces in QML while keeping their application logic, data models and domain services in Rust. You can run a standalone `.qml` file directly from the command line with `ljos run`, port an existing Qt Quick application with the help of `ljos check --port`, or embed the `ljos` crate in a Rust binary and register your own native types.
+Ljós renders through `egui`, runs scripts with `rquickjs`, and targets desktop and mobile under the MIT licence. You write the interface declaratively and keep application logic, data models and domain services in Rust. You can run a standalone `.qml` file directly from the command line with `ljos run`, bring an existing QML application across with the help of `ljos check --port`, or embed the `ljos` crate in a Rust binary and register your own native types.
 
 ## What you get
 
-### QML compatibility
+### Change an app while it runs
 
-Ljós compiles and runs QML files using the familiar `QtQuick` and `QtQuick.Controls` modules, along with `QtQuick.Layouts`, `QtQuick.LocalStorage`, `QtQml.Models`, `QtQml.XmlListModel`, `Qt.labs.folderlistmodel` and `QtTest`. Expressions that only read a property path run in tier 0, arithmetic and simple expressions run in the tier-1 binding VM, and full JavaScript runs in `rquickjs`.
+An app can take changes to its interface and scripts while it runs and show them live, checked by the same compiler and lints the dev tools use. That is what makes it malleable: the people who use it, alone or with a coding agent, can reshape it instead of accepting what they were given. Today you do that in development with `ljos run --watch`; letting the people who use a shipped app change it is being built.
+
+When you run an application with `ljos run --watch`, Ljós watches your `.qml`, `.js`, `.mjs`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project. Saving a file recompiles only what changed and patches the running scene in place without closing the window. Script-assigned property values, focused controls, text selections, scroll positions, navigation stacks and open popups survive the reload. If a save has a syntax or compile error, the running application stays interactive and shows the error over the window until you fix the file.
+
+### Typed TypeScript scripts
+
+Scripts can be TypeScript, checked before anything runs. A QML file imports a `.ts` module as it imports a script and reaches what the module exports through its name. The types are for the checker only: they are erased, and what is left runs as a script does.
+
+```ts
+// filter.ts
+export type Tag = "a" | "b"
+export function only(tag: Tag): number {
+    return tag === "a" ? 2 : 3
+}
+```
+
+```qml
+import QtQuick
+import "filter.ts" as Logic
+
+Item {
+    property int shown: Logic.only("b")
+}
+```
+
+### Observe and drive a running app
+
+Every part of a running app can be inspected and driven, by a person or by a coding agent. Ljós ships two Model Context Protocol (MCP) servers out of the box:
+
+- `ljos mcp` starts the authoring server over standard input and output. It lets an agent check and lint QML files, format code, look up types and API status, explain binding tiers, and run behaviour scenarios without opening a window.
+- `ljos run --mcp` starts the live inspector inside a running application. An agent (or the [`ljos observe`](./observe.md) window) can read the accessibility outline, inspect properties and their binding dependencies, synthesise real pointer and keyboard input, mutate properties, evaluate JavaScript and profile frames and wakes.
+
+### Fault isolation
+
+Erlang-style `ErrorBoundary` items isolate faults at run time, so a failing subtree can restart or show a fallback item without taking down the window.
+
+### 0 % CPU when idle
+
+An application at rest runs nothing. The UI thread sleeps until input, a running `Timer`, a running animation, a message on a bounded inbox or the windowing system wakes it. Connecting an MCP inspector or opening `ljos observe` uses no polling timers; watches sleep on the server thread until the application actually does work.
+
+### Accessibility
+
+Interactive controls expose their role and accessible name through AccessKit, and the same tree drives screen readers, Gherkin behaviour tests and the MCP inspector. `ljos check` and `qml_lint` audit your QML source for unnamed interactive items, pointer-only focus traps, contrast and motion rules, and untranslated strings.
+
+### Existing QML
+
+Existing QML runs, so an app you already have is a place to start. Ljós compiles and runs QML files that use the `QtQuick` and `QtQuick.Controls` modules, along with `QtQuick.Layouts`, `QtQuick.LocalStorage`, `QtQml.Models`, `QtQml.XmlListModel`, `Qt.labs.folderlistmodel` and `QtTest`. Expressions that only read a property path run in tier 0, arithmetic and simple expressions run in the tier-1 binding VM, and full JavaScript runs in `rquickjs`.
 
 ```qml
 import QtQuick
@@ -37,6 +83,8 @@ Rectangle {
     }
 }
 ```
+
+The [porting guide](../language/porting-from-qt.md) covers bringing an existing application across.
 
 ### Rust native types
 
@@ -62,25 +110,6 @@ pub fn register(engine: &Engine) {
     ));
 }
 ```
-
-### Hot reload
-
-When you run an application with `ljos run --watch`, Ljós watches your `.qml`, `.js`, `.mjs`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project. Saving a file recompiles only what changed and patches the running scene in place without closing the window. Script-assigned property values, focused controls, text selections, scroll positions, navigation stacks and open popups survive the reload. If a save has a syntax or compile error, the running application stays interactive and shows the error over the window until you fix the file.
-
-### MCP for coding agents
-
-Ljós ships two Model Context Protocol (MCP) servers out of the box so coding agents can work with your QML code and your running interface:
-
-- `ljos mcp` starts the authoring server over standard input and output. It lets an agent check and lint QML files, format code, look up types and API status, explain binding tiers, and run behaviour scenarios without opening a window.
-- `ljos run --mcp` starts the live inspector inside a running application. An agent (or the [`ljos observe`](./observe.md) window) can read the accessibility outline, inspect properties and their binding dependencies, synthesise real pointer and keyboard input, mutate properties, evaluate JavaScript and profile frames and wakes.
-
-### 0 % CPU when idle
-
-An application at rest runs nothing. The UI thread sleeps until input, a running `Timer`, a running animation, a message on a bounded inbox or the windowing system wakes it. Connecting an MCP inspector or opening `ljos observe` uses no polling timers; watches sleep on the server thread until the application actually does work.
-
-### Accessibility and fault isolation
-
-Interactive controls expose their role and accessible name through AccessKit, and the same tree drives screen readers, Gherkin behaviour tests and the MCP inspector. `ljos check` and `qml_lint` audit your QML source for unnamed interactive items, pointer-only focus traps, contrast and motion rules, and untranslated strings. At run time, Erlang-style `ErrorBoundary` items isolate faults so a failing subtree can restart or show a fallback item without taking down the window.
 
 ## Where to go next
 

@@ -1,7 +1,8 @@
 # Migrating a Qt Quick application to Ljós
 
-Ljós runs QML (Qt Quick + Qt Quick Controls compatible) on a Rust engine
-(`docs/ARCHITECTURE.md` §17). This guide is for the author of an existing
+Ljós runs existing Qt Quick and Qt Quick Controls applications on a Rust
+engine, as a way in to its own API (`docs/ARCHITECTURE.md` §17,
+`docs/DIALECT.md`). This guide is for the author of an existing
 Qt Quick application who wants to know what of their QML Ljós already has,
 what it lacks, and what to do about the difference. The inventory tool is
 `ljos check --port`; everything below was checked against the built CLI

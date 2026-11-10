@@ -11,11 +11,27 @@ This page explains what Ljós does, what it chooses not to do, and the rules tha
 
 ## Goals
 
-Ljós is built around eight practical goals for running QML applications across desktop and mobile platforms.
+Ljós is a Rust UI toolkit for malleable software: apps that people and their agents can reshape while they run. Interfaces are declarative, scripts are typed TypeScript, and every part of a running app can be observed and driven. Existing QML runs as a way in. Ten goals follow from that.
 
-### Run real QML
+### Malleable software
 
-Ljós runs modern Qt 6 QML. You can use typed and `required` properties, inline components, `pragma ComponentBehavior: Bound`, attached and grouped properties, `Binding` and `State` objects, and JavaScript modules. It also provides Qt Quick Controls with the behaviour and API that applications expect, tested against the Qt documentation example corpus and real desktop applications.
+People tailor the applications they use, alone or with a coding agent, instead of accepting what they are given. An application can let its user change its interface and scripts on their own device and see the change live, checked by the same compiler and lints the development tools use. Where a platform forbids code generated at run time, the changed code still runs, interpreted by the engine.
+
+### Typed scripts
+
+Scripts are a strict subset of TypeScript, checked before anything runs. Every program the checker accepts is valid TypeScript with the same meaning, so `tsc`, editors and coding models keep working on it. A property can have a type declared in TypeScript.
+
+### Observable and drivable, with MCP out of the box
+
+Every part of a running application can be inspected and driven: its accessibility tree, objects, properties and their bindings, processes, mailboxes, faults, frames and wakes. `ljos observe` shows the same in a window. Coding agents can check, look up, lint, and test QML without starting an application, and can inspect and drive a running development build over the Model Context Protocol (MCP), using the same accessible roles and names that screen readers use.
+
+### Fault isolation and fair scheduling
+
+Inspired by ideas from Erlang/BEAM, Ljós isolates faults and schedules work fairly so that a runaway handler, binding, or plugin cannot take over a frame or crash the process.
+
+### Existing QML runs, as the way in
+
+QML you already have runs. You can use typed and `required` properties, inline components, `pragma ComponentBehavior: Bound`, attached and grouped properties, `Binding` and `State` objects, and JavaScript modules, along with the controls and their behaviour and API that applications expect. This is tested against the documentation example corpus and real desktop applications. The [porting guide](../language/porting-from-qt.md) covers bringing an application across.
 
 ### Hot code update
 
@@ -33,23 +49,15 @@ Anything that is not painted does no layout, paint, or GPU work. Anything that i
 
 Every item can produce an AccessKit node for assistive technologies. Text is shaped with bidirectional layout support. Translation calls with `qsTr` work against real catalogues and support switching languages at runtime.
 
-### Fault isolation and fair scheduling
-
-Inspired by ideas from Erlang/BEAM, Ljós isolates faults and schedules work fairly so that a runaway handler, binding, or plugin cannot take over a frame or crash the process.
-
 ### Behaviour specified in Gherkin
 
 Every behaviour is specified in Gherkin scenarios and checked against real Qt (`qml6`) wherever possible.
 
-### MCP out of the box
-
-Coding agents can check, look up, lint, and test QML without starting a running application, and can inspect and drive a running development build over the Model Context Protocol (MCP) using the same accessible roles and names that screen readers use.
-
 ## Non-goals
 
-Some parts of the wider Qt ecosystem are outside Ljós's scope:
+Some modules and features are outside Ljós's scope for now:
 
-- **3D, web, location, and graphing modules:** `QtQuick3D`, `Qt3D`, `QtLocation`, `QtGraphs`, and `Qt.labs` modules are not supported. `QtWebEngine` is an opt-in build feature (`webengine`) that shows pages with the Chromium Embedded Framework. `QtQuick.Particles` supports systems, emitters, image particles, and seeded simulations, while affectors, trails, and sprite particles are not included. `ShaderEffect` with custom GLSL shaders is supported on the GL painter only.
+- **3D, web, location, and graphing modules:** `Qt3D`, `QtLocation`, `QtGraphs`, and `Qt.labs` modules are not supported. `QtQuick3D` is being built, drawn with wgpu. `QtWebEngine` is an opt-in build feature (`webengine`) that shows pages with the Chromium Embedded Framework. `QtQuick.Particles` supports systems, emitters, image particles, and seeded simulations, while affectors, trails, and sprite particles are not included. `ShaderEffect` with custom GLSL shaders is supported on the GL painter only.
 - **C++ `QObject` source compatibility:** Native types are written in Rust rather than C++.
 - **A JavaScript debugger:** Because `quickjs-ng` has no debugger API, Ljós focuses on logging, stack traces with QML file and line numbers, and development overlays instead.
 - **Non-QtQuick QML dialects:** Terminal UI dialects or other non-QtQuick QML vocabularies are out of scope.
@@ -60,9 +68,9 @@ Some parts of the wider Qt ecosystem are outside Ljós's scope:
 
 No source code is copied from or read in Qt or Slint. Ljós is built solely from public documentation, published specifications, and black-box testing against running Qt binaries (`qml6`, `lupdate`, and `lrelease`). All Qt Quick Controls styles are authored from scratch.
 
-### Qt semantics by default; efficiency by structure or opt-in
+### Existing QML keeps its behaviour; efficiency by structure or opt-in
 
-Where Qt defines an observable behaviour, Ljós matches it. For example, setting `visible: false` keeps bindings and timers running, and `reuseItems` defaults to `false`. Ljós saves work only in three ways:
+This is the rule for existing QML. Where Qt defines an observable behaviour, QML written for Qt Quick behaves that way on Ljós. For example, setting `visible: false` keeps bindings and timers running, and `reuseItems` defaults to `false`. Ljós saves work only in three ways:
 
 1. When the saving is unobservable, such as lazy render bindings or paint culling.
 2. When static analysis proves a structural optimisation safe, such as freezing covered `StackView` pages that have no observable handlers.
