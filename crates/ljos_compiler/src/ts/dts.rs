@@ -505,43 +505,40 @@ impl Api {
         &self,
         ty: &'static Type,
         own: &[(&'static str, &'static Enum)],
-    ) -> Vec<(String, Vec<&'static str>)> {
-        let mut inherited = Vec::new();
+    ) -> Vec<(&str, Vec<&str>)> {
         if self
             .exported
             .get(ty.name)
             .is_none_or(|e| e.class != ty.class)
         {
-            return inherited;
+            return Vec::new();
         }
-        let mut declared: HashSet<&str> = enums_of(ty).map(|e| e.name).collect();
-        let mut keys: HashSet<&str> = own.iter().map(|(key, _)| *key).collect();
-        let ancestors: Vec<(&'static Type, &str)> =
+        let ancestors: Vec<Ancestor<'_>> =
             std::iter::successors(ty.prototype(), |found| found.prototype())
-                .filter_map(|found| Some((found, self.name_of(found)?)))
-                .collect();
-        for &(found, found_name) in &ancestors {
-            // Inside the namespace a member named as the type that declares
-            // an enum would hide that type: such a key is left out, and an
-            // enum such a member hides is too.
-            let hidden = declared.contains(found_name) || keys.contains(found_name);
-            let held: Vec<&'static str> = own_keys(found)
-                .into_iter()
-                .filter(|&(key, enumeration)| {
-                    !hidden
-                        && !declared.contains(enumeration.name)
-                        && !ty.properties.iter().any(|p| p.name == key)
-                        && !ancestors.iter().any(|&(_, name)| name == key)
-                        && keys.insert(key)
+                .filter_map(|found| {
+                    Some(Ancestor {
+                        name: self.name_of(found)?,
+                        enums: enums_of(found).map(|e| e.name).collect(),
+                        keys: own_keys(found)
+                            .into_iter()
+                            .map(|(key, enumeration)| (key, enumeration.name))
+                            .collect(),
+                    })
                 })
-                .map(|(key, _)| key)
                 .collect();
-            declared.extend(enums_of(found).map(|e| e.name));
-            if !held.is_empty() {
-                inherited.push((found_name.to_string(), held));
-            }
-        }
-        inherited
+        let namespace = Namespace {
+            enums: enums_of(ty).map(|e| e.name).collect(),
+            keys: own.iter().map(|(key, _)| *key).collect(),
+            // What else the namespace declares: a singleton's members.
+            members: if ty.is_singleton {
+                let properties = ty.properties.iter().map(|p| p.name);
+                properties.chain(ty.methods.iter().copied()).collect()
+            } else {
+                HashSet::new()
+            },
+            properties: ty.properties.iter().map(|p| p.name).collect(),
+        };
+        held_keys(namespace, &ancestors)
     }
 
     fn write_type(&self, out: &mut String, ty: &'static Type) {
@@ -807,6 +804,59 @@ fn members_of(ty: &'static Type) -> impl Iterator<Item = &'static str> {
             let signals = own.signals.iter().map(|s| s.name);
             properties.chain(signals).chain(own.methods.iter().copied())
         })
+}
+
+/// What a type's namespace declares before the keys it inherits, by name.
+struct Namespace<'a> {
+    enums: HashSet<&'a str>,
+    keys: HashSet<&'a str>,
+    /// A singleton's properties and methods, written into the namespace.
+    members: HashSet<&'a str>,
+    /// The type's properties, which no key is named as.
+    properties: HashSet<&'a str>,
+}
+
+/// A type `ty` inherits from, nearest first, as the declarations name it.
+struct Ancestor<'a> {
+    name: &'a str,
+    /// Every enum a file reaches through its name.
+    enums: Vec<&'a str>,
+    /// Its own keys, each with the enum that has it.
+    keys: Vec<(&'a str, &'a str)>,
+}
+
+/// The keys a namespace takes from each ancestor, by the nearest one that
+/// declares their enum. Inside the namespace a name it declares (an enum,
+/// a key, a singleton's member) named as an ancestor hides that ancestor,
+/// so `typeof` it would not be the ancestor: its keys are left out, and so
+/// is a key named as an ancestor.
+fn held_keys<'a>(
+    mut namespace: Namespace<'a>,
+    ancestors: &[Ancestor<'a>],
+) -> Vec<(&'a str, Vec<&'a str>)> {
+    let mut inherited = Vec::new();
+    for ancestor in ancestors {
+        let hidden = namespace.enums.contains(ancestor.name)
+            || namespace.keys.contains(ancestor.name)
+            || namespace.members.contains(ancestor.name);
+        let held: Vec<&'a str> = ancestor
+            .keys
+            .iter()
+            .filter(|&&(key, enumeration)| {
+                !hidden
+                    && !namespace.enums.contains(enumeration)
+                    && !namespace.properties.contains(key)
+                    && !ancestors.iter().any(|a| a.name == key)
+                    && namespace.keys.insert(key)
+            })
+            .map(|&(key, _)| key)
+            .collect();
+        namespace.enums.extend(ancestor.enums.iter().copied());
+        if !held.is_empty() {
+            inherited.push((ancestor.name, held));
+        }
+    }
+    inherited
 }
 
 /// The keys `ty`'s namespace declares of its own enums, each with the
@@ -1077,6 +1127,41 @@ mod tests {
         let input = namespace(&declarations, "TextInput");
         assert_eq!(typed_as(input, "AlignRight").len(), 1, "{input}");
         assert!(typed_as(input, "AlignJustify").is_empty(), "{input}");
+    }
+
+    /// `Owner`, which declares `Origin { TopLeft }`, beside a namespace of
+    /// a type that inherits it and declares nothing else.
+    fn beside_owner<'a>(
+        members: &[&'a str],
+        keys: &[&'a str],
+    ) -> (Namespace<'a>, [Ancestor<'a>; 1]) {
+        let namespace = Namespace {
+            enums: HashSet::new(),
+            keys: keys.iter().copied().collect(),
+            members: members.iter().copied().collect(),
+            properties: HashSet::new(),
+        };
+        let owner = Ancestor {
+            name: "Owner",
+            enums: vec!["Origin"],
+            keys: vec![("TopLeft", "Origin")],
+        };
+        (namespace, [owner])
+    }
+
+    #[test]
+    fn a_name_the_namespace_declares_as_an_ancestor_hides_its_keys() {
+        let (namespace, ancestors) = beside_owner(&[], &[]);
+        assert_eq!(
+            held_keys(namespace, &ancestors),
+            [("Owner", vec!["TopLeft"])]
+        );
+        // `typeof Owner` inside the namespace would be the singleton's
+        // `function Owner()` or `let Owner`, which has no `TopLeft`.
+        let (namespace, ancestors) = beside_owner(&["Owner"], &[]);
+        assert!(held_keys(namespace, &ancestors).is_empty());
+        let (namespace, ancestors) = beside_owner(&[], &["Owner"]);
+        assert!(held_keys(namespace, &ancestors).is_empty());
     }
 
     #[test]
