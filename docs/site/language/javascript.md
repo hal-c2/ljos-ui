@@ -96,7 +96,7 @@ When serialising with `JSON.stringify`:
 - A QML `QtObject` without parent/child cycles serialises its properties in declaration order (starting with `objectName`), omitting signals, methods, `undefined`, and functions. Colours, points, rects, and vectors serialise as objects of their fields, dates as ISO strings, URLs as strings, and lists as arrays.
 - Calling `JSON.stringify` directly on an `Item` (or a `Timer`) throws `TypeError: Cannot convert circular structure to JSON` because `parent` and `children` refer back to the item, unless you pass a replacer function `JSON.stringify(item, (k, v) => ...)` that filters out circular keys.
 
-## Built-in globals and Qt compatibility
+## Built-in globals
 
 In addition to the `Qt` global object and `qsTr`, Ljós provides standard JavaScript built-ins alongside QML-specific behaviours:
 

@@ -1,6 +1,6 @@
 [package]
 name = "ljos"
-description = "Ljós UI: a QML runtime in Rust. The facade an application is written against."
+description = "Ljós UI: a Rust UI toolkit for malleable software. The facade an application is written against."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

@@ -1,5 +1,5 @@
-//! Ljós UI: a QML runtime in Rust, and the facade an application is
-//! written against.
+//! Ljós UI: a Rust UI toolkit for malleable software, and the facade an
+//! application is written against.
 //!
 //! Everything an application needs is here behind a small interface:
 //! [`App`] is the start of an application (its modules, its compiled

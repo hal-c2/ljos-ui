@@ -6,15 +6,19 @@
 
 *Ljós* is Icelandic for "light".
 
-Ljós is a Rust UI toolkit that runs QML, aiming for compatibility with Qt Quick and Qt Quick Controls. It renders through egui, runs JavaScript with rquickjs, and targets desktop and mobile. It is designed to support:
+Ljós is a Rust UI toolkit for malleable software: apps that people and their agents can reshape while they run. Interfaces are declarative, scripts are typed TypeScript, and every part of a running app can be observed and driven. Existing QML runs as a way in.
 
-- hot code update;
-- spending almost nothing on off-screen content;
-- accessibility and localisation from the start;
-- Erlang-style fault isolation;
-- MCP tooling for coding agents out of the box.
+Ljós renders through egui, runs scripts with rquickjs, and targets desktop and mobile. It is designed for:
 
-Status: under active development. The engine, the Qt Quick and Controls types, the MCP tooling and the QML test and Gherkin suites run today; `docs/ARCHITECTURE.md` has the design and its milestones (section 20).
+- **Malleable apps.** An app can let the people who use it change its interface and scripts and see the change live, checked by the same compiler and lints the dev tools use. Hot code update keeps the app's state across a change.
+- **TypeScript first.** Scripts are a strict subset of TypeScript, checked in Rust before anything runs, so `tsc`, editors and coding models work on them. Today a QML file imports `.ts` modules, and a property can have a type they declare (`docs/DIALECT.md`).
+- **Observability.** Every running app can be inspected and driven over MCP: its accessibility tree, properties, bindings, processes, mailboxes, frames and wakes. `ljos observe` shows the same in a window. Coding agents get authoring tools out of the box.
+- **Stability.** Erlang-style fault isolation and fair scheduling. A failing part restarts or shows a fallback, and a runaway handler cannot take over the frame or the process.
+- **Low cost.** An idle app uses 0 % CPU, and off-screen content costs almost nothing.
+- **Accessibility and localisation** from the start.
+- **Existing QML.** QML you already have runs, so an existing app is a place to start. `ljos check --port` lists what it uses that Ljós lacks (`docs/MIGRATION.md`), and `ljos migrate` rewrites it in Ljós's own API (`docs/DIALECT.md`).
+
+Status: under active development. The engine, the `QtQuick` and `QtQuick.Controls` types, TypeScript modules, the MCP tooling, `ljos observe`, and the QML test and Gherkin suites run today; `docs/ARCHITECTURE.md` has the design and its milestones (section 20).
 
 Ljós is a clean-room implementation: see `CLEAN_ROOM.md`.
 
