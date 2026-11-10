@@ -40,7 +40,7 @@ url = { workspace = true }
 # With `--example`, the native backends of a gallery example.
 ljos_gallery_backends = { path = "../../examples/gallery_backends" }
 # The engine-backed type oracle for `--example` compiles.
-ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "render"] }
+ljos = { path = "../ljos", default-features = false, features = ["dev-qml", "render", "woff"] }
 ljos_controls = { path = "../ljos_controls", features = ["pdf"] }
 # `ljos audit`: the design audit on the scene `ljos render` would draw.
 ljos_audit = { path = "../ljos_audit" }

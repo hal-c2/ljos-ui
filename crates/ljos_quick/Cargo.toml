@@ -31,7 +31,7 @@ ljos_reactive = { path = "../ljos_reactive" }
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 ljos_shader = { path = "../ljos_shader" }
-ljos_text = { path = "../ljos_text" }
+ljos_text = { path = "../ljos_text", default-features = false }
 bitflags.workspace = true
 # Image decoding: PNG and JPEG are the formats Image reads.
 png.workspace = true

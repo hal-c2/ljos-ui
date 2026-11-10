@@ -1,5 +1,6 @@
 //! Fonts packed as WOFF2 and WOFF: unpacked before they are registered, and
 //! refused with a reason, never a panic, when they are broken.
+#![cfg(feature = "woff")]
 
 use ljos_text::{FontError, TextEngine};
 

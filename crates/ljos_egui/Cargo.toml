@@ -14,7 +14,7 @@ ljos_engine = { path = "../ljos_engine" }
 ljos_quick = { path = "../ljos_quick" }
 ljos_render = { path = "../ljos_render", features = ["b0"] }
 ljos_runtime = { path = "../ljos_runtime" }
-ljos_text = { path = "../ljos_text" }
+ljos_text = { path = "../ljos_text", default-features = false }
 egui.workspace = true
 thiserror.workspace = true
 # Only with `quick3d`: a 3D view drawn on egui-wgpu's device, in its pass.
