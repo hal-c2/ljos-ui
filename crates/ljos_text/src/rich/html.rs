@@ -124,7 +124,7 @@ struct Parser<'a> {
     /// opened one, whatever it closed first.
     opened: u64,
     sheet: Sheet,
-    /// A box that keeps line feeds was just opened: a line feed right
+    /// A block that keeps line feeds was just opened: a line feed right
     /// after its start tag is not part of its text (measured on Qt 6.11,
     /// as HTML has it for `<pre>`).
     skip_line_feed: bool,
@@ -497,8 +497,10 @@ impl<'a> Parser<'a> {
                 open.empty = css.contains("-qt-paragraph-type:empty");
             }
         }
+        // A block in a table cell is not a box, but its line feed goes too.
         self.skip_line_feed = self.open.last().is_some_and(|o| {
-            o.boxed && matches!(o.white_space, WhiteSpace::Keep | WhiteSpace::Lines)
+            (o.boxed || is_block(&o.name))
+                && matches!(o.white_space, WhiteSpace::Keep | WhiteSpace::Lines)
         });
     }
 
@@ -1478,6 +1480,13 @@ mod tests {
             )[0],
             "a   b\nc"
         );
+        // In a cell too, a line feed right after a block's start tag is
+        // not text.
+        let cell =
+            |html: &str| texts(&format!("<table><tr><td>{html}</td></tr></table>"))[0].clone();
+        assert_eq!(cell("<pre>\ncode</pre>"), "code");
+        assert_eq!(cell("x<pre>\ncode</pre>"), "x\ncode");
+        assert_eq!(cell("<p style=\"white-space:pre-wrap\">\na</p>"), "a");
     }
 
     #[test]
