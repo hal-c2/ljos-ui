@@ -200,31 +200,25 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | case                                             | html                                                                                                  | text      |
-        | A cell collapses to a space that does not break  | <table><tr><td style='white-space:nowrap'>a   b</td></tr></table>                                     | [=a_b=]   |
-        | A pre-wrap cell keeps its spaces                 | <table><tr><td style='white-space:pre-wrap'>a   b</td></tr></table>                                   | [=a   b=] |
-        | So does a pre header cell                        | <table><tr><th style='white-space:pre'>a   b</th></tr></table>                                        | [=a   b=] |
-        | A rule for td of a style sheet says it           | <style>td { white-space: pre-wrap }</style><table><tr><td>a   b</td></tr></table>                     | [=a   b=] |
-        | A cell inherits it from its row                  | <table><tr style='white-space:pre-wrap'><td>a   b</td></tr></table>                                   | [=a   b=] |
-        | A cell inherits it from its table                | <table style='white-space:pre-wrap'><tr><td>a   b</td></tr></table>                                   | [=a   b=] |
-        | A paragraph in the cell may say normal           | <table><tr><td style='white-space:pre-wrap'><p style='white-space:normal'>a   b</p></td></tr></table> | [=a b=]   |
-        | One right after the cell's start tag is not text | <table><tr><td style='white-space:pre-wrap'>~a</td></tr></table>                                      | [=a=]     |
-        | Nor one after a list's start tag in it           | <table style='white-space:pre'><tr><td><ul>~<li>a</li></ul></td></tr></table>                         | [=a=]     |
-        | Nor a numbered list's                            | <table><tr><td style='white-space:pre'><ol>~<li>a</li></ol></td></tr></table>                         | [=a=]     |
-        | Nor a div's                                      | <table><tr><td style='white-space:pre-wrap'><div>~a</div></td></tr></table>                           | [=a=]     |
-        | Nor a definition list's                          | <table style='white-space:pre-wrap'><tr><td><dl>~<dt>a</dt></dl></td></tr></table>                    | [=a=]     |
-        | The spaces after a line break are kept           | <table><tr><td style='white-space:pre-wrap'>a<br>  b</td></tr></table>                                | [=a/  b=] |
-        | After a div's end text goes on in its paragraph  | <table><tr><td><div>x</div>y</td></tr></table>                                                        | [=xy=]    |
-
-      # Qt gives a cell paragraphs of its own; Ljós holds a cell as one, its
-      # breaks line breaks (hal-c2/ljos-ui#283).
-      @backlog
-      Examples:
-        | case                                              | html                                                                         | text      |
-        | A line feed in a pre-wrap cell starts a paragraph | <table><tr><td style='white-space:pre-wrap'>a  ~b</td></tr></table>          | [=a  #b=] |
-        | One after an inline start tag is                  | <table><tr><td style='white-space:pre-wrap'><b>~a</b></td></tr></table>      | [=#a=]    |
-        | A div after text in a cell starts a paragraph     | <table><tr><td style='white-space:pre-wrap'>x<div>~a</div></td></tr></table> | [=x#a=]   |
-        | Text after a paragraph's end is a paragraph       | <table><tr><td><p>x</p>y</td></tr></table>                                   | [=x#y=]   |
+        | case                                              | html                                                                                                  | text      |
+        | A cell collapses to a space that does not break   | <table><tr><td style='white-space:nowrap'>a   b</td></tr></table>                                     | [=a_b=]   |
+        | A pre-wrap cell keeps its spaces                  | <table><tr><td style='white-space:pre-wrap'>a   b</td></tr></table>                                   | [=a   b=] |
+        | So does a pre header cell                         | <table><tr><th style='white-space:pre'>a   b</th></tr></table>                                        | [=a   b=] |
+        | A rule for td of a style sheet says it            | <style>td { white-space: pre-wrap }</style><table><tr><td>a   b</td></tr></table>                     | [=a   b=] |
+        | A cell inherits it from its row                   | <table><tr style='white-space:pre-wrap'><td>a   b</td></tr></table>                                   | [=a   b=] |
+        | A cell inherits it from its table                 | <table style='white-space:pre-wrap'><tr><td>a   b</td></tr></table>                                   | [=a   b=] |
+        | A paragraph in the cell may say normal            | <table><tr><td style='white-space:pre-wrap'><p style='white-space:normal'>a   b</p></td></tr></table> | [=a b=]   |
+        | One right after the cell's start tag is not text  | <table><tr><td style='white-space:pre-wrap'>~a</td></tr></table>                                      | [=a=]     |
+        | Nor one after a list's start tag in it            | <table style='white-space:pre'><tr><td><ul>~<li>a</li></ul></td></tr></table>                         | [=a=]     |
+        | Nor a numbered list's                             | <table><tr><td style='white-space:pre'><ol>~<li>a</li></ol></td></tr></table>                         | [=a=]     |
+        | Nor a div's                                       | <table><tr><td style='white-space:pre-wrap'><div>~a</div></td></tr></table>                           | [=a=]     |
+        | Nor a definition list's                           | <table style='white-space:pre-wrap'><tr><td><dl>~<dt>a</dt></dl></td></tr></table>                    | [=a=]     |
+        | The spaces after a line break are kept            | <table><tr><td style='white-space:pre-wrap'>a<br>  b</td></tr></table>                                | [=a/  b=] |
+        | After a div's end text goes on in its paragraph   | <table><tr><td><div>x</div>y</td></tr></table>                                                        | [=xy=]    |
+        | A line feed in a pre-wrap cell starts a paragraph | <table><tr><td style='white-space:pre-wrap'>a  ~b</td></tr></table>                                   | [=a  #b=] |
+        | One after an inline start tag is                  | <table><tr><td style='white-space:pre-wrap'><b>~a</b></td></tr></table>                               | [=#a=]    |
+        | A div after text in a cell starts a paragraph     | <table><tr><td style='white-space:pre-wrap'>x<div>~a</div></td></tr></table>                          | [=x#a=]   |
+        | Text after a paragraph's end is a paragraph       | <table><tr><td><p>x</p>y</td></tr></table>                                                            | [=x#y=]   |
 
     Scenario Outline: <case>
       When the property "html" of "root" is set to "<html>"
@@ -232,37 +226,29 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<width>"
 
       Examples:
-        | case                                                  | html                                                                                                                                                                                         | width               |
-        | A normal cell wraps                                   | <table><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                                 | within the item     |
-        | A nowrap cell does not                                | <table><tr><td style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                      | wider than the item |
-        | Nor does a pre header cell                            | <table><tr><th style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</th></tr></table>                                                                         | wider than the item |
-        | A pre-wrap cell wraps                                 | <table><tr><td style='white-space:pre-wrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                    | within the item     |
-        | A cell of a nowrap table does not                     | <table style='white-space:nowrap'><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                      | wider than the item |
-        | Nor does one a rule makes nowrap                      | <style>td { white-space: nowrap }</style><table><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                        | wider than the item |
-        | Nor does a nowrap paragraph in a cell                 | <table><tr><td><p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                               | wider than the item |
-        | A cell beside a nowrap one still wraps                | <table><tr><td style='white-space:nowrap'>x</td><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                            | within the item     |
-        | A normal paragraph that starts a nowrap cell does not | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                    | wider than the item |
-        | Nor after white space that is nothing                 | <table><tr><td style='white-space:nowrap'>~<p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                   | wider than the item |
-        | Nor in a nowrap div that starts a cell                | <table><tr><td><div style='white-space:nowrap'><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></div></td></tr></table>                         | wider than the item |
-        | Nor on the line after a break in it                   | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x<br>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                               | wider than the item |
-        | Text after it has the cell's nowrap                   | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                   | wider than the item |
-        | Text after a div's end makes its paragraph not wrap   | <table><tr><td style='white-space:nowrap'>z<div style='white-space:normal'>x</div>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                              | wider than the item |
-        | A paragraph after an empty one wraps                  | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'></p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>  | within the item     |
-        | Text after an empty nowrap paragraph wraps            | <table><tr><td>x<p style='white-space:nowrap'></p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                              | within the item     |
-
-      # Text after a paragraph's end in a cell is a paragraph of its own in
-      # Qt, and each paragraph of a cell wraps as it says. A TextEdit holds
-      # a cell as one paragraph, with one wrap for all of it; a Text reads
-      # them apart (below) (hal-c2/ljos-ui#283).
-      @backlog
-      Examples:
-        | case                                                      | html                                                                                                                                                                                                            | width           |
-        | Text after a nowrap paragraph wraps                       | <table><tr><td><p style='white-space:nowrap'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                 | within the item |
-        | A normal paragraph after text in it wraps                 | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                    | within the item |
-        | So does one after a line break                            | <table><tr><td style='white-space:nowrap'>x<br><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                  | within the item |
-        | A paragraph after a kept line feed in a nowrap cell wraps | <table><tr><td style='white-space:nowrap'><span style='white-space:pre-wrap'>~</span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>            | within the item |
-        | So does one after kept spaces                             | <table><tr><td style='white-space:nowrap'><span style='white-space:pre-wrap'>  </span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>           | within the item |
-        | And one after a kept line feed in a nowrap div            | <table><tr><td><div style='white-space:nowrap'><span style='white-space:pre-wrap'>~</span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></div></td></tr></table> | within the item |
+        | case                                                      | html                                                                                                                                                                                                            | width               |
+        | A normal cell wraps                                       | <table><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                                                    | within the item     |
+        | A nowrap cell does not                                    | <table><tr><td style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                         | wider than the item |
+        | Nor does a pre header cell                                | <table><tr><th style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</th></tr></table>                                                                                            | wider than the item |
+        | A pre-wrap cell wraps                                     | <table><tr><td style='white-space:pre-wrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                       | within the item     |
+        | A cell of a nowrap table does not                         | <table style='white-space:nowrap'><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                         | wider than the item |
+        | Nor does one a rule makes nowrap                          | <style>td { white-space: nowrap }</style><table><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                           | wider than the item |
+        | Nor does a nowrap paragraph in a cell                     | <table><tr><td><p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                                                  | wider than the item |
+        | A cell beside a nowrap one still wraps                    | <table><tr><td style='white-space:nowrap'>x</td><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                               | within the item     |
+        | A normal paragraph that starts a nowrap cell does not     | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                       | wider than the item |
+        | Nor after white space that is nothing                     | <table><tr><td style='white-space:nowrap'>~<p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                      | wider than the item |
+        | Nor in a nowrap div that starts a cell                    | <table><tr><td><div style='white-space:nowrap'><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></div></td></tr></table>                                            | wider than the item |
+        | Nor on the line after a break in it                       | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x<br>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                  | wider than the item |
+        | Text after it has the cell's nowrap                       | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                      | wider than the item |
+        | Text after a div's end makes its paragraph not wrap       | <table><tr><td style='white-space:nowrap'>z<div style='white-space:normal'>x</div>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                 | wider than the item |
+        | A paragraph after an empty one wraps                      | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'></p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                     | within the item     |
+        | Text after an empty nowrap paragraph wraps                | <table><tr><td>x<p style='white-space:nowrap'></p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                 | within the item     |
+        | Text after a nowrap paragraph wraps                       | <table><tr><td><p style='white-space:nowrap'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                                                 | within the item     |
+        | A normal paragraph after text in it wraps                 | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                    | within the item     |
+        | So does one after a line break                            | <table><tr><td style='white-space:nowrap'>x<br><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                                  | within the item     |
+        | A paragraph after a kept line feed in a nowrap cell wraps | <table><tr><td style='white-space:nowrap'><span style='white-space:pre-wrap'>~</span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>            | within the item     |
+        | So does one after kept spaces                             | <table><tr><td style='white-space:nowrap'><span style='white-space:pre-wrap'>  </span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>           | within the item     |
+        | And one after a kept line feed in a nowrap div            | <table><tr><td><div style='white-space:nowrap'><span style='white-space:pre-wrap'>~</span><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></div></td></tr></table> | within the item     |
 
     Scenario Outline: <case>
       When the property "html" of "root" is set to "<html>"
@@ -298,41 +284,41 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | case                                                     | html                                                                   | text       |
-        | Two spaces between paragraphs end the first with one     | <p>a</p>  <p>b</p>                                                     | [a #b]     |
-        | So do a line feed and spaces                             | <p>a</p>~  <p>b</p>                                                    | [a #b]     |
-        | One space after a block's end tag is nothing             | <p>a</p> <p>b</p>                                                      | [a#b]      |
-        | So is one line feed                                      | <p>a</p>~<p>b</p>                                                      | [a#b]      |
-        | One line feed at the end is a space                      | <p>a</p>~                                                              | [a ]       |
-        | An end tag that closes nothing is no tag                 | <p>a</p>~</b>                                                          | [a ]       |
-        | After an inline tag one is a space                       | <p>a</p><b></b>~<p>b</p>                                               | [a #b]     |
-        | Before an inline tag one is nothing                      | <p>a</p>~<b>b</b>                                                      | [a#b]      |
-        | Not after a block that ends in a space                   | <p>a </p>  <p>b</p>                                                    | [a #b]     |
-        | Nor after one that ends in a line break                  | <p>a<br></p>  <p>b</p>                                                 | [a/#b]     |
-        | Nor after one that ends in a space that does not break   | <div style='white-space:nowrap'><p>a </p>  <p>b</p></div>              | [a_#b]     |
-        | A no-break space written as one is not a space here      | <p>a&nbsp;</p>  <p>b</p>                                               | [a_ #b]    |
-        | Nor where spaces do not break                            | <div style='white-space:nowrap'><p>a&nbsp;</p>  <p>b</p></div>         | [a__#b]    |
-        | After a list it goes to its last item                    | <ul><li>a</li></ul>  <p>b</p>                                          | [a #b]     |
-        | In a list, to the item before                            | <ul><li>a<ul><li>b</li></ul>  </li></ul>                               | [a#b ]     |
-        | At the end of the document too                           | <p>a</p>~<p>b</p>~~                                                    | [a#b ]     |
-        | Before an empty paragraph too                            | <p>a</p>  <p></p>                                                      | [a #]      |
-        | Text after a block is a block of its own                 | <p>a</p>  b                                                            | [a#b]      |
-        | After a block's start tag it is nothing                  | <p>x</p><div>  <p>a</p></div>                                          | [x#a]      |
-        | A comment eats the white space after it                  | <p>a<!-- -->  b</p>                                                    | [ab]       |
-        | White space before a comment counts for the tag after it | <p>a</p> <!-- x --><p>b</p>                                            | [a#b]      |
-        | No-break spaces are kept as they are                     | <p>a</p>&nbsp;&nbsp;<p>b</p>                                           | [a__#b]    |
-        | One no-break space after a block's end tag is nothing    | <p>a</p>&nbsp;<p>b</p>                                                 | [a#b]      |
-        | Before a table it goes to the paragraph                  | <p>a</p>  <table><tr><td>x</td></tr></table>                           | [a =x=]    |
-        | After a table it is nothing                              | <table><tr><td>x</td></tr></table>  b                                  | [=x=b]     |
-        | Between cells it is nothing                              | <table><tr><td>a</td>  <td>b</td></tr>  </table>                       | [=a=b=]    |
-        | pre keeps it as written                                  | <div style='white-space:pre'><p>a</p>  <p>b</p></div>                  | [a  #b]    |
-        | A line feed in pre starts a paragraph                    | <div style='white-space:pre'><p>a</p>~~~<p>b</p></div>                 | [a####b]   |
-        | One line feed after a block's end tag is nothing in pre  | <div style='white-space:pre'><p>a</p>~<p>b</p></div>                   | [a#b]      |
-        | pre-wrap leaves out line feeds before an end tag         | <div style='white-space:pre-wrap'><p>a</p>~~</div><p>b</p>             | [a#b]      |
-        | and keeps the spaces there                               | <div style='white-space:pre-wrap'><p>a</p>  </div>                     | [a  ]      |
-        | After the start tag of a pre div it is a block           | <div style='white-space:pre'>  <p>a</p></div>                          | [  #a]     |
-        | pre-line collapses it                                    | <div style='white-space:pre-line'><p>a</p>  <p>b</p></div>             | [a #b]     |
-        | nowrap makes it a space that does not break              | <div style='white-space:nowrap'><p>a</p>  <p>b</p></div>               | [a_#b]     |
+        | case                                                     | html                                                           | text     |
+        | Two spaces between paragraphs end the first with one     | <p>a</p>  <p>b</p>                                             | [a #b]   |
+        | So do a line feed and spaces                             | <p>a</p>~  <p>b</p>                                            | [a #b]   |
+        | One space after a block's end tag is nothing             | <p>a</p> <p>b</p>                                              | [a#b]    |
+        | So is one line feed                                      | <p>a</p>~<p>b</p>                                              | [a#b]    |
+        | One line feed at the end is a space                      | <p>a</p>~                                                      | [a ]     |
+        | An end tag that closes nothing is no tag                 | <p>a</p>~</b>                                                  | [a ]     |
+        | After an inline tag one is a space                       | <p>a</p><b></b>~<p>b</p>                                       | [a #b]   |
+        | Before an inline tag one is nothing                      | <p>a</p>~<b>b</b>                                              | [a#b]    |
+        | Not after a block that ends in a space                   | <p>a </p>  <p>b</p>                                            | [a #b]   |
+        | Nor after one that ends in a line break                  | <p>a<br></p>  <p>b</p>                                         | [a/#b]   |
+        | Nor after one that ends in a space that does not break   | <div style='white-space:nowrap'><p>a </p>  <p>b</p></div>      | [a_#b]   |
+        | A no-break space written as one is not a space here      | <p>a&nbsp;</p>  <p>b</p>                                       | [a_ #b]  |
+        | Nor where spaces do not break                            | <div style='white-space:nowrap'><p>a&nbsp;</p>  <p>b</p></div> | [a__#b]  |
+        | After a list it goes to its last item                    | <ul><li>a</li></ul>  <p>b</p>                                  | [a #b]   |
+        | In a list, to the item before                            | <ul><li>a<ul><li>b</li></ul>  </li></ul>                       | [a#b ]   |
+        | At the end of the document too                           | <p>a</p>~<p>b</p>~~                                            | [a#b ]   |
+        | Before an empty paragraph too                            | <p>a</p>  <p></p>                                              | [a #]    |
+        | Text after a block is a block of its own                 | <p>a</p>  b                                                    | [a#b]    |
+        | After a block's start tag it is nothing                  | <p>x</p><div>  <p>a</p></div>                                  | [x#a]    |
+        | A comment eats the white space after it                  | <p>a<!-- -->  b</p>                                            | [ab]     |
+        | White space before a comment counts for the tag after it | <p>a</p> <!-- x --><p>b</p>                                    | [a#b]    |
+        | No-break spaces are kept as they are                     | <p>a</p>&nbsp;&nbsp;<p>b</p>                                   | [a__#b]  |
+        | One no-break space after a block's end tag is nothing    | <p>a</p>&nbsp;<p>b</p>                                         | [a#b]    |
+        | Before a table it goes to the paragraph                  | <p>a</p>  <table><tr><td>x</td></tr></table>                   | [a =x=]  |
+        | After a table it is nothing                              | <table><tr><td>x</td></tr></table>  b                          | [=x=b]   |
+        | Between cells it is nothing                              | <table><tr><td>a</td>  <td>b</td></tr>  </table>               | [=a=b=]  |
+        | pre keeps it as written                                  | <div style='white-space:pre'><p>a</p>  <p>b</p></div>          | [a  #b]  |
+        | A line feed in pre starts a paragraph                    | <div style='white-space:pre'><p>a</p>~~~<p>b</p></div>         | [a####b] |
+        | One line feed after a block's end tag is nothing in pre  | <div style='white-space:pre'><p>a</p>~<p>b</p></div>           | [a#b]    |
+        | pre-wrap leaves out line feeds before an end tag         | <div style='white-space:pre-wrap'><p>a</p>~~</div><p>b</p>     | [a#b]    |
+        | and keeps the spaces there                               | <div style='white-space:pre-wrap'><p>a</p>  </div>             | [a  ]    |
+        | After the start tag of a pre div it is a block           | <div style='white-space:pre'>  <p>a</p></div>                  | [  #a]   |
+        | pre-line collapses it                                    | <div style='white-space:pre-line'><p>a</p>  <p>b</p></div>     | [a #b]   |
+        | nowrap makes it a space that does not break              | <div style='white-space:nowrap'><p>a</p>  <p>b</p></div>       | [a_#b]   |
 
     Scenario Outline: The space between blocks has the format it was written in: <case>
       When the property "html" of "root" is set to "<html>"
@@ -340,9 +326,9 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<bold>"
 
       Examples:
-        | case                         | html                                                     | bold     |
-        | in a bold div                | <div style='font-weight:bold'><p>a</p>  <p>b</p></div> | bold     |
-        | after bold text, not bold    | <p><b>a</b></p>  <p>b</p>                                | not bold |
+        | case                      | html                                                   | bold     |
+        | in a bold div             | <div style='font-weight:bold'><p>a</p>  <p>b</p></div> | bold     |
+        | after bold text, not bold | <p><b>a</b></p>  <p>b</p>                              | not bold |
 
     Scenario Outline: With the editor's mark: <case>
       When the property "html" of "root" is set to "<html>"
