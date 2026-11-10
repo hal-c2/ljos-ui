@@ -136,3 +136,19 @@ Feature: Keyboard focus of a popup
     And the method "open" of "plain" is called
     And the method "close" of "plain" is called
     Then the property "activeFocus" of "one" is true
+
+  Scenario: A popup closed under another leaves the focus in the one on top
+    When the method "open" of "p" is called
+    And the property "focus" of "plain" is set to true
+    And the method "open" of "plain" is called
+    And the method "close" of "p" is called
+    Then the property "activeFocus" of "inPlain" is true
+
+  Scenario: Popups closed out of order give the focus back to what had it before both
+    When the method "open" of "p" is called
+    And the property "focus" of "plain" is set to true
+    And the method "open" of "plain" is called
+    And the method "close" of "p" is called
+    And the method "close" of "plain" is called
+    Then the property "activeFocus" of "outside" is true
+    And the property "activeFocus" of "one" is false
