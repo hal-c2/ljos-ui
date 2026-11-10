@@ -147,7 +147,7 @@ struct CompletionNode {
 /// Who gives the initial properties of an object being made, which
 /// decides how they are set.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) enum Initial {
+pub enum Initial {
     /// Native code: each names a property of the root, and one that
     /// cannot be set stops the creation.
     #[default]
@@ -155,10 +155,27 @@ pub(crate) enum Initial {
     /// `createObject`: one that cannot be set is a warning, and a member
     /// of a value given `Qt.binding` takes the value it gives then.
     Created,
-    /// `incubateObject`: as `createObject`, except that such a member
-    /// follows its binding, and what cannot be set is an error of the
-    /// script that called, told at the place of the call (`file:line`).
+    /// `incubateObject`, and `Loader.setSource`, which Qt sets the same
+    /// way: as `createObject`, except that such a member follows its
+    /// binding, and what cannot be set is an error of the script that
+    /// called, told at the place of the call (`file:line`).
     Incubated(Option<Atom>),
+}
+
+impl Initial {
+    /// [`Initial::Incubated`] at the place of the script running now,
+    /// which an asynchronous creation is past by the time it sets `props`.
+    /// Nothing to set, nothing to tell: no stack is taken.
+    pub fn incubated_here(engine: &Engine, props: &[(String, Value)]) -> Self {
+        let at = if props.is_empty() {
+            None
+        } else {
+            engine
+                .js_origin()
+                .map(|p| Atom::from(format!("{}:{}", p.file, p.line)))
+        };
+        Self::Incubated(at)
+    }
 }
 
 #[derive(Default)]
@@ -393,19 +410,20 @@ impl Engine {
         parent: Option<ObjectId>,
         initial_props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
-        self.create_from_url_in(url, parent, initial_props, None)
+        self.create_from_url_in(url, parent, initial_props, None, Initial::Native)
     }
 
     /// [`Engine::create_from_url`] in a context of `scope`'s own, which a
     /// name the file cannot place finds the members of `scope` in, and then
     /// what `scope` finds: a Loader's item reads the Loader's members
-    /// first (checked on qml6).
+    /// first (checked on qml6). `how` says how `initial_props` are set.
     pub fn create_from_url_in(
         &self,
         url: &str,
         parent: Option<ObjectId>,
         initial_props: Vec<(String, Value)>,
         scope: Option<ObjectId>,
+        how: Initial,
     ) -> Result<ObjectId, EngineError> {
         let mut template = self.not_script_time(|| self.file_template(url))?;
         let ctx = scope.map(|s| self.scope_context(s));
@@ -416,15 +434,17 @@ impl Engine {
         } else {
             (initial_props, None)
         };
-        let made = self.as_host_root(|| self.create_from_template(&template, parent, props));
+        let noted_how = noted.as_ref().map(|_| how.clone());
+        let made = self
+            .as_host_root(|| self.create_from_template_with(&template, parent, props, how, |_| {}));
         match (&made, ctx) {
             (Ok(root), Some(ctx)) => self.add_context(*root, ctx),
             (Err(_), Some(ctx)) => self.destroy_context(ctx),
             _ => {}
         }
         let root = made?;
-        if let Some(props) = noted {
-            self.reload_note_origin(root, url, parent, &props, scope);
+        if let (Some(props), Some(how)) = (noted, noted_how) {
+            self.reload_note_origin(root, url, parent, &props, scope, how);
         }
         Ok(root)
     }
@@ -3444,7 +3464,8 @@ impl CreationJob {
     }
 
     /// The job with its initial properties set as `how` sets them.
-    pub(crate) fn initial(mut self, how: Initial) -> Self {
+    #[must_use]
+    pub fn initial(mut self, how: Initial) -> Self {
         self.initial = how;
         self
     }

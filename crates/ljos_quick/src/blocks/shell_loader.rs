@@ -21,8 +21,8 @@
 use std::time::Duration;
 
 use ljos_engine::{
-    Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, LogLevel, ObjectId,
-    PropIndex, QmlObject, Url, Value, WriteKind, qml_impl,
+    Atom, Boundary, BoundaryConfig, Cx, Engine, EngineError, FaultReport, Initial, LogLevel,
+    ObjectId, PropIndex, QmlObject, Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Restart};
 
@@ -259,7 +259,13 @@ fn show_fallback(e: &Engine, me: ObjectId, why: String) {
 /// compile, or something in it faulted while it was made.
 fn make(e: &Engine, me: ObjectId, url: &str) -> Result<ObjectId, String> {
     let before = last_fault(e);
-    let made = e.create_from_url_in(&e.resolve_url(me, url), Some(me), Vec::new(), Some(me));
+    let made = e.create_from_url_in(
+        &e.resolve_url(me, url),
+        Some(me),
+        Vec::new(),
+        Some(me),
+        Initial::Native,
+    );
     let after = last_fault(e);
     with_run(e, me, |r| r.handled = after);
     let obj = made.map_err(|err| err.to_string())?;

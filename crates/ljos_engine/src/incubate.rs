@@ -25,7 +25,6 @@ use std::rc::Rc;
 use ljos_js::JsRef;
 use ljos_runtime::Lane;
 
-use crate::atom::Atom;
 use crate::boundary::APPLICATION_PROC;
 use crate::builtins::QtObject;
 use crate::cx::Cx;
@@ -120,16 +119,7 @@ impl Engine {
             status::LOADING.into(),
             WriteKind::Initial,
         )?;
-        // What cannot be set is told at the call, which an asynchronous
-        // incubation is past by then. Nothing to set, nothing to tell: no
-        // stack is taken.
-        let at = if props.is_empty() {
-            None
-        } else {
-            self.js_origin()
-                .map(|p| Atom::from(format!("{}:{}", p.file, p.line)))
-        };
-        let how = Initial::Incubated(at);
+        let how = Initial::incubated_here(self, &props);
         if synchronous {
             let made = self.component_template(component).and_then(|template| {
                 self.create_for_script(component, template, parent, props, how)
