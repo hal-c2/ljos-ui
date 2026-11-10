@@ -61,9 +61,9 @@ fn a_file_kept_keeps_the_files_it_names() {
         panic!("Button is kept: {:?}", project.lowering("Button"));
     };
     assert!(
-        kept.reason.contains("`Main.qml`, which is kept"),
+        kept.to_string().contains("`Main.qml`, which is kept"),
         "{}",
-        kept.reason
+        kept
     );
     assert!(matches!(project.lowering("Main"), Some(Outcome::Kept(_))));
     assert_eq!(project.source("Button"), Some(BUTTON));
@@ -185,7 +185,7 @@ fn a_style_chosen_while_lowering_lowers_the_controls_again() {
     let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
         panic!("Main is kept: {:?}", project.lowering("Main"));
     };
-    assert!(kept.reason.contains("Fusion"), "{}", kept.reason);
+    assert!(kept.to_string().contains("Fusion"), "{}", kept);
     assert_eq!(project.source("Main"), Some(MAIN));
 }
 
@@ -221,7 +221,7 @@ fn a_module_told_after_its_importer_was_lowered_lowers_it_again() {
     let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
         panic!("Main is kept: {:?}", project.lowering("Main"));
     };
-    assert!(kept.reason.contains("not lowered yet"), "{}", kept.reason);
+    assert!(kept.to_string().contains("not lowered yet"), "{}", kept);
 
     project.add("Gauges/Dial", DIAL);
     project.add("Gauges/Tones", TONES);
@@ -241,7 +241,7 @@ fn a_module_with_native_types_only_keeps_the_files_that_import_it() {
         panic!("Main is kept: {:?}", project.lowering("Main"));
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "it imports `Sensors`, a module of the project whose types are native: they are not lowered"
     );
 }
@@ -277,7 +277,7 @@ fn a_script_of_the_rows_module_s_path_keeps_the_file_and_is_the_project_s() {
     let Some(Outcome::Kept(kept)) = project.lowering("Main") else {
         panic!("Main is kept: {:?}", project.lowering("Main"));
     };
-    assert!(kept.reason.contains("`Main.rows.ts`"), "{}", kept.reason);
+    assert!(kept.to_string().contains("`Main.rows.ts`"), "{}", kept);
     assert_eq!(project.source("Main"), Some(TABLE));
     assert_eq!(project.script("Main.rows.ts"), Some(OWN));
 

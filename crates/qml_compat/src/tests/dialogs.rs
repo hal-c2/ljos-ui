@@ -50,7 +50,7 @@ fn a_file_of_the_project_a_ljos_module_would_shadow_keeps_the_file() {
     let only =
         |file: &'static str| move |name: &str| (name == file).then(|| root_of("Rectangle", &[]));
     let kept = |source: &str, file: &'static str| match lower(source, &only(file)) {
-        Outcome::Kept(kept) => kept.reason,
+        Outcome::Kept(kept) => kept.to_string(),
         other => panic!("lowered: {other:?}"),
     };
     assert_eq!(
@@ -109,7 +109,7 @@ fn the_dialogs_with_the_controls_of_another_style_keep_the_file_for_the_style() 
         panic!("lowered in Fusion");
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic"
     );
 }
@@ -183,7 +183,7 @@ impl Locals for Gauges {
 #[test]
 fn an_import_of_the_project_between_qts_line_and_ljos_line_keeps_the_file() {
     let kept = |source: &str| match lower(source, &Gauges) {
-        Outcome::Kept(kept) => kept.reason,
+        Outcome::Kept(kept) => kept.to_string(),
         other => panic!("lowered: {other:?}"),
     };
     // Basic's `Label` in Qt; lowered, `Gauges` is after `Ljos.Controls.Basic`.

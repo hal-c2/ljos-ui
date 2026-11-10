@@ -52,9 +52,9 @@ fn files_that_name_one_another_are_lowered_together() {
         panic!("{:?}", outcomes["app/Button"]);
     };
     assert!(
-        kept.reason.contains("`Main.qml`, which is kept"),
+        kept.to_string().contains("`Main.qml`, which is kept"),
         "{}",
-        kept.reason
+        kept
     );
     assert!(matches!(outcomes["app/Main"], Outcome::Kept(_)));
     assert!(matches!(outcomes["other/Lone"], Outcome::Lowered(_)));
@@ -245,7 +245,7 @@ fn a_type_of_the_project_imported_after_qtqml_is_the_projects() {
 #[test]
 fn a_module_the_project_does_not_have_as_files_keeps_the_file() {
     let kept = |source: &str| match lower(source, &Project) {
-        Outcome::Kept(kept) => (kept.reason, kept.at),
+        Outcome::Kept(kept) => (kept.to_string(), kept.at),
         other => panic!("lowered: {other:?}"),
     };
     assert_eq!(
@@ -289,9 +289,9 @@ fn the_files_a_module_import_brings_are_of_the_group() {
         panic!("{:?}", outcomes["app/Main"]);
     };
     assert!(
-        kept.reason.contains("`Dial.qml`, which is kept"),
+        kept.to_string().contains("`Dial.qml`, which is kept"),
         "{}",
-        kept.reason
+        kept
     );
 }
 

@@ -29,7 +29,7 @@ fn a_loader_of_a_file_beside_it_names_the_file_as_a_type() {
 #[test]
 fn a_loader_whose_source_is_not_a_file_beside_it_keeps_the_file() {
     let kept = |source: &str| match lower(source, &page) {
-        Outcome::Kept(kept) => kept.reason,
+        Outcome::Kept(kept) => kept.to_string(),
         other => panic!("lowered: {other:?}"),
     };
     let made = "a `Loader`'s `source` is made as it runs, so what it loads is not known";
@@ -78,7 +78,7 @@ fn a_loader_whose_source_is_not_a_file_beside_it_keeps_the_file() {
             panic!("{file} lowered");
         };
         assert_eq!(
-            kept.reason,
+            kept.to_string(),
             format!("a `Loader`'s `source` is \"{file}\", whose name is not a type's"),
         );
     }
@@ -108,7 +108,7 @@ fn a_loader_whose_source_is_read_where_the_pass_does_not_follow_keeps_the_file()
         "Loader { source: \"Page.qml\"; Component.onCompleted: sourceChanged.connect(f); function f() { } }",
     ] {
         match lower(&format!("import QtQuick\n{source}\n"), &page) {
-            Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
+            Outcome::Kept(kept) => assert_eq!(kept.to_string(), read, "{source}"),
             other => panic!("{source}: {other:?}"),
         }
     }
@@ -172,7 +172,7 @@ fn a_loader_whose_component_is_read_keeps_the_file() {
         "Loader { source: \"Page.qml\"; Component.onCompleted: sourceComponentChanged.connect(f); function f() { } }",
     ] {
         match lower(&format!("import QtQuick\n{source}\n"), &page) {
-            Outcome::Kept(kept) => assert_eq!(kept.reason, read, "{source}"),
+            Outcome::Kept(kept) => assert_eq!(kept.to_string(), read, "{source}"),
             other => panic!("{source}: {other:?}"),
         }
     }
@@ -185,7 +185,7 @@ fn a_loader_given_both_a_source_and_a_component_keeps_the_file() {
         &page,
     ) {
         Outcome::Kept(kept) => assert_eq!(
-            kept.reason,
+            kept.to_string(),
             "a `Loader` is given both a `source` and a `sourceComponent`"
         ),
         other => panic!("{other:?}"),

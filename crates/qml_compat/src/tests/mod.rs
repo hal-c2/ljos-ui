@@ -34,7 +34,7 @@ fn lowered(source: &str) -> String {
 
 fn kept_for(source: &str) -> String {
     match lower(source, &no_locals) {
-        Outcome::Kept(kept) => kept.reason,
+        Outcome::Kept(kept) => kept.to_string(),
         other => panic!("lowered: {other:?}"),
     }
 }
@@ -181,4 +181,128 @@ fn in_style(source: &str, style: &str) -> Outcome {
             natives: None,
         },
     )
+}
+
+// What a kept file's cause is, as a value: a caller can tell one reason
+// from another without reading its text.
+
+fn cause_of(source: &str) -> Cause {
+    match lower(source, &no_locals) {
+        Outcome::Kept(kept) => kept.cause,
+        other => panic!("lowered: {other:?}"),
+    }
+}
+
+#[test]
+fn a_file_is_kept_for_its_imports() {
+    assert_eq!(cause_of("import QtQuick\nItem {\n"), Cause::Unparsed);
+    assert_eq!(
+        cause_of("import QtQuick as Q\nQ.Item { }\n"),
+        Cause::ImportedUnderName {
+            uri: "QtQuick".into()
+        }
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nimport QtQuick.Controls.Material\nButton { }\n"),
+        Cause::ModuleNotLowered {
+            uri: "QtQuick.Controls.Material".into()
+        }
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nimport QtQuick.Controls\nItem { }\n"),
+        Cause::ControlsStyle { style: None }
+    );
+}
+
+#[test]
+fn a_file_is_kept_for_a_type_its_module_lacks() {
+    assert_eq!(
+        cause_of("import QtQuick\nItem { PathView { } }\n"),
+        Cause::NotInModule {
+            name: "PathView".into(),
+            module: MODULE
+        }
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nimport QtQuick.Controls.Basic\nItem { Dial { } }\n"),
+        Cause::NotInModule {
+            name: "Dial".into(),
+            module: CONTROLS
+        }
+    );
+}
+
+#[test]
+fn a_file_is_kept_for_what_its_scripts_read() {
+    assert_eq!(
+        cause_of("import QtQuick\nItem { function f() { Qt.createQmlObject(\"\", this) } }\n"),
+        Cause::QmlText
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nRectangle { function f() { let color = 1; return color } }\n"),
+        Cause::LocalCalledRenamed {
+            name: "color".into()
+        }
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nItem { width: parent.color.r }\n"),
+        Cause::ReadOffUnknown {
+            name: "color".into()
+        }
+    );
+}
+
+#[test]
+fn a_file_is_kept_for_its_fonts_loaders_rows_and_layouts() {
+    assert_eq!(
+        cause_of("import QtQuick\nText { font.pointSize: 12 }\n"),
+        Cause::Font(Font::PointSize)
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nLoader { source: \"Pa\" + \"ge.qml\" }\n"),
+        Cause::Loader(Loader::SourceMade)
+    );
+    assert_eq!(
+        cause_of(
+            "import QtQuick\nItem {\n  ListModel { id: zones; ListElement { city: \"a\" } }\n  \
+             Repeater { model: zones; Text { text: { var model = 1; return model.city } } }\n}\n"
+        ),
+        Cause::Row(Row::LocalModel)
+    );
+    assert_eq!(
+        cause_of("import QtQuick\nColumn { Rectangle { Layout.fillWidth: true } }\n"),
+        Cause::Layout(Layout::Ignored {
+            name: "Layout.fillWidth".into(),
+            root: None,
+            qt: "Column"
+        })
+    );
+}
+
+#[test]
+fn a_file_of_a_kept_group_says_which_file_keeps_it() {
+    let files = std::collections::BTreeMap::from([
+        (
+            "app/Button".to_string(),
+            alone("import QtQuick\nRectangle { color: \"red\" }\n"),
+        ),
+        (
+            "app/Main".to_string(),
+            alone("import QtQuick\nPathView { Button { color: \"blue\" } }\n"),
+        ),
+    ]);
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Button"] else {
+        panic!("{:?}", outcomes["app/Button"]);
+    };
+    assert_eq!(
+        kept.cause,
+        Cause::Group {
+            with: "Main".into(),
+            cause: Box::new(Cause::NotInModule {
+                name: "PathView".into(),
+                module: MODULE
+            })
+        }
+    );
 }

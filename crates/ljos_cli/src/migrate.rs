@@ -260,7 +260,7 @@ impl Migrate {
                 let mut one = alone_of(&file, at, &text);
                 if let Outcome::Lowered(_) = one.outcome {
                     one.outcome = Outcome::Kept(qml_compat::Kept {
-                        reason: "it is not named: name it too".into(),
+                        cause: qml_compat::Cause::NotNamed,
                         at: 0,
                     });
                 }
@@ -284,7 +284,7 @@ impl Migrate {
                 Outcome::Kept(why) => {
                     kept += 1;
                     let (line, column) = line_column(text, why.at);
-                    outln!("kept {}:{line}:{column}: {}", file.display(), why.reason);
+                    outln!("kept {}:{line}:{column}: {}", file.display(), why);
                 }
                 Outcome::Lowered(done) => {
                     let dir = file.parent().unwrap_or(Path::new("."));

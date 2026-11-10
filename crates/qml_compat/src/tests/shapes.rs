@@ -47,7 +47,7 @@ fn a_type_of_qt_shapes_ljos_ui_has_not_keeps_the_file() {
             match (ui.type_named(name).is_some(), outcome) {
                 (true, Outcome::Lowered(_)) => {}
                 (false, Outcome::Kept(kept)) => {
-                    assert_eq!(kept.reason, format!("`{name}` is not in {MODULE} yet"));
+                    assert_eq!(kept.to_string(), format!("`{name}` is not in {MODULE} yet"));
                 }
                 (has, other) => panic!("{name} (in Ljos.Ui: {has}): {other:?}"),
             }

@@ -64,6 +64,7 @@ use qml_syntax::ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject};
 use qt_types::Type;
 
 use crate::Kept;
+use crate::cause::{Differs, Layout};
 
 /// What of Qt's an object is that the pass lowers to an arrangement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -208,8 +209,11 @@ const MINIMUM: [&str; 2] = ["Layout.minimumWidth", "Layout.minimumHeight"];
 const MAXIMUM: [&str; 2] = ["Layout.maximumWidth", "Layout.maximumHeight"];
 
 impl Arrange<'_, '_> {
-    fn keep(&self, reason: String, at: usize) -> Kept {
-        Kept { reason, at }
+    fn keep(&self, cause: Layout, at: usize) -> Kept {
+        Kept {
+            cause: cause.into(),
+            at,
+        }
     }
 
     fn insert(&mut self, at: usize, text: impl Into<String>) {
@@ -229,11 +233,9 @@ impl Arrange<'_, '_> {
             if POSITIONER_ONLY.contains(&name.as_str()) {
                 // Ljós's `Flow` is Qt's, and has them.
                 let why = if self.shape == Shape::Flow {
-                    format!(
-                        "`{name}` keeps a `Flow` as Qt's until the Box rules reach a wrapping line"
-                    )
+                    Layout::FlowOnly { name }
                 } else {
-                    format!("`{name}` is a member of Qt's `{qt}` that Ljós's has not")
+                    Layout::PositionerOnly { name, qt }
                 };
                 return Err(self.keep(why, binding.span.start as usize));
             }
@@ -242,14 +244,16 @@ impl Arrange<'_, '_> {
             if let Some(at) = self.source.find(name) {
                 let name = name.trim_end_matches('.');
                 return Err(self.keep(
-                    format!("it uses `{name}`, which only Qt's positioners have"),
+                    Layout::PositionersUse {
+                        name: name.to_owned(),
+                    },
                     at,
                 ));
             }
         }
         for child in self.laid_out(object)? {
             for (name, binding) in bindings(child) {
-                self.placed(&name, "", binding.span.start as usize)?;
+                self.placed(&name, None, binding.span.start as usize)?;
             }
             // What a file's root binds places it as much as what the child
             // binds; Qt's positioner ignores both alike.
@@ -259,7 +263,7 @@ impl Arrange<'_, '_> {
             {
                 let at = child.type_name.span.start as usize;
                 for name in names {
-                    self.placed(&name, &format!("`{ty}`'s root sets `{name}`, which "), at)?;
+                    self.placed(&name, Some(&ty), at)?;
                 }
             }
         }
@@ -267,28 +271,21 @@ impl Arrange<'_, '_> {
     }
 
     /// Why a positioner's child binding `name` keeps the file, if it does;
-    /// `whose` leads the reason when the binding is not the child's own.
-    fn placed(&self, name: &str, whose: &str, at: usize) -> Result<(), Kept> {
+    /// `root` is the type whose root binds it, when the child does not.
+    fn placed(&self, name: &str, root: Option<&str>, at: usize) -> Result<(), Kept> {
         let qt = self.shape.qt();
         let cross = ["x", "y"][1 - self.main()];
+        let root = root.map(str::to_owned);
         if name.starts_with("Layout.") {
-            let reason = if whose.is_empty() {
-                format!("`{name}` is ignored by Qt's `{qt}` and would be honoured by Ljós's")
-            } else {
-                format!("{whose}is ignored by Qt's `{qt}` and would be honoured by Ljós's")
-            };
-            return Err(self.keep(reason, at));
+            let name = name.to_owned();
+            return Err(self.keep(Layout::Ignored { name, root, qt }, at));
         }
         if name.starts_with("anchors.") {
             return Err(self.anchored(name, at));
         }
         if matches!(self.shape, Shape::Positioner { .. }) && name == cross {
-            let reason = if whose.is_empty() {
-                format!("Qt's `{qt}` leaves a child's `{cross}` to it, and Ljós's sets it")
-            } else {
-                format!("{whose}Qt's `{qt}` leaves to it, and Ljós's sets")
-            };
-            return Err(self.keep(reason, at));
+            let name = cross.to_owned();
+            return Err(self.keep(Layout::Crossed { name, root, qt }, at));
         }
         Ok(())
     }
@@ -304,7 +301,10 @@ impl Arrange<'_, '_> {
         ] {
             if let Some(b) = find(name) {
                 return Err(self.keep(
-                    format!("`{name}` is not in Ljós's `Grid` yet"),
+                    Layout::NotYet {
+                        name: name.to_owned(),
+                        ljos: "Grid",
+                    },
                     b.span.start as usize,
                 ));
             }
@@ -317,10 +317,9 @@ impl Arrange<'_, '_> {
             match number(&b.value) {
                 Some(n) if n >= 0.0 && n.fract() == 0.0 => Ok(Some(n as usize).filter(|n| *n > 0)),
                 _ => Err(self.keep(
-                    format!(
-                        "`{name}` of a `Grid` is not a whole number the pass can read, so it \
-                         cannot tell where Qt's `Grid` counts room Ljós's does not"
-                    ),
+                    Layout::GridCount {
+                        name: name.to_owned(),
+                    },
                     b.span.start as usize,
                 )),
             }
@@ -343,7 +342,7 @@ impl Arrange<'_, '_> {
         } else {
             (columns, rows)
         };
-        let differs = |n: usize| -> Option<String> {
+        let differs = |n: usize| -> Option<Differs> {
             let (line, lines) = match given {
                 (Some(l), ls) => (l, ls),
                 (None, Some(ls)) => (n.div_ceil(ls).max(1), Some(ls)),
@@ -356,52 +355,36 @@ impl Arrange<'_, '_> {
             };
             let a = if top_to_bottom { "column" } else { "row" };
             if matches!(given, (Some(_), Some(_))) && placed < n {
-                return Some(
-                    "Qt's `Grid` leaves a child beyond its rows and columns where it is, and \
-                     Ljós's `Grid` places it"
-                        .into(),
-                );
+                return Some(Differs::Beyond);
             }
             if spaced(along) && n > 0 && n < line {
-                return Some(format!(
-                    "Qt's `Grid` counts the spacing after a {a} of children it does not fill, \
-                     and Ljós's `Grid` does not"
-                ));
+                return Some(Differs::SpacingAfter { line: a });
             }
             if let Some(ls) = lines
                 && spaced(across)
                 && placed.div_ceil(line) < ls
             {
-                return Some(format!(
-                    "Qt's `Grid` counts the spacing of a {a} it leaves empty, and Ljós's \
-                     `Grid` does not; it has {ls} {a}s and {placed} children to fill them, \
-                     {line} to a {a}"
-                ));
+                return Some(Differs::EmptyLine {
+                    line: a,
+                    lines: ls,
+                    children: placed,
+                    per_line: line,
+                });
             }
             None
         };
         match shown {
             Shown::Between(least, most) => {
                 for n in least..=most {
-                    if let Some(why) = differs(n) {
-                        let why = if least == most {
-                            why
-                        } else {
-                            format!("{why}, for as many children as it may show")
-                        };
-                        return Err(self.keep(why, at));
+                    if let Some(differs) = differs(n) {
+                        let for_some = least != most;
+                        return Err(self.keep(Layout::Grid { differs, for_some }, at));
                     }
                 }
             }
             Shown::Unknown(why) => {
                 if spaced(along) || spaced(across) || matches!(given, (Some(_), Some(_))) {
-                    return Err(self.keep(
-                        format!(
-                            "{why}, and how many children Qt's `Grid` places tells where it \
-                             counts room Ljós's `Grid` does not"
-                        ),
-                        at,
-                    ));
+                    return Err(self.keep(Layout::GridShown { why }, at));
                 }
             }
         }
@@ -443,7 +426,9 @@ impl Arrange<'_, '_> {
 
     fn unread(&self, name: &str, b: &QmlBinding<'_>) -> Kept {
         self.keep(
-            format!("`{name}` of a `Grid` is not one the pass can read"),
+            Layout::GridUnread {
+                name: name.to_owned(),
+            },
             b.span.start as usize,
         )
     }
@@ -504,11 +489,11 @@ impl Arrange<'_, '_> {
 
     fn anchored(&self, name: &str, at: usize) -> Kept {
         self.keep(
-            format!(
-                "`{name}` on a child of a `{}` is overridden by it, and is an error in Ljós's `{}`",
-                self.shape.qt(),
-                self.shape.ljos()
-            ),
+            Layout::Anchored {
+                name: name.to_owned(),
+                qt: self.shape.qt(),
+                ljos: self.shape.ljos(),
+            },
             at,
         )
     }
@@ -524,7 +509,10 @@ impl Arrange<'_, '_> {
         ];
         if let Some((n, b)) = own.iter().find(|(n, _)| uniform.contains(&n.as_str())) {
             return Err(self.keep(
-                format!("`{n}` is not in Ljós's `{ljos}` yet"),
+                Layout::NotYet {
+                    name: n.clone(),
+                    ljos,
+                },
                 b.span.start as usize,
             ));
         }
@@ -571,7 +559,10 @@ impl Arrange<'_, '_> {
         let find = |n: &str| own.iter().find(|(m, _)| m == n).map(|(_, b)| *b);
         if let Some(b) = find("layoutDirection") {
             return Err(self.keep(
-                "`layoutDirection` is not in Ljós's `Grid` yet".into(),
+                Layout::NotYet {
+                    name: "layoutDirection".to_owned(),
+                    ljos: "Grid",
+                },
                 b.span.start as usize,
             ));
         }
@@ -583,11 +574,10 @@ impl Arrange<'_, '_> {
         };
         if let Some(b) = find(ignored.0) {
             return Err(self.keep(
-                format!(
-                    "`{}` of a `GridLayout` is ignored along a {} flow, and Ljós's `Grid` \
-                     would not ignore it",
-                    ignored.0, ignored.1
-                ),
+                Layout::GridLayoutIgnored {
+                    name: ignored.0,
+                    flow: ignored.1,
+                },
                 b.span.start as usize,
             ));
         }
@@ -615,17 +605,13 @@ impl Arrange<'_, '_> {
         if fills != Some(true) && (sized(own, axis) || self.a_root) {
             // A root is sized by whatever uses it, which this file does not
             // show.
-            let sized_by = if sized(own, axis) {
-                ""
-            } else {
-                " (a file that uses it may size it)"
-            };
             return Err(self.keep(
-                format!(
-                    "`{qt}` spreads the room no child fills over its children, and Ljós's \
-                     `{ljos}` leaves it at the end{sized_by}; give a child `{}: true`",
-                    FILL[axis]
-                ),
+                Layout::Spreads {
+                    qt,
+                    ljos,
+                    root: !sized(own, axis),
+                    fill: FILL[axis],
+                },
                 object.type_name.span.start as usize,
             ));
         }
@@ -649,13 +635,7 @@ impl Arrange<'_, '_> {
                 "Layout.columnSpan",
             ];
             if let Some((n, b)) = own.iter().find(|(n, _)| cells.contains(&n.as_str())) {
-                return Err(self.keep(
-                    format!(
-                        "`{n}` puts a child of a `GridLayout` where the pass does not yet follow \
-                         Qt"
-                    ),
-                    b.span.start as usize,
-                ));
+                return Err(self.keep(Layout::Cell { name: n.clone() }, b.span.start as usize));
             }
         }
         // Qt's layouts fill a layout's cell and bound it by its children.
@@ -664,13 +644,7 @@ impl Arrange<'_, '_> {
             .qt_type(&name)
             .is_some_and(|t| t.module == "QtQuick.Layouts" && t.name != "Layout")
         {
-            return Err(self.keep(
-                format!(
-                    "a `{name}` in a `{qt}` fills it and is bounded by its children, and \
-                     one in Ljós's `{ljos}` is not"
-                ),
-                at,
-            ));
+            return Err(self.keep(Layout::Fills { name, qt, ljos }, at));
         }
         let zero = ZERO_IMPLICIT.contains(&name.as_str()) && self.types.qt_type(&name).is_some();
         let mut empty = false;
@@ -725,10 +699,11 @@ impl Arrange<'_, '_> {
             match number(&b.value) {
                 Some(n) if n >= 0.0 && n.fract() == 0.0 => Ok(n),
                 _ => Err(self.keep(
-                    format!(
-                        "`{what}` is not a whole number the pass can read; `{qt}` rounds a \
-                         child's size up and Ljós's `{ljos}` does not"
-                    ),
+                    Layout::NotWhole {
+                        what: what.to_owned(),
+                        qt,
+                        ljos,
+                    },
                     b.span.start as usize,
                 )),
             }
@@ -750,11 +725,13 @@ impl Arrange<'_, '_> {
             };
             if !zero_implicit {
                 return Err(self.keep(
-                    format!(
-                        "`{}` of a `{name}` in a `{qt}` is not its size there, and would be in \
-                         Ljós's `{ljos}`; give it `{}`",
-                        SIZE[axis], PREFERRED[axis]
-                    ),
+                    Layout::NotSize {
+                        name: name.to_owned(),
+                        qt,
+                        ljos,
+                        size: SIZE[axis],
+                        preferred: PREFERRED[axis],
+                    },
                     b.span.start as usize,
                 ));
             }
@@ -764,15 +741,12 @@ impl Arrange<'_, '_> {
             Some(b) => whole(b, IMPLICIT[axis]).map(Some),
             None if zero => Ok(Some(0.0)),
             None => Err(self.keep(
-                format!(
-                    "the {} of a `{name}` may be a fraction, which `{qt}` rounds up and Ljós's \
-                     `{ljos}` does not",
-                    if axis == W {
-                        "implicit width"
-                    } else {
-                        "implicit height"
-                    }
-                ),
+                Layout::Fraction {
+                    name: name.to_owned(),
+                    qt,
+                    ljos,
+                    height: axis == H,
+                },
                 child.type_name.span.start as usize,
             )),
         }
@@ -782,10 +756,7 @@ impl Arrange<'_, '_> {
     /// centred across the row when it says nothing of that.
     fn centre(&mut self, binding: &QmlBinding<'_>) -> Result<(), Kept> {
         let QmlBindingValue::Expression(e) = &binding.value else {
-            return Err(self.keep(
-                "`Layout.alignment` is not an expression".into(),
-                binding.span.start as usize,
-            ));
+            return Err(self.keep(Layout::AlignmentNoExpression, binding.span.start as usize));
         };
         let qt = self.shape.qt();
         let ljos = self.shape.ljos();
@@ -793,18 +764,14 @@ impl Arrange<'_, '_> {
         let flags = flags(e)
             .filter(|_| !self.source[span.start as usize..span.end as usize].contains('\n'));
         let Some(flags) = flags else {
-            return Err(self.keep(
-                format!(
-                    "`Layout.alignment` is not one the pass can read, and `{qt}` centres a \
-                     child that says nothing of how it is aligned across the row, where Ljós's \
-                     `{ljos}` puts it at the top"
-                ),
-                span.start as usize,
-            ));
+            return Err(self.keep(Layout::AlignmentUnread { qt, ljos }, span.start as usize));
         };
         if flags.contains(&"AlignBaseline") {
             return Err(self.keep(
-                format!("`Qt.AlignBaseline` is not in Ljós's `{ljos}` yet"),
+                Layout::NotYet {
+                    name: "Qt.AlignBaseline".to_owned(),
+                    ljos,
+                },
                 span.start as usize,
             ));
         }
@@ -831,11 +798,10 @@ impl Arrange<'_, '_> {
                             continue;
                         }
                         return Err(self.keep(
-                            format!(
-                                "`{name}` is a file of the project, whose size in a `{}` the \
-                                 pass does not know",
-                                self.shape.qt()
-                            ),
+                            Layout::FileSize {
+                                name,
+                                qt: self.shape.qt(),
+                            },
                             child.type_name.span.start as usize,
                         ));
                     };
@@ -849,11 +815,10 @@ impl Arrange<'_, '_> {
                     if matches!(binding.name.as_simple(), Some("children" | "data")) =>
                 {
                     return Err(self.keep(
-                        format!(
-                            "the children of a `{}` are given through `{}`",
-                            self.shape.qt(),
-                            binding.name
-                        ),
+                        Layout::ChildrenThrough {
+                            qt: self.shape.qt(),
+                            through: binding.name.to_string(),
+                        },
                         binding.span.start as usize,
                     ));
                 }
@@ -883,7 +848,7 @@ impl Arrange<'_, '_> {
         }
         found.ok_or_else(|| {
             self.keep(
-                "the delegate of a `Repeater` is not one the pass can read".into(),
+                Layout::RepeaterDelegate,
                 repeater.type_name.span.start as usize,
             )
         })

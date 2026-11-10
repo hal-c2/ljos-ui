@@ -30,7 +30,7 @@ fn the_controls_of_another_style_or_of_one_not_known_keep_the_file() {
         panic!("lowered in Fusion");
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic"
     );
     assert_eq!(kept.at, "import QtQuick\n".len());

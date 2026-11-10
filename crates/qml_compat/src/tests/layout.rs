@@ -244,7 +244,7 @@ fn a_positioner_child_is_checked_by_its_files_root() {
         let Outcome::Kept(kept) = lower(&source, &locals) else {
             panic!("{body}: lowered");
         };
-        assert!(kept.reason.contains(why), "{body}: {}", kept.reason);
+        assert!(kept.to_string().contains(why), "{body}: {}", kept);
         assert_eq!(
             kept.at,
             source.rfind(child).unwrap(),
@@ -287,7 +287,7 @@ fn an_alignment_the_pass_cannot_read_is_reported_at_its_binding() {
         kept.at,
         source.find("Layout.alignment").unwrap(),
         "{}",
-        kept.reason
+        kept
     );
 }
 
@@ -489,7 +489,7 @@ fn a_grid_layout_of_an_import_built_on_what_is_not_lowered_keeps_the_file() {
                   Item { property var f: GridLayout.TopToBottom }\n";
     match lower(source, &OwnGrid("PathView")) {
         Outcome::Kept(kept) => {
-            assert!(kept.reason.contains("PathView"), "{}", kept.reason);
+            assert!(kept.to_string().contains("PathView"), "{}", kept);
         }
         other => panic!("not kept: {other:?}"),
     }

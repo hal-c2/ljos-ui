@@ -18,7 +18,7 @@ use qml_syntax::{
     ast::{QmlBindingValue, QmlImportSource, QmlMember, QmlObject},
 };
 
-use crate::{Kept, Outcome};
+use crate::{Cause, Kept, Outcome};
 
 /// What of the project a file may name: the words in it that could be a
 /// file beside it, the `.qml` addresses its scripts hold, the directories it
@@ -225,11 +225,10 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
         .map(|(at, (key, file))| {
             let outcome = match (&file.outcome, kept_in.get(&sets.root(at))) {
                 (Outcome::Lowered(_), Some((other, why))) => Outcome::Kept(Kept {
-                    reason: format!(
-                        "it is used with `{}.qml`, which is kept: {}",
-                        from_dir_of(key, other),
-                        why.reason
-                    ),
+                    cause: Cause::Group {
+                        with: from_dir_of(key, other).to_owned(),
+                        cause: Box::new(why.cause.clone()),
+                    },
                     at: 0,
                 }),
                 (outcome, _) => outcome.clone(),
