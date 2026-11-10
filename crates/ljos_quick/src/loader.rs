@@ -225,12 +225,17 @@ impl Loader {
             r.props = props;
             r.props_for = url.clone();
         });
-        // Qt reloads even when the source is the one already loaded.
+        let before = with_run(e, me, |r| r.generation);
         e.batch(|| {
             set(e, me, Loader::SOURCE_COMPONENT.index, Value::Null);
             set(e, me, Loader::SOURCE.index, Value::Url(url));
         });
-        reload(e, me, true);
+        // A new source has loaded already, from its watch: loading it again
+        // would make a second item, whose first stays alive until the next
+        // frame and acts on its own. Qt reloads an unchanged source too.
+        if with_run(e, me, |r| r.generation) == before {
+            reload(e, me, true);
+        }
     }
 }
 
