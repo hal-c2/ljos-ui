@@ -130,7 +130,15 @@ fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
     w.each(|b| {
         let probes = b.probes()?;
         // What is clicked may be what an answer still on its way shows.
-        observer_until(probes, &locator, true)?;
+        let looked = observer_until(probes, &locator, true)?;
+        if looked.count == 0 {
+            return Err(observer_missed(
+                probes,
+                &locator,
+                &looked,
+                "nothing to click",
+            ));
+        }
         probes
             .observer_call("app_click", serde_json::json!({ "target": locator }))
             .map(|_| ())
@@ -155,33 +163,64 @@ fn observer_has(w: &mut LjosWorld, locator: String) -> StepResult {
 fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResult {
     w.each(|b| {
         let probes = b.probes()?;
-        let count = observer_until(probes, locator, present)?;
-        match (present, count) {
-            (true, 0) => {
-                let seen = probes.observer_call(
-                    "app_find",
-                    serde_json::json!({ "locator": "text=", "limit": 200 }),
-                )?;
-                let names: Vec<String> = seen["matches"]
-                    .as_array()
-                    .map(|all| {
-                        all.iter()
-                            .map(|m| format!("{} {}", m["role"], m["name"]))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Err(BackendError::Failed(format!(
-                    "the observer showed nothing matching {locator} in {} s; it shows {names:?}",
-                    OBSERVER_ANSWERS.as_secs()
-                )))
-            }
-            (false, 1..) => Err(BackendError::Failed(format!(
-                "the observer still shows {count} matching {locator} after {} s",
-                OBSERVER_ANSWERS.as_secs()
+        let looked = observer_until(probes, locator, present)?;
+        match (present, looked.count) {
+            (true, 0) => Err(observer_missed(probes, locator, &looked, "nothing")),
+            (false, count @ 1..) => Err(BackendError::Failed(format!(
+                "the observer still shows {count} matching {locator} {}",
+                looked.how()
             ))),
             _ => Ok(()),
         }
     })
+}
+
+/// The failure for an item the observer never showed, with what its
+/// window shows instead, so that the cause is in the failure.
+fn observer_missed(
+    probes: &mut dyn crate::backend::Probes,
+    locator: &str,
+    looked: &Looked,
+    what: &str,
+) -> BackendError {
+    let names: Vec<String> = match probes.observer_call(
+        "app_find",
+        serde_json::json!({ "locator": "text=", "limit": 200 }),
+    ) {
+        Ok(seen) => seen["matches"]
+            .as_array()
+            .map(|all| {
+                all.iter()
+                    .map(|m| format!("{} {}", m["role"], m["name"]))
+                    .collect()
+            })
+            .unwrap_or_default(),
+        Err(e) => vec![format!("(its window could not be listed: {e})")],
+    };
+    BackendError::Failed(format!(
+        "the observer showed {what} matching {locator} {}; it shows {names:?}",
+        looked.how()
+    ))
+}
+
+/// What [`observer_until`] saw when it stopped looking.
+struct Looked {
+    count: u64,
+    /// From the first look to the last, the calls' own settling included.
+    waited: std::time::Duration,
+    /// Whether the observer's inspector counts frames, without which it
+    /// cannot be waited on.
+    could_wait: bool,
+}
+
+impl Looked {
+    fn how(&self) -> String {
+        if self.could_wait {
+            format!("after {:.1} s of waiting", self.waited.as_secs_f64())
+        } else {
+            "at once: its inspector counts no frames to wait on".to_owned()
+        }
+    }
 }
 
 /// How long the observer may take to show what it asked its application
@@ -189,7 +228,7 @@ fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResu
 /// `PATIENCE`).
 const OBSERVER_ANSWERS: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// How many items `locator` finds in the observer's window once it does
+/// What `locator` finds in the observer's window once it does
 /// (`present`) or does not show them, or when [`OBSERVER_ANSWERS`] is
 /// over. A click on the observer returns when its window rests, which it
 /// does while what it asked the application is still on its way: the
@@ -200,8 +239,9 @@ fn observer_until(
     probes: &mut dyn crate::backend::Probes,
     locator: &str,
     present: bool,
-) -> Result<u64, BackendError> {
-    let deadline = std::time::Instant::now() + OBSERVER_ANSWERS;
+) -> Result<Looked, BackendError> {
+    let started = std::time::Instant::now();
+    let deadline = started + OBSERVER_ANSWERS;
     // Without `since` the counts are answered at once. They are taken
     // before the window is looked at, so that a frame run between the two
     // is not missed.
@@ -211,14 +251,19 @@ fn observer_until(
         let found = probes.observer_call("app_find", serde_json::json!({ "locator": locator }))?;
         let count = found["total"].as_u64().unwrap_or(0);
         let left = deadline.saturating_duration_since(std::time::Instant::now());
-        if (count > 0) == present || left.is_zero() {
-            return Ok(count);
-        }
+        let looked = |could_wait| Looked {
+            count,
+            waited: started.elapsed(),
+            could_wait,
+        };
         let Some(since) = frames else {
             // An inspector that counts no frames cannot say when to look
             // again: what it shows now is the answer.
-            return Ok(count);
+            return Ok(looked(false));
         };
+        if (count > 0) == present || left.is_zero() {
+            return Ok(looked(true));
+        }
         let wait_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1);
         let told = probes.observer_call(
             "app_watch",
