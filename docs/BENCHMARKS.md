@@ -7972,11 +7972,18 @@ counts as 60 Hz. The view asked the host for an animation's next frame at its ti
 Each frame fell 0.9 ms further behind the display, until one display frame passed with
 nothing new. Two commits:
 
-- `ljos_egui`: the view asks for an animation's next frame half a frame early (the tolerance a
-  due wake already had), so it is waiting when the display takes the last one. The platform
-  then lets it draw at the compositor's frame callback. Pinned by
-  `the_next_animation_frame_is_asked_for_in_time_for_the_display` (crates/ljos_egui/tests/view.rs):
-  60 frames on a display of 16.1 ms are 60 frames drawn.
+- `ljos_egui`: the view asked for an animation's next frame half a frame early (the tolerance a
+  due wake already had), so it was waiting when the display took the last one. The platform
+  then let it draw at the compositor's frame callback. The review of #284 found what this did
+  to a host that waits only as long as it is asked (eframe without vsync, one off the screen):
+  the pass came half a frame early, found the frame due, and asked again for what was left,
+  so the view ran passes at once until the animation's time.
+  `a_host_that_waits_as_long_as_asked_runs_an_animation_at_its_rate`
+  (crates/ljos_egui/tests/view.rs) counted 200 passes in 8.5 ms. The view now asks at the
+  frame's time, and the shell, which waits for the display after it wakes, wakes early by the
+  same half frame itself (`wake_for_display` in crates/ljos_shell/src/desktop/slot.rs, pinned
+  by `the_next_frame_is_woken_for_before_the_display_draws_it`). In that test the same host
+  steps the animation 60 times in a second.
 - `ljos_shell`: a pass asked for while the window is held (it may not draw again yet) wakes the
   loop when the hold ends, not when it was asked. The early ask had added a wake each frame
   that found nothing to do. `features/window/frame-on-time.feature` now pins that the frame is
@@ -7987,7 +7994,7 @@ nothing new. Two commits:
 | run | `bench/animations.qml` frames/s | p95 ms | `bench/feed.qml` frames/s | p95 ms |
 |---|---:|---:|---:|---:|
 | before | 58.4 | 32.1 | 59.2 | 32.0 |
-| view asks early | 62.0 | 16.3 | 62.6 | 16.1 |
+| view asks early (#284) | 62.0 | 16.3 | 62.6 | 16.1 |
 | and the shell's hold | 61.6 | 16.3 | 62.4 | 16.1 |
 | qml6 | 62.6 | 16.1 | 61.8 | 16.3 |
 

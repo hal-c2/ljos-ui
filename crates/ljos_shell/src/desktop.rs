@@ -1758,14 +1758,7 @@ impl<M: Send + 'static> Desktop<M> {
         {
             slot.asked = earlier(slot.asked, Some(when));
         }
-        // A window on the screen is not drawn before its hold ends
-        // (`schedule`): the loop wakes then, and not once before it only
-        // to hear so. An animation asks for its next frame early, and
-        // woke the loop twice a frame.
-        let when = match slot.held {
-            Some(held) if slot.surface.is_some() && !slot.out_of_sight() => when.max(held),
-            _ => when,
-        };
+        let when = slot.wake_for(Instant::now(), when);
         self.repaints.request(key, when);
     }
 
@@ -2824,6 +2817,27 @@ mod tests {
         slot.drawn(t, t + Duration::from_millis(3));
         assert_eq!(slot.held, Some(t + Duration::from_secs_f64(0.75 / 60.0)));
         assert!(slot.held < Some(t + Duration::from_secs_f64(1.0 / 62.0)));
+    }
+
+    // An animation on a 62 Hz display asks for its next frame 16.7 ms
+    // after the pass: the loop wakes before the display's frame at 16.1,
+    // and not before the hold. A timer's wake is at its time.
+    #[test]
+    fn the_next_frame_is_woken_for_before_the_display_draws_it() {
+        let t = Instant::now();
+        let frame = Duration::from_secs_f64(1.0 / 60.0);
+        let animation = t + Duration::from_micros(16_667);
+        let woken = slot::wake_for_display(t, animation, frame, None);
+        assert_eq!(woken, animation - frame / 2);
+        assert!(woken < t + Duration::from_micros(16_100));
+        let held = t + Duration::from_millis(12);
+        assert_eq!(
+            slot::wake_for_display(t, animation, frame, Some(held)),
+            held
+        );
+        let timer = t + Duration::from_millis(100);
+        assert_eq!(slot::wake_for_display(t, timer, frame, None), timer);
+        assert_eq!(slot::wake_for_display(t, t, frame, None), t);
     }
 
     // The loop let each pass go a millisecond after it was due: the passes
