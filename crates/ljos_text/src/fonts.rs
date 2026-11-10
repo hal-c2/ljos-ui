@@ -41,7 +41,7 @@ pub enum FontError {
 }
 
 /// The most a WOFF2 or WOFF file may unpack to: the limit the WOFF2 decoder
-/// keeps to, so the two formats agree.
+/// keeps to, applied to WOFF as well so the two formats agree.
 const MAX_UNPACKED: u64 = 128 * 1024 * 1024;
 
 /// The TrueType or OpenType bytes of a font file. WOFF2 and WOFF, the web's
@@ -51,8 +51,13 @@ const MAX_UNPACKED: u64 = 128 * 1024 * 1024;
 fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
     match bytes.get(..4) {
         Some(b"wOF2") => {
-            // The decoder keeps to the same limit, but every refusal of its
-            // reads as corrupt; the header's own total says which it is.
+            // The decoder refuses a font past this limit with the error it
+            // gives a broken one, so the size is read here from the header,
+            // the font the file says it holds. That is a claim, not what the
+            // decoder measures (its table directory, then its output), so
+            // a header that understates still fails as corrupt. And one that
+            // claims more than the limit is refused even if its tables would
+            // unpack: no well-formed font says it is larger than it is.
             if woff2_unpacked_size(&bytes).ok_or(FontError::Corrupt("WOFF2"))? > MAX_UNPACKED {
                 return Err(FontError::TooLarge("WOFF2"));
             }
