@@ -10,7 +10,7 @@ Feature: The properties setSource gives an item it cannot take
   does not declare, a value it cannot take, or a read-only property is an
   error of the script that called setSource, told at the line of the call.
   The item is made all the same, with the other properties set, whether
-  the Loader makes it at once or asynchronously.
+  the Loader makes it at once or asynchronously, and loaded is emitted once.
 
   Qt names no file and a garbage line for what an asynchronous Loader
   could not set, so those scenarios check the words and not the place. Ljós
@@ -34,12 +34,27 @@ Feature: The properties setSource gives an item it cannot take
         id: root
         objectName: "root"
         property alias asynchronous: loader.asynchronous
-        Loader { id: loader; objectName: "loader" }
+        property int loads: 0
+        Loader { id: loader; objectName: "loader"; onLoaded: root.loads++ }
         function load(props) {
           loader.setSource("Viewer.qml", props)
         }
       }
       """
+
+  Scenario Outline: The item is loaded once, <how>, given <props>
+    When the property "asynchronous" of "root" is set to <asynchronous>
+    And the method "load" of "root" is called with <props>
+    And 50 milliseconds pass
+    Then the property "status" of "loader" is 1
+    And the property "loads" of "root" is 1
+
+    Examples:
+      | how            | asynchronous | props                               |
+      | at once        | false        | {"source": "a.mp3"}                 |
+      | asynchronously | true         | {"source": "a.mp3"}                 |
+      | at once        | false        | {"video": false, "source": "a.mp3"} |
+      | asynchronously | true         | {"video": false, "source": "a.mp3"} |
 
   Scenario Outline: A property the item does not declare is an error and the item is made, <how>
     When the property "asynchronous" of "root" is set to <asynchronous>
@@ -52,7 +67,7 @@ Feature: The properties setSource gives an item it cannot take
 
     Examples:
       | how            | asynchronous | place    |
-      | at once        | false        | [.]qml:8 |
+      | at once        | false        | [.]qml:9 |
       | asynchronously | true         |          |
 
   Scenario Outline: A value the property cannot take is an error and the item keeps its own, <how>
@@ -66,7 +81,7 @@ Feature: The properties setSource gives an item it cannot take
 
     Examples:
       | how            | asynchronous | place    |
-      | at once        | false        | [.]qml:8 |
+      | at once        | false        | [.]qml:9 |
       | asynchronously | true         |          |
 
   Scenario Outline: A read-only property keeps its value and is an error, <how>
@@ -80,5 +95,5 @@ Feature: The properties setSource gives an item it cannot take
 
     Examples:
       | how            | asynchronous | place    |
-      | at once        | false        | [.]qml:8 |
+      | at once        | false        | [.]qml:9 |
       | asynchronously | true         |          |
