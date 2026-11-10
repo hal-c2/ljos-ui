@@ -4,7 +4,8 @@
 # Verified on Qt 6.11.2 (qml6, offscreen).
 # The font files are in features/text/fonts (Noto Serif Test, see
 # LICENSE-Noto.txt there; Ljos Symbols Test, made by make-symbols-test.py
-# there, whose U+F8F0 is 600 units of 1000 wide and is in no other font).
+# there, whose U+F8F0 is 600 units of 1000 wide and is in no other font;
+# its .woff2 and .woff, and the truncated ones, made by make-woff.py there).
 
 @qt-parity
 Feature: FontLoader
@@ -81,6 +82,65 @@ Feature: FontLoader
       """
     Then the property "contentWidth" of "t" is 11.984375
     And the property "implicitWidth" of "t" is 11.984375
+
+  # The web's formats: WOFF2 (glyphs transformed, then Brotli) and WOFF
+  # (each table zlib-compressed). The width is the decoded font's own.
+  Scenario Outline: A <format> font file is loaded
+    Given the font file "LjosSymbolsTest-Regular.<ext>"
+    And the QML:
+      """qml
+      import QtQuick
+      Item {
+        FontLoader { objectName: "f"; source: "LjosSymbolsTest-Regular.<ext>" }
+        Text {
+          objectName: "t"
+          text: String.fromCodePoint(0xF8F0)
+          font.family: "Ljos Symbols Test"
+          font.pixelSize: 20
+        }
+      }
+      """
+    Then the property "status" of "f" is 1
+    And the property "name" of "f" is "Ljos Symbols Test"
+    And the property "contentWidth" of "t" is 11.984375
+
+    Examples:
+      | format | ext   |
+      | WOFF2  | woff2 |
+      | WOFF   | woff  |
+
+  Scenario Outline: A <format> file cut short is an error
+    Given the font file "LjosSymbolsTest-Truncated.<ext>"
+    And the QML:
+      """qml
+      import QtQuick
+      Item { FontLoader { objectName: "f"; source: "LjosSymbolsTest-Truncated.<ext>" } }
+      """
+    Then the property "status" of "f" is 3
+    And the property "name" of "f" is ""
+    And the log has a warning matching "Cannot load font: .*LjosSymbolsTest-Truncated\.<ext>."
+
+    Examples:
+      | format | ext   |
+      | WOFF2  | woff2 |
+      | WOFF   | woff  |
+
+  # Qt's warning names the file only, so a packed font that is corrupt reads
+  # as a file that is not there; Ljós says why after it.
+  @qt-diverges
+  Scenario Outline: The warning for a <format> file cut short says why
+    Given the font file "LjosSymbolsTest-Truncated.<ext>"
+    And the QML:
+      """qml
+      import QtQuick
+      Item { FontLoader { source: "LjosSymbolsTest-Truncated.<ext>" } }
+      """
+    Then the log has a warning matching "Cannot load font: .*LjosSymbolsTest-Truncated\.<ext>.: the <format> data is corrupt$"
+
+    Examples:
+      | format | ext   |
+      | WOFF2  | woff2 |
+      | WOFF   | woff  |
 
   @api-QtQuick.FontLoader.source
   Scenario: A loader without a source has loaded nothing
