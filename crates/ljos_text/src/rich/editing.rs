@@ -765,13 +765,20 @@ impl RichText {
     /// (a fragment without them, as [`Self::splice`] makes, gives each new
     /// paragraph the format of the one it was split from).
     pub fn splice_rich(&mut self, range: Range<usize>, other: &RichText) {
+        self.replace_with(range, other, true);
+    }
+
+    /// [`Self::splice_rich`]; `edit`: as an edit of the document, where
+    /// paragraphs joined take the format Qt gives them, not a cut that
+    /// takes a part of it out.
+    fn replace_with(&mut self, range: Range<usize>, other: &RichText, edit: bool) {
         let range = self.clamp(range);
         let b = self.block_index(range.start);
         let cell_paragraphs = self.cell_paragraphs_spliced(range.clone(), &other.text);
         let removed = self.text[range.clone()].matches('\n').count();
         // Measured on Qt 6.11: paragraphs joined keep the first one's
         // format, but an empty one's goes with it (hal-c2/ljos-ui#287).
-        let joined = (removed > 0 && self.block_range(b).is_empty())
+        let joined = (edit && removed > 0 && self.block_range(b).is_empty())
             .then(|| Arc::clone(&self.blocks[b + removed]))
             .filter(|f| f.table.is_none() && self.blocks[b].table.is_none());
         self.blocks.drain(b + 1..=b + removed);
@@ -871,8 +878,8 @@ impl RichText {
         let range = self.clamp(range);
         let mut out = self.clone();
         let end = out.text.len();
-        out.splice_rich(range.end..end, &RichText::empty_fragment());
-        out.splice_rich(0..range.start, &RichText::empty_fragment());
+        out.replace_with(range.end..end, &RichText::empty_fragment(), false);
+        out.replace_with(0..range.start, &RichText::empty_fragment(), false);
         // The first paragraph is the one the range starts in.
         out.blocks[0] = Arc::clone(&self.blocks[self.block_index(range.start)]);
         // Measured: a part of one cell is a paragraph of its own, or the
@@ -909,7 +916,7 @@ impl RichText {
                     }],
                     blocks: Vec::new(),
                 };
-                out.splice_rich(at..at + CELL_PARAGRAPH.len_utf8(), &feed);
+                out.replace_with(at..at + CELL_PARAGRAPH.len_utf8(), &feed, false);
             }
             out.blocks = blocks;
         }
@@ -1820,6 +1827,18 @@ mod tests {
         let mut t = rich("<p>x</p><h1>b</h1>");
         t.splice(1..2, "", None);
         assert_eq!(t.blocks[0].kind, BlockKind::Paragraph);
+    }
+
+    /// A slice is cut out of the document, not edited in it: its last
+    /// paragraph, empty, keeps its own format, not that of the paragraph
+    /// after the slice (review of hal-c2/ljos-ui#299).
+    #[test]
+    fn a_slice_keeps_the_format_of_its_last_empty_paragraph() {
+        let t =
+            rich("<p>a</p><p align='center' style='-qt-paragraph-type:empty'><br /></p><h1>H</h1>");
+        let s = t.slice(0..2);
+        assert_eq!(s.text(), "a\n");
+        assert_eq!(s.blocks[1], t.blocks[1]);
     }
 
     #[test]
