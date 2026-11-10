@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::doc::HAlign;
-use super::{Block, BlockKind, InlineBuf, Table};
+use super::{Block, BlockKind, Inline, InlineBuf, Table};
 
 /// One open box.
 #[derive(Default)]
@@ -129,6 +129,30 @@ impl Flow {
             block.kind = BlockKind::Image;
         }
         self.blocks.push(block);
+    }
+
+    /// Put `s` at the end of the last block made: white space read after
+    /// it ended. A picture with text is a paragraph.
+    pub(crate) fn append(&mut self, s: &str, style: &Inline) {
+        let Some(block) = self.blocks.last_mut() else {
+            return;
+        };
+        if s.is_empty() {
+            return;
+        }
+        let mut buf = InlineBuf {
+            text: std::mem::take(&mut block.text),
+            spans: std::mem::take(&mut block.spans),
+            images: std::mem::take(&mut block.images),
+            nowrap_space_end: None,
+        };
+        buf.push(s, style);
+        block.text = buf.text;
+        block.spans = buf.spans;
+        block.images = buf.images;
+        if block.kind == BlockKind::Image {
+            block.kind = BlockKind::Paragraph;
+        }
     }
 
     /// The last block made, to change it before the document is finished.
