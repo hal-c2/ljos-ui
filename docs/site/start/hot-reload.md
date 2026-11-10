@@ -17,7 +17,7 @@ Start your application with `--watch` to enable hot reload:
 ljos run --watch Main.qml
 ```
 
-The file watcher monitors `.qml`, `.js`, `.mjs`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project directory. After your editor finishes writing (following a 15 ms quiet window so multi-file saves batch into a single reload), Ljós recompiles the changed files and any files that reference their types, rebuilds the scene roots and transfers state from the old tree to the new one.
+The file watcher monitors `.qml`, `.js`, `.mjs`, `.ts`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project directory. After your editor finishes writing (following a 15 ms quiet window so multi-file saves batch into a single reload), Ljós recompiles the changed files and any files that reference their types, rebuilds the scene roots and transfers state from the old tree to the new one.
 
 The old roots are destroyed only after all new roots have been created, so a reload applies as a whole or not at all.
 

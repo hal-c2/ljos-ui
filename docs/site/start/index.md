@@ -21,7 +21,7 @@ Ljós renders through `egui`, runs scripts with `rquickjs`, and targets desktop 
 
 An app can take changes to its interface and scripts while it runs and show them live, checked by the same compiler and lints the dev tools use. That is what makes it malleable: the people who use it, alone or with a coding agent, can reshape it instead of accepting what they were given. Today you do that in development with `ljos run --watch`; letting the people who use a shipped app change it is being built.
 
-When you run an application with `ljos run --watch`, Ljós watches your `.qml`, `.js`, `.mjs`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project. Saving a file recompiles only what changed and patches the running scene in place without closing the window. Script-assigned property values, focused controls, text selections, scroll positions, navigation stacks and open popups survive the reload. If a save has a syntax or compile error, the running application stays interactive and shows the error over the window until you fix the file.
+When you run an application with `ljos run --watch`, Ljós watches your `.qml`, `.js`, `.mjs`, `.ts`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project. Saving a file recompiles only what changed and patches the running scene in place without closing the window. Script-assigned property values, focused controls, text selections, scroll positions, navigation stacks and open popups survive the reload. If a save has a syntax or compile error, the running application stays interactive and shows the error over the window until you fix the file.
 
 ### Typed TypeScript scripts
 
