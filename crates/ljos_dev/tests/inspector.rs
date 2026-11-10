@@ -1525,6 +1525,32 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
     );
 }
 
+#[test]
+fn a_pass_that_never_reached_the_window_is_no_paint() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    for drawn in [Drawn::Whole, Drawn::Lost, Drawn::Unchanged, Drawn::Part] {
+        inspector.record_paint(&PaintReport {
+            drawn,
+            ..PaintReport::default()
+        });
+    }
+    let watch = app.call("app_watch", json!({}));
+    assert_eq!(watch.structured["counts"]["paints"], 2, "{}", watch.text);
+    let reply = app.call("app_metrics", json!({}));
+    let p = &reply.structured["paint"];
+    assert_eq!(p["presented"], 2);
+    assert_eq!(p["unchanged"], 1);
+    assert_eq!(p["lost"], 1);
+    assert!(
+        reply
+            .text
+            .contains("1 unchanged and not presented, 1 lost before reaching the window"),
+        "{}",
+        reply.text
+    );
+}
+
 /// A frame of the engine that spent `ms` in one lane, with `owner`
 /// charged for it.
 fn frame_in(lane: ljos_runtime::Lane, ms: u64, owner: Option<ljos_runtime::ProcId>) -> FrameReport {

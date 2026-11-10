@@ -582,10 +582,11 @@ impl Inspector {
         self.startup.record(step, at);
     }
 
-    /// Records a pass of the primary window the host painted or found
-    /// unchanged, for `app_metrics`.
+    /// Records a pass of the primary window the host painted, found
+    /// unchanged or lost, for `app_metrics`; one that presented its
+    /// picture is a paint `app_watch` counts.
     pub fn record_paint(&mut self, report: &PaintReport) {
-        if report.drawn != Drawn::Unchanged {
+        if report.drawn.presented() {
             self.changes.paint();
         }
         self.paint.record(report);
