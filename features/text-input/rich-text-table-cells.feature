@@ -9,9 +9,10 @@ Feature: Images and right-to-left text in the cells of a rich TextEdit
   after it stands at its right, even where the cell ends with it, as it
   does where an image ends the text. A cell that reads right to left
   stands at the right of its column: its first position is at the right
-  of its text and its last at the left. The text is Liberation Sans at 20
-  pixels, where a "c" is ten pixels wide and a line 23 high; the image is
-  30 by 60.
+  of its text and its last at the left. The first letter of the cell says
+  which way it reads, for every paragraph of the cell. The text is
+  Liberation Sans at 20 pixels, where a "c" is ten pixels wide and a line
+  23 high; the image is 30 by 60.
 
   Background:
     Given a 30 by 60 image file "tall.png" filled with "#0000ff"
@@ -61,6 +62,8 @@ Feature: Images and right-to-left text in the cells of a rich TextEdit
         | doc | from | to | out |
         | [table][tr][td]אב[/td][/tr][tr][td]cccccccccc[/td][/tr][/table] | 1 | 4 | 104x52 102,2,23 89.453125,2,23 77.5,2,23 2,27,23 |
         | [table border='1'][tr][td]אב[/td][td]cc[/td][/tr][/table] | 1 | 4 | 57x31 29,4,23 16.453125,4,23 4.5,4,23 33,4,23 |
+        | [table][tr][td]c[div]אב[/div][/td][/tr][tr][td]cccccccccc[/td][/tr][/table] | 1 | 6 | 104x75 2,2,23 12,2,23 26.5,25,23 13.953125,25,23 2,25,23 2,50,23 |
+        | [table][tr][td]אב[div]c[/div][/td][/tr][tr][td]cccccccccc[/td][/tr][/table] | 1 | 6 | 104x75 102,2,23 89.453125,2,23 77.5,2,23 92,25,23 102,25,23 2,50,23 |
 
     Scenario Outline: A click at <x>, 10 is position <pos>
       When the property "doc" of "root" is set to "[table][tr][td]אב[/td][/tr][tr][td]cccccccccc[/td][/tr][/table]"
