@@ -43,6 +43,7 @@ as robotarm's `Backend` and car-configurator's `AssetDownloader`.
 | fx-material-showroom | `StudioApplication` | `corpus/standins/fx-material-showroom`, `launcher_calls` | works |
 | stocqt | `StockEngine`, `TimeFormatter` (QML singleton of module `StocQt`) | `corpus/standins/stocqt`, reads `data/*.json` by `XMLHttpRequest` | works |
 | osmbuildings | `OSMGeometry`, `OSMManager`, tile textures | `corpus/standins/osmbuildings`, over `Geometry` and `TextureData` | works, as in the table |
+| hangman | `Hangman`, `Store`, `Product`, `Transaction` (module `examples.Hangman`, beside its own `qml/Hangman.qml`) | `corpus/standins/hangman`, reads `dict.txt` by `XMLHttpRequest`; a desktop has no store, so no product is for sale | works: a game plays to its end and starts again |
 
 Not in the example list:
 
