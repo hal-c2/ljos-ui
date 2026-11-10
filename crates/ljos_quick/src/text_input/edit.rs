@@ -193,9 +193,46 @@ impl TextEdit {
                 Value::Bool(!e.read(obj, TextEditor::READ_ONLY.index).to_boolean())
             })?;
         }
-        // The text is read again in the new format.
+        // What the editor holds is converted, as in Qt 6.12
+        // (features/text-input/text-edit-format-change.feature): a rich
+        // document stays as it is under RichText, MarkdownText or
+        // AutoText and is written in the new format; plain characters, and
+        // a document made plain, are read again from `text`.
         engine.watch(obj, TextEdit::TEXT_FORMAT.index, move |e, _| {
             let Some(st) = ops::ready(e, obj) else { return };
+            let to = e
+                .untrack(|| e.read(obj, TextEdit::TEXT_FORMAT.index))
+                .to_number() as i32;
+            let kept = {
+                let mut s = st.borrow_mut();
+                let s = &mut *s;
+                super::rich::sync_doc(s);
+                match (s.rich.as_mut(), to) {
+                    (Some(_), text_format::AUTO_TEXT) => Some(false),
+                    (Some(r), text_format::RICH_TEXT | text_format::MARKDOWN_TEXT) => {
+                        let to = if to == text_format::RICH_TEXT {
+                            ljos_text::rich::TextFormat::Rich
+                        } else {
+                            ljos_text::rich::TextFormat::Markdown
+                        };
+                        let changed = r.format != to;
+                        r.format = to;
+                        r.dirty |= changed;
+                        Some(changed)
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(changed) = kept {
+                if changed {
+                    let mut s = st.borrow_mut();
+                    s.model.move_to(0, false);
+                    s.run = None;
+                    s.sticky = None;
+                }
+                check(e, "textFormat", publish(e, obj, &st));
+                return;
+            }
             let text = e
                 .untrack(|| e.read(obj, TextEditor::TEXT.index))
                 .to_js_string();
