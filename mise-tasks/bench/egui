@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+#MISE description="Measure bench/feed.qml on Ljós and Qt and the same UI in plain egui (ljos_egui's feed_egui example) inside systemd scopes in the headless sandbox: idle, the spinner alone, drag, scroll, typing and resizing; report in target/bench-egui"
+#MISE dir="{{config_root}}"
+set -euo pipefail
+# Options go to every `ljos bench` run after the defaults; BENCH_DEFAULTS
+# replaces the defaults. See docs/BENCHMARKS.md, "Ljós against egui".
+root="$(pwd)"
+target="${CARGO_TARGET_DIR:-$root/target}"
+out="${BENCH_DIR:-$target/bench-egui}"
+read -r -a defaults <<< "${BENCH_DEFAULTS---warm-up --repeat 3}"
+
+cargo build --quiet --release -p ljos_cli
+cargo build --quiet --release -p ljos_egui --example feed_egui
+egui="$target/release/examples/feed_egui"
+
+# feed: the spinner turns, so its idle span is the spinner alone; under
+# load the list scrolls under it. feed-still: nothing moves, so its idle
+# span is idle, and each gesture drives it in turn. The search field's
+# centre is the click point `--gesture type` focuses before it types.
+mkdir -p "$out"
+cat > "$out/feed.json" <<JSON
+{"apps": [{"id": "feed", "file": "$root/bench/feed.qml", "imports": ["$root/bench"],
+  "size": "1024x720", "commands": {"egui": ["$egui"]}}]}
+JSON
+cat > "$out/feed-still.json" <<JSON
+{"apps": [{"id": "feed-still", "file": "$root/bench/feed-still.qml", "imports": ["$root/bench"],
+  "size": "1024x720", "clicks": [[0.713, 0.033]], "commands": {"egui": ["$egui", "--still"]}}]}
+JSON
+
+sandbox="$("$root/scripts/cua-sandbox.sh" env)"
+value() { sed -n "s/^$1=//p" <<< "$sandbox"; }
+bench() {
+  local manifest="$1"
+  shift
+  "$target/release/ljos" bench --manifest "$manifest" --runtime ljos,egui,qt --profile desktop \
+    --sway "$(value SWAYSOCK)" --wayland "$(value WAYLAND_DISPLAY)" \
+    --app-env "DBUS_SESSION_BUS_ADDRESS=$(value DBUS_SESSION_BUS_ADDRESS)" \
+    --app-env "XDG_CONFIG_HOME=$(value XDG_CONFIG_HOME)" --app-env "XDG_DATA_HOME=$(value XDG_DATA_HOME)" \
+    --app-env "XDG_STATE_HOME=$(value XDG_STATE_HOME)" \
+    --app-env "LJOS_SCREEN_READER=$(value LJOS_SCREEN_READER)" \
+    "${defaults[@]}" \
+    --note "ljos: $(git -C "$root" rev-parse --short HEAD), cargo build --release (lto thin)" \
+    --note "egui: examples/feed_egui.rs, eframe on egui's GL painter, cargo build --release" \
+    --note "qt: $(QT_QPA_PLATFORM=offscreen qml6 --version 2>&1 | head -1), QT_QUICK_CONTROLS_STYLE=Basic" \
+    --note "all on the sandbox's headless sway (${LJOS_CUA_GPU:-pixman}), as Wayland clients" \
+    --out "$out" "$@"
+}
+bench "$out/feed.json" --gesture scroll "$@"
+for gesture in drag scroll type resize; do
+  bench "$out/feed-still.json" --gesture "$gesture" --append "$@"
+done
