@@ -970,6 +970,17 @@ fn a_directory_imported_by_its_file_url_is_the_key_of_where_it_is() {
         project.import_dir("Main", "file:///elsewhere"),
         "/elsewhere"
     );
+    // The root of the disk is the place of a URL under no other, though
+    // said first.
+    let mut rooted = crate::project(&[]);
+    rooted.add_place("/", "");
+    rooted.add_place("/app/", "app-key");
+    assert_eq!(rooted.import_dir("Main", "file:///app/x"), "app-key/x");
+    assert_eq!(
+        rooted.import_dir("Main", "file:///elsewhere/x"),
+        "elsewhere/x"
+    );
+    assert_eq!(rooted.import_dir("Main", "file:///C:/x"), "C:/x");
 }
 
 #[test]
