@@ -284,11 +284,13 @@ Feature: White space in rich text
     White space after a block ends, before the next one has text, is at
     the end of the block before: one space where spaces collapse, unless
     that block ends in a space or a line break already, and as it was
-    written where they are kept. It has the format of where it was
-    written. One character of it, right after the end tag of a block that
-    was open, is nothing when a tag follows it. A comment eats the white
-    space after it where spaces collapse. Between the cells of a table,
-    and after a table, it is nothing.
+    written where they are kept. A space that collapsed where spaces do
+    not break counts as a space there; a no-break space written as one
+    does not. It has the format of where it was written. One character
+    of it, right after the end tag of a block that was open, is nothing
+    when a tag follows it. A comment eats the white space after it where
+    spaces collapse. Between the cells of a table, and after a table, it
+    is nothing.
 
     Scenario Outline: <case>
       When the property "html" of "root" is set to "<html>"
@@ -307,6 +309,9 @@ Feature: White space in rich text
         | Before an inline tag one is nothing                      | <p>a</p>~<b>b</b>                                                      | [a#b]      |
         | Not after a block that ends in a space                   | <p>a </p>  <p>b</p>                                                    | [a #b]     |
         | Nor after one that ends in a line break                  | <p>a<br></p>  <p>b</p>                                                 | [a/#b]     |
+        | Nor after one that ends in a space that does not break   | <div style='white-space:nowrap'><p>a </p>  <p>b</p></div>              | [a_#b]     |
+        | A no-break space written as one is not a space here      | <p>a&nbsp;</p>  <p>b</p>                                               | [a_ #b]    |
+        | Nor where spaces do not break                            | <div style='white-space:nowrap'><p>a&nbsp;</p>  <p>b</p></div>         | [a__#b]    |
         | After a list it goes to its last item                    | <ul><li>a</li></ul>  <p>b</p>                                          | [a #b]     |
         | In a list, to the item before                            | <ul><li>a<ul><li>b</li></ul>  </li></ul>                               | [a#b ]     |
         | At the end of the document too                           | <p>a</p>~<p>b</p>~~                                                    | [a#b ]     |
