@@ -25,6 +25,8 @@ rustc-hash.workspace = true
 # Character maps, read for the blocks a font has characters in.
 skrifa.workspace = true
 thiserror.workspace = true
+# WOFF2 and WOFF fonts, unpacked before they are registered.
+wuff.workspace = true
 # Grapheme clusters for cursor movement.
 unicode-segmentation.workspace = true
 

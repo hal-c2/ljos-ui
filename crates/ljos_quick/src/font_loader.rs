@@ -117,7 +117,7 @@ fn load(e: &Engine, me: ObjectId) {
     let url = e.resolve_url(me, &source);
     let platform = Platform::of(e);
     if let Some(bytes) = platform.resource(&url) {
-        loaded(e, me, &url, Some(bytes.to_vec()));
+        loaded(e, me, &url, Ok(bytes.to_vec()));
         return;
     }
     if is_remote(&url) {
@@ -131,34 +131,46 @@ fn load(e: &Engine, me: ObjectId) {
                     .with_mut(me, |f: &mut FontLoader| f.generation == generation)
                     .unwrap_or(false);
                 if current {
-                    loaded(e, me, &asked, got.ok());
+                    loaded(e, me, &asked, got.map_err(|err| err.to_string()));
                 }
             },
         );
         return;
     }
     // A sandboxed run (a test) keeps every file under its root.
-    let bytes = platform.file_of(&url).and_then(|p| std::fs::read(p).ok());
+    let bytes = match platform.file_of(&url) {
+        Some(path) => std::fs::read(path).map_err(|err| err.to_string()),
+        None => Err("not a file".to_owned()),
+    };
     loaded(e, me, &url, bytes);
 }
 
 /// Registers what was read, or says why there is nothing.
-fn loaded(e: &Engine, me: ObjectId, url: &str, bytes: Option<Vec<u8>>) {
-    let faces = bytes.and_then(|b| text_engine().borrow_mut().register_font_faces(b).ok());
-    let Some(face) = faces.and_then(|f| f.into_iter().next()) else {
-        e.log(
-            LogLevel::Warning,
-            CATEGORY,
-            format!(
-                "QML FontLoader: Cannot load font: \"{}\"",
-                ljos_engine::diagnostic_url(url)
-            ),
-        );
-        e.batch(|| {
-            set(e, me, FontLoader::NAME.index, Value::String(Atom::EMPTY));
-            set(e, me, FontLoader::STATUS.index, Value::Int(status::ERROR));
-        });
-        return;
+fn loaded(e: &Engine, me: ObjectId, url: &str, bytes: Result<Vec<u8>, String>) {
+    // A file that registers has a face: the engine refuses one with none.
+    let face = bytes.and_then(|b| {
+        let faces = text_engine().borrow_mut().register_font_faces(b);
+        Ok(faces.map_err(|err| err.to_string())?.swap_remove(0))
+    });
+    let face = match face {
+        Ok(face) => face,
+        Err(reason) => {
+            // Qt's line, then why: a packed font that is corrupt and a file
+            // that is not there read the same in Qt's words alone.
+            e.log(
+                LogLevel::Warning,
+                CATEGORY,
+                format!(
+                    "QML FontLoader: Cannot load font: \"{}\": {reason}",
+                    ljos_engine::diagnostic_url(url)
+                ),
+            );
+            e.batch(|| {
+                set(e, me, FontLoader::NAME.index, Value::String(Atom::EMPTY));
+                set(e, me, FontLoader::STATUS.index, Value::Int(status::ERROR));
+            });
+            return;
+        }
     };
     let family = Atom::from(face.family.as_str());
     let font = Font {

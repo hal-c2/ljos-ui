@@ -27,6 +27,49 @@ pub enum FontError {
     /// The bytes hold no font Fontique can read.
     #[error("the data contains no usable font")]
     NoFont,
+    /// A WOFF2 or WOFF file (named by the format) that could not be unpacked:
+    /// cut short, or with tables that do not add up.
+    #[error("the {0} data is corrupt")]
+    Corrupt(&'static str),
+    /// A WOFF file whose tables unpack to more than any font needs; it is
+    /// refused before the memory is asked for.
+    #[error("the {0} data unpacks to more than {max} bytes", max = MAX_UNPACKED)]
+    TooLarge(&'static str),
+}
+
+/// The most a WOFF2 or WOFF file may unpack to: the limit the WOFF2 decoder
+/// keeps to, so the two formats agree.
+const MAX_UNPACKED: u64 = 128 * 1024 * 1024;
+
+/// The TrueType or OpenType bytes of a font file. WOFF2 and WOFF, the web's
+/// packings, are unpacked, and the packed bytes are dropped here, so only
+/// the unpacked font is held; anything else is passed on as it is.
+fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
+    match bytes.get(..4) {
+        Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|_| FontError::Corrupt("WOFF2")),
+        Some(b"wOFF") => {
+            // The decoder sets aside each table's stated size before it
+            // unpacks it, so a short file could otherwise ask for gigabytes.
+            if woff_unpacked_size(&bytes).ok_or(FontError::Corrupt("WOFF"))? > MAX_UNPACKED {
+                return Err(FontError::TooLarge("WOFF"));
+            }
+            wuff::decompress_woff1(&bytes).map_err(|_| FontError::Corrupt("WOFF"))
+        }
+        _ => Ok(bytes),
+    }
+}
+
+/// What a WOFF file's tables say they unpack to, added up; `None` when its
+/// table directory is cut short.
+fn woff_unpacked_size(bytes: &[u8]) -> Option<u64> {
+    // https://www.w3.org/TR/WOFF/: a 44-byte header (the table count at 12)
+    // then 20 bytes a table, the unpacked length at 12 in each.
+    let count = u16::from_be_bytes(bytes.get(12..14)?.try_into().ok()?);
+    (0..usize::from(count)).try_fold(0u64, |sum, i| {
+        let at = 44 + i * 20 + 12;
+        let len = u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?);
+        Some(sum + u64::from(len))
+    })
 }
 
 /// Generic families a style sheet or a platform theme may name. With bundled
@@ -163,6 +206,7 @@ pub(crate) fn register_faces(
     fcx: &mut FontContext,
     bytes: Vec<u8>,
 ) -> Result<Vec<RegisteredFace>, FontError> {
+    let bytes = sfnt(bytes)?;
     let added = fcx
         .collection
         .register_fonts(Blob::new(std::sync::Arc::new(bytes)), None);
@@ -187,6 +231,7 @@ pub(crate) fn register_faces(
 
 /// Register a font file and return the family names it adds.
 pub(crate) fn register(fcx: &mut FontContext, bytes: Vec<u8>) -> Result<Vec<String>, FontError> {
+    let bytes = sfnt(bytes)?;
     let added = fcx
         .collection
         .register_fonts(Blob::new(std::sync::Arc::new(bytes)), None);
