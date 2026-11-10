@@ -100,6 +100,9 @@ enum Missing {
     /// A path to a group or an attached object that has no such member
     /// (`border.nosuch`, `Layout.nosuch`).
     Member,
+    /// A path through properties that hold objects to a name the last
+    /// object does not have (`q.zz`, `q.r.zz`).
+    ObjectMember,
 }
 
 /// The component instance whose script is running: its context, and the
@@ -276,8 +279,9 @@ impl Engine {
     /// of a value when `createObject` sets it: that is given the value it
     /// gives now. `createObject` passes over in silence a name that leads
     /// nowhere and a member a value, group or attached object does not
-    /// have, as Qt 6.12 does; `incubateObject` tells them. `url` is the
-    /// component's.
+    /// have, as Qt 6.12 does; `incubateObject` tells them. Both tell, at
+    /// the place of the call, a name an object on the path does not have.
+    /// `url` is the component's.
     pub(crate) fn initial_props(
         &self,
         url: &Atom,
@@ -305,6 +309,21 @@ impl Engine {
                 Ok(reached) => reached,
                 Err(missing) => {
                     match (&at, missing) {
+                        (_, Missing::ObjectMember) => {
+                            let leaf = name.rsplit('.').next().unwrap_or(name);
+                            // createObject is still in its call: the place
+                            // is that of the script running now (Qt 6.11
+                            // and 6.12 both tell it, and 6.12 also gives
+                            // back no object).
+                            let here = at.is_none().then(|| self.js_origin()).flatten();
+                            let at = at.or(here.as_ref().map(At::Call)).unwrap_or(At::File(url));
+                            self.warn(format!(
+                                "{at}: Error: Cannot assign to non-existent property \"{leaf}\""
+                            ));
+                            if matches!(how, Initial::Created) {
+                                withhold();
+                            }
+                        }
                         (Some(at), Missing::Property) => self.warn(format!(
                             "{at}: Error: Cannot assign to non-existent property \"{name}\""
                         )),
@@ -492,8 +511,19 @@ impl Engine {
         match self.member_target(obj, through, leaf) {
             Ok(t) => Ok(reached(t.obj, t.prop, None, attached)),
             Err(_) if attached || self.is_group(obj, &through[0]) => Err(Missing::Member),
+            Err(_) if self.reaches_object(obj, through) => Err(Missing::ObjectMember),
             Err(_) => Err(Missing::Start),
         }
+    }
+
+    /// Whether each name of `through`, from `obj`, holds an object.
+    fn reaches_object(&self, obj: ObjectId, through: &[String]) -> bool {
+        through
+            .iter()
+            .try_fold(obj, |cur, seg| {
+                self.untrack(|| self.read_by_name(cur, seg)).as_object()
+            })
+            .is_some()
     }
 
     /// Whether `name` of `obj` is a group (`border` of a `Rectangle`).
