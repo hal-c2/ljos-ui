@@ -50,6 +50,7 @@ Feature: White space in rich text
         TextEdit { id: edit; objectName: "edit"; width: 280; focus: true; wrapMode: TextEdit.WordWrap; textFormat: TextEdit.RichText }
         TextEdit { id: other; width: 280; wrapMode: TextEdit.WordWrap; textFormat: TextEdit.RichText }
         TextEdit { id: md; width: 280; wrapMode: TextEdit.Wrap; textFormat: TextEdit.MarkdownText }
+        Text { id: label; objectName: "label"; width: 280; wrapMode: Text.WordWrap; textFormat: Text.RichText; function wide() { text = root.html.split("~").join("\n"); root.measure(label) } }
       }
       """
 
@@ -245,17 +246,31 @@ Feature: White space in rich text
         | Nor on the line after a break in it                   | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x<br>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                               | wider than the item |
         | Text after it has the cell's nowrap                   | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                   | wider than the item |
         | Text after a div's end makes its paragraph not wrap   | <table><tr><td style='white-space:nowrap'>z<div style='white-space:normal'>x</div>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                              | wider than the item |
-        | A normal paragraph after text in it wraps             | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> | within the item     |
-        | So does one after a line break                        | <table><tr><td style='white-space:nowrap'>x<br><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                               | within the item     |
         | So does one after an empty paragraph                  | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'></p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>  | within the item     |
         | Text after an empty nowrap paragraph wraps            | <table><tr><td>x<p style='white-space:nowrap'></p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                              | within the item     |
 
       # Text after a paragraph's end in a cell is a paragraph of its own in
-      # Qt; Ljós holds a cell as one (hal-c2/ljos-ui#283).
+      # Qt, and each paragraph of a cell wraps as it says. A TextEdit holds
+      # a cell as one paragraph, with one wrap for all of it; a Text reads
+      # them apart (below) (hal-c2/ljos-ui#283).
       @backlog
       Examples:
-        | case                                | html                                                                                                                            | width           |
-        | Text after a nowrap paragraph wraps | <table><tr><td><p style='white-space:nowrap'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table> | within the item |
+        | case                                      | html                                                                                                                                                                                         | width           |
+        | Text after a nowrap paragraph wraps       | <table><tr><td><p style='white-space:nowrap'>x</p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                                              | within the item |
+        | A normal paragraph after text in it wraps | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> | within the item |
+        | So does one after a line break            | <table><tr><td style='white-space:nowrap'>x<br><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                               | within the item |
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "wide" of "label" is called
+      Then the property "out" of "root" is "<width>"
+
+      Examples:
+        | case                                                                    | html                                                                                                                                                                                         | width               |
+        | A Text keeps a normal paragraph that starts a nowrap cell from wrapping | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                                    | wider than the item |
+        | A Text wraps a normal paragraph after text in a nowrap cell             | <table><tr><td style='white-space:nowrap'><p style='white-space:normal'>x</p><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> | within the item     |
+        | A Text wraps one after a line break                                     | <table><tr><td style='white-space:nowrap'>x<br><p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>                               | within the item     |
+        | A Text keeps text after a div's end from wrapping                       | <table><tr><td style='white-space:nowrap'>z<div style='white-space:normal'>x</div>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                              | wider than the item |
 
   Rule: The HTML a TextEdit writes reads back with its spaces
 
