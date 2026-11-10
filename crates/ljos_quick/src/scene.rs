@@ -3564,6 +3564,18 @@ impl QuickScene {
             // A Shape that takes points by its fill lets the rest through.
             .filter(|o| crate::shapes::takes_pointer(engine, *o, || local_point(engine, *o, pos)))
             .collect();
+        // What was hidden since the frame is still in its picture: a tool
+        // tip that closed as the pointer moved off what it was shown for,
+        // on the move just before this press. qml6 finds the items as they
+        // are, so the pointer goes through it. `visible` tells what an
+        // item inherits at once, so its own is enough.
+        if !self.shared.borrow().queued[Dirty::GEOM.slot()].is_empty() {
+            hits.retain(|o| {
+                engine
+                    .untrack(|| engine.read(*o, Item::VISIBLE.index))
+                    .to_boolean()
+            });
+        }
         crate::layer::trim(engine, self.layer, &mut hits);
         hits
     }
