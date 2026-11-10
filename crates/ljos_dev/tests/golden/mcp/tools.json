@@ -531,7 +531,7 @@
             },
             {
               "const": "paints",
-              "description": "Passes of the primary window that drew something: the picture\nchanged.",
+              "description": "Passes of the primary window that presented a picture: the\npicture changed, and the window shows it.",
               "type": "string"
             },
             {

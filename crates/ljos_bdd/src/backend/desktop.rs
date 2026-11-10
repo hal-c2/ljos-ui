@@ -177,7 +177,7 @@ impl Running {
             ("frames".to_owned(), n(&metrics["frames"]["count"])),
             (
                 "passes".to_owned(),
-                n(&paint["presented"]) + n(&paint["unchanged"]),
+                n(&paint["presented"]) + n(&paint["unchanged"]) + n(&paint["lost"]),
             ),
             ("jobs".to_owned(), n(&metrics["jobs"]["polled"])),
             ("messages".to_owned(), n(&metrics["messages"]["drained"])),
@@ -653,8 +653,12 @@ impl DesktopBackend {
     fn passes(&mut self) -> Result<u64> {
         let metrics = self.running()?.ask("app_metrics", json!({}))?;
         let paint = &metrics["paint"];
-        match (paint["presented"].as_u64(), paint["unchanged"].as_u64()) {
-            (Some(presented), Some(unchanged)) => Ok(presented + unchanged),
+        match (
+            paint["presented"].as_u64(),
+            paint["unchanged"].as_u64(),
+            paint["lost"].as_u64(),
+        ) {
+            (Some(presented), Some(unchanged), Some(lost)) => Ok(presented + unchanged + lost),
             _ => Err(BackendError::Failed(format!(
                 "app_metrics says no passes: {metrics}"
             ))),

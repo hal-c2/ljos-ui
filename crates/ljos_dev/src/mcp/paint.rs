@@ -67,6 +67,17 @@ pub enum Drawn {
     Part,
     /// Nothing: the picture was the one shown, and nothing was presented.
     Unchanged,
+    /// Drawn, but it never reached the window: the painter had lost its
+    /// surface, or the window system gave it none to draw into.
+    Lost,
+}
+
+impl Drawn {
+    /// Whether the window shows the pass's picture: only those are the
+    /// paints a client waits for.
+    pub fn presented(self) -> bool {
+        matches!(self, Drawn::Whole | Drawn::Part)
+    }
 }
 
 /// A pass of the primary window the host painted, or did not because
@@ -213,6 +224,7 @@ pub(crate) struct PaintStats {
     in_part: u64,
     moved: u64,
     unchanged: u64,
+    lost: u64,
     build: Cost,
     paint: Cost,
     upload: Option<Cost>,
@@ -229,6 +241,8 @@ impl PaintStats {
     pub(crate) fn record(&mut self, report: &PaintReport) {
         if report.drawn == Drawn::Unchanged {
             self.unchanged += 1;
+        } else if report.drawn == Drawn::Lost {
+            self.lost += 1;
         } else {
             self.presented += 1;
             if report.drawn == Drawn::Part {
@@ -272,6 +286,7 @@ impl PaintStats {
             "presented_in_part": self.in_part,
             "moved": self.moved,
             "unchanged": self.unchanged,
+            "lost": self.lost,
             "build_us": self.build.json(),
             "paint_us": self.paint.json(),
             "upload_us": self.upload.as_ref().map_or(Value::Null, Cost::json),
@@ -287,11 +302,16 @@ impl PaintStats {
 
     /// The text of `app_metrics`; nothing until the host reports a pass.
     pub(crate) fn text(&self) -> String {
-        if self.presented + self.unchanged == 0 {
+        if self.presented + self.unchanged + self.lost == 0 {
             return String::new();
         }
+        let lost = if self.lost > 0 {
+            format!(", {} lost before reaching the window", self.lost)
+        } else {
+            String::new()
+        };
         let mut text = format!(
-            "\npaint: {} passes presented ({} in part, {} moving a scrolled clip), {} unchanged and not presented\n\
+            "\npaint: {} passes presented ({} in part, {} moving a scrolled clip), {} unchanged and not presented{lost}\n\
              building last {}, longest {}; uploading, drawing and presenting last {}, longest {}\n\
              {} pictures uploaded, {} bytes",
             self.presented,

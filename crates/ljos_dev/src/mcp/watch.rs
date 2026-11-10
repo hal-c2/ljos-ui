@@ -54,8 +54,8 @@ pub enum Topic {
     /// Frames the application ran, including ones an inspector's request
     /// asked for.
     Frames,
-    /// Passes of the primary window that drew something: the picture
-    /// changed.
+    /// Passes of the primary window that presented a picture: the
+    /// picture changed, and the window shows it.
     Paints,
     /// Lines in the log `app_logs` reads.
     Logs,

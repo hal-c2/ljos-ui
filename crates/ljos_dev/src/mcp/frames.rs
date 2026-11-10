@@ -125,6 +125,7 @@ pub(super) fn paint_json(p: &PaintReport) -> Value {
             Drawn::Whole => "whole",
             Drawn::Part => "part",
             Drawn::Unchanged => "unchanged",
+            Drawn::Lost => "lost",
         },
         "build_us": us(p.build),
         "paint_us": us(p.paint),
