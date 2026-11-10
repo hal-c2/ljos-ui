@@ -11,7 +11,7 @@
 //! * text typed over a selection takes the format of the first character
 //!   it replaces;
 //! * a paragraph split in two leaves both halves the paragraph's format;
-//!   two paragraphs joined keep the first one's.
+//!   two paragraphs joined keep the first one's, unless it is empty.
 //!
 //! A line break inside a paragraph (`<br>`) is [`LINE_BREAK`] and an image
 //! is [`OBJECT`], each one character, as in Qt.
@@ -768,7 +768,15 @@ impl RichText {
         let b = self.block_index(range.start);
         let cell_paragraphs = self.cell_paragraphs_spliced(range.clone(), &other.text);
         let removed = self.text[range.clone()].matches('\n').count();
+        // Measured on Qt 6.11: paragraphs joined keep the first one's
+        // format, but an empty one's goes with it (hal-c2/ljos-ui#287).
+        let joined = (removed > 0 && self.block_range(b).is_empty())
+            .then(|| Arc::clone(&self.blocks[b + removed]))
+            .filter(|f| f.table.is_none() && self.blocks[b].table.is_none());
         self.blocks.drain(b + 1..=b + removed);
+        if let Some(f) = joined {
+            self.blocks[b] = f;
+        }
         let added = other.text.matches('\n').count();
         for k in 0..added {
             let f = other
@@ -1776,6 +1784,23 @@ mod tests {
         // What was written reads back the same.
         let again = rich(&t.html(&DocFont::default()));
         assert_eq!(body(&again), bold());
+    }
+
+    /// Measured on Qt 6.11 (hal-c2/ljos-ui#287).
+    #[test]
+    fn an_empty_paragraph_joined_to_the_next_takes_its_format() {
+        let empty = "<p style='-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px;'>\
+                     <br /></p>";
+        let mut t = rich(&format!("{empty}<h1>b</h1>"));
+        assert_eq!(t.text(), "\nb");
+        t.splice(0..1, "", None);
+        assert_eq!(t.blocks[0].kind, BlockKind::Heading(1));
+        let mut t = rich("<h1>x</h1><p>b</p>");
+        t.splice(1..2, "", None);
+        assert_eq!(t.blocks[0].kind, BlockKind::Heading(1));
+        let mut t = rich("<p>x</p><h1>b</h1>");
+        t.splice(1..2, "", None);
+        assert_eq!(t.blocks[0].kind, BlockKind::Paragraph);
     }
 
     #[test]
