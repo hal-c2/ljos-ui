@@ -385,13 +385,18 @@ fn modifier_bits(names: &str) -> Result<i64, String> {
     })
 }
 
-#[then(regex = r#"^the application sees (?:"([^"]+)"|no modifier) held$"#)]
+#[then(regex = r#"^the application sees "([^"]+)" held$"#)]
 fn modifiers_held(w: &mut LjosWorld, names: String) -> StepResult {
-    let want = if names.is_empty() {
-        0
-    } else {
-        modifier_bits(&names)?
-    };
+    let want = modifier_bits(&names)?;
+    application_sees(w, want, &names)
+}
+
+#[then(regex = r"^the application sees no modifier held$")]
+fn no_modifier_held(w: &mut LjosWorld) -> StepResult {
+    application_sees(w, 0, "none")
+}
+
+fn application_sees(w: &mut LjosWorld, want: i64, names: &str) -> StepResult {
     w.each(|b| match b.probes()?.keyboard_modifiers()? {
         held if held == want => Ok(()),
         held => Err(BackendError::Failed(format!(
