@@ -35,6 +35,9 @@ pub enum FontError {
     /// refused before the memory is asked for.
     #[error("the {0} data unpacks to more than {max} bytes", max = MAX_UNPACKED)]
     TooLarge(&'static str),
+    /// A WOFF2 or WOFF file in a build without the `woff` feature.
+    #[error("this build reads no {0} fonts (the `woff` feature is off)")]
+    Unsupported(&'static str),
 }
 
 /// The most a WOFF2 or WOFF file may unpack to: the limit the WOFF2 decoder
@@ -44,6 +47,7 @@ const MAX_UNPACKED: u64 = 128 * 1024 * 1024;
 /// The TrueType or OpenType bytes of a font file. WOFF2 and WOFF, the web's
 /// packings, are unpacked, and the packed bytes are dropped here, so only
 /// the unpacked font is held; anything else is passed on as it is.
+#[cfg(feature = "woff")]
 fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
     match bytes.get(..4) {
         Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|_| FontError::Corrupt("WOFF2")),
@@ -59,8 +63,18 @@ fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
     }
 }
 
+#[cfg(not(feature = "woff"))]
+fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
+    match bytes.get(..4) {
+        Some(b"wOF2") => Err(FontError::Unsupported("WOFF2")),
+        Some(b"wOFF") => Err(FontError::Unsupported("WOFF")),
+        _ => Ok(bytes),
+    }
+}
+
 /// What a WOFF file's tables say they unpack to, added up; `None` when its
 /// table directory is cut short.
+#[cfg(feature = "woff")]
 fn woff_unpacked_size(bytes: &[u8]) -> Option<u64> {
     // https://www.w3.org/TR/WOFF/: a 44-byte header (the table count at 12)
     // then 20 bytes a table, the unpacked length at 12 in each.

@@ -8,6 +8,14 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+default = ["woff"]
+# Fonts packed as WOFF2 and WOFF, as the web serves them, unpacked before
+# they are registered (wuff, with Brotli's dictionary: about 280 KB of a
+# stripped release binary). Without it such a file is refused as a format
+# this build does not read.
+woff = ["dep:wuff"]
+
 [dependencies]
 harfrust.workspace = true
 # The script of a character, as Parley's itemiser reads it, for the fallback
@@ -25,8 +33,8 @@ rustc-hash.workspace = true
 # Character maps, read for the blocks a font has characters in.
 skrifa.workspace = true
 thiserror.workspace = true
-# WOFF2 and WOFF fonts, unpacked before they are registered.
-wuff.workspace = true
+# WOFF2 and WOFF fonts, unpacked before they are registered (`woff`).
+wuff = { workspace = true, optional = true }
 # Grapheme clusters for cursor movement.
 unicode-segmentation.workspace = true
 

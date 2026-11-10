@@ -94,7 +94,7 @@ ljos_localstorage = { path = "../ljos_localstorage" }
 ljos_platform = { path = "../ljos_platform", features = ["http"] }
 ljos_runtime = { path = "../ljos_runtime" }
 # The characters of HTML another application copies, which it copies too.
-ljos_text = { path = "../ljos_text" }
+ljos_text = { path = "../ljos_text", features = ["woff"] }
 qml_front = { path = "../qml_front" }
 # The content key a file compiled ahead of time is matched by.
 ljos_ir = { path = "../ljos_ir" }
