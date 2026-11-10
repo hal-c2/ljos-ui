@@ -150,6 +150,28 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
       When the files are checked with TypeScript
       Then TypeScript reports nothing
 
+    # QML reads a key of an enum a type inherits through the type's own name, as qml6 does
+    # (`TextInput.AlignRight` is 2): without Qt's table the editors inherit their enums from
+    # the base they share, beside it every item inherits `Item`'s.
+    Scenario: A key of an enum the type inherits is read through the type's name
+      Given the file "Page.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          TextInput { id: field; horizontalAlignment: TextInput.AlignRight }
+          TextEdit { wrapMode: TextEdit.Wrap; horizontalAlignment: TextEdit.AlignJustify }
+          Rectangle { transformOrigin: Rectangle.TopLeft }
+          function wrap(): void { field.wrapMode = TextInput.WordWrap }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+      When the files are checked with TypeScript
+      Then TypeScript reports nothing
+
     Scenario: A key only another type's enum has is no key of the type
       Given the file "Field.qml":
         """qml

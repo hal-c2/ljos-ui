@@ -495,6 +495,55 @@ impl Api {
         again
     }
 
+    /// The keys of the enums `ty` inherits and does not declare again,
+    /// that `ty`'s namespace does not have of its own, by the nearest type
+    /// that declares each enum, named as the declarations name it: what a
+    /// file reads through `ty`'s name (`TextInput.AlignRight`, of the base
+    /// both editors share). Empty for a type no file names (`QQmlLocale`,
+    /// reached as what `Locale` inherits), which is read through no name.
+    fn inherited_keys(
+        &self,
+        ty: &'static Type,
+        own: &[(&'static str, &'static Enum)],
+    ) -> Vec<(String, Vec<&'static str>)> {
+        let mut inherited = Vec::new();
+        if self
+            .exported
+            .get(ty.name)
+            .is_none_or(|e| e.class != ty.class)
+        {
+            return inherited;
+        }
+        let mut declared: HashSet<&str> = enums_of(ty).map(|e| e.name).collect();
+        let mut keys: HashSet<&str> = own.iter().map(|(key, _)| *key).collect();
+        let ancestors: Vec<(&'static Type, &str)> =
+            std::iter::successors(ty.prototype(), |found| found.prototype())
+                .filter_map(|found| Some((found, self.name_of(found)?)))
+                .collect();
+        for &(found, found_name) in &ancestors {
+            // Inside the namespace a member named as the type that declares
+            // an enum would hide that type: such a key is left out, and an
+            // enum such a member hides is too.
+            let hidden = declared.contains(found_name) || keys.contains(found_name);
+            let held: Vec<&'static str> = own_keys(found)
+                .into_iter()
+                .filter(|&(key, enumeration)| {
+                    !hidden
+                        && !declared.contains(enumeration.name)
+                        && !ty.properties.iter().any(|p| p.name == key)
+                        && !ancestors.iter().any(|&(_, name)| name == key)
+                        && keys.insert(key)
+                })
+                .map(|(key, _)| key)
+                .collect();
+            declared.extend(enums_of(found).map(|e| e.name));
+            if !held.is_empty() {
+                inherited.push((found_name.to_string(), held));
+            }
+        }
+        inherited
+    }
+
     fn write_type(&self, out: &mut String, ty: &'static Type) {
         let Some(name) = self.name_of(ty) else {
             return;
@@ -584,11 +633,12 @@ impl Api {
     /// interface is, which TypeScript merges with it.
     fn write_namespace(&self, out: &mut String, ty: &'static Type, name: &str) {
         let enums: Vec<&Enum> = enums_of(ty).collect();
-        if enums.is_empty() && !ty.is_singleton {
+        let own = own_keys(ty);
+        let inherited = self.inherited_keys(ty, &own);
+        if enums.is_empty() && inherited.is_empty() && !ty.is_singleton {
             return;
         }
         let _ = writeln!(out, "declare namespace {name} {{");
-        let mut keys = BTreeSet::new();
         for enumeration in &enums {
             let _ = write!(out, "    enum {} {{", enumeration.name);
             let mut first = true;
@@ -610,24 +660,27 @@ impl Api {
         }
         // `Text.AlignLeft`, as QML writes a key, as well as
         // `Text.HAlignment.AlignLeft`.
-        for enumeration in &enums {
-            for (key, _) in &enumeration.keys {
-                if RESERVED.contains(key)
-                    || !is_word(key)
-                    || ty.properties.iter().any(|p| p.name == *key)
-                    || !keys.insert(*key)
-                {
-                    continue;
-                }
-                // An enum named as its type (`Flow.Flow`) hides the
-                // namespace inside it, so it is named alone there.
-                if enumeration.name == name {
-                    let _ = writeln!(out, "    const {key}: {name};");
-                } else {
-                    let _ = writeln!(out, "    const {key}: {name}.{};", enumeration.name);
-                }
+        for (key, enumeration) in &own {
+            // An enum named as its type (`Flow.Flow`) hides the namespace
+            // inside it, so it is named alone there.
+            if enumeration.name == name {
+                let _ = writeln!(out, "    const {key}: {name};");
+            } else {
+                let _ = writeln!(out, "    const {key}: {name}.{};", enumeration.name);
             }
         }
+        // A namespace cannot extend another, so each inherited key is
+        // declared again; taken from the namespace that declares it, so
+        // that it is named once rather than typed again (every item has
+        // `Item`'s keys, `Locale` the hundreds of `QLocale`'s).
+        for (owner, held) in &inherited {
+            let _ = writeln!(out, "    const {{ {} }}: typeof {owner};", held.join(", "));
+        }
+        let keys: HashSet<&str> = own
+            .iter()
+            .map(|(key, _)| *key)
+            .chain(inherited.iter().flat_map(|(_, held)| held.iter().copied()))
+            .collect();
         if ty.is_singleton {
             for property in &ty.properties {
                 if keys.contains(property.name) || RESERVED.contains(&property.name) {
@@ -754,6 +807,27 @@ fn members_of(ty: &'static Type) -> impl Iterator<Item = &'static str> {
             let signals = own.signals.iter().map(|s| s.name);
             properties.chain(signals).chain(own.methods.iter().copied())
         })
+}
+
+/// The keys `ty`'s namespace declares of its own enums, each with the
+/// first enum that has it. A key named as a property of the type is not
+/// one, nor is a word TypeScript reserves.
+fn own_keys(ty: &'static Type) -> Vec<(&'static str, &'static Enum)> {
+    let mut keys = HashSet::new();
+    enums_of(ty)
+        .flat_map(|enumeration| {
+            enumeration
+                .keys
+                .iter()
+                .map(move |(key, _)| (*key, enumeration))
+        })
+        .filter(|(key, _)| {
+            !RESERVED.contains(key)
+                && is_word(key)
+                && !ty.properties.iter().any(|p| p.name == *key)
+                && keys.insert(*key)
+        })
+        .collect()
 }
 
 /// The enums a file reaches through `ty`'s name: its own, then those of
@@ -948,6 +1022,61 @@ mod tests {
         let body = &declarations[start..];
         let body = &body[..body.find("\n}\n").expect("closed")];
         assert!(body.contains("\n    const LeftToRight: Flow;"), "{body}");
+    }
+
+    /// The body of the namespace `name` declares.
+    fn namespace<'a>(declarations: &'a str, name: &str) -> &'a str {
+        let start = declarations
+            .find(&format!("\ndeclare namespace {name} {{"))
+            .unwrap_or_else(|| panic!("{name} has no namespace"));
+        let body = &declarations[start..];
+        &body[..body.find("\n}\n").expect("closed")]
+    }
+
+    /// What types `key` in a namespace's body, each time it is declared:
+    /// the enum of its own, or the namespace it is taken from.
+    fn typed_as<'a>(body: &'a str, key: &str) -> Vec<&'a str> {
+        body.lines()
+            .filter_map(|line| line.trim().strip_prefix("const "))
+            .filter_map(|line| {
+                if let Some(held) = line.strip_prefix("{ ") {
+                    let (held, from) = held.split_once(" }: ")?;
+                    held.split(", ").any(|k| k == key).then_some(from)
+                } else {
+                    line.strip_prefix(key)?.strip_prefix(": ")
+                }
+            })
+            .map(|ty| ty.trim_end_matches(';'))
+            .collect()
+    }
+
+    #[test]
+    fn a_key_of_an_inherited_enum_is_declared_on_the_type() {
+        let declarations = Api::of(API).expect("Ljos.Ui").declarations();
+        // Item's, which every item inherits, is taken from Item.
+        let rectangle = namespace(&declarations, "Rectangle");
+        assert_eq!(
+            typed_as(rectangle, "TopLeft"),
+            ["typeof Item"],
+            "{rectangle}"
+        );
+        assert!(!rectangle.contains("enum TransformOrigin"), "{rectangle}");
+        // A key of an enum the type declares again is its own, once.
+        let edit = namespace(&declarations, "TextEdit");
+        assert_eq!(
+            typed_as(edit, "AlignLeft"),
+            ["TextEdit.HAlignment"],
+            "{edit}"
+        );
+        assert_eq!(
+            typed_as(edit, "AlignJustify"),
+            ["TextEdit.HAlignment"],
+            "{edit}"
+        );
+        assert_eq!(typed_as(edit, "Wrap").len(), 1, "{edit}");
+        let input = namespace(&declarations, "TextInput");
+        assert_eq!(typed_as(input, "AlignRight").len(), 1, "{input}");
+        assert!(typed_as(input, "AlignJustify").is_empty(), "{input}");
     }
 
     #[test]
