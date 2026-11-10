@@ -23,9 +23,10 @@ Feature: Paragraphs in the cells of a rich TextEdit
   it; the joined paragraph keeps the format of the first. Deleting a
   word never takes the cursor out of its table: from one cell into
   another it empties both, and from outside into a table it takes the
-  whole table. Every paragraph of a cell is written back as a `<p>` of
-  its own, and each wraps as it says. What is copied has a line feed
-  between the paragraphs of a cell and at a line break.
+  whole table and leaves the paragraphs on either side apart. Every
+  paragraph of a cell is written back as a `<p>` of its own, and each
+  wraps as it says. What is copied has a line feed between the
+  paragraphs of a cell and at a line break.
 
   Background:
     Given the QML:
@@ -206,14 +207,18 @@ Feature: Paragraphs in the cells of a rich TextEdit
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | doc                                                     | at | keys           | text           |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 1  | Ctrl+Backspace | 1 [=ab cd=ef=] |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 9  | Ctrl+Delete    | 9 [=ab cd=ef=] |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 4  | Ctrl+Backspace | 1 [=cd=ef=]    |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 6  | Ctrl+Delete    | 2 [===]        |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]       | 7  | Ctrl+Backspace | 1 [===]        |
-        | [table][tr][td]ab[/td][/tr][tr][td]cd[/td][/tr][/table] | 4  | Ctrl+Backspace | 1 [===]        |
-        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table]            | 2  | Ctrl+Delete    | 2 [xy]         |
+        | doc                                                                       | at | keys           | text            |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 1  | Ctrl+Backspace | 1 [=ab cd=ef=]  |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 9  | Ctrl+Delete    | 9 [=ab cd=ef=]  |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 4  | Ctrl+Backspace | 1 [=cd=ef=]     |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 6  | Ctrl+Delete    | 2 [===]         |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 7  | Ctrl+Backspace | 1 [===]         |
+        | [table][tr][td]ab[/td][/tr][tr][td]cd[/td][/tr][/table]                   | 4  | Ctrl+Backspace | 1 [===]         |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table]                              | 2  | Ctrl+Delete    | 2 [xy]          |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 2  | Ctrl+Delete    | 2 [xy#cd]       |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 6  | Ctrl+Backspace | 2 [xy#cd]       |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 5  | Ctrl+Delete    | 5 [xy zw#gh ij] |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 15 | Ctrl+Backspace | 5 [xy zw#gh ij] |
 
   Rule: What is copied has a line feed between the paragraphs of a cell
 
