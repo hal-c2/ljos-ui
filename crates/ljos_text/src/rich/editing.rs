@@ -1637,6 +1637,25 @@ mod tests {
         );
     }
 
+    /// The head says `p, li { white-space: pre-wrap; }`, so the spaces it
+    /// writes as they are read back as they are (issue #277).
+    #[test]
+    fn indented_text_reads_back_with_its_spaces() {
+        let mut t = rich("<ul><li>a</li></ul>");
+        t.splice(0..0, "def f():\n    return  1\n", None);
+        t.splice(
+            t.text().len()..t.text().len(),
+            LINE_BREAK.to_string().as_str(),
+            None,
+        );
+        t.splice(t.text().len()..t.text().len(), "  b", None);
+        let typed = t.text().to_owned();
+        assert_eq!(typed, "def f():\n    return  1\na\u{2028}  b");
+        let again = rich(&t.html(&DocFont::default()));
+        assert_eq!(again.text(), typed);
+        assert_eq!(body(&again), body(&t));
+    }
+
     #[test]
     fn typing_over_a_selection_takes_its_first_format() {
         let mut t = rich("a<b>bold</b>c");
