@@ -1430,13 +1430,20 @@ fn write_measured(
             if due.is_some() && engine.is_made_on_read(obj, p) {
                 // Still to be made: written over, not read first, which
                 // would measure the inputs it was due with.
-                let moved = told.is_some_and(|was| !was[at].change_equals(&v));
-                engine.write_internal(obj, p, v, ljos_engine::WriteKind::Imperative)?;
+                //
                 // A read between two changes may have made this value
-                // quietly already, so the write found nothing to tell;
-                // whoever was told the older one is told now. Told twice
-                // when the write told it too, which costs only a re-read.
-                if moved {
+                // quietly already (the second change put the maker back),
+                // so the write finds nothing to tell; whoever was told the
+                // older one is told here instead. Otherwise the write tells
+                // them itself, and a second tell would run a handler twice.
+                // Peeked, not read: a read would run the maker. (Without a
+                // node a peek is a read, whose maker finds nothing due, as
+                // it was taken above, and gives what the field holds.)
+                let quiet = told.is_some_and(|was| !was[at].change_equals(&v))
+                    && engine.is_observed(obj, p)
+                    && engine.untrack(|| engine.peek(obj, p)).change_equals(&v);
+                engine.write_internal(obj, p, v, ljos_engine::WriteKind::Imperative)?;
+                if quiet {
                     engine.notify(obj, p)?;
                 }
             } else if told.is_some_and(|was| !was[at].change_equals(&v))
