@@ -324,3 +324,35 @@ Feature: ToolTip
       And 500 milliseconds pass
       Then the property "tip.visible" of "root" is false
       And the property "shown" of "root" is "falsefalsefalse"
+
+  Rule: The shared tool tip is drawn in the style of the control that shows it
+
+    Scenario: A Fusion button's tool tip is Fusion's
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Fusion
+        Item {
+          id: root; objectName: "root"
+          width: 240; height: 120
+          property var tip: save.ToolTip.toolTip
+          Button { id: save; x: 10; y: 60; text: "Save"; ToolTip.text: "Writes the file"; ToolTip.visible: true }
+        }
+        """
+      Then the property "tip.background.color" of "root" is "#ffffdc"
+      And the property "tip.background.border.color" of "root" is "#000000"
+
+    Scenario: A Basic button's tool tip stays Basic's
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root; objectName: "root"
+          width: 240; height: 120
+          property var tip: save.ToolTip.toolTip
+          Button { id: save; x: 10; y: 60; text: "Save"; ToolTip.text: "Writes the file"; ToolTip.visible: true }
+        }
+        """
+      Then the property "tip.background.color" of "root" is "#ffffff"
+      And the property "tip.background.border.color" of "root" is "#353637"
