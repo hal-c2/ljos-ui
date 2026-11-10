@@ -145,6 +145,16 @@ struct TableState {
     white_space: WhiteSpace,
     /// What the row's style says, which its cells inherit.
     row_white_space: WhiteSpace,
+    /// The paragraph of the open cell that text goes to does not wrap.
+    /// Measured on Qt 6.11, it starts as the cell says for its first
+    /// paragraph and as its block says for the others, and a block that
+    /// starts with nothing in the paragraph yet joins it: either one saying
+    /// `nowrap` makes it not wrap. So does text landing in it where the
+    /// block around that text says so.
+    no_wrap: bool,
+    /// Nothing has landed in that paragraph since a cell or a block in it
+    /// started.
+    fresh: bool,
 }
 
 struct Parser<'a> {
@@ -260,20 +270,40 @@ impl<'a> Parser<'a> {
     /// Where text goes: the open table cell, or the block being collected.
     /// None inside a table but outside its cells, where text is dropped.
     fn target(&mut self) -> Option<&mut InlineBuf> {
-        let no_wrap = self.table.as_ref().is_some_and(|t| t.cell) && !self.cell_line_wraps();
+        match &mut self.table {
+            Some(t) if t.cell => Some(&mut t.rows.last_mut()?.last_mut()?.buf),
+            Some(_) => None,
+            None => Some(&mut self.buf),
+        }
+    }
+
+    /// Writes to where text goes with `f`. A line of a cell is one that
+    /// does not wrap once something lands in it while its paragraph, or the
+    /// block around what landed, does not wrap: white space that collapses
+    /// to nothing is not something.
+    fn write(&mut self, f: impl FnOnce(&mut InlineBuf)) {
+        let block_no_wrap = self.table.as_ref().is_some_and(|t| t.cell) && !self.cell_line_wraps();
         match &mut self.table {
             Some(t) if t.cell => {
-                let cell = t.rows.last_mut()?.last_mut()?;
-                if no_wrap {
-                    let line = cell.buf.text.rfind('\n').map_or(0, |i| i + 1);
+                let Some(cell) = t.rows.last_mut().and_then(|r| r.last_mut()) else {
+                    return;
+                };
+                let (len, images) = (cell.buf.text.len(), cell.buf.images.len());
+                f(&mut cell.buf);
+                if cell.buf.text.len() == len && cell.buf.images.len() == images {
+                    return;
+                }
+                t.fresh = false;
+                t.no_wrap |= block_no_wrap;
+                if t.no_wrap {
+                    let line = cell.buf.text[..len].rfind('\n').map_or(0, |i| i + 1);
                     if cell.no_wrap.last() != Some(&line) {
                         cell.no_wrap.push(line);
                     }
                 }
-                Some(&mut cell.buf)
             }
-            Some(_) => None,
-            None => Some(&mut self.buf),
+            Some(_) => {}
+            None => f(&mut self.buf),
         }
     }
 
@@ -310,11 +340,11 @@ impl<'a> Parser<'a> {
                 return;
             }
             let style = self.style();
-            if let Some(buf) = self.target() {
+            self.write(|buf| {
                 for line in s.split(['\n', '\r']) {
                     buf.push(line, &style);
                 }
-            }
+            });
             return;
         }
         if !white_space.keeps_line_feeds() {
@@ -329,9 +359,7 @@ impl<'a> Parser<'a> {
                 self.collapsed(line, white_space);
             } else {
                 let style = self.style();
-                if let Some(buf) = self.target() {
-                    buf.push(line, &style);
-                }
+                self.write(|buf| buf.push(line, &style));
             }
         }
     }
@@ -344,15 +372,21 @@ impl<'a> Parser<'a> {
         // holds its lines (each one a paragraph to an editor).
         let in_block = self.table.is_some() || self.flow.kind() == Some(BlockKind::Code);
         let style = self.style();
-        let Some(buf) = self.target() else {
-            return;
+        let lines = white_space == WhiteSpace::Lines;
+        let trim = |buf: &mut InlineBuf| {
+            if lines && buf.text.ends_with(' ') {
+                buf.truncate(buf.text.len() - 1);
+            }
         };
-        if white_space == WhiteSpace::Lines && buf.text.ends_with(' ') {
-            buf.truncate(buf.text.len() - 1);
-        }
         if in_block {
-            buf.push("\n", &style);
+            self.write(|buf| {
+                trim(buf);
+                buf.push("\n", &style);
+            });
         } else {
+            if let Some(buf) = self.target() {
+                trim(buf);
+            }
             self.flush(true);
         }
     }
@@ -360,9 +394,10 @@ impl<'a> Parser<'a> {
     /// Text whose runs of white space are one space each.
     fn collapsed(&mut self, s: &str, white_space: WhiteSpace) {
         let style = self.style();
-        let Some(buf) = self.target() else {
-            return;
-        };
+        self.write(|buf| Self::collapse_into(buf, s, white_space, &style));
+    }
+
+    fn collapse_into(buf: &mut InlineBuf, s: &str, white_space: WhiteSpace, style: &Inline) {
         let space = if white_space == WhiteSpace::NoWrap {
             "\u{a0}"
         } else {
@@ -373,18 +408,18 @@ impl<'a> Parser<'a> {
             if !c.is_ascii_whitespace() {
                 continue;
             }
-            buf.push(&s[word..i], &style);
+            buf.push(&s[word..i], style);
             word = i + 1;
             let after_space =
                 buf.text.ends_with([' ', '\n']) || buf.nowrap_space_end == Some(buf.text.len());
             if !buf.is_empty() && !after_space {
-                buf.push(space, &style);
+                buf.push(space, style);
                 if white_space == WhiteSpace::NoWrap {
                     buf.nowrap_space_end = Some(buf.text.len());
                 }
             }
         }
-        buf.push(&s[word..], &style);
+        buf.push(&s[word..], style);
     }
 
     fn line_break(&mut self) {
@@ -392,12 +427,12 @@ impl<'a> Parser<'a> {
         // Measured on Qt 6.11: only under `normal` is the space before a
         // break dropped (`nowrap` and `pre-line` keep it).
         let collapse = self.white_space() == WhiteSpace::Collapse;
-        if let Some(buf) = self.target() {
+        self.write(|buf| {
             if collapse && buf.text.ends_with(' ') {
                 buf.truncate(buf.text.len() - 1);
             }
             buf.push("\n", &style);
-        }
+        });
     }
 
     /// At an `&`: a character when it names one, itself otherwise.
@@ -422,9 +457,7 @@ impl<'a> Parser<'a> {
             }
             Some(c) => {
                 let style = self.style();
-                if let Some(buf) = self.target() {
-                    buf.push(c.encode_utf8(&mut [0; 4]), &style);
-                }
+                self.write(|buf| buf.push(c.encode_utf8(&mut [0; 4]), &style));
                 let semicolon = usize::from(rest[name_len..].starts_with(';'));
                 self.at += 1 + name_len + semicolon;
             }
@@ -622,6 +655,16 @@ impl<'a> Parser<'a> {
             && let Some(ctx) = self.flow.innermost_mut()
         {
             ctx.no_wrap = !white_space.wraps();
+        }
+        let cell = matches!(&*open.name, "td" | "th");
+        let block = is_block(&open.name);
+        if let Some(t) = &mut self.table
+            && t.cell
+            && (cell || block)
+        {
+            let joins = block && t.fresh;
+            t.no_wrap = !white_space.wraps() || (joins && t.no_wrap);
+            t.fresh = true;
         }
     }
 
@@ -887,7 +930,23 @@ impl<'a> Parser<'a> {
             }
             "tr" | "tbody" | "thead" | "tfoot" | "html" | "body" | "head" | "br" | "hr" | "img" => {
             }
-            _ => self.close(name),
+            _ => {
+                let depth = self.table.as_ref().filter(|t| t.cell).map(|t| t.depth);
+                let block_in_cell = depth.is_some_and(|depth| {
+                    is_block(name)
+                        && self.open[depth.min(self.open.len())..]
+                            .iter()
+                            .any(|o| &*o.name == name)
+                });
+                self.close(name);
+                // Measured on Qt 6.11: what comes after a block's end in a
+                // cell is a paragraph of its own, but after a div's it goes
+                // on in the div's.
+                if block_in_cell && let Some(t) = &mut self.table {
+                    t.no_wrap &= name == "div";
+                    t.fresh = false;
+                }
+            }
         }
     }
 
@@ -924,6 +983,8 @@ impl<'a> Parser<'a> {
             depth: self.open.len(),
             white_space: self.white_space_for("table", attrs, self.white_space()),
             row_white_space: WhiteSpace::default(),
+            no_wrap: false,
+            fresh: true,
         });
         if let Some(t) = &mut self.table {
             t.row_white_space = t.white_space;
@@ -1010,12 +1071,12 @@ impl<'a> Parser<'a> {
             },
             in_spaces: false,
         };
-        if let Some(buf) = self.target() {
+        self.write(|buf| {
             buf.images.push(InlineImage {
                 index: buf.text.len(),
                 ..image
             });
-        }
+        });
     }
 }
 
@@ -1913,6 +1974,48 @@ mod tests {
                 "<td><p>aa</p><p style=\"white-space:nowrap\">b c</p><p>d</p></td>"
             )),
             ("aa\nb\u{a0}c\nd".into(), vec![(3, 7)])
+        );
+        // What the cell says holds for its first paragraph, which a block
+        // that starts it joins. A block after text, or after a block's end,
+        // starts one of its own. White space that is nothing marks no line.
+        let nowrap = "style=\"white-space:nowrap\"";
+        let normal = "style=\"white-space:normal\"";
+        let td = |inner: &str| cell(&table(&format!("<td {nowrap}>{inner}</td>")));
+        assert_eq!(
+            td(&format!("\n<p {normal}>a b</p>")),
+            ("a b".into(), vec![(0, 3)])
+        );
+        assert_eq!(
+            td(&format!("<p {normal}>a<br>b c</p>")),
+            ("a\nb c".into(), vec![(0, 1), (2, 5)])
+        );
+        assert_eq!(
+            td(&format!("<p {normal}>x</p><p {normal}>a b</p>")),
+            ("x\na b".into(), vec![(0, 1)])
+        );
+        assert_eq!(
+            td(&format!("x<br><p {normal}>a b</p>")),
+            ("x\na b".into(), vec![(0, 1)])
+        );
+        assert_eq!(
+            td(&format!("<p {normal}></p><p {normal}>a b</p>")),
+            ("a b".into(), vec![])
+        );
+        assert_eq!(
+            cell(&table(&format!(
+                "<td><div {nowrap}><p {normal}>a b</p></div></td>"
+            ))),
+            ("a b".into(), vec![(0, 3)])
+        );
+        assert_eq!(
+            cell(&table(&format!("<td>x<p {nowrap}></p>a b</td>"))),
+            ("x\na b".into(), vec![])
+        );
+        // Text where the block around it does not wrap makes its paragraph
+        // not wrap, and after a div's end it goes on in the div's.
+        assert_eq!(
+            td(&format!("z<div {normal}>x</div>a b")),
+            ("z\nxa\u{a0}b".into(), vec![(0, 1), (2, 7)])
         );
         // In a pre-wrap cell, a line feed right after its start tag is no
         // text; after an inline one it is.
