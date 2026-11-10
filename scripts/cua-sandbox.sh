@@ -230,6 +230,10 @@ start() {
     esac
   fi
   cargo build --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli "${features[@]}"
+  # After both builds, as either may have copied CEF's libraries, unstripped (see the script).
+  case ",${LJOS_CLI_CARGO_FEATURES:-}," in
+    *,webengine,*) "$root/scripts/strip-cef-runtime.sh" "$target/debug" ;;
+  esac
   # X11 through XWayland: cua-driver's input and capture are X11's.
   "${sandbox_env[@]}" setsid "$target/debug/ljos" run "$@" > "$home/app.log" 2>&1 &
   track $! app
