@@ -2,7 +2,7 @@
 
 Status: draft 2, 2026-10-10. This document is a synthesis of the research reports in `docs/research/` (01–10). It records the decisions, the reasons for them and the plan. Every section names the report that holds the evidence, the rejected alternatives and the measurements. When this document and a report disagree, this document wins. Section 22 lists the conflicts it resolved.
 
-Ljós ("light" in Icelandic) is a Rust UI toolkit that runs QML. It aims to be compatible with Qt Quick and Qt Quick Controls. It renders through egui, runs JavaScript with rquickjs, and targets desktop and mobile.
+Ljós ("light" in Icelandic) is a Rust UI toolkit for malleable software: applications that people and their agents can reshape while they run. Interfaces are declarative, scripts are typed TypeScript ([DIALECT.md](DIALECT.md)), and every part of a running application can be observed and driven (sections 3.4 and 19). Existing QML runs as a way in: Qt Quick and Qt Quick Controls applications run with the behaviour they were written for (principle 2), lowered to Ljós's own API as far as it reaches. Ljós renders through egui, runs scripts with rquickjs, and targets desktop and mobile.
 
 Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/hal-c2`), which serves as one validation target among several. HAL-C2 supplies evidence (usage counts, test suites) and acceptance scenarios. It does not shape Ljós's names, crates or APIs (principle 9).
 
@@ -12,15 +12,16 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 
 **Goals**
 
-1. **Run real QML.** This means modern Qt 6 QML: typed and `required` properties, inline components, `pragma ComponentBehavior: Bound`, attached and grouped properties, `Binding`/`State`, and JS modules. It also covers Qt Quick Controls with the semantics and API that applications rely on. The yardsticks are the qtdoc example corpus (08) and real applications, the first of which is HAL-C2.
-2. **Hot code update.** In development a saved file patches the running app and keeps its state. In production a signed bundle can update QML, JS and assets without a store release, within store policy.
-3. **Desktop and mobile from one engine.** Linux, macOS and Windows come first, then Android, then iOS.
-4. **Off-screen content costs close to nothing.** Anything not painted does no layout, paint or GPU work. Anything not visible does no binding work unless something observes it. An idle app uses 0 % CPU.
-5. **Accessible and localisable from the start.** Every item can produce an AccessKit node. Text is shaped with bidi. `qsTr` works against real catalogues, with a language switch at runtime.
-6. **Fault isolation and fair scheduling,** with ideas taken from Erlang/BEAM (section 3.4). A runaway handler, binding or plugin cannot take over the frame or the process.
-7. **Every behaviour is specified in Gherkin** and checked against real Qt wherever that is possible (section 18).
-8. **MCP out of the box.** Coding agents can check, look up, lint and test QML without a running app, and can inspect and drive a running dev build (section 19).
-9. **Malleable software.** People tailor the applications they use, alone or with a coding agent, instead of accepting what they are given or reverse-engineering it. An application can let its user change its QML and scripts on their own device and see the change live, checked by the same compiler and lints the dev tools use. This is why a shipped application may carry the compiler (section 2, crate rules). Where a platform forbids code generated at run time (iOS has no JIT), the changed code still runs, as IR the engine interprets.
+1. **Malleable software.** People tailor the applications they use, alone or with a coding agent, instead of accepting what they are given or reverse-engineering it. An application can let its user change its QML and scripts on their own device and see the change live, checked by the same compiler and lints the dev tools use. This is why a shipped application may carry the compiler (section 2, crate rules). Where a platform forbids code generated at run time (iOS has no JIT), the changed code still runs, as IR the engine interprets.
+2. **Typed scripts.** Handlers, functions and bindings in a Ljós file are a strict subset of TypeScript, checked in Rust before anything runs. Every program the checker accepts is valid TypeScript with the same meaning, so `tsc`, editors and coding models keep working on it. Declarations are typed too: a property can have a type declared in TypeScript. [DIALECT.md](DIALECT.md) has the design.
+3. **Observable and drivable, with MCP out of the box.** Every part of a running application can be inspected and driven: its accessibility tree, objects, properties and their bindings, processes, mailboxes, faults, frames and wakes (section 3.4). `ljos observe` is a window over the same tools. Coding agents can check, look up, lint and test QML without a running app, and can inspect and drive a running dev build (section 19).
+4. **Fault isolation and fair scheduling,** with ideas taken from Erlang/BEAM (section 3.4). A runaway handler, binding or plugin cannot take over the frame or the process.
+5. **Existing QML runs, as the way in.** This means modern Qt 6 QML: typed and `required` properties, inline components, `pragma ComponentBehavior: Bound`, attached and grouped properties, `Binding`/`State`, and JS modules. It also covers Qt Quick Controls with the semantics and API that applications rely on. It runs in compat mode: lowered to Ljós's own API as it loads where the lowering reaches, and run as written where it does not ([DIALECT.md](DIALECT.md)), with the behaviour principle 2 keeps. The yardsticks are the qtdoc example corpus (08) and real applications, the first of which is HAL-C2.
+6. **Hot code update.** In development a saved file patches the running app and keeps its state. In production a signed bundle can update QML, JS and assets without a store release, within store policy.
+7. **Desktop and mobile from one engine.** Linux, macOS and Windows come first, then Android, then iOS.
+8. **Off-screen content costs close to nothing.** Anything not painted does no layout, paint or GPU work. Anything not visible does no binding work unless something observes it. An idle app uses 0 % CPU.
+9. **Accessible and localisable from the start.** Every item can produce an AccessKit node. Text is shaped with bidi. `qsTr` works against real catalogues, with a language switch at runtime.
+10. **Every behaviour is specified in Gherkin** and checked against real Qt wherever that is possible (section 18).
 
 **Non-goals (for now)**
 
@@ -34,7 +35,7 @@ Ljós is a **general-purpose framework**. Its first consumer is HAL-C2 (`~/dev/h
 ## 2. Principles
 
 1. **Clean room.** No source code is copied from, or read in, Qt or Slint. Allowed inputs are the Qt documentation (doc.qt.io), published specifications, and running Qt binaries as a black box: `qml6`, `lupdate` and `lrelease` as tools, and screenshots as references. Data generated from a local Qt installation (`types.txt`, reference PNGs) is generated locally and git-ignored (D1). Qt Quick Controls styles are authored from scratch. Every worker prompt and the contributor guide carry this rule.
-2. **Qt semantics by default; efficiency by structure or opt-in.** Where Qt defines an observable behaviour, Ljós matches it. Examples: `visible: false` keeps bindings and timers running, and `reuseItems` defaults to false. Ljós saves work only in three ways:
+2. **Existing QML keeps Qt's semantics; efficiency by structure or opt-in.** This is the compat-mode rule. Where Qt defines an observable behaviour, QML written for Qt Quick behaves that way on Ljós. Ljós's own API starts from the same semantics, and [DIALECT.md](DIALECT.md) records where it differs. Examples: `visible: false` keeps bindings and timers running, and `reuseItems` defaults to false. Ljós saves work only in three ways:
    - it is unobservable, such as lazy render bindings or paint culling;
    - it is structural, with static analysis proving it safe, such as auto-freezing covered `StackView` pages that have no observable handlers;
    - the application opts in, such as `Timer.suspendWhen` or `Frozen`.
@@ -270,7 +271,7 @@ ljos-ui/
 
 **Crate rules**
 
-- **The parser is the application's choice.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`: the engine runs IR, whoever compiled it. An application that does not let its user change it loads compiled IR and links no parser and none of its roughly 106 dependency crates (06 §4.6). One that does (goal 9) links `ljos_compiler` through an opt-in feature, and compiles its user's changes to IR on the device. Today that feature is for dev builds and plugins only (`ljos`'s `dev-qml`, `ljos_shell`'s `dev`); a feature for shipped applications that their users can change is still to come.
+- **The parser is the application's choice.** Runtime crates depend on `ljos_ir`, never on `qml_syntax` or `qml_front`: the engine runs IR, whoever compiled it. An application that does not let its user change it loads compiled IR and links no parser and none of its roughly 106 dependency crates (06 §4.6). One that does (goal 1) links `ljos_compiler` through an opt-in feature, and compiles its user's changes to IR on the device. Today that feature is for dev builds and plugins only (`ljos`'s `dev-qml`, `ljos_shell`'s `dev`); a feature for shipped applications that their users can change is still to come.
 - **MCP never ships by accident.** `ljos_mcp_author` is linked only by `ljos_cli`. The inspector is a feature of `ljos_dev` that release builds refuse (section 19.7).
 - **egui stays in three crates.** Only `ljos_egui`, `ljos_shell` and `ljos_render`'s B0 backend name egui types. `ljos_test` and `ljos_bdd` use egui_kittest, but scenarios never see it.
 - **wgpu stays in three crates too.** `ljos_3d` (its `gpu` feature), `ljos_egui` (its `quick3d` feature) and `ljos_shell` name wgpu types. The QtQuick3D types write a scene and never see a device (section 7.8).

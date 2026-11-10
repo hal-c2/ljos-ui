@@ -21,7 +21,7 @@ Sources: [Qt Quick 3D](https://doc.qt.io/qt-6/qtquick3d-index.html), [View3D](ht
    - QML animations on 3D properties.
 2. **One renderer, every target.** The same crate draws natively through egui's wgpu device and on the web into a `<canvas>` (WebGPU, WebGL2 where WebGPU is missing).
 3. **Beat qml6** on startup, frame time and memory for the same QML (§ Performance).
-4. **A still scene costs nothing.** Nothing polls: a view draws when its scene changed or an animation runs, and is a single blit otherwise (ARCHITECTURE.md goal 4).
+4. **A still scene costs nothing.** Nothing polls: a view draws when its scene changed or an animation runs, and is a single blit otherwise (ARCHITECTURE.md goal 8).
 
 ## Non-goals (for now)
 

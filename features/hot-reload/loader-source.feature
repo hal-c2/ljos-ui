@@ -1,5 +1,5 @@
 # Sources:
-#   docs/ARCHITECTURE.md (section 12.1, goal 9)
+#   docs/ARCHITECTURE.md (section 12.1, goal 1)
 #   https://doc.qt.io/qt-6/qml-qtquick-loader.html#source-prop
 # Hot reload is a Ljós extension: Qt has nothing to compare it with.
 

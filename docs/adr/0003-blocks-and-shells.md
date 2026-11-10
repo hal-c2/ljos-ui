@@ -193,7 +193,7 @@ moves give the same document with a blank line or a binding order shifted
   authoring tools that edit (`qml_edit_apply`, `blocks_list`). None of them
   names an application.
 - **No new runtime dependency on the parser.** `qml_edit` links only where
-  `qml_fmt` does (tools, and an app that opts into the compiler, goal 9).
+  `qml_fmt` does (tools, and an app that opts into the compiler, goal 1).
 - **A Qt-only author loses little:** the `# block` qmldir comment is a
   comment to Qt's tools, and a skin is ordinary QML.
 - **Where the build differs:**
