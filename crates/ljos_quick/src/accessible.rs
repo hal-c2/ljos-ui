@@ -1625,9 +1625,11 @@ impl QuickScene {
                 return engine.emit_by_name(att, signal, &[]).is_ok();
             }
         }
-        let pressed = self.pointer_event_without_keyboard(engine, &PointerEvent::press(x, y, now));
-        let released =
-            self.pointer_event_without_keyboard(engine, &PointerEvent::release(x, y, now));
+        // The pointer is not moved for it: a press of an assistive
+        // technology is not the pointer, so it hovers nothing on its way
+        // (`features/a11y/actions.feature`).
+        let pressed = self.deliver_pointer(engine, &PointerEvent::press(x, y, now));
+        let released = self.deliver_pointer(engine, &PointerEvent::release(x, y, now));
         // No pointer is there: without this a hover-enabled area would
         // stay hovered.
         self.pointer_event_without_keyboard(engine, &PointerEvent::leave(now));

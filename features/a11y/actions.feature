@@ -147,3 +147,33 @@ Feature: What an assistive technology asks of an item
       When the property "contentY" of "view" is set to 95
       And an assistive technology asks the "button" named "Row 5" to press
       Then the property "log" of "root" is "row 5 "
+
+  Rule: A press of an assistive technology is not the pointer
+
+    # The pointer is not moved to the item before the press, so what takes
+    # hover is not hovered when the press lands: a tool tip bound to the
+    # hover does not open for it.
+    Scenario: A press is not preceded by a move
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 200
+          property string log: ""
+          Rectangle {
+            x: 100; y: 50; width: 80; height: 30
+            Accessible.role: Accessible.Button; Accessible.name: "It"
+            HoverHandler { id: hover }
+            MouseArea {
+              anchors.fill: parent
+              onPressed: root.log += "pressed hovered:" + hover.hovered + " "
+              onClicked: root.log += "clicked "
+            }
+          }
+        }
+        """
+      And an assistive technology is listening
+      When the user moves the pointer to 20, 20
+      And an assistive technology asks the "button" named "It" to press
+      Then the property "log" of "root" is "pressed hovered:false clicked "

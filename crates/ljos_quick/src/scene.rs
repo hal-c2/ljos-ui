@@ -3355,7 +3355,9 @@ impl QuickScene {
         self.deliver_pointer(engine, ev) || moved
     }
 
-    fn deliver_pointer(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+    /// One pointer event as it comes, with no move put in front of it: for
+    /// a press that is not the pointer, such as an assistive technology's.
+    pub(crate) fn deliver_pointer(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
