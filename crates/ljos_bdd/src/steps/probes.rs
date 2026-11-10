@@ -371,6 +371,35 @@ fn picture_kept_at(w: &mut LjosWorld, object: String, width: u32, height: u32) -
     })
 }
 
+/// `"Ctrl+Shift"` as the bits of `Qt.KeyboardModifier`.
+fn modifier_bits(names: &str) -> Result<i64, String> {
+    names.split('+').try_fold(0, |bits, name| {
+        Ok(bits
+            | match name {
+                "Shift" => 0x0200_0000,
+                "Ctrl" => 0x0400_0000,
+                "Alt" => 0x0800_0000,
+                "Meta" => 0x1000_0000,
+                _ => return Err(format!("{name:?} is not Shift, Ctrl, Alt or Meta")),
+            })
+    })
+}
+
+#[then(regex = r#"^the application sees (?:"([^"]+)"|no modifier) held$"#)]
+fn modifiers_held(w: &mut LjosWorld, names: String) -> StepResult {
+    let want = if names.is_empty() {
+        0
+    } else {
+        modifier_bits(&names)?
+    };
+    w.each(|b| match b.probes()?.keyboard_modifiers()? {
+        held if held == want => Ok(()),
+        held => Err(BackendError::Failed(format!(
+            "the application sees the modifiers {held:#x} held, expected {want:#x} ({names:?})"
+        ))),
+    })
+}
+
 #[then(regex = r#"^the pointer shows the "([A-Za-z]+Cursor)" cursor$"#)]
 fn pointer_cursor(w: &mut LjosWorld, name: String) -> StepResult {
     let want = ljos_engine::qt_namespace()

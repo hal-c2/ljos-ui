@@ -469,6 +469,13 @@ pub trait Input: Backend {
         Err(BackendError::NotImplemented("the wheel"))
     }
 
+    /// [`Input::wheel`] with the keys `modifiers` held, such as `"Ctrl"`.
+    fn wheel_holding(&mut self, _modifiers: &str, _at: (f64, f64), _by: WheelBy) -> Result<()> {
+        Err(BackendError::NotImplemented(
+            "the wheel turned with keys held",
+        ))
+    }
+
     /// An input method shows `text` as what is being composed at the
     /// cursor; an empty text ends the composition with nothing typed.
     fn compose(&mut self, _text: &str) -> Result<()> {
@@ -1300,6 +1307,16 @@ pub trait Probes: Backend {
         Err(BackendError::Unsupported {
             backend: self.name(),
             what: "the reference renderer's picture of the window",
+        })
+    }
+
+    /// The keyboard modifiers the application sees as held, as the bits of
+    /// `Qt.KeyboardModifier`. Qt gives QML no application-wide value, so
+    /// the oracle has none to read.
+    fn keyboard_modifiers(&mut self) -> Result<i64> {
+        Err(BackendError::Unsupported {
+            backend: self.name(),
+            what: "the keyboard modifiers the application sees",
         })
     }
 
