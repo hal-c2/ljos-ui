@@ -87,6 +87,25 @@ Feature: A window drawn on the processor
     Then the pixel at 100, 21 of the window is "#ff0000"
     And the window's picture is within 2 of the reference renderer's
 
+  # What waits on the window's pictures (`app_watch` on `paints`, an
+  # observer, a profile's rows) waits as long on this painter as on a GPU's.
+  Scenario: Each picture shown is a paint the inspector counts
+    Given the QML:
+      """qml
+      import QtQuick
+      Rectangle { objectName: "root"; width: 120; height: 80; color: "#000080" }
+      """
+    Then the pixel at 60, 40 of the window is "#000080"
+    When the agent calls the tool "app_watch"
+    Then the answer's "/counts/paints" is at least 1
+    When the property "color" of "root" is set to "#ff0000"
+    Then the pixel at 60, 40 of the window is "#ff0000"
+    When the agent calls the tool "app_watch"
+    Then the answer's "/counts/paints" is at least 2
+    When the agent calls the tool "app_metrics"
+    Then the answer's "/paint/presented" is at least 2
+    And the answer's "/paint/draw_us/max" is at least 1
+
   Scenario: A ShaderEffect's program is left out, and said once
     Given the text file "red.frag":
       """

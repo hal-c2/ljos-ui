@@ -10,7 +10,7 @@ use ljos_host::{ButtonState, HostControl, PointerKind, WindowChange, WindowEvent
 use super::input::starts_input;
 use super::slot::Slot;
 use super::{Control, Desktop, RESIZE_WAIT, note_size, scaled, view_of};
-use crate::present::{self, Frame};
+use crate::present;
 use crate::window_spec;
 
 /// A key, a button, a touch or a turn of the wheel: what a user does, and
@@ -29,22 +29,16 @@ pub(super) fn is_an_act(event: &WindowEvent) -> bool {
 pub(super) struct Meter {
     started: Instant,
     built: Option<Instant>,
-    drawn: ljos_dev::mcp::Drawn,
     uploads: usize,
     upload_bytes: usize,
 }
 
 impl Meter {
-    pub(super) fn new(frame: &Frame, pending: &egui::TexturesDelta) -> Self {
-        use ljos_dev::mcp::Drawn;
+    /// Starts timing a pass that hands over the pictures `pending` holds.
+    pub(super) fn new(pending: &egui::TexturesDelta) -> Self {
         Self {
             started: Instant::now(),
             built: None,
-            drawn: match frame {
-                Frame::Nothing => Drawn::Unchanged,
-                Frame::Part(_) => Drawn::Part,
-                Frame::Whole => Drawn::Whole,
-            },
             uploads: pending.set.values().map(|d| d.len()).sum(),
             upload_bytes: pending
                 .set
@@ -60,17 +54,18 @@ impl Meter {
         self.built = Some(Instant::now());
     }
 
-    /// The pass ended; `asked` is when the repaint it answered was due,
-    /// `steps` what the painter timed of it.
+    /// The pass ended having `drawn` that; `asked` is when the repaint it
+    /// answered was due, `steps` what the painter timed of it.
     pub(super) fn report(
         self,
+        drawn: ljos_dev::mcp::Drawn,
         asked: Option<Instant>,
         steps: present::Steps,
     ) -> ljos_dev::mcp::PaintReport {
         let end = Instant::now();
         let built = self.built.unwrap_or(self.started);
         ljos_dev::mcp::PaintReport {
-            drawn: self.drawn,
+            drawn,
             build: built - self.started,
             paint: end - built,
             uploads: self.uploads,
