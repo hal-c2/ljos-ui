@@ -314,6 +314,7 @@ Feature: Dialog
             objectName: "d"
             Item { objectName: "field"; focus: true }
           }
+          Menu { objectName: "m"; MenuItem { text: "Copy" } }
         }
         """
 
@@ -325,3 +326,11 @@ Feature: Dialog
       And the property "activeFocus" of "outside" is false
       When the method "reject" of "d" is called
       Then the property "activeFocus" of "outside" is true
+
+    Scenario: A dialog closed while a menu is open gives the keyboard back when the menu closes
+      When the method "open" of "d" is called
+      And the method "open" of "m" is called
+      And the method "reject" of "d" is called
+      And the method "close" of "m" is called
+      Then the property "activeFocus" of "outside" is true
+      And the property "activeFocus" of "field" is false
