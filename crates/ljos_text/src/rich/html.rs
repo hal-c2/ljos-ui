@@ -944,7 +944,7 @@ impl<'a> Parser<'a> {
         self.between = Between::Blocks;
         // Measured: text after `</div>` goes on in the same block.
         if &*open.name == "div" && !self.buf.is_empty() {
-            self.flow.close();
+            self.flow.close_carrying();
             return;
         }
         let always = open.always && !self.flow.any();
