@@ -40,14 +40,14 @@ fi
 # `webengine`, which runs the @chromium scenarios on CEF; its helper is
 # built first, beside the test.
 features=()
+cef=
 if [ -n "${LJOS_BDD_CARGO_FEATURES:-}" ]; then
   features=(--features "$LJOS_BDD_CARGO_FEATURES")
   case ",$LJOS_BDD_CARGO_FEATURES," in
     *,webengine,*)
+      cef=1
       export CEF_PATH="${CEF_PATH:-${CARGO_TARGET_DIR:-$PWD/target}/cef}"
-      cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper
-      # CEF's libraries come unstripped, libcef.so at 1.48 GB (see the script).
-      scripts/strip-cef-runtime.sh "${CARGO_TARGET_DIR:-$PWD/target}/debug" ;;
+      cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
   esac
 fi
 
@@ -59,6 +59,13 @@ if [ -n "${LJOS_BDD_FEATURES_BIN:-}" ]; then
   runner=(env -C "$PWD/crates/ljos_bdd" "$(realpath "$LJOS_BDD_FEATURES_BIN")")
 else
   runner=(cargo test --quiet -p ljos_bdd "${features[@]}" --test features --)
+fi
+if [ -n "$cef" ]; then
+  # CEF's libraries come unstripped, libcef.so at 1.48 GB (see the script). Either build may
+  # run the cef crate's build script, which copies them again, so the test is built before
+  # they are stripped, not by the run that loads them.
+  [ -n "${LJOS_BDD_FEATURES_BIN:-}" ] || cargo test --quiet --no-run -p ljos_bdd "${features[@]}" --test features
+  scripts/strip-cef-runtime.sh "${CARGO_TARGET_DIR:-$PWD/target}/debug"
 fi
 
 desktop=
