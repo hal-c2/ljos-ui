@@ -252,13 +252,30 @@ struct Parser<'a> {
     html_open: bool,
     body_open: bool,
     after_table: AfterTable,
+    /// `<!--StartFragment-->` was read: what came before it is gone, and
+    /// `<!--EndFragment-->` ends the text.
+    in_fragment: bool,
 }
 
 pub(crate) fn parse(source: &str) -> Vec<Block> {
     let mut verbatim = false;
     loop {
-        let mut p = Parser {
-            src: source,
+        let mut p = Parser::new(source, verbatim);
+        p.run();
+        // Measured on Qt 6.11: the mark counts wherever it is. An editor
+        // writes it first, so a document is read twice only when someone
+        // put it last.
+        if !p.again {
+            return p.finish();
+        }
+        verbatim = true;
+    }
+}
+
+impl<'a> Parser<'a> {
+    fn new(src: &'a str, verbatim: bool) -> Self {
+        Parser {
+            src,
             at: 0,
             flow: Flow::default(),
             buf: InlineBuf::default(),
@@ -277,19 +294,10 @@ pub(crate) fn parse(source: &str) -> Vec<Block> {
             html_open: false,
             body_open: false,
             after_table: AfterTable::No,
-        };
-        p.run();
-        // Measured on Qt 6.11: the mark counts wherever it is. An editor
-        // writes it first, so a document is read twice only when someone
-        // put it last.
-        if !p.again {
-            return p.finish();
+            in_fragment: false,
         }
-        verbatim = true;
     }
-}
 
-impl<'a> Parser<'a> {
     fn run(&mut self) {
         while self.at < self.src.len() && !self.again {
             let rest = &self.src[self.at..];
@@ -792,6 +800,26 @@ impl<'a> Parser<'a> {
                 return false;
             };
             self.at += 1 + 3 + end + 3;
+            // Measured on Qt 6.12: of HTML with the marks of a fragment,
+            // as a copy writes it, only what is between them is read. The
+            // elements opened before the start do not count, nor does any
+            // text or style sheet before it, and the text ends at the end
+            // mark (features/text-input/rich-text-clipboard.feature).
+            // DECISION: the editor's mark before the start still counts,
+            // so that a paste keeps its spaces as Qt's does; Qt's `text`
+            // drops it there too.
+            match &comment[..end] {
+                "StartFragment" if !self.in_fragment => {
+                    let (src, at, verbatim) = (self.src, self.at, self.verbatim);
+                    *self = Self {
+                        at,
+                        in_fragment: true,
+                        ..Self::new(src, verbatim)
+                    };
+                }
+                "EndFragment" if self.in_fragment => return false,
+                _ => {}
+            }
             // Measured on Qt 6.11: white space before a comment is read as
             // if the comment were not there; after one see `text`. In an
             // editor's document a comment is not there at all.
@@ -2270,6 +2298,32 @@ mod tests {
         assert_eq!(texts("a<foo>b</foo>c"), ["abc"]);
         assert_eq!(texts("a<p style=\"margin:900px\">b</p>")[1], "b");
         assert_eq!(shape("<p style=\"margin:900px\">b</p>")[0].2, (12.0, 12.0));
+    }
+
+    #[test]
+    fn of_a_fragment_only_what_is_between_its_marks_is_read() {
+        // Measured on Qt 6.12: the elements opened before the start do
+        // not count, and the end mark ends the text.
+        let pre = parse("<pre><!--StartFragment-->x y<!--EndFragment--></pre>");
+        assert_eq!(pre.len(), 1);
+        assert_eq!((pre[0].kind, pre[0].text.as_str()), (Paragraph, "x y"));
+        assert!(!pre[0].no_wrap);
+        assert!(pre[0].spans.iter().all(|s| !s.style.mono));
+        let bold =
+            parse("<p style=\"font-weight:700\"><!--StartFragment-->x<!--EndFragment--></p>");
+        assert!(bold[0].spans.iter().all(|s| !s.style.bold));
+        assert_eq!(
+            texts("<p>a<!--StartFragment-->b<!--EndFragment-->c</p>"),
+            ["b"]
+        );
+        assert_eq!(texts("<h1><!--StartFragment-->x</h1>"), ["x"]);
+        assert_eq!(shape("<h1><!--StartFragment-->x</h1>")[0].0, Paragraph);
+        assert_eq!(
+            texts("<p>x</p><!--StartFragment--><p>y</p><!--EndFragment--><p>z</p>"),
+            ["y"]
+        );
+        // An end mark with no start is a comment like any other.
+        assert_eq!(texts("<p>a<!--EndFragment-->b</p>"), ["ab"]);
     }
 
     #[test]
