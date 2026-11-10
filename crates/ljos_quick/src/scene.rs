@@ -4231,31 +4231,50 @@ fn text_polish(e: &Engine, obj: ObjectId, t: TextInputs, shared: &SharedRc) {
     // which may read its new size in the next statement. A new one (a
     // view's new row) is laid out by its first frame's polish, which no
     // read comes before but its completion's.
+    //
+    // What follows its sizes (a binding, a handler of their change
+    // signals) is told inside the change, as on qml6, so such a text is
+    // laid out now and the frame has nothing left to lay it out for. One
+    // nothing follows is laid out when a size is read, or by the frame.
+    let now = polish && known && e.untrack(|| text::sizes_observed(e, obj));
     if polish
         && known
+        && !now
         && let Err(err) = e.untrack(|| text::measure_by_polish(e, obj, t.clone()))
     {
         e.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
     }
+    let polish = polish && !now;
+    // Kept before it is laid out now: the handlers that runs may change
+    // it again, and what they change it to is the one to keep.
+    let inputs = now.then(|| t.clone());
     let t = Rc::new(t);
     if !polish && !shown {
         // Nothing for a frame to do.
         if let Some(m) = shared.borrow_mut().marks.get_mut(obj) {
             m.text = Some(t);
         }
-        return;
+    } else {
+        mark(shared, |s| {
+            if shown {
+                s.paint(obj, Paint::Text(Rc::clone(&t)));
+            }
+            if let Some(m) = s.marks.get_mut(obj) {
+                m.text = Some(t);
+            }
+            if polish {
+                s.set(obj, Dirty::POLISH, |_| ());
+            } else if now {
+                // Marked by a change before, which nothing followed then.
+                s.clear(obj, Dirty::POLISH, |_| ());
+            }
+        });
     }
-    mark(shared, |s| {
-        if shown {
-            s.paint(obj, Paint::Text(Rc::clone(&t)));
-        }
-        if let Some(m) = s.marks.get_mut(obj) {
-            m.text = Some(t);
-        }
-        if polish {
-            s.set(obj, Dirty::POLISH, |_| ());
-        }
-    });
+    if let Some(t) = inputs
+        && let Err(err) = e.untrack(|| text::measure_now(e, obj, &t))
+    {
+        e.log(ljos_engine::LogLevel::Warning, "qml", err.to_string());
+    }
 }
 
 /// An Animator showed another value of `prop`, or stopped showing one:
