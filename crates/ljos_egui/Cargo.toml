@@ -35,6 +35,9 @@ png.workspace = true
 # tests/scripts.rs compiles a QML string; the crate never links the parser.
 ljos_compiler = { path = "../ljos_compiler" }
 qml_front = { path = "../qml_front" }
+# examples/feed_egui.rs: the bench's feed written with egui alone, on
+# egui's GL painter as the shell paints, with egui's own fonts.
+eframe = { workspace = true, features = ["glow", "default_fonts"] }
 
 [[test]]
 name = "scene3d"
