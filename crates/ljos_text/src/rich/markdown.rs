@@ -17,7 +17,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
 
 use super::flow::{CellBuf, Ctx, Flow, table_block};
 use super::styled::HEADING_SCALE;
-use super::{Block, BlockKind, Inline, InlineBuf, InlineImage, ParseOptions, Parsed};
+use super::{Block, BlockKind, Fence, Inline, InlineBuf, InlineImage, ParseOptions, Parsed};
 use crate::style::BoxAlign;
 
 /// Styles nested deeper than this are not remembered: a line of ten thousand
@@ -58,6 +58,10 @@ struct Reader {
     header: bool,
     /// Source and alternative text of the image being read.
     image: Option<(Arc<str>, String)>,
+    /// How the code block being read is written; whether a fence about to
+    /// open is of tildes.
+    fence: Option<Fence>,
+    tildes: bool,
 }
 
 /// Parse `source`, which starts `base` bytes into the document.
@@ -83,6 +87,8 @@ pub(crate) fn parse(source: &str, base: usize, options: &ParseOptions) -> Parsed
         row: Vec::new(),
         header: false,
         image: None,
+        fence: None,
+        tildes: false,
     };
     for (event, range) in parser {
         if reader.open.is_empty() {
@@ -93,6 +99,11 @@ pub(crate) fn parse(source: &str, base: usize, options: &ParseOptions) -> Parsed
                 .and_then(|before| before.rfind(['\n', '\r']))
                 .map_or(0, |i| i + 1);
             reader.flow.source_start = base + line;
+        }
+        if let Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(_))) = &event {
+            reader.tildes = source
+                .get(range.clone())
+                .is_some_and(|s| s.trim_start().starts_with('~'));
         }
         reader.event(event);
     }
@@ -252,10 +263,19 @@ impl Reader {
             Tag::CodeBlock(code) => {
                 self.open_box(Ctx {
                     kind: Some(BlockKind::Code),
-                    // Measured on Qt 6.11: a fenced block does not wrap, an
-                    // indented one does.
+                    // Qt 6.11: a fenced block does not wrap, an indented one
+                    // does.
                     no_wrap: matches!(code, CodeBlockKind::Fenced(_)),
                     ..Ctx::default()
+                });
+                // Measured on Qt 6.12: the info string's first word is kept,
+                // and a fence is written back as three of its marks.
+                self.fence = Some(match &code {
+                    CodeBlockKind::Indented => Fence::Indented,
+                    CodeBlockKind::Fenced(info) => Fence::Fenced {
+                        tildes: self.tildes,
+                        info: info.split_whitespace().next().unwrap_or("").into(),
+                    },
                 });
                 self.push_style(|s| s.mono = true);
                 Opened::Code
@@ -367,11 +387,12 @@ impl Reader {
                     self.buf.truncate(self.buf.text.len() - 1);
                 }
                 self.flush(true);
+                let fence = self.fence.take();
                 if matches!(opened, Opened::Code)
                     && let Some(block) = self.flow.last_mut()
                     && block.kind == BlockKind::Code
                 {
-                    block.fence = block.no_wrap;
+                    block.fence = fence;
                 }
                 self.flow.close();
             }

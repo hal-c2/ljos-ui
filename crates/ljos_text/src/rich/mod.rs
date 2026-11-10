@@ -337,6 +337,16 @@ impl Hash for Table {
     }
 }
 
+/// How a Markdown code block is written (features/text-input/markdown-edit.feature).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum Fence {
+    /// Every line indented four spaces.
+    Indented,
+    /// Between fences of three backticks or, `tildes`, three tildes, with
+    /// the first word of the info string after the opening one.
+    Fenced { tildes: bool, info: Arc<str> },
+}
+
 /// One block of a document.
 #[derive(Clone, Debug)]
 pub struct Block {
@@ -364,9 +374,10 @@ pub struct Block {
     /// item, and the block is as wide as its longest line (`white-space`
     /// `pre` and `nowrap`, `<pre>`, a fenced code block of Markdown).
     pub no_wrap: bool,
-    /// A fenced code block of Markdown. It does not wrap, yet Qt 6.12
-    /// writes it as a paragraph that does, not as a `pre`.
-    pub fence: bool,
+    /// How a code block of Markdown was written, which its Markdown is
+    /// written back as. A fenced one does not wrap, yet Qt 6.12 writes it
+    /// to HTML as a paragraph that does, not as a `pre`.
+    pub fence: Option<Fence>,
     /// The block stands right under the one before it, whatever that one's
     /// bottom margin is (a Markdown table in Qt 6.11).
     pub tight_above: bool,
@@ -410,7 +421,7 @@ impl Block {
             align: None,
             table: None,
             no_wrap: false,
-            fence: false,
+            fence: None,
             tight_above: false,
             source_start: 0,
             hash: 0,
@@ -441,7 +452,7 @@ impl Block {
             &self.background,
             self.align,
             &self.table,
-            (self.no_wrap, self.fence, self.tight_above),
+            (self.no_wrap, &self.fence, self.tight_above),
         )
             .hash(&mut h);
         self.hash = h.finish();
