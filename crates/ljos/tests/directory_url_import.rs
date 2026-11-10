@@ -221,3 +221,22 @@ fn a_module_loaded_from_a_pack_says_its_directory_by_a_url_of_its_own() {
     );
     assert_eq!(made_with_module_types(&engine, main), "#ff0000");
 }
+
+/// Where files have their own URLs, a URL is where it says on disk:
+/// `file:///Kit/Parts/plugin` is not the directory of that key in a root.
+#[test]
+fn a_url_outside_the_roots_is_not_a_directory_of_theirs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = module(tmp.path());
+    let engine = ljos::engine();
+    let compiled = ljos::dev::compile_quiet(&[&root], Some(&engine)).unwrap();
+    engine.set_component_source(compiled.source);
+    ljos::dev::install_text_compiler(&engine, &[&root]);
+    let main = engine.create_from_url("Main", None, Vec::new()).unwrap();
+
+    let text = "import QtQuick; import \"file:///Kit/Parts/plugin\"\nText {}\n";
+    assert_eq!(
+        made(&engine, main, text, "file:///elsewhere/a.qml"),
+        "#000000"
+    );
+}
