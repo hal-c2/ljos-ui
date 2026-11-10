@@ -91,6 +91,7 @@ Feature: Editing Markdown in a TextEdit
       | a~~    x~~```~y~```~ | a\|\|    x\|```\|y\|```\|\| |
       | ```~x~```~~    y~ | ```\|x\|```\|    y\|\| |
       | ```js  rest~x~```~ | ```js\|x\|```\|\| |
+      | ````~```~x~```~````~ | ```\|```\|x\|```\|```\|\| |
 
   Scenario: Typing in an indented code block keeps it indented
     When the method "read" of "root" is called with "a~~    x y~"

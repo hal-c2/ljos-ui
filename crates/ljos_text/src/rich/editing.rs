@@ -1387,7 +1387,10 @@ impl RichText {
                 // 6.12: indented lines run on with indented ones, and fenced
                 // ones (or a pre's) with fenced ones, under the first one's
                 // fence; a fence closing, or indented lines a fenced block
-                // follows, has no empty line after it.
+                // follows, has no empty line after it. The fence is three
+                // marks whatever the lines hold, and indented lines after a
+                // list item are indented still, though read back a line of
+                // three marks closes the fence and the lines go on the item.
                 BlockKind::Code => {
                     let run = code_run(block);
                     let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
