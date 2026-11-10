@@ -10,7 +10,7 @@
 
 use std::ops::Range;
 
-use ljos_text::rich::{CELL, CELL_PARAGRAPH, TableCell};
+use ljos_text::rich::{CELL, CELL_PARAGRAPH, LINE_BREAK, TableCell};
 use ljos_text::{byte_to_utf16, utf16_to_byte};
 
 use super::base::State;
@@ -118,7 +118,9 @@ pub(crate) fn selected_text(s: &State) -> String {
 
 /// The characters a copy puts on the clipboard: of a selection of cells a
 /// line break before each cell and one after the last; of other rich text
-/// a line break between cells, as in Qt.
+/// a line break between cells. A line break and the start of a paragraph
+/// of a cell are a line break too, as in Qt 6.11
+/// (features/text-input/rich-text-cell-paragraphs.feature).
 pub(crate) fn copied_text(s: &mut State) -> String {
     super::rich::sync_doc(s);
     match (selected(s), s.rich.as_ref()) {
@@ -126,7 +128,7 @@ pub(crate) fn copied_text(s: &mut State) -> String {
             let mut out = String::new();
             for cell in r.doc.cell_rectangle(&a, &c) {
                 out.push('\n');
-                out.push_str(&r.doc.text()[cell]);
+                out.push_str(&r.doc.text()[cell].replace([CELL_PARAGRAPH, LINE_BREAK], "\n"));
             }
             out.push('\n');
             out
@@ -134,7 +136,7 @@ pub(crate) fn copied_text(s: &mut State) -> String {
         (None, Some(_)) => s
             .model
             .selected_text()
-            .replace([CELL, CELL_PARAGRAPH], "\n"),
+            .replace([CELL, CELL_PARAGRAPH, LINE_BREAK], "\n"),
         _ => s.model.selected_text().to_owned(),
     }
 }
