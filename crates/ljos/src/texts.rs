@@ -184,6 +184,10 @@ impl State {
             };
             let mut project =
                 Project::load_roots(&roots, oracle.clone()).map_err(|e| e.to_string())?;
+            // A source without the URLs of its files (one read from a
+            // pack) gives each `file:///{key}.qml`, so a URL a file makes
+            // from its own, as `Qt.resolvedUrl("plugin")`, names a key.
+            project.add_disk_root();
             let mut dirs = Vec::new();
             for root in &self.dirs {
                 directories(root, &mut dirs);
