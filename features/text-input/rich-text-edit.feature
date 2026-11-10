@@ -62,6 +62,16 @@ Feature: Editing rich text in a TextEdit
       When the method "fragment" of "root" is called
       Then the property "out" of "root" is "<span style=' font-weight:700;'>ol</span>"
 
+    Scenario Outline: The text of a div is in a block of the div's format, <case>
+      When the property "text" of "edit" is set to "<html>"
+      And the method "html" of "root" is called
+      Then the property "out" of "root" is "<written>"
+
+      Examples:
+        | case                         | html                         | written                  |
+        | alone                        | <div align='center'>x</div>  | <p align='center'>x</p>  |
+        | with the text after its end  | <div align='center'>x</div>y | <p align='center'>xy</p> |
+
   Rule: Typed text takes the format of the text before it
 
     Scenario: Typing inside a bold word types bold text

@@ -31,12 +31,9 @@ Feature: White space in rich text
       import QtQuick
       Item {
         id: root; objectName: "root"; width: 300; height: 200
-        property string html; property string out
+        property string html; property string out; property string markdown
         onHtmlChanged: edit.text = html.split("~").join("\n")
-        function show(e) {
-          const t = e.getText(0, e.length)
-          out = "[" + t.split("\u2028").join("/").split("\u2029").join("#").split("\u00a0").join("_").replace(/[\ufdd0\ufdd1]/g, "=") + "]"
-        }
+        function show(e) { out = "[" + e.getText(0, e.length).split("\u2028").join("/").split("\u2029").join("#").split("\u00a0").join("_").replace(/[\ufdd0\ufdd1]/g, "=") + "]" }
         function plain() { show(edit) }
         function spaceBold() { const h = edit.getFormattedText(1, 2).replace(/[\s\S]*<body[^>]*>/, ""); out = /font-weight:\s*(bold|[6-9]00)/.test(h) ? "bold" : "not bold" }
         function lines() { out = edit.lineCount > 1 ? "wraps" : "one line" }
@@ -45,18 +42,13 @@ Feature: White space in rich text
         function wide() { measure(edit) }
         function again() { other.text = edit.text; show(other) }
         function againWide() { other.text = edit.text; measure(other) }
-        function bare(h) {
-          return h.replace(/^[\s\S]*<body[^>]*>\n?/, "").replace(/<\/body>[\s\S]*$/, "")
-            .replace(/ style="(?! font-family:'monospace';")[^"]*"/g, "").split("\"").join("'").split("\n").join("~").split("\u00a0").join("_")
-        }
+        function bare(h) { return h.replace(/^[\s\S]*<body[^>]*>\n?/, "").replace(/<\/body>[\s\S]*$/, "").replace(/ style="(?! font-family:'monospace';")[^"]*"/g, "").split("\"").join("'").split("\n").join("~").split("\u00a0").join("_") }
         function written() { out = bare(edit.text) }
         function againWritten() { other.text = edit.text; out = bare(other.text) }
-        property string markdown
-        onMarkdownChanged: md.text = markdown.split("~").join("\n")
         function markdownWide() { measure(md) }
         TextEdit { id: edit; objectName: "edit"; width: 280; focus: true; wrapMode: TextEdit.WordWrap; textFormat: TextEdit.RichText }
         TextEdit { id: other; width: 280; wrapMode: TextEdit.WordWrap; textFormat: TextEdit.RichText }
-        TextEdit { id: md; width: 280; wrapMode: TextEdit.Wrap; textFormat: TextEdit.MarkdownText }
+        TextEdit { id: md; width: 280; wrapMode: TextEdit.Wrap; textFormat: TextEdit.MarkdownText; text: root.markdown.split("~").join("\n") }
         Text { id: label; objectName: "label"; width: 280; wrapMode: Text.WordWrap; textFormat: Text.RichText; function wide() { text = root.html.split("~").join("\n"); root.measure(label) } }
       }
       """
@@ -421,6 +413,7 @@ Feature: White space in rich text
         | It keeps its alignment           | <p align='center' style='white-space:nowrap'>x y</p>                         | <pre align='center'>x_y</pre>                                                                        |
         | Its text keeps its formats       | <p style='white-space:nowrap'><b>x</b> y</p>                                 | <pre><span>x</span>_y</pre>                                                                          |
         | A div                            | <div style='white-space:nowrap'>x y</div>                                    | <pre>x_y</pre>                                                                                       |
+        | Text after a div's end           | <div style='white-space:nowrap'>x y</div>z                                   | <pre>x_yz</pre>                                                                                      |
         | A heading                        | <h2 style='white-space:nowrap'>x y</h2>                                      | <pre><span>x_y</span></pre>                                                                          |
         | An item of a list, in an open li | <ul><li>a</li><li style='white-space:nowrap'>x y</li></ul>                   | <ul>~<li>a</li>~<li><pre>x_y</pre></ul>                                                              |
         | A pre that wraps                 | <pre style='white-space:pre-wrap'>x y</pre>                                  | <p><span style=' font-family:'monospace';'>x y</span></p>                                            |
