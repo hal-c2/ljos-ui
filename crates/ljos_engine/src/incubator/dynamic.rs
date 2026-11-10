@@ -25,6 +25,7 @@ use crate::atom::Atom;
 use crate::engine::{Engine, Free};
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
+use crate::introspect::SourcePlace;
 use crate::js::{JsState, obj_to_u64, u64_to_obj};
 use crate::loader::{LoadedFile, join_url};
 use crate::meta::MetaRef;
@@ -154,6 +155,23 @@ fn char_codes(items: &[Value]) -> String {
     String::from_utf16_lossy(&units)
 }
 
+/// Where what the initial properties could not set is told.
+#[derive(Clone, Copy)]
+enum At<'a> {
+    /// The place of the call, `file:line`.
+    Call(&'a SourcePlace),
+    File(&'a str),
+}
+
+impl std::fmt::Display for At<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            At::Call(p) => write!(f, "{}:{}", p.file, p.line),
+            At::File(file) => f.write_str(file),
+        }
+    }
+}
+
 /// Puts back who was calling before.
 pub(crate) struct CallingGuard {
     js: Option<Rc<JsState>>,
@@ -227,16 +245,19 @@ impl Engine {
     ) {
         // Where `incubateObject` was called: it says what it could not set
         // as the call's error, where `createObject` speaks for the file.
-        let at = match how {
-            Initial::Incubated(at) => Some(at.as_ref().unwrap_or(url)),
-            _ => None,
+        // A path that leads nowhere is told by the caller's file alone.
+        // Both are only written out when something is told.
+        let (at, caller) = match how {
+            Initial::Incubated(Some(p)) => (Some(At::Call(p)), At::File(&p.file)),
+            Initial::Incubated(None) => (Some(At::File(url)), At::File(url)),
+            _ => (None, At::File(url)),
         };
         for (name, v) in props {
             let Some((obj, p, member)) = self.initial_target(root, name) else {
                 let path = name.contains('.');
-                match at {
+                match &at {
                     Some(_) if path => {
-                        self.warn(format!("{url}: Cannot resolve property \"{name}\"."));
+                        self.warn(format!("{caller}: Cannot resolve property \"{name}\"."));
                     }
                     Some(at) => self.warn(format!(
                         "{at}: Error: Cannot assign to non-existent property \"{name}\""

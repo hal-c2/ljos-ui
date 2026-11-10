@@ -37,6 +37,7 @@ use crate::engine::{Engine, Held};
 use crate::error::EngineError;
 use crate::foreign::{ForeignMember, ForeignValue};
 use crate::ids::{ContextId, ObjectId, PropIndex};
+use crate::introspect::SourcePlace;
 use crate::loader::LoadedFile;
 use crate::meta::{Declared, MetaBuilder, MetaRef, PropertyFlags};
 use crate::object::{BindingLoc, Location, QmlType};
@@ -158,8 +159,9 @@ pub enum Initial {
     /// `incubateObject`, and `Loader.setSource`, which Qt sets the same
     /// way: as `createObject`, except that such a member follows its
     /// binding, and what cannot be set is an error of the script that
-    /// called, told at the place of the call (`file:line`).
-    Incubated(Option<Atom>),
+    /// called, told at the place of the call (`file:line`), or by its file
+    /// alone for a path that leads nowhere.
+    Incubated(Option<SourcePlace>),
 }
 
 impl Initial {
@@ -170,9 +172,7 @@ impl Initial {
         let at = if props.is_empty() {
             None
         } else {
-            engine
-                .js_origin()
-                .map(|p| Atom::from(format!("{}:{}", p.file, p.line)))
+            engine.js_origin()
         };
         Self::Incubated(at)
     }
