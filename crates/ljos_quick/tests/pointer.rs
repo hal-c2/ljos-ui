@@ -757,11 +757,12 @@ fn a_tap_reads_its_point_before_the_point_is_emptied() {
     s.pointer_event(&e, &PointerEvent::press(60.0, 70.0, ms(0)));
     set(&e, root, "log", Value::from(""));
     s.pointer_event(&e, &PointerEvent::release(62.0, 73.0, ms(10)));
-    // Qt's order: tapped, then pressed false with no button held, then
-    // the empty point.
+    // Qt's order (qml6): the pointer moves to where the button comes up,
+    // then tapped, then pressed false with no button held, then the empty
+    // point.
     assert_eq!(
         text(&e, root, "log"),
-        "tapped 12,33|pressed false 0|point 0,0|"
+        "point 12,33|tapped 12,33|pressed false 0|point 0,0|"
     );
     assert_eq!(text(&e, root, "now"), EMPTY_POINT);
 }

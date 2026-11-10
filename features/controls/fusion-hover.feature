@@ -97,6 +97,8 @@ Feature: How the Fusion style shows the pointer over a control
       | Slider      | value: 0; palette.button: "#808080" | handle.gradient.stops.1.color         | "#808080" |
       | CheckBox    | text: "Ab"                    | indicator.color                             | "#d8d8d8" |
 
+  # A press moves the pointer there first, as on qml6, so the knob says it
+  # takes no hover: qml6 off-screen takes none by default, a desktop does.
   Scenario Outline: A <type>'s knob held without hover is darker
     Given the QML:
       """qml
@@ -104,7 +106,7 @@ Feature: How the Fusion style shows the pointer over a control
       import QtQuick.Controls
       Item {
         width: 300; height: 200
-        <type> { objectName: "c"; <setup> }
+        <type> { objectName: "c"; hoverEnabled: false; <setup> }
       }
       """
     When the user presses the pointer at 10, 10
