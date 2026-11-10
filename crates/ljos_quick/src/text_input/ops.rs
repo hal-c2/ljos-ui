@@ -242,7 +242,15 @@ pub(crate) fn begin_editing(engine: &Engine, obj: ObjectId) {
 /// next joins the step. `None` when no cells are selected; else whether
 /// any text went.
 pub(crate) fn empty_cells(engine: &Engine, obj: ObjectId, kind: EditKind) -> Option<bool> {
-    let st = ready(engine, obj)?;
+    empty_cells_of(engine, obj, &ready(engine, obj)?, kind)
+}
+
+fn empty_cells_of(
+    engine: &Engine,
+    obj: ObjectId,
+    st: &SharedState,
+    kind: EditKind,
+) -> Option<bool> {
     let removed = {
         let mut s = st.borrow_mut();
         let removed = super::cells::empty(&mut s)?;
@@ -252,8 +260,44 @@ pub(crate) fn empty_cells(engine: &Engine, obj: ObjectId, kind: EditKind) -> Opt
         s.sticky = None;
         removed
     };
-    check(engine, "edit", publish(engine, obj, &st));
+    check(engine, "edit", publish(engine, obj, st));
     Some(removed)
+}
+
+/// Ctrl with Backspace or Delete over a table's edge
+/// ([`super::cells::word_over_edge`]): whether it was one.
+pub(crate) fn delete_word_over_table_edge(
+    engine: &Engine,
+    obj: ObjectId,
+    to: impl FnOnce(&TextModel, usize) -> usize,
+) -> bool {
+    use super::cells::OverEdge;
+    let Some(st) = ready(engine, obj) else {
+        return false;
+    };
+    let over = super::cells::word_over_edge(&mut st.borrow_mut(), to);
+    match over {
+        None => return false,
+        Some(OverEdge::Stays) => {}
+        // Emptied before anything reconciles the selection away.
+        Some(OverEdge::Cells) => {
+            empty_cells_of(engine, obj, &st, EditKind::Other);
+        }
+        Some(OverEdge::Span(anchor, cursor)) => {
+            // The line feed before the table is the paragraph left before
+            // the one after it: what goes is what follows that line feed,
+            // read from the span's end whichever way the word was taken.
+            let how = How {
+                start: Some(anchor.max(cursor)),
+                ..How::user(EditKind::Other)
+            };
+            edit(engine, obj, how, |m| {
+                m.select(anchor, cursor);
+                m.delete_selection()
+            });
+        }
+    }
+    true
 }
 
 /// Backspace or Delete at a table's edge, which does nothing: whether it
