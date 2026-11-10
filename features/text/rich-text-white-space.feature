@@ -18,6 +18,9 @@ Feature: White space in rich text
   `pre-wrap` keep every space, and a line feed starts a new paragraph.
   `pre-line` collapses spaces and keeps line feeds. An element's own style
   or a rule of a style sheet can say it, and what is inside inherits it.
+  A paragraph that is `pre` or `nowrap`, and a `<pre>`, breaks its lines
+  only where it is told to, however narrow the item, and so does a table
+  cell.
   The HTML a TextEdit writes says `white-space: pre-wrap` for its
   paragraphs, so its spaces read back as they were.
 
@@ -36,9 +39,17 @@ Feature: White space in rich text
         }
         function plain() { show(edit) }
         function lines() { out = edit.lineCount > 1 ? "wraps" : "one line" }
+        function anywhere() { edit.wrapMode = TextEdit.Wrap; lines() }
+        function measure(e) { out = e.contentWidth > e.width ? "wider than the item" : "within the item" }
+        function wide() { measure(edit) }
         function again() { other.text = edit.text; show(other) }
+        function againWide() { other.text = edit.text; measure(other) }
+        property string markdown
+        onMarkdownChanged: md.text = markdown.split("~").join("\n")
+        function markdownWide() { measure(md) }
         TextEdit { id: edit; objectName: "edit"; width: 280; focus: true; wrapMode: TextEdit.WordWrap; textFormat: TextEdit.RichText }
-        TextEdit { id: other; textFormat: TextEdit.RichText }
+        TextEdit { id: other; width: 280; wrapMode: TextEdit.WordWrap; textFormat: TextEdit.RichText }
+        TextEdit { id: md; width: 280; wrapMode: TextEdit.Wrap; textFormat: TextEdit.MarkdownText }
       }
       """
 
@@ -50,19 +61,19 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | case                                               | html                                                                                              | text                  |
-        | Indentation after a line break is kept             | <p style='margin:0;white-space:pre-wrap'>def f():<br/>    return 1</p>                            | [def f():/    return 1] |
-        | pre keeps a run of spaces                          | <p style='white-space:pre'>a   b</p>                                                              | [a   b]               |
-        | pre-wrap keeps spaces at both ends                 | <p style='white-space:pre-wrap'>  a   b  </p>                                                     | [  a   b  ]           |
-        | The space before a line break is kept              | <p style='white-space:pre-wrap'>a  <br>  b</p>                                                    | [a  /  b]             |
-        | A rule for p of a style sheet says it              | <style>p, li { white-space: pre-wrap; }</style><p>  a   b</p>                                     | [  a   b]             |
-        | A rule for li of a style sheet says it             | <style>p, li { white-space: pre-wrap; }</style><ul><li>  a   b</li></ul>                          | [  a   b]             |
-        | What is inside the paragraph inherits it           | <p style='white-space:pre-wrap'><b>  a</b>   b</p>                                                | [  a   b]             |
-        | A paragraph inherits it from a div around it       | <div style='white-space:pre-wrap'><p>a   b</p></div>                                              | [a   b]               |
-        | An element inside may say normal                   | <p style='white-space:pre-wrap'><span style='white-space:normal'>a   b</span>  c</p>              | [a b  c]              |
-        | A span may say it for its own text                 | <span style='white-space:pre-wrap'>a   b</span>  c                                                | [a   b c]             |
-        | The element's own style wins over a rule           | <style>p { white-space: pre-wrap }</style><p style='white-space:normal'>a   b</p>                 | [a b]                 |
-        | A value nobody knows leaves what is inherited      | <div style='white-space:pre-wrap'><p style='white-space:bogus'>a   b</p></div>                    | [a   b]               |
+        | case                                          | html                                                                                 | text                    |
+        | Indentation after a line break is kept        | <p style='margin:0;white-space:pre-wrap'>def f():<br/>    return 1</p>               | [def f():/    return 1] |
+        | pre keeps a run of spaces                     | <p style='white-space:pre'>a   b</p>                                                 | [a   b]                 |
+        | pre-wrap keeps spaces at both ends            | <p style='white-space:pre-wrap'>  a   b  </p>                                        | [  a   b  ]             |
+        | The space before a line break is kept         | <p style='white-space:pre-wrap'>a  <br>  b</p>                                       | [a  /  b]               |
+        | A rule for p of a style sheet says it         | <style>p, li { white-space: pre-wrap; }</style><p>  a   b</p>                        | [  a   b]               |
+        | A rule for li of a style sheet says it        | <style>p, li { white-space: pre-wrap; }</style><ul><li>  a   b</li></ul>             | [  a   b]               |
+        | What is inside the paragraph inherits it      | <p style='white-space:pre-wrap'><b>  a</b>   b</p>                                   | [  a   b]               |
+        | A paragraph inherits it from a div around it  | <div style='white-space:pre-wrap'><p>a   b</p></div>                                 | [a   b]                 |
+        | An element inside may say normal              | <p style='white-space:pre-wrap'><span style='white-space:normal'>a   b</span>  c</p> | [a b  c]                |
+        | A span may say it for its own text            | <span style='white-space:pre-wrap'>a   b</span>  c                                   | [a   b c]               |
+        | The element's own style wins over a rule      | <style>p { white-space: pre-wrap }</style><p style='white-space:normal'>a   b</p>    | [a b]                   |
+        | A value nobody knows leaves what is inherited | <div style='white-space:pre-wrap'><p style='white-space:bogus'>a   b</p></div>       | [a   b]                 |
 
   Rule: Where line feeds are kept, one starts a new paragraph
 
@@ -72,14 +83,14 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | case                                                     | html                                              | text     |
-        | A line feed in pre-wrap starts a paragraph               | <p style='white-space:pre-wrap'>a  ~b</p>         | [a  #b]  |
-        | An empty line is an empty paragraph                      | <p style='white-space:pre-wrap'>a~~b</p>          | [a##b]   |
-        | A line feed right after the start tag is not text        | <p style='white-space:pre-wrap'>~~  a</p>         | [#  a]   |
-        | A line feed at the end makes no paragraph                | <p style='white-space:pre-wrap'>a~</p>            | [a]      |
-        | So it is in pre                                          | <pre>~  a</pre>                                   | [  a]    |
-        | So it is in a table cell                                 | <table><tr><td><pre>~code</pre></td></tr></table> | [=code=]           |
-        | pre-line keeps the line feed, not the spaces around it   | <p style='white-space:pre-line'>  a  ~  b</p>     | [a#b]    |
+        | case                                                   | html                                              | text     |
+        | A line feed in pre-wrap starts a paragraph             | <p style='white-space:pre-wrap'>a  ~b</p>         | [a  #b]  |
+        | An empty line is an empty paragraph                    | <p style='white-space:pre-wrap'>a~~b</p>          | [a##b]   |
+        | A line feed right after the start tag is not text      | <p style='white-space:pre-wrap'>~~  a</p>         | [#  a]   |
+        | A line feed at the end makes no paragraph              | <p style='white-space:pre-wrap'>a~</p>            | [a]      |
+        | So it is in pre                                        | <pre>~  a</pre>                                   | [  a]    |
+        | So it is in a table cell                               | <table><tr><td><pre>~code</pre></td></tr></table> | [=code=] |
+        | pre-line keeps the line feed, not the spaces around it | <p style='white-space:pre-line'>  a  ~  b</p>     | [a#b]    |
 
   Rule: normal, nowrap and pre-line collapse spaces
 
@@ -89,12 +100,12 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | case                                  | html                                          | text   |
-        | Without white-space spaces collapse   | <p>  a   b</p>                                | [a b]  |
-        | normal collapses                      | <p style='white-space:normal'>  a   b</p>     | [a b]  |
-        | nowrap collapses to one that does not break | <p style='white-space:nowrap'>  a   b</p>     | [a_b]  |
-        | pre-line collapses                    | <p style='white-space:pre-line'>  a   b</p>   | [a b]  |
-        | normal on a pre collapses             | <pre style='white-space:normal'>a   b</pre>   | [a b]  |
+        | case                                        | html                                        | text  |
+        | Without white-space spaces collapse         | <p>  a   b</p>                              | [a b] |
+        | normal collapses                            | <p style='white-space:normal'>  a   b</p>   | [a b] |
+        | nowrap collapses to one that does not break | <p style='white-space:nowrap'>  a   b</p>   | [a_b] |
+        | pre-line collapses                          | <p style='white-space:pre-line'>  a   b</p> | [a b] |
+        | normal on a pre collapses                   | <pre style='white-space:normal'>a   b</pre> | [a b] |
 
   Rule: nowrap does not wrap at its spaces
 
@@ -106,9 +117,119 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<lines>"
 
       Examples:
-        | case                                | html                                                                                                 | lines    |
-        | A long normal paragraph wraps       | <p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>        | wraps    |
-        | A long nowrap paragraph stays whole | <p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>        | one line |
+        | case                                | html                                                                                          | lines    |
+        | A long normal paragraph wraps       | <p style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p> | wraps    |
+        | A long nowrap paragraph stays whole | <p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p> | one line |
+
+  Rule: A pre or nowrap paragraph, and a pre element, break lines only where told
+
+    It does not wrap at its spaces, nor inside a word too long for the
+    line. The paragraph is as wide as its longest line, wider than the item
+    if it must. It is the paragraph that says it: a span inside cannot.
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "anywhere" of "root" is called
+      Then the property "out" of "root" is "<lines>"
+
+      Examples:
+        | case                                           | html                                                                                                                                  | lines    |
+        | A long normal paragraph wraps                  | <p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                                                                    | wraps    |
+        | A word too long for the line breaks inside     | <p>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>                                                                 | wraps    |
+        | A pre paragraph does not wrap                  | <p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                                            | one line |
+        | A nowrap paragraph does not wrap               | <p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                                         | one line |
+        | Nor does a long word in it break               | <p style='white-space:nowrap'>aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa</p>                                      | one line |
+        | A pre element does not wrap                    | <pre>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</pre>                                                                | one line |
+        | pre-wrap wraps                                 | <p style='white-space:pre-wrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                                       | wraps    |
+        | pre-line wraps                                 | <p style='white-space:pre-line'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                                       | wraps    |
+        | A paragraph inherits it from a div around it   | <div style='white-space:nowrap'><p>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></div>                              | one line |
+        | A list item may say it                         | <ul><li style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</li></ul>                              | one line |
+        | A heading may say it                           | <h3 style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</h3>                                       | one line |
+        | A span cannot keep its paragraph from wrapping | <p><span style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</span></p>                            | wraps    |
+        | Nor can a span make it wrap                    | <p style='white-space:nowrap'><span style='white-space:normal'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</span></p> | one line |
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "wide" of "root" is called
+      Then the property "out" of "root" is "<width>"
+
+      Examples:
+        | case                                      | html                                                                                            | width               |
+        | A nowrap paragraph is wider than the item | <p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>   | wider than the item |
+        | A pre-wrap paragraph is not               | <p style='white-space:pre-wrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p> | within the item     |
+
+    Scenario: A line break still breaks a nowrap paragraph
+      When the property "html" of "root" is set to "<p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll<br>x</p>"
+      Then the property "lineCount" of "edit" is 2
+
+    Scenario: A paragraph made after one that does not wrap does not wrap either
+      When the property "html" of "root" is set to "<p style='white-space:nowrap'>x</p>"
+      And the user presses "End"
+      And the user presses "Return"
+      And the user types "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll"
+      And the method "wide" of "root" is called
+      Then the property "out" of "root" is "wider than the item"
+
+    Scenario: A fenced code block of Markdown does not wrap
+      When the property "markdown" of "root" is set to "```~aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll~```~"
+      And the method "markdownWide" of "root" is called
+      Then the property "out" of "root" is "wider than the item"
+
+    Scenario: An indented code block of Markdown wraps
+      When the property "markdown" of "root" is set to "    aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll~"
+      And the method "markdownWide" of "root" is called
+      Then the property "out" of "root" is "within the item"
+
+  Rule: A table cell says its white space too
+
+    A cell's own style says it, or a rule for td of a style sheet, or the
+    row or the table around it.
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "plain" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | case                                             | html                                                                                                  | text      |
+        | A cell collapses to a space that does not break  | <table><tr><td style='white-space:nowrap'>a   b</td></tr></table>                                     | [=a_b=]   |
+        | A pre-wrap cell keeps its spaces                 | <table><tr><td style='white-space:pre-wrap'>a   b</td></tr></table>                                   | [=a   b=] |
+        | So does a pre header cell                        | <table><tr><th style='white-space:pre'>a   b</th></tr></table>                                        | [=a   b=] |
+        | A rule for td of a style sheet says it           | <style>td { white-space: pre-wrap }</style><table><tr><td>a   b</td></tr></table>                     | [=a   b=] |
+        | A cell inherits it from its row                  | <table><tr style='white-space:pre-wrap'><td>a   b</td></tr></table>                                   | [=a   b=] |
+        | A cell inherits it from its table                | <table style='white-space:pre-wrap'><tr><td>a   b</td></tr></table>                                   | [=a   b=] |
+        | A paragraph in the cell may say normal           | <table><tr><td style='white-space:pre-wrap'><p style='white-space:normal'>a   b</p></td></tr></table> | [=a b=]   |
+        | One right after the cell's start tag is not text | <table><tr><td style='white-space:pre-wrap'>~a</td></tr></table>                                      | [=a=]     |
+        | Nor one after a list's start tag in it           | <table style='white-space:pre'><tr><td><ul>~<li>a</li></ul></td></tr></table>                         | [=a=]     |
+        | Nor a numbered list's                            | <table><tr><td style='white-space:pre'><ol>~<li>a</li></ol></td></tr></table>                         | [=a=]     |
+        | Nor a div's                                      | <table><tr><td style='white-space:pre-wrap'><div>~a</div></td></tr></table>                           | [=a=]     |
+        | Nor a definition list's                          | <table style='white-space:pre-wrap'><tr><td><dl>~<dt>a</dt></dl></td></tr></table>                    | [=a=]     |
+        | The spaces after a line break are kept           | <table><tr><td style='white-space:pre-wrap'>a<br>  b</td></tr></table>                                | [=a/  b=] |
+
+      # Qt gives a cell paragraphs of its own; Ljós holds a cell as one, its
+      # breaks line breaks (hal-c2/ljos-ui#283).
+      @backlog
+      Examples:
+        | case                                              | html                                                                         | text      |
+        | A line feed in a pre-wrap cell starts a paragraph | <table><tr><td style='white-space:pre-wrap'>a  ~b</td></tr></table>          | [=a  #b=] |
+        | One after an inline start tag is                  | <table><tr><td style='white-space:pre-wrap'><b>~a</b></td></tr></table>      | [=#a=]    |
+        | A div after text in a cell starts a paragraph     | <table><tr><td style='white-space:pre-wrap'>x<div>~a</div></td></tr></table> | [=x#a=]   |
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "wide" of "root" is called
+      Then the property "out" of "root" is "<width>"
+
+      Examples:
+        | case                                   | html                                                                                                                                  | width               |
+        | A normal cell wraps                    | <table><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>                                          | within the item     |
+        | A nowrap cell does not                 | <table><tr><td style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>               | wider than the item |
+        | Nor does a pre header cell             | <table><tr><th style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</th></tr></table>                  | wider than the item |
+        | A pre-wrap cell wraps                  | <table><tr><td style='white-space:pre-wrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>             | within the item     |
+        | A cell of a nowrap table does not      | <table style='white-space:nowrap'><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>               | wider than the item |
+        | Nor does one a rule makes nowrap       | <style>td { white-space: nowrap }</style><table><tr><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table> | wider than the item |
+        | Nor does a nowrap paragraph in a cell  | <table><tr><td><p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table>        | wider than the item |
+        | A cell beside a nowrap one still wraps | <table><tr><td style='white-space:nowrap'>x</td><td>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table>     | within the item     |
 
   Rule: The HTML a TextEdit writes reads back with its spaces
 
@@ -123,3 +244,30 @@ Feature: White space in rich text
       And the user types "    b  c"
       And the method "again" of "root" is called
       Then the property "out" of "root" is "[a#    b  c]"
+
+  Rule: HTML with the editor's mark is read as written, and wraps
+
+    The HTML a TextEdit writes starts with the mark
+    `<meta name="qrichtext" content="1">`. Where it stands, anywhere in the
+    document, every space and tab of the HTML is text and no line feed is;
+    white-space is not read, and every paragraph wraps. The name must come
+    before the content, and the content must be 1.
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "plain" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | case                                  | html                                                                      | text      |
+        | Every space is kept                   | <meta name='qrichtext' content='1'><p>  a   b</p>                         | [  a   b] |
+        | A line feed is no text                | <meta name='qrichtext' content='1'><p>a~b</p>                             | [ab]      |
+        | white-space is not read               | <meta name='qrichtext' content='1'><p style='white-space:nowrap'>a  b</p> | [a  b]    |
+        | The mark counts after the text too    | <p>a   b</p><meta name='qrichtext' content='1'>                           | [a   b]   |
+        | The name must come before the content | <meta content='1' name='qrichtext'><p>a   b</p>                           | [a b]     |
+        | Another content is no mark            | <meta name='qrichtext' content='2'><p>a   b</p>                           | [a b]     |
+
+    Scenario: A paragraph that does not wrap is written so that it reads back wrapping
+      When the property "html" of "root" is set to "<p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>"
+      And the method "againWide" of "root" is called
+      Then the property "out" of "root" is "within the item"
