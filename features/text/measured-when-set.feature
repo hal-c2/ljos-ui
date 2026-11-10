@@ -246,3 +246,55 @@ Feature: A shown text's sizes are new in the statement after it changes
     Then the property "log" of "root" is "b true, again b true"
     When 50 milliseconds pass
     Then the property "fresh" of "root" is true
+
+  # Its width and height are set, so nothing follows its sizes until the
+  # handler is connected: the first change waits for a read or the frame,
+  # and the second finds it still to be made.
+  Scenario: A handler connected between two changes of a text runs once for the second
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property int told: 0
+        property int inside: -1
+        function bump() { root.told++ }
+        function change() {
+          subject.text = "a\nb"
+          subject.lineCountChanged.connect(root.bump)
+          subject.text = "a\nb\nc"
+          root.inside = root.told
+        }
+        Text { id: subject; width: 200; height: 100; text: "a" }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    Then the property "inside" of "root" is 1
+    When 50 milliseconds pass
+    Then the property "told" of "root" is 1
+
+  # Ljós lays out a text nothing follows by the frame, and that frame tells
+  # a handler connected since. qml6 laid it out in the setter, before the
+  # handler was there. Telling only what followed a size before the change
+  # would need the change to know them; main does the same.
+  @backlog
+  Scenario: A handler connected after a text changes is not told of that change
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root; objectName: "root"; width: 400; height: 300
+        property int told: 0
+        function bump() { root.told++ }
+        function change() {
+          subject.text = "a\nb"
+          subject.lineCountChanged.connect(root.bump)
+        }
+        Text { id: subject; width: 200; height: 100; text: "a" }
+      }
+      """
+    When 50 milliseconds pass
+    And the method "change" of "root" is called
+    And 50 milliseconds pass
+    Then the property "told" of "root" is 0
