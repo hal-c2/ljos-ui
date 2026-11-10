@@ -1529,9 +1529,17 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
 fn a_pass_that_never_reached_the_window_is_no_paint() {
     let mut app = app();
     let inspector = app.inspector.as_mut().unwrap();
-    for drawn in [Drawn::Whole, Drawn::Lost, Drawn::Unchanged, Drawn::Part] {
+    // The lost pass takes the longest: what it cost is not a paint's.
+    for (drawn, ms) in [
+        (Drawn::Whole, 4),
+        (Drawn::Lost, 30),
+        (Drawn::Unchanged, 0),
+        (Drawn::Part, 4),
+    ] {
+        inspector.record_frame(&frame_in(ljos_runtime::Lane::Visible, 1, None));
         inspector.record_paint(&PaintReport {
             drawn,
+            paint: Duration::from_millis(ms),
             ..PaintReport::default()
         });
     }
@@ -1542,6 +1550,9 @@ fn a_pass_that_never_reached_the_window_is_no_paint() {
     assert_eq!(p["presented"], 2);
     assert_eq!(p["unchanged"], 1);
     assert_eq!(p["lost"], 1);
+    assert_eq!(p["paint_us"]["max"], 4000);
+    let recent = &reply.structured["recent"]["paint_us"];
+    assert_eq!(recent["max"], 4000, "{recent}");
     assert!(
         reply
             .text
