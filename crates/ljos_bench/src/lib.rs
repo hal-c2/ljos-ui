@@ -9,6 +9,7 @@
 //! limits asked for, so nothing is measured outside a limit.
 
 pub mod cgroup;
+pub mod compare;
 pub mod counters;
 pub mod gate;
 pub mod measure;
@@ -20,6 +21,7 @@ pub mod sway;
 pub mod wayland;
 
 use std::{
+    collections::BTreeMap,
     ffi::OsString,
     path::{Path, PathBuf},
     time::Duration,
@@ -57,6 +59,13 @@ pub struct App {
     /// finds them), clicked at the same places on every runtime.
     #[serde(default)]
     pub clicks: Vec<[f64; 2]>,
+    /// The same application written for another toolkit, by the name of
+    /// the runtime it is measured as: the program and its arguments. A
+    /// runtime other than `ljos` and `qt` runs only the apps that give it
+    /// a command, so the same window is measured as QML and as, say,
+    /// plain egui, under the same limits and the same input.
+    #[serde(default)]
+    pub commands: BTreeMap<String, Vec<String>>,
 }
 
 fn yes() -> bool {
@@ -85,6 +94,7 @@ impl App {
             qt_args: Vec::new(),
             drive: true,
             clicks: Vec::new(),
+            commands: BTreeMap::new(),
         }
     }
 }
@@ -101,7 +111,7 @@ pub struct Programs {
 }
 
 /// How `app` is started on the runtime `name`; `None` for a runtime
-/// there is none of.
+/// it has no command for.
 #[must_use]
 pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
     let mut env = Vec::new();
@@ -138,7 +148,13 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
             args.extend(app.qt_args.iter().map(OsString::from));
             (programs.qml6.clone(), args)
         }
-        _ => return None,
+        other => {
+            let (program, args) = app.commands.get(other)?.split_first()?;
+            (
+                PathBuf::from(program),
+                args.iter().map(OsString::from).collect(),
+            )
+        }
     };
     env.extend(programs.env.iter().cloned());
     Some(Runtime {
