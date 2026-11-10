@@ -159,7 +159,9 @@ impl Thresholds {
         // `Duration`, which would otherwise panic on the UI thread.
         let run = Duration::try_from_secs_f64(ms / 1000.0).map_err(|_| {
             SurfaceError::invalid_argument(format!(
-                "`min_run_ms` is a time of at least 0 milliseconds, not {ms}"
+                "`min_run_ms` is a time of at least 0 milliseconds that a \
+                 duration can hold, not {ms}, which is negative, not a number \
+                 or too large"
             ))
         })?;
         let share = min_share.unwrap_or(MIN_SHARE_PERCENT);
