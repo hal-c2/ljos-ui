@@ -43,11 +43,6 @@ use crate::style::{BoxAlign, InlineObject, StyleSpan, TextStyle};
 /// Ends a paragraph.
 pub const PARAGRAPH: char = '\n';
 
-/// What the HTML of a paragraph that does not wrap says of it. Read back
-/// it wraps all the same, as in Qt 6.11: the HTML is the editor's, whose
-/// mark has every white-space read as written
-/// (features/text/rich-text-white-space.feature).
-const NO_WRAP: &str = " white-space:pre;";
 /// Breaks a line inside a paragraph.
 pub const LINE_BREAK: char = '\u{2028}';
 /// Stands for an image.
@@ -1137,7 +1132,7 @@ impl RichText {
                 out.push_str(if was { "</ol>" } else { "</ul>" });
                 list = None;
             }
-            if written && !(in_list && list.is_some()) {
+            if written {
                 out.push('\n');
             }
             written = true;
@@ -1163,6 +1158,8 @@ impl RichText {
                      margin-right: 0px; -qt-list-indent: 1;\">",
                     if ordered { "ol" } else { "ul" }
                 );
+                // Measured on Qt 6.12: every item is on a line of its own.
+                out.push('\n');
                 list = Some(ordered);
             }
             if block.kind == BlockKind::Rule {
@@ -1170,9 +1167,17 @@ impl RichText {
                 continue;
             }
             // Measured: a fragment's marks are in paragraphs, not in cells.
+            // A paragraph that does not wrap is a pre, whatever it is, and
+            // one that wraps is not, though a pre made it; read back, a pre
+            // is monospace and wraps, as every paragraph of the editor's
+            // HTML does (features/text/rich-text-white-space.feature). In a
+            // list the pre is in an li that is left open, as Qt 6.12 has it.
+            if block.no_wrap && block.kind == BlockKind::List {
+                out.push_str("<li>");
+            }
             let tag = match block.kind {
+                _ if block.no_wrap => "pre".to_owned(),
                 BlockKind::Heading(n) => format!("h{}", n.clamp(1, 6)),
-                BlockKind::Code => "pre".to_owned(),
                 BlockKind::List => "li".to_owned(),
                 _ => "p".to_owned(),
             };
@@ -1185,7 +1190,7 @@ impl RichText {
             let _ = write!(
                 out,
                 " style=\"{}margin-top:{}px; margin-bottom:{}px; margin-left:{}px; \
-                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}{}\">",
+                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}\">",
                 if empty {
                     "-qt-paragraph-type:empty; "
                 } else {
@@ -1200,12 +1205,6 @@ impl RichText {
                     .as_deref()
                     .map(|c| format!(" background-color:{c};"))
                     .unwrap_or_default(),
-                // A pre says so itself.
-                if block.no_wrap && block.kind != BlockKind::Code {
-                    NO_WRAP
-                } else {
-                    ""
-                },
             );
             if fragment && index == 0 {
                 out.push_str("<!--StartFragment-->");
@@ -1285,7 +1284,12 @@ impl RichText {
                     if empty && k == 0 {
                         continue;
                     }
-                    out.push_str("\n<p");
+                    let tag = if format.is_some_and(|f| f.paragraph_no_wrap(k)) {
+                        "pre"
+                    } else {
+                        "p"
+                    };
+                    let _ = write!(out, "\n<{tag}");
                     // Measured: a th is written as a td in the middle.
                     if format.is_some_and(|f| f.header) {
                         out.push_str(" align=\"center\"");
@@ -1299,16 +1303,13 @@ impl RichText {
                         "margin-top:0px; margin-bottom:0px; margin-left:0px; \
                          margin-right:0px; -qt-block-indent:0; text-indent:0px;",
                     );
-                    if format.is_some_and(|f| f.paragraph_no_wrap(k)) {
-                        out.push_str(NO_WRAP);
-                    }
                     out.push_str("\">");
                     if empty {
                         out.push_str("<br />");
                     } else {
                         self.write_inline(out, paragraph);
                     }
-                    out.push_str("</p>");
+                    let _ = write!(out, "</{tag}>");
                 }
                 out.push_str("</td>");
             }
@@ -2112,7 +2113,7 @@ mod tests {
         };
         assert_eq!(t.text(), "\na\u{2029}b\u{1f}z\n");
         assert_eq!(no_wrap(&t), [true, false, false]);
-        assert_eq!(cell(&t), "<p style=' white-space:pre;'>a</p>|<p>b</p>");
+        assert_eq!(cell(&t), "<pre>a</pre>|<p>b</p>");
 
         // A paragraph split off takes the paragraph's format; an empty one
         // is written as empty, but not first.
@@ -2125,7 +2126,7 @@ mod tests {
         assert_eq!(no_wrap(&split), [true, false, false]);
         assert_eq!(
             cell(&split),
-            "<p style=' white-space:pre;'>a</p>|<p>b</p>|\
+            "<pre>a</pre>|<p>b</p>|\
              <p style='-qt-paragraph-type:empty;'><br /></p>"
         );
 
@@ -2134,7 +2135,7 @@ mod tests {
         joined.splice(2..5, "", None);
         assert_eq!(joined.text(), "\nab\u{1f}z\n");
         assert_eq!(no_wrap(&joined), [true, false, false]);
-        assert_eq!(cell(&joined), "<p style=' white-space:pre;'>ab</p>");
+        assert_eq!(cell(&joined), "<pre>ab</pre>");
     }
 
     #[test]
