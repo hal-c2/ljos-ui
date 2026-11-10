@@ -41,7 +41,7 @@ Feature: Paragraphs in the cells of a rich TextEdit
             .replace(/ ?margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px;( -qt-block-indent:0; text-indent:0px;)?/g, "")
             .replace(/ style=""/g, "").split("\"").join("'").split("\n").join("~")
         }
-        function shown() { return "[" + edit.getText(0, edit.length).split(" ").join("/").split(" ").join("#").replace(/[﷐﷑]/g, "=") + "]" }
+        function shown() { return "[" + edit.getText(0, edit.length).split(" ").join("/").split(" ").join("#").replace(/[﷐﷑]/g, "=").split("\u00a0").join("_") + "]" }
         function plain() { out = shown() }
         function typed() { out = edit.cursorPosition + " " + shown() }
         function written() { out = simple(edit.text) }
@@ -228,6 +228,9 @@ Feature: Paragraphs in the cells of a rich TextEdit
         | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 9  | Ctrl+Backspace | 6 [xy zw=cd=ef=#gh ij]     |
         | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 11 | Ctrl+Delete    | 7 [xy zw===#gh ij]         |
         | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 12 | Ctrl+Backspace | 6 [xy zw===#gh ij]         |
+        | [p]xy&nbsp;[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]               | 2  | Ctrl+Delete    | 2 [xy=ab=#cd]              |
+        | [p]xy&nbsp;[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]               | 3  | Ctrl+Delete    | 3 [xy_#cd]                 |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]&nbsp;cd[/p]               | 7  | Ctrl+Backspace | 6 [xy=ab=_cd]              |
 
   Rule: What is copied has a line feed between the paragraphs of a cell
 
