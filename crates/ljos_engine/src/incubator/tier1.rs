@@ -897,7 +897,10 @@ impl Engine {
         };
         let outer = st.spy.replace(Some(Vec::new()));
         st.spying.set(true);
-        let js = self.eval_expr_as(inst, expr, hint, args, false, kept);
+        let js = {
+            let _check = self.profile_cross_check();
+            self.eval_expr_as(inst, expr, hint, args, false, kept)
+        };
         // Tier 1 builds a list where the script builds an array, and holds
         // a record where the script holds the object made of it.
         let js_plain = js.as_ref().map(|v| {

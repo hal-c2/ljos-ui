@@ -11,6 +11,14 @@
 //! profiles a run pays one look at a flag. The binding loops are kept
 //! whether or not anything profiles: the graph reports one rarely, and
 //! one met while the application starts is the one worth seeing.
+//!
+//! What a run spent in its own script is counted apart, for the script
+//! cost hints of `app_frames`' `script` (docs/script-cost.md): the time
+//! from its expression's entry into JavaScript to its return, less the
+//! profiled runs nested in it (what its writes set off is theirs). Only
+//! the outermost entry of a run is timed, so a tier 1 program that gave up
+//! and fell back to JavaScript counts as script, and compiled code (tiers 0
+//! and 1, and shipped files compiled ahead of time) never does.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
@@ -76,6 +84,12 @@ pub struct HotEntry {
     /// Less the runs nested in its runs.
     pub own: Duration,
     pub longest: Duration,
+    /// Of `own`, the time its runs spent in their own JavaScript.
+    pub script: Duration,
+    /// The runs that entered JavaScript.
+    pub script_runs: u64,
+    /// The most script time of one run.
+    pub longest_script: Duration,
     /// Most runs first; runs whose cause is not known (a first run, a
     /// read that was not a property) are in none.
     pub causes: Vec<HotCause>,
@@ -102,6 +116,9 @@ pub struct Profile {
     pub dropped_runs: u64,
     /// Bindings and handlers past [`MAX_ENTRIES`], not told apart.
     pub dropped_entries: u64,
+    /// The time of the runs no other profiled run was open around: what
+    /// all bindings and handlers took together.
+    pub busy: Duration,
 }
 
 /// A binding loop the graph broke: the binding whose change came back to
@@ -130,6 +147,9 @@ struct Row {
     total: Duration,
     own: Duration,
     longest: Duration,
+    script: Duration,
+    script_runs: u64,
+    longest_script: Duration,
     causes: HashMap<(ObjectId, u32), u64>,
 }
 
@@ -145,6 +165,13 @@ struct Open {
     row: u32,
     started: Instant,
     nested: Duration,
+    /// What this run spent in its own script so far.
+    script: Duration,
+    /// Its script is being timed: an entry into JavaScript nested in that
+    /// one is part of it.
+    in_script: bool,
+    /// It entered JavaScript.
+    entered: bool,
 }
 
 #[derive(Default)]
@@ -157,6 +184,7 @@ struct State {
     runs: VecDeque<(u32, Instant, Duration)>,
     dropped_runs: u64,
     dropped_entries: u64,
+    busy: Duration,
     reads: HashMap<(ObjectId, PropIndex), Vec<(NodeId, Value)>>,
 }
 
@@ -172,6 +200,56 @@ pub(crate) struct Profiler {
     on: Cell<bool>,
     state: RefCell<State>,
     loops: RefCell<Vec<Loop>>,
+}
+
+/// The script of the run open now, being timed; it ends when dropped.
+pub(crate) struct ScriptRun<'a> {
+    profiler: &'a Profiler,
+    generation: u64,
+    /// Its place in [`State::open`].
+    depth: usize,
+    started: Instant,
+    /// The run's nested time when its script was entered: what is nested
+    /// since is not its script.
+    nested: Duration,
+}
+
+impl Drop for ScriptRun<'_> {
+    fn drop(&mut self) {
+        let mut s = self.profiler.state.borrow_mut();
+        if s.generation != self.generation {
+            return;
+        }
+        let Some(open) = s.open.get_mut(self.depth) else {
+            return;
+        };
+        let nested = open.nested.saturating_sub(self.nested);
+        open.script += self.started.elapsed().saturating_sub(nested);
+        open.in_script = false;
+    }
+}
+
+/// A compiled tier checking itself by running the expression of the run
+/// open now again in the dynamic tiers (debug builds): that is the
+/// engine's check, not the run's script, and a release build never runs
+/// it. Script entered while it lasts is not timed.
+pub(crate) struct CrossCheck<'a> {
+    profiler: &'a Profiler,
+    generation: u64,
+    depth: usize,
+    was: bool,
+}
+
+impl Drop for CrossCheck<'_> {
+    fn drop(&mut self) {
+        let mut s = self.profiler.state.borrow_mut();
+        if s.generation != self.generation {
+            return;
+        }
+        if let Some(open) = s.open.get_mut(self.depth) {
+            open.in_script = self.was;
+        }
+    }
 }
 
 /// One run being profiled; it ends when dropped.
@@ -195,11 +273,19 @@ impl Drop for ProfiledRun<'_> {
         if let Some(parent) = s.open.last_mut() {
             parent.nested += took;
         }
+        if s.open.is_empty() {
+            s.busy += took;
+        }
         let row = &mut s.rows[open.row as usize];
         row.runs += 1;
         row.total += took;
         row.own += took.saturating_sub(open.nested);
         row.longest = row.longest.max(took);
+        if open.entered {
+            row.script += open.script;
+            row.script_runs += 1;
+            row.longest_script = row.longest_script.max(open.script);
+        }
         if s.runs.len() == MAX_RUNS {
             s.runs.pop_front();
             s.dropped_runs += 1;
@@ -234,6 +320,9 @@ impl Profiler {
                     total: Duration::ZERO,
                     own: Duration::ZERO,
                     longest: Duration::ZERO,
+                    script: Duration::ZERO,
+                    script_runs: 0,
+                    longest_script: Duration::ZERO,
                     causes: HashMap::new(),
                 });
                 s.index.insert(key, row);
@@ -244,10 +333,51 @@ impl Profiler {
             row,
             started: Instant::now(),
             nested: Duration::ZERO,
+            script: Duration::ZERO,
+            in_script: false,
+            entered: false,
         });
         Some(ProfiledRun {
             profiler: self,
             generation: s.generation,
+        })
+    }
+
+    /// Times the script of the run open now, unless one of its entries
+    /// into JavaScript is timed already.
+    fn script(&self) -> Option<ScriptRun<'_>> {
+        let mut s = self.state.borrow_mut();
+        let generation = s.generation;
+        let depth = s.open.len().checked_sub(1)?;
+        let open = &mut s.open[depth];
+        if open.in_script {
+            return None;
+        }
+        open.in_script = true;
+        open.entered = true;
+        Some(ScriptRun {
+            profiler: self,
+            generation,
+            depth,
+            started: Instant::now(),
+            nested: open.nested,
+        })
+    }
+
+    fn cross_check(&self) -> Option<CrossCheck<'_>> {
+        let mut s = self.state.borrow_mut();
+        let generation = s.generation;
+        let depth = s.open.len().checked_sub(1)?;
+        let open = &mut s.open[depth];
+        // As if its script were being timed already: [`Self::script`]
+        // then times nothing for this run, and the runs nested in the
+        // check are their own.
+        let was = std::mem::replace(&mut open.in_script, true);
+        Some(CrossCheck {
+            profiler: self,
+            generation,
+            depth,
+            was,
         })
     }
 
@@ -328,6 +458,26 @@ impl Engine {
             });
         }
         Some(run)
+    }
+
+    /// The start of the binding or handler running now entering its
+    /// script, timed if profiling is on and a profiled run is open.
+    pub(crate) fn profile_script(&self) -> Option<ScriptRun<'_>> {
+        let p = &self.inner.profile;
+        if !p.on.get() {
+            return None;
+        }
+        p.script()
+    }
+
+    /// The start of a compiled tier's cross-check of the binding or
+    /// handler running now, whose script is then not timed.
+    pub(crate) fn profile_cross_check(&self) -> Option<CrossCheck<'_>> {
+        let p = &self.inner.profile;
+        if !p.on.get() {
+            return None;
+        }
+        p.cross_check()
     }
 
     /// What the binding of `prop` of `obj`, whose node is `node`, read at
@@ -432,6 +582,9 @@ impl Engine {
                     total: r.total,
                     own: r.own,
                     longest: r.longest,
+                    script: r.script,
+                    script_runs: r.script_runs,
+                    longest_script: r.longest_script,
                     causes,
                 }
             })
@@ -450,6 +603,7 @@ impl Engine {
                 .collect(),
             dropped_runs: s.dropped_runs,
             dropped_entries: s.dropped_entries,
+            busy: s.busy,
         }
     }
 
