@@ -69,12 +69,29 @@ fn woff_claiming_4_gib() -> Vec<u8> {
     b
 }
 
+/// A WOFF2 whose header says the font it holds is 4 GiB.
+fn woff2_claiming_4_gib() -> Vec<u8> {
+    let mut b = fixture("LjosSymbolsTest-Regular.woff2");
+    b[16..20].copy_from_slice(&u32::MAX.to_be_bytes());
+    b
+}
+
 #[test]
-fn a_woff_that_claims_more_than_any_font_is_refused_before_it_is_unpacked() {
-    let err = TextEngine::new()
-        .register_font(woff_claiming_4_gib())
-        .unwrap_err();
-    assert!(matches!(err, FontError::TooLarge("WOFF")), "{err:?}");
+fn a_woff2_or_woff_that_claims_more_than_any_font_is_too_large() {
+    for (bytes, format) in [
+        (woff_claiming_4_gib(), "WOFF"),
+        (woff2_claiming_4_gib(), "WOFF2"),
+    ] {
+        let err = TextEngine::new().register_font(bytes).unwrap_err();
+        assert!(
+            matches!(err, FontError::TooLarge(f) if f == format),
+            "{format}: {err:?}"
+        );
+        assert_eq!(
+            err.to_string(),
+            format!("the {format} data unpacks to more than 134217728 bytes")
+        );
+    }
 }
 
 // Every prefix and every single changed byte of each fixture: the decoder

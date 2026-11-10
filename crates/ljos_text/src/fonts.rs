@@ -31,8 +31,8 @@ pub enum FontError {
     /// cut short, or with tables that do not add up.
     #[error("the {0} data is corrupt")]
     Corrupt(&'static str),
-    /// A WOFF file whose tables unpack to more than any font needs; it is
-    /// refused before the memory is asked for.
+    /// A WOFF2 or WOFF file that says it unpacks to more than any font
+    /// needs; it is refused before the memory is asked for.
     #[error("the {0} data unpacks to more than {max} bytes", max = MAX_UNPACKED)]
     TooLarge(&'static str),
     /// A WOFF2 or WOFF file in a build without the `woff` feature.
@@ -50,7 +50,14 @@ const MAX_UNPACKED: u64 = 128 * 1024 * 1024;
 #[cfg(feature = "woff")]
 fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
     match bytes.get(..4) {
-        Some(b"wOF2") => wuff::decompress_woff2(&bytes).map_err(|_| FontError::Corrupt("WOFF2")),
+        Some(b"wOF2") => {
+            // The decoder keeps to the same limit, but every refusal of its
+            // reads as corrupt; the header's own total says which it is.
+            if woff2_unpacked_size(&bytes).ok_or(FontError::Corrupt("WOFF2"))? > MAX_UNPACKED {
+                return Err(FontError::TooLarge("WOFF2"));
+            }
+            wuff::decompress_woff2(&bytes).map_err(|_| FontError::Corrupt("WOFF2"))
+        }
         Some(b"wOFF") => {
             // The decoder sets aside each table's stated size before it
             // unpacks it, so a short file could otherwise ask for gigabytes.
@@ -70,6 +77,14 @@ fn sfnt(bytes: Vec<u8>) -> Result<Vec<u8>, FontError> {
         Some(b"wOFF") => Err(FontError::Unsupported("WOFF")),
         _ => Ok(bytes),
     }
+}
+
+/// What a WOFF2 file's header says the font unpacks to; `None` when the
+/// header is cut short.
+#[cfg(feature = "woff")]
+fn woff2_unpacked_size(bytes: &[u8]) -> Option<u64> {
+    // https://www.w3.org/TR/WOFF2/: totalSfntSize, at 16 in the header.
+    Some(u32::from_be_bytes(bytes.get(16..20)?.try_into().ok()?).into())
 }
 
 /// What a WOFF file's tables say they unpack to, added up; `None` when its
