@@ -829,6 +829,8 @@ impl<O: TypeOracle> Project<O> {
     /// Says a `file:` URL under no other place names the key its path is
     /// (`file:///a/b` is `a/b`): where the engine puts a file it has no
     /// URL of its own for, `file:///{key}.qml`, as one read from a pack.
+    /// Only for such a source: where files have their own URLs,
+    /// `file:///a/b` is the directory `/a/b` on disk.
     pub fn add_disk_root(&mut self) {
         self.front.add_place("", "");
     }

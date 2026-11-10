@@ -59,6 +59,8 @@ struct State {
     failed: HashMap<String, String>,
     /// The URLs of the files outside `dirs`, which no root keys.
     urls: HashMap<String, String>,
+    /// The engine's own source, which says what URL each file has.
+    source: Option<Rc<dyn ComponentSource>>,
 }
 
 impl DiskTexts {
@@ -82,6 +84,7 @@ impl DiskTexts {
                 made: HashMap::new(),
                 failed: HashMap::new(),
                 urls: HashMap::new(),
+                source: None,
             })),
         }
     }
@@ -102,6 +105,7 @@ impl DiskTexts {
     }
 
     fn install_with(self, engine: &Engine, source: Rc<dyn ComponentSource>) {
+        self.state.borrow_mut().source = Some(Rc::clone(&source));
         engine.set_component_source(Fallback {
             source,
             state: Rc::clone(&self.state),
@@ -125,6 +129,24 @@ impl DiskTexts {
         });
         engine.set_qml_text_compiler(Some(compiler));
     }
+}
+
+/// Whether `source` names its files by their keys, `file:///{key}.qml`,
+/// and not by where they are on disk, as one read from a pack does: then
+/// a URL a file makes from its own (`Qt.resolvedUrl("plugin")`) is a key's
+/// too. On a source that names them where they are, `file:///plugin` is
+/// the directory `/plugin`, which no root holds.
+fn named_by_key<O: TypeOracle>(source: &dyn ComponentSource, project: &Project<O>) -> bool {
+    project
+        .files()
+        .find(|key| source.contains(key))
+        .is_some_and(|key| {
+            let url = source.url(key);
+            url == format!("file:///{key}.qml")
+                && project
+                    .path(key)
+                    .is_some_and(|path| ljos_engine::file_url(path) != url)
+        })
 }
 
 fn modified(path: &Path) -> Option<SystemTime> {
@@ -184,10 +206,13 @@ impl State {
             };
             let mut project =
                 Project::load_roots(&roots, oracle.clone()).map_err(|e| e.to_string())?;
-            // A source without the URLs of its files (one read from a
-            // pack) gives each `file:///{key}.qml`, so a URL a file makes
-            // from its own, as `Qt.resolvedUrl("plugin")`, names a key.
-            project.add_disk_root();
+            if self
+                .source
+                .as_deref()
+                .is_some_and(|s| named_by_key(s, &project))
+            {
+                project.add_disk_root();
+            }
             let mut dirs = Vec::new();
             for root in &self.dirs {
                 directories(root, &mut dirs);
