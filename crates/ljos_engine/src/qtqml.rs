@@ -187,7 +187,10 @@ impl Component {
         });
         match made {
             // Complete, it goes again before the script holds it (Qt 6.12).
+            // It was made all the same, so the component is Ready again,
+            // as in 6.11, which gives the object back.
             Ok(o) if withheld => {
+                cx.engine.component_made(cx.this, None);
                 cx.engine.destroy_now(o);
                 Value::Null
             }
