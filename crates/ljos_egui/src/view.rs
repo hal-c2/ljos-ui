@@ -660,23 +660,6 @@ impl QmlView {
         self.frame_period / 2
     }
 
-    /// How long the host is asked to wait for a wake `wait` away. The next
-    /// frame of an animation or a fling, about a frame away, is asked
-    /// for early by as much as a pass may be, so that the display's frame
-    /// before it runs the pass: asked for at its time, a pass that began
-    /// late put the next one a frame and that much after it, the passes
-    /// came 17.1 ms apart where the display drew every 16.2, and one frame
-    /// in eighteen showed nothing new. A later wake, a timer's, is asked
-    /// for at its time, which wakes the host once.
-    fn ask_after(&self, wait: Duration) -> Duration {
-        // Nearer than the display's frame after the next.
-        if wait < self.frame_period + self.early() {
-            wait.saturating_sub(self.early())
-        } else {
-            wait
-        }
-    }
-
     /// The egui id of an item's accessibility node, if the item is exposed.
     /// It is made of the view's id and the item, so it is the same every
     /// pass. With [`QmlView::with_accessibility_graft`] the item is a node
@@ -1102,7 +1085,11 @@ impl QmlView {
             Some(t) if t <= now => self.request_repaint(&ctx, None),
             // egui forgets a delayed repaint after each pass, so ask again
             // every pass until the timer fires.
-            Some(t) => self.request_repaint(&ctx, Some(self.ask_after(t - now))),
+            // At its time: a host that waits for the display after waking (the
+            // shell's frame callback) may ask early itself, by `wakes_in`'s
+            // tolerance; one that waits only as long as asked would run the
+            // pass early, and an animation at twice its rate.
+            Some(t) => self.request_repaint(&ctx, Some(t - now)),
             None => {}
         }
     }

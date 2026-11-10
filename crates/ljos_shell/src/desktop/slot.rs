@@ -316,8 +316,47 @@ impl Slot {
         }
     }
 
+    /// When a pass asked for at `when` wakes the loop. A window on the
+    /// screen draws at the display's frame, after the wake, so it is woken
+    /// for the display's frame before an animation's next one (see
+    /// [`wake_for_display`]). A window that is not drawn runs its pass at
+    /// the wake, which is at its time.
+    pub(super) fn wake_for(&self, now: Instant, when: Instant) -> Instant {
+        if self.surface.is_none() || self.out_of_sight() {
+            return when;
+        }
+        wake_for_display(now, when, self.frame_interval(), self.held)
+    }
+
     /// How long a frame is shown on the window's display.
     pub(super) fn frame_interval(&self) -> Duration {
         Duration::from_secs_f64(1.0 / self.refresh.filter(|hz| *hz > 0.0).unwrap_or(60.0))
     }
+}
+
+/// When the loop wakes for a pass asked for at `when`, of a window that
+/// draws at the display's frame (`frame` apart) and is held until `held`.
+/// The next frame of an animation or a fling, nearer than the frame after
+/// the next, is woken for half a frame early, the tolerance the view takes
+/// a pass early by (`QmlView::wakes_in`), so that the display's frame
+/// before its time runs it. Woken at its time, a pass that began late put
+/// the next one a frame and that much after it: the passes came 17.1 ms
+/// apart where the display drew every 16.2, and one frame in eighteen
+/// showed nothing new. The view asks for its time, not this early, since
+/// a host that runs the pass at the wake itself would run an animation at
+/// twice its rate. A later wake, a timer's, is at its time. Nothing is
+/// woken for before the hold ends: the loop would wake only to hear so.
+pub(super) fn wake_for_display(
+    now: Instant,
+    when: Instant,
+    frame: Duration,
+    held: Option<Instant>,
+) -> Instant {
+    let early = frame / 2;
+    let when = if when.saturating_duration_since(now) < frame + early {
+        when.checked_sub(early).map_or(now, |w| w.max(now))
+    } else {
+        when
+    };
+    held.map_or(when, |held| when.max(held))
 }
