@@ -47,6 +47,7 @@ Each change is listed with its reason. The original is `ljos-original.svg`.
 8. **Mark on a square canvas** (`0 -3 188 188`), so it drops into square icon slots without being stretched or off-centre.
 9. **Dark variant.** The violet is `#8a6bd6` (4.8:1 on `#0d0b12`; the original violet was 1.2:1) and the wordmark `#f1ecfa`. Amber and yellow are unchanged because they already pass.
 10. **`ljos-mark-dark.svg` added.** The mark alone is needed on dark backgrounds too.
+11. **The `<title>` and `<desc>` carry the ids `aria-labelledby` names.** The original pointed at `title desc`, which no element had, so a screen reader announced nothing.
 
 Checked at 16 px and 32 px (mark) and 120 px wide (full logo), on white and on `#0d0b12`.
 
