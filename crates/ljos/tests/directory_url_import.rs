@@ -136,3 +136,88 @@ fn a_text_placed_elsewhere_imports_a_directory_by_its_url() {
     let place = file_url(&cases.join("b.qml"));
     assert_eq!(made(&engine, root, beside, &place), "#ff0000");
 }
+
+/// A module whose singleton says where its directory of types is, by a
+/// URL made from its own (#305).
+fn module(dir: &Path) -> std::path::PathBuf {
+    let root = dir.join("modular");
+    let files = [
+        (
+            "Kit/Parts/qmldir",
+            "module Kit.Parts\nsingleton Registry 1.0 Registry.qml\n",
+        ),
+        (
+            "Kit/Parts/Registry.qml",
+            "pragma Singleton\nimport QtQuick\n\
+             QtObject { readonly property string types: Qt.resolvedUrl(\"plugin\") }\n",
+        ),
+        ("Kit/Parts/plugin/Text.qml", TEXT),
+        (
+            "Main.qml",
+            r#"import QtQuick
+import Kit.Parts
+Item {
+    id: root
+    property string made: ""
+    property string types: Registry.types
+    function make(text, place) {
+        try {
+            made = "" + Qt.createQmlObject(text, root, place).color
+        } catch (e) {
+            made = "" + e
+        }
+    }
+}
+"#,
+        ),
+    ];
+    for (name, text) in files {
+        let path = root.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+    root
+}
+
+/// The text the singleton's URL is imported into, after a module, as a
+/// plugin's file would be.
+fn made_with_module_types(engine: &Engine, root: ObjectId) -> String {
+    let types = engine.read_by_name(root, "types").to_js_string();
+    let text = format!("import QtQuick; import Kit.Parts; import \"{types}\"\nText {{}}\n");
+    made(engine, root, &text, "file:///elsewhere/a.qml")
+}
+
+#[test]
+fn a_module_says_its_directory_by_a_url_of_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = module(tmp.path());
+    let engine = ljos::engine();
+    let compiled = ljos::dev::compile_quiet(&[&root], Some(&engine)).unwrap();
+    engine.set_component_source(compiled.source);
+    ljos::dev::install_text_compiler(&engine, &[&root]);
+    let main = engine.create_from_url("Main", None, Vec::new()).unwrap();
+
+    assert_eq!(made_with_module_types(&engine, main), "#ff0000");
+}
+
+/// A source read from a pack keeps no file's URL, so the singleton's
+/// is the one the engine gives a file it has no URL for
+/// (`file:///Kit/Parts/plugin`), and the texts' compiler finds the
+/// directory there too.
+#[test]
+fn a_module_loaded_from_a_pack_says_its_directory_by_a_url_of_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = module(tmp.path());
+    let engine = ljos::engine();
+    let compiled = ljos::dev::compile_quiet(&[&root], Some(&engine)).unwrap();
+    let pack = compiled.source.to_pack().unwrap();
+    engine.set_component_source(ljos::MapSource::from_pack(&pack).unwrap());
+    ljos::dev::install_text_compiler(&engine, &[&root]);
+    let main = engine.create_from_url("Main", None, Vec::new()).unwrap();
+
+    assert_eq!(
+        engine.read_by_name(main, "types").to_js_string().as_ref(),
+        "file:///Kit/Parts/plugin"
+    );
+    assert_eq!(made_with_module_types(&engine, main), "#ff0000");
+}
