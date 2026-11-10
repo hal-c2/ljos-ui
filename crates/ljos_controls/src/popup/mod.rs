@@ -854,14 +854,19 @@ pub(super) fn show_still(engine: &Engine, popup: ObjectId) -> Result<(), EngineE
     if engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)) {
         return Ok(());
     }
-    emit(engine, popup, "aboutToShow");
+    // Visible already as it says it is about to show, as `open` is
+    // (measured on Qt 6.11.2 and 6.12.0, `drawer-drag.feature`).
+    state.switching.set(true);
+    let shown = engine.batch(|| -> Result<(), EngineError> {
+        set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(true))?;
+        emit(engine, popup, "aboutToShow");
+        Ok(())
+    });
+    state.switching.set(false);
+    shown?;
     if !engine.is_alive(popup) {
         return Ok(());
     }
-    state.switching.set(true);
-    let wrote = set_derived(engine, popup, Popup::VISIBLE.index, Value::Bool(true));
-    state.switching.set(false);
-    wrote?;
     try_present(engine, popup)
 }
 
