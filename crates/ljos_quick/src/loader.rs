@@ -30,8 +30,8 @@ use std::time::Duration;
 
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
-    FaultReport, Interception, LogLevel, ObjectId, PropIndex, QmlObject, Url, Value, WriteKind,
-    qml_impl,
+    FaultReport, Interception, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Url,
+    Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 
@@ -268,9 +268,13 @@ pub(crate) fn shown_children(e: &Engine, obj: ObjectId) -> Vec<ObjectId> {
     kids
 }
 
-/// Makes every Loader a boundary.
+/// Makes every Loader a boundary and a focus scope.
 pub(crate) fn register(engine: &Engine) {
     engine.register_boundary::<Loader>(Rc::new(LoaderBoundary));
+    // As in Qt, so that each loaded item's `focus` stays inside its own
+    // Loader: two loaded items that both ask for focus keep it, and one
+    // has active focus only while its Loader has focus.
+    crate::focus::register_focus_scope(engine, MetaRef::Static(Loader::static_meta()));
 }
 
 struct LoaderBoundary;
