@@ -30,8 +30,8 @@ use std::time::Duration;
 
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
-    FaultReport, Interception, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Url,
-    Value, WriteKind, qml_impl,
+    FaultReport, Initial, Interception, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject, QmlType,
+    Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 
@@ -111,6 +111,9 @@ struct Run {
     /// last until the source changes.
     props: Vec<(String, Value)>,
     props_for: Atom,
+    /// How `props` are set: as `incubateObject` sets its own (qml6), told
+    /// at the `setSource` call.
+    props_how: Initial,
     /// Counts reloads, so a creation that comes back after another reload
     /// began knows its object is not wanted.
     generation: u64,
@@ -144,6 +147,7 @@ impl Loader {
                 if r.props_for != source {
                     r.props.clear();
                     r.props_for = Atom::default();
+                    r.props_how = Initial::Native;
                 }
             });
             reload(e, me, false);
@@ -220,10 +224,14 @@ impl Loader {
     fn set_source(cx: &Cx, source: Url, properties: Value) {
         let (e, me) = (cx.engine, cx.this);
         let props = e.js_object_entries(&properties);
+        // What the item cannot take is the caller's error and the item is
+        // made all the same (qml6), where a native caller's stops it.
+        let how = Initial::incubated_here(e, &props);
         let url = source.0;
         with_run(e, me, |r| {
             r.props = props;
             r.props_for = url.clone();
+            r.props_how = how;
         });
         let before = with_run(e, me, |r| r.generation);
         e.batch(|| {
@@ -473,16 +481,17 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
     if !is_current(e, me, generation) {
         return;
     }
-    let props = with_run(e, me, |r| r.props.clone()).unwrap_or_default();
+    let (props, how) =
+        with_run(e, me, |r| (r.props.clone(), r.props_how.clone())).unwrap_or_default();
     if asynchronous {
-        start_job(e, me, generation, &origin, props);
+        start_job(e, me, generation, &origin, props, how);
         return;
     }
     // Made at once, the new item takes the old one's place with no empty
     // item told between (qml6).
     let made = match &origin {
         Origin::Url(url) => {
-            e.create_from_url_in(&e.resolve_url(me, url), Some(me), props, Some(me))
+            e.create_from_url_in(&e.resolve_url(me, url), Some(me), props, Some(me), how)
         }
         Origin::Component(c) => e.component_create(*c, Some(me), props),
     };
@@ -517,6 +526,7 @@ fn start_job(
     generation: u64,
     origin: &Origin,
     props: Vec<(String, Value)>,
+    how: Initial,
 ) {
     // The Loader is the boundary of what it makes, and so its owner.
     let owner = e.boundary_proc(me);
@@ -537,7 +547,10 @@ fn start_job(
     if !is_current(e, me, generation) {
         return;
     }
-    e.incubate(job.on_done(move |e, made| finish(e, me, generation, made.clone())));
+    e.incubate(
+        job.initial(how)
+            .on_done(move |e, made| finish(e, me, generation, made.clone())),
+    );
 }
 
 /// Publishes what a creation made, or its error.
