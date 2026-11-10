@@ -26,7 +26,7 @@ QtObject {
     property int vowelsAvailable: 100
     property int wordsGiven: 0
     property int wordsGuessedCorrectly: 0
-    property int score: wordsGuessedCorrectly
+    readonly property int score: wordsGuessedCorrectly
 
     property var dictionary: []
 
@@ -73,11 +73,6 @@ QtObject {
     function isVowel(letter) {
         return letter.length === 1 && vowels.indexOf(letter.toUpperCase()) >= 0
     }
-
-    function setVowelsAvailable(count) { vowelsAvailable = count }
-    function setWordsGiven(count) { wordsGiven = count }
-    function setWordsGuessedCorrectly(count) { wordsGuessedCorrectly = count }
-    function setScore(value) { score = value }
 
     function ownAll() {
         let owned = lettersOwned
