@@ -25,8 +25,9 @@
 //! [`CELL`] and the '\n' between rows stand where Qt has U+FDD0 before a cell, and the '\n'
 //! out of it where Qt has U+FDD1 ([`RichText::plain_text`]). A cell holds
 //! paragraphs of its own, apart by [`CELL_PARAGRAPH`]. As in Qt, a
-//! table that starts or ends the document has an empty paragraph before or
-//! after it, as two tables have between them; those are not written back.
+//! table that starts the document has an empty paragraph before it, and
+//! every table one after it; those are not written back while they are
+//! empty.
 
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -1217,8 +1218,8 @@ impl RichText {
         }
     }
 
-    /// Paragraph `index` is the empty one Qt has beside a table at an end
-    /// of the document or between two tables, which it does not write.
+    /// Paragraph `index` is the empty one Qt has after every table, or
+    /// before one that starts the document, which it does not write.
     fn beside_table(&self, index: usize) -> bool {
         let block = &self.blocks[index];
         if !self.block_range(index).is_empty() || **block != BlockFormat::default() {
@@ -1229,7 +1230,7 @@ impl RichText {
                 .is_some_and(|b| b.table.is_some())
         };
         let (before, after) = (table(index.checked_sub(1)), table(Some(index + 1)));
-        (before && after) || (index == 0 && after) || (index + 1 == self.blocks.len() && before)
+        before || (index == 0 && after)
     }
 
     /// The rows `rows` of a table as Qt writes them.
@@ -1784,6 +1785,24 @@ mod tests {
         // What was written reads back the same.
         let again = rich(&t.html(&DocFont::default()));
         assert_eq!(body(&again), bold());
+    }
+
+    /// Measured on Qt 6.11 (hal-c2/ljos-ui#287): the paragraph after a
+    /// table is written once text is in it.
+    #[test]
+    fn the_paragraph_after_a_table_is_written_once_it_holds_text() {
+        let table = "<table border='0' style=' margin-top:0px; margin-bottom:0px; \
+                     margin-left:0px; margin-right:0px;' cellspacing='2' cellpadding='0'>|\
+                     <tr>|<td>|<p>a</p></td></tr></table>";
+        let b = "<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; \
+                 margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>";
+        let mut t = rich("<table><tr><td>a</td></tr></table><p>b</p>");
+        assert_eq!(t.text(), "\na\n\nb");
+        assert_eq!(body(&t), format!("{table}|{b}"));
+        let again = rich(&t.html(&DocFont::default()));
+        assert_eq!(again.text(), t.text());
+        t.splice(3..3, "x", None);
+        assert_eq!(body(&t), format!("{table}|<p>x</p>|{b}"));
     }
 
     /// Measured on Qt 6.11 (hal-c2/ljos-ui#287).

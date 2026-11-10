@@ -137,6 +137,15 @@ impl Flow {
         self.blocks.push(block);
     }
 
+    /// An empty paragraph in no box: the one Qt has after a table when
+    /// what follows the table is a block of its own.
+    pub(crate) fn push_paragraph(&mut self) {
+        let mut block = Block::new(BlockKind::Paragraph);
+        block.source_start = self.source_start;
+        self.nowrap_space_end = false;
+        self.blocks.push(block);
+    }
+
     /// Put `s` at the end of the last block made: white space read after
     /// it ended. A picture with text is a paragraph.
     pub(crate) fn append(&mut self, s: &str, style: &Inline) {
