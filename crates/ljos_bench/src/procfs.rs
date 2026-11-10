@@ -149,6 +149,45 @@ pub fn cpu_by_name(
     by_name
 }
 
+/// The one thread that used the most CPU time between two
+/// [`thread_cpu_ns`]: what a runtime that splits its work over threads of
+/// one name (a pool's workers take their parent's) has on a single core,
+/// which [`cpu_by_name`] adds up.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Busiest {
+    pub name: String,
+    pub cpu_ms: f64,
+    /// How many live threads used CPU under that name.
+    pub of_name: u32,
+}
+
+#[must_use]
+#[allow(clippy::cast_precision_loss)]
+pub fn busiest_thread(
+    before: &BTreeMap<u32, u64>,
+    after: &BTreeMap<u32, u64>,
+    names: &BTreeMap<u32, (String, u64)>,
+) -> Option<Busiest> {
+    let name = |id: &u32| names.get(id).map_or("?", |(name, _)| name.as_str());
+    let used =
+        |(id, n): (&u32, &u64)| (*id, n.saturating_sub(before.get(id).copied().unwrap_or(0)));
+    let (id, ns) = after
+        .iter()
+        .map(used)
+        .filter(|(_, ns)| *ns > 0)
+        .max_by_key(|(_, ns)| *ns)?;
+    let of_name = after
+        .iter()
+        .map(used)
+        .filter(|(other, ns)| *ns > 0 && name(other) == name(&id))
+        .count();
+    Some(Busiest {
+        name: name(&id).to_owned(),
+        cpu_ms: ns as f64 / 1e6,
+        of_name: u32::try_from(of_name).unwrap_or(u32::MAX),
+    })
+}
+
 /// The program a process runs.
 #[must_use]
 pub fn exe(pid: u32) -> Option<PathBuf> {
@@ -281,6 +320,28 @@ mod tests {
         assert_eq!(woke.get("pool"), Some(&3));
         assert_eq!(woke.get("new"), Some(&2));
         assert!(!woke.contains_key("main"), "{woke:?}");
+    }
+
+    #[test]
+    fn the_busiest_thread_is_one_thread_not_a_name() {
+        let names: BTreeMap<u32, (String, u64)> = [(1, "app"), (2, "app"), (3, "app"), (4, "gpu")]
+            .into_iter()
+            .map(|(id, n)| (id, (n.to_owned(), 0)))
+            .collect();
+        let before = BTreeMap::from([(1, 0), (2, 0), (3, 0), (4, 0)]);
+        let after = BTreeMap::from([
+            (1, 4_000_000),
+            (2, 3_000_000),
+            (3, 3_000_000),
+            (4, 6_000_000),
+        ]);
+        // By name, "app" used 10 ms to "gpu"'s 6; on one thread, "gpu" did most.
+        assert_eq!(cpu_by_name(&before, &after, &names).get("app"), Some(&10.0));
+        let b = busiest_thread(&before, &after, &names).unwrap();
+        assert_eq!((b.name.as_str(), b.of_name), ("gpu", 1));
+        assert!((b.cpu_ms - 6.0).abs() < 1e-9);
+        let idle = busiest_thread(&before, &before, &names);
+        assert_eq!(idle, None);
     }
 
     #[test]
