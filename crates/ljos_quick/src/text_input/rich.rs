@@ -765,6 +765,7 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
             && b.indent_right == 0.0
             && b.marker.is_none()
             && block_background(b).is_none()
+            && !b.no_wrap
             && b.table.is_none()
     };
     if blocks.iter().all(|b| plain(b)) {
@@ -789,6 +790,7 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
                     indent: f64::from(b.indent),
                     indent_right: f64::from(b.indent_right),
                     marker: b.marker.clone(),
+                    no_wrap: b.no_wrap,
                     table: b.table.as_ref().map(|t| EditTable {
                         row,
                         border: f64::from(t.table.border),
@@ -796,6 +798,7 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
                         padding: f64::from(t.table.padding),
                         background: t.table.background.clone(),
                         cells: t.cells.iter().map(|c| c.background.clone()).collect(),
+                        no_wrap: t.cells.iter().map(|c| c.no_wrap).collect(),
                     }),
                 }
             })

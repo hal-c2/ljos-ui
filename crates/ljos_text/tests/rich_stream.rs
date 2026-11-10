@@ -196,8 +196,11 @@ fn a_resize_lays_out_what_wraps_differently_and_nothing_else() {
     // The same width again: nothing.
     doc.layout_simple(&mut engine, &p);
     assert_eq!(doc.stats().laid_out, blocks);
-    // Another width: every block that wraps to it.
+    // Another width: every block that wraps to it. A code block does
+    // not wrap, so its lines are the same at any width.
+    let wraps = doc.blocks().iter().filter(|b| !b.no_wrap).count() as u64;
+    assert!(wraps < blocks);
     p.layout.width = Some(300.0);
     doc.layout_simple(&mut engine, &p);
-    assert_eq!(doc.stats().laid_out, 2 * blocks);
+    assert_eq!(doc.stats().laid_out, blocks + wraps);
 }

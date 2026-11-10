@@ -285,6 +285,19 @@ pub(crate) fn decode(name: &str) -> Option<char> {
         .map(|i| NAMED[i].1)
 }
 
+/// Whether `name`, the text between `&` and `;`, is a numeric reference
+/// to a carriage return, which [`decode`] leaves out with the other
+/// control characters.
+pub(crate) fn is_carriage_return(name: &str) -> bool {
+    name.strip_prefix('#').is_some_and(|number| {
+        let code = match number.strip_prefix(['x', 'X']) {
+            Some(hex) => u32::from_str_radix(hex, 16),
+            None => number.parse::<u32>(),
+        };
+        code == Ok(13)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -312,6 +312,9 @@ pub struct Cell {
     pub header: bool,
     /// The colour behind the cell inside its padding, as written.
     pub background: Option<Arc<str>>,
+    /// Lines of it, bytes of the block's text, that break only where the
+    /// text says so: the column is as wide as the widest of them.
+    pub no_wrap: Vec<Range<usize>>,
 }
 
 impl Hash for Table {
@@ -353,6 +356,10 @@ pub struct Block {
     /// An alignment the document asked for; none follows the item's.
     pub align: Option<HAlign>,
     pub table: Option<Table>,
+    /// The lines break only where the text says so, however narrow the
+    /// item, and the block is as wide as its longest line (`white-space`
+    /// `pre` and `nowrap`, `<pre>`, a fenced code block of Markdown).
+    pub no_wrap: bool,
     /// The block stands right under the one before it, whatever that one's
     /// bottom margin is (a Markdown table in Qt 6.11).
     pub tight_above: bool,
@@ -376,6 +383,7 @@ impl PartialEq for Block {
             && self.marker == other.marker
             && self.background == other.background
             && self.table == other.table
+            && self.no_wrap == other.no_wrap
     }
 }
 
@@ -394,6 +402,7 @@ impl Block {
             background: None,
             align: None,
             table: None,
+            no_wrap: false,
             tight_above: false,
             source_start: 0,
             hash: 0,
@@ -424,7 +433,7 @@ impl Block {
             &self.background,
             self.align,
             &self.table,
-            self.tight_above,
+            (self.no_wrap, self.tight_above),
         )
             .hash(&mut h);
         self.hash = h.finish();
