@@ -37,7 +37,7 @@ use super::css;
 use super::doc::HAlign;
 use super::html::scale_keyword;
 use super::styled::{Marker, marker_text};
-use super::{Block, BlockKind, Inline, ParseOptions, TextFormat, parse};
+use super::{Block, BlockKind, Fence, Inline, ParseOptions, TextFormat, parse};
 use crate::style::{BoxAlign, InlineObject, StyleSpan, TextStyle};
 
 /// Ends a paragraph.
@@ -113,8 +113,8 @@ pub struct BlockFormat {
     /// The paragraph breaks its lines only at its line breaks, however
     /// narrow the item (a `pre` or `nowrap` one, see [`super::Block`]).
     pub no_wrap: bool,
-    /// A fenced code block of Markdown ([`Block::fence`]).
-    pub fence: bool,
+    /// How a code block of Markdown was written ([`Block::fence`]).
+    pub fence: Option<Fence>,
     /// The paragraph is a row of a table: its cells are set apart by [`CELL`].
     pub table: Option<TableRow>,
 }
@@ -290,7 +290,7 @@ impl Default for BlockFormat {
             background: None,
             align: None,
             no_wrap: false,
-            fence: false,
+            fence: None,
             table: None,
         }
     }
@@ -338,7 +338,7 @@ impl BlockFormat {
             background: block.background.clone(),
             align: block.align,
             no_wrap: block.no_wrap,
-            fence: block.fence,
+            fence: block.fence.clone(),
             table: None,
         }
     }
@@ -1178,7 +1178,7 @@ impl RichText {
             // list the pre is in an li that is left open, as Qt 6.12 has it.
             // A fenced code block of Markdown is a paragraph, as Qt 6.12
             // writes it.
-            let pre = block.no_wrap && !block.fence;
+            let pre = block.no_wrap && !matches!(block.fence, Some(Fence::Fenced { .. }));
             if pre && block.kind == BlockKind::List {
                 out.push_str("<li>");
             }
@@ -1376,13 +1376,54 @@ impl RichText {
         let mut out = String::new();
         let count = self.blocks.len();
         let mut number = 0;
+        // The marks of the fence open, which the block closes with.
+        let mut fence = "```";
         for (index, block) in self.blocks.iter().enumerate() {
             let range = self.block_range(index);
-            let next_in_list = self
-                .blocks
-                .get(index + 1)
-                .is_some_and(|b| b.kind == BlockKind::List);
+            let next = self.blocks.get(index + 1);
+            let next_in_list = next.is_some_and(|b| b.kind == BlockKind::List);
             match block.kind {
+                // Each line of a code block is a paragraph. Measured on Qt
+                // 6.12: indented lines run on with indented ones, and fenced
+                // ones (or a pre's) with fenced ones, under the first one's
+                // fence; a fence closing, or indented lines a fenced block
+                // follows, has no empty line after it.
+                BlockKind::Code => {
+                    let run = code_run(block);
+                    let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
+                    let joins_after = next.is_some_and(|n| code_run(n) == run);
+                    let text = &self.text[range];
+                    if run == Some(true) {
+                        out.push_str("    ");
+                        out.push_str(text);
+                        out.push('\n');
+                    } else {
+                        if !joins_before {
+                            let (tildes, info) = match &block.fence {
+                                Some(Fence::Fenced { tildes, info }) => (*tildes, &**info),
+                                _ => (false, ""),
+                            };
+                            fence = if tildes { "~~~" } else { "```" };
+                            out.push_str(fence);
+                            out.push_str(info);
+                            out.push('\n');
+                        }
+                        out.push_str(text);
+                        out.push('\n');
+                        if !joins_after {
+                            out.push_str(fence);
+                            out.push('\n');
+                        }
+                    }
+                    let blank = match next {
+                        None => true,
+                        Some(n) => !joins_after && run == Some(true) && n.kind != BlockKind::Code,
+                    };
+                    if blank {
+                        out.push('\n');
+                    }
+                    continue;
+                }
                 BlockKind::List => {
                     if block.ordered() {
                         number += 1;
@@ -1409,11 +1450,6 @@ impl RichText {
                 BlockKind::Quote => {
                     out.push_str("> ");
                     self.write_markdown_inline(&mut out, range);
-                }
-                BlockKind::Code => {
-                    out.push_str("```\n");
-                    out.push_str(&self.text[range]);
-                    out.push_str("\n```");
                 }
                 BlockKind::Rule => out.push_str("- - -"),
                 _ => self.write_markdown_inline(&mut out, range),
@@ -1605,6 +1641,12 @@ impl ImageFormat {
 /// A paragraph ends at `c`, in a cell or out of one.
 fn ends_paragraph(c: char) -> bool {
     c == PARAGRAPH || c == CELL_PARAGRAPH
+}
+
+/// Which code blocks a code paragraph's Markdown runs on with: `Some(true)`
+/// the indented, `Some(false)` the fenced ones; `None` for any other.
+fn code_run(block: &BlockFormat) -> Option<bool> {
+    (block.kind == BlockKind::Code).then(|| block.fence == Some(Fence::Indented))
 }
 
 fn same(a: &Arc<CharFormat>, b: &Arc<CharFormat>) -> bool {
@@ -2019,6 +2061,13 @@ mod tests {
     fn markdown_lists_and_headings() {
         let t = md("# Title\n\n- one\n- two\n\nafter");
         assert_eq!(t.markdown(), "# Title\n\n- one\n- two\n\nafter\n\n");
+    }
+
+    #[test]
+    fn a_fence_of_tildes_is_written_as_three_and_runs_on_with_backticks() {
+        // Measured on Qt 6.12.
+        let t = md("~~~~\nx\n~~~~\n\n```\ny\n```\n");
+        assert_eq!(t.markdown(), "~~~\nx\ny\n~~~\n\n");
     }
 
     #[test]
