@@ -820,7 +820,13 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
                         padding: f64::from(t.table.padding),
                         background: t.table.background.clone(),
                         cells: t.cells.iter().map(|c| c.background.clone()).collect(),
-                        no_wrap: t.cells.iter().map(|c| c.no_wrap.clone()).collect(),
+                        // For now the layout knows only which paragraphs of a
+                        // cell do not wrap.
+                        no_wrap: t
+                            .cells
+                            .iter()
+                            .map(|c| c.paragraphs.iter().map(|p| p.no_wrap).collect())
+                            .collect(),
                     }),
                 }
             })

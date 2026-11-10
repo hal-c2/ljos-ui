@@ -241,17 +241,16 @@ pub struct CellFormat {
     pub background: Option<Arc<str>>,
     /// A `th`.
     pub header: bool,
-    /// Which paragraphs of the cell, in order, break their lines only at
-    /// their line breaks; one past the end wraps
-    /// ([`CellFormat::paragraph_no_wrap`]).
-    pub no_wrap: Vec<bool>,
+    /// The format of each of the cell's paragraphs, in order, as the
+    /// readers set them; one past the end is a default paragraph.
+    pub paragraphs: Vec<Arc<BlockFormat>>,
 }
 
 impl CellFormat {
     /// Whether paragraph `index` of the cell breaks its lines only at its
     /// line breaks.
     pub fn paragraph_no_wrap(&self, index: usize) -> bool {
-        self.no_wrap.get(index).copied().unwrap_or(false)
+        self.paragraphs.get(index).is_some_and(|p| p.no_wrap)
     }
 
     /// The format after `removed` paragraph ends were taken out of
@@ -260,25 +259,34 @@ impl CellFormat {
     /// removal ended in when it started at paragraph `index`'s start
     /// (`from_start`), and its own when it started inside it.
     fn spliced(&self, index: usize, removed: usize, added: usize, from_start: bool) -> Self {
-        let mut no_wrap = self.no_wrap.clone();
-        // One past the end wraps: made explicit while the ones that are
-        // taken out are picked.
-        if no_wrap.len() <= index + removed {
-            no_wrap.resize(index + removed + 1, false);
+        let mut paragraphs = self.paragraphs.clone();
+        // One past the end is a default paragraph: made explicit while the
+        // ones that are taken out are picked.
+        if paragraphs.len() <= index + removed {
+            paragraphs.resize_with(index + removed + 1, Default::default);
         }
         if from_start {
-            no_wrap.swap(index, index + removed);
+            paragraphs.swap(index, index + removed);
         }
-        no_wrap.drain(index + 1..=index + removed);
-        let flag = no_wrap[index];
-        no_wrap.splice(index + 1..index + 1, std::iter::repeat_n(flag, added));
-        while no_wrap.last() == Some(&false) {
-            no_wrap.pop();
-        }
+        paragraphs.drain(index + 1..=index + removed);
+        let format = Arc::clone(&paragraphs[index]);
+        paragraphs.splice(index + 1..index + 1, std::iter::repeat_n(format, added));
+        trim_default(&mut paragraphs);
         Self {
-            no_wrap,
+            paragraphs,
             ..self.clone()
         }
+    }
+}
+
+/// Leave out the default paragraphs that end `paragraphs`, which one past
+/// the end is anyway.
+fn trim_default(paragraphs: &mut Vec<Arc<BlockFormat>>) {
+    while paragraphs
+        .last()
+        .is_some_and(|p| **p == BlockFormat::default())
+    {
+        paragraphs.pop();
     }
 }
 
@@ -374,7 +382,7 @@ impl BlockFormat {
                     .map(|c| CellFormat {
                         background: c.background.as_deref().and_then(resolve),
                         header: c.header,
-                        no_wrap: paragraphs_no_wrap(c),
+                        paragraphs: cell_paragraphs(c),
                     })
                     .collect();
                 Arc::new(Self {
@@ -394,28 +402,29 @@ impl BlockFormat {
     }
 }
 
-/// Which paragraphs of `cell` do not wrap: those a line that does not wrap
-/// starts in. Trailing ones that wrap are left out.
-fn paragraphs_no_wrap(cell: &super::Cell) -> Vec<bool> {
+/// The format of each paragraph of `cell`: one a line that does not wrap
+/// starts in does not wrap. Trailing default ones are left out.
+fn cell_paragraphs(cell: &super::Cell) -> Vec<Arc<BlockFormat>> {
     let ends = cell
         .paragraphs
         .iter()
         .copied()
         .chain(std::iter::once(cell.range.end));
     let mut start = cell.range.start;
-    let mut out: Vec<bool> = ends
+    let mut out: Vec<Arc<BlockFormat>> = ends
         .map(|end| {
-            let flag = cell
+            let no_wrap = cell
                 .no_wrap
                 .iter()
                 .any(|line| (start..end).contains(&line.start));
             start = end + 1;
-            flag
+            Arc::new(BlockFormat {
+                no_wrap,
+                ..BlockFormat::default()
+            })
         })
         .collect();
-    while out.last() == Some(&false) {
-        out.pop();
-    }
+    trim_default(&mut out);
     out
 }
 
@@ -913,6 +922,9 @@ impl RichText {
                     Some((row.cells.get(column).cloned(), index))
                 })
                 .unwrap_or_default();
+            // The record of a cell paragraph says only whether it wraps
+            // until the readers fill in the rest (hal-c2/ljos-ui#293); the
+            // rest stays the row's, as the slice wrote it before.
             let paragraph = |k: usize| {
                 Arc::new(BlockFormat {
                     table: None,
