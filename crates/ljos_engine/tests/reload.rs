@@ -1293,3 +1293,32 @@ Item {{
     );
     assert!(log.contains(&"new destroyed".to_owned()), "{log:?}");
 }
+
+#[test]
+fn an_object_incubate_object_made_follows_its_member_binding_after_a_reload() {
+    let src = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  property int size: 10
+  function fill() {
+    label.incubateObject(area, { "face.pixelSize": Qt.binding(function() { return root.size }) },
+                         Qt.Synchronous)
+  }
+  Component { id: label; Item { objectName: "label"; property font face } }
+  Item { id: area; objectName: "area" }
+}
+"#;
+    let mut r = rig(&[("Main", src)]);
+    r.call("root", "fill");
+    r.edit("Main", &remade(src)).unwrap();
+    r.h.set(r.find("root"), "size", Value::Int(20));
+    // Remade as createObject would make it, the member would keep the
+    // first value the binding gave.
+    let face = r.h.get(r.find("label"), "face");
+    assert_eq!(
+        face.member("pixelSize")
+            .map(|v| v.to_js_string().to_string()),
+        Some("20".to_owned())
+    );
+}
