@@ -243,7 +243,7 @@ impl FrameLog {
         let painted: Vec<Duration> = self
             .recent
             .iter()
-            .filter(|e| e.paint.is_some_and(|p| p.drawn != Drawn::Unchanged))
+            .filter(|e| e.paint.is_some_and(|p| p.drawn.presented()))
             .map(Entry::painting)
             .collect();
         let recent = json!({
