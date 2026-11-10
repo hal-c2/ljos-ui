@@ -17,7 +17,7 @@ use crate::edit::{
     CaretCluster, EditBlock, EditCell, EditGrid, EditLayout, EditLine, EditParams, EditRun,
     EditTable, PlacedBlock,
 };
-use crate::rich::{CELL, column_widths};
+use crate::rich::{CELL, CELL_PARAGRAPH, column_widths};
 use crate::style::{InlineObject, Ranged, StyleSpan, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
@@ -474,25 +474,53 @@ impl TextEngine {
             })
             .collect();
         let columns = cells.iter().map(Vec::len).max().unwrap_or(0);
-        let no_wrap = |r: usize, c: usize| {
+        // Each paragraph of a cell is laid out on its own, as it wraps:
+        // bytes of the text, the CELL_PARAGRAPH after one not included.
+        let paragraphs: Vec<Vec<Vec<Range<usize>>>> = cells
+            .iter()
+            .map(|row| {
+                row.iter()
+                    .map(|bytes| {
+                        let mut out = Vec::new();
+                        let mut start = bytes.start;
+                        for (i, _) in text[bytes.clone()].match_indices(CELL_PARAGRAPH) {
+                            out.push(start..bytes.start + i);
+                            start = bytes.start + i + CELL_PARAGRAPH.len_utf8();
+                        }
+                        out.push(start..bytes.end);
+                        out
+                    })
+                    .collect()
+            })
+            .collect();
+        let no_wrap = |r: usize, c: usize, k: usize| {
             tables
                 .get(r)
                 .and_then(|t| t.no_wrap.get(c))
+                .and_then(|p| p.get(k))
                 .copied()
                 .unwrap_or(false)
         };
-        let mut laid: Vec<Vec<LaidCell>> = Vec::with_capacity(cells.len());
-        for row in &cells {
+        let mut laid: Vec<Vec<Vec<LaidCell>>> = Vec::with_capacity(cells.len());
+        for row in &paragraphs {
             let mut out = Vec::with_capacity(row.len());
-            for bytes in row {
-                out.push(self.cell(text, style, ranged, bytes.clone(), class, None, fallback));
+            for cell in row {
+                let cell = cell
+                    .iter()
+                    .map(|bytes| {
+                        self.cell(text, style, ranged, bytes.clone(), class, None, fallback)
+                    })
+                    .collect();
+                out.push(cell);
             }
             laid.push(out);
         }
         let mut maxs = vec![0.0_f64; columns];
         for row in &laid {
-            for (c, (_, natural)) in row.iter().enumerate() {
-                maxs[c] = maxs[c].max(f64::from(*natural).ceil());
+            for (c, cell) in row.iter().enumerate() {
+                for (_, natural) in cell {
+                    maxs[c] = maxs[c].max(f64::from(*natural).ceil());
+                }
             }
         }
         let chrome = 2.0 * border + spacing * (columns + 1) as f64 + around * columns as f64;
@@ -501,36 +529,43 @@ impl TextEngine {
         let widths = if room.is_some_and(|room| maxs.iter().sum::<f64>() > room) {
             let words = BreakClass::of(WrapMode::WordWrap);
             let mut mins = vec![0.0_f64; columns];
-            for (r, row) in cells.iter().enumerate() {
-                for (c, bytes) in row.iter().enumerate() {
-                    // A cell that does not wrap needs all of its width.
-                    if no_wrap(r, c) {
-                        mins[c] = mins[c].max(f64::from(laid[r][c].1).ceil());
-                        continue;
-                    }
-                    let (lines, _) = self.cell(
-                        text,
-                        style,
-                        ranged,
-                        bytes.clone(),
-                        words,
-                        Some(1.0),
-                        fallback,
-                    );
-                    let widest = lines
-                        .iter()
-                        .map(|(l, _)| f64::from(l.width))
-                        .fold(0.0, f64::max);
-                    mins[c] = mins[c].max(widest.ceil());
+            let all = paragraphs.iter().enumerate().flat_map(|(r, row)| {
+                row.iter().enumerate().flat_map(move |(c, cell)| {
+                    cell.iter()
+                        .enumerate()
+                        .map(move |(k, bytes)| (r, c, k, bytes))
+                })
+            });
+            for (r, c, k, bytes) in all {
+                // A paragraph that does not wrap needs all of its width.
+                if no_wrap(r, c, k) {
+                    mins[c] = mins[c].max(f64::from(laid[r][c][k].1).ceil());
+                    continue;
                 }
+                let (lines, _) = self.cell(
+                    text,
+                    style,
+                    ranged,
+                    bytes.clone(),
+                    words,
+                    Some(1.0),
+                    fallback,
+                );
+                let widest = lines
+                    .iter()
+                    .map(|(l, _)| f64::from(l.width))
+                    .fold(0.0, f64::max);
+                mins[c] = mins[c].max(widest.ceil());
             }
             let widths = column_widths(&mins, &maxs, room);
-            for (r, row) in cells.iter().enumerate() {
-                for (c, bytes) in row.iter().enumerate() {
-                    if f64::from(laid[r][c].1) > widths[c] && !no_wrap(r, c) {
-                        let max = Some(widths[c] as f32);
-                        laid[r][c] =
-                            self.cell(text, style, ranged, bytes.clone(), class, max, fallback);
+            for (r, row) in paragraphs.iter().enumerate() {
+                for (c, cell) in row.iter().enumerate() {
+                    for (k, bytes) in cell.iter().enumerate() {
+                        if f64::from(laid[r][c][k].1) > widths[c] && !no_wrap(r, c, k) {
+                            let max = Some(widths[c] as f32);
+                            laid[r][c][k] =
+                                self.cell(text, style, ranged, bytes.clone(), class, max, fallback);
+                        }
                     }
                 }
             }
@@ -543,7 +578,11 @@ impl TextEngine {
         };
         let heights: Vec<f64> = laid
             .iter()
-            .map(|row| row.iter().map(|(l, _)| high(l)).fold(0.0, f64::max))
+            .map(|row| {
+                row.iter()
+                    .map(|cell| cell.iter().map(|(l, _)| high(l)).sum::<f64>())
+                    .fold(0.0, f64::max)
+            })
             .collect();
         // Left edges of the columns and top edges of the rows (of the
         // cells' frames), and where the last one ends.
@@ -586,27 +625,40 @@ impl TextEngine {
         let mut grid_cells = Vec::with_capacity(laid.len());
         for (r, row) in laid.into_iter().enumerate() {
             let mut row_cells = Vec::with_capacity(row.len());
-            for (c, (lines, _)) in row.into_iter().enumerate() {
+            for (c, cell) in row.into_iter().enumerate() {
                 let bytes = cells[r][c].clone();
                 // A cell that reads right to left stands at the right of
                 // its column, as in Qt 6.11.
                 let rtl = crate::direction::reads_right_to_left(&text[bytes.clone()]);
                 let first = out.len();
-                let count = lines.len();
                 let mut top = 0.0;
-                for (k, (mut line, places)) in lines.into_iter().enumerate() {
+                let lines = cell
+                    .into_iter()
+                    .zip(&paragraphs[r][c])
+                    .flat_map(|((lines, _), p)| {
+                        let count = lines.len();
+                        lines
+                            .into_iter()
+                            .enumerate()
+                            .map(move |(k, line)| (line, (k + 1 == count).then_some(p.end)))
+                    });
+                for ((mut line, places), paragraph_end) in lines {
                     let height = line.vertical.natural();
                     let flush = if rtl {
                         (widths[c] - f64::from(line.width)).max(0.0)
                     } else {
                         0.0
                     };
+                    // The last line of a paragraph holds what ends it: the
+                    // CELL_PARAGRAPH, the CELL or the row's line break.
                     let mut end = None;
-                    if k + 1 == count {
-                        if text[bytes.end..].starts_with([CELL, '\n']) {
-                            line.range.end = bytes.end + 1;
+                    if let Some(at) = paragraph_end {
+                        if text[at..].starts_with(CELL_PARAGRAPH) {
+                            line.range.end = at + CELL_PARAGRAPH.len_utf8();
+                        } else if text[at..].starts_with([CELL, '\n']) {
+                            line.range.end = at + 1;
                         }
-                        end = Some(bytes.end);
+                        end = Some(at);
                     }
                     let place = CellLine {
                         grid: 0,
@@ -1427,7 +1479,7 @@ mod tests {
 
     #[test]
     fn a_cell_that_does_not_wrap_keeps_its_column_wide() {
-        let row = |no_wrap: Vec<bool>| EditBlock {
+        let row = |no_wrap: Vec<Vec<bool>>| EditBlock {
             table: Some(EditTable {
                 border: 1.0,
                 no_wrap,
@@ -1438,7 +1490,7 @@ mod tests {
         let text = "\nab ab ab\u{1f}cd cd cd\n";
         let mut engine = TextEngine::new();
         let style = TextStyle::default();
-        let lay = |engine: &mut TextEngine, width: Option<f64>, no_wrap: Vec<bool>| {
+        let lay = |engine: &mut TextEngine, width: Option<f64>, no_wrap: Vec<Vec<bool>>| {
             let blocks = [EditBlock::default(), row(no_wrap), EditBlock::default()];
             let params = EditParams {
                 width,
@@ -1451,7 +1503,7 @@ mod tests {
         let wraps = lay(&mut engine, room, vec![]);
         assert!(wraps.lines.len() > wide.lines.len());
         // The first cell stays one line; the second wraps in what is left.
-        let still = lay(&mut engine, room, vec![true]);
+        let still = lay(&mut engine, room, vec![vec![true]]);
         let first = still
             .lines
             .iter()
@@ -1460,7 +1512,7 @@ mod tests {
         assert_eq!(first, 1, "{:?}", still.lines);
         assert!(still.lines.len() > wide.lines.len());
         // Neither wraps: the table is wider than the room.
-        let neither = lay(&mut engine, room, vec![true, true]);
+        let neither = lay(&mut engine, room, vec![vec![true], vec![true]]);
         assert_eq!(neither.lines.len(), wide.lines.len());
         assert_eq!(neither.content_width, wide.natural_width);
     }

@@ -241,7 +241,10 @@ fn paragraph_rtl(s: &State) -> bool {
     let text = s.model.text();
     let at = s.model.cursor_byte().min(text.len());
     let breaks = |c: char| c == '\n' || c == '\u{2029}';
-    let start = text[..at].rfind(breaks).map_or(0, |i| i + 1);
+    let start = text[..at]
+        .char_indices()
+        .rfind(|&(_, c)| breaks(c))
+        .map_or(0, |(i, c)| i + c.len_utf8());
     let end = text[at..].find(breaks).map_or(text.len(), |i| at + i);
     reads_right_to_left(&text[start..end])
 }
@@ -564,6 +567,8 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
         // Over a selection of cells either key empties the cells.
         Action::Backspace | Action::Delete
             if ops::empty_cells(engine, obj, EditKind::Other).is_some() => {}
+        Action::Backspace | Action::Delete
+            if ops::at_table_edge(engine, obj, action == Action::Delete) => {}
         Action::Backspace if ops::outdent(engine, obj) => {}
         Action::Backspace => {
             ops::edit(engine, obj, How::user(EditKind::Backspace), |m| {
@@ -590,9 +595,8 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
         }
         Action::NewLine => {
             if multi {
-                // DECISION: Return in a table cell breaks the line in the
-                // cell. Qt adds a paragraph to the cell, which a cell here
-                // cannot hold; on screen the two look the same.
+                // Return in a table cell adds a paragraph to the cell, as
+                // in Qt 6.11 (features/text-input/rich-text-cell-paragraphs.feature).
                 let in_cell = {
                     let mut s = st.borrow_mut();
                     super::rich::sync_doc(&mut s);
@@ -604,7 +608,7 @@ fn act(engine: &Engine, obj: ObjectId, st: &SharedState, action: Action) {
                             .is_some_and(|b| b.table.is_some())
                     })
                 };
-                let text = if in_cell { "\u{2028}" } else { "\n" };
+                let text = if in_cell { "\u{2029}" } else { "\n" };
                 ops::edit(engine, obj, How::user(EditKind::Other), |m| {
                     m.replace_selection(text)
                 });

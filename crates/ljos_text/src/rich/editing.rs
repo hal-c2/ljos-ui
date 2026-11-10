@@ -23,7 +23,8 @@
 //! with a [`TableRow`] that says how its table and its cells are set. Its
 //! text is counted as Qt counts it: the '\n' into the table, every
 //! [`CELL`] and the '\n' between rows stand where Qt has U+FDD0 before a cell, and the '\n'
-//! out of it where Qt has U+FDD1 ([`RichText::plain_text`]). As in Qt, a
+//! out of it where Qt has U+FDD1 ([`RichText::plain_text`]). A cell holds
+//! paragraphs of its own, apart by [`CELL_PARAGRAPH`]. As in Qt, a
 //! table that starts or ends the document has an empty paragraph before or
 //! after it, as two tables have between them; those are not written back.
 
@@ -53,6 +54,9 @@ pub const OBJECT: char = '\u{fffc}';
 /// Ends a cell of a table row that another follows. It is not a tab, which
 /// Qt lets a cell hold, and is one byte as a tab is.
 pub const CELL: char = '\u{1f}';
+/// Ends a paragraph of a table cell that another of the cell follows. A
+/// '\n' would end the row; this is the character Qt's plain text has there.
+pub const CELL_PARAGRAPH: char = '\u{2029}';
 
 /// How a character is set.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -239,10 +243,39 @@ pub struct CellFormat {
     pub background: Option<Arc<str>>,
     /// A `th`.
     pub header: bool,
-    /// The cell breaks its lines only at its line breaks. A cell read with
-    /// some of its paragraphs that wrap and some that don't keeps them all
-    /// from wrapping: its column is as wide as the widest one anyway.
-    pub no_wrap: bool,
+    /// Which paragraphs of the cell, in order, break their lines only at
+    /// their line breaks; one past the end wraps
+    /// ([`CellFormat::paragraph_no_wrap`]).
+    pub no_wrap: Vec<bool>,
+}
+
+impl CellFormat {
+    /// Whether paragraph `index` of the cell breaks its lines only at its
+    /// line breaks.
+    pub fn paragraph_no_wrap(&self, index: usize) -> bool {
+        self.no_wrap.get(index).copied().unwrap_or(false)
+    }
+
+    /// The format after the paragraphs `index + 1..=index + removed` were
+    /// taken out and `added` put in after paragraph `index`: the ones put
+    /// in are as it is, and a join keeps the first one's.
+    fn spliced(&self, index: usize, removed: usize, added: usize) -> Self {
+        let mut no_wrap = self.no_wrap.clone();
+        let from = (index + 1).min(no_wrap.len());
+        let to = (index + 1 + removed).min(no_wrap.len());
+        no_wrap.drain(from..to);
+        if index < no_wrap.len() {
+            let flag = no_wrap[index];
+            no_wrap.splice(index + 1..index + 1, std::iter::repeat_n(flag, added));
+        }
+        while no_wrap.last() == Some(&false) {
+            no_wrap.pop();
+        }
+        Self {
+            no_wrap,
+            ..self.clone()
+        }
+    }
 }
 
 impl Default for BlockFormat {
@@ -335,7 +368,7 @@ impl BlockFormat {
                     .map(|c| CellFormat {
                         background: c.background.as_deref().and_then(resolve),
                         header: c.header,
-                        no_wrap: !c.no_wrap.is_empty(),
+                        no_wrap: paragraphs_no_wrap(c),
                     })
                     .collect();
                 Arc::new(Self {
@@ -353,6 +386,31 @@ impl BlockFormat {
     fn ordered(&self) -> bool {
         self.marker.as_deref().is_some_and(|m| m.ends_with('.'))
     }
+}
+
+/// Which paragraphs of `cell` do not wrap: those a line that does not wrap
+/// starts in. Trailing ones that wrap are left out.
+fn paragraphs_no_wrap(cell: &super::Cell) -> Vec<bool> {
+    let ends = cell
+        .paragraphs
+        .iter()
+        .copied()
+        .chain(std::iter::once(cell.range.end));
+    let mut start = cell.range.start;
+    let mut out: Vec<bool> = ends
+        .map(|end| {
+            let flag = cell
+                .no_wrap
+                .iter()
+                .any(|line| (start..end).contains(&line.start));
+            start = end + 1;
+            flag
+        })
+        .collect();
+    while out.last() == Some(&false) {
+        out.pop();
+    }
+    out
 }
 
 /// The font a document is set in, which the HTML of it names.
@@ -534,8 +592,11 @@ impl RichText {
                     (Some(s), _) => format_of(&s.style),
                     (None, _) => Arc::clone(&plain),
                 };
+                let mut feed = i;
                 for (k, piece) in text[i..end].split('\n').enumerate() {
                     if k > 0 {
+                        let at = feed;
+                        feed += 1;
                         if table.is_some() && cell.is_none() {
                             row += 1;
                             out.push(&PARAGRAPH.to_string(), &plain);
@@ -544,10 +605,13 @@ impl RichText {
                         } else if breaks_paragraph {
                             out.push(&PARAGRAPH.to_string(), &f);
                             out.blocks.push(Arc::clone(&bf));
+                        } else if cell.is_some_and(|c| c.paragraphs.contains(&at)) {
+                            out.push(&CELL_PARAGRAPH.to_string(), &f);
                         } else {
                             out.push(&LINE_BREAK.to_string(), &f);
                         }
                     }
+                    feed += piece.len();
                     if table.is_some() && cell.is_none() {
                         out.push(&piece.replace('\t', &CELL.to_string()), &plain);
                     } else {
@@ -588,6 +652,21 @@ impl RichText {
     /// The paragraphs' formats, one per paragraph.
     pub fn blocks(&self) -> &[Arc<BlockFormat>] {
         &self.blocks
+    }
+
+    /// Whether the character at `byte` is one of a table's own: a [`CELL`]
+    /// of a row, or a '\n' into, between or out of a table's rows. Taking
+    /// one out would join cells, or a table with the text around it.
+    pub fn is_table_edge(&self, byte: usize) -> bool {
+        let row = |i: usize| self.blocks.get(i).is_some_and(|b| b.table.is_some());
+        match self.text.get(byte..).and_then(|t| t.chars().next()) {
+            Some(CELL) => row(self.block_index(byte)),
+            Some(PARAGRAPH) => {
+                let i = self.block_index(byte);
+                row(i) || row(i + 1)
+            }
+            _ => false,
+        }
     }
 
     /// The paragraph `byte` is in.
@@ -632,8 +711,8 @@ impl RichText {
         let before = self.text[..byte].chars().next_back();
         let after = self.text[byte..].chars().next();
         let f = match (before, after) {
-            (Some(c), _) if c != PARAGRAPH => self.format_at(byte - c.len_utf8()),
-            (_, Some(c)) if c != PARAGRAPH => self.format_at(byte),
+            (Some(c), _) if !ends_paragraph(c) => self.format_at(byte - c.len_utf8()),
+            (_, Some(c)) if !ends_paragraph(c) => self.format_at(byte),
             (Some(c), _) => self.format_at(byte - c.len_utf8()),
             _ => Arc::default(),
         };
@@ -687,6 +766,7 @@ impl RichText {
     pub fn splice_rich(&mut self, range: Range<usize>, other: &RichText) {
         let range = self.clamp(range);
         let b = self.block_index(range.start);
+        let cell_paragraphs = self.cell_paragraphs_spliced(range.clone(), &other.text);
         let removed = self.text[range.clone()].matches('\n').count();
         self.blocks.drain(b + 1..=b + removed);
         let added = other.text.matches('\n').count();
@@ -701,7 +781,52 @@ impl RichText {
         let j = self.split(range.end);
         self.runs.splice(i..j, other.runs.iter().cloned());
         self.text.replace_range(range, &other.text);
+        if let Some(row) = cell_paragraphs {
+            self.blocks[b] = row;
+        }
         self.normalize();
+    }
+
+    /// The format of the row `range` is in once `text` replaced it, where
+    /// that takes paragraphs out of one cell or puts some in.
+    fn cell_paragraphs_spliced(&self, range: Range<usize>, text: &str) -> Option<Arc<BlockFormat>> {
+        let removed = &self.text[range.clone()];
+        let in_cell = |t: &str| !t.contains([CELL, PARAGRAPH]);
+        if !in_cell(removed) || !in_cell(text) {
+            return None;
+        }
+        let (removed, added) = (
+            removed.matches(CELL_PARAGRAPH).count(),
+            text.matches(CELL_PARAGRAPH).count(),
+        );
+        if removed == 0 && added == 0 {
+            return None;
+        }
+        let (block, column, index) = self.cell_paragraph(range.start)?;
+        let row = self.blocks[block].table.as_ref()?;
+        let mut cells = row.cells.to_vec();
+        let cell = cells.get_mut(column)?;
+        *cell = cell.spliced(index, removed, added);
+        Some(Arc::new(BlockFormat {
+            table: Some(TableRow {
+                table: Arc::clone(&row.table),
+                cells: cells.into(),
+            }),
+            ..(*self.blocks[block]).clone()
+        }))
+    }
+
+    /// The row `byte` is in, the cell of it and the paragraph of that cell,
+    /// by index; `None` outside tables.
+    fn cell_paragraph(&self, byte: usize) -> Option<(usize, usize, usize)> {
+        let block = self.block_index(byte);
+        self.blocks.get(block)?.table.as_ref()?;
+        let start = self.block_range(block).start;
+        let before = &self.text[start..byte];
+        let column = before.matches(CELL).count();
+        let cell_start = before.rfind(CELL).map_or(0, |i| i + CELL.len_utf8());
+        let index = before[cell_start..].matches(CELL_PARAGRAPH).count();
+        Some((block, column, index))
     }
 
     /// Change the format of the characters in `range`.
@@ -741,12 +866,43 @@ impl RichText {
         out.splice_rich(0..range.start, &RichText::empty_fragment());
         // The first paragraph is the one the range starts in.
         out.blocks[0] = Arc::clone(&self.blocks[self.block_index(range.start)]);
-        // Measured: a part of one cell is a paragraph of its own.
+        // Measured: a part of one cell is a paragraph of its own, or the
+        // paragraphs of it.
         if out.blocks.len() == 1 && out.blocks[0].table.is_some() && !out.text.contains(CELL) {
-            out.blocks[0] = Arc::new(BlockFormat {
-                table: None,
-                ..(*out.blocks[0]).clone()
-            });
+            let (cell, first) = self
+                .cell_paragraph(range.start)
+                .and_then(|(block, column, index)| {
+                    let row = self.blocks[block].table.as_ref()?;
+                    Some((row.cells.get(column).cloned(), index))
+                })
+                .unwrap_or_default();
+            let paragraph = |k: usize| {
+                Arc::new(BlockFormat {
+                    table: None,
+                    no_wrap: cell
+                        .as_ref()
+                        .is_some_and(|c| c.paragraph_no_wrap(first + k)),
+                    ..(*out.blocks[0]).clone()
+                })
+            };
+            let ends: Vec<usize> = out
+                .text
+                .match_indices(CELL_PARAGRAPH)
+                .map(|(i, _)| i)
+                .collect();
+            let blocks: Vec<_> = (0..=ends.len()).map(paragraph).collect();
+            for &at in ends.iter().rev() {
+                let feed = Self {
+                    text: PARAGRAPH.to_string(),
+                    runs: vec![Run {
+                        len: PARAGRAPH.len_utf8(),
+                        format: out.format_at(at),
+                    }],
+                    blocks: Vec::new(),
+                };
+                out.splice_rich(at..at + CELL_PARAGRAPH.len_utf8(), &feed);
+            }
+            out.blocks = blocks;
         }
         out
     }
@@ -1103,21 +1259,39 @@ impl RichText {
                     let _ = write!(out, " bgcolor=\"{bg}\"");
                 }
                 out.push('>');
-                if !cell.is_empty() {
+                let mut start = cell.start;
+                for (k, text) in self.text[cell].split(CELL_PARAGRAPH).enumerate() {
+                    let paragraph = start..start + text.len();
+                    start = paragraph.end + CELL_PARAGRAPH.len_utf8();
+                    let empty = paragraph.is_empty();
+                    // Measured: an empty first paragraph is not written, an
+                    // empty cell is none.
+                    if empty && k == 0 {
+                        continue;
+                    }
                     out.push_str("\n<p");
                     // Measured: a th is written as a td in the middle.
                     if format.is_some_and(|f| f.header) {
                         out.push_str(" align=\"center\"");
                     }
+                    out.push_str(if empty {
+                        " style=\"-qt-paragraph-type:empty; "
+                    } else {
+                        " style=\" "
+                    });
                     out.push_str(
-                        " style=\" margin-top:0px; margin-bottom:0px; margin-left:0px; \
+                        "margin-top:0px; margin-bottom:0px; margin-left:0px; \
                          margin-right:0px; -qt-block-indent:0; text-indent:0px;",
                     );
-                    if format.is_some_and(|f| f.no_wrap) {
+                    if format.is_some_and(|f| f.paragraph_no_wrap(k)) {
                         out.push_str(NO_WRAP);
                     }
                     out.push_str("\">");
-                    self.write_inline(out, cell);
+                    if empty {
+                        out.push_str("<br />");
+                    } else {
+                        self.write_inline(out, paragraph);
+                    }
                     out.push_str("</p>");
                 }
                 out.push_str("</td>");
@@ -1404,6 +1578,11 @@ impl ImageFormat {
 }
 
 /// Two formats that write the same and are kept as one.
+/// A paragraph ends at `c`, in a cell or out of one.
+fn ends_paragraph(c: char) -> bool {
+    c == PARAGRAPH || c == CELL_PARAGRAPH
+}
+
 fn same(a: &Arc<CharFormat>, b: &Arc<CharFormat>) -> bool {
     Arc::ptr_eq(a, b) || **a == **b
 }
@@ -1798,6 +1977,19 @@ mod tests {
     }
 
     #[test]
+    fn a_tables_own_characters_are_its_edges() {
+        let t = rich("x<table><tr><td>a<p>b</p></td><td>c</td></tr><tr><td>d</td></tr></table>y");
+        assert_eq!(t.text(), "x\na\u{2029}b\u{1f}c\nd\ny");
+        let text = t.text();
+        let edges: Vec<usize> = (0..text.len())
+            .filter(|&b| text.is_char_boundary(b) && t.is_table_edge(b))
+            .collect();
+        // Into the table, between its cells and rows, and out of it; not
+        // between the paragraphs of a cell.
+        assert_eq!(edges, vec![1, 7, 9, 11]);
+    }
+
+    #[test]
     fn cells_are_found_by_where_they_are() {
         let t =
             rich("x<table><tr><td>pq</td><td>r</td></tr><tr><td>s</td><td>tu</td></tr></table>y");
@@ -1832,6 +2024,54 @@ mod tests {
              background-color:#00ff00;'>a</span></p></td>|<td></td></tr>|<tr>|<td>|\
              <p>b</p></td></tr></table>"
         );
+    }
+
+    #[test]
+    fn a_cell_keeps_its_paragraphs_through_edits() {
+        // Measured on Qt 6.11 (features/text-input/rich-text-cell-paragraphs.feature).
+        let t = rich(
+            "<table><tr><td><p style='white-space:nowrap'>a</p><p>b</p></td><td>z</td></tr></table>",
+        );
+        let no_wrap = |t: &RichText| {
+            let row = t.blocks().iter().find_map(|b| b.table.clone()).unwrap();
+            (0..3)
+                .map(|k| row.cells[0].paragraph_no_wrap(k))
+                .collect::<Vec<_>>()
+        };
+        let cell = |t: &RichText| {
+            let html = body(t);
+            let start = html.find("<td>|").unwrap() + 5;
+            html[start..start + html[start..].find("</td>").unwrap()].replace(
+                " margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; \
+                     -qt-block-indent:0; text-indent:0px;",
+                "",
+            )
+        };
+        assert_eq!(t.text(), "\na\u{2029}b\u{1f}z\n");
+        assert_eq!(no_wrap(&t), [true, false, false]);
+        assert_eq!(cell(&t), "<p style=' white-space:pre;'>a</p>|<p>b</p>");
+
+        // A paragraph split off takes the paragraph's format; an empty one
+        // is written as empty, but not first.
+        let mut split = t.clone();
+        split.splice(1..1, "\u{2029}", None);
+        assert_eq!(no_wrap(&split), [true, true, false]);
+        assert_eq!(cell(&split), cell(&t));
+        let mut split = t.clone();
+        split.splice(6..6, "\u{2029}", None);
+        assert_eq!(no_wrap(&split), [true, false, false]);
+        assert_eq!(
+            cell(&split),
+            "<p style=' white-space:pre;'>a</p>|<p>b</p>|\
+             <p style='-qt-paragraph-type:empty;'><br /></p>"
+        );
+
+        // Two joined keep the first one's format.
+        let mut joined = t.clone();
+        joined.splice(2..5, "", None);
+        assert_eq!(joined.text(), "\nab\u{1f}z\n");
+        assert_eq!(no_wrap(&joined), [true, false, false]);
+        assert_eq!(cell(&joined), "<p style=' white-space:pre;'>ab</p>");
     }
 
     #[test]

@@ -49,8 +49,8 @@ pub use doc::{
     RichDoc, View, default_image_size,
 };
 pub use editing::{
-    BlockFormat, CELL, CellFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK, OBJECT, PARAGRAPH,
-    RichText, TableCell, TableFormat, TableRow,
+    BlockFormat, CELL, CELL_PARAGRAPH, CellFormat, CharFormat, DocFont, ImageFormat, LINE_BREAK,
+    OBJECT, PARAGRAPH, RichText, TableCell, TableFormat, TableRow,
 };
 pub use select::SelectionScope;
 
@@ -315,6 +315,10 @@ pub struct Cell {
     /// Lines of it, bytes of the block's text, that break only where the
     /// text says so: the column is as wide as the widest of them.
     pub no_wrap: Vec<Range<usize>>,
+    /// Where its paragraphs end: bytes of the block's text, each a line
+    /// feed that ends one, in order. The other line feeds in it are line
+    /// breaks in a paragraph.
+    pub paragraphs: Vec<usize>,
 }
 
 impl Hash for Table {

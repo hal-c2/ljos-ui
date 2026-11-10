@@ -450,6 +450,28 @@ pub(crate) fn saved(s: &mut State) {
     }
 }
 
+/// Whether Backspace (or Delete, `forward`) would take out a character of a
+/// table's own: in Qt 6.11 cells never join, nor a table with the text
+/// around it, and the key does nothing
+/// (features/text-input/rich-text-cell-paragraphs.feature).
+pub(crate) fn at_table_edge(s: &mut State, forward: bool) -> bool {
+    sync_doc(s);
+    let Some(r) = s.rich.as_ref() else {
+        return false;
+    };
+    let text = s.model.text();
+    if s.model.has_selection() || r.doc.text() != text {
+        return false;
+    }
+    let at = s.model.cursor_byte();
+    let edge = if forward {
+        Some(at)
+    } else {
+        text[..at].char_indices().next_back().map(|(i, _)| i)
+    };
+    edge.is_some_and(|b| r.doc.is_table_edge(b))
+}
+
 /// Backspace at the start of a list item, or of a paragraph that was one
 /// and keeps its indent: the paragraph's format steps out as one step of
 /// the history, and the text stays. Whether it did.
@@ -798,7 +820,7 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
                         padding: f64::from(t.table.padding),
                         background: t.table.background.clone(),
                         cells: t.cells.iter().map(|c| c.background.clone()).collect(),
-                        no_wrap: t.cells.iter().map(|c| c.no_wrap).collect(),
+                        no_wrap: t.cells.iter().map(|c| c.no_wrap.clone()).collect(),
                     }),
                 }
             })

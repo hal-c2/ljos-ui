@@ -53,7 +53,7 @@ use std::sync::Arc;
 use super::css;
 use super::doc::HAlign;
 use super::entity;
-use super::flow::{CellBuf, Ctx, Flow, table_block};
+use super::flow::{CellBuf, CellParagraph, Ctx, Flow, table_block};
 use super::sheet::Sheet;
 use super::styled::{FONT_SCALE, HEADING_SCALE, Marker, marker_text};
 use super::{Block, BlockKind, Inline, InlineBuf, InlineImage};
@@ -344,11 +344,23 @@ impl<'a> Parser<'a> {
                 let Some(cell) = t.rows.last_mut().and_then(|r| r.last_mut()) else {
                     return;
                 };
+                // What lands after a block's end starts a paragraph; white
+                // space that collapses to nothing starts none.
+                let before = cell.buf.text.len();
+                let ended = matches!(cell.paragraph, CellParagraph::Ended | CellParagraph::EndFed);
+                if ended {
+                    cell.break_paragraph();
+                }
                 let (len, images) = (cell.buf.text.len(), cell.buf.images.len());
                 f(&mut cell.buf);
                 if cell.buf.text.len() == len && cell.buf.images.len() == images {
+                    if ended {
+                        cell.paragraphs.pop();
+                        cell.buf.truncate(before);
+                    }
                     return;
                 }
+                cell.paragraph = CellParagraph::Filled;
                 t.fresh = false;
                 t.no_wrap |= block_no_wrap;
                 if t.no_wrap {
@@ -361,6 +373,12 @@ impl<'a> Parser<'a> {
             Some(_) => {}
             None => f(&mut self.buf),
         }
+    }
+
+    /// The open table cell.
+    fn cell_mut(&mut self) -> Option<&mut CellBuf> {
+        let t = self.table.as_mut().filter(|t| t.cell)?;
+        t.rows.last_mut()?.last_mut()
     }
 
     /// Whether the line of the open cell text goes to now wraps: a cell has
@@ -601,7 +619,7 @@ impl<'a> Parser<'a> {
     /// the paragraph, and the next one has the same format; an empty line
     /// is an empty paragraph.
     fn line_feed(&mut self, white_space: WhiteSpace) {
-        // A table cell has no paragraphs of its own, and a `<pre>` block
+        // A table outside its cells takes no text, and a `<pre>` block
         // holds its lines (each one a paragraph to an editor).
         let in_block = self.table.is_some() || self.flow.kind() == Some(BlockKind::Code);
         let style = self.style();
@@ -611,7 +629,20 @@ impl<'a> Parser<'a> {
                 buf.truncate(buf.text.len() - 1);
             }
         };
-        if in_block {
+        if let Some(cell) = self.cell_mut()
+            && cell.paragraph == CellParagraph::Ended
+        {
+            // The block's end ended its paragraph already.
+            cell.paragraph = CellParagraph::EndFed;
+        } else if let Some(cell) = self.cell_mut() {
+            // A cell's paragraph ends here, and the next is its own.
+            trim(&mut cell.buf);
+            cell.break_paragraph();
+            cell.paragraph = CellParagraph::Fed;
+            if let Some(t) = &mut self.table {
+                t.fresh = false;
+            }
+        } else if in_block {
             self.write(|buf| {
                 trim(buf);
                 buf.push("\n", &style);
@@ -1046,11 +1077,11 @@ impl<'a> Parser<'a> {
             | "td" | "th" | "caption" | "table" => {}
             // Inside a table cell there are no boxes: a block is a new line.
             _ if in_cell && is_block(name) => {
-                let needs_break = self
-                    .target()
-                    .is_some_and(|b| !b.text.is_empty() && !b.text.ends_with('\n'));
-                if needs_break {
-                    self.line_break();
+                if let Some(cell) = self.cell_mut() {
+                    if cell.paragraph != CellParagraph::Opened {
+                        cell.break_paragraph();
+                    }
+                    cell.paragraph = CellParagraph::Opened;
                 }
                 if let Some(level) = heading_level(name) {
                     self.push(name, |o| heading_style(&mut o.style, level));
@@ -1225,6 +1256,12 @@ impl<'a> Parser<'a> {
                 if block_in_cell && let Some(t) = &mut self.table {
                     t.no_wrap &= name == "div";
                     t.fresh = false;
+                    if name != "div"
+                        && let Some(cell) = self.cell_mut()
+                        && cell.paragraph == CellParagraph::Filled
+                    {
+                        cell.paragraph = CellParagraph::Ended;
+                    }
                 }
             }
         }
@@ -2319,9 +2356,11 @@ mod tests {
             td(&format!("<p {normal}>x</p><p {normal}>a b</p>")),
             ("x\na b".into(), vec![(0, 1)])
         );
+        // A paragraph after a line break: the break stays the first
+        // paragraph's (measured on Qt 6.11, hal-c2/ljos-ui#283).
         assert_eq!(
             td(&format!("x<br><p {normal}>a b</p>")),
-            ("x\na b".into(), vec![(0, 1)])
+            ("x\n\na b".into(), vec![(0, 1)])
         );
         assert_eq!(
             td(&format!("<p {normal}></p><p {normal}>a b</p>")),
@@ -2353,6 +2392,49 @@ mod tests {
             cell(&table("<td style=\"white-space:pre-wrap\"><b>\na</b></td>")).0,
             "\na"
         );
+    }
+
+    #[test]
+    fn a_cell_holds_paragraphs_of_its_own() {
+        // Measured on Qt 6.11 (features/text-input/rich-text-cell-paragraphs.feature).
+        let cell = |td: &str| -> (String, Vec<usize>) {
+            let b = parse(&format!("<table><tr><td{td}</td></tr></table>")).remove(0);
+            let t = b.table.expect("a table");
+            (b.text, t.cells[0].paragraphs.clone())
+        };
+        let pre_wrap = " style=\"white-space:pre-wrap\">";
+        for (td, text, paragraphs) in [
+            ("><p>a</p><p>b</p>", "a\nb", vec![1]),
+            (">a<p>b</p>", "a\nb", vec![1]),
+            ("><h1>a</h1>b", "a\nb", vec![1]),
+            ("><ul><li>a</li></ul>b", "a\nb", vec![1]),
+            ("><p>a</p><br>", "a\n\n", vec![1]),
+            (">a<br><p>b</p>", "a\n\nb", vec![2]),
+            (">a<p></p>", "a\n", vec![1]),
+            ("><p></p><p>b</p>", "b", vec![]),
+            ("><div>a</div>b", "ab", vec![]),
+            ("><pre>a\nb</pre>", "a\nb", vec![1]),
+            // White space that collapses to nothing starts none.
+            ("><p>a</p> <p>b</p>", "a\nb", vec![1]),
+        ] {
+            assert_eq!(cell(td), (text.into(), paragraphs), "{td}");
+        }
+        for (td, text, paragraphs) in [
+            ("a\nb", "a\nb", vec![1]),
+            ("\na", "a", vec![]),
+            // A kept line feed that ends the cell ends nothing.
+            ("a\n", "a", vec![]),
+            ("a<p>\nb</p>", "a\nb", vec![1]),
+            ("<p>a</p>\n<p>b</p>", "a\nb", vec![1]),
+            ("x\n<p></p>", "x\n\n", vec![1, 2]),
+            ("<span>\n</span><p></p>", "\n\n", vec![0, 1]),
+        ] {
+            assert_eq!(
+                cell(&format!("{pre_wrap}{td}")),
+                (text.into(), paragraphs),
+                "{td}"
+            );
+        }
     }
 
     #[test]
