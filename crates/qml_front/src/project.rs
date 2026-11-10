@@ -236,6 +236,8 @@ impl Project {
     /// it, are added under `prefix`: a project's root under `""`, a
     /// directory read beside a text under that text's directory. A
     /// directory an import names by its `file:` URL is found through it.
+    /// The root of the disk (`""`) is the place of a URL under no other,
+    /// whichever was said first.
     pub fn add_place(&mut self, dir: &str, prefix: &str) {
         let dir = dir.replace('\\', "/").trim_end_matches('/').to_string();
         if !self.places.iter().any(|(d, p)| *d == dir && p == prefix) {
@@ -251,7 +253,11 @@ impl Project {
         let Some(on_disk) = url_path(path) else {
             return join(directory(file), path);
         };
-        for (dir, prefix) in &self.places {
+        // The root of the disk holds every place; one inside it is more
+        // particular, so it is asked first.
+        let (root, inside): (Vec<_>, Vec<_>) =
+            self.places.iter().partition(|(dir, _)| dir.is_empty());
+        for (dir, prefix) in inside.into_iter().chain(root) {
             let rest = if dir.is_empty() {
                 on_disk.strip_prefix('/')
             } else {
