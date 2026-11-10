@@ -20,6 +20,7 @@
 
 mod arrange;
 mod bindings;
+mod cause;
 mod gesture;
 mod given;
 mod group;
@@ -54,6 +55,7 @@ use qml_syntax::{
 use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
 
+pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
 pub use renames::{FONT_RENAMES, member_renames, type_renames};
 
@@ -128,11 +130,17 @@ pub struct Lowered {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Kept {
-    /// What of the file the pass cannot lower: "`PathView` is not in Ljos.Ui
-    /// yet".
-    pub reason: String,
+    /// What of the file the pass cannot lower; it is written as the reason
+    /// `ljos migrate` prints: "`PathView` is not in Ljos.Ui yet".
+    pub cause: Cause,
     /// Where, as a byte offset into the file.
     pub at: usize,
+}
+
+impl std::fmt::Display for Kept {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.cause.fmt(f)
+    }
 }
 
 /// The root object of a file of the project, or of an inline component,
@@ -353,22 +361,22 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
     let parsed = qml_syntax::parse(&allocator, source);
     if !parsed.is_ok() {
         // The compiler says what is wrong with the file as written.
-        return kept("it does not parse", 0);
+        return kept(Cause::Unparsed, 0);
     }
     let Some(ui) = qt_types::module(MODULE) else {
-        return kept("this build has no description of Ljos.Ui", 0);
+        return kept(Cause::NoDescription { module: MODULE }, 0);
     };
     let Some(core) = qt_types::module(CORE) else {
-        return kept("this build has no description of Ljos.Core", 0);
+        return kept(Cause::NoDescription { module: CORE }, 0);
     };
     let Some(layout) = qt_types::module(LAYOUT) else {
-        return kept("this build has no description of Ljos.Layout", 0);
+        return kept(Cause::NoDescription { module: LAYOUT }, 0);
     };
     let Some(quick) = qt_types::module("QtQuick") else {
-        return kept("this build has no description of QtQuick", 0);
+        return kept(Cause::NoDescription { module: "QtQuick" }, 0);
     };
     let Some(qml) = qt_types::module("QtQml") else {
-        return kept("this build has no description of QtQml", 0);
+        return kept(Cause::NoDescription { module: "QtQml" }, 0);
     };
     let mut pass = Pass {
         source,
@@ -430,7 +438,7 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
             let text = qml_edit::splice(source, &changes);
             let again = qml_syntax::parse(&allocator, allocator.alloc_str(&text));
             if !again.is_ok() {
-                return kept("the lowered text does not parse", 0);
+                return kept(Cause::LoweredUnparsed, 0);
             }
             let modules = match (stem, pass.tables.is_empty()) {
                 (Some(stem), false) => vec![(
@@ -492,11 +500,8 @@ impl Root {
     }
 }
 
-fn kept(reason: impl Into<String>, at: usize) -> Outcome {
-    Outcome::Kept(Kept {
-        reason: reason.into(),
-        at,
-    })
+fn kept(cause: Cause, at: usize) -> Outcome {
+    Outcome::Kept(Kept { cause, at })
 }
 
 /// What the pass knows of what a name or an expression is.
@@ -668,7 +673,7 @@ impl<'s> Pass<'s> {
                 ) || uri == QT_DIALOGS
                     || QT_CONTROLS.contains(&uri.as_str()))
             {
-                return Err(self.no(format!("it imports `{uri}` under a name"), at));
+                return Err(self.no(Cause::ImportedUnderName { uri }, at));
             }
             match uri.as_str() {
                 "QtQuick" => {
@@ -709,20 +714,17 @@ impl<'s> Pass<'s> {
                 // Ljós's controls are Basic's; `QtQuick.Controls` is the
                 // style the program starts with, which may be another.
                 "QtQuick.Controls" if self.locals.controls_style() != Some(CONTROLS_STYLE) => {
-                    let reason = match self.locals.controls_style() {
-                        Some(style) => format!(
-                            "it imports `QtQuick.Controls`, which is the {style} style where it runs, and {CONTROLS} is {CONTROLS_STYLE}"
-                        ),
-                        None => "it imports `QtQuick.Controls`, whose style is chosen as the program starts".to_owned(),
-                    };
-                    return Err(self.no(reason, at));
+                    let style = self.locals.controls_style().map(str::to_owned);
+                    return Err(self.no(Cause::ControlsStyle { style }, at));
                 }
                 uri if uri == QT_DIALOGS || QT_CONTROLS.contains(&uri) => {
                     let (Some(qt), Some(ljos)) =
                         (qt_types::module(uri), qt_types::module(CONTROLS))
                     else {
                         return Err(self.no(
-                            format!("this build has no description of `{uri}` or {CONTROLS}"),
+                            Cause::NoControlsDescription {
+                                uri: uri.to_owned(),
+                            },
                             at,
                         ));
                     };
@@ -759,14 +761,18 @@ impl<'s> Pass<'s> {
                         self.imports.push(Import::Module(uri));
                     }
                     Some(ProjectModule::Files) => {
-                        return Err(self.no(format!("it imports `{other}` under a name"), at));
+                        return Err(self.no(
+                            Cause::ImportedUnderName {
+                                uri: other.to_owned(),
+                            },
+                            at,
+                        ));
                     }
                     Some(ProjectModule::Native) => {
                         return Err(self.no(
-                            format!(
-                                "it imports `{other}`, a module of the project whose types \
-                                 are native: they are not lowered"
-                            ),
+                            Cause::NativeModule {
+                                uri: other.to_owned(),
+                            },
                             at,
                         ));
                     }
@@ -775,7 +781,9 @@ impl<'s> Pass<'s> {
                     // (docs/DIALECT.md).
                     None => {
                         return Err(self.no(
-                            format!("it imports `{other}`, which is not lowered yet"),
+                            Cause::ModuleNotLowered {
+                                uri: other.to_owned(),
+                            },
                             at,
                         ));
                     }
@@ -953,15 +961,20 @@ impl<'s> Pass<'s> {
     fn attached_layout(&self, name: &str, at: usize) -> Step {
         if name != "Layout" && self.of_layouts(name, at)? {
             return Err(self.no(
-                format!("`{name}`'s attached properties are not in {LAYOUT} yet"),
+                Cause::AttachedNotInLayout {
+                    name: name.to_owned(),
+                },
                 at,
             ));
         }
         Ok(())
     }
 
-    fn no(&self, reason: String, at: usize) -> Kept {
-        Kept { reason, at }
+    fn no(&self, cause: impl Into<Cause>, at: usize) -> Kept {
+        Kept {
+            cause: cause.into(),
+            at,
+        }
     }
 
     fn change(&mut self, range: Range<usize>, replacement: impl Into<String>) {
@@ -1077,10 +1090,9 @@ impl<'s> Pass<'s> {
     fn object_type(&mut self, object: &QmlObject<'_>) -> Result<Ty, Kept> {
         let Some(name) = object.type_name.as_simple() else {
             return Err(self.no(
-                format!(
-                    "`{}` is a type of a module named in the file",
-                    object.type_name
-                ),
+                Cause::QualifiedType {
+                    name: object.type_name.to_string(),
+                },
                 object.type_name.span.start as usize,
             ));
         };
@@ -1128,7 +1140,7 @@ impl<'s> Pass<'s> {
                 "RowLayout" | "ColumnLayout" | "GridLayout" | "StackLayout" | "Layout" => {
                     Ok(Ty::Exact(ty))
                 }
-                _ => Err(self.no(format!("`{name}` is not in {LAYOUT} yet"), at)),
+                _ => Err(self.no(not_in(name, LAYOUT), at)),
             };
         }
         let controls = |dialogs: bool| if dialogs { self.dialogs } else { self.controls };
@@ -1156,7 +1168,7 @@ impl<'s> Pass<'s> {
         {
             return match controls.ljos.type_named(name) {
                 Some(_) => Ok(Ty::Exact(ty)),
-                None => Err(self.no(format!("`{name}` is not in {CONTROLS} yet"), at)),
+                None => Err(self.no(not_in(name, CONTROLS), at)),
             };
         }
         // Shapes lower into Ljos.Ui, so Ljos.Ui's line is where the
@@ -1175,7 +1187,7 @@ impl<'s> Pass<'s> {
                     self.uis.set(true);
                     Ok(Ty::Exact(ty))
                 }
-                None => Err(self.no(format!("`{name}` is not in {MODULE} yet"), at)),
+                None => Err(self.no(not_in(name, MODULE), at)),
             };
         }
         if let Some(ty) = self.quick.type_named(name)
@@ -1197,7 +1209,7 @@ impl<'s> Pass<'s> {
                 self.arranges.set(true);
                 return Ok(Ty::Exact(ty));
             }
-            return Err(self.no(format!("`{name}` is not in {MODULE} yet"), at));
+            return Err(self.no(not_in(name, MODULE), at));
         }
         if let Some((native_at, ty)) = native.filter(|_| !shadowed_native) {
             // A Ljós module whose line comes after the program's import
@@ -1206,9 +1218,11 @@ impl<'s> Pass<'s> {
                 && !matches!(line, Some(line) if native_at > line)
             {
                 return Err(self.no(
-                    format!(
-                        "`{name}` is one of the program's own types, and {module}, which the lowered file imports, has a `{name}` that would be found first"
-                    ),
+                    Cause::FoundFirst {
+                        name: name.to_owned(),
+                        is: Owner::Program,
+                        module,
+                    },
                     at,
                 ));
             }
@@ -1226,15 +1240,17 @@ impl<'s> Pass<'s> {
             && let Some((module, line)) = self.ljos_module_with(name)
             && !matches!((&imported, line), (Some((at, _)), Some(line)) if *at > line)
         {
-            let what = if imported.is_some() || self.locals.root(name).is_some() {
-                "is a file of the project"
+            let is = if imported.is_some() || self.locals.root(name).is_some() {
+                Owner::Project
             } else {
-                "is not a type of the modules the file imports"
+                Owner::Nowhere
             };
             return Err(self.no(
-                format!(
-                    "`{name}` {what}, and {module}, which the lowered file imports, has a `{name}` that would be found first"
-                ),
+                Cause::FoundFirst {
+                    name: name.to_owned(),
+                    is,
+                    module,
+                },
                 at,
             ));
         }
@@ -1254,10 +1270,10 @@ impl<'s> Pass<'s> {
             // The file names the program's types, and this is not one the
             // program describes: what it is in the file is not known.
             None if !self.native_modules.is_empty() => Err(self.no(
-                format!(
-                    "`{name}` is neither a file beside it nor a type of `{}` as the program describes it",
-                    self.native_modules.join("`, `")
-                ),
+                Cause::NotBesideNorNative {
+                    name: name.to_owned(),
+                    modules: self.native_modules.clone(),
+                },
                 at,
             )),
             None => Ok(Ty::Unknown),
@@ -1359,7 +1375,7 @@ impl<'s> Pass<'s> {
             self.cores.set(true);
             return Ok(Ty::Exact(ty));
         }
-        Err(self.no(format!("`{name}` is not in {CORE} yet"), at))
+        Err(self.no(not_in(name, CORE), at))
     }
 
     /// The Ljós module the lowered file imports that has `name`, for a name
@@ -1430,7 +1446,7 @@ impl<'s> Pass<'s> {
         name: &str,
         project: Option<usize>,
         qt: Option<usize>,
-        (module, line): (&str, Option<usize>),
+        (module, line): (&'static str, Option<usize>),
         at: usize,
     ) -> Result<bool, Kept> {
         let after = |line: Option<usize>| matches!((project, line), (Some(p), Some(l)) if p > l);
@@ -1440,22 +1456,26 @@ impl<'s> Pass<'s> {
             project.and_then(|p| self.imports.get(p)),
             Some(Import::Native(_))
         );
-        let (what, whose) = if native {
-            ("one of the program's own types", "the program's")
+        let owner = if native {
+            Owner::Program
         } else {
-            ("a file of the project", "the project's")
+            Owner::Project
         };
         match (after(qt), after(line)) {
             (true, false) => Err(self.no(
-                format!(
-                    "`{name}` is {what}, and {module}, which the lowered file imports, has a `{name}` that would be found first"
-                ),
+                Cause::FoundFirst {
+                    name: name.to_owned(),
+                    is: owner,
+                    module,
+                },
                 at,
             )),
             (false, true) => Err(self.no(
-                format!(
-                    "`{name}` is Qt's, but in the lowered file {whose} `{name}`, imported after the line {module} takes, would be found first"
-                ),
+                Cause::ShadowedInLowered {
+                    name: name.to_owned(),
+                    by: owner,
+                    module,
+                },
                 at,
             )),
             (in_qt, _) => Ok(in_qt),
@@ -1613,11 +1633,9 @@ impl<'s> Pass<'s> {
                 QmlMember::Object(child) => {
                     if prefix.is_some() {
                         return Err(self.no(
-                            format!(
-                                "`{} {{ … }}` is set through the target of a `PropertyChanges`, \
-                                 which Ljós's API names in each change",
-                                child.type_name
-                            ),
+                            Cause::ThroughTarget {
+                                what: format!("`{} {{ … }}`", child.type_name),
+                            },
                             child.type_name.span.start as usize,
                         ));
                     }
@@ -1666,7 +1684,9 @@ impl<'s> Pass<'s> {
                         .is_some_and(|r| r.iter().any(|(o, n)| *o == name || *n == name))
                     {
                         return Err(self.no(
-                            format!("it declares `{name}` on a type whose `{name}` Ljós renames"),
+                            Cause::DeclaresRenamed {
+                                name: name.to_owned(),
+                            },
                             property.span.start as usize,
                         ));
                     }
@@ -1756,10 +1776,7 @@ impl<'s> Pass<'s> {
         };
         let at = binding.name.span.start as usize;
         let QmlBindingValue::Expression(Expression::StringLiteral(url)) = &binding.value else {
-            return Err(self.no(
-                "a `Loader`'s `source` is made as it runs, so what it loads is not known".into(),
-                at,
-            ));
+            return Err(self.no(Loader::SourceMade, at));
         };
         let file = url.value.as_str();
         let name = file
@@ -1769,7 +1786,9 @@ impl<'s> Pass<'s> {
             .filter(|name| !name.is_empty() && !name.contains(['/', '\\', ':']));
         let Some(name) = name.filter(|name| self.locals.root(name).is_some()) else {
             return Err(self.no(
-                format!("a `Loader`'s `source` is \"{file}\", which is not a file beside this one"),
+                Loader::SourceNotBeside {
+                    file: file.to_owned(),
+                },
                 at,
             ));
         };
@@ -1777,17 +1796,16 @@ impl<'s> Pass<'s> {
         // if it is one: `page` would be an id, `my-page` a subtraction.
         if !is_type_name(name) {
             return Err(self.no(
-                format!("a `Loader`'s `source` is \"{file}\", whose name is not a type's"),
+                Loader::SourceNotType {
+                    file: file.to_owned(),
+                },
                 at,
             ));
         }
         if object.members.iter().any(|member| {
             matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("sourceComponent"))
         }) {
-            return Err(self.no(
-                "a `Loader` is given both a `source` and a `sourceComponent`".into(),
-                at,
-            ));
+            return Err(self.no(Loader::Both, at));
         }
         // The Loader's `source` is then empty: whatever reads it, or hears
         // it change, would be told otherwise.
@@ -1803,10 +1821,7 @@ impl<'s> Pass<'s> {
                 .any(|(at, name)| at == id && matches!(name.as_str(), "source" | "onSourceChanged"))
         }) || self.reads_unqualified(object, Bare::Source);
         if reads {
-            return Err(self.no(
-                "a `Loader`'s `source` is read or set as well as written".into(),
-                at,
-            ));
+            return Err(self.no(Loader::SourceRead, at));
         }
         // Qt's `sourceComponent` stays empty beside a `source`; lowered, it
         // is the component, and whatever reads it or hears it change would
@@ -1827,11 +1842,7 @@ impl<'s> Pass<'s> {
             })
         }) || self.reads_unqualified(object, Bare::Component);
         if reads_component {
-            return Err(self.no(
-                "a `Loader`'s `sourceComponent` is read or heard, and lowered it is not empty"
-                    .into(),
-                at,
-            ));
+            return Err(self.no(Loader::ComponentRead, at));
         }
         let span = binding.name.span;
         self.change(span.start as usize..span.end as usize, "component");
@@ -1979,10 +1990,9 @@ impl<'s> Pass<'s> {
         }
         if first.starts_with(|c: char| c.is_ascii_uppercase()) {
             return Err(self.no(
-                format!(
-                    "`{name}` is set through the target of a `PropertyChanges`, which Ljós's \
-                     API names in each change"
-                ),
+                Cause::ThroughTarget {
+                    what: format!("`{name}`"),
+                },
                 name.span.start as usize,
             ));
         }
@@ -2019,7 +2029,7 @@ impl<'s> Pass<'s> {
                 return Ok(());
             }
             if is_grab_permissions(first) {
-                return Err(self.no(GRAB_PERMISSIONS.into(), at));
+                return Err(self.no(Cause::GrabPermissions, at));
             }
             match (
                 target,
@@ -2135,7 +2145,9 @@ impl<'s> Pass<'s> {
             // may be one; another group of a member called so is not.
             Ty::Unknown if index == 0 || name.parts[index - 1] == "font" => {
                 return Err(self.no(
-                    format!("`{name}` is set on an object whose type is not known"),
+                    Cause::SetOnUnknownObject {
+                        name: name.to_string(),
+                    },
                     range.start,
                 ));
             }
@@ -2145,10 +2157,7 @@ impl<'s> Pass<'s> {
             "pointSize" => {
                 // A point is the screen's logical DPI / 72 of a pixel,
                 // known only when the file runs (docs/DIALECT.md §4.13).
-                return Err(self.no(
-                    format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}"),
-                    range.start,
-                ));
+                return Err(self.no(Font::PointSize, range.start));
             }
             "bold" => {
                 let weight: Vec<&str> = name.parts[..index]
@@ -2158,11 +2167,7 @@ impl<'s> Pass<'s> {
                     .collect();
                 // Which one wins in Qt depends on the order they are set in.
                 if names.contains(&weight.join(".")) {
-                    return Err(self.no(
-                        "`font.bold` and `font.weight` are both set, and are one `weight` in Ljós"
-                            .into(),
-                        range.start,
-                    ));
+                    return Err(self.no(Font::BoldAndWeight, range.start));
                 }
                 let at = range.start;
                 self.change(range, "weight");
@@ -2181,10 +2186,7 @@ impl<'s> Pass<'s> {
     /// (700) for true, `Font.Normal` (400) for false, as in Qt.
     fn bold_value(&mut self, value: &QmlBindingValue<'_>, at: usize) -> Step {
         let QmlBindingValue::Expression(expression) = value else {
-            return Err(self.no(
-                "`font.bold` is given by a block, which is not lowered yet".into(),
-                at,
-            ));
+            return Err(self.no(Font::BoldBlock, at));
         };
         let span = expression.span();
         let (start, end) = (span.start as usize, span.end as usize);
@@ -2205,7 +2207,7 @@ impl<'s> Pass<'s> {
 
     /// Renames the simple name `name` when it is a member the type `on`
     /// has under another name in Ljós.
-    fn member_name(&mut self, name: &QmlQualifiedName<'_>, on: Ty, what: &str) -> Step {
+    fn member_name(&mut self, name: &QmlQualifiedName<'_>, on: Ty, what: &'static str) -> Step {
         let Some(simple) = name.as_simple() else {
             return Ok(());
         };
@@ -2216,10 +2218,13 @@ impl<'s> Pass<'s> {
         match self.member(simple, on) {
             Rename::To(new) => self.change(span, new),
             Rename::Keep => {}
-            Rename::No(reason) => return Err(self.no(reason, span.start)),
+            Rename::No(cause) => return Err(self.no(cause, span.start)),
             Rename::Unknown => {
                 return Err(self.no(
-                    format!("`{simple}` is set on {what}, whose type is not known"),
+                    Cause::SetOnUnknown {
+                        name: simple.to_owned(),
+                        on: what,
+                    },
                     span.start,
                 ));
             }
@@ -2248,10 +2253,12 @@ impl<'s> Pass<'s> {
                 self.change(span, format!("on{first}{}", chars.as_str()));
             }
             Rename::Keep => {}
-            Rename::No(reason) => return Err(self.no(reason, span.start)),
+            Rename::No(cause) => return Err(self.no(cause, span.start)),
             Rename::Unknown => {
                 return Err(self.no(
-                    format!("`{handler}` handles a signal of an object whose type is not known"),
+                    Cause::HandlerOnUnknown {
+                        handler: handler.to_owned(),
+                    },
                     span.start,
                 ));
             }
@@ -2267,10 +2274,12 @@ impl<'s> Pass<'s> {
         match self.member(name.parts[index], on) {
             Rename::To(new) => self.change(range, new),
             Rename::Keep => {}
-            Rename::No(reason) => return Err(self.no(reason, range.start)),
+            Rename::No(cause) => return Err(self.no(cause, range.start)),
             Rename::Unknown => {
                 return Err(self.no(
-                    format!("`{name}` is set on an object whose type is not known"),
+                    Cause::SetOnUnknownObject {
+                        name: name.to_string(),
+                    },
                     range.start,
                 ));
             }
@@ -2323,11 +2332,12 @@ impl<'s> Pass<'s> {
         if let Some(new) = renames_of(base).and_then(|renames| lookup_rename(renames, name)) {
             // The program's type is built on the native type, not on the
             // face Ljós's API has of it: it answers to Qt's name only.
-            return Rename::No(format!(
-                "`{name}` of `{}` is {}'s, which {MODULE} calls `{new}`, and the program's type has it as `{name}`",
-                natives.name(ty),
-                base.name
-            ));
+            return Rename::No(Cause::NativeRenamed {
+                name: name.to_owned(),
+                native: natives.name(ty).to_string(),
+                base: base.name.to_owned(),
+                new: new.to_string(),
+            });
         }
         if natives.has_member(ty, name) {
             return Rename::Keep;
@@ -2512,13 +2522,17 @@ enum Rename {
     To(String),
     Keep,
     /// The name cannot be lowered, for the reason given.
-    No(String),
+    No(Cause),
     Unknown,
 }
 
-/// Why a file that sets or reads Qt's grab permissions is kept.
-const GRAB_PERMISSIONS: &str =
-    "`grabPermissions` is a gesture's `takeOver` in Ljós's API, which is not built yet";
+/// A Qt type its Ljós module does not have yet.
+fn not_in(name: &str, module: &'static str) -> Cause {
+    Cause::NotInModule {
+        name: name.to_owned(),
+        module,
+    }
+}
 
 /// `grabPermissions`, its change signal or its handler.
 fn is_grab_permissions(name: &str) -> bool {
@@ -2872,10 +2886,10 @@ struct Script<'p, 's> {
 }
 
 impl Script<'_, '_> {
-    fn keep(&mut self, reason: String, at: u32) {
+    fn keep(&mut self, cause: impl Into<Cause>, at: u32) {
         if self.kept.is_none() {
             self.kept = Some(Kept {
-                reason,
+                cause: cause.into(),
                 at: at as usize,
             });
         }
@@ -3025,10 +3039,10 @@ impl Script<'_, '_> {
             && behind.get(name) == Some(false)
     }
 
-    fn row_keep(&mut self, reason: String, at: u32) {
+    fn row_keep(&mut self, cause: Row, at: u32) {
         if self.row.kept.is_none() {
             self.row.kept = Some(Kept {
-                reason,
+                cause: cause.into(),
                 at: at as usize,
             });
         }
@@ -3045,7 +3059,10 @@ impl Script<'_, '_> {
             self.row.wrote.push(name);
         } else {
             self.row_keep(
-                format!("`{what}` would be `{name}`, which an object here has a member of"),
+                Row::Taken {
+                    what: what.to_owned(),
+                    name,
+                },
                 span.start,
             );
         }
@@ -3069,20 +3086,20 @@ impl Script<'_, '_> {
             (_, Some(Rows::OneRole(role))) if role == member => {
                 self.row_write(it.span, "modelData", &what);
             }
-            (_, Some(Rows::OneRole(_))) => self.row_keep(
-                format!("`{what}` reads a role the model does not have, which is `undefined`; take it out"),
-                at,
-            ),
+            (_, Some(Rows::OneRole(_))) => self.row_keep(Row::MissingRole { what }, at),
             (_, Some(Rows::Objects)) => self.row_keep(
-                format!("`{what}` reads a role of an array, which gives none; read `modelData.{member}`, the element's"),
+                Row::RoleOfArray {
+                    what,
+                    member: member.to_owned(),
+                },
                 at,
             ),
-            (_, Some(Rows::Values)) => self.row_keep(
-                format!("`{what}` reads a role of a model of values, which gives none; take it out"),
-                at,
-            ),
+            (_, Some(Rows::Values)) => self.row_keep(Row::RoleOfValues { what }, at),
             (_, Some(Rows::Unknown)) => self.row_keep(
-                format!("`{what}` reads a role of a model the file does not show, which `modelData.{member}` reads only of a model of several roles; give the delegate `required property var {member}`"),
+                Row::RoleOfUnshown {
+                    what,
+                    member: member.to_owned(),
+                },
                 at,
             ),
             (_, None) => self.row_keep(
@@ -3094,15 +3111,12 @@ impl Script<'_, '_> {
 
     /// Why `what`, which reads `part` of a row where the file shows no
     /// view, keeps the file, and what to declare in its place.
-    fn unshown(&self, what: &str, part: &str, declare: &str) -> String {
-        if self.pass.loose {
-            format!(
-                "`{what}` reads {part} of a view the `Component` it is in is not written in the `delegate:` of, or given to by id alone; give the Component's root `required property {declare}`"
-            )
-        } else {
-            format!(
-                "`{what}` reads {part} of a view the file is not shown in; give the root `required property {declare}`"
-            )
+    fn unshown(&self, what: &str, part: &'static str, declare: &str) -> Row {
+        Row::Unshown {
+            what: what.to_owned(),
+            part,
+            declare: declare.to_owned(),
+            in_component: self.pass.loose,
         }
     }
 
@@ -3113,24 +3127,23 @@ impl Script<'_, '_> {
         if let Some(at) = row.read
             && self.declared.iter().any(|d| d == "model")
         {
-            self.keep(
-                "a local is called `model`, as a delegate's row is".into(),
-                at,
-            );
+            self.keep(Row::LocalModel, at);
             return;
         }
         for name in &row.wrote {
             if self.declared.iter().any(|d| d == name) {
                 let at = row.changes.first().map_or(0, |c| c.range.start as u32);
                 self.keep(
-                    format!("a local is called `{name}`, as the row's `{name}` is"),
+                    Row::LocalRow {
+                        name: (*name).to_owned(),
+                    },
                     at,
                 );
                 return;
             }
         }
         if let Some(kept) = row.kept {
-            self.keep(kept.reason, kept.at as u32);
+            self.keep(kept.cause, kept.at as u32);
         }
         self.pass.changes.extend(row.changes);
     }
@@ -3199,11 +3212,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             match self.model() {
                 Model::Own => {}
                 Model::Unsure => {
-                    let reason = format!(
-                        "`model.{}` may read a member of an object whose type is not known",
-                        it.property.name
-                    );
-                    self.row_keep(reason, it.span.start);
+                    let cause = Row::ModelMemberUnknown {
+                        member: it.property.name.to_string(),
+                    };
+                    self.row_keep(cause, it.span.start);
                     return;
                 }
                 Model::Row(rows) => {
@@ -3227,13 +3239,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         }
         if name == "createQmlObject" {
             // The text is compiled when the script runs, as written.
-            self.keep(
-                "it makes objects from QML text, which is not lowered yet".into(),
-                it.property.span.start,
-            );
+            self.keep(Cause::QmlText, it.property.span.start);
         }
         if is_grab_permissions(name) {
-            self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+            self.keep(Cause::GrabPermissions, it.property.span.start);
         }
         // A key of the grab permissions read through a handler's name.
         if let Expression::Identifier(ty) = &it.object
@@ -3242,7 +3251,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             && (key.enumeration.name == "GrabPermissions"
                 || key.enumeration.alias == Some("GrabPermissions"))
         {
-            self.keep(GRAB_PERMISSIONS.into(), it.property.span.start);
+            self.keep(Cause::GrabPermissions, it.property.span.start);
         }
         // An attached object read off an item: `item.Drag.active`. Of
         // anything else the name is a key of its own (`config.Drag`), and a
@@ -3255,7 +3264,6 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 .type_named(name)
                 .is_some_and(|ty| ty.attached().is_some())
         {
-            let only = format!("only an item's is Qt's attached `{name}`");
             let on = match self.ty(&it.object) {
                 // The program's type attaches what the toolkit type it is
                 // built on does.
@@ -3272,21 +3280,23 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                         .change(span.start as usize..span.end as usize, new);
                 }
                 Ty::Exact(ty) | Ty::Derived(ty) => self.keep(
-                    format!(
-                        "`.{name}` is read off a `{}`, which is no item, and {only}",
-                        ty.name
-                    ),
+                    Cause::AttachedOffNoItem {
+                        name: name.to_owned(),
+                        on: ty.name.to_owned(),
+                    },
                     it.property.span.start,
                 ),
                 Ty::Plain | Ty::Font => {}
                 Ty::Native(..) => self.keep(
-                    format!(
-                        "`.{name}` is read off one of the program's own types, built on no type of the toolkit's, and {only}"
-                    ),
+                    Cause::AttachedOffNative {
+                        name: name.to_owned(),
+                    },
                     it.property.span.start,
                 ),
                 Ty::Unknown => self.keep(
-                    format!("`.{name}` is read off something whose type is not known, and {only}"),
+                    Cause::AttachedOffUnknown {
+                        name: name.to_owned(),
+                    },
                     it.property.span.start,
                 ),
             }
@@ -3296,19 +3306,14 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         {
             let on = self.ty(&it.object);
             match (on, name) {
-                (Ty::Font, "bold") => self.keep(
-                    "`.bold` of a font is read or written, and Ljós's font has only a `weight`"
-                        .into(),
-                    it.property.span.start,
-                ),
-                (Ty::Font, "pointSize") => self.keep(
-                    format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}"),
-                    it.property.span.start,
-                ),
+                (Ty::Font, "bold") => self.keep(Font::BoldRead, it.property.span.start),
+                (Ty::Font, "pointSize") => self.keep(Font::PointSize, it.property.span.start),
                 // A row's role or a script's object may be called so too.
                 (Ty::Unknown, _) if !is_renamed_member(name) && self.could_be_font(&it.object) => {
                     self.keep(
-                        format!("`.{name}` is read off something whose type is not known"),
+                        Cause::ReadOffUnknown {
+                            name: name.to_owned(),
+                        },
                         it.property.span.start,
                     );
                 }
@@ -3321,9 +3326,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                         .change(span.start as usize..span.end as usize, new);
                 }
                 Rename::Keep => {}
-                Rename::No(reason) => self.keep(reason, it.property.span.start),
+                Rename::No(cause) => self.keep(cause, it.property.span.start),
                 Rename::Unknown => self.keep(
-                    format!("`.{name}` is read off something whose type is not known"),
+                    Cause::ReadOffUnknown {
+                        name: name.to_owned(),
+                    },
                     it.property.span.start,
                 ),
             }
@@ -3336,7 +3343,9 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             && (is_renamed_member(&key.value) || is_font_member(&key.value))
         {
             self.keep(
-                format!("`[\"{}\"]` names a member Ljós renames", key.value),
+                Cause::ComputedRenamed {
+                    key: key.value.to_string(),
+                },
                 key.span.start,
             );
         }
@@ -3349,10 +3358,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             match self.model() {
                 Model::Own => {}
                 Model::Unsure => {
-                    self.row_keep(
-                        "`model` may be a member of an object whose type is not known".into(),
-                        it.span.start,
-                    );
+                    self.row_keep(Row::ModelMaybeMember, it.span.start);
                 }
                 Model::Row(Some(Rows::Roles)) => {
                     self.row.read.get_or_insert(it.span.start);
@@ -3360,10 +3366,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 }
                 Model::Row(_) => {
                     self.row.read.get_or_insert(it.span.start);
-                    self.row_keep(
-                        "`model` is the row of a model whose roles the file does not show; read the roles it needs by name".into(),
-                        it.span.start,
-                    );
+                    self.row_keep(Row::ModelRolesUnshown, it.span.start);
                 }
             }
             return;
@@ -3389,7 +3392,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                     .is_some_and(|m| m.type_named(name).is_some()))
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
-                self.keep(kept.reason, it.span.start);
+                self.keep(kept.cause, it.span.start);
             } else if name == "GridLayout" {
                 match self.pass.of_layouts(name, it.span.start as usize) {
                     // Its enumerations: `GridLayout.TopToBottom` is `Grid`'s.
@@ -3400,21 +3403,21 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                         }
                     }
                     Ok(false) => {}
-                    Err(kept) => self.keep(kept.reason, it.span.start),
+                    Err(kept) => self.keep(kept.cause, it.span.start),
                 }
             } else if let Err(kept) = self.pass.attached_layout(name, it.span.start as usize) {
-                self.keep(kept.reason, it.span.start);
+                self.keep(kept.cause, it.span.start);
             } else if self.pass.ljos_module_with(name).is_some()
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 // A name the Qt imports lack, read in a script, is the
                 // project's or the context's; lowered, it would be Ljós's.
-                self.keep(kept.reason, it.span.start);
+                self.keep(kept.cause, it.span.start);
             }
             return;
         }
         if is_grab_permissions(name) {
-            self.keep(GRAB_PERMISSIONS.into(), it.span.start);
+            self.keep(Cause::GrabPermissions, it.span.start);
             return;
         }
         // A parameter or a local is found before an id and the scope's
@@ -3437,9 +3440,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         if let Some((ty, old)) = captor {
             let new = renamed_type(ty.name).unwrap_or(ty.name);
             self.keep(
-                format!(
-                    "`{name}` would be the `{new}`'s own once lowered (Qt's `{old}`), not what it names in Qt"
-                ),
+                Cause::OwnOnceLowered {
+                    name: name.to_owned(),
+                    new: new.to_owned(),
+                    old: old.to_string(),
+                },
                 it.span.start,
             );
             return;
@@ -3459,9 +3464,11 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 .pass
                 .change(it.span.start as usize..it.span.end as usize, new),
             Rename::Keep => {}
-            Rename::No(reason) => self.keep(reason, it.span.start),
+            Rename::No(cause) => self.keep(cause, it.span.start),
             Rename::Unknown => self.keep(
-                format!("`{name}` may be a member of an object whose type is not known"),
+                Cause::MaybeMember {
+                    name: name.to_owned(),
+                },
                 it.span.start,
             ),
         }
@@ -3501,10 +3508,9 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         let hides = |on: Ty| !matches!(self.pass.member(&it.name, on), Rename::Keep);
         if is_renamed_member(&it.name) && (hides(self.scope) || hides(self.root)) {
             self.keep(
-                format!(
-                    "a local is called `{}`, as a member Ljós renames is",
-                    it.name
-                ),
+                Cause::LocalCalledRenamed {
+                    name: it.name.to_string(),
+                },
                 it.span.start,
             );
         }

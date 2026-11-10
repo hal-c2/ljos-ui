@@ -130,7 +130,7 @@ fn a_module_of_the_programs_own_types_is_lowered_with_its_import_as_written() {
     ) else {
         panic!("lowered");
     };
-    assert!(kept.reason.contains("not lowered yet"), "{}", kept.reason);
+    assert!(kept.to_string().contains("not lowered yet"), "{}", kept);
 }
 
 #[test]
@@ -165,10 +165,10 @@ fn a_name_ljos_renames_on_a_native_types_toolkit_base_keeps_the_file() {
             panic!("lowered: {body}");
         };
         assert!(
-            kept.reason
+            kept.to_string()
                 .contains("is Rectangle's, which Ljos.Ui calls `fill"),
             "{body}: {}",
-            kept.reason
+            kept
         );
         assert_eq!(kept.at, source.find(at).unwrap(), "{body}");
     }
@@ -181,7 +181,7 @@ fn a_type_the_description_lacks_keeps_the_file() {
         panic!("lowered");
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "`Gauge` is neither a file beside it nor a type of `Studio.Kit` as the program describes it"
     );
     // A file beside it is no type of the module.
@@ -309,7 +309,7 @@ fn a_native_timer_is_found_by_its_place_among_qtquick_and_qtqml() {
         panic!("lowered");
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "`Timer` is Qt's, but in the lowered file the program's `Timer`, imported after the line Ljos.Core takes, would be found first"
     );
 }
@@ -326,7 +326,7 @@ fn a_native_type_a_ljos_module_imported_after_it_has_keeps_the_file() {
         panic!("lowered");
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "`PointerArea` is one of the program's own types, and Ljos.Ui, which the lowered file imports, has a `PointerArea` that would be found first"
     );
 }
@@ -346,7 +346,7 @@ fn an_attached_drag_read_off_a_native_type_is_an_items_where_it_is_built_on_one(
         panic!("lowered");
     };
     assert_eq!(
-        kept.reason,
+        kept.to_string(),
         "`.Drag` is read off one of the program's own types, built on no type of the toolkit's, and only an item's is Qt's attached `Drag`"
     );
 }

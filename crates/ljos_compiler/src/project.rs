@@ -303,10 +303,9 @@ impl<O: TypeOracle> Project<O> {
             && !self.owns_rows(key, &lowered.modules)
         {
             outcome = qml_compat::Outcome::Kept(qml_compat::Kept {
-                reason: format!(
-                    "`{}` is a script of the project's, not the module of this file's rows",
-                    Self::rows_path(key)
-                ),
+                cause: qml_compat::Cause::RowsScript {
+                    path: Self::rows_path(key),
+                },
                 at: 0,
             });
         }
