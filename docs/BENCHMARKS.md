@@ -57,6 +57,50 @@ for id in rectangles form listview; do
 done
 ```
 
+**Against an earlier report.** `--compare <report.json>` compares the new report with an earlier
+one, cell by cell (application, runtime, profile, gesture), by the median of each cell's repeats.
+It writes `compare.md` and `compare.json` beside `report.json`, and lists on stderr each cell that
+got worse. A cell counts as moved when it is higher or lower than before by more than runs of one
+build move between them (see "Noise"):
+
+| Metric | Margin |
+|---|---|
+| First frame, first frame that answers | 25 % + 20 ms |
+| Settled memory, settled private memory | 10 % + 2 MiB |
+| Idle CPU | 10 % + 0.1 % of a core |
+| Driven CPU, driven busiest thread | 10 % + 0.5 % of a core |
+| Driven frame interval p95, lag p95 | 25 % + 8 ms |
+| Lag p50 | 25 % + 4 ms |
+
+Like the bench, a comparison has no floors. It says what moved; it does not fail. With no
+applications to measure, `ljos bench --compare <earlier> --out <dir>` compares the report already
+in `<dir>`. The committed baseline is `bench/baseline/desktop.json`, the report of the last dated
+section below that measured the gallery:
+
+```sh
+mise run bench <ids…> --profile desktop --compare bench/baseline/desktop.json
+```
+
+The baseline is a report with what a comparison does not read taken out: the install sizes, the
+log paths, and each span's wakes, per-thread CPU, instruction counts and frame waits. A section
+that measures the gallery again replaces it the same way:
+
+```sh
+jq --indent 1 '.runs |= map(.install = null | .log = ""
+    | del(.load.woken, .load.thread_cpu_ms, .load.instructions, .load.frames.long, .load.frames.waits_ms,
+          .idle.woken, .idle.thread_cpu_ms, .idle.instructions, .idle.frames.long, .idle.frames.waits_ms))' \
+  target/bench/report.json > bench/baseline/desktop.json
+```
+
+Its numbers are of one machine at one load (the section says which). On another machine, or
+under another load, the cells that moved say where to look, not what got worse.
+
+**Other toolkits.** A manifest app can give the same application written for another toolkit as
+`"commands": {"<runtime>": [program, args…]}`. `--runtime <runtime>` then measures that command
+in the same scope, sandbox and gestures as `ljos` and `qt`. `mise run bench:egui` uses this to
+measure `bench/feed.qml` on Ljós and Qt beside the same window written with egui alone
+(`crates/ljos_egui/examples/feed_egui.rs`); see "Ljós against egui alone" below.
+
 **Where it runs.** The task builds the release `ljos` first. Nothing compiles while it measures.
 `BENCH_PROFILE=dist mise run bench …` builds and measures the `dist` profile instead, the binary
 that is handed out (one LLVM module; the build takes about 15 minutes). The report's notes name
@@ -114,7 +158,7 @@ outside a limit.
 | Frames while idle | screencopy frames over the idle window whose pixels differ from the one before: non-zero only for apps that animate. A runtime that sends the compositor a frame that shows what the last one did (Qt does, in an animation that moves nothing on screen) is not counted for it; those are reported apart, as frames sent. Counts before 2026-10-18 include them |
 | Frame interval while idle | the 95th percentile time between those frames, and the slowest. A pause in an animation is a long interval in either runtime |
 | Wait before driving | the pointer is put where the gesture starts, then the bench waits until the window's pixels have not changed for 300 ms (at most 5 s), so that the input starts on a settled window in every runtime: what the pointer's entry starts, and a startup animation, are over. Not counted in the load. An animation that never pauses that long is driven at 5 s |
-| CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks, evenly over the span, the controls `mise run gallery:drive` clicked in that example, at the same places in every runtime (its `clicks.json`, fractions of the window, used when it found three or more), or else a 5 × 5 grid over the window; `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up |
+| CPU and frames while driven | over `--load` seconds (10) of `--gesture` input (wlr virtual pointer): `click` (default) clicks, evenly over the span, the controls `mise run gallery:drive` clicked in that example, at the same places in every runtime (its `clicks.json`, fractions of the window, used when it found three or more), or else a 5 × 5 grid over the window; `drag` holds the button in its middle and moves up and down a third of its height once a second, `scroll` turns the wheel ten notches down and ten up, `type` clicks the first click point (to give a field the focus) and types lower-case words a key every 80 ms (wlr virtual keyboard), `resize` has the compositor make the window smaller down to 70 % of each side and back every two seconds, a step every 33 ms |
 | Frame interval while driven | the median, 95th percentile and slowest time between the frames that changed then |
 | Mapped install | the files the app maps: runtime, libraries, plugins, fonts |
 | Least memory | the smallest `MemoryMax`, found by bisection, at which the first frame is shown and the app is still running a second later |
@@ -7835,3 +7879,327 @@ DECISIONs:
 - The 4096² limit on desktop stays: the atlas now reaches it only for a frame that draws
   that much text.
 - Checked by Rust tests: neither QML nor the BDD runner (which draws with R) sees B0's atlas.
+
+### Ljós against egui alone, and the gallery against qml6 again (2026-11-10)
+
+Two questions: is Ljós, which draws only what changed, faster than plain egui, which lays out and
+paints the whole window every frame, on an app complex enough for that to show? And has Ljós
+got worse against qml6 since the last gallery table ("Two passes a click", 2026-10-18)?
+
+**The app.** `bench/feed/Feed.qml` is a mail client's window, 1024 × 720: a toolbar with a
+title, three buttons, a search field and a spinner; a sidebar of twelve folders with counts;
+and a `ListView` of 1 000 rows, each 64 px with a check box, a round avatar with initials, a
+name, a subject, a preview line, a time, a coloured tag and a star button.
+`bench/feed.qml` turns the spinner; `bench/feed-still.qml` leaves it still. The same window is
+written with egui alone in `crates/ljos_egui/examples/feed_egui.rs`, as an egui user writes
+it: one immediate-mode pass a frame, with `ScrollArea::show_rows` building only the rows
+scrolled into view, `egui::Spinner` for the spinner, and eframe on egui's GL painter, the
+painter Ljós's shell uses. `mise run bench:egui` measures all three (Ljós, egui and qml6) the
+same way, outside the app, in the sandbox's headless sway (pixman). Each runs in its own scope
+with the same gestures:
+
+| Run | What it measures |
+|---|---|
+| `feed`, idle | only the spinner turns; nothing else changes |
+| `feed`, scroll | the wheel scrolls the list under the turning spinner |
+| `feed-still`, idle | nothing moves (rule 6: 0 % for Ljós) |
+| `feed-still`, drag | a flick: the button held in the middle, moved a third of the height up and down once a second |
+| `feed-still`, scroll | ten wheel notches down and ten up |
+| `feed-still`, type | a click on the search field, then a key every 80 ms |
+| `feed-still`, resize | the window made smaller, down to 70 % of each side, and back, a step every 33 ms |
+
+Each cell is the median of three runs of 10 s (idle 10 s, load 10 s, after `--warm-up`). The
+load average was 5.1–44.5: other lanes' `cargo test` ran throughout, though no build ran while
+the bench measured. "CPU" is the scope's whole CPU, all threads, in % of one core. "Changed
+(sent)" is frames per second whose pixels changed, with the frames sent to the compositor in
+brackets. "Private" is `Pss_Anon`.
+
+| app | gesture | runtime | first frame ms | RSS MiB | private MiB | idle CPU % | idle frames/s | idle p95 ms | driven CPU % | driven frames/s changed (sent) | CPU ms per sent frame | driven p95 ms | lag p95 ms |
+|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| feed | scroll | **Ljós** | 63.0 | 98.6 | 30.0 | **2.80** | 62.4 | 16.1 | **23.3** | 61.8 (61.8) | **3.77** | 16.3 | 15.3 |
+| feed | scroll | egui | 317 | 152 | 45.4 | 104 | 61.5 | 16.4 | 107 | 61.6 (61.6) | 17.4 | 16.4 | 15.3 |
+| feed | scroll | qml6 | 546 | 297 | 128 | 68.4 | 61.4 | 16.4 | 73.5 | 61.5 (61.5) | 11.9 | 16.3 | 15.5 |
+| feed-still | drag | **Ljós** | 74.5 | 100 | 30.6 | 0 | 0 | — | **19.0** | 59.8 (59.8) | **3.18** | 16.3 | 15.6 |
+| feed-still | drag | egui | 341 | 149 | 43.5 | 0 | 0 | — | 97.9 | 60.3 (61.5) | 15.9 | 16.4 | 15.3 |
+| feed-still | drag | qml6 | 518 | 298 | 130 | 0 | 0 | — | 66.4 | 59.8 (59.8) | 11.1 | 16.4 | 15.6 |
+| feed-still | scroll | **Ljós** | 45.0 | 101 | 29.9 | 0 | 0 | — | **23.0** | 61.7 (61.7) | **3.73** | 16.3 | 15.3 |
+| feed-still | scroll | egui | 449 | 152 | 45.5 | 0 | 0 | — | 107 | 61.6 (61.6) | 17.4 | 16.4 | 15.3 |
+| feed-still | scroll | qml6 | 505 | 296 | 130 | 0 | 0 | — | 73.7 | 61.4 (61.5) | 12.0 | 16.3 | 15.5 |
+| feed-still | type | **Ljós** | 108 | 96.5 | 30.0 | 0 | 0 | — | **1.55** | 12.6 (12.6) | 1.23 | 80.7 | **1.39** |
+| feed-still | type | egui | 440 | 151 | 45.5 | 0 | 0 | — | 104 | 12.7 (61.3) | 17.0 | 81.6 | 20.5 |
+| feed-still | type | qml6 | 685 | 294 | 128 | 0 | 0 | — | 15.1 | 12.6 (12.6) | 12.0 | 81.0 | 3.81 |
+| feed-still | resize | **Ljós** | 61.8 | 100 | 30.3 | 0 | 0 | — | **20.9** | 61.3 (61.5) | **3.40** | 16.3 | 15.4 |
+| feed-still | resize | egui | 321 | 155 | 45.4 | 0 | 0 | — | 90.1 | 60.9 (61.1) | 14.7 | 16.5 | 15.3 |
+| feed-still | resize | qml6 | 651 | 296 | 130 | 0 | 0 | — | 160 | 60.7 (61.0) | 26.2 | 16.5 | 15.2 |
+
+What it says:
+
+- **Only the spinner turning.** Ljós uses 2.8 % of a core, egui 104 % (37× more) and qml6
+  68 %. All three show the spinner at the display's rate. egui lays out the whole window and
+  hands its GL painter every vertex of it each frame. llvmpipe then rasterises 1024 × 720 on
+  its 32 threads, which do most of that 104 %. Ljós, on the same software display, draws on the
+  processor (`ljos_shell/src/cpu.rs`): only the spinner's rectangle is drawn again and handed
+  to the compositor as damage, on one thread, with no llvmpipe started. qml6 renders its whole
+  scene graph each frame, as egui does, though its GUI thread does not rebuild the scene.
+- **Idle.** All three are at 0 %: egui and qml6 do not repaint a still window either. Ljós's 0
+  is rule 6. egui's is what eframe does by default.
+- **Driven: flick, scroll, resize.** Every runtime shows every frame (60–62 changed a second),
+  with the same frame intervals (p95 16.3–16.5 ms) and the same lag. Ljós uses 19–23 % of a
+  core, against 90–107 % for egui and 66–160 % for qml6: 3.2–3.8 ms of CPU per frame against
+  egui's 14.7–17.4 and qml6's 11–26. A scroll moves the drawn pixels and draws only the strip
+  that came into view.
+- **Typing.** Ljós uses 1.55 % and qml6 15 %, but egui 104 %: egui sends 61 frames a second for
+  the 12.6 that change. While a `TextEdit` has the focus, it asks for a repaint every frame,
+  for its cursor. Lag p95 from key to frame is 1.4 ms in Ljós, 3.8 ms in qml6 and 20.5 ms in
+  egui. Most likely an egui key waits for the next frame and is shown after its 17 ms of
+  raster; this was not profiled.
+- **Startup and memory.** First frame 45–108 ms against egui's 317–449 and qml6's 505–685.
+  Private memory is 30 MiB against 45 and 130. RSS is 99 MiB against 152 and 297; egui and
+  qml6 also map Mesa's llvmpipe, which Ljós does not start here.
+- **The busiest thread.** Ljós does script, layout and the frame's recording on its main
+  thread, and the raster on three workers. All four threads are named `ljos`. This run's report
+  added them up, so their 19.9–23.3 % looked like one thread's; that was the bench's fault, fixed
+  in Part B. Measured per thread (the table below), Ljós's busiest thread uses 8.6–12.1 % of a
+  core when driven. qml6's `QSGRenderThread` uses 9.6–11.6 % (28.7 % on a resize), and egui's one
+  thread 10.6–14.6 %. No Ljós thread is busier than qml6's busiest.
+
+**Fixed on the way: an animation one frame in eighteen late.** The first run (Ljós at
+6fa689e2a, before the two commits below) showed the spinner at 58.8 frames a second with a
+frame interval p95 of 32.0 ms. egui and qml6 showed 61.8 and 61.7, at 16.3 ms. The
+sandbox's display draws every 16.2 ms (61.7 Hz), but a refresh the window does not know
+counts as 60 Hz. The view asked the host for an animation's next frame at its time,
+16.67 ms after a pass, so passes came 17.1 ms apart once the wake's own latency was added.
+Each frame fell 0.9 ms further behind the display, until one display frame passed with
+nothing new. Two commits:
+
+- `ljos_egui`: the view asks for an animation's next frame half a frame early (the tolerance a
+  due wake already had), so it is waiting when the display takes the last one. The platform
+  then lets it draw at the compositor's frame callback. Pinned by
+  `the_next_animation_frame_is_asked_for_in_time_for_the_display` (crates/ljos_egui/tests/view.rs):
+  60 frames on a display of 16.1 ms are 60 frames drawn.
+- `ljos_shell`: a pass asked for while the window is held (it may not draw again yet) wakes the
+  loop when the hold ends, not when it was asked. The early ask had added a wake each frame
+  that found nothing to do. `features/window/frame-on-time.feature` now pins that the frame is
+  drawn in the frame callback's wake and that no deadline wake between frames does nothing.
+  Wakes a frame are three, as before: the deadline, its ping and the frame callback. The
+  frame is drawn in the third rather than the first.
+
+| run | `bench/animations.qml` frames/s | p95 ms | `bench/feed.qml` frames/s | p95 ms |
+|---|---:|---:|---:|---:|
+| before | 58.4 | 32.1 | 59.2 | 32.0 |
+| view asks early | 62.0 | 16.3 | 62.6 | 16.1 |
+| and the shell's hold | 61.6 | 16.3 | 62.4 | 16.1 |
+| qml6 | 62.6 | 16.1 | 61.8 | 16.3 |
+
+Idle CPU of `animations` went from 5.17 to 7.65–7.87 % for 6 % more frames, at load averages
+of 14–21. That is within what the gallery's bold rule calls noise at that load. Part B below
+measures it again.
+
+The same first run also measured egui's drag at 1.10 changed frames a second. egui's
+`ScrollArea` scrolls by dragging only on touch unless asked. The example now asks for it
+(`ScrollSource::ALL`), as a QML `ListView` flicks to a mouse. In that first run, all three
+runtimes showed a resize at 30 changed frames a second (one a step). Ljós's p95 was 48.3 ms,
+against 33.0 for egui and qml6. In the run above, every runtime shows about 61 a second and
+Ljós's p95 is 16.3 ms. The resize gesture did not change between the runs. What changed is
+Ljós's pacing and the compositor's state, so the earlier resize cells are not compared.
+
+**Measured again at the branch's head** (be11ddf34), after Part B's fixes, from 11:37 to 11:59.
+The load averages were 10.1–35.6, and no build that takes the build slot ran. The busiest thread
+is now one thread:
+
+| app | gesture | runtime | first frame ms | settled RSS MiB | private MiB | idle CPU % | idle frames/s | idle p95 ms | driven CPU % | driven frames/s changed (sent) | CPU ms per sent frame | driven p95 ms | lag p95 ms | busiest thread % (name) |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| feed | scroll | **Ljós** | 87.8 | 93.0 | 23.6 | 5.39 | 62.3 | 16.1 | 25.3 | 61.5 (61.5) | 4.11 | 16.4 | 15.6 | 12.1 (`ljos`) |
+| feed | scroll | egui | 384 | 154 | 45.3 | 104 | 61.4 | 16.4 | 107 | 61.5 (61.5) | 17.4 | 16.4 | 15.7 | 12.3 (`feed_egui`) |
+| feed | scroll | qml6 | 558 | 299 | 131 | 69.1 | 61.4 | 16.4 | 74.7 | 61.5 (61.5) | 12.2 | 16.4 | 15.5 | 11.6 (`QSGRenderThread`) |
+| feed-still | drag | **Ljós** | 73.3 | 92.6 | 23.3 | 0.00 | 0.00 | — | 18.5 | 60.5 (60.5) | 3.06 | 16.3 | 15.5 | 8.6 (`ljos`) |
+| feed-still | drag | egui | 329 | 155 | 45.4 | 0.00 | 0.00 | — | 96.1 | 60.5 (61.6) | 15.6 | 16.3 | 15.3 | 10.6 (`feed_egui`) |
+| feed-still | drag | qml6 | 573 | 297 | 130 | 0.00 | 0.00 | — | 67.3 | 60.1 (60.1) | 11.2 | 16.4 | 15.6 | 9.6 (`QSGRenderThread`) |
+| feed-still | resize | **Ljós** | 85.6 | 91.3 | 23.5 | 0.00 | 0.00 | — | 21.1 | 30.0 (61.6) | 3.43 | 48.3 | 18.2 | 10.2 (`ljos`) |
+| feed-still | resize | egui | 459 | 152 | 43.5 | 0.00 | 0.00 | — | 90.5 | 30.0 (61.2) | 14.8 | 33.1 | 19.7 | 14.6 (`feed_egui`) |
+| feed-still | resize | qml6 | 820 | 293 | 128 | 0.00 | 0.00 | — | 162 | 29.9 (61.1) | 26.5 | 33.1 | 24.6 | 28.7 (`QSGRenderThread`) |
+| feed-still | scroll | **Ljós** | 58.6 | 93.0 | 23.3 | 0.00 | 0.00 | — | 24.6 | 61.4 (61.4) | 4.00 | 16.4 | 15.6 | 11.6 (`ljos`) |
+| feed-still | scroll | egui | 457 | 153 | 45.4 | 0.00 | 0.00 | — | 107 | 61.5 (61.5) | 17.3 | 16.4 | 15.4 | 12.3 (`feed_egui`) |
+| feed-still | scroll | qml6 | 641 | 295 | 130 | 0.00 | 0.00 | — | 73.9 | 61.3 (61.4) | 12.0 | 16.4 | 15.6 | 10.9 (`QSGRenderThread`) |
+| feed-still | type | **Ljós** | 64.3 | 91.1 | 23.2 | 0.00 | 0.00 | — | 1.96 | 12.6 (12.6) | 1.56 | 80.8 | 1.71 | 1.5 (`ljos`) |
+| feed-still | type | egui | 509 | 153 | 43.6 | 0.00 | 0.00 | — | 105 | 12.7 (61.3) | 17.1 | 81.8 | 20.9 | 12.3 (`feed_egui`) |
+| feed-still | type | qml6 | 642 | 296 | 130 | 0.00 | 0.00 | — | 15.0 | 12.6 (12.6) | 12.0 | 81.1 | 4.02 | 2.2 (`QSGRenderThread`) |
+
+- **Memory.** Private memory fell from 30 to 23.3 MiB, from the text compiler fix (Part B).
+- **Unchanged.** The driven gestures, typing and the first frame are within `--compare`'s
+  margins of the first table.
+- **The spinner alone** used 5.39 % instead of 2.80 %, at the same 62 frames a second. In its
+  10 s, the `ljos` threads counted 0.84–1.22 G instructions, against 0.45–0.54 G in the first
+  run. Every driven gesture counted the same within 2 % (17.6 G against 17.3 G on a scroll). The
+  Wayland dispatch thread counted the same instructions in both runs, with twice the CPU time,
+  so the machine was slower per instruction. Nothing between the two builds touches a frame.
+  The main thread and the raster workers share the name `ljos`, so the counter does not say
+  which of them did more. The cause is not established. Either way, Ljós uses 19× less than
+  egui and 13× less than qml6.
+- **The resize** again shows 30 changed frames a second on all three runtimes, as in the first
+  run before the pacing fix. Ljós's frame interval p95 is 48.3 ms, against 33.1. Its lag p95 is
+  the lowest, 18.2 ms against 19.7 and 24.6. The gesture steps every 33 ms, which is 2.04 of the
+  display's frames, so a step shows two or three frames after the one before. All three have
+  intervals of 49 ms (slowest 49.0–49.6), and Ljós has more of them. Not profiled. In the run of
+  the first table, all three showed 61 a second.
+
+**Part B: the gallery and the bench apps against qml6, and against 2026-10-18.** `mise run bench`
+measured the 28 gallery examples of "Two passes a click" (2026-10-18) and the ten `bench/` apps,
+both runtimes, on the desktop profile, with `--warm-up --repeat 3 --settle 3 --idle 5 --load 10`.
+Each cell is the median of three runs. It ran in six chunks. Each chunk held the machine's build
+slot, so no build that takes the slot ran while it measured. Other projects' `cargo test` runs,
+which do not take the slot, ran through every chunk. The load averages of single runs were
+1.2–58.4: chunks 2 and 3 (the first eighteen snippets) ran at 2–7, chunks 1, 4 and 5 at 7–14, and
+chunk 6 started at 30.5. Chunk 5 measured clocks, maroon, samegame and thermostat again after
+the busiest-thread fix below. Chunk 6 measured the bench apps, calqlatr, hangman, todolist, alarms
+and rssnews again after the text compiler fix below. For each app, the table takes its last
+chunk.
+
+The clicks are those `mise run gallery:drive` found for an example (calqlatr's 19 buttons,
+todolist's 5 and its text field, alarms's 8), and a 5 × 5 grid for the rest. On 2026-10-18 every
+example had the grid, so the lag of calqlatr, todolist and alarms is not the same gesture as then.
+Qt in brackets. Bold marks a cell where qml6 is better by more than the gallery's bold rule.
+"Driven busiest thread" is one thread now, not the threads of one name added up (see below).
+
+| example | first frame ms (Qt) | settled MiB (Qt) | private MiB (Qt) | idle CPU % (Qt) | driven CPU % (Qt) | driven busiest thread % (Qt) | lag p50 ms (Qt) | lag p95 ms (Qt) | clicks |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---|
+| photosurface | 241 (454) | 68.1 (124) | 63.0 (111) | **12.6 (5.70)** | 2.39 (2.79) | — (—) | 1 315 (1 384) | 3 936 (3 736) | 25 |
+| snippet-borderimage-defaults | 67.8 (666) | 32.8 (207) | 21.4 (95.5) | 0.00 (0.00) | 0.15 (0.12) | — (—) | — (—) | — (—) | 25 |
+| snippet-vertical-positioner-transition | 113 (1 086) | 49.4 (108) | 23.1 (95.4) | 0.00 (0.00) | 0.23 (0.19) | — (—) | 48.9 (54.2) | 48.9 (54.2) | 25 |
+| snippet-flow-diagram | 72.5 (600) | 43.0 (150) | 21.5 (98.4) | 0.00 (0.00) | 0.15 (0.12) | — (—) | — (—) | — (—) | 25 |
+| snippet-focus-column | 85.6 (434) | 66.8 (102) | 21.3 (96.1) | 0.00 (0.00) | 0.14 (0.11) | — (—) | — (—) | — (—) | 25 |
+| snippet-focus-scopes | 72.0 (621) | 49.0 (251) | 21.5 (101) | 0.00 (0.30) | 0.36 (0.43) | — (—) | 170 (273) | 440 (558) | 25 |
+| snippet-rectangle-smooth | 34.2 (410) | 23.0 (104) | 21.5 (97.0) | 0.00 (0.00) | 0.13 (0.10) | — (—) | — (—) | — (—) | 25 |
+| snippet-texteditor | 34.6 (427) | 22.8 (108) | 21.5 (98.8) | 0.00 (0.25) | 0.33 (0.80) | — (—) | 193 (275) | 465 (550) | 25 |
+| snippet-text-lines | 33.6 (438) | 22.5 (108) | 21.4 (102) | 0.00 (0.00) | 0.12 (0.10) | — (—) | — (—) | — (—) | 25 |
+| snippet-components-application | 43.0 (407) | 23.0 (101) | 21.2 (95.9) | 0.00 (0.00) | 0.16 (0.11) | — (—) | — (—) | — (—) | 25 |
+| snippet-properties-application | 39.6 (431) | 23.2 (109) | 21.9 (103) | 0.00 (0.00) | 0.14 (0.09) | 0.14 (0.06) | — (—) | — (—) | 25 |
+| snippet-alias-application | 41.8 (497) | 26.6 (160) | 21.9 (95.6) | 0.00 (0.00) | 0.14 (0.10) | 0.14 (0.07) | — (—) | — (—) | 25 |
+| snippet-property-signals | 39.6 (432) | 27.9 (99.2) | 23.1 (90.2) | 0.00 (0.00) | 0.11 (0.10) | 0.11 (0.06) | — (—) | — (—) | 25 |
+| snippet-signals-basic | 57.1 (402) | 46.8 (101) | 21.1 (95.5) | 0.00 (0.00) | 0.18 (0.11) | 0.18 (0.07) | — (—) | — (—) | 25 |
+| snippet-signals-parameters | 31.1 (413) | 22.0 (101) | 21.1 (95.5) | 0.00 (0.00) | 0.22 (0.11) | 0.22 (0.08) | — (—) | — (—) | 25 |
+| snippet-signals-no-parameters | 71.1 (408) | 37.2 (101) | 21.1 (95.5) | 0.00 (0.00) | 0.21 (0.12) | 0.20 (0.08) | — (—) | — (—) | 25 |
+| snippet-signals-connectslots | 30.8 (402) | 23.0 (103) | 21.3 (96.2) | 0.00 (0.00) | 0.21 (0.11) | 0.20 (0.08) | — (—) | — (—) | 25 |
+| snippet-signals-connectdynamic | 53.1 (397) | 32.2 (102) | 21.4 (95.7) | 0.00 (0.00) | 0.21 (0.12) | 0.21 (0.09) | — (—) | — (—) | 25 |
+| snippet-methods-app | 36.4 (455) | 22.5 (110) | 21.1 (95.4) | 0.00 (0.00) | 0.19 (0.12) | 0.18 (0.09) | — (—) | — (—) | 25 |
+| animations | 35.9 (661) | 31.8 (157) | 25.5 (104) | 7.48 (23.3) | 5.84 (23.6) | 3.53 (3.37) | 8.39 (9.04) | 15.3 (15.3) | 25 |
+| feed | 42.5 (579) | 37.8 (171) | 30.2 (130) | 2.45 (69.1) | 3.08 (69.1) | 2.11 (9.79) | 7.95 (7.62) | 14.8 (14.1) | 25 |
+| listview | 37.1 (422) | 30.7 (116) | 25.4 (103) | 10.5 (25.0) | 9.73 (24.7) | **7.01 (4.08)** | 8.09 (9.04) | 14.3 (15.1) | 25 |
+| workspace | 82.9 (476) | 44.0 (149) | 32.9 (128) | 0.00 (0.00) | 0.29 (1.26) | 0.20 (0.14) | 1 397 (1 398) | 3 749 (3 750) | 25 |
+| wrapped | 50.3 (649) | 38.9 (145) | 30.7 (99.7) | 24.7 (59.1) | 21.2 (59.8) | **11.7 (8.48)** | 8.11 (6.81) | 15.2 (14.8) | 25 |
+| clocks | 38.1 (442) | 29.0 (110) | 23.8 (99.6) | 4.26 (20.1) | 4.97 (20.2) | 2.62 (2.74) | 8.48 (10.0) | 15.2 (16.2) | 25 |
+| maroon | 82.7 (492) | 53.3 (128) | 41.7 (116) | 14.2 (39.7) | 16.3 (48.6) | **4.32 (3.46)** | 6.01 (7.86) | 14.1 (15.6) | 25 |
+| samegame | 42.8 (602) | 32.7 (225) | 29.0 (110) | 5.32 (26.5) | 55.4 (253) | 16.2 (23.1) | 5.49 (8.91) | **53.3 (16.1)** | 25 |
+| thermostat | 111 (923) | 70.8 (507) | 51.5 (159) | 0.00 (0.00) | 3.46 (4.90) | **3.45 (1.18)** | 1 835 (1 605) | 2 784 (2 546) | 25 |
+| form | 71.6 (512) | 38.5 (141) | 25.4 (126) | 0.00 (0.00) | 0.16 (0.14) | 0.16 (0.10) | — (—) | — (—) | 25 |
+| list1000 | 50.3 (984) | 23.0 (260) | 16.8 (96.2) | 0.00 (0.00) | 0.42 (1.15) | 0.32 (0.27) | 0.78 (1.24) | 1.40 (2.08) | 25 |
+| minimal | 89.9 (485) | 21.0 (117) | 14.3 (89.4) | 0.00 (0.00) | 0.17 (0.11) | 0.17 (0.07) | — (—) | — (—) | 25 |
+| rectangles | 69.9 (634) | 38.6 (230) | 24.5 (117) | 0.00 (0.00) | 0.16 (0.18) | 0.16 (0.14) | — (—) | — (—) | 25 |
+| text | 57.7 (491) | 39.7 (147) | 23.6 (114) | 0.00 (0.00) | 0.15 (0.11) | 0.15 (0.07) | — (—) | — (—) | 25 |
+| calqlatr | 57.0 (493) | 29.2 (118) | 18.6 (105) | 0.00 (0.00) | 1.79 (6.83) | 1.28 (2.01) | 1.99 (18.2) | 583 (583) | 25 |
+| hangman | 48.9 (492) | 19.0 (117) | 15.7 (94.3) | 0.00 (0.00) | 0.17 (0.12) | 0.17 (0.08) | — (—) | — (—) | 25 |
+| rssnews | 76.0 (740) | 66.6 (365) | 49.3 (218) | **4.66 (1.61)** | 1.35 (9.03) | 0.96 (1.13) | **982 (519)** | 1 923 (1 924) | 25 |
+| todolist | 130 (668) | 51.0 (188) | 29.8 (116) | 0.00 (0.00) | 0.82 (1.59) | 0.53 (0.32) | 2 072 (2 072) | 4 142 (4 143) | 25 |
+| alarms | 93.7 (630) | 45.4 (179) | 22.0 (112) | 0.00 (0.00) | 0.26 (9.89) | 0.20 (2.22) | 1.12 (2.13) | 1.95 (42.0) | 25 |
+
+Against qml6, Ljós starts in 31–241 ms against 397–1 086 ms. Its private memory is 14–63 MiB
+against 89–218, and it is never behind on settled memory. Idle, it is at 0 % wherever qml6 is,
+and below qml6 wherever either moves, except photosurface and rssnews. Its total driven CPU is under qml6's on every example
+but the static snippets, where both are 0.1–0.4 % and within the margin. Where qml6 still wins:
+
+| example | cell | Ljós | qml6 | cause |
+|---|---|---:|---:|---|
+| samegame | lag p95 ms | 53.3 | 16.1 | The fifth click of the grid waits 50–59 ms for its frame, against 5–11 ms in qml6. Not profiled: the machine has no `perf`, and a debug build does not show the release's time. |
+| listview, wrapped, maroon | driven busiest thread % | 7.01, 11.7, 4.32 | 4.08, 8.48, 3.46 | Ljós does script, layout and the frame's raster on its main thread. qml6 splits a frame between the GUI thread, `QSGRenderThread` and llvmpipe's threads. In total, Ljós uses 39 %, 35 % and 34 % of qml6's CPU. |
+| thermostat | driven busiest thread % | 3.45 | 1.18 | The same, and its dial's handlers are script on the main thread. Total CPU 3.46 against 4.90. |
+| photosurface | idle CPU % | 12.6 | 5.70 | Both runtimes keep the slideshow moving over a shader backdrop. Ljós draws both on the processor, on its own threads; qml6 hands them to llvmpipe's. |
+| rssnews | idle CPU %, lag p50 ms | 4.66, 982 | 1.61, 519 | Not established. The example reads a live feed. qml6's numbers moved too: its private memory went from 122 to 218 MiB, and Ljós's from 32.7 to 49.3. So the feed is not the one of 2026-10-18. |
+
+Against 2026-10-18, by the gallery's bold rule (first frame 25 % + 20 ms, memory 10 % + 2 MiB,
+CPU and lag as the margins of `--compare`):
+
+- **Better.** Settled memory of almost every example, by 10–59 MiB: calqlatr 51.7 → 29.2,
+  hangman 68.0 → 19.0, the snippets 40–82 → 22–33. Three snippets start 47–152 ms sooner, and
+  clocks and hangman 43 and 118 ms sooner. maroon's idle CPU went from 32.4 % to 14.2 %, and its
+  driven CPU from 36.9 % to 16.3 %. clocks went from 6.0 % to 4.3 % idle. samegame's driven CPU
+  went from 65.1 % to 55.4 %, todolist's from 2.6 % to 0.8 %. alarms's lag p95 went from 47.4 to
+  1.95 ms, on the drive's clicks.
+- **Worse, and why:**
+  - *samegame*: lag p95 34.1 → 53.3 ms (above). Driven busiest thread 14.2 → 16.2 %, while total
+    driven CPU fell. Idle 4.80 → 5.32 %, at the edge of the margin.
+  - *thermostat*: driven CPU 2.40 → 3.46 %, busiest thread 2.20 → 3.45 %. Both are about 1 % of a
+    core. Not traced. qml6 went from 5.9 to 4.9 % on the same clicks, and its busiest thread from 2.0 to 1.18 %.
+  - *rssnews*: idle 0 → 4.66 %, lag p50 514 → 982 ms (above).
+  - *todolist*: lag p95 2 654 → 4 142 ms. These are the drive's clicks, not the grid's, and qml6
+    has 4 143.
+  - *photosurface*: lag p50 456 → 1 315 ms, with qml6 at 1 384 (927 then). Idle 12.2 → 12.6 % is within the margin of 10 %.
+  - *snippet-vertical-positioner-transition*: first frame 65.5 → 113 ms, with qml6's at 1 086 in
+    the same chunk, against its usual 400–700. The load was high when it ran.
+  - *snippet-vertical-positioner-transition, snippet-focus-column*: settled memory 39.1 → 49.4
+    and 42.1 → 66.8 MiB. Settled memory is the scope's, page cache included, and moves with what
+    the cache holds. Private memory is 21–23 MiB, as for every snippet.
+- **Since SHM1 (2026-10-26).** `minimal` had 11.7 MiB private there and 14.3 now (21.8 before
+  the fix below). The 2.6 MiB left were not traced.
+
+**Fixed: the text compiler read every style library at the start.** `minimal` had 21.8 MiB of
+private memory, against 11.7 in SHM1. dhat showed 12.3 MB live after the first frame, 4.8 MB of
+it under `describe_qml_type`. Installing the text compiler (`Qt.createQmlObject`) built an
+`EngineOracle` at once. To describe every type the engine knows, it loads each style library's
+files. Few apps make a text, and those that do make it after the start. The oracle is now
+described at the first text (`crates/ljos/src/texts.rs`, `Oracle::Later`). Pinned by
+`the_types_of_the_engine_are_described_at_the_first_text_not_at_the_start`. dhat on `minimal`:
+12.3 → 6.2 MB live, 4.8 → 0 under `describe_qml_type`, 4.1 → 0.3 under `from_bytes`.
+
+| app | private MiB before | after | qml6 |
+|---|---:|---:|---:|
+| minimal | 21.8 | 14.3 | 89.4 |
+| list1000 | 23.8 | 16.8 | 96.2 |
+| hangman | 22.8 | 15.7 | 94.3 |
+| calqlatr | 25.6 | 18.6 | 105 |
+| text | 29.6 | 23.6 | 114 |
+| rectangles | 31.4 | 24.5 | 117 |
+| form | 31.7 | 25.4 | 126 |
+| alarms | 28.5 | 22.0 | 112 |
+| todolist | 36.1 | 29.8 | 116 |
+
+**Fixed: the busiest thread was the threads of a name.** `driven busiest thread` added up the
+threads that shared a name. Ljós's main thread and the processor renderer's three raster
+workers are all named `ljos`, and their sum was reported as one thread. The bench now reads
+each thread by its id (`busiest_thread`, unit-tested in `ljos_bench`). Chunk 5 measured the four
+examples whose cell had looked worst again: clocks 2.62 % against qml6's 2.74, maroon 4.32 against
+3.46, samegame 16.2 against 23.1, and thermostat 3.45 against 1.18.
+
+**Fixed: `gallery:drive` did not find a started app.** It looked for the inspector's token under
+`$CARGO_TARGET_DIR`, while the app writes it under the project's `target/ljos`. So every example
+"did not start". Now it clicks calqlatr's, todolist's and alarms's controls. alarms then logs
+"Cannot create delegate" and "Required property dayOfWeek was not initialized"
+(`AlarmDelegate.qml:80–82`). That is a fault of Ljós's or the example's, left open here.
+
+**The baseline.** `bench/baseline/desktop.json` is this section's report, trimmed as above: 228
+runs of 38 apps, merged from the three reports of the day (chunks 1–4, chunk 5 and chunk 6, the
+last of each app). `ljos bench --compare bench/baseline/desktop.json --out <dir>` against chunk
+6's own report says "0 cells worse, 0 better", as it should.
+
+Decisions:
+
+- DECISION: the plain-egui window is an example of `ljos_egui`
+  (`crates/ljos_egui/examples/feed_egui.rs`). Rule 4 keeps egui in that crate. An example is
+  built only when asked, so no runtime crate links it.
+- DECISION: another toolkit's app is a manifest entry's `commands`, measured in the same scope
+  and gestures. No runtime is named in the bench's code. A runtime that no app has a command for
+  is a refusal (exit 2), not an empty report.
+- DECISION: the scenarios are the bench's gestures (`--gesture`: click, drag, scroll, type,
+  resize, each with an idle span before it), not a `--scenario` script. Each is general to any app, and the five cover what Part A
+  asked for.
+- DECISION: `--compare` takes its margins from "Noise" and the gallery's bold rule, compares
+  medians, and never fails. The bench has no floors, and a shared machine moves timings by more
+  than a floor could allow.
+- DECISION: the baseline lives in `bench/baseline/desktop.json`, beside the apps it measures,
+  for the desktop profile only. The other profiles had no gallery run to keep.
+- DECISION: this section's runs held the machine's build slot (`flock` on the slot `capped`
+  takes), so no build that goes through it ran under them. The bench itself takes no lock: a
+  machine without `capped` has no slot to take.
+- DECISION: the egui example scrolls by mouse drag (`ScrollSource::ALL`), as a `ListView`
+  flicks.
+- DECISION: `busiest_thread` per thread id is pinned by a unit test of `ljos_bench`, not a
+  scenario. It is how the report reads `/proc`, not behaviour a user sees.
