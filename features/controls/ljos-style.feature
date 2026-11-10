@@ -779,6 +779,35 @@ Feature: Ljós's own style: the controls of Ljos.Controls
       Then the property "width" of "short" is 220
       And the property "width" of "wide" is 360
 
+  Rule: A combo box's popup says which way it opened
+
+    # Its rows are made as it says it is about to show, so a rule that
+    # chose the side then saw a popup of no rows.
+    Scenario Outline: A combo box <where> opens <way>
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 300
+          ComboBox {
+            id: c; objectName: "c"; x: 10; y: <y>; width: 160
+            model: ["One", "Two", "Three", "Four"]
+          }
+          function show() { c.popup.open() }
+          readonly property bool below: c.popup.y >= c.height
+        }
+        """
+      When the method "show" of "root" is called
+      Then the property "popup.upward" of "c" is <upward>
+      And the property "below" of "root" is <below>
+
+      Examples:
+        | where                     | way    | y   | upward | below |
+        | with room below           | below  | 100 | false  | true  |
+        | at the foot of the window | upward | 250 | true   | false |
+
   Rule: The tool tip of a control is drawn in the control's style
 
     Scenario: A button's tool tip is the style's
