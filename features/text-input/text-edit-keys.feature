@@ -142,6 +142,35 @@ Feature: Editing a TextEdit with the keyboard
         | GNOME      |
         | KDE Plasma |
 
+  Rule: A word is never taken over the start or the end of a paragraph
+
+    Scenario Outline: <key> at <from> of "xy" and " cd" goes to <to>
+      When the property "text" of "edit" is set to "xy\n cd"
+      And the property "cursorPosition" of "edit" is set to <from>
+      And the user presses "<key>"
+      Then the property "cursorPosition" of "edit" is <to>
+
+      Examples:
+        | key        | from | to |
+        | Ctrl+Left  | 4    | 3  |
+        | Ctrl+Left  | 3    | 2  |
+        | Ctrl+Right | 2    | 3  |
+        | Ctrl+Right | 3    | 4  |
+
+    Scenario Outline: <key> at <from> of "xy" and " cd" leaves "<text>"
+      When the property "text" of "edit" is set to "xy\n cd"
+      And the property "cursorPosition" of "edit" is set to <from>
+      And the user presses "<key>"
+      Then the property "text" of "edit" is "<text>"
+      And the property "cursorPosition" of "edit" is <to>
+
+      Examples:
+        | key            | from | text    | to |
+        | Ctrl+Backspace | 4    | xy\\ncd | 3  |
+        | Ctrl+Backspace | 3    | xy cd   | 2  |
+        | Ctrl+Delete    | 2    | xy cd   | 2  |
+        | Ctrl+Delete    | 3    | xy\\ncd | 3  |
+
   Rule: A key the TextEdit does not use goes on to its parents
 
     Scenario Outline: <key> at position <from> is passed on
