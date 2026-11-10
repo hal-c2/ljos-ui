@@ -128,7 +128,10 @@ fn application_observed(w: &mut LjosWorld) -> StepResult {
 fn observer_clicked(w: &mut LjosWorld, locator: String) -> StepResult {
     let locator = unquoted(&locator);
     w.each(|b| {
-        b.probes()?
+        let probes = b.probes()?;
+        // What is clicked may be what an answer still on its way shows.
+        observer_until(probes, &locator, true)?;
+        probes
             .observer_call("app_click", serde_json::json!({ "target": locator }))
             .map(|_| ())
     })
@@ -151,13 +154,11 @@ fn observer_has(w: &mut LjosWorld, locator: String) -> StepResult {
 
 fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResult {
     w.each(|b| {
-        let found = b
-            .probes()?
-            .observer_call("app_find", serde_json::json!({ "locator": locator }))?;
-        let count = found["total"].as_u64().unwrap_or(0);
+        let probes = b.probes()?;
+        let count = observer_until(probes, locator, present)?;
         match (present, count) {
             (true, 0) => {
-                let seen = b.probes()?.observer_call(
+                let seen = probes.observer_call(
                     "app_find",
                     serde_json::json!({ "locator": "text=", "limit": 200 }),
                 )?;
@@ -170,15 +171,67 @@ fn observer_matches(w: &mut LjosWorld, locator: &str, present: bool) -> StepResu
                     })
                     .unwrap_or_default();
                 Err(BackendError::Failed(format!(
-                    "the observer shows nothing matching {locator}; it shows {names:?}"
+                    "the observer showed nothing matching {locator} in {} s; it shows {names:?}",
+                    OBSERVER_ANSWERS.as_secs()
                 )))
             }
             (false, 1..) => Err(BackendError::Failed(format!(
-                "the observer shows {count} matching {locator}"
+                "the observer still shows {count} matching {locator} after {} s",
+                OBSERVER_ANSWERS.as_secs()
             ))),
             _ => Ok(()),
         }
     })
+}
+
+/// How long the observer may take to show what it asked its application
+/// for: as long as it waits for an answer itself (`ljos observe`'s
+/// `PATIENCE`).
+const OBSERVER_ANSWERS: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How many items `locator` finds in the observer's window once it does
+/// (`present`) or does not show them, or when [`OBSERVER_ANSWERS`] is
+/// over. A click on the observer returns when its window rests, which it
+/// does while what it asked the application is still on its way: the
+/// Audit page says "Auditing…" until the audit answers. The window is
+/// looked at again only after it ran a frame, never on a timer: an answer
+/// shown runs one, and finding items in it runs none.
+fn observer_until(
+    probes: &mut dyn crate::backend::Probes,
+    locator: &str,
+    present: bool,
+) -> Result<u64, BackendError> {
+    let deadline = std::time::Instant::now() + OBSERVER_ANSWERS;
+    // Without `since` the counts are answered at once. They are taken
+    // before the window is looked at, so that a frame run between the two
+    // is not missed.
+    let told = probes.observer_call("app_watch", serde_json::json!({ "topics": ["frames"] }))?;
+    let mut frames = told["counts"]["frames"].as_u64();
+    loop {
+        let found = probes.observer_call("app_find", serde_json::json!({ "locator": locator }))?;
+        let count = found["total"].as_u64().unwrap_or(0);
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if (count > 0) == present || left.is_zero() {
+            return Ok(count);
+        }
+        let Some(since) = frames else {
+            // An inspector that counts no frames cannot say when to look
+            // again: what it shows now is the answer.
+            return Ok(count);
+        };
+        let wait_ms = u64::try_from(left.as_millis()).unwrap_or(u64::MAX).max(1);
+        let told = probes.observer_call(
+            "app_watch",
+            serde_json::json!({
+                "since": { "frames": since },
+                "topics": ["frames"],
+                "wait_ms": wait_ms,
+                // A burst of frames is one look.
+                "settle_ms": 100,
+            }),
+        )?;
+        frames = told["counts"]["frames"].as_u64().or(frames);
+    }
 }
 
 // The observer is itself an application with a window: the audit it
