@@ -86,6 +86,56 @@ Feature: A module imported from a directory of another's choosing
       import QtQuick
       Item { property string source: "shipped" }
       """
+    And the file "game/CMakeLists.txt":
+      """
+      qt_add_qml_module(game
+          URI Game.Play
+          NO_RESOURCE_TARGET_PATH
+          SOURCES
+              board.cpp
+              store.cpp
+          QML_FILES
+              qml/Main.qml
+              qml/Board.qml
+              qml/Picture.qml
+      )
+      """
+    And the file "game/qml/Main.qml":
+      """qml
+      import QtQuick
+      import Game.Play
+      Item {
+        Board { objectName: "board" }
+        Store { objectName: "store" }
+        Picture {}
+      }
+      """
+    And the file "game/qml/Picture.qml":
+      """qml
+      import QtQuick
+      Item { Board { objectName: "drawing" } }
+      """
+    And the file "game/qml/Board.qml":
+      """qml
+      import QtQuick
+      Item { property string source: "the file beside it" }
+      """
+    And the file "game/standins/Game/Play/qmldir":
+      """
+      module Game.Play
+      Board 1.0 Board.qml
+      Store 1.0 Store.qml
+      """
+    And the file "game/standins/Game/Play/Board.qml":
+      """qml
+      import QtQuick
+      Item { property string source: "stand-in" }
+      """
+    And the file "game/standins/Game/Play/Store.qml":
+      """qml
+      import QtQuick
+      Item { property bool available: false }
+      """
     And the QML:
       """qml
       import QtQuick
@@ -97,6 +147,22 @@ Feature: A module imported from a directory of another's choosing
     Scenario: A module of native code does not hide the stand-in the application ships
       When the application watches the roots "app" for the entries "Native"
       Then the property "source" of "player" is "shipped"
+
+  Rule: A stand-in for a module of native code and QML
+
+    A project's module may register types from native code beside its QML
+    files, one of them of the same name as a file of its own. A stand-in
+    for the module gives the native types; a file of the module that does
+    not import it still has the file beside it.
+
+    Scenario: The file that imports the module has the stand-in's types
+      When the application watches the roots "game" for the entries "qml/Main" with the module "Game.Play" aliased to "game/standins/Game/Play"
+      Then the property "source" of "board" is "stand-in"
+      And the property "available" of "store" is false
+
+    Scenario: A file of the module that does not import it has the file beside it
+      When the application watches the roots "game" for the entries "qml/Main" with the module "Game.Play" aliased to "game/standins/Game/Play"
+      Then the property "source" of "drawing" is "the file beside it"
 
   Rule: An alias given at the start
 
