@@ -1625,11 +1625,11 @@ impl QuickScene {
                 return engine.emit_by_name(att, signal, &[]).is_ok();
             }
         }
-        let pressed = self.pointer_event(engine, &PointerEvent::press(x, y, now));
-        let released = self.pointer_event(engine, &PointerEvent::release(x, y, now));
+        let pressed = self.made_pointer_event(engine, &PointerEvent::press(x, y, now));
+        let released = self.made_pointer_event(engine, &PointerEvent::release(x, y, now));
         // No pointer is there: without this a hover-enabled area would
         // stay hovered.
-        self.pointer_event(engine, &PointerEvent::leave(now));
+        self.made_pointer_event(engine, &PointerEvent::leave(now));
         pressed || released
     }
 

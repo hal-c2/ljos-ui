@@ -91,9 +91,11 @@ pub(crate) fn deliver(scene: &mut QuickScene, engine: &Engine, what: &PlatformTe
                 _ => None,
             }
             .unwrap_or(key::UNKNOWN);
-            let taken = scene.key_event(engine, &KeyEvent::press(code).with_text(text.as_str()));
+            // It says nothing of the modifiers: the pass's stay held.
+            let press = KeyEvent::press(code).with_text(text.as_str());
+            let taken = scene.key_event_from_text(engine, &press);
             // No release will come for a key egui does not report.
-            scene.key_event(engine, &KeyEvent::release(code).with_text(text.as_str()));
+            scene.key_event_from_text(engine, &KeyEvent::release(code).with_text(text.as_str()));
             taken
         }
         PlatformText::Preedit { text, cursor } => scene.ime_preedit(engine, text, *cursor),

@@ -11,6 +11,7 @@ use egui::{
     TouchPhase, Ui, Vec2,
 };
 use ljos_engine::{Engine, EngineError, ObjectId};
+use ljos_quick::keys::set_keyboard_modifiers;
 use ljos_quick::{
     Clipboard, Item, MouseButtons, PointerEvent, PointerId, PointerKind, PointerSource, QuickScene,
     TimerHook, WheelEvent,
@@ -783,7 +784,8 @@ impl QmlView {
             m.move_focus(FocusDirection::None);
         });
         let events = ui.input(|i| i.events.clone());
-        let keys = self.keys.translate(&events, ctx.os());
+        let os = ctx.os();
+        let keys = self.keys.translate(&events, os);
         let texts = text::collect(&events, &keys);
         if keys.is_empty() && texts.is_empty() {
             return;
@@ -804,7 +806,7 @@ impl QmlView {
         for k in &keys {
             let at = k.sources[0].unwrap_or(usize::MAX);
             while let Some((i, t)) = texts.next_if(|(i, _)| *i < at) {
-                self.deliver_text(i, &t, &mut taken);
+                self.deliver_text(&events[..i], os, i, &t, &mut taken);
             }
             // The platform read its clipboard for the paste: an editor
             // that takes the chord pastes that.
@@ -821,7 +823,7 @@ impl QmlView {
             }
         }
         for (i, t) in texts {
-            self.deliver_text(i, &t, &mut taken);
+            self.deliver_text(&events[..i], os, i, &t, &mut taken);
         }
         self.gate.held.set(held);
 
@@ -848,7 +850,23 @@ impl QmlView {
 
     /// Hands text that is not a key press to the scene; `at` is its place
     /// in the pass's events, noted in `taken` when an item took it.
-    fn deliver_text(&mut self, at: usize, what: &text::PlatformText, taken: &mut Vec<usize>) {
+    fn deliver_text(
+        &mut self,
+        before: &[Event],
+        os: egui::os::OperatingSystem,
+        at: usize,
+        what: &text::PlatformText,
+        taken: &mut Vec<usize>,
+    ) {
+        // Text says nothing of the modifiers: the ones held as it was
+        // typed are the last egui told of before it.
+        let held = before.iter().rev().find_map(|e| match e {
+            Event::ModifiersChanged(m) | Event::Key { modifiers: m, .. } => Some(*m),
+            _ => None,
+        });
+        if let Some(m) = held {
+            set_keyboard_modifiers(&self.engine, map_modifiers(m, os));
+        }
         self.stats.text_events += 1;
         if text::deliver(&mut self.scene, &self.engine, what) {
             self.stats.texts_accepted += 1;
@@ -1118,13 +1136,18 @@ impl QmlView {
     fn deliver_input(&mut self, ui: &Ui, rect: Rect, now: Time) {
         let ctx = ui.ctx();
         let (events, modifiers) = ui.input(|i| (i.events.clone(), i.modifiers));
+        let os = ctx.os();
+        let mods = map_modifiers(modifiers, os);
+        // egui tells a modifier key only as a change of the pass's
+        // modifiers, never as a key event, and typed text says nothing of
+        // them. The pass's events, given below, say it again for their own
+        // time.
+        set_keyboard_modifiers(&self.engine, mods);
         if events.is_empty() {
             self.show_cursor(ctx);
             self.keep_wheel(ui);
             return;
         }
-        let os = ctx.os();
-        let mods = map_modifiers(modifiers, os);
         let clip = ui.clip_rect();
         let layer = ui.layer_id();
         // A press or hover only belongs to the view when nothing egui drew

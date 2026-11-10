@@ -3317,6 +3317,14 @@ impl QuickScene {
     /// Delivers a pointer event (pipeline steps 1-2). Returns whether an
     /// item or handler took it.
     pub fn pointer_event(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+        crate::keys::note_pointer(engine, ev);
+        self.made_pointer_event(engine, ev)
+    }
+
+    /// [`QuickScene::pointer_event`] for one the scene made itself, of a
+    /// touch or for an assistive technology: it says nothing of the
+    /// keyboard, so the modifiers held stay as they were.
+    pub(crate) fn made_pointer_event(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
@@ -3455,6 +3463,7 @@ impl QuickScene {
         buttons: MouseButtons,
     ) -> bool {
         self.note_input();
+        crate::keys::set_keyboard_modifiers(engine, ev.modifiers);
         let hits = self.hits(engine, ev.pos);
         crate::wheel::deliver(engine, &hits, ev, buttons)
     }
