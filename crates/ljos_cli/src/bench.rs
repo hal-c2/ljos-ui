@@ -248,10 +248,15 @@ impl Bench {
         );
 
         for name in &self.runtime {
-            anyhow::ensure!(
-                name == "ljos" || name == "qt" || apps.iter().any(|a| a.commands.contains_key(name)),
-                "no runtime {name:?}: ljos, qt, or one an app of the manifest gives a command for"
-            );
+            if !(name == "ljos"
+                || name == "qt"
+                || apps.iter().any(|a| a.commands.contains_key(name)))
+            {
+                eprintln!(
+                    "ljos bench: no runtime {name:?}: ljos, qt, or one an app of the manifest gives a command for"
+                );
+                return Ok(REFUSED);
+            }
         }
         let mut profiles = Vec::new();
         for name in &self.profile {
