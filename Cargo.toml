@@ -88,6 +88,10 @@ icu_properties = { version = "2.3", default-features = false, features = ["compi
 yeslogic-fontconfig-sys = "6.0.1"
 # Must match the skrifa that vello_cpu, parley and epaint use, so the font stack is not duplicated.
 skrifa = "0.44"
+# WOFF2 and WOFF to the TrueType/OpenType bytes Fontique reads (FontLoader).
+# Pure Rust, MIT; its Brotli and zlib decoders are the brotli-decompressor
+# and flate2 (miniz_oxide) the workspace already links.
+wuff = "=0.2.9"
 # Fills a flattened outline with triangles: ljos_render's B0 shapes and the
 # 3D helpers' extruded text.
 lyon_tessellation = "1.0.22"

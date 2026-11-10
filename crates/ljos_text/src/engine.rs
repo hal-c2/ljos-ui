@@ -2733,8 +2733,8 @@ impl TextEngine {
         self.direct.reused = 0;
     }
 
-    /// Add a font file (TrueType, OpenType, or a collection). Returns the
-    /// family names it provides.
+    /// Add a font file (TrueType, OpenType, a collection, or one of those
+    /// packed as WOFF2 or WOFF). Returns the family names it provides.
     pub fn register_font(&mut self, bytes: Vec<u8>) -> Result<Vec<String>, FontError> {
         let names = fonts::register(&mut self.fcx, bytes)?;
         self.hold(names.iter().map(String::as_str));
