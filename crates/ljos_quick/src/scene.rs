@@ -66,7 +66,9 @@ use crate::anchors;
 use crate::animation::shown::Shown;
 use crate::enums::gesture_policy;
 use crate::handlers::{grab_transition, point_state};
-use crate::input::{MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, TapHandler};
+use crate::input::{
+    MouseArea, MouseButtons, MouseEvent, PointerEvent, PointerKind, PointerSource, TapHandler,
+};
 use crate::item::{Item, init_item, is_a, is_item, num, scene_transform, write_computed};
 use crate::item_picture::PictureArea;
 use crate::loader::{Loader, shown_children};
@@ -3327,6 +3329,33 @@ impl QuickScene {
     /// one from a window without the keyboard, which the platform tells of
     /// no modifiers while another window of the application has them.
     pub fn pointer_event_without_keyboard(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
+        // As on qml6, a button pressed or let go where the pointer was not
+        // is the pointer moving there first: what it left stops being
+        // hovered, and a tool tip shown for that is gone, before the press
+        // lands (`features/input/press-moves-pointer-first.feature`). Every
+        // window system's events come this way, so none of them has to.
+        // A finger has no hover to move, and qml6 tells its press alone.
+        let mut moved = false;
+        if let (PointerKind::Press | PointerKind::Release, Some(button)) = (ev.kind, ev.button)
+            && ev.source.device != PointerSource::FINGER.device
+            && self.pointer.at != Some(ev.pos)
+        {
+            let before = match ev.kind {
+                PointerKind::Press => ev.buttons - button,
+                _ => ev.buttons | button,
+            };
+            let to = PointerEvent {
+                kind: PointerKind::Move,
+                button: None,
+                buttons: before,
+                ..*ev
+            };
+            moved = self.deliver_pointer(engine, &to);
+        }
+        self.deliver_pointer(engine, ev) || moved
+    }
+
+    fn deliver_pointer(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
