@@ -464,6 +464,10 @@ pub(crate) struct InlineBuf {
     pub(crate) text: String,
     pub(crate) spans: Vec<Span>,
     pub(crate) images: Vec<InlineImage>,
+    /// The length of the text when it ends in white space made a no-break
+    /// space (`white-space: nowrap`): white space after it collapses into
+    /// it, as after a space, where after a `&nbsp;` it would not.
+    pub(crate) nowrap_space_end: Option<usize>,
 }
 
 impl InlineBuf {
@@ -496,6 +500,7 @@ impl InlineBuf {
     /// Cut the text back to `len` bytes (a character boundary).
     pub(crate) fn truncate(&mut self, len: usize) {
         self.text.truncate(len);
+        self.nowrap_space_end = self.nowrap_space_end.filter(|end| *end <= len);
         self.spans.retain_mut(|s| {
             s.range.end = s.range.end.min(len);
             s.range.start < s.range.end

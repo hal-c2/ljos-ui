@@ -57,8 +57,8 @@ struct Open {
     style: Inline,
     /// It is a box of the flow (closing it closes a [`Ctx`]).
     boxed: bool,
-    /// White space inside is kept.
-    pre: bool,
+    /// What becomes of white space inside.
+    white_space: WhiteSpace,
     /// An editor wrote it as an empty paragraph
     /// (`-qt-paragraph-type:empty`): its `<br />` is the paragraph's own
     /// line, not a break in it.
@@ -67,6 +67,37 @@ struct Open {
     always: bool,
     /// A `ul` or `ol`: its bullets and how many items it has so far.
     list: Option<(Marker, u32)>,
+}
+
+/// How white space in the text of an element is read, after its CSS
+/// `white-space`. That `pre` and `nowrap` do not wrap their lines at all is
+/// not here: whether a line wraps is the item's `wrapMode`, for every block.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum WhiteSpace {
+    /// `normal`: a run of white space is one space, and none at the start
+    /// of a line.
+    #[default]
+    Collapse,
+    /// `nowrap`: as `normal`, but the one space is a no-break space, so the
+    /// line does not wrap at it (measured on Qt 6.11).
+    NoWrap,
+    /// `pre`, `pre-wrap` and `<pre>`: every space is kept, and a line feed
+    /// ends the paragraph.
+    Keep,
+    /// `pre-line`: spaces collapse, a line feed ends the paragraph.
+    Lines,
+}
+
+impl WhiteSpace {
+    fn of(value: &str) -> Option<Self> {
+        match value.to_ascii_lowercase().as_str() {
+            "normal" => Some(Self::Collapse),
+            "nowrap" => Some(Self::NoWrap),
+            "pre" | "pre-wrap" => Some(Self::Keep),
+            "pre-line" => Some(Self::Lines),
+            _ => None,
+        }
+    }
 }
 
 struct TableState {
@@ -93,6 +124,10 @@ struct Parser<'a> {
     /// opened one, whatever it closed first.
     opened: u64,
     sheet: Sheet,
+    /// A box that keeps line feeds was just opened: a line feed right
+    /// after its start tag is not part of its text (measured on Qt 6.11,
+    /// as HTML has it for `<pre>`).
+    skip_line_feed: bool,
 }
 
 pub(crate) fn parse(source: &str) -> Vec<Block> {
@@ -105,6 +140,7 @@ pub(crate) fn parse(source: &str) -> Vec<Block> {
         table: None,
         opened: 0,
         sheet: Sheet::default(),
+        skip_line_feed: false,
     };
     p.run();
     p.finish()
@@ -154,8 +190,8 @@ impl<'a> Parser<'a> {
             .unwrap_or_default()
     }
 
-    fn pre(&self) -> bool {
-        self.open.last().is_some_and(|o| o.pre)
+    fn white_space(&self) -> WhiteSpace {
+        self.open.last().map(|o| o.white_space).unwrap_or_default()
     }
 
     /// Where text goes: the open table cell, or the block being collected.
@@ -169,18 +205,65 @@ impl<'a> Parser<'a> {
     }
 
     fn text(&mut self, s: &str) {
+        let mut s = s;
+        if std::mem::take(&mut self.skip_line_feed) {
+            s = s.strip_prefix('\n').unwrap_or(s);
+        }
         if s.is_empty() {
             return;
         }
+        let white_space = self.white_space();
+        if matches!(white_space, WhiteSpace::Collapse | WhiteSpace::NoWrap) {
+            self.collapsed(s, white_space);
+            return;
+        }
+        for (i, line) in s.split('\n').enumerate() {
+            if i > 0 {
+                self.line_feed(white_space);
+            }
+            if white_space == WhiteSpace::Keep {
+                let style = self.style();
+                if let Some(buf) = self.target() {
+                    buf.push(line, &style);
+                }
+            } else {
+                self.collapsed(line, white_space);
+            }
+        }
+    }
+
+    /// A line feed where line feeds are kept. Measured on Qt 6.11: it ends
+    /// the paragraph, and the next one has the same format; an empty line
+    /// is an empty paragraph.
+    fn line_feed(&mut self, white_space: WhiteSpace) {
+        // A table cell has no paragraphs of its own, and a `<pre>` block
+        // holds its lines (each one a paragraph to an editor).
+        let in_block = self.table.is_some() || self.flow.kind() == Some(BlockKind::Code);
         let style = self.style();
-        let pre = self.pre();
         let Some(buf) = self.target() else {
             return;
         };
-        if pre {
-            buf.push(s, &style);
-            return;
+        if white_space == WhiteSpace::Lines && buf.text.ends_with(' ') {
+            buf.truncate(buf.text.len() - 1);
         }
+        if in_block {
+            buf.push("\n", &style);
+        } else {
+            self.flush(true);
+        }
+    }
+
+    /// Text whose runs of white space are one space each.
+    fn collapsed(&mut self, s: &str, white_space: WhiteSpace) {
+        let style = self.style();
+        let Some(buf) = self.target() else {
+            return;
+        };
+        let space = if white_space == WhiteSpace::NoWrap {
+            "\u{a0}"
+        } else {
+            " "
+        };
         let mut word = 0;
         for (i, c) in s.char_indices() {
             if !c.is_ascii_whitespace() {
@@ -188,8 +271,13 @@ impl<'a> Parser<'a> {
             }
             buf.push(&s[word..i], &style);
             word = i + 1;
-            if !buf.is_empty() && !buf.text.ends_with([' ', '\n']) {
-                buf.push(" ", &style);
+            let after_space =
+                buf.text.ends_with([' ', '\n']) || buf.nowrap_space_end == Some(buf.text.len());
+            if !buf.is_empty() && !after_space {
+                buf.push(space, &style);
+                if white_space == WhiteSpace::NoWrap {
+                    buf.nowrap_space_end = Some(buf.text.len());
+                }
             }
         }
         buf.push(&s[word..], &style);
@@ -197,8 +285,11 @@ impl<'a> Parser<'a> {
 
     fn line_break(&mut self) {
         let style = self.style();
+        // Measured on Qt 6.11: only under `normal` is the space before a
+        // break dropped (`nowrap` and `pre-line` keep it).
+        let collapse = self.white_space() == WhiteSpace::Collapse;
         if let Some(buf) = self.target() {
-            if buf.text.ends_with(' ') {
+            if collapse && buf.text.ends_with(' ') {
                 buf.truncate(buf.text.len() - 1);
             }
             buf.push("\n", &style);
@@ -207,6 +298,7 @@ impl<'a> Parser<'a> {
 
     /// At an `&`: a character when it names one, itself otherwise.
     fn reference(&mut self) {
+        self.skip_line_feed = false;
         let rest = &self.src[self.at + 1..];
         let name_len = rest
             .find(|c: char| !(c.is_ascii_alphanumeric() || c == '#'))
@@ -229,6 +321,7 @@ impl<'a> Parser<'a> {
 
     /// At a `<`. False when it swallows the rest of the text.
     fn tag(&mut self) -> bool {
+        self.skip_line_feed = false;
         let rest = &self.src[self.at + 1..];
         if let Some(comment) = rest.strip_prefix("!--") {
             let Some(end) = comment.find("-->") else {
@@ -307,7 +400,7 @@ impl<'a> Parser<'a> {
             name: name.into(),
             style: self.style(),
             boxed: false,
-            pre: self.pre(),
+            white_space: self.white_space(),
             empty: false,
             always: false,
             list: None,
@@ -404,6 +497,9 @@ impl<'a> Parser<'a> {
                 open.empty = css.contains("-qt-paragraph-type:empty");
             }
         }
+        self.skip_line_feed = self.open.last().is_some_and(|o| {
+            o.boxed && matches!(o.white_space, WhiteSpace::Keep | WhiteSpace::Lines)
+        });
     }
 
     /// Apply a style to the element just opened, as its `style` attribute.
@@ -485,7 +581,7 @@ impl<'a> Parser<'a> {
                 } else if name == "pre" {
                     self.push(name, |o| {
                         o.style.mono = true;
-                        o.pre = true;
+                        o.white_space = WhiteSpace::Keep;
                     });
                 } else if name != "hr" {
                     self.push(name, |_| {});
@@ -540,7 +636,7 @@ impl<'a> Parser<'a> {
                 };
                 self.open_box(name, ctx, |o| {
                     o.always = true;
-                    o.pre = true;
+                    o.white_space = WhiteSpace::Keep;
                     o.style.mono = true;
                 });
             }
@@ -785,6 +881,12 @@ fn apply_style(open: &mut Open, css: &str) {
                 }
             }
             "text-decoration-color" => style.decoration_color = Some(Arc::from(value)),
+            // A value nobody knows leaves what the element inherits.
+            "white-space" => {
+                if let Some(white_space) = WhiteSpace::of(value) {
+                    open.white_space = white_space;
+                }
+            }
             // What an editor writes when it saves its text, so that the
             // text reads back as it was written.
             "font-weight" => match value.to_ascii_lowercase().as_str() {
@@ -1300,6 +1402,107 @@ mod tests {
         assert_eq!(texts("abc<br>abc"), ["abc\nabc"]);
         assert_eq!(texts("abc <br> abc"), ["abc\nabc"]);
         assert_eq!(texts("abc<br>"), ["abc\n"]);
+    }
+
+    /// What Qt 6.11 makes of each, measured with qml6.
+    #[test]
+    fn white_space_pre_and_pre_wrap_keep_spaces() {
+        let keep =
+            |ws: &str, body: &str| texts(&format!("<p style=\"white-space:{ws}\">{body}</p>"));
+        assert_eq!(
+            texts("<p style=\"margin:0;white-space:pre-wrap\">def f():<br/>    return 1</p>"),
+            ["def f():\n    return 1"]
+        );
+        assert_eq!(keep("pre", "a   b"), ["a   b"]);
+        assert_eq!(keep("pre-wrap", "  a   b  "), ["  a   b  "]);
+        assert_eq!(keep("PRE-WRAP !important", "a   b"), ["a   b"]);
+        assert_eq!(keep("pre-wrap", "a\tb"), ["a\tb"]);
+        // The space before a break stays.
+        assert_eq!(keep("pre-wrap", "a  <br>  b"), ["a  \n  b"]);
+        // A line feed ends the paragraph; the next has the same format,
+        // and the paragraph's margins are at the ends of the two.
+        assert_eq!(
+            shape("<p style=\"white-space:pre-wrap\">a  \n\nb</p>"),
+            [
+                (Paragraph, "a  ".into(), (12.0, 0.0), (0.0, 0.0)),
+                (Paragraph, String::new(), (0.0, 0.0), (0.0, 0.0)),
+                (Paragraph, "b".into(), (0.0, 12.0), (0.0, 0.0)),
+            ]
+        );
+        // One line feed right after the start tag is not text, nor one
+        // at the end.
+        assert_eq!(keep("pre-wrap", "\n\n  a\n"), ["", "  a"]);
+        assert_eq!(keep("pre-wrap", "<b>\na</b>"), ["", "a"]);
+        assert_eq!(texts("<pre>\n  a</pre>"), ["  a"]);
+    }
+
+    #[test]
+    fn white_space_from_a_style_sheet_and_inherited() {
+        let sheet = "<style>p, li { white-space: pre-wrap; }</style>";
+        assert_eq!(texts(&format!("{sheet}<p>  a   b</p>")), ["  a   b"]);
+        assert_eq!(
+            texts(&format!("{sheet}<ul><li>  a   b</li></ul>")),
+            ["  a   b"]
+        );
+        // The element's own style wins over the rule.
+        assert_eq!(
+            texts(
+                "<style>p { white-space: pre-wrap }</style><p style=\"white-space:normal\">a   b</p>"
+            ),
+            ["a b"]
+        );
+        // What is inside inherits it, and may say otherwise.
+        assert_eq!(
+            texts("<p style=\"white-space:pre-wrap\"><b>  a</b>   b</p>"),
+            ["  a   b"]
+        );
+        assert_eq!(
+            texts(
+                "<p style=\"white-space:pre-wrap\"><span style=\"white-space:normal\">a   b</span>  c</p>"
+            ),
+            ["a b  c"]
+        );
+        assert_eq!(
+            texts("<span style=\"white-space:pre-wrap\">a   b</span>  c"),
+            ["a   b c"]
+        );
+        assert_eq!(
+            texts(
+                "<div style=\"white-space:pre-wrap\"><p style=\"white-space:bogus\">a   b</p></div>"
+            ),
+            ["a   b"]
+        );
+        assert_eq!(
+            texts(
+                "<table><tr><td><p style=\"white-space:pre-wrap\">a   b\nc</p></td></tr></table>"
+            )[0],
+            "a   b\nc"
+        );
+    }
+
+    #[test]
+    fn white_space_normal_nowrap_and_pre_line_collapse_spaces() {
+        let ws = |ws: &str, body: &str| texts(&format!("<p style=\"white-space:{ws}\">{body}</p>"));
+        assert_eq!(ws("normal", "  a   b"), ["a b"]);
+        // nowrap's space is one that does not break, and white space after
+        // it collapses into it, but not after a `&nbsp;`.
+        assert_eq!(ws("nowrap", "  a   b"), ["a\u{a0}b"]);
+        assert_eq!(ws("nowrap", "a&nbsp; b"), ["a\u{a0}\u{a0}b"]);
+        assert_eq!(
+            ws("nowrap", "a <span style=\"white-space:normal\"> b</span>"),
+            ["a\u{a0}b"]
+        );
+        assert_eq!(ws("nowrap", "a <br> b"), ["a\u{a0}\nb"]);
+        assert_eq!(texts("<p>a&nbsp; b</p>"), ["a\u{a0} b"]);
+        assert_eq!(ws("bogus", "  a   b"), ["a b"]);
+        assert_eq!(
+            texts("<pre style=\"white-space:normal\">a   b</pre>"),
+            ["a b"]
+        );
+        // pre-line keeps line feeds, not the spaces around them; the
+        // space before a break stays.
+        assert_eq!(ws("pre-line", "  a  \n  b"), ["a", "b"]);
+        assert_eq!(ws("pre-line", "a <br> b"), ["a \nb"]);
     }
 
     #[test]
