@@ -7996,7 +7996,11 @@ nothing new. Two commits:
 | before | 58.4 | 32.1 | 59.2 | 32.0 |
 | view asks early (#284) | 62.0 | 16.3 | 62.6 | 16.1 |
 | and the shell's hold | 61.6 | 16.3 | 62.4 | 16.1 |
+| the shell wakes early, the view asks at its time (#290) | 62.0 | 16.3 | 62.4 | 16.1 |
 | qml6 | 62.6 | 16.1 | 61.8 | 16.3 |
+
+The #290 row was measured after the wake moved to the shell (load average 12–17; another lane's
+`cargo check` started during it). In the same run, qml6 drew 61.8 and 61.6 frames/s.
 
 Idle CPU of `animations` went from 5.17 to 7.65–7.87 % for 6 % more frames, at load averages
 of 14–21. That is within what the gallery's bold rule calls noise at that load. Part B below
