@@ -419,18 +419,7 @@ impl RichText {
         resolve: &dyn Fn(&str) -> Option<Arc<str>>,
     ) -> Self {
         let parsed = parse(format, source, options);
-        let mut out = Self::from_blocks(&parsed.blocks, options.link_color, resolve);
-        // Measured: white space after the last paragraph of HTML is one
-        // space at the end of it; between paragraphs it is nothing.
-        if format == TextFormat::Rich && trailing_space(source) {
-            let format = out
-                .runs
-                .last()
-                .map_or_else(Arc::default, |r| r.format.for_typing());
-            let end = out.text.len();
-            out.splice(end..end, " ", Some(format));
-        }
-        out
+        Self::from_blocks(&parsed.blocks, options.link_color, resolve)
     }
 
     fn from_blocks(
@@ -1446,37 +1435,6 @@ fn resolved(
         }
     }
     out
-}
-
-/// Whether HTML ends in white space after the end tag of a block.
-fn trailing_space(source: &str) -> bool {
-    let trimmed = source.trim_end();
-    if trimmed.len() == source.len() || !trimmed.ends_with('>') {
-        return false;
-    }
-    let Some(lt) = trimmed.rfind('<') else {
-        return false;
-    };
-    let tag = &trimmed[lt + 1..trimmed.len() - 1];
-    let Some(name) = tag.strip_prefix('/') else {
-        return false;
-    };
-    matches!(
-        name.trim().to_ascii_lowercase().as_str(),
-        "p" | "div"
-            | "h1"
-            | "h2"
-            | "h3"
-            | "h4"
-            | "h5"
-            | "h6"
-            | "li"
-            | "ul"
-            | "ol"
-            | "pre"
-            | "blockquote"
-            | "table"
-    )
 }
 
 fn write_head(out: &mut String) {

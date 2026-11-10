@@ -41,6 +41,11 @@
 //! `<meta name="qrichtext" content="1">`, anywhere in it, is read as
 //! Qt 6.11 reads it: every space and tab is text, no line feed is,
 //! `white-space` is not read and every block wraps.
+//!
+//! White space after a block ends and before the next one has text goes
+//! to the block before, as Qt 6.11 has it (hal-c2/ljos-ui#282): one space
+//! where spaces collapse, as written where they are kept. One character
+//! of it right after the end tag of a block is nothing when a tag follows.
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -157,6 +162,36 @@ struct TableState {
     fresh: bool,
 }
 
+/// White space read where it may be nothing, or text of another block.
+struct Pending {
+    text: String,
+    style: Inline,
+    white_space: WhiteSpace,
+    /// It came right after the end of a block or a `<meta>`.
+    fresh: bool,
+}
+
+/// What comes after white space that waits to be placed.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Next {
+    Content,
+    StartTag,
+    EndTag,
+    End,
+}
+
+/// Where the text read now is, if not in a block.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Between {
+    /// In a block, or in one that has not ended yet.
+    #[default]
+    Text,
+    /// After a block ended.
+    Blocks,
+    /// After a cell or a row of a table ended.
+    Cells,
+}
+
 struct Parser<'a> {
     src: &'a str,
     at: usize,
@@ -178,6 +213,19 @@ struct Parser<'a> {
     /// The editor's mark was found after text it changes: the document is
     /// read again from the start.
     again: bool,
+    /// White space not placed yet: it is placed at the next tag, text or
+    /// the end, by what that is.
+    pending: Option<Pending>,
+    between: Between,
+    /// The last tag ended a block, or was a `<meta>`.
+    fresh_end: bool,
+    /// The last thing read was a comment.
+    after_comment: bool,
+    /// A box of blocks that keeps line feeds was just opened.
+    container_line_feed: bool,
+    /// `<html>` and `<body>` are open: their end tags end something.
+    html_open: bool,
+    body_open: bool,
 }
 
 pub(crate) fn parse(source: &str) -> Vec<Block> {
@@ -195,6 +243,13 @@ pub(crate) fn parse(source: &str) -> Vec<Block> {
             skip_line_feed: false,
             verbatim,
             again: false,
+            pending: None,
+            between: Between::Text,
+            fresh_end: false,
+            after_comment: false,
+            container_line_feed: false,
+            html_open: false,
+            body_open: false,
         };
         p.run();
         // Measured on Qt 6.11: the mark counts wherever it is. An editor
@@ -229,6 +284,7 @@ impl<'a> Parser<'a> {
     }
 
     fn finish(mut self) -> Vec<Block> {
+        self.place_pending(Next::End);
         self.end_table();
         while !self.open.is_empty() {
             self.close_top();
@@ -323,22 +379,44 @@ impl<'a> Parser<'a> {
         if std::mem::take(&mut self.skip_line_feed) {
             s = s.strip_prefix('\n').unwrap_or(s);
         }
+        if std::mem::take(&mut self.container_line_feed) {
+            // Measured on Qt 6.11: after the start tag of a box of blocks a
+            // lone line feed is nothing, and so is the first one of text,
+            // but white space alone that ends in one is all text.
+            let blank = s.chars().all(is_space);
+            if s == "\n" || !(blank && s.ends_with('\n')) {
+                s = s.strip_prefix('\n').unwrap_or(s);
+            }
+        }
+        // Measured on Qt 6.11: where spaces collapse, a comment eats the
+        // white space after it.
+        if std::mem::take(&mut self.after_comment) && self.white_space().collapses() {
+            s = s.trim_start_matches(|c: char| c != '\u{a0}' && is_space(c));
+        }
         if s.is_empty() {
             return;
         }
-        let white_space = self.white_space();
-        if white_space == WhiteSpace::Verbatim {
-            // Qt 6.11 gives white space between blocks to the block before
-            // (hal-c2/ljos-ui#282); here it is no text, as where
-            // spaces collapse, so it makes no paragraph of its own.
-            let between = self.buf.is_empty()
-                && self.table.is_none()
-                && self.open.last().is_none_or(|o| {
-                    o.boxed && matches!(&*o.name, "div" | "ul" | "ol" | "blockquote" | "dl")
-                });
-            if between && s.chars().all(|c| matches!(c, ' ' | '\t' | '\n' | '\r')) {
+        if self.defers() {
+            let blank = s.find(|c: char| !is_space(c)).unwrap_or(s.len());
+            self.defer(&s[..blank]);
+            s = &s[blank..];
+            if s.is_empty() {
                 return;
             }
+            self.place_pending(Next::Content);
+        } else if self.in_list_box() && s.chars().all(|c| c.is_ascii_whitespace()) {
+            // Measured on Qt 6.11: before a list's first item it is
+            // nothing, whatever its white space.
+            return;
+        }
+        self.fresh_end = false;
+        self.read(s);
+    }
+
+    /// Text where it is: in a block, or one of its own.
+    fn read(&mut self, s: &str) {
+        let white_space = self.white_space();
+        if white_space == WhiteSpace::Verbatim {
             let style = self.style();
             self.write(|buf| {
                 for line in s.split(['\n', '\r']) {
@@ -360,6 +438,161 @@ impl<'a> Parser<'a> {
             } else {
                 let style = self.style();
                 self.write(|buf| buf.push(line, &style));
+            }
+        }
+    }
+
+    /// Whether white space read now waits to be placed: it may be nothing,
+    /// or go to the block before.
+    fn defers(&self) -> bool {
+        self.pending.is_some() || self.fresh_end || self.in_gap()
+    }
+
+    /// Whether text read now is between blocks, or between cells.
+    fn in_gap(&self) -> bool {
+        match self.between {
+            Between::Text => false,
+            Between::Blocks => self.table.is_none() && self.buf.is_empty(),
+            Between::Cells => self.table.as_ref().is_some_and(|t| !t.cell),
+        }
+    }
+
+    /// Whether text read now is in a list before its first item.
+    fn in_list_box(&self) -> bool {
+        self.buf.is_empty()
+            && self.table.is_none()
+            && self
+                .open
+                .last()
+                .is_some_and(|o| o.boxed && matches!(&*o.name, "ul" | "ol"))
+    }
+
+    fn defer(&mut self, s: &str) {
+        if s.is_empty() {
+            return;
+        }
+        if let Some(pending) = &mut self.pending {
+            pending.text.push_str(s);
+            return;
+        }
+        self.pending = Some(Pending {
+            text: s.to_owned(),
+            style: self.style(),
+            white_space: self.white_space(),
+            fresh: self.fresh_end,
+        });
+    }
+
+    /// Place the white space that waited, now that `next` comes. Measured
+    /// on Qt 6.11 (hal-c2/ljos-ui#282).
+    fn place_pending(&mut self, next: Next) {
+        let Some(Pending {
+            mut text,
+            style,
+            white_space,
+            fresh,
+        }) = self.pending.take()
+        else {
+            return;
+        };
+        // Text starts a block, and the white space is read as the start of
+        // it.
+        if next == Next::Content {
+            self.read(&text);
+            return;
+        }
+        // Where line feeds end paragraphs, the ones right before an end
+        // tag are none.
+        if next == Next::EndTag && white_space.keeps_line_feeds() {
+            text.truncate(text.trim_end_matches('\n').len());
+        }
+        // One character right after the end of a block is nothing, unless
+        // the document ends there.
+        if fresh && next != Next::End && text.chars().count() == 1 {
+            return;
+        }
+        if text.is_empty() {
+            return;
+        }
+        if !self.in_gap() {
+            self.read(&text);
+        } else if self.between == Between::Cells {
+            self.give_cell_before(&text, &style, white_space);
+        } else {
+            self.give_block_before(&text, &style, white_space);
+        }
+    }
+
+    /// White space between the cells of a table: in an editor's document,
+    /// as written, it goes to the cell before; elsewhere it is nothing.
+    fn give_cell_before(&mut self, text: &str, style: &Inline, white_space: WhiteSpace) {
+        if white_space != WhiteSpace::Verbatim {
+            return;
+        }
+        let cell = self
+            .table
+            .as_mut()
+            .and_then(|t| t.rows.last_mut())
+            .and_then(|row| row.last_mut());
+        if let Some(cell) = cell {
+            for line in text.split(['\n', '\r']) {
+                cell.buf.push(line, style);
+            }
+        }
+    }
+
+    /// White space after a block ended: at the end of that block. A table
+    /// takes none; where spaces are kept, it is the paragraph that follows
+    /// one, as Qt has after every table.
+    fn give_block_before(&mut self, text: &str, style: &Inline, white_space: WhiteSpace) {
+        let after_table = self.flow.last_mut().is_none_or(|b| b.table.is_some());
+        let ends_open = self
+            .flow
+            .last_mut()
+            .is_some_and(|b| b.text.ends_with([' ', '\n']));
+        match white_space {
+            WhiteSpace::Verbatim | WhiteSpace::Pre | WhiteSpace::PreWrap if after_table => {
+                self.read(text);
+            }
+            WhiteSpace::Verbatim => {
+                let text: String = text.chars().filter(|c| !matches!(c, '\n' | '\r')).collect();
+                self.flow.append(&text, style);
+            }
+            WhiteSpace::Pre | WhiteSpace::PreWrap => {
+                // As written; a line feed starts a paragraph.
+                let mut lines = text.split('\n');
+                self.flow.append(lines.next().unwrap_or_default(), style);
+                for line in lines {
+                    self.buf.push(line, style);
+                    self.flush(true);
+                }
+            }
+            WhiteSpace::Collapse | WhiteSpace::NoWrap | WhiteSpace::Lines => {
+                if after_table {
+                    return;
+                }
+                let space = if white_space == WhiteSpace::NoWrap {
+                    "\u{a0}"
+                } else {
+                    " "
+                };
+                let (first, line_feeds) = match text.split_once('\n') {
+                    Some((first, rest)) if white_space == WhiteSpace::Lines => {
+                        (first, 1 + rest.matches('\n').count())
+                    }
+                    _ => (text, 0),
+                };
+                let mut first = collapsed_gap(first, space, ends_open);
+                // pre-line: no space before a line feed.
+                if line_feeds > 0 && first.ends_with(' ') {
+                    first.pop();
+                }
+                self.flow.append(&first, style);
+                // Each line feed an empty paragraph: what follows one on
+                // its line is white space at the start of a line.
+                for _ in 0..line_feeds {
+                    self.flush(true);
+                }
             }
         }
     }
@@ -405,7 +638,8 @@ impl<'a> Parser<'a> {
         };
         let mut word = 0;
         for (i, c) in s.char_indices() {
-            if !c.is_ascii_whitespace() {
+            // Measured on Qt 6.11: a vertical tab too.
+            if !(c.is_ascii_whitespace() || c == '\u{b}') {
                 continue;
             }
             buf.push(&s[word..i], style);
@@ -456,10 +690,21 @@ impl<'a> Parser<'a> {
                 self.at += 1 + name_len + semicolon;
             }
             Some(c) => {
-                let style = self.style();
-                self.write(|buf| buf.push(c.encode_utf8(&mut [0; 4]), &style));
                 let semicolon = usize::from(rest[name_len..].starts_with(';'));
                 self.at += 1 + name_len + semicolon;
+                self.after_comment = false;
+                let mut bytes = [0; 4];
+                let c = c.encode_utf8(&mut bytes);
+                if self.defers() {
+                    if c.chars().all(is_space) {
+                        self.defer(c);
+                        return;
+                    }
+                    self.place_pending(Next::Content);
+                }
+                self.fresh_end = false;
+                let style = self.style();
+                self.write(|buf| buf.push(c, &style));
             }
             None => {
                 self.text("&");
@@ -471,12 +716,17 @@ impl<'a> Parser<'a> {
     /// At a `<`. False when it swallows the rest of the text.
     fn tag(&mut self) -> bool {
         self.skip_line_feed = false;
+        self.container_line_feed = false;
         let rest = &self.src[self.at + 1..];
         if let Some(comment) = rest.strip_prefix("!--") {
             let Some(end) = comment.find("-->") else {
                 return false;
             };
             self.at += 1 + 3 + end + 3;
+            // Measured on Qt 6.11: white space before a comment is read as
+            // if the comment were not there; after one see `text`. In an
+            // editor's document a comment is not there at all.
+            self.after_comment = !self.verbatim;
             return true;
         }
         let Some(end) = tag_end(rest) else {
@@ -486,7 +736,20 @@ impl<'a> Parser<'a> {
         self.at += end + 2;
         if let Some(name) = inner.strip_prefix('/') {
             let name = name.trim().to_ascii_lowercase();
+            // Measured on Qt 6.11: an end tag that closes nothing is as if
+            // it were not there.
+            let Some(ends_block) = self.ends(&name) else {
+                return true;
+            };
+            self.place_pending(Next::EndTag);
+            self.after_comment = false;
             self.end_tag(&name);
+            self.fresh_end = ends_block;
+            match name.as_str() {
+                "html" => self.html_open = false,
+                "body" => self.body_open = false,
+                _ => {}
+            }
             return true;
         }
         let inner = inner.trim_start();
@@ -499,6 +762,14 @@ impl<'a> Parser<'a> {
             return true;
         }
         let name = name.to_ascii_lowercase();
+        self.place_pending(Next::StartTag);
+        self.after_comment = false;
+        self.fresh_end = name == "meta";
+        match name.as_str() {
+            "html" => self.html_open = true,
+            "body" => self.body_open = true,
+            _ => {}
+        }
         let closed = attrs.trim_end().ends_with('/');
         let attrs = Attrs(attrs);
         if matches!(name.as_str(), "script" | "style" | "title") {
@@ -559,6 +830,7 @@ impl<'a> Parser<'a> {
             return;
         }
         self.flush(false);
+        self.between = Between::Text;
         self.flow.open(ctx);
         self.push(name, |o| {
             o.boxed = true;
@@ -582,6 +854,7 @@ impl<'a> Parser<'a> {
         if !open.boxed {
             return;
         }
+        self.between = Between::Blocks;
         // Measured: text after `</div>` goes on in the same block.
         if &*open.name == "div" && !self.buf.is_empty() {
             self.flow.close();
@@ -644,11 +917,14 @@ impl<'a> Parser<'a> {
             return;
         };
         let white_space = self.white_space_of(Some(open));
+        let holds_blocks =
+            open.boxed && matches!(&*open.name, "div" | "center" | "blockquote" | "dl");
+        self.container_line_feed = holds_blocks && white_space.keeps_line_feeds();
         // A block in a table cell is not a box, nor is the cell, but their
         // line feed goes too.
-        self.skip_line_feed =
-            (open.boxed || is_block(&open.name) || matches!(&*open.name, "td" | "th"))
-                && white_space.keeps_line_feeds();
+        self.skip_line_feed = !holds_blocks
+            && (open.boxed || is_block(&open.name) || matches!(&*open.name, "td" | "th"))
+            && white_space.keeps_line_feeds();
         // It is the block that does not wrap, not the text in it: a span
         // that says `pre` wraps with its paragraph (measured on Qt 6.11).
         if open.boxed
@@ -790,6 +1066,8 @@ impl<'a> Parser<'a> {
             "hr" => {
                 self.imply_end("p", &[]);
                 self.flush(false);
+                // Measured on Qt 6.11: a rule takes no white space after it.
+                self.between = Between::Text;
                 self.flow
                     .emit(InlineBuf::default(), Some(BlockKind::Rule), None);
             }
@@ -926,8 +1204,10 @@ impl<'a> Parser<'a> {
                 if let Some(t) = &mut self.table {
                     t.cell = false;
                     self.open.truncate(t.depth);
+                    self.between = Between::Cells;
                 }
             }
+            "tr" if self.table.is_some() => self.between = Between::Cells,
             "tr" | "tbody" | "thead" | "tfoot" | "html" | "body" | "head" | "br" | "hr" | "img" => {
             }
             _ => {
@@ -950,6 +1230,26 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// What the end tag of `name` does: None when it closes nothing, else
+    /// whether it ends a block (a table's cells and rows are blocks here).
+    fn ends(&self, name: &str) -> Option<bool> {
+        match name {
+            "table" => self.table.is_some().then_some(true),
+            "td" | "th" => self.table.as_ref().is_some_and(|t| t.cell).then_some(true),
+            "tr" => self.table.is_some().then_some(true),
+            "tbody" | "thead" | "tfoot" => self.table.is_some().then_some(false),
+            "html" => self.html_open.then_some(true),
+            "body" => self.body_open.then_some(true),
+            "head" | "br" | "hr" | "img" => None,
+            _ => {
+                let floor = self.table.as_ref().map_or(0, |t| t.depth);
+                let inside = self.open.get(floor..)?;
+                let at = inside.iter().rposition(|o| &*o.name == name)?;
+                Some(inside[at..].iter().any(|o| o.boxed))
+            }
+        }
+    }
+
     /// Close an open `name` that the next start tag ends without saying so.
     fn imply_end(&mut self, name: &str, through: &[&str]) {
         if self.open_within(name, through) {
@@ -960,6 +1260,7 @@ impl<'a> Parser<'a> {
     fn start_table(&mut self, attrs: &Attrs<'_>) {
         self.imply_end("p", &[]);
         self.flush(false);
+        self.between = Between::Text;
         let number = |name, default: f32| {
             attrs
                 .get(name)
@@ -1000,6 +1301,7 @@ impl<'a> Parser<'a> {
             "tr" => {
                 t.cell = false;
                 t.rows.push(Vec::new());
+                self.between = Between::Text;
                 self.open.truncate(t.depth);
                 let inherited = t.white_space;
                 let white_space = self.white_space_for(name, attrs, inherited);
@@ -1022,6 +1324,7 @@ impl<'a> Parser<'a> {
                 }
                 t.cell = true;
                 self.open.truncate(t.depth);
+                self.between = Between::Text;
                 let white_space = t.row_white_space;
                 // An element of its own, so that the rules of a style sheet
                 // and its style say what white space in it is.
@@ -1041,6 +1344,7 @@ impl<'a> Parser<'a> {
         let Some(t) = self.table.take() else {
             return;
         };
+        self.between = Between::Blocks;
         self.open.truncate(t.depth);
         let (buf, mut table) = table_block(t.rows, t.border, t.spacing, t.padding);
         table.background = t.background;
@@ -1408,6 +1712,28 @@ fn tag_end(rest: &str) -> Option<usize> {
     }
     // A quote that never closes does not hide the tag's end.
     rest.find('>')
+}
+
+/// White space as read between blocks: a no-break space too.
+fn is_space(c: char) -> bool {
+    c.is_ascii_whitespace() || matches!(c, '\u{b}' | '\u{a0}')
+}
+
+/// White space between blocks where spaces collapse: each run of it one
+/// `space`, none at the start `after_space`; a no-break space stays one.
+fn collapsed_gap(text: &str, space: &str, after_space: bool) -> String {
+    let mut out = String::new();
+    let mut after_space = after_space;
+    for c in text.chars() {
+        if c == '\u{a0}' {
+            out.push(c);
+            after_space = false;
+        } else if !after_space {
+            out.push_str(space);
+            after_space = true;
+        }
+    }
+    out
 }
 
 fn is_block(name: &str) -> bool {
@@ -2053,8 +2379,9 @@ mod tests {
                 .no_wrap
                 .is_empty()
         );
-        // White space between blocks makes no paragraph.
-        assert_eq!(with("<p>a</p>\n  <p>b</p>\n"), ["a", "b"]);
+        // White space between blocks goes to the block before, without
+        // its line feeds.
+        assert_eq!(with("<p>a</p>\n  <p>b</p>\n"), ["a  ", "b"]);
         assert_eq!(with("<ul>\n  <li>a</li>\n</ul>"), ["a"]);
         // The mark counts wherever it stands, outside a comment.
         assert_eq!(texts(&format!("<p>a  b</p>{mark}")), ["a  b"]);
@@ -2336,5 +2663,79 @@ mod tests {
         assert!(
             parse("<span style=\"color: \u{0}\u{202e}; : ; ;;; !important\">a</span>").len() == 1
         );
+    }
+
+    #[test]
+    fn white_space_between_blocks_goes_to_the_block_before() {
+        let qrich = "<meta name='qrichtext' content='1'>";
+        let pre = |inner: &str| format!("<div style='white-space:pre'>{inner}</div>");
+        for (source, expected) in [
+            ("<p>a</p>  <p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a</p>\n  <p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a</p> <p>b</p>".to_owned(), vec!["a", "b"]),
+            ("<p>a</p>\n".to_owned(), vec!["a "]),
+            ("<p>a</p>\n</b>".to_owned(), vec!["a "]),
+            ("<p>a</p><b></b>\n<p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a </p>  <p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a</p>  b".to_owned(), vec!["a", "b"]),
+            ("<p>a</p> <!-- x --><p>b</p>".to_owned(), vec!["a", "b"]),
+            ("<p>a<!-- -->  b</p>".to_owned(), vec!["ab"]),
+            (
+                "<p>a</p>&nbsp;&nbsp;<p>b</p>".to_owned(),
+                vec!["a\u{a0}\u{a0}", "b"],
+            ),
+            ("<p>a</p>\u{b}\u{b}<p>b</p>".to_owned(), vec!["a ", "b"]),
+            (pre("<p>a</p>  <p>b</p>"), vec!["a  ", "b"]),
+            (pre("<p>a</p>\n\n\n<p>b</p>"), vec!["a", "", "", "", "b"]),
+            (pre("  <p>a</p>"), vec!["  ", "a"]),
+            (format!("{qrich}<p>a</p>\n  <p>b</p>"), vec!["a  ", "b"]),
+            (format!("{qrich}<p>a</p>  </body>"), vec!["a  "]),
+            (format!("{qrich}<div>  <p>a</p></div>"), vec!["  ", "a"]),
+            (format!("{qrich}<ul>  <li>a</li></ul>"), vec!["a"]),
+            (format!("{qrich}<p>a</p> \t <p>b</p>"), vec!["a \t ", "b"]),
+            (format!("{qrich}<p>a</p>  x<p>b</p>"), vec!["a", "  x", "b"]),
+            (
+                format!("{qrich}<p>a<br>  </p>  <p>b</p>"),
+                vec!["a\n    ", "b"],
+            ),
+            (
+                "<div>\n  <p>a</p>\n  <p>b</p>\n</div>".to_owned(),
+                vec!["a ", "b"],
+            ),
+            ("<p>a</p><b> </b><p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a</p> <b> </b> <p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a</p>&#10;&#10;<p>b</p>".to_owned(), vec!["a ", "b"]),
+            ("<p>a</p>&#32;<p>b</p>".to_owned(), vec!["a", "b"]),
+            ("<p>a</p> &amp;<p>b</p>".to_owned(), vec!["a", "&", "b"]),
+            ("<p>a</p><hr>  <p>b</p>".to_owned(), vec!["a", "", "b"]),
+        ] {
+            assert_eq!(texts(&source), expected, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn a_table_takes_no_white_space_between_its_cells_or_after_it() {
+        let table = |source: &str| -> (Vec<String>, Vec<String>) {
+            let blocks = parse(source);
+            let cells = blocks
+                .iter()
+                .filter_map(|b| Some((b, b.table.as_ref()?)))
+                .flat_map(|(b, t)| t.cells.iter().map(|c| b.text[c.range.clone()].to_owned()))
+                .collect();
+            (blocks.into_iter().map(|b| b.text).collect(), cells)
+        };
+        let qrich = "<meta name='qrichtext' content='1'>";
+        let (_, cells) = table("<table><tr><td>a</td>  <td>b</td></tr>  </table>");
+        assert_eq!(cells, ["a", "b"]);
+        let (blocks, _) = table("<table><tr><td>x</td></tr></table>  <p>b</p>");
+        assert_eq!(blocks.last().map(String::as_str), Some("b"));
+        let (_, cells) = table(&format!(
+            "{qrich}<table><tr><td>a</td>  <td>b</td></tr></table>"
+        ));
+        assert_eq!(cells, ["a  ", "b"]);
+        let (_, cells) = table(&format!(
+            "{qrich}<table><tr><td>a</td>  </tr>  <tr>  <td>b</td></tr></table>"
+        ));
+        assert_eq!(cells, ["a    ", "b"]);
     }
 }
