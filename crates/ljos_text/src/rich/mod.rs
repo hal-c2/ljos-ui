@@ -364,6 +364,9 @@ pub struct Block {
     /// item, and the block is as wide as its longest line (`white-space`
     /// `pre` and `nowrap`, `<pre>`, a fenced code block of Markdown).
     pub no_wrap: bool,
+    /// A fenced code block of Markdown. It does not wrap, yet Qt 6.12
+    /// writes it as a paragraph that does, not as a `pre`.
+    pub fence: bool,
     /// The block stands right under the one before it, whatever that one's
     /// bottom margin is (a Markdown table in Qt 6.11).
     pub tight_above: bool,
@@ -407,6 +410,7 @@ impl Block {
             align: None,
             table: None,
             no_wrap: false,
+            fence: false,
             tight_above: false,
             source_start: 0,
             hash: 0,
@@ -437,7 +441,7 @@ impl Block {
             &self.background,
             self.align,
             &self.table,
-            (self.no_wrap, self.tight_above),
+            (self.no_wrap, self.fence, self.tight_above),
         )
             .hash(&mut h);
         self.hash = h.finish();

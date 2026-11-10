@@ -367,6 +367,12 @@ impl Reader {
                     self.buf.truncate(self.buf.text.len() - 1);
                 }
                 self.flush(true);
+                if matches!(opened, Opened::Code)
+                    && let Some(block) = self.flow.last_mut()
+                    && block.kind == BlockKind::Code
+                {
+                    block.fence = block.no_wrap;
+                }
                 self.flow.close();
             }
             Opened::Table => {

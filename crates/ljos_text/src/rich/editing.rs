@@ -113,6 +113,8 @@ pub struct BlockFormat {
     /// The paragraph breaks its lines only at its line breaks, however
     /// narrow the item (a `pre` or `nowrap` one, see [`super::Block`]).
     pub no_wrap: bool,
+    /// A fenced code block of Markdown ([`Block::fence`]).
+    pub fence: bool,
     /// The paragraph is a row of a table: its cells are set apart by [`CELL`].
     pub table: Option<TableRow>,
 }
@@ -288,6 +290,7 @@ impl Default for BlockFormat {
             background: None,
             align: None,
             no_wrap: false,
+            fence: false,
             table: None,
         }
     }
@@ -335,6 +338,7 @@ impl BlockFormat {
             background: block.background.clone(),
             align: block.align,
             no_wrap: block.no_wrap,
+            fence: block.fence,
             table: None,
         }
     }
@@ -1172,11 +1176,14 @@ impl RichText {
             // is monospace and wraps, as every paragraph of the editor's
             // HTML does (features/text/rich-text-white-space.feature). In a
             // list the pre is in an li that is left open, as Qt 6.12 has it.
-            if block.no_wrap && block.kind == BlockKind::List {
+            // A fenced code block of Markdown is a paragraph, as Qt 6.12
+            // writes it.
+            let pre = block.no_wrap && !block.fence;
+            if pre && block.kind == BlockKind::List {
                 out.push_str("<li>");
             }
             let tag = match block.kind {
-                _ if block.no_wrap => "pre".to_owned(),
+                _ if pre => "pre".to_owned(),
                 BlockKind::Heading(n) => format!("h{}", n.clamp(1, 6)),
                 BlockKind::List => "li".to_owned(),
                 _ => "p".to_owned(),
@@ -1978,6 +1985,20 @@ mod tests {
         assert_eq!(rich("<p>x <b>y</b></p>").text(), "x y");
         assert_eq!(rich("<p>x <b>y</b></p>\n").text(), "x y ");
         assert_eq!(rich("<p>a</p> <p>b</p>").text(), "a\nb");
+    }
+
+    #[test]
+    fn a_code_block_of_markdown_is_written_as_a_paragraph() {
+        // Measured on Qt 6.12: fenced or indented, a monospace paragraph;
+        // a fenced one still does not wrap.
+        for source in ["```\ncode\n```\n", "    code\n"] {
+            assert_eq!(
+                body(&md(source)),
+                "<p><span style=' font-family:'monospace';'>code</span></p>",
+                "{source:?}"
+            );
+        }
+        assert!(md("```\ncode\n```\n").blocks()[0].no_wrap);
     }
 
     #[test]
