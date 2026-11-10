@@ -179,3 +179,18 @@ Feature: Popup transitions
       And 700 milliseconds pass
       Then the property "log" of "root" is "aboutToShow visible aboutToHide hidden closed "
       And the property "visible" of "p" is false
+
+  Rule: A popup that comes back while it goes keeps what its exit did
+
+    @api-QtQuick.Controls.Popup.open
+    Scenario: It comes back as far as the exit had taken it
+      When the method "open" of "p" is called
+      And 700 milliseconds pass
+      And the method "close" of "p" is called
+      And 200 milliseconds pass
+      And the method "open" of "p" is called
+      And 700 milliseconds pass
+      Then the property "small" of "root" is true
+      And the property "opacity" of "p" is 1
+      And the property "opened" of "p" is true
+
