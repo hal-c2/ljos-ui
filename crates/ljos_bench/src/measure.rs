@@ -228,6 +228,10 @@ pub struct Span {
     /// milliseconds: which thread a runtime's work is on.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub thread_cpu_ms: BTreeMap<String, f64>,
+    /// The one thread that used the most of it: threads of one name are
+    /// added up above, and a pool's workers take their parent's name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub busiest_thread: Option<procfs::Busiest>,
     /// Of `cpu_ms`, what threads that ended in the window used: short
     /// workers whose wakeups `woken` cannot count.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -429,6 +433,7 @@ fn span(
     let ns1 = procfs::thread_cpu_ns(pid);
     let live_ms = procfs::live_cpu_ns(&ns0, &ns1) as f64 / 1e6;
     let thread_cpu_ms = procfs::cpu_by_name(&ns0, &ns1, &sw1);
+    let busiest_thread = procfs::busiest_thread(&ns0, &ns1, &sw1);
     let (instructions, instructions_missing) = match counted {
         Ok(c) => (Some(c.finish(&sw1)), None),
         Err(why) => (None, Some(why)),
@@ -459,6 +464,7 @@ fn span(
         clicks,
         woken,
         thread_cpu_ms,
+        busiest_thread,
         instructions,
         instructions_missing,
         // Rounding between the two clocks is not an ended thread.

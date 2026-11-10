@@ -104,6 +104,19 @@ const CHECKS: &[Check] = &[
         },
     },
     Check {
+        name: "driven busiest thread",
+        unit: "% of a core",
+        value: |r| {
+            let load = r.load.as_ref()?;
+            let busiest = load.busiest_thread.as_ref()?;
+            (load.seconds > 0.0).then(|| busiest.cpu_ms / 10.0 / load.seconds)
+        },
+        margin: Margin {
+            relative: 0.10,
+            absolute: 0.5,
+        },
+    },
+    Check {
         name: "driven frame interval p95",
         unit: "ms",
         value: |r| r.load.as_ref()?.frames.as_ref()?.p95_ms,
