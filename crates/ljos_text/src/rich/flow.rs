@@ -45,6 +45,10 @@ const MAX_INDENT: f32 = 2000.0;
 pub(crate) struct Flow {
     blocks: Vec<Block>,
     ctxs: Vec<Ctx>,
+    /// Boxes closed on text that goes on after them, outermost first: the
+    /// block that text is in is still theirs, as in Qt 6.12
+    /// (features/text/rich-text-white-space.feature).
+    carried: Vec<Ctx>,
     /// Goes on every block made from now on ([`Block::source_start`]).
     pub(crate) source_start: usize,
     /// The last block made ends in a space that collapsed where spaces do
@@ -72,6 +76,14 @@ impl Flow {
             last.margin_bottom = last.margin_bottom.max(ctx.margin_bottom);
         }
         ctx.any
+    }
+
+    /// Close the innermost box on text that goes on after it, in the block
+    /// the box made.
+    pub(crate) fn close_carrying(&mut self) {
+        if let Some(ctx) = self.ctxs.pop() {
+            self.carried.insert(0, ctx);
+        }
     }
 
     /// The innermost box, while nothing was made inside it.
@@ -107,7 +119,8 @@ impl Flow {
     pub(crate) fn emit(&mut self, buf: InlineBuf, kind: Option<BlockKind>, table: Option<Table>) {
         let mut block = Block::new(BlockKind::Paragraph);
         let mut inherited = None;
-        for ctx in &mut self.ctxs {
+        let mut carried = std::mem::take(&mut self.carried);
+        for ctx in self.ctxs.iter_mut().chain(&mut carried) {
             block.indent = (block.indent + ctx.indent).min(MAX_INDENT);
             block.indent_right = (block.indent_right + ctx.indent_right).min(MAX_INDENT);
             if ctx.top_pending {
@@ -126,7 +139,11 @@ impl Flow {
         }
         block.kind = kind.or(inherited).unwrap_or(BlockKind::Paragraph);
         // A table's cells say it for their own lines.
-        block.no_wrap = table.is_none() && self.ctxs.last().is_some_and(|c| c.no_wrap);
+        let innermost = carried.last().or(self.ctxs.last());
+        block.no_wrap = table.is_none() && innermost.is_some_and(|c| c.no_wrap);
+        for ctx in &carried {
+            block.margin_bottom = block.margin_bottom.max(ctx.margin_bottom);
+        }
         block.table = table;
         block.source_start = self.source_start;
         self.nowrap_space_end = buf.nowrap_space_end == Some(buf.text.len());
