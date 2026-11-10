@@ -1248,3 +1248,48 @@ fn a_row_removed_from_a_model_file_takes_its_nested_model_with_it() {
     assert_eq!(r.num("lm", "count"), 1.0);
     assert_eq!(lists(&r), 1);
 }
+
+#[test]
+fn an_object_a_script_made_comes_back_as_its_create_object_would_make_it() {
+    let src = |ty: &str, word: &str| {
+        format!(
+            r#"import QtQuick
+Item {{
+  id: root
+  objectName: "root"
+  function fill() {{ tile.createObject(area, {{ kind: 3 }}) }}
+  Component {{
+    id: tile
+    Item {{
+      objectName: "tile"
+      property {ty} kind
+      Component.onDestruction: console.log("{word} destroyed")
+    }}
+  }}
+  Item {{ id: area; objectName: "area" }}
+}}
+"#
+        )
+    };
+    let mut r = rig(&[("Main", &src("int", "old"))]);
+    r.call("root", "fill");
+    assert_eq!(r.num("tile", "kind"), 3.0);
+    let _ = r.h.log();
+
+    // The value still fits: the object is made again, with it.
+    r.edit("Main", &remade(&src("int", "kept"))).unwrap();
+    assert_eq!(r.num("tile", "kind"), 3.0);
+    let _ = r.h.log();
+
+    // It no longer does: a createObject would give back no object, made,
+    // completed and destroyed (Qt 6.12), so the reload keeps none either.
+    r.edit("Main", &src("point", "new")).unwrap();
+    assert_eq!(support::find(&r.h.engine, r.root, "tile"), None);
+    let log = r.h.log();
+    assert!(
+        log.iter()
+            .any(|l| l.ends_with("Could not set initial property kind")),
+        "{log:?}"
+    );
+    assert!(log.contains(&"new destroyed".to_owned()), "{log:?}");
+}
