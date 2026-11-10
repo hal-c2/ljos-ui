@@ -27,8 +27,9 @@ Feature: Copying and pasting formatted text
             .split(" style=\" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px;"
                    + " -qt-block-indent:0; text-indent:0px;\"").join("").split("\"").join("'").split("\n").join("|")
         }
+        function markdown(text) { md.text = text.split("~").join("\n").split("_").join(" ") }
         function show(name) {
-          const e = { target: target, bolded: bolded, plainEdit: plainEdit, field: field, md: md }[name]
+          const e = { target: target, bolded: bolded, plainEdit: plainEdit, field: field, md: md, empty: empty }[name]
           out = e.textFormat === TextEdit.RichText ? simple(e.text) : e.text.split("\n").join("|")
         }
         TextEdit { id: source; objectName: "source"; textFormat: TextEdit.RichText; text: "a<b>bold</b><i>it</i>c" }
@@ -37,6 +38,7 @@ Feature: Copying and pasting formatted text
         TextEdit { id: bolded; objectName: "bolded"; textFormat: TextEdit.RichText; text: "a<b>bold</b>c" }
         TextEdit { id: plainEdit; objectName: "plainEdit"; textFormat: TextEdit.PlainText; text: "xy" }
         TextEdit { id: md; objectName: "md"; textFormat: TextEdit.MarkdownText; text: "ab" }
+        TextEdit { id: empty; objectName: "empty"; textFormat: TextEdit.RichText }
         TextInput { id: field; objectName: "field"; text: "xy" }
         TextInput { objectName: "plainField"; text: "PL" }
         TextEdit { objectName: "plainSource"; textFormat: TextEdit.PlainText; text: "PL" }
@@ -71,6 +73,54 @@ Feature: Copying and pasting formatted text
       And the method "paste" of "md" is called
       And the method "show" of "root" is called with "md"
       Then the property "out" of "root" is "a**old***i*b||"
+
+  Rule: Of a copy only the selection is pasted, not the paragraph it started in
+
+    A copy's HTML marks where the selection starts and ends. The format of
+    the paragraph the selection starts in comes before the mark and is not
+    pasted: not its margins, nor whether it wraps, is a heading or is in a
+    list. Its characters keep their formats, and the paragraphs after it
+    keep their margins.
+
+    Scenario Outline: Pasting <copied>
+      When the property "text" of "target" is set to "<html>"
+      And the method "selectAll" of "target" is called
+      And the method "copy" of "target" is called
+      And the method "paste" of "empty" is called
+      And the method "show" of "root" is called with "empty"
+      Then the property "out" of "root" is "<pasted>"
+
+      Examples:
+        | copied                                       | html                                                      | pasted                                                                                                                                                                                   |
+        | a paragraph that does not wrap               | <p style='white-space:nowrap'>xy</p>                      | <p>xy</p>                                                                                                                                                                                |
+        | one that does not wrap and one that does     | <p style='white-space:nowrap'>xy</p><p>b</p>              | <p>xy</p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>                                                |
+        | one that does and one that does not wrap     | <p>a</p><p style='white-space:nowrap'>xy</p>              | <p>a</p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-family:'monospace';'>xy</span></p> |
+        | a list of one that does not wrap and another | <ul><li style='white-space:nowrap'>xy</li><li>b</li></ul> | <p>xy</p>\|<p style=' margin-top:0px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>                                                 |
+        | a bold paragraph                             | <p style='font-weight:700'>xy</p>                         | <p><span style=' font-weight:700;'>xy</span></p>                                                                                                                                         |
+        | a heading                                    | <h1>xy</h1>                                               | <p><span style=' font-size:xx-large; font-weight:700;'>xy</span></p>                                                                                                                     |
+
+    Scenario: HTML another application copied with the marks pastes what is between them
+      Given the HTML "<pre>a<!--StartFragment-->x y<!--EndFragment-->b</pre>" was copied in another application
+      When the method "paste" of "empty" is called
+      And the method "show" of "root" is called with "empty"
+      Then the property "out" of "root" is "<p>x y</p>"
+
+  Rule: A code block of Markdown is copied as a paragraph in a monospace font
+
+    Scenario Outline: A <block> code block pastes as a paragraph in a monospace font
+      When the method "markdown" of "root" is called with "<markdown>"
+      And the method "selectAll" of "md" is called
+      And the method "copy" of "md" is called
+      And the method "paste" of "empty" is called
+      And the method "show" of "root" is called with "empty"
+      Then the property "out" of "root" is "<pasted>"
+
+      Examples:
+        | block    | markdown            | pasted                                                                                                                                                                                             |
+        | fenced   | ```~code~```~       | <p><span style=' font-family:'monospace';'>code</span></p>                                                                                                                                         |
+        | indented | ____code~           | <p><span style=' font-family:'monospace';'>code</span></p>                                                                                                                                         |
+        | fenced   | a~~```~code~```~~b~ | <p>a</p>\|<p><span style=' font-family:'monospace';'>code</span></p>\|<p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
+        | indented | a~~____code~~b~     | <p>a</p>\|<p><span style=' font-family:'monospace';'>code</span></p>\|<p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
 
   Rule: Cut and paste moves formatted text
 
