@@ -71,6 +71,11 @@ impl Flow {
         self.ctxs.last_mut().filter(|c| !c.any)
     }
 
+    /// What a block made now would be, by the boxes it is in.
+    pub(crate) fn kind(&self) -> Option<BlockKind> {
+        self.ctxs.iter().rev().find_map(|c| c.kind)
+    }
+
     /// Whether the innermost box has a block yet.
     pub(crate) fn any(&self) -> bool {
         self.ctxs.last().is_some_and(|c| c.any)
