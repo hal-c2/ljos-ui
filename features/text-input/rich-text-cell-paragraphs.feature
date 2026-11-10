@@ -21,7 +21,9 @@ Feature: Paragraphs in the cells of a rich TextEdit
   paragraph to it, Backspace at the start of one joins it to the one
   before and Delete at the end of one joins the next to it; the joined
   paragraph keeps the format of the first. Every paragraph of a cell is
-  written back as a `<p>` of its own, and each wraps as it says.
+  written back as a `<p>` of its own, and each wraps as it says. What is
+  copied has a line feed between the paragraphs of a cell and at a line
+  break.
 
   Background:
     Given the QML:
@@ -42,8 +44,10 @@ Feature: Paragraphs in the cells of a rich TextEdit
         function written() { out = simple(edit.text) }
         function fragment(a, b) { out = simple(edit.getFormattedText(a, b)) }
         function selected(a, b) { edit.select(a, b); out = Array.from(edit.selectedText, c => c.charCodeAt(0).toString(16)).join(" ") }
+        function copied(a, b) { edit.select(a, b); edit.copy(); src.text = ""; src.paste(); out = Array.from(src.text, c => c.charCodeAt(0).toString(16)).join(" ") }
         function wide() { out = edit.contentWidth > edit.width ? "wider than the item" : "within the item" }
         function typing(at) { edit.forceActiveFocus(); edit.cursorPosition = at }
+        TextEdit { id: src; y: 150 }
         TextEdit {
           id: edit; objectName: "edit"; width: 280; wrapMode: TextEdit.WordWrap
           textFormat: TextEdit.RichText; font.family: "Liberation Sans"; font.pixelSize: 20
@@ -189,6 +193,21 @@ Feature: Paragraphs in the cells of a rich TextEdit
       And the user presses "Backspace"
       And the method "wide" of "root" is called
       Then the property "out" of "root" is "wider than the item"
+
+  Rule: What is copied has a line feed between the paragraphs of a cell
+
+    Scenario Outline: Copying <from> to <to> of <doc> copies <out>
+      When the property "html" of "root" is set to "<doc>"
+      And the method "copied" of "root" is called with <from>, <to>
+      Then the property "out" of "root" is "<out>"
+
+      Examples:
+        | doc                                                          | from | to | out              |
+        | [table][tr][td][p]a[/p][p]b[/p][/td][td]c[/td][/tr][/table]  | 1    | 5  | a 61 a 62 a 63 a |
+        | [table][tr][td][p]a[/p][p]b[/p][/td][td]c[/td][/tr][/table]  | 1    | 4  | 61 a 62          |
+        | [table][tr][td]a[br]b[/td][td]c[/td][/tr][/table]            | 1    | 5  | a 61 a 62 a 63 a |
+        | [table][tr][td]a[br]b[/td][td]c[/td][/tr][/table]            | 1    | 4  | 61 a 62          |
+        | a[br]b                                                       | 0    | 3  | 61 a 62          |
 
   Rule: Each paragraph of a cell wraps as it says
 
