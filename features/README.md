@@ -246,6 +246,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the user pinches at X, Y from D1 to D2 pixels apart` | two fingers on a line across, the second down a frame after the first, at most 4 pixels a finger a frame, then lifted |
 | `When the user turns two fingers D pixels apart at X, Y by A degrees` | two fingers about X, Y turned clockwise on the screen, at most 5 degrees a frame, then lifted |
 | `When the user turns the wheel N notch(es) down at X, Y` | a mouse wheel turns with the pointer at a position; `down` (or `up`, `left`, `right`) is where the view goes over the content, so `down` is towards the content's end (`@ljos-only`: the oracle's input channel has no wheel) |
+| `When the user turns the wheel N notch(es) down at X, Y holding "Ctrl"` | the same with the keys held, the move to X, Y too (`@ljos-only`) |
 | `When the user scrolls N pixels down at X, Y` | a touchpad, or another device that scrolls by the pixel, scrolls that far, in the same four directions (`@ljos-only`) |
 | `When the input method composes "text"` | an input method shows the text at the cursor as what is being composed; `""` ends the composition with nothing typed (`@ljos-only`: the oracle has no input method) |
 | `When the input method commits "text"` | an input method ends the composition and types the text (`@ljos-only`) |
@@ -326,6 +327,7 @@ setter tries to write `depth` and logs the error it gets.
 | `Then the picture of "photo" is kept at 224 by 112 pixels` | the size in pixels of the picture kept for an Image, which may be smaller than the picture itself (`@ljos-only`: the oracle does not say what it keeps) |
 | `Then no picture is kept for "photo" yet` | no pixels are kept for an Image yet: they are still being decoded (`@ljos-only`) |
 | `Then the pointer shows the "SplitHCursor" cursor` | the `Qt.CursorShape` the pointer shows where it is (`@ljos-only`: the oracle runs off-screen, without a pointer) |
+| `Then the application sees "Ctrl+Shift" held` / `Then the application sees no modifier held` | the keyboard modifiers native code is told are held (`ljos::keys::keyboard_modifiers`), as the last key, pointer or wheel event said: `Shift`, `Ctrl`, `Alt`, `Meta` joined by `+` (`@ljos-only`: Qt gives QML no application-wide value) |
 | `Then the application was asked to quit` / `Then the application was not asked to quit` | whether `Qt.quit()` was called, which a host answers by ending (`@ljos-only`: the oracle is itself the application that would end) |
 | `Then the application has nothing scheduled` | nothing would wake the application if no one touched it: no timer, no frame of something moving, no answer it waits for (`@ljos-only`: the oracle's event loop cannot be read) |
 | `Then the application has no fault` | no fault got past every boundary, or the one that did was cleared (`@ljos-only`) |

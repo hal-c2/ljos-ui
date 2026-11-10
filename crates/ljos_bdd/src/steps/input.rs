@@ -180,6 +180,14 @@ fn user_turns_wheel(w: &mut LjosWorld, n: f64, direction: String, x: f64, y: f64
     w.each(|b| b.input()?.wheel((x, y), WheelBy::Notches(dx, dy)))
 }
 
+// A wheel turned with keys held, as a zoom made with Ctrl is.
+#[rustfmt::skip]
+#[when(regex = r#"^the user turns the wheel ([\d.]+) notch(?:es)? (\w+) at ([-\d.]+), ([-\d.]+) holding "([^"]+)"$"#)]
+fn user_turns_wheel_holding(w: &mut LjosWorld, n: f64, direction: String, x: f64, y: f64, modifiers: String) -> StepResult {
+    let (dx, dy) = wheel_delta(n, &direction)?;
+    w.each(|b| b.input()?.wheel_holding(&modifiers, (x, y), WheelBy::Notches(dx, dy)))
+}
+
 #[when(regex = r"^the user scrolls ([\d.]+) pixels? (\w+) at ([-\d.]+), ([-\d.]+)$")]
 fn user_scrolls(w: &mut LjosWorld, n: f64, direction: String, x: f64, y: f64) -> StepResult {
     let (dx, dy) = wheel_delta(n, &direction)?;
