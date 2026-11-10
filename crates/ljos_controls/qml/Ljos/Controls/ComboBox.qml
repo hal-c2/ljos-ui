@@ -180,16 +180,15 @@ T.ComboBox {
 
     popup: Component {
         T.Popup {
-            // Chosen as it opens: the combo box does not move while it is open.
-            property bool upward: false
-            y: upward ? -implicitHeight - Theme.spacingSmall : control.height + Theme.spacingSmall
+            // The combo box flips it above where the window has no room
+            // below; its rows are not made yet as it says it is about to
+            // show, so only where it was put can say which way it opened.
+            readonly property bool upward: y < 0
+            y: control.height + Theme.spacingSmall
             width: Math.max(control.width, 160)
             implicitHeight: Math.min(320, contentItem.implicitHeight + topPadding + bottomPadding)
             padding: Theme.spacingSmall
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-            onAboutToShow: upward = control.Window.window !== null
-                                    && control.mapToItem(null, 0, control.height).y
-                                       + implicitHeight + Theme.spacingSmall > control.Window.height
 
             enter: Transition {
                 NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120; easing.type: Easing.OutCubic }
