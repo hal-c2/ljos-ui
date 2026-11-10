@@ -1192,9 +1192,35 @@ fn give_back_keyboard(
                     WriteKind::Imperative,
                 )?,
             }
+        } else {
+            pass_on_saved_focus(engine, item, saved);
         }
     }
     Ok(())
+}
+
+/// A popup that closes while another one above it has the keyboard
+/// hands what it saved to the one that saved something inside it: that
+/// one gives the keyboard back past both, never to an item that is
+/// hidden now (measured on Qt 6.11.2 and 6.12.0,
+/// `popup-focus.feature`).
+fn pass_on_saved_focus(engine: &Engine, item: ObjectId, saved: Option<ObjectId>) {
+    let Some(overlay) = engine.visual_parent(item) else {
+        return;
+    };
+    for (_, other) in overlay::stack(engine, overlay) {
+        let Some(st) = state_of(engine, other) else {
+            continue;
+        };
+        if st.took_focus.get()
+            && st
+                .saved_focus
+                .get()
+                .is_some_and(|s| item::is_inside(engine, s, item))
+        {
+            st.saved_focus.set(saved);
+        }
+    }
 }
 
 /// Takes a shown popup off the screen. The keyboard goes back first, so
