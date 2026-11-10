@@ -170,7 +170,8 @@ impl std::fmt::Debug for Component {
 #[qml_impl]
 impl Component {
     /// `createObject(parent, properties)`: `null` and a warning on failure,
-    /// as in Qt.
+    /// as in Qt. An object its initial properties withhold
+    /// ([`Engine::withholding`]) is `null` too.
     #[qml(invokable, name = "createObject")]
     fn create_object(cx: &Cx, parent: Value, props: Value) -> Value {
         let parent = parent.as_object();
@@ -180,10 +181,16 @@ impl Component {
             return Value::Null;
         };
         let props = cx.engine.js_object_entries(&props);
-        match cx
-            .engine
-            .create_for_script(cx.this, template, parent, props, Initial::Created)
-        {
+        let (made, withheld) = cx.engine.withholding(|| {
+            cx.engine
+                .create_for_script(cx.this, template, parent, props, Initial::Created)
+        });
+        match made {
+            // Complete, it goes again before the script holds it (Qt 6.12).
+            Ok(o) if withheld => {
+                cx.engine.destroy_now(o);
+                Value::Null
+            }
             Ok(o) => {
                 cx.engine.component_made(cx.this, None);
                 Value::Object(o)
