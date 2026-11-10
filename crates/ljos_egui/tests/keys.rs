@@ -393,7 +393,8 @@ fn another_window(s: &Scene) -> Scene {
 
 // The windows of an application share one engine, and egui tells one
 // without the keyboard of no modifiers: its passes, pointer moves and
-// wheel turns say nothing of those held in the window that has it.
+// wheel turns say nothing of those held in the window that has it, nor
+// does the change to none that X11 sends the window losing the keyboard.
 #[test]
 fn a_window_without_the_keyboard_leaves_the_modifiers_held_alone() {
     let s = scene();
@@ -406,6 +407,7 @@ fn a_window_without_the_keyboard_leaves_the_modifiers_held_alone() {
     pass(
         &mut behind,
         [
+            Event::ModifiersChanged(Modifiers::NONE),
             Event::PointerMoved(at),
             Event::MouseWheel {
                 unit: egui::MouseWheelUnit::Line,
