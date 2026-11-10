@@ -819,7 +819,7 @@
     "read_only": true
   },
   {
-    "description": "A timeline of every window's frames: `record` starts or stops it; each says what woke it and where its time went, pass by pass. Modes instead: `wakes`, `bindings` (hot bindings, loops), `growth` (instances per component over time), `export` (a trace file). `since` takes `next_since`.",
+    "description": "A timeline of every window's frames: `record` starts or stops it; each says what woke it and where its time went. Modes instead: `wakes`, `bindings` (hot bindings, loops), `script` (costly JS, cheaper form), `growth` (instances per component), `export` (a trace file). `since` takes `next_since`.",
     "input_schema": {
       "$defs": {
         "HotSort": {
@@ -891,6 +891,24 @@
             "null"
           ]
         },
+        "min_run_ms": {
+          "default": null,
+          "description": "With `script`: hint one run that spent this long in script, in\nmilliseconds (default 2, an eighth of a 60 Hz frame).",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "min_share": {
+          "default": null,
+          "description": "With `script`: hint script that took this share of what all\nbindings and handlers took, in percent (default 10), and at least\n1 ms in all.",
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
         "record": {
           "default": null,
           "description": "Start recording (`true`) or stop (`false`). What was recorded\nstays until newer frames push it out.",
@@ -898,6 +916,11 @@
             "boolean",
             "null"
           ]
+        },
+        "script": {
+          "default": false,
+          "description": "Hints instead where bindings and handlers spend their time in\nJavaScript, read from the recording `bindings` makes (`record`\nstarts or stops it): each with where it is written, what its\nscript cost and a cheaper form. Never errors: script is allowed.",
+          "type": "boolean"
         },
         "since": {
           "default": null,
