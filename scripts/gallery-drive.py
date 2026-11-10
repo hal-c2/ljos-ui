@@ -24,6 +24,9 @@ import base64, glob, json, os, re, shutil, signal, struct, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TARGET = os.environ.get("CARGO_TARGET_DIR") or os.path.join(ROOT, "target")
+# The inspector writes its token below the directory the app runs in (ROOT), not below
+# CARGO_TARGET_DIR: target/ljos/mcp-<pid>.json.
+TOKENS = os.path.join(ROOT, "target", "ljos")
 CORPUS = "file://" + os.path.join(ROOT, "corpus", "qtdoc") + "/"
 SANDBOX = os.path.join(ROOT, "scripts", "cua-sandbox.sh")
 # The sandbox's config, data and state directories; cua-sandbox.sh makes them again, with the
@@ -300,7 +303,7 @@ def why_it_ended(d, p):
 def drive(out, eid):
     d = os.path.join(out, eid)
     os.makedirs(d, exist_ok=True)
-    before = set(glob.glob(TARGET + "/ljos/mcp-*.json"))
+    before = set(glob.glob(TOKENS + "/mcp-*.json"))
     # What the last run saved (Settings, LocalStorage) would start this one somewhere else.
     shutil.rmtree(XDG, ignore_errors=True)
     seed_pictures()
@@ -321,7 +324,7 @@ def drive(out, eid):
     path = None
     for _ in range(STARTUP * 2):
         time.sleep(0.5)
-        new = set(glob.glob(TARGET + "/ljos/mcp-*.json")) - before
+        new = set(glob.glob(TOKENS + "/mcp-*.json")) - before
         if new:
             path = new.pop()
             break
