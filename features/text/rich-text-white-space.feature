@@ -4,8 +4,8 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-textedit.html#text-prop
 # Verified on Qt 6.11.2 (qml6, offscreen). What becomes of the white space
 # is read with getText: a line break is shown as "/", the start of a new
-# paragraph as "#", a space that does not break as "_", and the text is in
-# brackets so that its spaces show.
+# paragraph as "#", a space that does not break as "_", the start and end
+# of a table as "=", and the text is in brackets so that its spaces show.
 # A "~" in the HTML of a step stands for a line feed.
 
 @qt-parity @api-QtQuick.TextEdit.textFormat
@@ -32,7 +32,7 @@ Feature: White space in rich text
         onHtmlChanged: edit.text = html.split("~").join("\n")
         function show(e) {
           const t = e.getText(0, e.length)
-          out = "[" + t.split("\u2028").join("/").split("\u2029").join("#").split("\u00a0").join("_") + "]"
+          out = "[" + t.split("\u2028").join("/").split("\u2029").join("#").split("\u00a0").join("_").replace(/[\ufdd0\ufdd1]/g, "=") + "]"
         }
         function plain() { show(edit) }
         function lines() { out = edit.lineCount > 1 ? "wraps" : "one line" }
@@ -78,6 +78,7 @@ Feature: White space in rich text
         | A line feed right after the start tag is not text        | <p style='white-space:pre-wrap'>~~  a</p>         | [#  a]   |
         | A line feed at the end makes no paragraph                | <p style='white-space:pre-wrap'>a~</p>            | [a]      |
         | So it is in pre                                          | <pre>~  a</pre>                                   | [  a]    |
+        | So it is in a table cell                                 | <table><tr><td><pre>~code</pre></td></tr></table> | [=code=]           |
         | pre-line keeps the line feed, not the spaces around it   | <p style='white-space:pre-line'>  a  ~  b</p>     | [a#b]    |
 
   Rule: normal, nowrap and pre-line collapse spaces
