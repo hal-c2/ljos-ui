@@ -151,7 +151,7 @@ pub use incubator::singletons::{
     QmlSingleton, ScopedEvent, ScopedSingleton, SingletonScope, WindowScope,
 };
 pub use incubator::tier1::Tier1Stats;
-pub use incubator::{CreationHandle, CreationJob, SharedCreation};
+pub use incubator::{CreationHandle, CreationJob, Initial, SharedCreation};
 pub use instantiator::Instantiator;
 pub use introspect::{BindingTier, ObjectReport, PropertyReport, SourcePlace};
 pub use item_selection::{ItemSelectionModel, invalid_model_index, model_index};

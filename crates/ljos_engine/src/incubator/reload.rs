@@ -220,6 +220,7 @@ struct Origin {
     props: Vec<(String, Value)>,
     /// See [`Engine::create_from_url_in`].
     scope: Option<ObjectId>,
+    how: Initial,
 }
 
 #[derive(Clone)]
@@ -771,6 +772,7 @@ impl Engine {
                 origin.parent,
                 origin.props.clone(),
                 origin.scope,
+                origin.how.clone(),
             ) {
                 Ok(new) => made.push((*old_root, new)),
                 Err(e) => {
@@ -1382,6 +1384,7 @@ impl Engine {
         parent: Option<ObjectId>,
         props: &[(String, Value)],
         scope: Option<ObjectId>,
+        how: Initial,
     ) {
         self.inner.reload.origins.borrow_mut().insert(
             root,
@@ -1390,6 +1393,7 @@ impl Engine {
                 parent,
                 props: props.to_vec(),
                 scope,
+                how,
             },
         );
     }
