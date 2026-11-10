@@ -2,7 +2,7 @@
 #   https://doc.qt.io/qt-6/qml-qtqml-component.html#createObject-method
 #   https://doc.qt.io/qt-6/qtqml-syntax-objectattributes.html#grouped-properties
 #   https://doc.qt.io/qt-6/qtqml-syntax-objectattributes.html#attached-properties-and-attached-signal-handlers
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 and 6.12.0 (qml6, offscreen).
 
 @qt-parity
 Feature: Dotted names among the properties given to Component.createObject
@@ -18,8 +18,7 @@ Feature: Dotted names among the properties given to Component.createObject
       import QtQuick.Controls
       import QtQuick.Layouts
       Item {
-        id: root
-        objectName: "root"
+        id: root; objectName: "root"
         property var got; property var other
         Component { id: text; Text { text: "x"; font.italic: true } }
         Component { id: box; Rectangle { } }
@@ -28,8 +27,7 @@ Feature: Dotted names among the properties given to Component.createObject
         ColumnLayout { id: column }
         function sized() {
           const o = text.createObject(root, { "font.pixelSize": 31 })
-          got = o.font.pixelSize
-          other = o.font.italic
+          got = o.font.pixelSize; other = o.font.italic
         }
         function bordered() { got = box.createObject(root, { "border.width": 4 }).border.width }
         function named() {
@@ -38,6 +36,8 @@ Feature: Dotted names among the properties given to Component.createObject
         function filling() {
           got = plain.createObject(column, { "Layout.fillWidth": true }).Layout.fillWidth
         }
+        function odd(which, name) {
+          got = { text, box, plain }[which].createObject(column, { [name]: 1 }) !== null }
       }
       """
 
@@ -59,3 +59,16 @@ Feature: Dotted names among the properties given to Component.createObject
     Scenario: A property attached by Layout
       When the method "filling" of "root" is called
       Then the property "got" of "root" is true
+
+  Rule: A name that what the path leads to does not have is passed over in silence
+
+    Scenario Outline: <name> is passed over and the object is made
+      When the method "odd" of "root" is called with "<which>", "<name>"
+      Then the property "got" of "root" is true
+      And the log has no warnings
+
+      Examples:
+        | name          | which |
+        | font.nosuch   | text  |
+        | border.nosuch | box   |
+        | Layout.nosuch | plain |
