@@ -1444,11 +1444,34 @@ fn write_measured(
     })
 }
 
-/// Lays the shown Text `obj` out with `t` by the next frame's polish, which
-/// tells whatever follows its sizes once however often a script changes it
-/// before then, and when one of its sizes is read before that, at once: as
-/// on qml6, a script that changes a text reads its new size in the next
-/// statement. The read's layout is the polish's.
+/// Whether anything follows a size of the Text `obj`: a binding that read
+/// one, or a handler of its change signal.
+pub(crate) fn sizes_observed(engine: &Engine, obj: ObjectId) -> bool {
+    MEASURED.into_iter().any(|p| engine.is_observed(obj, p))
+}
+
+/// Lays the shown Text `obj` out with `t` now and writes its sizes, which
+/// tells whatever follows one that moved inside the change that moved it,
+/// as qml6 does: a binding on another item reads the new size in the next
+/// statement, and a handler of its change signal has run by then. Only for
+/// a text something follows ([`sizes_observed`]); the rest wait for a read
+/// or the frame ([`measure_by_polish`]), so a script that changes many
+/// does not lay out each.
+pub(crate) fn measure_now(
+    engine: &Engine,
+    obj: ObjectId,
+    t: &TextInputs,
+) -> Result<(), EngineError> {
+    engine.with_mut(obj, |x: &mut Text| x.measured = None)?;
+    write_measured(engine, obj, t, &text_engine())
+}
+
+/// Lays the shown Text `obj`, whose sizes nothing follows yet, out with `t`
+/// by the next frame's polish, which tells whatever came to follow them
+/// since once however often a script changes it before then, and when one
+/// of its sizes is read before that, at once: as on qml6, a script that
+/// changes a text reads its new size in the next statement. The read's
+/// layout is the polish's.
 pub(crate) fn measure_by_polish(
     engine: &Engine,
     obj: ObjectId,
