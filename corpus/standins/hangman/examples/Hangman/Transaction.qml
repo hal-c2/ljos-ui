@@ -12,7 +12,7 @@ QtObject {
     readonly property int failureReason: Transaction.NoFailure
     readonly property string errorString: ""
     readonly property string orderId: ""
-    readonly property date timestamp
+    readonly property date timestamp: new Date(0)
     readonly property QtObject product: null
 
     function finalize() {}
