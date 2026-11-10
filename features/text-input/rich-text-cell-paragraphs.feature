@@ -207,18 +207,27 @@ Feature: Paragraphs in the cells of a rich TextEdit
       Then the property "out" of "root" is "<text>"
 
       Examples:
-        | doc                                                                       | at | keys           | text            |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 1  | Ctrl+Backspace | 1 [=ab cd=ef=]  |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 9  | Ctrl+Delete    | 9 [=ab cd=ef=]  |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 4  | Ctrl+Backspace | 1 [=cd=ef=]     |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 6  | Ctrl+Delete    | 2 [===]         |
-        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 7  | Ctrl+Backspace | 1 [===]         |
-        | [table][tr][td]ab[/td][/tr][tr][td]cd[/td][/tr][/table]                   | 4  | Ctrl+Backspace | 1 [===]         |
-        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table]                              | 2  | Ctrl+Delete    | 2 [xy]          |
-        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 2  | Ctrl+Delete    | 2 [xy#cd]       |
-        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 6  | Ctrl+Backspace | 2 [xy#cd]       |
-        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 5  | Ctrl+Delete    | 5 [xy zw#gh ij] |
-        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 15 | Ctrl+Backspace | 5 [xy zw#gh ij] |
+        | doc                                                                       | at | keys           | text                       |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 1  | Ctrl+Backspace | 1 [=ab cd=ef=]             |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 9  | Ctrl+Delete    | 9 [=ab cd=ef=]             |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 4  | Ctrl+Backspace | 1 [=cd=ef=]                |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 6  | Ctrl+Delete    | 2 [===]                    |
+        | [table][tr][td]ab cd[/td][td]ef[/td][/tr][/table]                         | 7  | Ctrl+Backspace | 1 [===]                    |
+        | [table][tr][td]ab[/td][/tr][tr][td]cd[/td][/tr][/table]                   | 4  | Ctrl+Backspace | 1 [===]                    |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table]                              | 2  | Ctrl+Delete    | 2 [xy]                     |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 2  | Ctrl+Delete    | 2 [xy#cd]                  |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 6  | Ctrl+Backspace | 2 [xy#cd]                  |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 5  | Ctrl+Delete    | 5 [xy zw#gh ij]            |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 15 | Ctrl+Backspace | 5 [xy zw#gh ij]            |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 3  | Ctrl+Backspace | 3 [xy=ab=#cd]              |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 5  | Ctrl+Delete    | 5 [xy=ab=#cd]              |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 7  | Ctrl+Backspace | 6 [xy=ab=cd]               |
+        | [p]xy[/p][table][tr][td]ab[/td][/tr][/table][p]cd[/p]                     | 6  | Ctrl+Delete    | 6 [xy=ab=cd]               |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 6  | Ctrl+Backspace | 6 [xy zw=ab cd=ef=#gh ij]  |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 14 | Ctrl+Delete    | 14 [xy zw=ab cd=ef=#gh ij] |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 9  | Ctrl+Backspace | 6 [xy zw=cd=ef=#gh ij]     |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 11 | Ctrl+Delete    | 7 [xy zw===#gh ij]         |
+        | [p]xy zw[/p][table][tr][td]ab cd[/td][td]ef[/td][/tr][/table][p]gh ij[/p] | 12 | Ctrl+Backspace | 6 [xy zw===#gh ij]         |
 
   Rule: What is copied has a line feed between the paragraphs of a cell
 
