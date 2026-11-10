@@ -83,6 +83,12 @@ fn class_of(ch: char) -> Class {
     }
 }
 
+/// What ends a paragraph: a line feed, or U+2029, the paragraph separator,
+/// which a rich text has between the paragraphs of a table's cell.
+fn ends_paragraph(ch: char) -> bool {
+    ch == '\n' || ch == '\u{2029}'
+}
+
 /// Combining marks stay with the letter they sit on.
 fn is_mark(ch: char) -> bool {
     matches!(u32::from(ch),
@@ -313,9 +319,9 @@ impl TextModel {
             let mut end = start + first.len_utf8();
             // A line break ends a word of spaces too: words do not span
             // paragraphs.
-            if first != '\n' {
+            if !ends_paragraph(first) {
                 while let Some((i, ch)) = chars.peek().copied() {
-                    if ch == '\n' || class_of(ch) != class {
+                    if ends_paragraph(ch) || class_of(ch) != class {
                         break;
                     }
                     end = i + ch.len_utf8();
@@ -334,7 +340,9 @@ impl TextModel {
     }
 
     /// The start of the next word after `pos`; the end of the text when
-    /// there is none (Ctrl+Right). The end of a paragraph is a stop too.
+    /// there is none (Ctrl+Right). The end of a paragraph is a stop too,
+    /// and from there the start of the next one, as on Qt 6.12
+    /// (features/text-input/text-edit-keys.feature).
     pub fn next_word(&self, pos: usize) -> usize {
         let at = self.byte(pos);
         let word = self
@@ -342,16 +350,21 @@ impl TextModel {
             .map(|w| w.start)
             .find(|s| *s > at)
             .unwrap_or(self.text.len());
-        let line_end = self.text[at..]
-            .char_indices()
-            .skip(1)
-            .find(|(_, ch)| *ch == '\n')
-            .map_or(word, |(i, _)| at + i);
-        self.units(word.min(line_end))
+        let end = self.paragraph_bytes(at).end;
+        let stop = if end > at {
+            end
+        } else {
+            self.text[at..]
+                .chars()
+                .next()
+                .map_or(at, |c| at + c.len_utf8())
+        };
+        self.units(word.min(stop))
     }
 
     /// The start of the word before `pos`; the start of the text when there
-    /// is none (Ctrl+Left). The end of a paragraph is a stop too.
+    /// is none (Ctrl+Left). The start of a paragraph is a stop too, and
+    /// from there the end of the one before.
     pub fn prev_word(&self, pos: usize) -> usize {
         let at = self.byte(pos);
         let word = self
@@ -360,8 +373,16 @@ impl TextModel {
             .take_while(|s| *s < at)
             .last()
             .unwrap_or(0);
-        let line_end = self.text[..at].rfind('\n').unwrap_or(0);
-        self.units(word.max(line_end))
+        let start = self.paragraph_bytes(at).start;
+        let stop = if start < at {
+            start
+        } else {
+            self.text[..at]
+                .chars()
+                .next_back()
+                .map_or(0, |c| at - c.len_utf8())
+        };
+        self.units(word.max(stop))
     }
 
     /// The end of the word at or after `pos`.
@@ -419,17 +440,21 @@ impl TextModel {
     pub fn select_paragraph(&mut self) {
         let r = self.paragraph_bytes(self.cursor);
         self.anchor = r.start;
-        self.cursor = if r.end < self.text.len() {
-            r.end + 1
-        } else {
-            r.end
-        };
+        self.cursor = self.text[r.end..]
+            .chars()
+            .next()
+            .map_or(r.end, |c| r.end + c.len_utf8());
     }
 
-    fn paragraph_bytes(&self, at: usize) -> Range<usize> {
-        let start = self.text[..at].rfind('\n').map_or(0, |i| i + 1);
+    /// The paragraph the byte `at` is in, without the breaks around it:
+    /// the one place that says where paragraphs start and end.
+    pub fn paragraph_bytes(&self, at: usize) -> Range<usize> {
+        let start = self.text[..at]
+            .char_indices()
+            .rfind(|&(_, c)| ends_paragraph(c))
+            .map_or(0, |(i, c)| i + c.len_utf8());
         let end = self.text[at..]
-            .find('\n')
+            .find(ends_paragraph)
             .map_or(self.text.len(), |i| at + i);
         start..end
     }
@@ -620,7 +645,7 @@ impl TextModel {
         let count = text.graphemes(true).count();
         let end = self.text[self.cursor..]
             .grapheme_indices(true)
-            .take_while(|(_, g)| !g.starts_with('\n'))
+            .take_while(|(_, g)| !g.starts_with(ends_paragraph))
             .nth(count.saturating_sub(1))
             .map_or_else(
                 || self.paragraph_bytes(self.cursor).end,
@@ -1076,6 +1101,28 @@ mod tests {
         assert_eq!((m.next_word(0), m.next_word(5)), (5, 6));
         let m = model("hello brave\nworld");
         assert_eq!((m.prev_word(17), m.prev_word(12)), (12, 11));
+    }
+
+    /// hal-c2/ljos-ui#308: from a paragraph's edge a word goes no further
+    /// than the break, and from the break no further than the next edge.
+    #[test]
+    fn a_word_stops_at_the_edges_of_a_paragraph() {
+        for sep in ["\n", "\u{2029}"] {
+            let m = model(&format!("xy{sep} cd"));
+            assert_eq!((m.prev_word(4), m.prev_word(3)), (3, 2), "{sep:?}");
+            assert_eq!((m.next_word(2), m.next_word(3)), (3, 4), "{sep:?}");
+            let start = 2 + sep.len();
+            assert_eq!(m.paragraph_bytes(start + 1), start..m.text().len());
+        }
+    }
+
+    #[test]
+    fn a_paragraph_separator_ends_a_paragraph() {
+        let mut m = model("one\u{2029}two");
+        m.move_to(1, false);
+        m.select_paragraph();
+        assert_eq!(m.selection(), 0..4);
+        assert_eq!((m.paragraph_start(5), m.paragraph_end(1)), (4, 3));
     }
 
     #[test]

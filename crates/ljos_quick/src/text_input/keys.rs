@@ -240,13 +240,7 @@ fn rtl_at(s: &State) -> bool {
 fn paragraph_rtl(s: &State) -> bool {
     let text = s.model.text();
     let at = s.model.cursor_byte().min(text.len());
-    let breaks = |c: char| c == '\n' || c == '\u{2029}';
-    let start = text[..at]
-        .char_indices()
-        .rfind(|&(_, c)| breaks(c))
-        .map_or(0, |(i, c)| i + c.len_utf8());
-    let end = text[at..].find(breaks).map_or(text.len(), |i| at + i);
-    reads_right_to_left(&text[start..end])
+    reads_right_to_left(&text[s.model.paragraph_bytes(at)])
 }
 
 fn motion(s: &State, motion: Motion, select: bool, echo: i32) -> Plan {
