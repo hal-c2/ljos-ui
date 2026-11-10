@@ -45,7 +45,9 @@ if [ -n "${LJOS_BDD_CARGO_FEATURES:-}" ]; then
   case ",$LJOS_BDD_CARGO_FEATURES," in
     *,webengine,*)
       export CEF_PATH="${CEF_PATH:-${CARGO_TARGET_DIR:-$PWD/target}/cef}"
-      cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper ;;
+      cargo build --quiet -p ljos_webengine --features cef --bin ljos-webengine-helper
+      # CEF's libraries come unstripped, libcef.so at 1.48 GB (see the script).
+      scripts/strip-cef-runtime.sh "${CARGO_TARGET_DIR:-$PWD/target}/debug" ;;
   esac
 fi
 

@@ -15,6 +15,10 @@ export CEF_PATH="${CEF_PATH:-$target/cef}"
 # other had built, every time.
 cargo build --quiet -p ljos_webengine --bin ljos-webengine-helper --bin ljos-webengine-bundle \
   -p ljos_cli --bin ljos --features ljos_webengine/cef,ljos_cli/webengine
+# On Linux the libraries the build script copied beside the binaries ship unstripped: libcef.so
+# is 1.48 GB, most of it DWARF, and 278 MB stripped. The copies are stripped;
+# the original in CEF_PATH keeps its symbols for symbolising a crash (see the script).
+scripts/strip-cef-runtime.sh "$target/debug"
 if [ "$(uname -s)" = Darwin ]; then
   # On macOS CEF is a framework inside an application bundle, with helper
   # applications it starts its processes from: ljos.app, run from inside.
