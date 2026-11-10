@@ -47,6 +47,11 @@ pub(crate) struct Flow {
     ctxs: Vec<Ctx>,
     /// Goes on every block made from now on ([`Block::source_start`]).
     pub(crate) source_start: usize,
+    /// The last block made ends in a space that collapsed where spaces do
+    /// not break. Measured on Qt 6.11, white space after that block adds
+    /// none, as after a block that ends in a space; after one written as
+    /// `&nbsp;` it does.
+    nowrap_space_end: bool,
 }
 
 impl Flow {
@@ -124,6 +129,7 @@ impl Flow {
         block.no_wrap = table.is_none() && self.ctxs.last().is_some_and(|c| c.no_wrap);
         block.table = table;
         block.source_start = self.source_start;
+        self.nowrap_space_end = buf.nowrap_space_end == Some(buf.text.len());
         let mut block = buf.into_block(block);
         if block.kind == BlockKind::Paragraph && block.text.is_empty() && block.images.len() == 1 {
             block.kind = BlockKind::Image;
@@ -140,6 +146,7 @@ impl Flow {
         if s.is_empty() {
             return;
         }
+        self.nowrap_space_end = false;
         let mut buf = InlineBuf {
             text: std::mem::take(&mut block.text),
             spans: std::mem::take(&mut block.spans),
@@ -153,6 +160,22 @@ impl Flow {
         if block.kind == BlockKind::Image {
             block.kind = BlockKind::Paragraph;
         }
+    }
+
+    /// Whether the last block made ends in a space or a line break, so
+    /// white space after it adds no space.
+    pub(crate) fn ends_open(&self) -> bool {
+        self.nowrap_space_end
+            || self
+                .blocks
+                .last()
+                .is_some_and(|b| b.text.ends_with([' ', '\n']))
+    }
+
+    /// The text [`Flow::append`] put at the end of the last block ends in
+    /// a space that collapsed where spaces do not break.
+    pub(crate) fn ends_in_nowrap_space(&mut self) {
+        self.nowrap_space_end = true;
     }
 
     /// The last block made, to change it before the document is finished.

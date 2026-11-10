@@ -546,10 +546,7 @@ impl<'a> Parser<'a> {
     /// one, as Qt has after every table.
     fn give_block_before(&mut self, text: &str, style: &Inline, white_space: WhiteSpace) {
         let after_table = self.flow.last_mut().is_none_or(|b| b.table.is_some());
-        let ends_open = self
-            .flow
-            .last_mut()
-            .is_some_and(|b| b.text.ends_with([' ', '\n']));
+        let ends_open = self.flow.ends_open();
         match white_space {
             WhiteSpace::Verbatim | WhiteSpace::Pre | WhiteSpace::PreWrap if after_table => {
                 self.read(text);
@@ -582,12 +579,15 @@ impl<'a> Parser<'a> {
                     }
                     _ => (text, 0),
                 };
-                let mut first = collapsed_gap(first, space, ends_open);
+                let (mut first, ends_in_space) = collapsed_gap(first, space, ends_open);
                 // pre-line: no space before a line feed.
                 if line_feeds > 0 && first.ends_with(' ') {
                     first.pop();
                 }
                 self.flow.append(&first, style);
+                if white_space == WhiteSpace::NoWrap && ends_in_space && !first.is_empty() {
+                    self.flow.ends_in_nowrap_space();
+                }
                 // Each line feed an empty paragraph: what follows one on
                 // its line is white space at the start of a line.
                 for _ in 0..line_feeds {
@@ -1721,7 +1721,7 @@ fn is_space(c: char) -> bool {
 
 /// White space between blocks where spaces collapse: each run of it one
 /// `space`, none at the start `after_space`; a no-break space stays one.
-fn collapsed_gap(text: &str, space: &str, after_space: bool) -> String {
+fn collapsed_gap(text: &str, space: &str, after_space: bool) -> (String, bool) {
     let mut out = String::new();
     let mut after_space = after_space;
     for c in text.chars() {
@@ -1733,7 +1733,7 @@ fn collapsed_gap(text: &str, space: &str, after_space: bool) -> String {
             after_space = true;
         }
     }
-    out
+    (out, after_space)
 }
 
 fn is_block(name: &str) -> bool {
