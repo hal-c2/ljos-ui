@@ -943,6 +943,16 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             return;
         };
         self.check_name(Declared::Property, &name, declaration.name.span);
+        // Nothing can give a read-only property its value later, so Qt
+        // refuses the file. A list is only warned of there, and loads empty
+        // (Qt 6.12.0); that warning is not given here.
+        if declaration.is_readonly && declaration.value.is_none() && !type_name.is_list {
+            self.diagnostics.push(Diagnostic::error(
+                Code::Semantic,
+                "Read-only properties require an initializer.",
+                self.span(declaration.span),
+            ));
+        }
         let is_alias = type_name.name.as_simple() == Some("alias");
         let alias = is_alias
             .then(|| alias_target(declaration))
