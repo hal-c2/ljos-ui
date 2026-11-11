@@ -128,11 +128,21 @@ impl Engine {
             return Ok(inc);
         }
         let owner = parent.map_or(APPLICATION_PROC, |p| self.proc_for(p));
-        let (job, handle) =
+        // Made later, it is kept for a reload as one made at once is.
+        let call = self.reload_script_call(component, parent, &props, &how);
+        let (mut job, handle) =
             CreationJob::for_component(self, component, parent, props, Lane::Visible, owner);
+        if call.is_some() {
+            job = job.by_script();
+        }
         let (job, shared) = job
             .initial(how)
-            .on_done(move |e, made| e.incubated(inc, made))
+            .on_done(move |e, made| {
+                if let (Some(call), Ok(obj)) = (call, made) {
+                    e.reload_note_scripted(*obj, call);
+                }
+                e.incubated(inc, made)
+            })
             .shared();
         self.extension::<Running>()
             .handles

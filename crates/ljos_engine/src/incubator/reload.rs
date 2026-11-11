@@ -214,6 +214,15 @@ struct Scripted {
     how: Initial,
 }
 
+/// A script's call that made an object, to keep it as a [`Scripted`].
+pub(crate) struct ScriptCall {
+    component: ObjectId,
+    template: Rc<Template>,
+    parent: ObjectId,
+    props: Vec<(String, Value)>,
+    how: Initial,
+}
+
 /// How a root was made, to make it again.
 #[derive(Clone)]
 struct Origin {
@@ -910,14 +919,10 @@ impl Engine {
             how.clone(),
         );
         st.scripting.set(false);
-        if let Ok(obj) = made
-            && self.is_alive(obj)
-        {
-            st.serial.set(st.serial.get() + 1);
-            st.scripted.borrow_mut().insert(
+        if let Ok(obj) = made {
+            self.reload_note_scripted(
                 obj,
-                Scripted {
-                    serial: st.serial.get(),
+                ScriptCall {
                     component,
                     template,
                     parent,
@@ -927,6 +932,63 @@ impl Engine {
             );
         }
         made
+    }
+
+    /// [`Engine::create_for_script`]'s call, for an object made later
+    /// by a job ([`CreationJob::by_script`]): what to keep the object as
+    /// once it is made. `None` when nothing is tracked.
+    pub(crate) fn reload_script_call(
+        &self,
+        component: ObjectId,
+        parent: Option<ObjectId>,
+        props: &[(String, Value)],
+        how: &Initial,
+    ) -> Option<ScriptCall> {
+        let parent = parent.filter(|_| self.inner.reload.tracking.get())?;
+        Some(ScriptCall {
+            component,
+            template: self.component_template(component).ok()?,
+            parent,
+            props: props.to_vec(),
+            how: how.clone(),
+        })
+    }
+
+    /// `obj` was made by a script's `call`: a reload makes it again under
+    /// the object that goes on for its parent.
+    pub(crate) fn reload_note_scripted(&self, obj: ObjectId, call: ScriptCall) {
+        let st = &self.inner.reload;
+        if !self.is_alive(obj) {
+            return;
+        }
+        let ScriptCall {
+            component,
+            template,
+            parent,
+            props,
+            how,
+        } = call;
+        st.serial.set(st.serial.get() + 1);
+        st.scripted.borrow_mut().insert(
+            obj,
+            Scripted {
+                serial: st.serial.get(),
+                component,
+                template,
+                parent,
+                props,
+                how,
+            },
+        );
+    }
+
+    /// The root a job makes next is a script's: it gets a path of its own
+    /// beside the ones made before it from the same component.
+    pub(super) fn reload_by_script(&self) {
+        let st = &self.inner.reload;
+        if st.tracking.get() {
+            st.scripting.set(true);
+        }
     }
 
     /// The objects scripts made under objects of the old tree, made again
