@@ -104,6 +104,20 @@ Feature: Editing Markdown in a TextEdit
       | ````~```~x~```~````~      | ````\|```\|x\|```\|````\|\|      |
       | ```js~x~```~~```py~y~```~ | ```js\|x\|```\|```py\|y\|```\|\| |
 
+  Scenario Outline: A list item's second paragraph "<text>" is written back in the item
+    When the method "read" of "root" is called with "<text>"
+    Then the property "out" of "root" is "<out>"
+
+    Examples:
+      | text                 | out                                  |
+      | - a~~  x~            | - a\|\|  x\|\|                       |
+      | - a~~    x~          | - a\|\|  x\|\|                       |
+      | 1. a~~   x~          | 1.  a\|\|    x\|\|                   |
+      | - a~~  x~- b~        | - a\|\|  x\|\|- b\|                  |
+      | - a~~  x~~  y~       | - a\|\|  x\|\|  y\|\|                |
+      | - a~~  x~~after~     | - a\|\|  x\|\|after\|\|              |
+      | 1. a~2. b~~   x~3. c~ | 1.  a\|2.  b\|\|    x\|\|3.  c\|      |
+
   Scenario: Typing in an indented code block keeps it indented
     When the method "read" of "root" is called with "a~~    x y~"
     And the property "cursorPosition" of "edit" is set to 3
