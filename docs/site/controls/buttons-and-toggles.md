@@ -157,9 +157,8 @@ Column {
 
 Watch out for keyboard activation on `DelayButton`: pressing and immediately releasing the Space key emits `pressed`, `released`, and `clicked`, but does not emit `activated` or check the button.
 
-## Differences from Qt
+## Style coverage
 
-- Pointer-held interactions (`pressed` while held, `pressAndHold`, `autoRepeat`, and `canceled`) are covered by Ljós-only scenarios: the comparison tool sends whole clicks, so what happens between press and release was read from Qt with its own test tool instead.
 - Material, Fusion, and Universal restyle a subset of these controls (for example, Material provides its own `Button`, `CheckBox`, `RadioButton`, `RoundButton`, and `Switch`) and inherit the remaining controls from Basic.
 
 ## See also

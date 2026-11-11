@@ -124,10 +124,10 @@ You can customise an individual control without writing a full style:
 
 To build a custom style for your application, create a `qmldir` module containing QML files named after the controls you want to restyle—for example, a `Button.qml` whose root item is `T.Button` from `QtQuick.Templates`. When your custom style is selected, its `Button` replaces the one in `QtQuick.Controls`, and any control your module does not define is taken from its fallback style (which defaults to Basic). To name another fallback style, set the `QT_QUICK_CONTROLS_FALLBACK_STYLE` environment variable or `FallbackStyle=` in the `[Controls]` group of the configuration file.
 
-## Differences from Qt
+## Limits
 
-- Ljós has no macOS, Windows, or iOS style; the native macOS and Windows styles are deferred, and the platform style is Fusion on Linux.
-- Material's `variant` and `shade()` are not supported, and the built-in styles render Basic's shapes using each style's metrics and colours rather than full Material or Fluent visual effects.
+- There are no macOS, Windows or iOS styles; on Linux the platform style is Fusion.
+- Material's `variant` and `shade()` are not available, and the built-in styles draw Basic's shapes in each style's metrics and colours rather than the full Material or Fluent visual effects.
 
 ## See also
 

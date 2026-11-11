@@ -155,7 +155,7 @@ Column {
 
 `MenuBar` creates a `MenuBarItem` for each `Menu` added to it (`addMenu()`, `removeMenu()`, `count`), matching the height of its items and opening a menu as soon as the pointer presses its `MenuBarItem` (Escape or pressing outside closes it).
 
-On macOS a `MenuBar` is the system's menu bar, as in Qt 6.8 and later: it takes no room in its window, and the active window's bar is the one shown. Items titled "About…", "Settings…" or "Preferences…", and "Quit" or "Exit", move to the application menu. macOS lists the application's windows in the menu titled "Window". When that title is translated, say which menu it is with `SystemMenu.role` from `import Ljos`; such a menu is shown even when it has no items of its own:
+On macOS a `MenuBar` is the system's menu bar: it takes no room in its window, and the active window's bar is the one shown. Items titled "About…", "Settings…" or "Preferences…", and "Quit" or "Exit", move to the application menu. macOS lists the application's windows in the menu titled "Window". When that title is translated, say which menu it is with `SystemMenu.role` from `import Ljos`; such a menu is shown even when it has no items of its own:
 
 ```qml
 Menu {
@@ -203,7 +203,7 @@ Item {
 
 `ToolTip` displays short help text centered above its parent. Calling `show()` sets `text` and opens the tool tip; if `delay` is set, it waits before appearing (calling `hide()` during the delay cancels it), and if `timeout` is set, it closes automatically once the timeout expires.
 
-## Differences from Qt
+## Notes
 
 - `ToolTip` uses a single shared instance per window, and the attached `ToolTip` property reports that shared state while waiting for its `delay`.
 - When a popup closes, its item is hidden inside the window overlay rather than removed from the overlay tree.

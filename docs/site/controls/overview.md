@@ -1,16 +1,59 @@
 ---
-title: Quick Controls Overview
-description: Learn how Qt Quick Controls work in Ljós, including the Control base type, sizing, padding, palettes, fonts, and built-in styles.
+title: Controls Overview
+description: Use Ljós's own controls from Ljos.Controls, or the Basic, Fusion, Material and Universal style modules existing QML imports, and learn the Control base type, sizing, padding, palettes and fonts.
 section: controls
 order: 1
 ---
-# Quick Controls Overview
+# Controls Overview
 
-Use `QtQuick.Controls` when you need ready-made user interface controls—buttons, text fields, sliders, menus, panes, and windows—or when you want to build your own controls on the `Control` base type. You can import `QtQuick.Controls` to let Ljós pick the active style, or import `QtQuick.Controls.Basic`, `QtQuick.Controls.Fusion`, `QtQuick.Controls.Material`, or `QtQuick.Controls.Universal` directly to lock a file to that style.
+Controls are the ready-made parts of an interface: buttons, text fields, sliders, menus, panes and windows. A file of Ljós's own API imports them from `Ljos.Controls`. A file that imports `QtQuick.Controls` or one of its style modules gets those styles' controls instead, and you can build your own controls on the `Control` base type in either.
 
-## Styles and control catalogue
+## Ljós's own controls
 
-Every control exists in every style module, so a `SpinBox` or `ComboBox` works the same way whether your program runs under Basic, Fusion, Material, or Universal.
+`Ljos.Controls` draws its controls in Ljós's own style: compact controls, 28 px high with 13 px type and a radius of 8, all drawn with the colour roles of one `Theme` singleton.
+
+```qml
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls
+
+Column {
+    spacing: 8
+    padding: 12
+
+    Label {
+        text: "Ready"
+    }
+
+    Button {
+        text: "Save"
+        ToolTip.text: "Writes the file"
+        ToolTip.delay: 500
+    }
+
+    Button {
+        text: "Send"
+        primary: true
+    }
+
+    Button {
+        text: "Delete"
+        destructive: true
+    }
+}
+```
+
+The style has `Button` (with `primary`, `destructive`, `subtle`, `chevron` and `iconName`), `Switch`, `CheckBox`, `ComboBox`, `TextField`, `SpinBox`, `Slider`, `Menu`, `MenuItem`, `MenuSeparator`, `Label`, `ToolTip` and `Icon`, which draws Lucide's icons. `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`, `ScrollView`, `FileDialog` and `FolderDialog` are there too, drawn as the Basic style draws them until the style has its own.
+
+Every colour is a role of `Theme` (`canvas`, `surface`, `input`, `border`, `text`, `textMuted`, `accent`, `focus`, `link`, `destructive` and more), and every role is derived from three: `canvas`, `text` and `accent`, which follow `Ljos.Design`'s `Colors` in light and dark. Each derived role is moved until it meets its WCAG contrast ratio against every fill it is drawn on, so a theme built from your own three colours stays legible. Set any role to override it (`Theme.input = "#b00020"`); the others still follow the three.
+
+A pressed button gives a little and a switch's thumb slides, using `Ljos.Design`'s `Motion`. Under reduced motion nothing moves, and the state still shows: a pressed button's fill says it is pressed. A control reached by the keyboard draws a ring in the `focus` role.
+
+A file chooses its style by its import and nothing else, so it draws the same wherever it runs. `Ljos.Controls.Basic` has the same controls drawn in the Basic style, and a file moves between the two by changing its import.
+
+## Style modules
+
+Files that import `QtQuick.Controls` choose among four style modules: Basic, Fusion, Material and Universal. Every control exists in every style module, so a `SpinBox` or `ComboBox` works the same way whether your program runs under Basic, Fusion, Material, or Universal.
 
 The Basic style is the neutral foundation that the other styles and custom controls build on. When a style does not provide its own version of a control, it falls back to Basic unless another fallback style is named. If your program does not choose a style, it uses the platform style, which is Fusion on Linux.
 
@@ -149,13 +192,13 @@ Here the `Label` and the `Button` inherit `20` px and italic from the `Pane`, an
 
 Keep a common pitfall in mind: a plain `Text` item does not inherit the `font` of the `Pane` or control it sits inside. Use `Label` when you want text to follow control font and palette inheritance.
 
-## Differences from Qt
+## Limits
 
-- Ljós has no macOS, Windows, or iOS style; the native macOS and Windows styles are deferred, and the platform style on Linux is Fusion.
-- Material's `variant` and `shade()` are not supported, and Fusion, Material, and Universal use Basic's shapes in each style's sizes and colours rather than full design-system visuals.
+- There are no macOS, Windows or iOS styles; on Linux the platform style is Fusion.
+- Fusion, Material and Universal draw Basic's shapes in each style's sizes and colours rather than each design system's full visuals. Material's `variant` and `shade()` are not available.
 - `ToolTip` uses one shared instance per window. Popups play their `enter` and `exit` transitions (fading instead of moving under reduced motion), and a `Menu` or `ComboBox` popup with more rows than fit scrolls.
-- In the Basic style, `palette.placeholderText` has a `3.04:1` contrast ratio on white (matching Qt's palette value); set `palette.placeholderText` explicitly if your application requires WCAG AA contrast.
-- A plain `Item` gives child controls the active style's default colours when nothing above sets a colour, whereas Qt on the desktop reads the platform palette instead.
+- In the Basic style, `palette.placeholderText` has a `3.04:1` contrast ratio on white; set `palette.placeholderText` yourself if your application needs WCAG AA contrast. `Ljos.Controls` meets 4.5:1 for its `placeholder` role.
+- A plain `Item` gives child controls the active style's default colours when nothing above it sets a colour; the desktop's palette is not read.
 
 ## See also
 

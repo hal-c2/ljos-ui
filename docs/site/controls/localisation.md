@@ -16,7 +16,7 @@ For plural strings, pass the count as the third argument to `qsTr`:
 
 - `%n` is replaced with the count in the plural form chosen for that language (if you omit the count argument, `%n` remains literally in the string).
 - `%Ln` formats the count using the active locale's digit grouping.
-- Plural rules follow ICU4X `PluralRules` with a small override table where Qt's numerus forms differ from CLDR—for example, Icelandic uses two forms, where the first form applies to counts ending in `1` except `11`. Strings looked up by ID also support plural forms, while a translation entry written without plural forms serves only its first form.
+- Plural rules follow ICU4X `PluralRules` with a small override table for languages whose translation catalogues count their plural forms differently from CLDR—for example, Icelandic uses two forms, where the first form applies to counts ending in `1` except `11`. Strings looked up by ID also support plural forms, while a translation entry written without plural forms serves only its first form.
 
 Write this as `Main.qml` and run `ljos check` on its directory:
 
@@ -41,7 +41,7 @@ Column {
 
 With no catalogue loaded, the label reads `"3 file(s)"`. When an Icelandic catalogue is active, `count: 3` selects the plural form provided by the translator.
 
-Translators edit standard Qt `.ts` files, which Ljós reads and writes while preserving comments and source locations. Catalogue entries are keyed by context (the QML file stem or a `Translator` pragma), source text, and disambiguation. During development, Ljós reads and watches `.ts` files directly so translations hot-reload; at run time, it loads memory-mapped binary `.ljl` catalogues and walks a language fallback chain such as `is-IS` → `is` → `en`.
+Translators edit `.ts` catalogue files, the XML format that translation editors such as Linguist read and write. Ljós reads and writes them while preserving comments and source locations. Catalogue entries are keyed by context (the QML file stem or a `Translator` pragma), source text, and disambiguation. During development, Ljós reads and watches `.ts` files directly so translations hot-reload; at run time, it loads memory-mapped binary `.ljl` catalogues and walks a language fallback chain such as `is-IS` → `is` → `en`.
 
 ## Switching `Qt.uiLanguage` and mirroring layouts
 
@@ -100,10 +100,10 @@ Column {
 }
 ```
 
-## Differences from Qt
+## Catalogue formats and the interface language
 
-- Ljós does not read `.qm` files; it reads `.ts` files directly in development (with hot-reload) and its own binary `.ljl` catalogue format at run time.
-- `Qt.uiLanguage` is a writable `QString` property of the `Qt` object with a `uiLanguageChanged` signal, as in Qt, and assigning it re-translates every translated binding.
+- Ljós reads `.ts` files directly in development (with hot reload) and its own binary `.ljl` catalogues at run time. Compiled `.qm` catalogues are not read.
+- `Qt.uiLanguage` is a writable string property with a `uiLanguageChanged` signal, and assigning it re-translates every translated binding.
 
 ## See also
 
