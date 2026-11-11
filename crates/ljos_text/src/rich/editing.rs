@@ -833,7 +833,7 @@ impl RichText {
         let (block, column, index) = self.cell_paragraph(range.start)?;
         let row = self.blocks[block].table.as_ref()?;
         // Only an edit: a cut keeps the first paragraph's format, as it does
-        // outside a table. No cut gets here today, as each of `slice`'s
+        // outside a table. No cut gets here today, as each of `slice`'s cuts
         // takes a paragraph end with it (a table always has a paragraph on
         // either side); this keeps the two paths one rule.
         let from_start = edit
