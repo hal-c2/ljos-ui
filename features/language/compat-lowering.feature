@@ -310,8 +310,7 @@ Feature: Qt's QML lowered to Ljós's API
       When the author runs "ljos migrate --write twice"
       Then the file "twice/Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
-
+        import Ljos.Ui
         import Ljos.Layout
         Rectangle {
           width: 80; height: 40; fill: "#202020"
@@ -321,6 +320,84 @@ Feature: Qt's QML lowered to Ljós's API
           }
         }
         """
+
+  Rule: A migrated file is written in Ljós's API, typed where its scripts already are
+
+    # The pass keeps each line where it was, so a lowered run's findings point at the file as
+    # written; migrate writes the file a person reads from then on, so its imports are laid out one
+    # to a line. `pragma Scripts: JavaScript` only turns the checker's rules off, and the program is
+    # the same without it: migrate leaves it out where the checker finds nothing more without it.
+    @ljos-only @headless
+    Scenario: A file whose scripts keep the checker's rules is migrated typed
+      Given the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+
+        Rectangle {
+          width: 120; height: 60; color: "#202020"
+          property int taps: 0
+          function bump(by: int) { taps += by }
+          ColumnLayout {
+            Rectangle { implicitWidth: 20; implicitHeight: 20; color: taps === 2 ? "#c03030" : "#30a050" }
+          }
+        }
+        """
+      When the author runs "ljos migrate --write app"
+      Then the command prints:
+        """
+        lowered app/Main.qml (6 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "app/Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+
+        Rectangle {
+          width: 120; height: 60; fill: "#202020"
+          property int taps: 0
+          function bump(by: int) { taps += by }
+          Column { spacing: 5;
+            Rectangle { implicitWidth: 20; implicitHeight: 20; fill: taps === 2 ? "#c03030" : "#30a050" }
+          }
+        }
+        """
+      When the author runs "ljos check app"
+      Then the command exits with status 0
+
+    @ljos-only @headless
+    Scenario: A file whose scripts break the checker's rules keeps its scripts JavaScript
+      Given the file "app/Main.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 120; height: 60; color: "#202020"
+          property int taps: 0
+          function bump(by) { taps += by }
+          Rectangle { width: 20; height: 20; color: taps == 2 ? "#c03030" : "#30a050" }
+        }
+        """
+      When the author runs "ljos migrate --write app"
+      Then the command prints:
+        """
+        lowered app/Main.qml (3 edits)
+        scripts of app/Main.qml stay JavaScript: typed, ljos check finds 2
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "app/Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        Rectangle {
+          width: 120; height: 60; fill: "#202020"
+          property int taps: 0
+          function bump(by) { taps += by }
+          Rectangle { width: 20; height: 20; fill: taps == 2 ? "#c03030" : "#30a050" }
+        }
+        """
+      When the author runs "ljos check app"
+      Then the command exits with status 0
 
   Rule: A name a script binds is the script's wherever the script reads it
 

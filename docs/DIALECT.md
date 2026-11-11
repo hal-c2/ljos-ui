@@ -1975,9 +1975,12 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 2 files, 1 lowered, 1 kept
 ```
 
-- It runs the same pass and the same grouping as `--compat lower`. A
-  migrated file is the text a lowered run compiled, byte for byte, and it
-  compiles to the same program.
+- It runs the same pass and the same grouping as `--compat lower`, and a
+  migrated file compiles to the program a lowered run compiled. The text
+  is laid out as a file written in Ljós's API is: each import on a line of
+  its own, without the lines the pass emptied of a Qt import (a lowered run
+  keeps every line where it was, so that its findings point at the file as
+  written).
 - Each directory named is read as a project, as a run reads it, so a
   module of the project and a directory imported by path are files to the
   files that import them. A file named alone is of the project of its
@@ -1995,7 +1998,14 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   so `==`, `null`, `var` and `if (count)` keep compiling as they did.
   Taking the pragma out is the step that types a file, and `ljos check`
   then says what to change. Renaming the API and typing the scripts are
-  two steps, and only the first is mechanical.
+  two steps, and only the first is mechanical. Migrate takes the second
+  where it changes nothing: it compiles each lowered file as it will be
+  written, with the pragma and without, and leaves the pragma out where
+  the checker finds nothing more without it (the pragma only turns the
+  rules off, so the program is the same). Where the checker does find
+  more, the pragma stays on a line of its own and migrate says how many
+  findings typing the file has to settle
+  (`scripts of Main.qml stay JavaScript: typed, ljos check finds 2`).
 - Without `--write` it says what it would do. With `--write` it writes in
   place.
 - A file whose constant ListModels became typed lists gets their row types

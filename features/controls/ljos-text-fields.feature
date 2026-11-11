@@ -170,7 +170,7 @@ Feature: Ljós's controls: text fields
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 160; fill: "white"
@@ -211,7 +211,7 @@ Feature: Ljós's controls: text fields
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         TextArea { text: "one two"; wrapMode: TextEdit.Wrap }
         """
@@ -232,7 +232,7 @@ Feature: Ljós's controls: text fields
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         TextField { echoMode: TextInput.Password }
         """
@@ -253,7 +253,7 @@ Feature: Ljós's controls: text fields
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         TextField { validator: IntValidator { bottom: 0 } }
         """

@@ -44,13 +44,16 @@ Compat is **a lowering pass in front of a Qt-agnostic IR** (option 3):
   same runtime as today.
 - **One pass, two uses.** At load (`Project::set_compat`, `--compat
   lower`), the lowered text is compiled and the written text is kept for
-  reload. Offline, `ljos migrate --write` writes the same text. A migrated
-  file is byte for byte what a lowered run compiled.
+  reload. Offline, `ljos migrate --write` writes the same text, laid out
+  one import to a line and typed where its scripts already are
+  (docs/DIALECT.md §8). A migrated file compiles to the program a lowered
+  run compiled.
 - **The checker is the API's, not compat's.** It runs on files that import
   `Ljos.Ui` themselves. A lowered file says so:
   `pragma Scripts: JavaScript` goes on its import's line, the checker does
   not hold it to its rules, and a migrated file compiles as it did. A
-  person types a file by taking the pragma out.
+  person types a file by taking the pragma out; migrate leaves it out
+  where the checker finds nothing more without it.
 - **Opt-in while the API is small.** The default is `--compat keep`, where
   the pass does not run at all.
 

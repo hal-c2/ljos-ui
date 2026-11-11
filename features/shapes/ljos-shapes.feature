@@ -115,8 +115,7 @@ Feature: Shapes in Ljós's API
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
-
+        import Ljos.Ui
         Rectangle {
           width: 120; height: 60; fill: "white"
           Shape {
@@ -188,7 +187,7 @@ Feature: Shapes in Ljós's API
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Item {
           width: 120; height: 60
           Rectangle {

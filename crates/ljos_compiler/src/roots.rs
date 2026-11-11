@@ -69,6 +69,14 @@ impl<O: TypeOracle> Roots<O> {
         self.of.get(key).map(|(at, _)| *at)
     }
 
+    /// The project the file `key` is read with, to change, and the file's
+    /// key there: `ljos migrate` puts the lowered files in to compile them as
+    /// they will be written.
+    pub fn project_mut(&mut self, key: &str) -> Option<(&mut Project<O>, &str)> {
+        let (at, in_project) = self.of.get(key)?;
+        Some((&mut self.roots[*at].1, in_project))
+    }
+
     /// The root file `key` is read with, its project and its key there.
     fn of(&self, key: &str) -> (&Path, &Project<O>, &str) {
         let (at, in_project) = &self.of[key];

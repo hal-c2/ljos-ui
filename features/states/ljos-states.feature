@@ -110,7 +110,7 @@ Feature: States in Ljós's API
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Item {
           id: root
           Rectangle { id: face; fill: "#2060c0" }
@@ -152,7 +152,7 @@ Feature: States in Ljós's API
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Item {
           id: root
           property Item shown: face

@@ -195,7 +195,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 260; fill: "white"

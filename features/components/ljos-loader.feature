@@ -208,7 +208,8 @@ Feature: A Loader shows a component, named as a type
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        import Ljos.Ui
+        import Ljos.Core
         Item {
           Loader { component: Page }
           Loader { component: dot; onComponentChanged: {} }

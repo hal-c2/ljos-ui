@@ -72,7 +72,7 @@ Feature: Lowering a file that imports the program's own types
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Studio.Kit 1.0
 
         Rectangle {
@@ -101,7 +101,7 @@ Feature: Lowering a file that imports the program's own types
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Studio.Kit
 
         Rectangle {
@@ -292,7 +292,7 @@ Feature: Lowering a file that imports the program's own types
         """
       And the file "own/After.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Studio.Print
 
         Rectangle {
@@ -303,7 +303,7 @@ Feature: Lowering a file that imports the program's own types
       And the file "own/Before.qml" is:
         """qml
         import Studio.Print
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
 
         Rectangle {
             fill: "#204080"

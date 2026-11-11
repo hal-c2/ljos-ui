@@ -171,7 +171,7 @@ Feature: Ljós's gestures: Tap and Hover
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Rectangle {
           width: 100; height: 60
           fill: hover.hovered ? "#c03020" : "#2060c0"

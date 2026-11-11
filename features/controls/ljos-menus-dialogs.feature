@@ -256,7 +256,7 @@ Feature: Ljós's controls: menus, dialogs and item delegates
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Rectangle {
           width: 240; height: 160; fill: "white"

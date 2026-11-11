@@ -221,7 +221,7 @@ Feature: A MouseArea that fills its parent is gestures on it
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Rectangle {
           width: 100; height: 60
           Tap {

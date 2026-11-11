@@ -160,8 +160,7 @@ Feature: The items Ljós's API has as Qt Quick has them
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
-
+        import Ljos.Ui
         Window {
           width: 160; height: 100
           Image { fillMode: Image.Stretch }
