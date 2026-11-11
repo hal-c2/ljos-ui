@@ -7,8 +7,10 @@
 # start and end of a table as "=", in brackets. In the HTML of a step a
 # "~" stands for a line feed, [ and ] for < and >, and LONG for a line
 # too long for the item.
-# The HTML written back is shown with its zero margins left out, its
-# quotes as ' and its line feeds as ~.
+# The HTML written back is shown with its zero margins and its zero
+# block and text indents left out, its quotes as ' and its line feeds as
+# ~. Where a position is shown it is "x,y" of positionToRectangle. The
+# formats of a cell's paragraphs were measured on Qt 6.12.0.
 
 @qt-parity @api-QtQuick.TextEdit.textFormat
 Feature: Paragraphs in the cells of a rich TextEdit
@@ -26,9 +28,15 @@ Feature: Paragraphs in the cells of a rich TextEdit
   word never takes the cursor out of its table: from one cell into
   another it empties both, and from outside into a table it takes the
   whole table and leaves the paragraphs on either side apart. Every
-  paragraph of a cell is written back as a `<p>` of its own, and each
-  wraps as it says. What is copied has a line feed between the
-  paragraphs of a cell and at a line break.
+  paragraph of a cell keeps its own format, as a paragraph outside a
+  table does: a heading, a list item, a quote or a pre, with its margins
+  and its alignment. It is written back with that format and laid out
+  with it in its column: its margins between paragraphs, where the larger
+  one counts but none at the cell's top or bottom, and its indents in the
+  column's width. Return gives the new paragraph the format of the one it
+  splits, and a join keeps the first one's. Each paragraph wraps as it
+  says. What is copied has a line feed between the paragraphs of a cell
+  and at a line break.
 
   Background:
     Given the QML:
@@ -41,7 +49,7 @@ Feature: Paragraphs in the cells of a rich TextEdit
         function simple(h) {
           return h.replace(/^[\s\S]*<body[^>]*>\n?/, "").replace(/<\/body>[\s\S]*$/, "")
             .replace(/ ?margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px;( -qt-block-indent:0; text-indent:0px;)?/g, "")
-            .replace(/ style=""/g, "").split("\"").join("'").split("\n").join("~")
+            .replace(/ style=""/g, "").replace(/ -qt-block-indent:0; text-indent:0px;/g, "").split("\"").join("'").split("\n").join("~")
         }
         function shown() { return "[" + edit.getText(0, edit.length).split(" ").join("/").split(" ").join("#").replace(/[﷐﷑]/g, "=").split("\u00a0").join("_") + "]" }
         function plain() { out = shown() }
@@ -50,13 +58,13 @@ Feature: Paragraphs in the cells of a rich TextEdit
         function fragment(a, b) { out = simple(edit.getFormattedText(a, b)) }
         function selected(a, b) { edit.select(a, b); out = Array.from(edit.selectedText, c => c.charCodeAt(0).toString(16)).join(" ") }
         function copied(a, b) { edit.select(a, b); edit.copy(); src.text = ""; src.paste(); out = Array.from(src.text, c => c.charCodeAt(0).toString(16)).join(" ") }
+        function at(i) { const r = edit.positionToRectangle(i); out = Math.round(r.x) + "," + Math.round(r.y) }
         function wide() { out = edit.contentWidth > edit.width ? "wider than the item" : "within the item" }
         function typing(at) { edit.forceActiveFocus(); edit.cursorPosition = at }
         TextEdit { id: src; y: 150 }
         TextEdit {
           id: edit; objectName: "edit"; width: 280; wrapMode: TextEdit.WordWrap
-          textFormat: TextEdit.RichText; font.family: "Liberation Sans"; font.pixelSize: 20
-        }
+          textFormat: TextEdit.RichText; font.family: "Liberation Sans"; font.pixelSize: 20 }
       }
       """
 
@@ -159,26 +167,6 @@ Feature: Paragraphs in the cells of a rich TextEdit
       And the user presses "Return"
       And the method "written" of "root" is called
       Then the property "out" of "root" is "<table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p>~<p style='-qt-paragraph-type:empty;'><br /></p>~<p>b</p></td>~<td>~<p>z</p></td></tr></table>"
-
-    # Ljós reads a cell's paragraphs into records that hold only whether
-    # they wrap (hal-c2/ljos-ui#293), so it writes each as a plain <p>.
-    @backlog
-    Scenario Outline: A cell's <case> is written back with its own format
-      A paragraph of a cell is written with its own tag, margins and
-      alignment, as a paragraph outside a table is, so that the cell reads
-      back as the same paragraphs.
-
-      When the property "html" of "root" is set to "<doc>"
-      And the method "written" of "root" is called
-      Then the property "out" of "root" is "<html>"
-
-      Examples:
-        | case                        | doc                                                              | html                                                                                                                                                                                                                                                                               |
-        | heading                     | [table][tr][td][h1]a[/h1][/td][/tr][/table]                      | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:xx-large; font-weight:700;'>a</span></h1></td></tr></table>         |
-        | pre                         | [table][tr][td][pre]a[/pre][/td][/tr][/table]                    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-family:'monospace';'>a</span></pre></td></tr></table>                   |
-        | paragraph set right         | [table][tr][td][p align='right']a[/p][/td][/tr][/table]          | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p></td></tr></table>                                                        |
-        | paragraph with a margin     | [table][tr][td][p style='margin-top:5px']a[/p][/td][/tr][/table] | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style=' margin-top:5px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p></td></tr></table>                                                                       |
-        | second paragraph, a heading | [table][tr][td]a[h2]b[/h2][/td][/tr][/table]                     | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p>~<h2 style=' margin-top:16px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:x-large; font-weight:700;'>b</span></h2></td></tr></table> |
 
     Scenario Outline: The text from <from> to <to> after Return is <out>
       When the property "html" of "root" is set to "[table][tr][td]ab[/td][td]z[/td][/tr][/table]"
@@ -344,3 +332,65 @@ Feature: Paragraphs in the cells of a rich TextEdit
         | case                                       | html                                                                                         | width               |
         | A paragraph after a nowrap one wraps       | [table][tr][td][p style='white-space:nowrap']x[/p][p]LONG[/p][/td][/tr][/table]              | within the item     |
         | A nowrap one after one that wraps does not | [table][tr][td][p]x[/p][p style='white-space:nowrap']LONG[/p][/td][/tr][/table]              | wider than the item |
+
+  Rule: A paragraph of a cell keeps its own format
+
+    Scenario Outline: <case> is written back with it
+      When the property "html" of "root" is set to "<html>"
+      And the method "written" of "root" is called
+      Then the property "out" of "root" is "<out>"
+
+      Examples:
+        | case                                  | html                                                                                | out                                                                                                                                                                                                                                                                                                                                                                                  |
+        | A heading                             | [table][tr][td][h1]a[/h1][/td][/tr][/table]                                         | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:xx-large; font-weight:700;'>a</span></h1></td></tr></table>                                                                                                                                                |
+        | A heading and the text after it       | [table][tr][td][h1]a[/h1]b[/td][/tr][/table]                                        | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:xx-large; font-weight:700;'>a</span></h1>~<p>b</p></td></tr></table>                                                                                                                                       |
+        | A heading after text                  | [table][tr][td]a[h2]b[/h2][/td][/tr][/table]                                        | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p>~<h2 style=' margin-top:16px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:x-large; font-weight:700;'>b</span></h2></td></tr></table>                                                                                                                                        |
+        | A paragraph aligned to the right      | [table][tr][td][p align='right']a[/p][p]b[/p][/td][/tr][/table]                     | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</p>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</p></td></tr></table>                                                                                                     |
+        | A list item and the text after it     | [table][tr][td][ul][li]a[/li][/ul]b[/td][/tr][/table]                               | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<ul style='margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;'>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</li></ul>~<p>b</p></td></tr></table>                                                                                  |
+        | The items of a list share its margins | [table][tr][td][ol][li]a[/li][li]b[/li][/ol][/td][/tr][/table]                      | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<ol style='margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;'>~<li style=' margin-top:12px; margin-bottom:0px; margin-left:0px; margin-right:0px;'>a</li>~<li style=' margin-top:0px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</li></ol></td></tr></table> |
+        | A paragraph's own margins             | [table][tr][td][p style='margin-top:5px; margin-bottom:7px']a[/p][/td][/tr][/table] | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style=' margin-top:5px; margin-bottom:7px; margin-left:0px; margin-right:0px;'>a</p></td></tr></table>                                                                                                                                                                                                               |
+        | A cell's alignment                    | [table][tr][td align='right']a[p]b[/p][/td][/tr][/table]                            | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right'>a</p>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</p></td></tr></table>                                                                                                                                                                        |
+        | A quote                               | [table][tr][td][blockquote]a[/blockquote][/td][/tr][/table]                         | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:40px; margin-right:40px;'>a</p></td></tr></table>                                                                                                                                                                                                           |
+        | A pre                                 | [table][tr][td][pre]a[/pre][/td][/tr][/table]                                       | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-family:'monospace';'>a</span></pre></td></tr></table>                                                                                                                                                          |
+        | A header cell                         | [table][tr][th]a[p]b[/p][/th][/tr][/table]                                          | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='center'><span style=' font-weight:700;'>a</span></p>~<p align='center' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-weight:700;'>b</span></p></td></tr></table>                                                                                        |
+
+    Scenario Outline: <case> is laid out with it
+      When the property "html" of "root" is set to "<html>"
+      And the method "at" of "root" is called with <at>
+      Then the property "out" of "root" is "<x,y>"
+
+      Examples:
+        | case                                            | html                                                                                                     | at | x,y  |
+        | The text after a heading is below its margin    | [table][tr][td][h1]a[/h1]b[/td][/tr][/table]                                                             | 3  | 2,59 |
+        | Between two paragraphs the larger margin counts | [table][tr][td][p style='margin-bottom:30px']a[/p][p style='margin-top:5px']b[/p][/td][/tr][/table]      | 3  | 2,55 |
+        | The first paragraph's top margin does not count | [table][tr][td][p style='margin-top:30px; margin-bottom:30px']a[/p][/td][td]c[/td][/tr][/table]          | 1  | 2,2  |
+        | Nor the last one's bottom margin                | [table][tr][td][p style='margin-top:30px; margin-bottom:30px']a[/p][/td][/tr][tr][td]b[/td][/tr][/table] | 3  | 2,27 |
+        | A quote stands in                               | [table][tr][td][blockquote]a[/blockquote][/td][/tr][/table]                                              | 1  | 42,2 |
+        | A list item stands in                           | [table][tr][td][ul][li]a[/li][/ul][/td][/tr][/table]                                                     | 1  | 42,2 |
+        | A left margin stands in                         | [table][tr][td][p style='margin-left:15px']a[/p][/td][/tr][/table]                                       | 1  | 17,2 |
+        | The margins are in the column's width           | [table][tr][td][p style='margin-left:15px; margin-right:20px']a[/p][/td][td]c[/td][/tr][/table]          | 3  | 52,2 |
+        | A paragraph centred in its column               | [table][tr][td][p align='center']a[/p][p]bbbbbbbb[/p][/td][/tr][/table]                                  | 1  | 41,2 |
+        | A paragraph set to the right of its column      | [table][tr][td][p align='right']a[/p][p]bbbbbbbb[/p][/td][/tr][/table]                                   | 1  | 80,2 |
+        | A cell set to the right                         | [table][tr][td align='right']a[/td][/tr][tr][td]bbbbbbbb[/td][/tr][/table]                               | 1  | 80,2 |
+
+    Scenario Outline: <keys> at <at> of <html> keeps the formats
+      When the property "html" of "root" is set to "<html>"
+      And the method "typing" of "root" is called with <at>
+      And the user presses "<keys>"
+      And the method "written" of "root" is called
+      Then the property "out" of "root" is "<out>"
+
+      Examples:
+        | html                                                                                     | at | keys      | out                                                                                                                                                                                                                                                                                                                                                                                          |
+        | [table][tr][td][h1]ab[/h1][/td][/tr][/table]                                             | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:xx-large; font-weight:700;'>a</span></h1>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:xx-large; font-weight:700;'>b</span></h1></td></tr></table> |
+        | [table][tr][td][p align='right']ab[/p][/td][/tr][/table]                                 | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</p>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</p></td></tr></table>                                                                                               |
+        | [table][tr][td][ul][li]ab[/li][/ul][/td][/tr][/table]                                    | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<ul style='margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;'>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</li>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</li></ul></td></tr></table>       |
+        | [table][tr][td][p align='right' style='margin-left:15px']a[/p][p]b[/p][/td][/tr][/table] | 3  | Backspace | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:15px; margin-right:0px;'>ab</p></td></tr></table>                                                                                                                                                                                                     |
+        | [table][tr][td][p]a[/p][p align='right']b[/p][/td][/tr][/table]                          | 2  | Delete    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>ab</p></td></tr></table>                                                                                                                                                                                                                    |
+
+    Scenario: The paragraph Return splits from a heading is below its margin
+      When the property "html" of "root" is set to "[table][tr][td][h1]ab[/h1][/td][/tr][/table]"
+      And the method "typing" of "root" is called with 2
+      And the user presses "Return"
+      And the method "at" of "root" is called with 3
+      Then the property "out" of "root" is "2,65"
