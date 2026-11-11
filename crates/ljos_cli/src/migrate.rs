@@ -31,13 +31,16 @@
 
 use std::{
     collections::{BTreeMap, BTreeSet},
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use clap::Args;
 use ljos::dev::EngineOracle;
-use ljos_compiler::Project;
-use qml_compat::{Held, Outcome};
+use ljos_compiler::{
+    Project, Roots,
+    roots::{absolute, file_key},
+};
+use qml_compat::Outcome;
 use qml_front::project::ControlsStyle;
 
 use crate::render::oracle_for_modules;
@@ -154,45 +157,38 @@ impl Migrate {
                 return 2;
             }
         };
-        let projects: Vec<Option<Project<EngineOracle>>> = roots
-            .iter()
-            .enumerate()
-            .map(|(at, root)| {
-                match Project::load(root, oracle.clone().unwrap_or_else(oracle_for_modules)) {
-                    Ok(mut project) => {
-                        if chosen.is_some() {
-                            project.set_controls_style(chosen.clone());
-                        }
-                        Some(project)
+        let mut around = Roots::new();
+        for (at, root) in roots.iter().enumerate() {
+            let oracle = || oracle.clone().unwrap_or_else(oracle_for_modules);
+            let project = match Project::load(root, oracle()) {
+                Ok(mut project) => {
+                    if chosen.is_some() {
+                        project.set_controls_style(chosen.clone());
                     }
+                    project
+                }
+                Err(e) => {
                     // A project only searched for importers is not the
                     // command's to fail on.
-                    Err(_) if at >= named => None,
-                    Err(e) => {
+                    if at < named {
                         eprintln!("{}: {e}", root.display());
                         failed = true;
-                        None
                     }
+                    // A root that did not load is a project with nothing
+                    // in it: its files have nothing beside them, and the
+                    // style a loaded one would have.
+                    let mut project = Project::new(oracle());
+                    project.set_controls_style(chosen.clone().or_else(|| {
+                        ljos_compiler::controls_style(
+                            |name| std::env::var(name).ok(),
+                            |path| std::fs::read_to_string(path).ok(),
+                        )
+                    }));
+                    project
                 }
-            })
-            .collect();
-        // For a root that did not load: the same style, with nothing beside.
-        let style = self.style.clone().unwrap_or_else(|| {
-            ljos_compiler::controls_style(
-                |name| std::env::var(name).ok(),
-                |path| std::fs::read_to_string(path).ok(),
-            )
-            // No style chosen is Basic, as in Qt 6.
-            .map_or_else(|| qml_compat::CONTROLS_STYLE.to_owned(), |style| style.name)
-        });
-        let natives = oracle.as_ref().map(ljos_compiler::OracleNatives::new);
-        let mut around = Around {
-            roots: &roots,
-            projects: &projects,
-            of: BTreeMap::new(),
-            style: &style,
-            natives: natives.as_ref().map(|n| n as &dyn qml_compat::Natives),
-        };
+            };
+            around.push(root.clone(), project);
+        }
         // Every file first: files that name one another are lowered
         // together, as a lowered run lowers them (`qml_compat::Lowering`).
         let mut lowering = qml_compat::Lowering::new();
@@ -206,10 +202,7 @@ impl Migrate {
                     continue;
                 }
             };
-            let key = key_of(file);
-            around
-                .of
-                .insert(key.clone(), (*at, key_in(&roots[*at], &absolute(file))));
+            let key = around.place(file, *at);
             lowering.put(&key, text);
             shown.insert(key, file);
         }
@@ -221,22 +214,21 @@ impl Migrate {
             lowering.lower(&around);
             let used: Vec<(PathBuf, usize)> = lowering
                 .uses()
-                .map(|(user, used)| (PathBuf::from(format!("{used}.qml")), around.of[user].0))
-                .filter(|(file, _)| lowering.written(&key_of(file)).is_none())
+                .filter_map(|(user, used)| {
+                    Some((PathBuf::from(format!("{used}.qml")), around.root_of(user)?))
+                })
+                .filter(|(file, _)| lowering.written(&file_key(file)).is_none())
                 .collect();
             unnamed.extend(used);
             let mut found = false;
             for (file, at) in std::mem::take(&mut unnamed) {
-                let key = key_of(&file);
-                if lowering.written(&key).is_some() {
+                if lowering.written(&file_key(&file)).is_some() {
                     continue;
                 }
                 let Ok(text) = std::fs::read_to_string(&file) else {
                     continue;
                 };
-                around
-                    .of
-                    .insert(key.clone(), (at, key_in(&roots[at], &absolute(&file))));
+                let key = around.place(&file, at);
                 lowering.put_read_only(&key, text);
                 found = true;
             }
@@ -331,101 +323,6 @@ impl Migrate {
     }
 }
 
-/// The projects the files are read with, as the lowering reads them: a
-/// file of a project that loaded is lowered as a run of it lowers it, and
-/// one of a root that did not, with nothing beside it.
-struct Around<'m> {
-    roots: &'m [PathBuf],
-    projects: &'m [Option<Project<EngineOracle>>],
-    /// Per file, by its key, its root and its key in that root's project.
-    of: BTreeMap<String, (usize, String)>,
-    style: &'m str,
-    natives: Option<&'m dyn qml_compat::Natives>,
-}
-
-impl qml_compat::Project for Around<'_> {
-    fn locals<'a>(&'a self, key: &'a str, held: &'a dyn Held) -> Box<dyn qml_compat::Locals + 'a> {
-        let (at, in_project) = &self.of[key];
-        match &self.projects[*at] {
-            Some(project) => project.compat_locals(
-                in_project,
-                Box::new(InProject {
-                    held,
-                    project,
-                    root: &self.roots[*at],
-                }),
-            ),
-            None => Box::new(qml_compat::Styled {
-                locals: &qml_compat::no_locals,
-                style: self.style,
-                natives: self.natives,
-            }),
-        }
-    }
-
-    fn module_files(&self, key: &str, uri: &str) -> Vec<String> {
-        let (at, _) = &self.of[key];
-        let Some(project) = &self.projects[*at] else {
-            return Vec::new();
-        };
-        // The project's keys are from its root; these are the paths.
-        project
-            .front()
-            .module_files(uri)
-            .map(|used| key_of(&self.roots[*at].join(format!("{used}.qml"))))
-            .collect()
-    }
-
-    fn script(&self, key: &str, path: &str) -> Option<qml_compat::ProjectScript<'_>> {
-        let (at, in_project) = &self.of[key];
-        let project = self.projects[*at].as_ref()?;
-        let path = beside(key, in_project, path);
-        let text = project.script(&path)?;
-        Some(qml_compat::ProjectScript { path, text })
-    }
-}
-
-/// The files the command holds, as a project names them. One the project
-/// has another text of (a variant its selectors chose) is read as the
-/// project has it, as a run of the project reads it.
-struct InProject<'a> {
-    held: &'a dyn Held,
-    project: &'a Project<EngineOracle>,
-    root: &'a Path,
-}
-
-impl Held for InProject<'_> {
-    fn text(&self, key: &str) -> Option<&str> {
-        let text = self.held.text(&self.key(key))?;
-        (self.project.source(key) == Some(text)).then_some(text)
-    }
-
-    fn root(&self, key: &str) -> Option<Option<qml_compat::Root>> {
-        self.text(key)?;
-        self.held.root(&self.key(key))
-    }
-}
-
-impl InProject<'_> {
-    fn key(&self, key: &str) -> String {
-        key_of(&self.root.join(format!("{key}.qml")))
-    }
-}
-
-/// `path`, a path beside the file `key`, from the root of the project in
-/// which the file is `in_project`.
-fn beside(key: &str, in_project: &str, path: &str) -> String {
-    let dir = key.rsplit_once('/').map_or("", |(dir, _)| dir);
-    let name = path
-        .strip_prefix(dir)
-        .and_then(|name| name.strip_prefix('/'))
-        .unwrap_or(path);
-    match in_project.rsplit_once('/') {
-        Some((dir, _)) => format!("{dir}/{name}"),
-        None => name.to_string(),
-    }
-}
-
 /// The files of `candidates` whose imports name the directory of a file of
 /// `named`: by its path (`import "parts"`), or by the module its `qmldir`
 /// or build says it is (`import Gauges`). The others are not read further, so a
@@ -506,30 +403,13 @@ fn root_of(dir: &Path) -> PathBuf {
     import_root().unwrap_or(dir).to_owned()
 }
 
-/// `path` from the root of the file system, with `.` and `..` taken out
-/// by its words alone, as the path a person wrote names it.
-fn absolute(path: &Path) -> PathBuf {
-    let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
-    let mut out = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                out.pop();
-            }
-            part => out.push(part),
-        }
-    }
-    out
-}
-
 impl Migrate {
     /// What the checker is told of the program's own types, where they
     /// are described: the file `--types` names, else the `ljostypes.json`
     /// of the first path given (of a file, its directory). The other paths
     /// are not looked in, so which description a file is lowered against
     /// does not depend on what the paths after the first hold.
-    fn oracle(&self) -> anyhow::Result<Option<ljos::dev::EngineOracle>> {
+    fn oracle(&self) -> anyhow::Result<Option<EngineOracle>> {
         let file = match self.types.as_deref() {
             Some(named) => crate::run::types_file(Some(named), Path::new(".")),
             None => self.paths.first().and_then(|path| {
@@ -553,33 +433,6 @@ impl Migrate {
             .map(|types| crate::run::oracle_for_types(&types))
             .transpose()
     }
-}
-
-/// A file's key for [`qml_compat::Lowering`]: its absolute path without
-/// `.qml`, with `/` between the parts on every system.
-fn key_of(file: &Path) -> String {
-    let path = absolute(file).with_extension("");
-    let parts: Vec<String> = path
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    let joined = parts.join("/");
-    // A root `/` is a part of its own.
-    joined
-        .strip_prefix("//")
-        .map_or(joined.clone(), |rest| format!("/{rest}"))
-}
-
-/// The key of `file` in the project under `root`: its path from there
-/// without `.qml`, with `/` between the parts.
-fn key_in(root: &Path, file: &Path) -> String {
-    let path = file.strip_prefix(root).unwrap_or(file).with_extension("");
-    let parts: Vec<String> = path
-        .components()
-        .filter(|c| !matches!(c, Component::CurDir))
-        .map(|c| c.as_os_str().to_string_lossy().into_owned())
-        .collect();
-    parts.join("/")
 }
 
 /// The 1-based line and column (in characters) of byte `at` of `text`.
