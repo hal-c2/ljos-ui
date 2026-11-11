@@ -457,11 +457,19 @@ mod tests {
         let engine = engine();
         let face = engine.lookup_type(MODULE, "Text").expect("registered");
         let native = Text::static_meta();
-        for (old, new) in [
-            ("horizontalAlignment", "align"),
-            ("wrapMode", "wrap"),
-            ("textFormat", "format"),
-        ] {
+        // The renames are written once, in `text()`: the face's own members
+        // are the native's at the same places, so they are read back here.
+        let faced = face.face_of().expect("a face");
+        assert_eq!(face.own_properties().len(), faced.own_properties().len());
+        let renamed: Vec<_> = face
+            .own_properties()
+            .iter()
+            .zip(faced.own_properties())
+            .filter(|(new, old)| new.name != old.name)
+            .map(|(new, old)| (old.name.to_string(), new.name.to_string()))
+            .collect();
+        assert!(!renamed.is_empty());
+        for (old, new) in &renamed {
             assert_eq!(face.property_index(new), native.property_index(old));
             assert_eq!(face.property_index(old), None, "{old}");
             assert!(face.signal_index(&format!("{new}Changed")).is_some());
