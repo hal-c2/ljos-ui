@@ -393,8 +393,8 @@ Feature: White space in rich text
         | A pre wraps            | <meta name='qrichtext' content='1'><pre>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</pre> | within the item |
 
       # Qt 6.12 reads no white-space in HTML with the editor's mark, so every
-      # paragraph of it wraps; Ljós reads whether a paragraph wraps, which is
-      # how its editor writes one that does not.
+      # paragraph and cell of it wraps; Ljós reads whether a paragraph or a
+      # cell wraps, which is how its editor writes one that does not.
       @qt-diverges
       Examples:
         | case                                | html                                                                                                                                 | width               |
@@ -403,6 +403,7 @@ Feature: White space in rich text
         | A heading says it does not wrap     | <meta name='qrichtext' content='1'><h2 style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</h2>       | wider than the item |
         | An item says it does not wrap       | <meta name='qrichtext' content='1'><ul><li style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</li></ul> | wider than the item |
         | A cell's paragraph says it          | <meta name='qrichtext' content='1'><table><tr><td><p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> | wider than the item |
+        | A cell says it does not wrap        | <meta name='qrichtext' content='1'><table><tr><td style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</td></tr></table> | wider than the item |
 
   Rule: What a TextEdit writes reads back as it was
 
