@@ -41,7 +41,7 @@ use crate::model::{
     row_hook, row_shape,
 };
 use crate::value::Value;
-use crate::{Provenance, WriteKind};
+use crate::{NodeId, Provenance, WriteKind};
 
 /// What a view does with its delegates. Called with nothing borrowed:
 /// an implementation may call back into its [`Delegates`].
@@ -203,6 +203,10 @@ struct Shared {
     removal: RemovalOrder,
     state: RefCell<State>,
     plans: RowPlans,
+    /// What a binding that asked for a row's delegate depends on: bumped
+    /// whenever a row gets, loses or swaps its delegate. Made on the first
+    /// tracked read, so a view nobody asks costs nothing.
+    placed: Cell<Option<NodeId>>,
 }
 
 impl Drop for Shared {
@@ -240,6 +244,7 @@ impl Delegates {
                 removal,
                 state: RefCell::new(State::default()),
                 plans: RowPlans::default(),
+                placed: Cell::new(None),
             }),
         }
     }
@@ -305,6 +310,32 @@ impl Delegates {
         self.shared.state.borrow().rows.get(index)?.object
     }
 
+    /// Makes the running binding or effect depend on which delegate each
+    /// row has, as an `itemAt(i)` read does in Qt: the reader runs again
+    /// when a delegate is made, goes, or moves to another row. `count`
+    /// alone does not say that, since it changes before the delegates of
+    /// new rows exist.
+    pub fn track(&self, engine: &Engine) {
+        if engine.inner.tracking.get() == 0 {
+            return;
+        }
+        let s = &self.shared;
+        let n = match s.placed.get() {
+            Some(n) => n,
+            None => {
+                let Ok(scope) = engine.ensure_scope(s.owner) else {
+                    return;
+                };
+                let Ok(n) = engine.inner.graph.property(scope, Value::Int(0)) else {
+                    return;
+                };
+                s.placed.set(Some(n));
+                n
+            }
+        };
+        let _ = engine.inner.graph.try_get(n);
+    }
+
     /// The finished delegates, in row order.
     pub fn objects(&self) -> Vec<ObjectId> {
         let st = self.shared.state.borrow();
@@ -319,6 +350,20 @@ impl Delegates {
 }
 
 impl Shared {
+    /// Runs again what read the rows' delegates through
+    /// [`Delegates::track`]: a row got, lost or swapped its delegate.
+    fn placed_changed(&self, engine: &Engine) {
+        let Some(n) = self.placed.get() else {
+            return;
+        };
+        let g = &engine.inner.graph;
+        let next = match g.untrack(|| g.try_get(n)) {
+            Some(Value::Int(i)) => i.wrapping_add(1),
+            _ => 1,
+        };
+        let _ = g.write(n, Value::Int(next), WriteKind::Initial);
+    }
+
     fn populate(s: &Rc<Shared>, engine: &Engine) {
         let ids = {
             let mut st = s.state.borrow_mut();
@@ -337,6 +382,9 @@ impl Shared {
             st.later.set(None);
             std::mem::take(&mut st.rows)
         };
+        if !rows.is_empty() {
+            self.placed_changed(engine);
+        }
         let rows = rows.into_iter().enumerate();
         match self.removal {
             RemovalOrder::FirstToLast => rows.for_each(|(i, r)| self.dispose(engine, i, r)),
@@ -379,6 +427,7 @@ impl Shared {
             }
         }
         self.reindex(engine, first, n);
+        self.placed_changed(engine);
         self.host.count_changed(engine, n);
         for row in gone {
             self.end(engine, first, row, true);
@@ -535,7 +584,10 @@ impl Shared {
             i
         };
         match (made, index) {
-            (Ok(obj), Some(i)) => self.host.added(engine, i, obj),
+            (Ok(obj), Some(i)) => {
+                self.placed_changed(engine);
+                self.host.added(engine, i, obj);
+            }
             // The row went while its delegate was being made.
             (Ok(obj), None) => {
                 engine.destroy(obj);
@@ -565,6 +617,7 @@ impl Shared {
                     (ids, st.rows.len())
                 };
                 s.reindex(engine, first + count, n);
+                s.placed_changed(engine);
                 s.host.count_changed(engine, n);
                 // One batch, so what watches all the delegates (a
                 // positioner) runs once for the lot.
@@ -593,6 +646,7 @@ impl Shared {
                     st.rows.splice(*to..*to, moved);
                 }
                 s.reindex(engine, *from.min(to), from.max(to) + count);
+                s.placed_changed(engine);
                 s.host.moved(engine);
             }
             ModelChange::DataChanged {
@@ -650,6 +704,9 @@ impl Shared {
                     );
                     (old, id)
                 };
+                if old.object.is_some() {
+                    s.placed_changed(engine);
+                }
                 s.dispose(engine, i, old);
                 Shared::create_row(s, engine, id);
             }
