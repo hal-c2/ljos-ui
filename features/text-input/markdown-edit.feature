@@ -78,20 +78,32 @@ Feature: Editing Markdown in a TextEdit
     Then the property "out" of "root" is "<out>"
 
     Examples:
-      | text             | out                         |
-      | a~~    x y~      | a\|\|    x y\|\|            |
-      | a~~```~x y~```~  | a\|\|```\|x y\|```\|\|      |
-      | a~~    x~    y~  | a\|\|    x\|    y\|\|       |
-      | a~~    x~~    y~ | a\|\|    x\|    \|    y\|\| |
-      | a~~```~x~~y~```~ | a\|\|```\|x\|\|y\|```\|\|   |
-      | ```js~x~```~     | ```js\|x\|```\|\|           |
-      | ````~x~````~     | ```\|x\|```\|\|             |
-      | a~~    x~b~      | a\|\|    x\|\|b\|\|         |
-      | ```~x~```~b~ | ```\|x\|```\|b\|\| |
-      | ```~x~```~~```~y~```~ | ```\|x\|y\|```\|\| |
-      | a~~    x~~```~y~```~ | a\|\|    x\|```\|y\|```\|\| |
-      | ```~x~```~~    y~ | ```\|x\|```\|    y\|\| |
-      | ```js  rest~x~```~ | ```js\|x\|```\|\| |
+      | text                  | out                         |
+      | a~~    x y~           | a\|\|    x y\|\|            |
+      | a~~```~x y~```~       | a\|\|```\|x y\|```\|\|      |
+      | a~~    x~    y~       | a\|\|    x\|    y\|\|       |
+      | a~~    x~~    y~      | a\|\|    x\|    \|    y\|\| |
+      | a~~```~x~~y~```~      | a\|\|```\|x\|\|y\|```\|\|   |
+      | ```js~x~```~          | ```js\|x\|```\|\|           |
+      | ````~x~````~          | ```\|x\|```\|\|             |
+      | a~~    x~b~           | a\|\|    x\|\|b\|\|         |
+      | ```~x~```~b~          | ```\|x\|```\|b\|\|          |
+      | ```~x~```~~```~y~```~ | ```\|x\|y\|```\|\|          |
+      | a~~    x~~```~y~```~  | a\|\|    x\|```\|y\|```\|\| |
+      | ```~x~```~~    y~     | ```\|x\|```\|    y\|\|      |
+      | ```js  rest~x~```~    | ```js\|x\|```\|\|           |
+      | a~~```~~~```~         | a\|\|```\|\|\|```\|\|       |
+
+    # Qt 6.12 writes nothing for a fenced block of no lines or of one empty
+    # line, so read again the block is gone. In Ljós it is written with its
+    # line, which reads back as the same block.
+    @qt-diverges
+    Examples:
+      | text             | out                      |
+      | a~~```~~```~     | a\|\|```\|\|```\|\|      |
+      | a~~```~```~      | a\|\|```\|\|```\|\|      |
+      | ```~```~~b~      | ```\|\|```\|b\|\|        |
+      | a~~```js~```~~b~ | a\|\|```js\|\|```\|b\|\| |
 
     # Qt 6.12 writes a fence of three marks whatever the lines hold, so a
     # line of three marks closes it when the text is read again, and it runs
@@ -147,6 +159,34 @@ Feature: Editing Markdown in a TextEdit
     Examples:
       | text              | from | to | out                          |
       | - a~~b~~    x~    | 2    | 4  | - a\|\|<!-- -->\|\|    x\|\| |
+
+  Scenario Outline: A nested list "<text>" is written back as "<out>"
+    When the method "read" of "root" is called with "<text>"
+    Then the property "out" of "root" is "<out>"
+
+    Examples:
+      | text                       | out                                  |
+      | - a~  - b~                 | - a\|  - b\|                         |
+      | - a~  - b~- c~             | - a\|  - b\|- c\|                    |
+      | - a~  - b~    - c~         | - a\|  - b\|    - c\|                |
+      | 1. a~   1. b~              | 1.  a\|    1.  b\|                   |
+      | 1. a~   1. b~   2. c~2. d~ | 1.  a\|    1.  b\|    2.  c\|2.  d\| |
+      | - a~  - b~~    x~          | - a\|  - b\|\|    x\|\|              |
+      | - a~  - b~~    x~- c~      | - a\|  - b\|\|    x\|\|- c\|         |
+      | 1. a~   1. b~~       x~    | 1.  a\|    1.  b\|\|        x\|\|    |
+
+    # Qt 6.12 indents a nested item by its depth times its own marker's
+    # width, so read again a bullet in a numbered item is not in the item,
+    # and it indents the line that closes a fence in an item twice over, so
+    # in a nested item that line no longer closes it. In Ljós an item, and
+    # each line of its code, is indented to the text of the item it is in.
+    @qt-diverges
+    Examples:
+      | text | out |
+      | - a~  1. b~ | - a\|  1.  b\| |
+      | 1. a~   - b~ | 1.  a\|    - b\| |
+      | - a~~  ```~  x~  ```~ | - a\|\|  ```\|  x\|  ```\|\| |
+      | - a~  - b~~    ```~    x~    ```~ | - a\|  - b\|\|    ```\|    x\|    ```\|\| |
 
   Scenario: Typing in an indented code block keeps it indented
     When the method "read" of "root" is called with "a~~    x y~"
