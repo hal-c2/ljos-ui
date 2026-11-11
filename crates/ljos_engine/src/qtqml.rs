@@ -1285,8 +1285,46 @@ impl Engine {
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
+        self.component_create_as(component, parent, props, Initial::Native)
+    }
+
+    /// [`Engine::component_create`] with `props` set as `how` says: what a
+    /// view makes for a script that gave them (`StackView.push`) sets them
+    /// as `incubateObject` does.
+    pub fn component_create_as(
+        &self,
+        component: ObjectId,
+        parent: Option<ObjectId>,
+        props: Vec<(String, Value)>,
+        how: Initial,
+    ) -> Result<ObjectId, EngineError> {
         let template = self.component_template(component)?;
-        self.as_host_root(|| self.create_from_template(&template, parent, props))
+        self.as_host_root(|| self.create_from_template_for_script(&template, parent, props, how))
+    }
+
+    /// Sets `props` on `obj`, which exists already, as `how` says the
+    /// initial properties of an object being made are set: an item a
+    /// script pushes on a `StackView` with properties takes them as one
+    /// the view makes does.
+    pub fn set_properties_as(
+        &self,
+        obj: ObjectId,
+        props: &[(String, Value)],
+        how: &Initial,
+    ) -> Result<(), EngineError> {
+        match how {
+            Initial::Native => {
+                for (name, v) in props {
+                    self.write_by_name(obj, name, v.clone())?;
+                }
+                Ok(())
+            }
+            how => {
+                let url = self.document_url(obj).unwrap_or_default();
+                self.initial_props(&url, obj, props, how);
+                Ok(())
+            }
+        }
     }
 
     /// What a `createObject` of `component` left it in: Error with
