@@ -1510,7 +1510,7 @@ module Qt.labs.folderlistmodel
 module Qt.labs.lottieqt
 	LottieAnimation Qt.labs.lottieqt.LottieAnimation
 	type Qt.labs.lottieqt.LottieAnimation LottieAnimation
-		prototype QtQuick.Item named
+		prototype QtQuick.PaintedItem named
 		enum Status Null=0 Loading=1 Ready=2 Error=3
 		enum Quality LowQuality=0 MediumQuality=1 HighQuality=2
 		enum Direction Forward=1 Reverse=-1

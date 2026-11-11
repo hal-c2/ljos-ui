@@ -38,6 +38,11 @@
 //!   staying `Loading` until they are.
 //! - Loading sets the item's size to the file's canvas, and `frameRate`
 //!   to the file's.
+//! - It is a painted item, as in Qt ([`PaintedItem`]): the file is painted
+//!   at its own size from the item's top-left corner, whatever size the
+//!   item is given, `contentsScale` times as large, over `fillColor`, and
+//!   cut off at the item and its `contentsSize`. An animation fits a box
+//!   with `contentsScale: Math.min(width / w, height / h)`.
 //! - Each tick of `1000 / frameRate` ms moves one frame; the last frame
 //!   shows for a tick before a run ends ([`clock`]).
 //! - `quality` is kept but changes nothing: every frame is drawn
@@ -68,7 +73,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos::item::kurbo::{Affine, Size};
-use ljos::item::{self, DisplayListBuilder, ItemPaint, TextEngine};
+use ljos::item::{self, DisplayListBuilder, ItemPaint, PaintedItem, TextEngine};
 use ljos::prelude::*;
 
 use crate::clock::Clock;
@@ -121,12 +126,12 @@ pub fn register(engine: &Engine) {
 #[qml(
     module = "Qt.labs.lottieqt",
     name = "LottieAnimation",
-    extends = Item,
+    extends = PaintedItem,
     enums = enums
 )]
 pub struct LottieAnimation {
     #[qml(base)]
-    pub item: Item,
+    pub painted: PaintedItem,
     /// The Lottie JSON file.
     #[qml(notify)]
     pub source: Url,
@@ -179,7 +184,7 @@ impl fmt::Debug for LottieAnimation {
 impl Default for LottieAnimation {
     fn default() -> Self {
         LottieAnimation {
-            item: Item::default(),
+            painted: PaintedItem::default(),
             source: Url::default(),
             status: status::NULL,
             frame_rate: 30,
@@ -671,18 +676,13 @@ impl ItemPaint for Frame {
     }
 }
 
+/// The frame at the file's own size: the painted item it is scales it by
+/// `contentsScale`, and the item's size stretches nothing, as in Qt.
 fn read(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
-    let w = item::prop(e, me, Item::WIDTH);
-    let h = item::prop(e, me, Item::HEIGHT);
     let Ok(Some((comp, frame))) = e.with(me, |m: &LottieAnimation| {
         m.composition.clone().map(|c| (c, m.clock.frame))
     }) else {
         return Rc::new(Frame(Vec::new()));
     };
-    let view = if comp.width > 0.0 && comp.height > 0.0 {
-        Affine::scale_non_uniform(w / comp.width, h / comp.height)
-    } else {
-        Affine::IDENTITY
-    };
-    Rc::new(Frame(render::render(&comp, frame, view)))
+    Rc::new(Frame(render::render(&comp, frame, Affine::IDENTITY)))
 }
