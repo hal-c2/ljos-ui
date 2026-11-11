@@ -4,7 +4,9 @@
 //! the parser is used: its HTML renderer is not linked, and raw HTML in the
 //! source (a block or a tag in a line) becomes the text it is. Qt hands such
 //! HTML to its own importer; a document here cannot bring in a second
-//! language.
+//! language. A block of nothing but comments is left out, as Qt 6.12 leaves
+//! it: it holds no text, and it is how CommonMark ends a list before an
+//! indented code block.
 //!
 //! The geometry is Qt 6.11's as measured: lists and quotes stand in by 40
 //! pixels a level (quotes from the right too), headings are bold and sized
@@ -13,7 +15,7 @@
 
 use std::sync::Arc;
 
-use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag};
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use super::flow::{CellBuf, Ctx, Flow, table_block};
 use super::styled::HEADING_SCALE;
@@ -90,7 +92,18 @@ pub(crate) fn parse(source: &str, base: usize, options: &ParseOptions) -> Parsed
         fence: None,
         tildes: false,
     };
+    let mut comments = false;
     for (event, range) in parser {
+        if comments {
+            comments = !matches!(event, Event::End(TagEnd::HtmlBlock));
+            continue;
+        }
+        if let Event::Start(Tag::HtmlBlock) = &event
+            && source.get(range.clone()).is_some_and(only_comments)
+        {
+            comments = true;
+            continue;
+        }
         if reader.open.is_empty() {
             // A streamed update parses again from the line the last
             // top-level block starts on (its indent belongs to it).
@@ -111,6 +124,18 @@ pub(crate) fn parse(source: &str, base: usize, options: &ParseOptions) -> Parsed
         blocks: reader.finish(),
         references,
     }
+}
+
+/// `html` is HTML comments and white space, nothing else.
+fn only_comments(html: &str) -> bool {
+    let mut rest = html.trim_start();
+    while let Some(after) = rest.strip_prefix("<!--") {
+        let Some(end) = after.find("-->") else {
+            return false;
+        };
+        rest = after[end + 3..].trim_start();
+    }
+    rest.is_empty()
 }
 
 impl Reader {

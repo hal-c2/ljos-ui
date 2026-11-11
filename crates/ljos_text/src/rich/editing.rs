@@ -1377,7 +1377,7 @@ impl RichText {
         let count = self.blocks.len();
         let mut number = 0;
         // The marks of the fence open, which the block closes with.
-        let mut fence = "```";
+        let mut fence = String::new();
         for (index, block) in self.blocks.iter().enumerate() {
             let range = self.block_range(index);
             let next = self.blocks.get(index + 1);
@@ -1387,16 +1387,25 @@ impl RichText {
                 // 6.12: indented lines run on with indented ones, and fenced
                 // ones (or a pre's) with fenced ones, under the first one's
                 // fence; a fence closing, or indented lines a fenced block
-                // follows, has no empty line after it. The fence is three
-                // marks whatever the lines hold, and indented lines after a
-                // list item are indented still, though read back a line of
-                // three marks closes the fence and the lines go on the item.
+                // follows, has no empty line after it.
                 BlockKind::Code => {
                     let run = code_run(block);
                     let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
                     let joins_after = next.is_some_and(|n| code_run(n) == run);
                     let text = &self.text[range];
                     if run == Some(true) {
+                        // Indented lines right after a list would be a
+                        // paragraph of its last item; an empty comment ends
+                        // the list, as CommonMark has it, and reads as nothing.
+                        // Qt 6.11: indented lines after a list item are
+                        // written right after it, and read back they are a
+                        // paragraph of the item.
+                        if !joins_before
+                            && index > 0
+                            && self.blocks[index - 1].kind == BlockKind::List
+                        {
+                            out.push_str("<!-- -->\n\n");
+                        }
                         out.push_str("    ");
                         out.push_str(text);
                         out.push('\n');
@@ -1406,15 +1415,26 @@ impl RichText {
                                 Some(Fence::Fenced { tildes, info }) => (*tildes, &**info),
                                 _ => (false, ""),
                             };
-                            fence = if tildes { "~~~" } else { "```" };
-                            out.push_str(fence);
+                            // Longer than any run of its mark in the lines,
+                            // so that none of them closes it.
+                            // Qt 6.11: the fence is three marks whatever the
+                            // lines hold, and a line of three closes it.
+                            let mark = if tildes { '~' } else { '`' };
+                            let marks = (index..count)
+                                .take_while(|&j| code_run(&self.blocks[j]) == run)
+                                .map(|j| longest_run(&self.text[self.block_range(j)], mark))
+                                .max()
+                                .unwrap_or(0);
+                            fence.clear();
+                            fence.extend(std::iter::repeat_n(mark, (marks + 1).max(3)));
+                            out.push_str(&fence);
                             out.push_str(info);
                             out.push('\n');
                         }
                         out.push_str(text);
                         out.push('\n');
                         if !joins_after {
-                            out.push_str(fence);
+                            out.push_str(&fence);
                             out.push('\n');
                         }
                     }
@@ -1644,6 +1664,14 @@ impl ImageFormat {
 /// A paragraph ends at `c`, in a cell or out of one.
 fn ends_paragraph(c: char) -> bool {
     c == PARAGRAPH || c == CELL_PARAGRAPH
+}
+
+/// The most `mark`s in a row in `line`.
+fn longest_run(line: &str, mark: char) -> usize {
+    line.split(|c| c != mark)
+        .map(|r| r.len() / mark.len_utf8())
+        .max()
+        .unwrap_or(0)
 }
 
 /// Which code blocks a code paragraph's Markdown runs on with: `Some(true)`
@@ -2071,6 +2099,38 @@ mod tests {
         // Measured on Qt 6.12.
         let t = md("~~~~\nx\n~~~~\n\n```\ny\n```\n");
         assert_eq!(t.markdown(), "~~~\nx\ny\n~~~\n\n");
+    }
+
+    #[test]
+    fn an_indented_code_block_after_a_list_is_written_apart_from_it() {
+        let t = md("- a\n\n<!-- -->\n\n    x\n    y\n");
+        let kinds: Vec<_> = t.blocks.iter().map(|b| b.kind).collect();
+        assert_eq!(kinds, [BlockKind::List, BlockKind::Code, BlockKind::Code]);
+        let written = t.markdown();
+        assert_eq!(written, "- a\n\n<!-- -->\n\n    x\n    y\n\n");
+        assert_eq!(md(&written), t);
+    }
+
+    #[test]
+    fn a_fence_is_longer_than_any_run_of_its_mark_in_the_block() {
+        for (source, written) in [
+            ("````\n```\nx\n```\n````\n", "````\n```\nx\n```\n````\n\n"),
+            ("~~~~~\n~~~~\n~~~~~\n", "~~~~~\n~~~~\n~~~~~\n\n"),
+            ("```\na `` b\n```\n", "```\na `` b\n```\n\n"),
+        ] {
+            let t = md(source);
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn a_block_of_html_comments_is_not_read() {
+        assert_eq!(md("a\n\n<!-- note -->\n<!-- -->\n\nb\n"), md("a\n\nb\n"));
+        assert_eq!(
+            md("a\n\n<!-- note --> c\n\nb\n").text(),
+            "a\n<!-- note --> c\nb"
+        );
     }
 
     #[test]
