@@ -175,65 +175,111 @@ fn lowered(modules: &[(&str, &str)]) -> Outcome {
 
 // No two files' rows modules go to one path (`rows_module` is named by the
 // file's own name), so these give each file a module of one name.
+
+fn project(scripts: &[(&str, &str)]) -> Files {
+    Files {
+        scripts: scripts
+            .iter()
+            .map(|(path, text)| (path.to_string(), text.to_string()))
+            .collect(),
+    }
+}
+
+/// A lowering that wrote the module of each of `owners` before.
+fn written_by(owners: &[&str]) -> Lowering {
+    let mut lowering = Lowering::new();
+    for owner in owners {
+        lowering
+            .generated
+            .insert(owner.to_string(), vec![M.to_string()]);
+    }
+    lowering
+}
+
+const M: &str = "app/m.rows.ts";
+
+fn put(text: &str) -> ScriptEdit {
+    ScriptEdit::Put {
+        path: M.to_string(),
+        text: text.to_string(),
+    }
+}
+
+fn owners(lowering: &Lowering) -> Vec<&str> {
+    lowering
+        .generated
+        .iter()
+        .filter(|(_, wrote)| wrote.iter().any(|path| path == M))
+        .map(|(key, _)| key.as_str())
+        .collect()
+}
+
 #[test]
 fn a_file_settled_after_another_sees_the_module_that_one_writes() {
-    let project = Files::default();
     let mut lowering = Lowering::new();
-    let mut scripts = Vec::new();
-    lowering.settle_modules(
-        &project,
-        "app/a",
-        &lowered(&[("m.rows.ts", "a")]),
-        &mut scripts,
+    let scripts = lowering.settle_modules(
+        &project(&[]),
+        &[
+            ("app/a".to_string(), lowered(&[("m.rows.ts", "a")])),
+            ("app/b".to_string(), lowered(&[("m.rows.ts", "b")])),
+        ],
     );
-    lowering.settle_modules(
-        &project,
-        "app/b",
-        &lowered(&[("m.rows.ts", "b")]),
-        &mut scripts,
-    );
-    assert_eq!(
-        scripts,
-        [ScriptEdit::Put {
-            path: "app/m.rows.ts".to_string(),
-            text: "a".to_string()
-        }]
-    );
-    assert_eq!(
-        lowering.generated,
-        BTreeMap::from([("app/a".to_string(), vec!["app/m.rows.ts".to_string()])])
-    );
+    assert_eq!(scripts, [put("a")]);
+    assert_eq!(owners(&lowering), ["app/a"]);
 }
 
 #[test]
 fn a_file_settled_after_another_writes_where_that_one_dropped_its_module() {
-    let project = Files {
-        scripts: BTreeMap::from([("app/m.rows.ts".to_string(), "a".to_string())]),
-    };
-    let mut lowering = Lowering::new();
-    lowering
-        .generated
-        .insert("app/a".to_string(), vec!["app/m.rows.ts".to_string()]);
-    let mut scripts = Vec::new();
-    lowering.settle_modules(&project, "app/a", &Outcome::Unchanged, &mut scripts);
-    lowering.settle_modules(
-        &project,
-        "app/b",
-        &lowered(&[("m.rows.ts", "b")]),
-        &mut scripts,
+    let mut lowering = written_by(&["app/a"]);
+    let scripts = lowering.settle_modules(
+        &project(&[(M, "a")]),
+        &[
+            ("app/a".to_string(), Outcome::Unchanged),
+            ("app/b".to_string(), lowered(&[("m.rows.ts", "b")])),
+        ],
     );
-    assert_eq!(
-        scripts,
-        [
-            ScriptEdit::Drop("app/m.rows.ts".to_string()),
-            ScriptEdit::Put {
-                path: "app/m.rows.ts".to_string(),
-                text: "b".to_string()
-            }
-        ]
+    assert_eq!(scripts, [ScriptEdit::Drop(M.to_string()), put("b")]);
+    assert_eq!(owners(&lowering), ["app/b"]);
+}
+
+#[test]
+fn a_file_settled_before_another_writes_where_that_one_drops_its_module() {
+    let mut lowering = written_by(&["app/b"]);
+    let scripts = lowering.settle_modules(
+        &project(&[(M, "b")]),
+        &[
+            ("app/a".to_string(), lowered(&[("m.rows.ts", "a")])),
+            ("app/b".to_string(), Outcome::Unchanged),
+        ],
     );
-    assert_eq!(
-        lowering.generated,
-        BTreeMap::from([("app/b".to_string(), vec!["app/m.rows.ts".to_string()])])
+    assert_eq!(scripts, [ScriptEdit::Drop(M.to_string()), put("a")]);
+    assert_eq!(owners(&lowering), ["app/a"]);
+}
+
+#[test]
+fn a_module_one_file_still_writes_is_not_dropped_by_another_that_wrote_it() {
+    let mut lowering = written_by(&["app/a", "app/b"]);
+    let scripts = lowering.settle_modules(
+        &project(&[(M, "x")]),
+        &[
+            ("app/a".to_string(), lowered(&[("m.rows.ts", "a")])),
+            ("app/b".to_string(), Outcome::Unchanged),
+        ],
     );
+    assert_eq!(scripts, [put("a")]);
+    assert_eq!(owners(&lowering), ["app/a"]);
+}
+
+#[test]
+fn a_module_a_file_settled_before_writes_is_not_written_over() {
+    let mut lowering = written_by(&["app/a", "app/b"]);
+    let scripts = lowering.settle_modules(
+        &project(&[(M, "x")]),
+        &[
+            ("app/a".to_string(), lowered(&[("m.rows.ts", "a")])),
+            ("app/b".to_string(), lowered(&[("m.rows.ts", "b")])),
+        ],
+    );
+    assert_eq!(scripts, [put("a")]);
+    assert_eq!(owners(&lowering), ["app/a"]);
 }

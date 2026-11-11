@@ -299,59 +299,82 @@ impl Lowering {
     /// the one there is the pass's. It drops the ones it wrote before and
     /// does not now. A script of that path the project has already is the
     /// project's, and stays. The edits are to be applied in the order
-    /// given: each file's are decided against the scripts as the edits
-    /// before them leave the project.
+    /// given: each is decided against the scripts as the edits before it
+    /// leave the project, the drops first, and a module of one path that
+    /// two files write is the one settled first's.
     pub fn settle(&mut self, project: &dyn Project) -> Vec<ScriptEdit> {
         self.lower(project);
-        let mut scripts = Vec::new();
-        for (key, outcome) in group(&self.alone) {
-            self.settle_modules(project, &key, &outcome, &mut scripts);
-            self.lowered.insert(key, outcome);
-        }
+        let files: Vec<(String, Outcome)> = group(&self.alone).into_iter().collect();
+        let scripts = self.settle_modules(project, &files);
+        self.lowered.extend(files);
         scripts
     }
 
+    /// The edits to the rows modules of `files`, lowered as given, in order.
+    /// The drops come first, so a module one file stops writing is there
+    /// for any file to write, whichever is settled first; one that a file
+    /// that wrote it still writes is not dropped. Then each file's module
+    /// is written where the edits before it leave no script, or one it
+    /// wrote and no file settled before it has taken.
     fn settle_modules(
         &mut self,
         project: &dyn Project,
-        key: &str,
-        outcome: &Outcome,
-        scripts: &mut Vec<ScriptEdit>,
-    ) {
-        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
-        let modules: Vec<(String, String)> = match outcome {
-            Outcome::Lowered(lowered) => lowered
-                .modules
-                .iter()
-                .map(|(name, text)| {
-                    let path = dir.map_or_else(|| name.clone(), |dir| format!("{dir}/{name}"));
-                    (path, text.clone())
-                })
-                .collect(),
-            Outcome::Unchanged | Outcome::Kept(_) => Vec::new(),
+        files: &[(String, Outcome)],
+    ) -> Vec<ScriptEdit> {
+        let files: Vec<Settling<'_>> = files
+            .iter()
+            .map(|(key, outcome)| Settling {
+                key,
+                modules: modules_beside(key, outcome),
+                before: self.generated.remove(key).unwrap_or_default(),
+            })
+            .collect();
+        let writes = |key: &str, path: &str| {
+            files.iter().any(|other| {
+                other.key != key
+                    && other.before.iter().any(|p| p == path)
+                    && other.modules.iter().any(|(p, _)| p == path)
+            })
         };
-        let before = self.generated.remove(key).unwrap_or_default();
-        for path in &before {
-            if !modules.iter().any(|(p, _)| p == path) {
-                scripts.push(ScriptEdit::Drop(path.clone()));
-            }
-        }
-        let mut wrote = Vec::new();
-        for (path, text) in modules {
-            let there = script_after(project, scripts, key, &path);
-            if before.contains(&path) || there.is_none() {
-                if there != Some(text.as_str()) {
-                    scripts.push(ScriptEdit::Put {
-                        path: path.clone(),
-                        text,
-                    });
+        let mut scripts = Vec::new();
+        for file in &files {
+            for path in &file.before {
+                let drop = ScriptEdit::Drop(path.clone());
+                if !file.modules.iter().any(|(p, _)| p == path)
+                    && !writes(file.key, path)
+                    && !scripts.contains(&drop)
+                {
+                    scripts.push(drop);
                 }
-                wrote.push(path);
             }
         }
-        if !wrote.is_empty() {
-            self.generated.insert(key.to_string(), wrote);
+        let mut taken = BTreeSet::new();
+        for Settling {
+            key,
+            modules,
+            before,
+        } in files
+        {
+            let mut wrote = Vec::new();
+            for (path, text) in modules {
+                let there = script_after(project, &scripts, key, &path);
+                let mine = before.contains(&path) && !taken.contains(&path);
+                if mine || there.is_none() {
+                    if there != Some(text.as_str()) {
+                        scripts.push(ScriptEdit::Put {
+                            path: path.clone(),
+                            text,
+                        });
+                    }
+                    taken.insert(path.clone());
+                    wrote.push(path);
+                }
+            }
+            if !wrote.is_empty() {
+                self.generated.insert(key.to_string(), wrote);
+            }
         }
+        scripts
     }
 
     /// What the file `key` is lowered to with its group, as the last
@@ -432,6 +455,30 @@ fn script_after<'a>(
         Some(ScriptEdit::Put { text, .. }) => Some(text),
         Some(ScriptEdit::Drop(_)) => None,
         None => project.script(key, path).map(|script| script.text),
+    }
+}
+
+/// A file in [`Lowering::settle_modules`]: its rows modules now, at their
+/// paths, and the ones the pass wrote for it before.
+struct Settling<'a> {
+    key: &'a str,
+    modules: Vec<(String, String)>,
+    before: Vec<String>,
+}
+
+/// The rows modules the file `key` is lowered to, at their paths.
+fn modules_beside(key: &str, outcome: &Outcome) -> Vec<(String, String)> {
+    let dir = key.rsplit_once('/').map(|(dir, _)| dir);
+    match outcome {
+        Outcome::Lowered(lowered) => lowered
+            .modules
+            .iter()
+            .map(|(name, text)| {
+                let path = dir.map_or_else(|| name.clone(), |dir| format!("{dir}/{name}"));
+                (path, text.clone())
+            })
+            .collect(),
+        Outcome::Unchanged | Outcome::Kept(_) => Vec::new(),
     }
 }
 
