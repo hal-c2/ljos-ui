@@ -657,7 +657,7 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
             check(e, "StackView", e.set_properties_as(item, &props, &how));
             (item, false, home)
         }
-        Source::Component(c) => (e.component_create_as(c, Some(me), props, how)?, true, None),
+        Source::Component(c) => (made_from(e, me, c, props, how)?, true, None),
         Source::Url(url) => (from_url(e, me, &url, props, how)?, true, None),
     };
     if !is_item(e, item) {
@@ -716,14 +716,32 @@ fn from_url(
     how: Initial,
 ) -> Result<ObjectId, EngineError> {
     let Some(ctx) = e.context_of(me) else {
-        return e.create_from_url_in(url, Some(me), props, None, how);
+        let req = ljos_engine::Request::url(url)
+            .parent(Some(me))
+            .props(props, how);
+        return e.make(req).map(|(page, _)| page);
     };
     let c = e.create_component(url, Some(me))?;
     let made = e
         .set_component_context(c, ctx)
-        .and_then(|()| e.component_create_as(c, Some(me), props, how));
+        .and_then(|()| made_from(e, me, c, props, how));
     e.destroy(c);
     made
+}
+
+/// A page the component `c` makes: what a script gave it is set as
+/// `incubateObject` sets it.
+fn made_from(
+    e: &Engine,
+    me: ObjectId,
+    c: ObjectId,
+    props: Vec<(String, Value)>,
+    how: Initial,
+) -> Result<ObjectId, EngineError> {
+    let req = ljos_engine::Request::component(c)
+        .parent(Some(me))
+        .props(props, how);
+    e.make(req).map(|(page, _)| page)
 }
 
 /// A page that was given no size is as large as the view.

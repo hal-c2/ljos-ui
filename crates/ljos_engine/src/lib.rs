@@ -146,7 +146,9 @@ pub use hooks::{Interception, Interceptor};
 pub use ids::{ConnectionId, ContextId, MethodIndex, ObjectId, PropIndex, PropKey, SignalIndex};
 pub use incubate::Incubator;
 pub use incubator::dynamic::{QmlText, QmlTextCompiler, QmlTextError};
+pub use incubator::initial::Settled;
 pub use incubator::reload::{Migrate, ReloadError, ReloadFault, ReloadOutcome};
+pub use incubator::request::{Allocated, By, Request};
 pub use incubator::singletons::{
     QmlSingleton, ScopedEvent, ScopedSingleton, SingletonScope, WindowScope,
 };

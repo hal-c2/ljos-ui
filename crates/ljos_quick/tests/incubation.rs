@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use common::*;
-use ljos_engine::{APPLICATION_PROC, CreationJob, Engine, ObjectId, Value};
+use ljos_engine::{APPLICATION_PROC, Engine, ObjectId, Value};
 use ljos_quick::{INCUBATION_BUDGET, MIN_INCUBATION_BUDGET, QuickScene, incubation_budget};
 use ljos_runtime::{Clock, FrameReport, JobPoll, Lane, ProcId, Time};
 
@@ -152,11 +152,8 @@ fn one_step_at(look: Duration) -> Duration {
     let (e, clock) = busy(look);
     let root = load(&e, &source(8));
     let comp = get(&e, root, "c").as_object().unwrap();
-    let (mut job, handle) = CreationJob::for_component(
-        &e,
-        comp,
-        Some(root),
-        vec![],
+    let (mut job, handle) = e.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
         Lane::Visible,
         APPLICATION_PROC,
     );

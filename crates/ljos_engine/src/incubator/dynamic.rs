@@ -434,7 +434,9 @@ impl Engine {
             context: Some(context),
         };
         let before = state.refused.replace(Some(Vec::new()));
-        let made = self.create_from_template(&template, Some(parent), Vec::new());
+        let made = self
+            .make(super::request::Request::template(Rc::new(template)).parent(Some(parent)))
+            .map(|(root, _)| root);
         let refused = state.refused.replace(before).unwrap_or_default();
         match made {
             Ok(root) => {

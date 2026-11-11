@@ -603,11 +603,8 @@ Item {
     );
     let comp = h.get(root, "c").as_object().unwrap();
     assert!(h.log().is_empty());
-    let (mut job, handle) = ljos_engine::CreationJob::for_component(
-        &h.engine,
-        comp,
-        Some(root),
-        vec![],
+    let (mut job, handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
         ljos_runtime::Lane::Visible,
         ljos_runtime::ProcId::new(0, 0),
     );

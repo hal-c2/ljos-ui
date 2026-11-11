@@ -140,7 +140,7 @@ pub(crate) enum Told {
 /// What became of the initial properties as a whole.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[must_use]
-pub(crate) struct Settled {
+pub struct Settled {
     /// The object is not to be given back ([`Verdict::Withhold`]).
     pub withheld: bool,
 }

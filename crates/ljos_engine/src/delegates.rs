@@ -32,7 +32,8 @@ use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
 use crate::incubator::initial::Mode;
-use crate::incubator::{CreationHandle, CreationJob, SharedCreation};
+use crate::incubator::request::Request;
+use crate::incubator::{CreationHandle, SharedCreation};
 use crate::log::LogLevel;
 use crate::meta::{MetaObject, MetaRef, PropertyFlags};
 use crate::model::{
@@ -454,17 +455,22 @@ impl Shared {
             for_setup.setup_row(e, id, root, ctx, ljos);
         };
         if !asynchronous {
-            let r = engine.create_delegate(component, Some(s.owner), setup);
+            let r = engine
+                .make(
+                    Request::component(component)
+                        .parent(Some(s.owner))
+                        .delegate(setup),
+                )
+                .map(|(root, _)| root);
             s.finish_row(engine, id, component, r);
             return;
         }
-        let (job, handle) = CreationJob::for_delegate(
-            engine,
-            component,
-            Some(s.owner),
+        let (job, handle) = engine.make_later(
+            Request::component(component)
+                .parent(Some(s.owner))
+                .delegate(setup),
             Lane::Visible,
             ProcId::new(0, 0),
-            setup,
         );
         {
             let mut st = s.state.borrow_mut();
@@ -1104,39 +1110,44 @@ impl Engine {
         values: &[(&str, Value)],
         allocated: impl FnOnce(&Engine, ObjectId),
     ) -> Result<ObjectId, EngineError> {
-        self.create_delegate(component, owner, |e, root, ctx| {
-            let required: Vec<_> = e
-                .meta_of(root)
-                .map(|m| required_properties(&m).collect())
-                .unwrap_or_default();
-            if required.is_empty() && !values.is_empty() {
-                let roles: Vec<crate::Atom> =
-                    values.iter().map(|(n, _)| crate::Atom::intern(n)).collect();
-                let shape = row_shape(RowKind::Element, &roles);
-                let row = e.create_with(
-                    shape.meta.clone(),
-                    Box::new(ModelRow::default()),
-                    Some(root),
-                );
-                if let Ok(row) = row {
-                    for (name, v) in values {
-                        if let Some(p) = shape.role(name) {
-                            let _ = e.write_internal(row, p, v.clone(), WriteKind::Initial);
+        self.make(
+            Request::component(component)
+                .parent(owner)
+                .delegate(|e: &Engine, root, ctx| {
+                    let required: Vec<_> = e
+                        .meta_of(root)
+                        .map(|m| required_properties(&m).collect())
+                        .unwrap_or_default();
+                    if required.is_empty() && !values.is_empty() {
+                        let roles: Vec<crate::Atom> =
+                            values.iter().map(|(n, _)| crate::Atom::intern(n)).collect();
+                        let shape = row_shape(RowKind::Element, &roles);
+                        let row = e.create_with(
+                            shape.meta.clone(),
+                            Box::new(ModelRow::default()),
+                            Some(root),
+                        );
+                        if let Ok(row) = row {
+                            for (name, v) in values {
+                                if let Some(p) = shape.role(name) {
+                                    let _ = e.write_internal(row, p, v.clone(), WriteKind::Initial);
+                                }
+                            }
+                            e.set_context_object(ctx, Some(row));
                         }
                     }
-                    e.set_context_object(ctx, Some(row));
-                }
-            }
-            let given: Vec<(String, Value)> = required
-                .into_iter()
-                .filter_map(|(_, name)| {
-                    let (_, v) = values.iter().find(|(n, _)| *n == name)?;
-                    Some((name, v.clone()))
-                })
-                .collect();
-            let _ = e.apply_initial(&Atom::default(), root, &given, Mode::Required);
-            allocated(e, root);
-        })
+                    let given: Vec<(String, Value)> = required
+                        .into_iter()
+                        .filter_map(|(_, name)| {
+                            let (_, v) = values.iter().find(|(n, _)| *n == name)?;
+                            Some((name, v.clone()))
+                        })
+                        .collect();
+                    let _ = e.apply_initial(&Atom::default(), root, &given, Mode::Required);
+                    allocated(e, root);
+                }),
+        )
+        .map(|(root, _)| root)
     }
 }
 
@@ -1531,18 +1542,23 @@ impl ViewDelegates {
         };
         match urgency {
             Urgency::Now => {
-                let r = engine.create_delegate(component, Some(s.owner), setup);
+                let r = engine
+                    .make(
+                        Request::component(component)
+                            .parent(Some(s.owner))
+                            .delegate(setup),
+                    )
+                    .map(|(root, _)| root);
                 s.finish(engine, id, component, r, false)
                     .map(|o| (o, Made::Created))
             }
             Urgency::Later => {
-                let (job, handle) = CreationJob::for_delegate(
-                    engine,
-                    component,
-                    Some(s.owner),
+                let (job, handle) = engine.make_later(
+                    Request::component(component)
+                        .parent(Some(s.owner))
+                        .delegate(setup),
                     Lane::Prefetch,
                     ProcId::new(0, 0),
-                    setup,
                 );
                 let weak = Rc::downgrade(s);
                 let (job, shared) = job

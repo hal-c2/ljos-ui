@@ -3,7 +3,7 @@
 
 mod support;
 
-use ljos_engine::{CreationJob, EngineError, ObjectFlags, Value};
+use ljos_engine::{EngineError, ObjectFlags, Value};
 use ljos_runtime::{Lane, ProcId};
 use support::engine;
 
@@ -279,11 +279,8 @@ fn incremental_creation_yields_and_finishes() {
     }
     src.push_str("  Component.onCompleted: console.log(\"done\")\n}\n");
     h.files(&[("Main", &src)]);
-    let (mut job, handle) = CreationJob::new(
-        &h.engine,
-        "Main",
-        None,
-        vec![],
+    let (mut job, handle) = h.engine.make_later(
+        ljos_engine::Request::url("Main").parent(None),
         Lane::Visible,
         ProcId::new(0, 0),
     );
@@ -326,11 +323,13 @@ fn a_job_makes_an_object_from_a_component_and_reports_it() {
     let comp = h.get(root, "c").as_object().unwrap();
     let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
     let s = seen.clone();
-    let (job, handle) = CreationJob::for_component(
-        &h.engine,
-        comp,
-        Some(root),
-        vec![("n".into(), Value::Int(4))],
+    let (job, handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp)
+            .parent(Some(root))
+            .props(
+                vec![("n".into(), Value::Int(4))],
+                ljos_engine::Initial::Native,
+            ),
         Lane::Visible,
         ProcId::new(0, 0),
     );
@@ -358,11 +357,8 @@ fn a_cancelled_job_leaves_nothing_behind() {
     let before = h.engine.object_count();
     let called = std::rc::Rc::new(std::cell::Cell::new(false));
     let c = called.clone();
-    let (job, handle) = CreationJob::for_component(
-        &h.engine,
-        comp,
-        Some(root),
-        vec![],
+    let (job, handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
         Lane::Visible,
         ProcId::new(0, 0),
     );
@@ -386,11 +382,8 @@ fn a_job_whose_parent_died_ends_with_an_error() {
     let root = h.load(MANY);
     let comp = h.get(root, "c").as_object().unwrap();
     let holder = h.engine.create_by_name("QtQuick", "Item", None).unwrap();
-    let (mut job, handle) = CreationJob::for_component(
-        &h.engine,
-        comp,
-        Some(holder),
-        vec![],
+    let (mut job, handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp).parent(Some(holder)),
         Lane::Visible,
         ProcId::new(0, 0),
     );
@@ -410,11 +403,8 @@ fn queued_jobs_wake_the_host_and_do_not_keep_the_engine() {
     let woke = std::rc::Rc::new(std::cell::Cell::new(0));
     let w = woke.clone();
     h.engine.set_timer_wake(move || w.set(w.get() + 1));
-    let (job, handle) = CreationJob::for_component(
-        &h.engine,
-        comp,
-        Some(root),
-        vec![],
+    let (job, handle) = h.engine.make_later(
+        ljos_engine::Request::component(comp).parent(Some(root)),
         Lane::Visible,
         ProcId::new(0, 0),
     );

@@ -695,7 +695,12 @@ impl Engine {
         owner: ObjectId,
         placed: impl FnOnce(&Engine, ObjectId),
     ) -> Result<ObjectId, crate::EngineError> {
-        self.create_delegate(component, Some(owner), |e, root, _| placed(e, root))
+        self.make(
+            crate::incubator::request::Request::component(component)
+                .parent(Some(owner))
+                .delegate(|e: &Engine, root, _| placed(e, root)),
+        )
+        .map(|(root, _)| root)
     }
 
     // ------------------------------------------------------------- snapshots
