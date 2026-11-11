@@ -283,3 +283,18 @@ fn a_module_a_file_settled_before_writes_is_not_written_over() {
     assert_eq!(scripts, [put("a")]);
     assert_eq!(owners(&lowering), ["app/a"]);
 }
+
+#[test]
+fn a_module_two_files_wrote_and_neither_writes_now_is_dropped_once() {
+    let mut lowering = written_by(&["app/a", "app/b"]);
+    let scripts = lowering.settle_modules(
+        &project(&[(M, "a")]),
+        &[
+            ("app/a".to_string(), Outcome::Unchanged),
+            ("app/b".to_string(), Outcome::Unchanged),
+        ],
+    );
+    // The project is told once that the module is gone.
+    assert_eq!(scripts, [ScriptEdit::Drop(M.to_string())]);
+    assert!(owners(&lowering).is_empty());
+}
