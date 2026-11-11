@@ -1240,6 +1240,15 @@ DECISION: `destroy()` is not in a Ljós file. An object a view made is
 removed by its model, and one made by `createObject` is owned by its parent
 and removed with `parent.remove(child)`.
 
+**Creation order.** An object's initial properties, aliases and bindings
+are settled together, and only then do its change handlers run, in height
+order, before `Component.onCompleted`. A handler sees every binding of the
+object with its first value. Qt runs an initial property's handler as the
+property is written, while its bindings are still pending, and a binding
+the handler reads is run there. DECISION (#331): Ljós keeps its batched
+order. Qt's belongs to compat, as each quirk marked `// Qt 6.11:` does,
+and `features/components/creation-order.feature` records both logs.
+
 ### 4.12 Theming
 
 **What apps say.** "Use the app's colours, spacing and type". The corpus

@@ -554,6 +554,13 @@ impl Engine {
         let root = self.allocate_template(&mut cr, template, parent)?;
         allocated(root);
         self.reload_assign(&cr, root);
+        // Qt 6.11: an initial property's handler runs as the property is
+        // written, before the object's bindings run; a binding the handler
+        // reads runs there, its own handler inside, and one a handler makes
+        // stale before it ran runs once ("eval3 dbl6 w3/6 evtri tri8" in
+        // features/components/creation-order.feature). Ljós settles the
+        // properties and bindings in this batch, and the handlers run after
+        // it in height order (#331).
         let r = self.batch(|| -> Result<(), EngineError> {
             let (r, held) = self.hold_eager(|| {
                 self.apply_aliases(&cr);
