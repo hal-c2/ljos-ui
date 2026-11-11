@@ -2,7 +2,7 @@
 #   https://doc.qt.io/qt-6/qtqml-syntax-signals.html#signal-parameters
 #   https://doc.qt.io/qt-6/qtqml-documents-scope.html
 #   https://doc.qt.io/qt-6/qml-qtquick-repeater.html#itemAdded-signal
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.12.0 (qml6, offscreen).
 
 @qt-parity
 Feature: A handler's undeclared parameters come before the names of the document
@@ -11,8 +11,10 @@ Feature: A handler's undeclared parameters come before the names of the document
   a property of the object the handler is on and one of the root. A handler
   that declares its parameters gets the arguments in order under its own
   names; one that declares none is given none, and the names are the
-  document's again. A parameter the signal does not name is never given by
-  name (see tst_tap_handler_arguments.qml for TapHandler's `button`).
+  document's again. So is a name of the signal that a handler written as a
+  function does not declare. A parameter the signal does not name is never
+  given by name (see tst_tap_handler_arguments.qml for TapHandler's
+  `button`).
 
   Background:
     Given the QML:
@@ -21,7 +23,7 @@ Feature: A handler's undeclared parameters come before the names of the document
       Item {
         id: root; objectName: "root"
         property int depth: 7; property int outer: 8
-        property string seen: ""; property int declared: 0; property int none: 0
+        property string seen: ""; property int declared: 0; property int none: 0; property int arrow: 0
         signal fired(int button, int depth, int width)
         Item { id: button; objectName: "theButton" }
         Item { id: item; objectName: "theItem" }
@@ -32,12 +34,14 @@ Feature: A handler's undeclared parameters come before the names of the document
           Connections { target: kid; function onShot(outer) { root.declared = outer } }
           Connections { target: kid; function onShot() { root.none = outer } }
         }
+        Item { id: third; signal sent(int outer); onSent: at => root.arrow = outer + at }
         Repeater { model: 1; Item { objectName: "made" }
           onItemAdded: root.seen = item.objectName + " " + index }
         Repeater { id: second; objectName: "second"; model: 0; Item { objectName: "other" }
           onItemAdded: (at, made) => root.seen = made.objectName + " " + at }
         function fire() { fired(11, 12, 13) }
         function shoot() { kid.shot(21) }
+        function send() { third.sent(30) }
       }
       """
 
@@ -56,3 +60,7 @@ Feature: A handler's undeclared parameters come before the names of the document
     When the method "shoot" of "root" is called
     Then the property "declared" of "root" is 21
     And the property "none" of "root" is 8
+
+  Scenario: A handler that is a function sees the document's names for the signal's
+    When the method "send" of "root" is called
+    Then the property "arrow" of "root" is 38
