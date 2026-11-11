@@ -3381,6 +3381,8 @@ pub struct CreationJob {
     scope: Option<ObjectId>,
     /// The context made for `scope`, until the object made in it owns it.
     scope_ctx: Option<ContextId>,
+    /// Made for a script's call, which a reload makes again.
+    by_script: bool,
 }
 
 impl std::fmt::Debug for CreationJob {
@@ -3461,6 +3463,7 @@ impl CreationJob {
                 errors: None,
                 scope: None,
                 scope_ctx: None,
+                by_script: false,
             },
             handle,
         )
@@ -3470,6 +3473,13 @@ impl CreationJob {
     #[must_use]
     pub fn initial(mut self, how: Initial) -> Self {
         self.initial = how;
+        self
+    }
+
+    /// The job making the object of a script's call.
+    #[must_use]
+    pub(crate) fn by_script(mut self) -> Self {
+        self.by_script = true;
         self
     }
 
@@ -3515,6 +3525,7 @@ impl CreationJob {
                 errors: None,
                 scope: None,
                 scope_ctx: None,
+                by_script: false,
             },
             SharedCreation(inner),
         )
@@ -3683,6 +3694,9 @@ impl CreationJob {
                                 setup(&e, root, top.context);
                             }
                             self.handle.0.root.set(Some(root));
+                            if self.by_script {
+                                e.reload_by_script();
+                            }
                             e.reload_assign(&cr, root);
                             e.apply_aliases(&cr);
                             self.phase = Phase::Apply(cr, root, 0);

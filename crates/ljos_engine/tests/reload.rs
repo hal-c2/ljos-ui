@@ -10,6 +10,7 @@ use ljos_compiler::ReloadSession;
 use ljos_engine::{
     Engine, MapSource, Migrate, ObjectId, QmlObject, QtObject, ReloadError, ReloadOutcome, Value,
 };
+use ljos_runtime::JobPoll;
 use qml_front::QtTypeOracle;
 use support::{Harness, engine};
 
@@ -1358,4 +1359,40 @@ Item {
             .map(|v| v.to_js_string().to_string()),
         Some("20".to_owned())
     );
+}
+
+#[test]
+fn objects_incubated_later_come_back_as_ones_incubated_at_once() {
+    let src = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  function fill() {
+    for (var k = 3; k < 5; k++)
+      tile.incubateObject(area, { kind: k }, Qt.Asynchronous)
+  }
+  Component { id: tile; Item { objectName: "tile"; property int kind } }
+  Item { id: area; objectName: "area" }
+}
+"#;
+    let kinds = |r: &Rig| -> Vec<f64> {
+        let area = r.find("area");
+        r.h.engine
+            .children(area)
+            .into_iter()
+            .map(|t| r.h.num(t, "kind"))
+            .collect()
+    };
+    let mut r = rig(&[("Main", src)]);
+    r.call("root", "fill");
+    for mut job in r.h.engine.take_incubations() {
+        while matches!(job.step(&|| false), JobPoll::Yield) {}
+    }
+    assert!(!r.h.engine.has_half_made());
+    assert_eq!(kinds(&r), [3.0, 4.0]);
+
+    // Made later or at once, each is the object of its own call, in the
+    // order the calls made them.
+    r.edit("Main", &remade(src)).unwrap();
+    assert_eq!(kinds(&r), [3.0, 4.0]);
 }
