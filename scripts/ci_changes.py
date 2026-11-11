@@ -84,6 +84,8 @@ NOTHING = (
 READERS = {
     "docs/design/": ("ljos_design", "ljos_mcp_author"),
     "docs/declarative.md": ("ljos_mcp_author",),
+    # tests/docs_site.rs checks every example of the site.
+    "docs/site/": ("ljos_cli",),
     "skills/": ("ljos_mcp_author",),
     "ledger/": ("ljos_bdd", "ljos_cli", "ljos_mcp_author"),
     "corpus/": (

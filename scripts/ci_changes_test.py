@@ -78,7 +78,7 @@ def feature_files(out):
 
 class Plans(unittest.TestCase):
     def test_docs_run_nothing(self):
-        out = run("docs/ARCHITECTURE.md", "README.md", "docs/site/index.html")
+        out = run("docs/ARCHITECTURE.md", "README.md", "docs/DIALECT.md")
         self.assertFalse(out["full"] or out["clippy"] or out["lint"] or out["acceptance"])
         self.assertEqual(out["tests"], [])
         self.assertEqual(out["features"], [])
@@ -151,6 +151,11 @@ class Plans(unittest.TestCase):
     def test_a_file_a_crate_reads_tests_that_crate_only(self):
         out = run("skills/embedding/SKILL.md")
         self.assertEqual(tested(out), {"ljos_mcp_author"})
+        self.assertFalse(out["clippy"])
+
+    def test_a_site_page_tests_the_examples_check(self):
+        out = run("docs/site/start/index.md")
+        self.assertEqual(tested(out), {"ljos_cli"})
         self.assertFalse(out["clippy"])
 
     def test_a_crates_notes_test_that_crate_only(self):
