@@ -225,3 +225,47 @@ fn qt_resolved_url_not_called_with_one_argument_stays_qt_s() {
          Item { property url c: Qt.resolvedUrl.call(null, \"c.png\", this); property url d: Qt.resolvedUrl.apply(null, [\"d.png\", this]); property unknown f: Qt.resolvedUrl }\n"
     );
 }
+
+/// A `Connections` is aimed at its target only through its handlers: one of
+/// an id's renamed signal is renamed, its own members are not, and one it
+/// cannot follow keeps the file.
+#[test]
+fn a_connections_renames_the_handlers_of_its_target() {
+    let at = |connections: &str| {
+        format!("import QtQuick\nItem {{ Rectangle {{ id: r }} {connections} }}\n")
+    };
+    for (handler, lowered_as) in [
+        (
+            "function onColorChanged() { }",
+            "function onFillChanged() { }",
+        ),
+        ("onColorChanged: { }", "onFillChanged: { }"),
+        (
+            "function onWidthChanged() { }",
+            "function onWidthChanged() { }",
+        ),
+    ] {
+        let text = lowered(&at(&format!(
+            "Connections {{ target: r; enabled: true; {handler} }}"
+        )));
+        assert!(
+            text.contains(&format!(
+                "Connections {{ target: r; enabled: true; {lowered_as} }}"
+            )),
+            "{text}"
+        );
+    }
+    // A target that is not an id, or none, is not followed.
+    for connections in [
+        "Connections { target: parent; function onColorChanged() { } }",
+        "Connections { function onColorChanged() { } }",
+    ] {
+        assert_eq!(
+            cause_of(&at(connections)),
+            Cause::HandlerOnUnknown {
+                handler: "onColorChanged".into()
+            },
+            "{connections}"
+        );
+    }
+}
