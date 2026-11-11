@@ -71,6 +71,8 @@ Item {
     }
 
     MouseArea {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Increment"
         anchors.fill: parent
         onClicked: counter.increment()
     }

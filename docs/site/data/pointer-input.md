@@ -22,11 +22,15 @@ Item {
     property int under: 0
     property int over: 0
     MouseArea {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Under"
         width: 100
         height: 100
         onClicked: root.under++
     }
     MouseArea {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Over"
         width: 50
         height: 50
         onClicked: root.over++
@@ -56,6 +60,8 @@ Item {
     width: 300
     height: 200
     Rectangle {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Box"
         id: box
         x: 50; y: 50
         width: 100; height: 100
@@ -132,6 +138,8 @@ Item {
         Drag.hotSpot.x: 20
         Drag.hotSpot.y: 20
         MouseArea {
+            Accessible.role: Accessible.Button
+            Accessible.name: "Drag box"
             anchors.fill: parent
             onPressed: box.Drag.active = true
             onReleased: box.Drag.drop()

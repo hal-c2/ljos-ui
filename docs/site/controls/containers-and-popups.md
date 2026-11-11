@@ -158,6 +158,9 @@ Column {
 On macOS a `MenuBar` is the system's menu bar: it takes no room in its window, and the active window's bar is the one shown. Items titled "About…", "Settings…" or "Preferences…", and "Quit" or "Exit", move to the application menu. macOS lists the application's windows in the menu titled "Window". When that title is translated, say which menu it is with `SystemMenu.role` from `import Ljos`; such a menu is shown even when it has no items of its own:
 
 ```qml
+import QtQuick.Controls
+import Ljos
+
 Menu {
     title: qsTr("Window")
     SystemMenu.role: SystemMenu.WindowRole

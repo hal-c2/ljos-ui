@@ -50,7 +50,7 @@ In a `.qml` file, a single- or double-quoted string literal may span multiple li
 
 You can move shared logic into a `.js` file and import it with `import "file.js" as Name`:
 
-```javascript
+```javascript file=lib.js group=lib
 // lib.js
 .pragma library
 
@@ -61,7 +61,7 @@ function clamp(v, low, high) {
 }
 ```
 
-```qml
+```qml group=lib
 // Main.qml
 import QtQuick
 import "lib.js" as Lib

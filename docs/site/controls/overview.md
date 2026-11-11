@@ -91,7 +91,7 @@ A `Control` with no parts starts with an implicit size of `0 × 0`, `padding: 0`
 
 You can build your own control by placing a `Badge.qml` file beside `Main.qml`:
 
-```qml
+```qml file=Badge.qml group=badge
 import QtQuick
 import QtQuick.Controls
 
@@ -116,7 +116,7 @@ Control {
 }
 ```
 
-```qml
+```qml group=badge
 import QtQuick
 import QtQuick.Controls
 
