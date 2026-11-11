@@ -1238,6 +1238,7 @@ impl<M: Send + 'static> Desktop<M> {
             screens_stale,
             ..
         } = self;
+        let color_space = config.color_space;
         let slot = &mut slots[i];
         let began = Instant::now();
         // What was asked until now, this pass answers. egui forgets a
@@ -1493,6 +1494,7 @@ impl<M: Send + 'static> Desktop<M> {
                     &[],
                     &mut slot.pending,
                     &surface.window,
+                    color_space,
                 );
                 Shown::Nothing { lost: false }
             } else {
@@ -1517,6 +1519,7 @@ impl<M: Send + 'static> Desktop<M> {
                     &primitives,
                     &mut slot.pending,
                     &surface.window,
+                    color_space,
                 );
                 // DebugView's numbers: a pass with no reading keeps the last.
                 #[cfg(feature = "quick3d")]
@@ -2277,7 +2280,7 @@ impl<M: Send + 'static> HostApp<WinitHost<ShellEvent>> for Desktop<M> {
 
 /// [`crate::run`].
 pub(crate) fn run<M: Send + 'static>(
-    config: ShellConfig,
+    mut config: ShellConfig,
     setup: impl FnOnce(&mut Setup<'_, M>) -> Result<ObjectId, SetupError> + 'static,
 ) -> Result<(), ShellError> {
     #[cfg(feature = "mcp")]
@@ -2331,6 +2334,15 @@ pub(crate) fn run<M: Send + 'static>(
             CATEGORY,
             "drawn on the processor: EGL would draw in software",
         );
+    }
+    // Decided once: every window and every frame follows it.
+    let (color_space, unknown) = crate::color_space::ColorSpace::from_env(
+        std::env::var(crate::color_space::VAR).ok().as_deref(),
+        config.color_space,
+    );
+    config.color_space = color_space;
+    if let Some(unknown) = unknown {
+        app.engine().log(LogLevel::Warning, CATEGORY, unknown);
     }
     #[cfg(feature = "mcp")]
     app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
