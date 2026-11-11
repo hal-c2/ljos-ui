@@ -22,6 +22,7 @@ mod bindings;
 mod cause;
 mod given;
 mod group;
+mod lowering;
 mod modules;
 mod qt_members;
 mod rows;
@@ -53,6 +54,7 @@ use rules::{arrange, font, gesture};
 
 pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
+pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
 pub use rules::{FONT_RENAMES, LAYOUT_RENAMES, member_renames, type_renames};
 
 /// The module a lowered file imports.
