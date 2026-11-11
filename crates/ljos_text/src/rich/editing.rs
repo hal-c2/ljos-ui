@@ -1392,7 +1392,7 @@ impl RichText {
                 // the first one's (6.12 the same).
                 BlockKind::Code => {
                     let run = code_run(block);
-                    let indented = block.fence == Some(Fence::Indented);
+                    let indented = run == Some(CodeRun::Indented);
                     let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
                     let joins_after = next.is_some_and(|n| code_run(n) == run);
                     let text = &self.text[range];
@@ -1414,8 +1414,8 @@ impl RichText {
                         out.push('\n');
                     } else {
                         if !joins_before {
-                            let (tildes, info) = match &block.fence {
-                                Some(Fence::Fenced { tildes, info }) => (*tildes, &**info),
+                            let (tildes, info) = match run {
+                                Some(CodeRun::Fenced { tildes, info }) => (tildes, info),
                                 _ => (false, ""),
                             };
                             // Longer than any run of its mark in the lines,
@@ -1678,10 +1678,29 @@ fn longest_run(line: &str, mark: char) -> usize {
         .unwrap_or(0)
 }
 
-/// Which code blocks a code paragraph's Markdown runs on with: those of
-/// the same fence; `None` for any other block.
-fn code_run(block: &BlockFormat) -> Option<&Option<Fence>> {
-    (block.kind == BlockKind::Code).then_some(&block.fence)
+/// How a code paragraph's Markdown is written, which the lines written
+/// the same way run on under.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CodeRun<'a> {
+    Indented,
+    Fenced { tildes: bool, info: &'a str },
+}
+
+/// The code run of a paragraph; `None` for one that is not code. A `pre`'s
+/// lines are written as a fence of backticks with no info string, and run
+/// on with that fence.
+fn code_run(block: &BlockFormat) -> Option<CodeRun<'_>> {
+    (block.kind == BlockKind::Code).then(|| match &block.fence {
+        Some(Fence::Indented) => CodeRun::Indented,
+        Some(Fence::Fenced { tildes, info }) => CodeRun::Fenced {
+            tildes: *tildes,
+            info,
+        },
+        None => CodeRun::Fenced {
+            tildes: false,
+            info: "",
+        },
+    })
 }
 
 fn same(a: &Arc<CharFormat>, b: &Arc<CharFormat>) -> bool {
@@ -2137,6 +2156,15 @@ mod tests {
         let written = t.markdown();
         assert_eq!(written, "- a\n\n<!-- -->\n\n    x\n    y\n\n");
         assert_eq!(md(&written), t);
+    }
+
+    #[test]
+    fn a_pre_line_runs_on_with_a_fence_written_as_it_is() {
+        let mut t = md("```\nx\ny\n```\n");
+        Arc::make_mut(&mut t.blocks[0]).fence = None;
+        let written = t.markdown();
+        assert_eq!(written, "```\nx\ny\n```\n\n");
+        assert_eq!(md(&written).markdown(), written);
     }
 
     #[test]
