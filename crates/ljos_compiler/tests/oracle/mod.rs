@@ -245,6 +245,15 @@ impl Runtime {
                 methods: vec!["label"],
                 ..Ty::default()
             },
+            // A gesture whose signal names only its first argument, as
+            // Ljós's table writes `Tap.tapped(eventPoint, _)`.
+            Ty {
+                name: "Tap",
+                module: "Ljos.Ui",
+                prototype: Some("QtObject"),
+                signals: vec![("tapped", vec!["eventPoint", ""])],
+                ..Ty::default()
+            },
             // A type whose description lacks what the runtime adds to it,
             // and the description of what it adds.
             Ty {
