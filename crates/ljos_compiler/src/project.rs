@@ -552,9 +552,9 @@ impl<O: TypeOracle> Project<O> {
     }
 
     /// Tells the front end the module `module` of the directory `dir`;
-    /// whether a file lowered before it was lowered again, so that its
-    /// group is to settle. They are lowered now, against what the front
-    /// end has of the project now, as each module is told.
+    /// whether a file lowered before imports it, so that it is to settle.
+    /// It is marked, not lowered: the files are lowered as they settle,
+    /// once, against every module told before then.
     fn add_module(&mut self, dir: &str, module: &Module) -> bool {
         if !module.native.is_empty() {
             self.native
@@ -568,14 +568,7 @@ impl<O: TypeOracle> Project<O> {
                 self.add_type(&module.uri, &ty.name, file);
             }
         }
-        let Some((lowering, around)) = self.compat_parts() else {
-            return false;
-        };
-        let again = lowering.changed(qml_compat::Changed::Module(&module.uri));
-        if again {
-            lowering.lower(&around);
-        }
-        again
+        self.compat_changed(qml_compat::Changed::Module(&module.uri))
     }
 
     /// Every `.qml` file under `root`, and the modules its `qmldir` and
@@ -907,17 +900,17 @@ impl<O: TypeOracle> Project<O> {
                 }
             }
         }
-        let mut lowered_again = false;
+        let mut to_settle = false;
         for i in wanted {
             // A module of the URI that an import does not see is read, as
             // its directory is, but its types are not the URI's.
             if tree.counted[i] && tree.told.insert(i) {
                 let (dir, module) = &tree.modules[i];
-                lowered_again |= self.add_module(dir, module);
+                to_settle |= self.add_module(dir, module);
             }
         }
         self.tree = Some(tree);
-        if lowered_again {
+        if to_settle {
             self.settle_compat();
         }
         read
