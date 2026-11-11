@@ -1,6 +1,9 @@
 //! What the compat pass is told of a program's own types: what the
 //! checker's [`TypeOracle`] has of them, so a file is lowered against the
-//! types it is checked against.
+//! types it is checked against. Ljós's own modules (`Ljos.Design`) are told
+//! as such too: their types are in Ljós's API already, so a file that
+//! imports one beside Qt's keeps that import as it is written and lowers
+//! the rest, as it does a module of the program's.
 
 use std::cell::RefCell;
 
@@ -44,21 +47,28 @@ impl<'o, O: TypeOracle> OracleNatives<'o, O> {
         self.types.borrow()[native.0 as usize]
     }
 
-    /// Whether `ty` is a type of the table, the toolkit's.
+    /// Whether `ty` is a type of the table in Qt's API, the toolkit's.
     fn is_toolkit(&self, ty: O::Type) -> bool {
         self.oracle.module(ty).is_some_and(|module| {
-            QtTypeOracle
-                .module_type(&module, self.oracle.name(ty))
-                .is_some()
+            !is_ljos_api(&module)
+                && QtTypeOracle
+                    .module_type(&module, self.oracle.name(ty))
+                    .is_some()
         })
     }
 }
 
+/// Whether `uri` is a module of Ljós's own API, whose types and members
+/// have Ljós's names: nothing in a file that names them is lowered.
+fn is_ljos_api(uri: &str) -> bool {
+    uri == "Ljos" || uri.starts_with("Ljos.")
+}
+
 impl<O: TypeOracle> qml_compat::Natives for OracleNatives<'_, O> {
     fn has_module(&self, uri: &str) -> bool {
-        // A module of the table's is the toolkit's, whatever the program
-        // registers in it.
-        self.oracle.has_module(uri) && !QtTypeOracle.has_module(uri)
+        // A module of the table's in Qt's API is the toolkit's, whatever
+        // the program registers in it.
+        self.oracle.has_module(uri) && (is_ljos_api(uri) || !QtTypeOracle.has_module(uri))
     }
 
     fn module_type(&self, uri: &str, name: &str) -> Option<Native> {

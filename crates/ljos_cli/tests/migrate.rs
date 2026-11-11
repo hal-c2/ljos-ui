@@ -117,6 +117,43 @@ fn a_file_whose_scripts_keep_the_rules_is_written_typed() {
     assert_eq!(status, 0, "{out}{err}");
 }
 
+/// A file in Ljós's API is nothing to migrate, and a migrated file is one:
+/// running the command again changes nothing.
+#[test]
+fn a_file_in_ljos_api_is_left_as_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let ljos_api = "import Ljos.Ui\nimport Ljos.Layout\nRectangle { fill: \"red\"; Column { } }\n";
+    write(dir.path(), "app/Main.qml", ljos_api);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(out, "1 files, 0 lowered, 0 kept\n");
+    assert_eq!(read(dir.path(), "app/Main.qml"), ljos_api);
+}
+
+/// A module of Ljós's own beside Qt's is in Ljós's API already: its import
+/// stays as it is written, and what the file names of it keeps its names.
+#[test]
+fn a_ljos_module_beside_qt_s_stays_and_the_rest_is_lowered() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Main.qml",
+        "import QtQuick\nimport Ljos.Design\nRectangle { color: Colors.canvas }\n",
+    );
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(
+        out,
+        "lowered app/Main.qml (2 edits)\n1 files, 1 lowered, 0 kept\n"
+    );
+    assert_eq!(
+        read(dir.path(), "app/Main.qml"),
+        "import Ljos.Ui\nimport Ljos.Design\nRectangle { fill: Colors.canvas }\n"
+    );
+    let (status, out, err) = ljos(dir.path(), &["check", "app"]);
+    assert_eq!(status, 0, "{out}{err}");
+}
+
 #[test]
 fn a_kept_file_keeps_the_files_it_names_and_says_where() {
     let dir = tempfile::tempdir().unwrap();
