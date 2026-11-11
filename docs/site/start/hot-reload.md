@@ -2,7 +2,7 @@
 title: Hot Reload
 description: Update QML, scripts and images in a running application with ljos run --watch, understand what state is kept across saves, and ship signed production bundles.
 section: start
-order: 5
+order: 6
 ---
 
 # Hot Reload
@@ -84,6 +84,8 @@ Item {
     }
 
     MouseArea {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Change label"
         anchors.fill: parent
         onClicked: label.text = "clicked"
     }

@@ -13,7 +13,7 @@ This page explains what Ljós is, what it gives you when you build an interface 
 
 *Ljós* is Icelandic for "light". It is a Rust UI toolkit for malleable software: apps that people and their agents can reshape while they run. Four things set it apart:
 
-- **Malleable.** A running app takes changes to its interface and scripts and shows them live, keeping its state.
+- **Malleable.** The people who use an app can replace its interface with their own: a `shell.qml` of theirs lays out what the app and its plugins offer, and the app's own shell comes back, with what broke and where, when theirs does not work.
 - **TypeScript first.** Handlers, functions and bindings are typed TypeScript, checked before anything runs.
 - **Observable.** Every part of a running app can be inspected and driven, by a person in `ljos observe` or by a coding agent over MCP.
 - **Stable.** A fault stays inside the part of the interface that caused it, and an app at rest uses 0 % CPU.
@@ -22,17 +22,28 @@ You write the interface declaratively in QML, script it in TypeScript, and keep 
 
 ## What you get
 
-### Change an app while it runs
+### Let users replace the interface
 
-An app can take changes to its interface and scripts while it runs and show them live, checked by the same compiler and lints the dev tools use. That is what makes it malleable: the people who use it, alone or with a coding agent, can reshape it instead of accepting what they were given. Today you do that in development with `ljos run --watch`; letting the people who use a shipped app change it is being built.
+An app built with Ljós can let the people who use it replace its whole interface. The app and its plugins keep the state and do the work, and contribute their pieces to named `Slot`s. A shell file lays those slots out. The app ships its own, and a `ShellLoader` shows the user's `shell.qml` in its place:
 
-When you run an application with `ljos run --watch`, Ljós watches your `.qml`, `.js`, `.mjs`, `.ts`, `qmldir` and `CMakeLists.txt` files, as well as image files under the project. Saving a file recompiles only what changed and patches the running scene in place without closing the window. Script-assigned property values, focused controls, text selections, scroll positions, navigation stacks and open popups survive the reload. If a save has a syntax or compile error, the running application stays interactive and shows the error over the window until you fix the file.
+```qml harness=shell
+ShellLoader {
+    id: shell
+    anchors.fill: parent
+    source: "shell.qml"
+    fallback: "AppShell.qml"
+}
+```
+
+When the user's file does not compile, or throws, the loader shows the app's own shell and its `error` says what broke and where, so an edit never leaves anyone without a working app. The pieces a shell is built from are blocks, types whose state, actions, events and slots an agent can list with `blocks_list` without running the app. [Let users replace the shell](./your-own-shell.md) walks through it.
+
+The rest is what keeps such an edit safe. Under `ljos run --watch` each save of the shell applies to the running app and keeps its state, and an edit that breaks it leaves the shell that works running, with the error shown over the window until the file is fixed. The compiler and lints that check your files check the user's too, and a `theme.json` sets the app's colours without touching its QML. [Hot reload](./hot-reload.md) covers the details.
 
 ### Typed TypeScript scripts
 
 Scripts are TypeScript, checked before anything runs. A QML file imports a `.ts` module as it imports a script and reaches what the module exports through its name. The types are for the checker only: they are erased, and what is left runs as a script does.
 
-```ts
+```ts file=filter.ts group=filter
 // filter.ts
 export type Tag = "a" | "b"
 export function only(tag: Tag): number {
@@ -40,7 +51,7 @@ export function only(tag: Tag): number {
 }
 ```
 
-```qml
+```qml group=filter
 import Ljos.Ui
 import "filter.ts" as Logic
 
@@ -120,6 +131,7 @@ pub fn register(engine: &Engine) {
 
 ## Where to go next
 
+- [Let users replace the shell](./your-own-shell.md) to load the user's own `shell.qml`, fall back to yours, and fill named slots.
 - [Install Ljós](./install.md) to set up the toolchain and build `ljos`.
 - [Your first app](./first-app.md) to write a QML file, run it and change it live with `--watch`.
 - [Command-line reference](./cli.md) for every `ljos` subcommand and option.
@@ -130,6 +142,7 @@ pub fn register(engine: &Engine) {
 
 ## See also
 
+- [Let users replace the shell](./your-own-shell.md)
 - [Install Ljós](./install.md)
 - [Your first app](./first-app.md)
 - [Language overview](../language/overview.md)

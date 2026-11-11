@@ -11,7 +11,7 @@ After reading this page, you will understand how a `.qml` file forms a tree of o
 
 ## Declarative files, typed scripts
 
-A Ljós interface is a tree of objects you declare, with TypeScript for what it does. The declarations are what tools can read and change safely: `ljos fmt` lays them out, the MCP authoring server lets an agent check and lint them, and hot reload patches a saved change into the running app. The scripts are a strict subset of TypeScript, checked in Rust before anything runs, so a mistake is a check error rather than a surprise at run time.
+A Ljós interface is a tree of objects you declare, with TypeScript for what it does. The declarations are what tools can read and change safely: `ljos fmt` lays them out, the MCP authoring server lets an agent check, lint and edit them structurally, hot reload patches a saved change into the running app, and the people who use an app can replace its whole layout with a [shell of their own](../start/your-own-shell.md). The scripts are a strict subset of TypeScript, checked in Rust before anything runs, so a mistake is a check error rather than a surprise at run time.
 
 A file of Ljós's own API imports its modules by concern: `Ljos.Ui` for items, text, images, gestures and states, `Ljos.Layout` for `Row`, `Column`, `Box`, `Grid` and `Flow`, `Ljos.Controls` for controls, `Ljos.Models` for models, `Ljos.Core` for `Timer`, `Connections` and other non-visual objects, and `Ljos.Design` for design tokens.
 

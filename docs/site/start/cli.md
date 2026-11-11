@@ -2,7 +2,7 @@
 title: Command-Line Reference
 description: Reference for every subcommand and option of the ljos command-line tool.
 section: start
-order: 4
+order: 5
 ---
 
 # Command-Line Reference

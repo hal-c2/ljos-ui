@@ -2,7 +2,7 @@
 title: Observer
 description: Inspect a running Ljós application's processes, mailboxes, objects, memory, models, wakes and supervision tree with ljos observe.
 section: start
-order: 8
+order: 9
 ---
 
 # Observer
