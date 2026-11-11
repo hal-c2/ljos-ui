@@ -12,7 +12,7 @@ publish.workspace = true
 default = []
 # Show pages with the Chromium Embedded Framework. Without it the types
 # are there and every load fails, saying there is no web engine.
-cef = ["dep:cef"]
+cef = ["dep:cef", "dep:url"]
 
 [[bin]]
 name = "ljos-webengine-helper"
@@ -34,6 +34,7 @@ ljos_render = { path = "../ljos_render", default-features = false }
 serde_json.workspace = true
 thiserror.workspace = true
 cef = { workspace = true, optional = true }
+url = { workspace = true, optional = true }
 
 [dev-dependencies]
 ljos_compiler = { path = "../ljos_compiler" }
