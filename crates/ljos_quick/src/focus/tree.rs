@@ -518,6 +518,18 @@ pub fn active_focus_item(engine: &Engine, root: ObjectId) -> Option<ObjectId> {
     w.chain.last().copied().filter(|o| engine.is_alive(*o))
 }
 
+/// `Window.activeFocusItem` of the window of `root`, read as a dependency:
+/// an effect that asks runs again when the keyboard moves, or when that
+/// window appears. `None` while the window does not have the keyboard.
+pub fn watch_active_focus_item(engine: &Engine, root: ObjectId) -> Option<ObjectId> {
+    let (focus, _) = window_nodes(engine, root)?;
+    engine
+        .graph()
+        .try_get(focus)?
+        .as_object()
+        .filter(|o| engine.is_alive(*o))
+}
+
 /// The graph nodes behind `Window.activeFocusItem` and `Window.active`
 /// for the window of `root`. Reads the set of windows as a dependency, so
 /// a binding that found none asks again when one appears.
