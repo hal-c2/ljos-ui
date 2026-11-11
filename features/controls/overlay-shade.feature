@@ -14,7 +14,9 @@ Feature: The shade of a popup is the style's
   What a popup that dims puts between itself and what is under it comes
   from its style. Each style has its own colour, the same for a popup, a
   dialog, a drawer and a menu, and a popup with no style has a shade that
-  draws nothing. The shade goes clear as the popup starts to close.
+  draws nothing. A shade the style gives an opacity is shown at it. The
+  shade goes clear as the popup starts to close and is back if the popup
+  is opened again.
 
   Rule: The Basic shade is the palette's shadow, half or an eighth
 
@@ -363,6 +365,75 @@ Feature: The shade of a popup is the style's
       And 700 milliseconds pass
       And the method "look" of "root" is called
       Then the property "count" of "root" is 0
+
+    Scenario: The shade is back at once when the popup is opened again as it goes
+      When the method "open" of "p" is called
+      And the method "close" of "p" is called
+      And 300 milliseconds pass
+      And the method "open" of "p" is called
+      And the method "look" of "root" is called
+      Then the property "count" of "root" is 1
+      And the property "shade" of "root" is 1
+
+  Rule: A shade with an opacity of its own is shown at it
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Templates as T
+        import QtQuick.Controls.Basic
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 400
+          property var ov: Overlay.overlay
+          property real shade: -1; property real level: 0.4
+          function look() {
+            shade = -1
+            for (var i = 0; i < ov.children.length; ++i)
+              if (ov.children[i] !== p.contentItem.parent && ov.children[i] !== b.contentItem.parent)
+                shade = ov.children[i].opacity
+          }
+          Popup {
+            id: p; objectName: "p"
+            width: 100; height: 100; modal: true
+            T.Overlay.modal: Rectangle { color: "red"; opacity: 0.3 }
+            exit: Transition { NumberAnimation { property: "opacity"; to: 0; duration: 600 } }
+          }
+          Popup {
+            id: b; objectName: "b"; width: 100; height: 100; modal: true
+            T.Overlay.modal: Rectangle { color: "red"; opacity: root.level }
+          }
+        }
+        """
+
+    Scenario: A shade with an opacity of its own is shown at it
+      When the method "open" of "p" is called
+      And the method "look" of "root" is called
+      Then the property "shade" of "root" is 0.3
+
+    Scenario: A shade with an opacity of its own goes clear as the popup starts to close
+      When the method "open" of "p" is called
+      And the method "close" of "p" is called
+      And 300 milliseconds pass
+      And the method "look" of "root" is called
+      Then the property "shade" of "root" is 0
+
+    Scenario: A shade with an opacity of its own is back at it when the popup is opened again as it goes
+      When the method "open" of "p" is called
+      And the method "close" of "p" is called
+      And 300 milliseconds pass
+      And the method "open" of "p" is called
+      And the method "look" of "root" is called
+      Then the property "shade" of "root" is 0.3
+
+    Scenario: A shade whose opacity is bound is shown at what it was as the popup opened
+      When the method "open" of "b" is called
+      And the method "look" of "root" is called
+      Then the property "shade" of "root" is 0.4
+      When the property "level" of "root" is set to 0.7
+      And the method "look" of "root" is called
+      Then the property "shade" of "root" is 0.4
 
   Rule: The shade is not in what the popup holds
 
