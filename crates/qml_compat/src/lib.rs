@@ -22,6 +22,7 @@ mod bindings;
 mod cause;
 mod given;
 mod group;
+mod modules;
 mod qt_members;
 mod rows;
 mod rules;
@@ -34,6 +35,7 @@ use std::{
 };
 
 use bindings::{Bindings, Node};
+use modules::{Ljos, Modules, Qt};
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingIdentifier, BlockStatement, CallExpression,
     ComputedMemberExpression, Expression, FormalParameters, Function, FunctionBody,
@@ -297,20 +299,8 @@ pub enum Imported<'a> {
 /// name is.
 #[derive(Clone, Debug)]
 enum Import {
-    /// `QtQuick` (with `QtQml`'s types), or `QtQuick.Layouts`.
-    Qt {
-        layouts: bool,
-    },
-    /// `QtQml`, whose types a later import of the project shadows as it
-    /// shadows `QtQuick`'s.
-    Qml,
-    /// `QtQuick.Controls` or one of its styles' modules, or
-    /// `QtQuick.Dialogs`.
-    Controls {
-        dialogs: bool,
-    },
-    /// `QtQuick.Shapes`.
-    Shapes,
+    /// A module of Qt's the pass lowers ([`modules::ROWS`]).
+    Qt(Qt),
     /// A module of the program's own types ([`Natives`]).
     Native(String),
     Module(String),
@@ -320,11 +310,7 @@ enum Import {
 impl Import {
     fn imported(&self) -> Option<Imported<'_>> {
         match self {
-            Import::Qt { .. }
-            | Import::Qml
-            | Import::Controls { .. }
-            | Import::Shapes
-            | Import::Native(_) => None,
+            Import::Qt(_) | Import::Native(_) => None,
             Import::Module(uri) => Some(Imported::Module(uri)),
             Import::Dir(path) => Some(Imported::Dir(path)),
         }
@@ -357,41 +343,15 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         // The compiler says what is wrong with the file as written.
         return kept(Cause::Unparsed, 0);
     }
-    let Some(ui) = qt_types::module(MODULE) else {
-        return kept(Cause::NoDescription { module: MODULE }, 0);
-    };
-    let Some(core) = qt_types::module(CORE) else {
-        return kept(Cause::NoDescription { module: CORE }, 0);
-    };
-    let Some(layout) = qt_types::module(LAYOUT) else {
-        return kept(Cause::NoDescription { module: LAYOUT }, 0);
-    };
-    let Some(quick) = qt_types::module("QtQuick") else {
-        return kept(Cause::NoDescription { module: "QtQuick" }, 0);
-    };
-    let Some(qml) = qt_types::module("QtQml") else {
-        return kept(Cause::NoDescription { module: "QtQml" }, 0);
+    let modules = match Modules::new() {
+        Ok(modules) => modules,
+        Err(module) => return kept(Cause::NoDescription { module }, 0),
     };
     let mut pass = Pass {
         source,
-        ui,
-        core,
-        cores: std::cell::Cell::new(false),
-        uis: std::cell::Cell::new(false),
-        layout,
-        arranges: std::cell::Cell::new(false),
-        layout_line: None,
-        quick,
-        qml,
-        layouts: None,
-        controls: None,
-        shapes: None,
-        dialogs: None,
+        modules,
         locals,
         imports: Vec::new(),
-        ui_line: None,
-        core_line: None,
-        controls_line: None,
         imported: RefCell::default(),
         natives: locals.natives(),
         native_modules: Vec::new(),
@@ -402,8 +362,6 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
         fonts: Vec::new(),
         changes: Vec::new(),
         listed: Vec::new(),
-        imports_models: false,
-        makes_models: std::cell::Cell::new(false),
         given: None,
         view_rows: None,
         delegate: None,
@@ -519,45 +477,14 @@ enum Ty {
 
 struct Pass<'s> {
     source: &'s str,
-    ui: &'static qt_types::Module,
-    core: &'static qt_types::Module,
-    /// Whether the file names a type of `Ljos.Core`, which it imports
-    /// then.
-    cores: std::cell::Cell<bool>,
-    /// Whether the file names a type of `Ljos.Ui`: a file that imports
-    /// `QtQml` and not `QtQuick` imports it then too.
-    uis: std::cell::Cell<bool>,
-    layout: &'static qt_types::Module,
-    /// Whether the file names a type of `Ljos.Layout`, which it imports
-    /// then.
-    arranges: std::cell::Cell<bool>,
-    quick: &'static qt_types::Module,
-    /// QtQml, which QtQuick imports: what of QtQuick's is QtQml's lowers
-    /// into Ljos.Core or Ljos.Models, not Ljos.Ui.
-    qml: &'static qt_types::Module,
-    /// QtQuick.Layouts, when the file imports it.
-    layouts: Option<&'static qt_types::Module>,
-    /// Qt's controls and [`CONTROLS`], when the file imports Qt's.
-    controls: Option<Controls>,
-    /// QtQuick.Shapes, when the file imports it.
-    shapes: Option<&'static qt_types::Module>,
-    /// Qt's dialogs and [`CONTROLS`], when the file imports them.
-    dialogs: Option<Controls>,
+    /// The modules the file imports, Qt's and the Ljós modules they lower
+    /// to, and which line of [`imports`](Self::imports) each Ljós module
+    /// takes.
+    modules: Modules,
     locals: &'s dyn Locals,
     /// The imports that name types, in the order written: the last that
     /// has a name is the one it is.
     imports: Vec<Import>,
-    /// Which of [`imports`](Self::imports) is the line `import Ljos.Ui`
-    /// takes in the lowered file, which `import Ljos.Core` and which
-    /// `import Ljos.Controls.Basic`: an import of the project after it is found
-    /// before Ljós's type. `Ljos.Ui` takes `QtQuick`'s line, else
-    /// `QtQml`'s; `Ljos.Core` takes `QtQml`'s, else `QtQuick`'s.
-    ui_line: Option<usize>,
-    core_line: Option<usize>,
-    controls_line: Option<usize>,
-    /// The line `import Ljos.Layout` takes: `QtQuick.Layouts`', else
-    /// `Ljos.Ui`'s.
-    layout_line: Option<usize>,
     /// What [`imported_root`](Self::imported_root) found, by name.
     imported: RefCell<HashMap<String, Option<(usize, Root)>>>,
     natives: Option<&'s dyn Natives>,
@@ -578,11 +505,6 @@ struct Pass<'s> {
     changes: Vec<Change>,
     /// The `ListModel`s with ids, and the rows they give.
     listed: Vec<(String, Rows)>,
-    /// Whether the file imports `QtQml.Models`, which is lowered to
-    /// `Ljos.Models`.
-    imports_models: bool,
-    /// Whether it makes one of [`MODELS`].
-    makes_models: std::cell::Cell<bool>,
     /// The rows of the view whose delegate the next object is.
     given: Option<Rows>,
     /// The rows of the view the pass is in, which a `DelegateChoice` or a
@@ -624,28 +546,16 @@ struct Pass<'s> {
 
 type Step = Result<(), Kept>;
 
-/// Qt's description of the controls a file imports, and Ljós's of those
-/// it has taken.
-#[derive(Clone, Copy)]
-struct Controls {
-    qt: &'static qt_types::Module,
-    ljos: &'static qt_types::Module,
-}
-
 impl<'s> Pass<'s> {
     /// Whether the file imports `QtQuick` and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
-        let mut quick = None;
-        let mut qml = None;
-        let mut layouts = None;
-        let mut controls = Vec::new();
-        let mut shapes = None;
+        // The imports of Qt's modules the pass lowers, in the order written.
+        let mut qt_imports: Vec<(&'static modules::Row, Span)> = Vec::new();
         self.qualifiers = document
             .imports
             .iter()
             .filter_map(|import| import.alias.as_ref().map(|alias| alias.name.to_string()))
             .collect();
-        let mut emptied = Vec::new();
         for import in &document.imports {
             let at = import.span.start as usize;
             let name = match &import.source {
@@ -661,83 +571,30 @@ impl<'s> Pass<'s> {
                 }
             };
             let uri = name.to_string();
-            if import.alias.is_some()
-                && (matches!(
-                    uri.as_str(),
-                    "QtQuick" | "QtQml" | "QtQml.Models" | "QtQuick.Shapes"
-                ) || uri == QT_DIALOGS
-                    || QT_CONTROLS.contains(&uri.as_str()))
-            {
-                return Err(self.no(Cause::ImportedUnderName { uri }, at));
-            }
-            match uri.as_str() {
-                "QtQuick" => {
-                    quick = Some(import.span);
-                    self.ui_line = Some(self.imports.len());
-                    self.imports.push(Import::Qt { layouts: false });
+            let row = modules::row(&uri).filter(|row| {
+                import.alias.is_none() || row.under_name == modules::UnderName::Keeps
+            });
+            if let Some(row) = row {
+                if import.alias.is_some() {
+                    return Err(self.no(Cause::ImportedUnderName { uri }, at));
                 }
-                "QtQml" => {
-                    qml = Some(import.span);
-                    self.core_line = Some(self.imports.len());
-                    self.imports.push(Import::Qml);
-                }
-                // Its models are `Ljos.Models`'.
-                "QtQml.Models" => {
-                    self.imports_models = true;
-                    let span = import.span;
-                    self.change(
-                        span.start as usize..span.end as usize,
-                        format!("import {MODELS_MODULE}"),
-                    );
-                }
-                // Its line layouts are lowered to Ljós's arrangement
-                // ([`arrange`]); its other types keep the file.
-                "QtQuick.Layouts" if import.alias.is_none() => {
-                    self.layouts = qt_types::module("QtQuick.Layouts");
-                    layouts = Some(import.span);
-                    self.layout_line = Some(self.imports.len());
-                    self.imports.push(Import::Qt { layouts: true });
-                }
-                // `Ljos.Ui` has its types as they are.
-                "QtQuick.Shapes" => {
-                    self.shapes = qt_types::module("QtQuick.Shapes");
-                    shapes = Some(import.span);
-                    self.imports.push(Import::Shapes);
-                }
-                // Its types are QtQuick's, and `Ljos.Ui` has them.
-                "QtQuick.Window" if import.alias.is_none() => emptied.push(import.span),
-                // Ljós's controls are Basic's; `QtQuick.Controls` is the
-                // style the program starts with, which may be another.
-                "QtQuick.Controls" if self.locals.controls_style() != Some(CONTROLS_STYLE) => {
+                if row.styled && self.locals.controls_style() != Some(CONTROLS_STYLE) {
                     let style = self.locals.controls_style().map(str::to_owned);
                     return Err(self.no(Cause::ControlsStyle { style }, at));
                 }
-                uri if uri == QT_DIALOGS || QT_CONTROLS.contains(&uri) => {
-                    let (Some(qt), Some(ljos)) =
-                        (qt_types::module(uri), qt_types::module(CONTROLS))
-                    else {
-                        return Err(self.no(
-                            Cause::NoControlsDescription {
-                                uri: uri.to_owned(),
-                            },
-                            at,
-                        ));
-                    };
-                    let dialogs = uri == QT_DIALOGS;
-                    let found = if dialogs {
-                        &mut self.dialogs
-                    } else {
-                        &mut self.controls
-                    };
-                    found.get_or_insert(Controls { qt, ljos });
-                    // The dialogs are in Ljos.Controls.Basic, so their import is
-                    // one of the controls'.
-                    if controls.is_empty() {
-                        self.controls_line = Some(self.imports.len());
-                    }
-                    controls.push(import.span);
-                    self.imports.push(Import::Controls { dialogs });
+                if let Err(cause) = self.modules.read(row) {
+                    return Err(self.no(cause, at));
                 }
+                qt_imports.push((row, import.span));
+                if row.names_types {
+                    if row.takes_the_line {
+                        self.modules.imported(row.lowers_to, self.imports.len());
+                    }
+                    self.imports.push(Import::Qt(row.qt));
+                }
+                continue;
+            }
+            match uri.as_str() {
                 // The program's own types are what it registers, in Qt's
                 // API and in Ljós's: the import stays as it is written.
                 other if self.natives.is_some_and(|n| n.has_module(other)) => {
@@ -785,38 +642,16 @@ impl<'s> Pass<'s> {
                 },
             }
         }
-        if quick.is_none() && qml.is_none() {
+        if !qt_imports
+            .iter()
+            .any(|(row, _)| matches!(row.qt, Qt::Quick | Qt::Qml))
+        {
             return Ok(false);
         }
-        // The lowered file's lines (`document`'s end): what has no import of
-        // its own shares the other's.
-        if self.ui_line.is_none() {
-            self.ui_line = self.core_line;
-        }
-        if self.core_line.is_none() {
-            self.core_line = self.ui_line;
-        }
-        // `Ljos.Layout` takes `QtQuick.Layouts`' line, else `Ljos.Ui`'s.
-        if self.layout_line.is_none() {
-            self.layout_line = self.ui_line;
-        }
-        // `Ljos.Ui` has the shapes and what the others name; each line
-        // stays, empty.
-        for span in shapes.into_iter().chain(emptied) {
-            self.change(span.start as usize..span.end as usize, "");
-        }
-        for (i, span) in controls.into_iter().enumerate() {
-            // A second import of Qt's controls is the first again. The
-            // first is `controls_line`.
-            let import = if i == 0 {
-                format!("import {CONTROLS}")
-            } else {
-                String::new()
-            };
-            self.change(span.start as usize..span.end as usize, import);
-        }
+        self.modules.share_lines();
+        let lines = modules::lines(&qt_imports.iter().map(|(row, _)| *row).collect::<Vec<_>>());
         if self.stem.is_some() {
-            let quick = self.quick;
+            let quick = self.modules.quick();
             self.tables = tables::tables(self.source, &document.root, &|name| {
                 quick.type_named(name).is_some()
             });
@@ -841,66 +676,36 @@ impl<'s> Pass<'s> {
         let members = std::mem::take(&mut self.members);
         for (range, name) in members.settle(self.source, |name| self.locals.root(name).is_some()) {
             self.change(range, name);
-            self.cores.set(true);
+            self.modules.names(Ljos::Core);
         }
-        // On the import's line, so every line stays where it was. What
-        // imported `QtQml` imports `Ljos.Core` in its place; what has it
-        // from `QtQuick` imports it beside `Ljos.Ui` when it names one of
-        // its types. A file that makes a model imports `Ljos.Models` on the
-        // same line.
-        let models = if self.makes_models.get() && !self.imports_models {
-            format!("; import {MODELS_MODULE}")
-        } else {
-            String::new()
-        };
+        // On the import's line, so every line stays where it was. Each Qt
+        // import takes the line of the Ljós module it lowers to, or is
+        // emptied ([`modules::lines`]). `QtQuick`'s, else `QtQml`'s, has the
+        // pragma and the Ljós modules the file names a type of that no
+        // import of its lowers to: a file that makes a model imports
+        // `Ljos.Models` there, and one a child of a type of another file
+        // may be given a `Layout` in, `Ljos.Layout`.
+        let own = |ljos: Ljos| lines.contains(&modules::Line::Takes(ljos));
+        let shared = if own(Ljos::Ui) { Ljos::Ui } else { Ljos::Core };
         // A file whose constant tables are typed lists imports their rows
-        // module on the line that imports Ljós's models.
+        // module on that line too.
         let rows = match (self.stem, self.tables.is_empty()) {
             (Some(stem), false) => {
                 format!("; import \"{}\" as {}", rows_module(stem), tables::ALIAS)
             }
             _ => String::new(),
         };
-        let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
-        // What imported QtQuick.Layouts imports Ljos.Layout in its place, as
-        // a child of a type of another file may be given a `Layout`.
-        let models = match layouts {
-            Some(layouts) => {
-                self.change(span(layouts), format!("import {LAYOUT}"));
-                models
-            }
-            None if self.arranges.get() => format!("{models}; import {LAYOUT}"),
-            None => models,
-        };
-        match (quick, qml) {
-            (Some(quick), Some(qml)) => {
-                self.change(
-                    span(quick),
-                    format!("{JAVASCRIPT}; import {MODULE}{models}{rows}"),
-                );
-                self.change(span(qml), format!("import {CORE}"));
-            }
-            (Some(quick), None) => {
-                let mut import = format!("{JAVASCRIPT}; import {MODULE}");
-                if self.cores.get() {
-                    import.push_str(&format!("; import {CORE}"));
+        for ((_, span), line) in qt_imports.iter().zip(&lines) {
+            let import = match line {
+                modules::Line::Takes(ljos) if *ljos == shared => {
+                    let line =
+                        modules::shared_line(shared, own, |ljos| self.modules.is_named(ljos));
+                    format!("{line}{rows}")
                 }
-                import.push_str(&models);
-                import.push_str(&rows);
-                self.change(span(quick), import);
-            }
-            (None, Some(qml)) => {
-                let ui = if self.uis.get() {
-                    format!("; import {MODULE}")
-                } else {
-                    String::new()
-                };
-                self.change(
-                    span(qml),
-                    format!("{JAVASCRIPT}{ui}; import {CORE}{models}{rows}"),
-                );
-            }
-            (None, None) => unreachable!("returned above"),
+                modules::Line::Takes(ljos) => format!("import {}", ljos.uri()),
+                modules::Line::Emptied => String::new(),
+            };
+            self.change(span.start as usize..span.end as usize, import);
         }
         let edits: Vec<Change> = self
             .tables
@@ -928,27 +733,34 @@ impl<'s> Pass<'s> {
     /// Such an import's type, built on one the pass cannot lower yet,
     /// keeps the file.
     fn of_layouts(&self, name: &str, at: usize) -> Result<bool, Kept> {
-        if self.layouts.and_then(|m| m.type_named(name)).is_none() {
+        if self.modules.qt_type(&[Qt::Layouts], name).is_none() {
             return Ok(false);
         }
         match self.named_type(name, at, 0) {
             Ok(Ty::Exact(t)) => Ok(t.module == "QtQuick.Layouts"),
             Ok(_) => Ok(false),
-            Err(kept) if self.after_qt(&self.imported_root(name), true) => Err(kept),
+            Err(kept)
+                if self.shadows(self.imported_root(name).map(|(at, _)| at), &[Qt::Layouts]) =>
+            {
+                Err(kept)
+            }
             // Qt's, of a type Ljos.Layout has not yet.
             Err(_) => Ok(true),
         }
     }
 
-    /// Whether `imported`, where an import of the project brings the name,
-    /// comes after the last import of Qt's QtQuick.Layouts (`layouts`) or
-    /// of QtQuick: the loader then takes the import's type.
-    fn after_qt(&self, imported: &Option<(usize, Root)>, layouts: bool) -> bool {
-        let qt = self
-            .imports
+    /// Which of [`imports`](Self::imports) is the last of one of `qts`.
+    fn last(&self, qts: &[Qt]) -> Option<usize> {
+        self.imports
             .iter()
-            .rposition(|i| matches!(i, Import::Qt { layouts: l } if *l == layouts));
-        matches!((imported, qt), (Some((at, _)), Some(qt)) if *at > qt)
+            .rposition(|import| matches!(import, Import::Qt(qt) if qts.contains(qt)))
+    }
+
+    /// Whether an import at `own`, of the project's files or the program's
+    /// own types, comes after the last of `qts`, so that a name both have
+    /// is its: the loader takes the last.
+    fn shadows(&self, own: Option<usize>, qts: &[Qt]) -> bool {
+        matches!((own, self.last(qts)), (Some(own), Some(qt)) if own > qt)
     }
 
     /// Keeps a file that names a type of QtQuick.Layouts whose attached
@@ -1119,92 +931,31 @@ impl<'s> Pass<'s> {
             .as_ref()
             .map(|(at, _)| *at)
             .max(native.map(|(at, _)| at));
-        let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
         let shadowed_native =
             matches!((&imported, native), (Some((at, _)), Some((n, _))) if *at > n);
-        if let Some(ty) = self.layouts.and_then(|m| m.type_named(name))
-            && !self.project_first(
+        for group in modules::LOOKED_UP {
+            let Some((qt, ty, qt_line)) = self.qt_found(group, name) else {
+                continue;
+            };
+            let (ljos, has) = self.lowered(qt, name);
+            if self.project_first(
                 name,
                 project,
-                last(&|i| matches!(i, Import::Qt { layouts: true })),
-                (LAYOUT, self.layout_line),
+                qt_line,
+                (ljos.uri(), self.modules.line(ljos)),
                 at,
-            )?
-        {
-            return match name {
-                "RowLayout" | "ColumnLayout" | "GridLayout" | "StackLayout" | "Layout" => {
-                    Ok(Ty::Exact(ty))
-                }
-                _ => Err(self.no(not_in(name, LAYOUT), at)),
-            };
-        }
-        let controls = |dialogs: bool| if dialogs { self.dialogs } else { self.controls };
-        // Of the controls and the dialogs, the type is that of the last
-        // imported that has it.
-        if let Some((line, controls, ty)) =
-            self.imports
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(line, import)| match import {
-                    Import::Controls { dialogs } => {
-                        let controls = controls(*dialogs)?;
-                        Some((line, controls, controls.qt.type_named(name)?))
-                    }
-                    _ => None,
-                })
-            && !self.project_first(
-                name,
-                project,
-                Some(line),
-                (CONTROLS, self.controls_line),
-                at,
-            )?
-        {
-            return match controls.ljos.type_named(name) {
-                Some(_) => Ok(Ty::Exact(ty)),
-                None => Err(self.no(not_in(name, CONTROLS), at)),
-            };
-        }
-        // Shapes lower into Ljos.Ui, so Ljos.Ui's line is where the
-        // lowered file finds them.
-        if let Some(ty) = self.shapes.and_then(|m| m.type_named(name))
-            && !self.project_first(
-                name,
-                project,
-                last(&|i| matches!(i, Import::Shapes)),
-                (MODULE, self.ui_line),
-                at,
-            )?
-        {
-            return match self.ui.type_named(name) {
-                Some(_) => {
-                    self.uis.set(true);
-                    Ok(Ty::Exact(ty))
-                }
-                None => Err(self.no(not_in(name, MODULE), at)),
-            };
-        }
-        if let Some(ty) = self.quick.type_named(name)
-            && !self.quick_first(name, ty, project, at)?
-        {
-            if self.qml.has(ty) {
-                if MODELS.contains(&name) {
-                    self.makes_models.set(true);
-                    return Ok(Ty::Exact(ty));
-                }
-                return self.core_type(name, ty, at);
+            )? {
+                continue;
             }
-            let new = rules::new_name(name).unwrap_or(name);
-            if self.ui.type_named(new).is_some() {
-                self.uis.set(true);
-                return Ok(Ty::Exact(ty));
+            if !has {
+                return Err(self.no(not_in(name, ljos.uri()), at));
             }
-            if self.layout.type_named(new).is_some() {
-                self.arranges.set(true);
-                return Ok(Ty::Exact(ty));
+            // `Qt` is a global of every file, as it is in Qt's QML: naming
+            // it imports nothing.
+            if name != "Qt" {
+                self.modules.names(ljos);
             }
-            return Err(self.no(not_in(name, MODULE), at));
+            return Ok(Ty::Exact(ty));
         }
         if let Some((native_at, ty)) = native.filter(|_| !shadowed_native) {
             // A Ljós module whose line comes after the program's import
@@ -1286,14 +1037,6 @@ impl<'s> Pass<'s> {
             })
     }
 
-    /// Whether an import at `own_at`, of the project's files or the
-    /// program's own types, comes after the last of Qt's imports that `qt`
-    /// picks, so that a name both have is its.
-    fn shadowed(&self, own_at: Option<usize>, qt: impl Fn(&Import) -> bool) -> bool {
-        let qt = self.imports.iter().rposition(qt);
-        matches!((own_at, qt), (Some(own), Some(qt)) if own > qt)
-    }
-
     /// What Ljós calls the type `name`, where that is Qt's and Ljós calls
     /// it otherwise: a type of the same name imported after QtQuick is
     /// not Qt's, and keeps its name.
@@ -1303,7 +1046,7 @@ impl<'s> Pass<'s> {
             .imported_root(name)
             .map(|(at, _)| at)
             .max(self.native_type(name).map(|(at, _)| at));
-        (!self.shadowed(own_at, |i| matches!(i, Import::Qt { layouts: false }))).then_some(new)
+        (!self.shadows(own_at, &[Qt::Quick])).then_some(new)
     }
 
     /// The toolkit type of Qt's table the native type `ty` is built on.
@@ -1356,18 +1099,63 @@ impl<'s> Pass<'s> {
         found
     }
 
-    /// `name`, a type of `QtQml`'s, as `Ljos.Core` has it; the models are
-    /// [`MODELS_MODULE`]'s, and found before this. `Qt` is a global of
-    /// every file, as it is in Qt's QML.
-    fn core_type(&self, name: &str, ty: &'static Type, at: usize) -> Result<Ty, Kept> {
-        if name == "Qt" {
-            return Ok(Ty::Exact(ty));
+    /// The Qt type `name` is of one of the modules of `group`
+    /// ([`modules::LOOKED_UP`]), with which module's type it is and the
+    /// last import that brings it: of the imports of the group, the last
+    /// that has it.
+    fn qt_found(&self, group: &[Qt], name: &str) -> Option<(Qt, &'static Type, Option<usize>)> {
+        if group == [Qt::Quick] {
+            // `QtQuick`'s types are known whether it is imported or not.
+            // One of `QtQml`'s is shadowed by what is imported after the
+            // last of `QtQuick` and `QtQml`.
+            let ty = self.modules.quick().type_named(name)?;
+            let qt = if self.modules.qml().has(ty) {
+                Qt::Qml
+            } else {
+                Qt::Quick
+            };
+            return Some((qt, ty, self.last(qt.brought_by())));
         }
-        if self.core.type_named(name).is_some() {
-            self.cores.set(true);
-            return Ok(Ty::Exact(ty));
+        self.imports
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(line, import)| match import {
+                Import::Qt(qt) if group.contains(qt) => {
+                    let ty = self.modules.qt(*qt)?.type_named(name)?;
+                    Some((*qt, ty, Some(line)))
+                }
+                _ => None,
+            })
+    }
+
+    /// The Ljós module the type `name` of `qt`'s lowers to, and whether
+    /// that module has it.
+    fn lowered(&self, qt: Qt, name: &str) -> (Ljos, bool) {
+        let has = |ljos: Ljos, name: &str| {
+            self.modules
+                .ljos(ljos)
+                .is_some_and(|m| m.type_named(name).is_some())
+        };
+        match qt {
+            Qt::Layouts => (Ljos::Layout, rules::layout::LOWERED.contains(&name)),
+            // The models are [`MODELS_MODULE`]'s.
+            Qt::Qml if MODELS.contains(&name) => (Ljos::Models, true),
+            Qt::Qml => (Ljos::Core, name == "Qt" || has(Ljos::Core, name)),
+            // What arranges children is `Ljos.Layout`'s.
+            Qt::Quick => {
+                let new = rules::new_name(name).unwrap_or(name);
+                if !has(Ljos::Ui, new) && has(Ljos::Layout, new) {
+                    (Ljos::Layout, true)
+                } else {
+                    (Ljos::Ui, has(Ljos::Ui, new))
+                }
+            }
+            other => {
+                let ljos = other.lowers_to();
+                (ljos, has(ljos, name))
+            }
         }
-        Err(self.no(not_in(name, CORE), at))
     }
 
     /// The Ljós module the lowered file imports that has `name`, for a name
@@ -1376,17 +1164,8 @@ impl<'s> Pass<'s> {
     /// files beside it, but an import is found before those, so the lowered
     /// file would make Ljós's type instead.
     fn ljos_module_with(&self, name: &str) -> Option<(&'static str, Option<usize>)> {
-        if self.ui.type_named(name).is_some() {
-            return Some((MODULE, self.ui_line));
-        }
-        if self.layout.type_named(name).is_some() {
-            return Some((LAYOUT, self.layout_line));
-        }
-        let controls = self.controls.or(self.dialogs)?;
-        controls
-            .ljos
-            .type_named(name)
-            .map(|_| (CONTROLS, self.controls_line))
+        let ljos = self.modules.ljos_with(name)?;
+        Some((ljos.uri(), self.modules.line(ljos)))
     }
 
     /// Whether the type `name` is the project's, imported as the
@@ -1394,45 +1173,6 @@ impl<'s> Pass<'s> {
     /// it is the `qt`th; the lowered file finds `module`'s instead, on the
     /// `line`th. An import of the project between the two lines would be
     /// one type in Qt's file and another in the lowered one.
-    /// [`project_first`](Self::project_first) for `ty`, `QtQuick`'s type
-    /// `name`: one of `QtQml`'s is shadowed by what is imported after the
-    /// last of `QtQuick` and `QtQml`, and the lowered file finds it on
-    /// `Ljos.Core`'s line, or `Ljos.Models`' for a model.
-    fn quick_first(
-        &self,
-        name: &str,
-        ty: &'static Type,
-        project: Option<usize>,
-        at: usize,
-    ) -> Result<bool, Kept> {
-        let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
-        let new = rules::new_name(name).unwrap_or(name);
-        let (qt, lowered) = if !self.qml.has(ty) {
-            // What arranges children is `Ljos.Layout`'s, on its own line.
-            let lowered =
-                if self.ui.type_named(new).is_none() && self.layout.type_named(new).is_some() {
-                    (LAYOUT, self.layout_line)
-                } else {
-                    (MODULE, self.ui_line)
-                };
-            (
-                last(&|i| matches!(i, Import::Qt { layouts: false })),
-                lowered,
-            )
-        } else if MODELS.contains(&name) {
-            (
-                last(&|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
-                (MODELS_MODULE, self.ui_line),
-            )
-        } else {
-            (
-                last(&|i| matches!(i, Import::Qt { layouts: false } | Import::Qml)),
-                (CORE, self.core_line),
-            )
-        };
-        self.project_first(name, project, qt, lowered, at)
-    }
-
     fn project_first(
         &self,
         name: &str,
@@ -1487,11 +1227,9 @@ impl<'s> Pass<'s> {
                 // The lowered file's object is Ljós's, whose members are
                 // in sight there.
                 let ljos = rules::new_name(t.name).unwrap_or(t.name);
-                if let Some(t) = self
-                    .ui
-                    .type_named(ljos)
-                    .or_else(|| self.core.type_named(ljos))
-                    .or_else(|| self.layout.type_named(ljos))
+                if let Some(t) = [Ljos::Ui, Ljos::Core, Ljos::Layout]
+                    .into_iter()
+                    .find_map(|of| self.modules.ljos(of)?.type_named(ljos))
                 {
                     self.members.object_type(Some(t));
                 }
@@ -2261,11 +1999,11 @@ impl rules::File for Pass<'_> {
     }
 
     fn quick(&self) -> &'static qt_types::Module {
-        self.quick
+        self.modules.quick()
     }
 
     fn ui(&self) -> &'static qt_types::Module {
-        self.ui
+        self.modules.ui()
     }
 
     fn id(&self, name: &str) -> Option<Ty> {
@@ -2316,12 +2054,16 @@ impl rules::File for Pass<'_> {
     }
 
     fn qt_type(&self, name: &str) -> Option<&'static Type> {
-        self.quick
-            .type_named(name)
-            .or_else(|| self.layouts.and_then(|m| m.type_named(name)))
-            .or_else(|| self.controls.and_then(|c| c.qt.type_named(name)))
-            .or_else(|| self.shapes.and_then(|m| m.type_named(name)))
-            .or_else(|| self.dialogs.and_then(|c| c.qt.type_named(name)))
+        self.modules.qt_type(
+            &[
+                Qt::Quick,
+                Qt::Layouts,
+                Qt::Controls,
+                Qt::Shapes,
+                Qt::Dialogs,
+            ],
+            name,
+        )
     }
 
     fn root_bindings(&self, name: &str) -> Option<Vec<String>> {
@@ -2733,7 +2475,8 @@ impl Script<'_, '_> {
             // An Item; which one is known when the file runs.
             return self
                 .pass
-                .quick
+                .modules
+                .quick()
                 .type_named("Item")
                 .map_or(Ty::Unknown, Ty::Derived);
         }
@@ -3033,7 +2776,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         }
         // A key of the grab permissions read through a handler's name.
         if let Expression::Identifier(ty) = &it.object
-            && let Some(ty) = self.pass.quick.type_named(&ty.name)
+            && let Some(ty) = self.pass.modules.quick().type_named(&ty.name)
             && let Some(key) = ty.enum_value(name)
             && (key.enumeration.name == "GrabPermissions"
                 || key.enumeration.alias == Some("GrabPermissions"))
@@ -3047,7 +2790,8 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             && let Some(new) = rules::new_name(name)
             && self
                 .pass
-                .quick
+                .modules
+                .quick()
                 .type_named(name)
                 .is_some_and(|ty| ty.attached().is_some())
         {
@@ -3156,15 +2900,13 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             if let Some(new) = self.pass.renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
-            } else if (self.pass.quick.type_named(name).is_some()
-                || [self.pass.controls, self.pass.dialogs]
-                    .into_iter()
-                    .flatten()
-                    .any(|c| c.qt.type_named(name).is_some())
-                || self
-                    .pass
-                    .shapes
-                    .is_some_and(|m| m.type_named(name).is_some()))
+            // QtQuick.Layouts' names are looked at below: a `GridLayout`'s
+            // enumerations, and the objects its types attach.
+            } else if self
+                .pass
+                .modules
+                .qt_type(&[Qt::Quick, Qt::Controls, Qt::Dialogs, Qt::Shapes], name)
+                .is_some()
                 && let Err(kept) = self.pass.named_type(name, it.span.start as usize, 0)
             {
                 self.keep(kept.cause, it.span.start);
