@@ -8,9 +8,10 @@ mod support;
 
 use ljos_compiler::ReloadSession;
 use ljos_engine::{
-    Engine, MapSource, Migrate, ObjectId, QmlObject, QtObject, ReloadError, ReloadOutcome, Value,
+    Engine, MapSource, Migrate, ObjectId, QmlObject, QtObject, ReloadError, ReloadOutcome, Request,
+    Value,
 };
-use ljos_runtime::JobPoll;
+use ljos_runtime::{JobPoll, Lane, ProcId};
 use qml_front::QtTypeOracle;
 use support::{Harness, engine};
 
@@ -1428,4 +1429,27 @@ Item {
             .map(|t| r.h.num(t, "kind"))
             .collect();
     assert_eq!(kinds, [3.0, 4.0]);
+}
+
+/// A host that makes its root in slices reloads it as one it made at
+/// once: the job keeps what it was asked for once it is done.
+#[test]
+fn a_root_made_in_slices_reloads_as_one_made_at_once() {
+    let page = r#"import QtQuick
+Item { objectName: "page"; width: 10 }
+"#;
+    let mut r = rig(&[("Main", COUNTER), ("Page", page)]);
+    let (mut job, handle) =
+        r.h.engine
+            .make_later(Request::url("Page"), Lane::Visible, ProcId::new(0, 0));
+    while matches!(job.step(&|| true), JobPoll::Yield) {}
+    let made = handle.result().unwrap().expect("Page.qml creates");
+    r.session
+        .set_file("Page", remade(page).replace("width: 10", "width: 30"));
+    let patch = r.session.build().unwrap().unwrap();
+    let done =
+        r.h.engine
+            .reload(&patch, &[made], &mut |_, _, _| {})
+            .expect("the root made in slices reloads");
+    assert_eq!(r.h.num(done.roots[0].1, "width"), 30.0);
 }
