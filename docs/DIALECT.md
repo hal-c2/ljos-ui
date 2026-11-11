@@ -2071,9 +2071,14 @@ files, so that one merging does not put the others in conflict:
   files, `rules/<area>.rs`, `tests/<area>.rs` and
   `docs/dialect/status/<area>.md`, and one line in `AREAS`
   (`rules/mod.rs`); a unit test holds the three lists equal. A new rule
-  is one line in `RULES` there. A Qt type's member renames live in one
-  area, a type is renamed in one area, and a type has one rule; a unit
-  test holds all three.
+  is one line in `RULES` there. A member Ljós calls by another name is
+  renamed once, by the runtime's face of the type (`ljos_quick`'s
+  `ljos_ui.rs`), and Ljos.Ui's description carries it to the pass as
+  `was=` (`crates/qt_types/src/ljos.txt`); an area writes only an empty
+  row, for a type that would take the renames of what it is built on
+  (`Window`, `rules/window.rs`). A type
+  is renamed in one area, and a type has one rule; a unit test holds
+  both.
 - **Tests** go only in `crates/qml_compat/src/tests/<area>.rs`. Shared
   helpers stay in `tests/mod.rs`.
 - **Pass logic** for an area goes in its rule, as `rules/text/font.rs`

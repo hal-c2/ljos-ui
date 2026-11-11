@@ -6,9 +6,8 @@ use super::Area;
 
 pub(super) const AREA: Area = Area {
     types: &[],
-    members: &[
-        // A `source` naming a file beside this one is `component` too,
-        // written by the `Loader` rule (`source.rs`).
-        ("Loader", &[("sourceComponent", "component")]),
-    ],
+    // `sourceComponent` is `component`, as Ljos.Ui's `Loader` says; a
+    // `source` naming a file beside this one is `component` too, written by
+    // the `Loader` rule (`source.rs`).
+    members: &[],
 };

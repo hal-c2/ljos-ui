@@ -6,8 +6,9 @@
 //! new file here, in `src/tests/` and in `docs/dialect/status/`, plus one
 //! line in [`AREAS`] (the test
 //! `rules::every_area_has_rules_tests_and_status` holds the three lists
-//! equal). A Qt type's member renames live in
-//! exactly one area, and an old type name is renamed in one area only, so a
+//! equal). A member Ljós calls by another name is renamed by the runtime's
+//! face of the type, which Ljos.Ui's description says ([`member_renames`]),
+//! and nowhere here. An old type name is renamed in one area only, so a
 //! type has one slice of member renames and one new name (the test
 //! `rules::one_area_per_type` holds them to it).
 
@@ -34,6 +35,7 @@ pub(crate) use text::font;
 pub use text::font::FONT_RENAMES;
 
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use qml_edit::Change;
 use qml_syntax::ast::QmlObject;
@@ -237,9 +239,8 @@ struct Area {
     /// The Qt types Ljós calls by another name: (Qt's name, Ljós's).
     types: &'static [(&'static str, &'static str)],
     /// Per Qt type (and what derives from it), the members Ljós calls by
-    /// another name. A property's change signal and its handler follow its
-    /// name. Every one is a property: a member that is called is a method,
-    /// and not one of these.
+    /// another name where no face of Ljos.Ui says them: none, for a type
+    /// that would otherwise have those of what Ljós's table builds it on.
     members: &'static [(&'static str, &'static [(&'static str, &'static str)])],
 }
 
@@ -280,9 +281,41 @@ pub fn type_renames() -> impl Iterator<Item = &'static (&'static str, &'static s
 /// name. A property's change signal and its handler follow its name.
 /// Every one is a property: a member that is called is a method, and not
 /// one of these.
+///
+/// DECISION: the runtime's faces own a rename (`ljos_quick`'s `ljos_ui.rs`),
+/// and Ljos.Ui's description says each one with the name the faced type
+/// gives it (`prop wrap WrapMode was=wrapMode`). A rename is read from
+/// there, under the Qt name of the type the face is of, so this crate links
+/// no runtime and nothing here can drift from it.
 pub fn member_renames()
--> impl Iterator<Item = &'static (&'static str, &'static [(&'static str, &'static str)])> {
-    AREAS.iter().flat_map(|area| area.members.iter())
+-> impl Iterator<Item = (&'static str, &'static [(&'static str, &'static str)])> {
+    static FACES: OnceLock<Vec<Face>> = OnceLock::new();
+    let faces = FACES.get_or_init(faces);
+    AREAS
+        .iter()
+        .flat_map(|area| area.members.iter().copied())
+        .chain(faces.iter().map(|(ty, renames)| (*ty, renames.as_slice())))
+}
+
+/// A face's renames, by the Qt name of the type it faces.
+type Face = (&'static str, Vec<(&'static str, &'static str)>);
+
+/// The renames of each face of Ljos.Ui that has any.
+fn faces() -> Vec<Face> {
+    let Some(ui) = qt_types::module(crate::MODULE) else {
+        return Vec::new();
+    };
+    let names = qt_types::native_types(crate::MODULE).unwrap_or_default();
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let renames: Vec<_> = ui.type_named(name)?.renamed().collect();
+            let qt = type_renames()
+                .find(|(_, new)| *new == name)
+                .map_or(name, |(old, _)| *old);
+            (!renames.is_empty()).then_some((qt, renames))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -335,8 +368,8 @@ mod tests {
         let mut with_members = HashSet::new();
         for (ty, _) in member_renames() {
             assert!(
-                with_members.insert(*ty),
-                "`{ty}` has member renames in two areas"
+                with_members.insert(ty),
+                "`{ty}` has member renames in two areas, or in an area and a face"
             );
         }
     }

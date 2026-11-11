@@ -4,5 +4,5 @@ use super::Area;
 
 pub(super) const AREA: Area = Area {
     types: &[("MouseArea", "PointerArea")],
-    members: &[("Rectangle", &[("color", "fill")])],
+    members: &[],
 };
