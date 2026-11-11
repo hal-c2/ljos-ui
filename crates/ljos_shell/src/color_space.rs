@@ -80,17 +80,34 @@ impl ColorSpace {
     }
 }
 
+/// Settles `config`'s colour space, once before any window opens, with
+/// the environment's `value` of [`VAR`]; a value the shell does not know
+/// is given to `warn`. Every window and every frame then follows
+/// `config.color_space`.
+pub(crate) fn settle(
+    config: &mut crate::ShellConfig,
+    value: Option<&str>,
+    warn: impl FnOnce(String),
+) {
+    let (space, unknown) = ColorSpace::from_env(value, config.color_space);
+    config.color_space = space;
+    if let Some(unknown) = unknown {
+        warn(unknown);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ColorSpace, LayerTag};
     use crate::ShellConfig;
 
     /// The layer decision for a window opened with `config`, with the
-    /// environment's `value`, as the shell makes it before each frame.
+    /// environment's `value`, as the shell makes it: settled once, then
+    /// asked before each frame.
     fn tag(config: &ShellConfig, value: Option<&str>, has_one: bool) -> Option<LayerTag> {
-        ColorSpace::from_env(value, config.color_space)
-            .0
-            .layer_tag(has_one)
+        let mut config = config.clone();
+        super::settle(&mut config, value, |w| panic!("warned: {w}"));
+        config.color_space.layer_tag(has_one)
     }
 
     #[test]
@@ -127,9 +144,11 @@ mod tests {
 
     #[test]
     fn a_value_the_shell_does_not_know_keeps_the_application_s_and_says_so() {
-        let (space, note) = ColorSpace::from_env(Some("p3"), ColorSpace::Untagged);
-        assert_eq!(space, ColorSpace::Untagged);
-        let note = note.expect("a note to log");
-        assert!(note.contains("LJOS_COLOR_SPACE=p3"), "{note}");
+        let mut config = ShellConfig::new("app").with_color_space(ColorSpace::Untagged);
+        let mut warned = None;
+        super::settle(&mut config, Some("p3"), |w| warned = Some(w));
+        assert_eq!(config.color_space, ColorSpace::Untagged);
+        let warned = warned.expect("a warning to log");
+        assert!(warned.contains("LJOS_COLOR_SPACE=p3"), "{warned}");
     }
 }

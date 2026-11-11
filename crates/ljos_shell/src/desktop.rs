@@ -2335,15 +2335,11 @@ pub(crate) fn run<M: Send + 'static>(
             "drawn on the processor: EGL would draw in software",
         );
     }
-    // Decided once: every window and every frame follows it.
-    let (color_space, unknown) = crate::color_space::ColorSpace::from_env(
+    crate::color_space::settle(
+        &mut config,
         std::env::var(crate::color_space::VAR).ok().as_deref(),
-        config.color_space,
+        |unknown| app.engine().log(LogLevel::Warning, CATEGORY, unknown),
     );
-    config.color_space = color_space;
-    if let Some(unknown) = unknown {
-        app.engine().log(LogLevel::Warning, CATEGORY, unknown);
-    }
     #[cfg(feature = "mcp")]
     app.record_startup(ljos_dev::mcp::StartupStep::Built, began.elapsed());
     let failure = Rc::new(RefCell::new(None));
