@@ -76,6 +76,32 @@ Feature: The types of QtWebEngine
     And the property "scoped" of "root" is "4"
     And the property "answers" of "root" is "0 255"
 
+  @api-QtWebEngine.WebEnginePermission.permissionType @api-QtWebEngine.WebEnginePermission.state
+  Scenario: The kinds of permission and their states have their numbers
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        property string kinds: [WebEnginePermission.PermissionType.Unsupported,
+          WebEnginePermission.PermissionType.MediaAudioCapture,
+          WebEnginePermission.PermissionType.MediaVideoCapture,
+          WebEnginePermission.PermissionType.MediaAudioVideoCapture,
+          WebEnginePermission.PermissionType.DesktopVideoCapture,
+          WebEnginePermission.PermissionType.DesktopAudioVideoCapture,
+          WebEnginePermission.PermissionType.MouseLock,
+          WebEnginePermission.PermissionType.Notifications,
+          WebEnginePermission.PermissionType.Geolocation,
+          WebEnginePermission.PermissionType.ClipboardReadWrite,
+          WebEnginePermission.PermissionType.LocalFontsAccess].join(" ")
+        property string states: [WebEnginePermission.State.Invalid, WebEnginePermission.State.Ask,
+          WebEnginePermission.State.Granted, WebEnginePermission.State.Denied].join(" ")
+      }
+      """
+    Then the property "kinds" of "root" is "0 1 2 3 4 5 6 7 8 9 10"
+    And the property "states" of "root" is "0 1 2 3"
+
   @api-QtWebEngine.WebEngine.defaultProfile
   Scenario: The default profile keeps nothing on disk
     Given the QML:
