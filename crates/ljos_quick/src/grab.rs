@@ -10,8 +10,8 @@
 //! is drawn while nothing is asked. An item that leaves every shown window
 //! before the frame calls back with an empty result, as in Qt, and wakes
 //! no scene while it waits. A window is there while a scene shows it: a
-//! grab whose scene is dropped gets the same result at the next frame of
-//! the scenes left, which the drop wakes.
+//! grab whose scene is dropped gets the same result as the scene goes, as
+//! no frame may come after it.
 
 use std::cell::{Cell, RefCell};
 
@@ -103,7 +103,7 @@ pub(crate) struct Grab {
 }
 
 #[derive(Default)]
-pub(crate) struct Grabs {
+struct Grabs {
     pending: RefCell<Vec<Grab>>,
     /// Numbers the results' URLs.
     made: Cell<u64>,
@@ -246,13 +246,35 @@ pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Gra
 /// scene's next frame: one asked after this frame took its grabs. A grab
 /// no scene shows wakes none.
 pub(crate) fn waiting(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> bool {
-    engine.extension::<Grabs>().waits_on(shows)
+    engine
+        .extension::<Grabs>()
+        .pending
+        .borrow()
+        .iter()
+        .any(|g| shows(g.item))
 }
 
-impl Grabs {
-    /// Whether a grab not yet taken is of an item `shows` holds.
-    pub(crate) fn waits_on(&self, shows: impl Fn(ObjectId) -> bool) -> bool {
-        self.pending.borrow().iter().any(|g| shows(g.item))
+/// A scene that showed the items `showed` holds is gone: each grab of one
+/// that no scene shows now calls back with an empty result here, as no
+/// frame may come to settle it. A grab of an item that is gone is dropped.
+pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool) {
+    let settled: Vec<Grab> = {
+        let grabs = engine.extension::<Grabs>();
+        let mut pending = grabs.pending.borrow_mut();
+        if !pending.iter().any(|g| showed(g.item)) {
+            return;
+        }
+        let (gone, kept) = std::mem::take(&mut *pending).into_iter().partition(|g| {
+            showed(g.item) && (!engine.is_alive(g.item) || in_shown_window(engine, g.item).is_err())
+        });
+        *pending = kept;
+        gone
+    };
+    // Unborrowed: a callback may ask for another grab.
+    for grab in settled {
+        if engine.is_alive(grab.item) {
+            deliver(engine, grab, None);
+        }
     }
 }
 

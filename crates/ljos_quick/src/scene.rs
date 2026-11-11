@@ -546,9 +546,10 @@ struct Scenes {
     /// The root each scene shows: the windows there are. Read without
     /// borrowing a scene, which may be at work.
     roots: RefCell<Vec<(std::rc::Weak<RefCell<Shared>>, ObjectId)>>,
-    /// The grabs asked for ([`crate::grab`]), once one was: a scene that
-    /// is dropped hands the ones it would have taken to the scenes left.
-    grabs: RefCell<Option<Rc<crate::grab::Grabs>>>,
+    /// The engine, once a grab was asked for ([`crate::grab`]): a scene
+    /// that is dropped, which has no engine of its own, settles with it the
+    /// grabs it would have taken.
+    engine: RefCell<Option<ljos_engine::WeakEngine>>,
 }
 
 impl Scenes {
@@ -589,35 +590,13 @@ impl Scenes {
     }
 
     /// `shared`'s scene is dropped: it shows no window from now on, and a
-    /// grab of an item it showed, which it can no longer take, is settled
-    /// at the next frame of each scene left.
+    /// grab of an item it showed that no scene shows now is settled at
+    /// once. No frame may come to settle it: this may be the last scene.
     fn closed(&self, shared: &SharedRc, showed: impl Fn(ObjectId) -> bool) {
         self.set_root(shared, None);
-        let waits = self
-            .grabs
-            .borrow()
-            .as_ref()
-            .is_some_and(|g| g.waits_on(showed));
-        if !waits {
-            return;
-        }
-        for s in self.live() {
-            if Rc::ptr_eq(&s, shared) {
-                continue;
-            }
-            let waker = {
-                let Ok(mut s) = s.try_borrow_mut() else {
-                    continue;
-                };
-                if std::mem::replace(&mut s.dirty, true) {
-                    None
-                } else {
-                    s.waker.clone()
-                }
-            };
-            if let Some(w) = waker {
-                w();
-            }
+        let engine = self.engine.borrow().as_ref().and_then(|w| w.upgrade());
+        if let Some(engine) = engine {
+            crate::grab::settle_unshown(&engine, showed);
         }
     }
 
@@ -680,9 +659,9 @@ pub(crate) fn pictures_wanted(e: &Engine) {
 pub(crate) fn grab_wanted(e: &Engine, item: ObjectId) {
     let scenes = e.extension::<Scenes>();
     scenes
-        .grabs
+        .engine
         .borrow_mut()
-        .get_or_insert_with(|| e.extension::<crate::grab::Grabs>());
+        .get_or_insert_with(|| e.downgrade());
     for s in scenes.live() {
         let shows = s.try_borrow().is_ok_and(|s| s.marks.contains(item));
         if shows {
