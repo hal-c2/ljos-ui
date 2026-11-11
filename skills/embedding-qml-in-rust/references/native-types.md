@@ -184,6 +184,8 @@ pub fn register(engine: &Engine) {
 }
 ```
 
+A type that is a `QQuickPaintedItem` in Qt extends `ljos::item::PaintedItem` instead of `Item` (`extends = PaintedItem`, `#[qml(base)] pub painted: PaintedItem`). It then has `contentsScale`, `fillColor`, `contentsSize`, `textureSize` and `renderTarget`, and the scene applies them to what its hook paints: drawn `contentsScale` times as large, over `fillColor`, cut off at the item and its `contentsSize`. The hook paints as it would at scale 1.
+
 The `ljos::item` module provides the remaining hooks a custom visual item needs without depending on internal engine crates:
 
 - **Input hooks:** `register_key_item` (receives keys while the item has active focus via `item::force_active_focus`), `register_wheel_item`, `register_pointer_item`, `register_hover_move` (pointer motion with no button held), and `register_text_input_client` (IME committed text and cursor rectangle placement).

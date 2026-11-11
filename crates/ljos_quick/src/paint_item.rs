@@ -34,6 +34,14 @@ pub trait ItemPaint: Debug {
     /// one ([`crate::text_engine`]) while it paints, so borrowing that
     /// here fails. Layouts made with it are cached as a `Text`'s are.
     fn paint(&self, size: kurbo::Size, text: &mut TextEngine, out: &mut DisplayListBuilder);
+
+    /// Where what is painted is cut off, in the item's coordinates, for an
+    /// item of `size`. `None`, the default, cuts nothing off: an item's
+    /// own drawing is not clipped unless it says so.
+    fn clip(&self, size: kurbo::Size) -> Option<kurbo::Rect> {
+        let _ = size;
+        None
+    }
 }
 
 /// Reads what `obj` shows. Tracked: whatever it reads repaints the item

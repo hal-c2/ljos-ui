@@ -49,6 +49,7 @@ mod mirroring;
 mod mouse_drag;
 mod off_thread;
 mod paint_item;
+mod painted_item;
 pub mod palette;
 mod particles;
 #[cfg(feature = "pdf")]
@@ -155,6 +156,7 @@ pub use loader::Loader;
 pub use metrics::{FontInfo, FontMetrics, TextMetrics};
 pub use mirroring::{LayoutMirroring, LayoutMirroringAttached};
 pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint};
+pub use painted_item::PaintedItem;
 pub use palette::{ColorGroup, Palette};
 pub use pinch_area::{Pinch, PinchArea, PinchEvent};
 pub use pointer_item::{
@@ -226,7 +228,7 @@ pub fn register(engine: &Engine) {
         Item, Rectangle, Text, MouseArea, TapHandler, Row, Column, Loader, MouseEvent,
         Accessible, Repeater,
         FontMetrics, TextMetrics, FontInfo,
-        Grid, Flow, Positioner, LayoutMirroring, SafeArea,
+        Grid, Flow, Positioner, PaintedItem, LayoutMirroring, SafeArea,
         Image, BorderImage, AnimatedImage,
         Gradient, GradientStop,
         focus::FocusScope, focus::Window,

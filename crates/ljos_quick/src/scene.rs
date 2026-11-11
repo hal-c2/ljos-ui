@@ -2571,9 +2571,14 @@ impl QuickScene {
             self.tree.set_drawn(node, drawn);
             self.tree
                 .set_clip(node, g.clip.then(|| ClipSpec::bounds(size)));
-            if let Some(Paint::Editor(ed)) = &e.paint {
-                self.tree
-                    .set_content_clip(node, ed.clip(size).map(ClipSpec::rect));
+            match &e.paint {
+                Some(Paint::Editor(ed)) => self
+                    .tree
+                    .set_content_clip(node, ed.clip(size).map(ClipSpec::rect)),
+                Some(Paint::External(p)) => self
+                    .tree
+                    .set_content_clip(node, p.clip(size).map(ClipSpec::rect)),
+                _ => {}
             }
             self.tree.set_z(node, g.z as f32);
         }
@@ -2695,9 +2700,16 @@ impl QuickScene {
                     }
                     p => p,
                 };
-                if let Paint::Editor(ed) = &p {
-                    let clip = ed.clip(e.size).map(ClipSpec::rect);
-                    self.tree.set_content_clip(e.node, clip);
+                match &p {
+                    Paint::Editor(ed) => {
+                        let clip = ed.clip(e.size).map(ClipSpec::rect);
+                        self.tree.set_content_clip(e.node, clip);
+                    }
+                    Paint::External(x) => {
+                        let clip = x.clip(e.size).map(ClipSpec::rect);
+                        self.tree.set_content_clip(e.node, clip);
+                    }
+                    _ => {}
                 }
                 e.paint = Some(p);
             }
@@ -4396,7 +4408,7 @@ fn content_effect(e: &Engine, obj: ObjectId, kind: Kind, shared: &SharedRc) {
         Kind::External => match crate::paint_item::paint_item(e, obj) {
             Some(read) => {
                 crate::paint_item::track_repaint(e, obj);
-                Paint::External(read(e, obj))
+                Paint::External(crate::painted_item::read(e, obj, read(e, obj)))
             }
             None => return,
         },
