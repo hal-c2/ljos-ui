@@ -5,7 +5,7 @@
 
 mod oracle;
 
-use ljos_compiler::Project;
+use ljos_compiler::{Project, Roots};
 use oracle::Runtime;
 use qml_compat::Outcome;
 
@@ -343,4 +343,72 @@ fn a_file_that_lowered_qt_to_app_is_lowered_again_when_an_app_qml_comes_and_goes
     project.remove("App");
     let source = project.source("Pad").expect("Pad");
     assert!(source.contains("App.platform"), "{source}");
+}
+
+const LABEL: &str = "import QtQuick\nimport QtQuick.Controls\nLabel { text: \"Ready\" }\n";
+const TILES: &str = "import QtQuick\nItem { Tile { color: \"blue\" } }\n";
+
+/// The files of `root`, read with `project`, lowered through [`Roots`] as
+/// `ljos migrate` lowers them: each file's outcome, by its name.
+fn lowered_in(
+    project: Project<Runtime>,
+    files: &[(&str, &str)],
+) -> std::collections::BTreeMap<String, Outcome> {
+    let root = std::path::PathBuf::from("/work/app");
+    let mut roots = Roots::new();
+    roots.push(root.clone(), project);
+    let mut lowering = qml_compat::Lowering::new();
+    for (name, text) in files {
+        let key = roots.place(&root.join(format!("{name}.qml")), 0);
+        lowering.put(&key, (*text).to_owned());
+    }
+    lowering.lower(&roots);
+    let _ = lowering.settle(&roots);
+    files
+        .iter()
+        .map(|(name, _)| {
+            let key = ljos_compiler::roots::file_key(&root.join(format!("{name}.qml")));
+            let outcome = lowering.lowering(&key).expect("each file has an outcome");
+            ((*name).to_owned(), outcome.clone())
+        })
+        .collect()
+}
+
+/// A root that did not load is read as a project with nothing in it: its
+/// files have nothing beside them, and the style it is given.
+#[test]
+fn a_file_of_a_root_with_nothing_in_it_has_nothing_beside_it() {
+    use qml_front::project::ControlsStyle;
+    let empty = |name: &str| {
+        let mut project = Project::new(Runtime::new());
+        project.set_controls_style(Some(ControlsStyle {
+            name: name.to_owned(),
+            fallback: None,
+        }));
+        project
+    };
+    let files = [("Main", LABEL), ("Tiles", TILES)];
+
+    let basic = lowered_in(empty("Basic"), &files);
+    assert!(matches!(basic["Main"], Outcome::Lowered(_)), "{basic:?}");
+    // Beside it in a project, `Tile` would be a Rectangle; here it is not known.
+    let Outcome::Kept(kept) = &basic["Tiles"] else {
+        panic!("Tiles is kept: {basic:?}");
+    };
+    assert!(
+        kept.to_string().contains("whose type is not known"),
+        "{kept}"
+    );
+
+    let fusion = lowered_in(empty("Fusion"), &files);
+    let Outcome::Kept(kept) = &fusion["Main"] else {
+        panic!("Main is kept: {fusion:?}");
+    };
+    assert!(kept.to_string().contains("Fusion"), "{kept}");
+
+    // The same root with `Tile` in it: Tiles is lowered with it.
+    let mut project = empty("Basic");
+    project.add("Tile", BUTTON);
+    let loaded = lowered_in(project, &files);
+    assert!(matches!(loaded["Tiles"], Outcome::Lowered(_)), "{loaded:?}");
 }
