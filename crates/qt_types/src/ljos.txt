@@ -2641,6 +2641,7 @@ module QtQuick
 	Image QtQuick.Image
 	IntValidator QtQuick.IntValidator
 	Item QtQuick.Item
+	ItemGrabResult QtQuick.ItemGrabResult
 	KeyEvent QtQuick.KeyEvent
 	KeyNavigation QtQuick.KeyNavigation
 	Keys QtQuick.Keys
@@ -3496,8 +3497,16 @@ module QtQuick
 		method mapFromGlobal
 		method contains returns:bool
 		method childAt
+		method grabToImage returns:bool
 		method forceActiveFocus
 		method nextItemInFocusChain
+	type QtQuick.ItemGrabResult ItemGrabResult
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop image QtQml.var named readonly
+		prop url QtQml.url named readonly
+		signal ready
+		method saveToFile returns:bool
 	type QtQuick.KeyEvent KeyEvent
 		prototype QtQml.QtObject named
 		is uncreatable

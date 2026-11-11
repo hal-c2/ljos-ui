@@ -1312,6 +1312,10 @@ pub struct QuickScene {
     picture_roots: Vec<ObjectId>,
     picture_items: Vec<ObjectId>,
     pictures_seen: u64,
+    /// The grabs ([`crate::grab`]) this frame takes, and their items, which
+    /// are drawn for it even while hidden.
+    grabs: Vec<crate::grab::Grab>,
+    grab_items: Vec<ObjectId>,
     /// The UI thread's text engine, and the font generation the Texts
     /// were last laid out under.
     text: SharedTextEngine,
@@ -1411,6 +1415,8 @@ impl QuickScene {
             picture_roots: Vec::new(),
             picture_items: Vec::new(),
             pictures_seen: 0,
+            grabs: Vec::new(),
+            grab_items: Vec::new(),
             text_generation: text::text_engine().borrow().generation(),
             text: text::text_engine(),
             timers: None,
@@ -1793,6 +1799,7 @@ impl QuickScene {
         crate::focus::tree::settle(engine);
         self.sync_layer(engine);
         self.sync_pictures(engine);
+        self.take_grabs(engine);
         lap(&mut laps, &mut steps.other);
         // 5. Animations, from the frame's time and nothing else.
         STEPPING.set(true);
@@ -1828,7 +1835,13 @@ impl QuickScene {
         drop(phase);
         let _phase = engine.enter_phase(Phase::Render);
         let mut snap = self.tree.compose(self.viewport, self.frame);
-        let mut synced = self.snapshot.clone();
+        // A grabbed item is drawn although the window shows nothing new:
+        // what it holds is looked at once more.
+        let mut synced = if self.grabs.is_empty() {
+            self.snapshot.clone()
+        } else {
+            None
+        };
         for _ in 0..3 {
             if synced.as_ref().is_some_and(|s| Arc::ptr_eq(s, &snap)) {
                 break;
@@ -1844,6 +1857,7 @@ impl QuickScene {
             self.draw_item_pictures(engine);
             snap = self.tree.compose(self.viewport, self.frame);
         }
+        self.draw_grabs(engine);
         let changed = !self
             .snapshot
             .as_ref()
@@ -1864,6 +1878,7 @@ impl QuickScene {
             let mut s = self.shared.borrow_mut();
             let p = s.pending()
                 || self.a11y.pending()
+                || crate::grab::waiting(engine)
                 || crate::item_picture::wanted_since(engine, self.pictures_seen);
             // Unfinished jobs need the next frame although nothing they
             // made shows yet.
@@ -2855,6 +2870,61 @@ impl QuickScene {
         self.picture_items = items;
     }
 
+    /// Takes the grabs of items this scene shows. Their items are drawn
+    /// by this frame, shown or not.
+    fn take_grabs(&mut self, engine: &Engine) {
+        let grabs = crate::grab::take(engine, |item| self.items.contains(item));
+        if grabs.is_empty() {
+            return;
+        }
+        self.grab_items = grabs.iter().map(|g| g.item).collect();
+        self.grab_items.sort_unstable();
+        self.grab_items.dedup();
+        self.grabs = grabs;
+        // The items drawn as sources changed: content is looked at again.
+        self.items_gen += 1;
+    }
+
+    /// Draws each grab's item in its own coordinates, cut to the size it
+    /// had when it was asked, at the scene's scale stretched to the
+    /// target. A target of another shape is drawn at the larger stretch
+    /// and resampled to it.
+    fn draw_grabs(&mut self, engine: &Engine) {
+        if self.grabs.is_empty() {
+            return;
+        }
+        let scale = f64::from(self.scale_factor);
+        for grab in std::mem::take(&mut self.grabs) {
+            let Some(node) = self.items.get(grab.item).map(|e| e.node) else {
+                continue;
+            };
+            let (w, h) = grab.size;
+            let (tw, th) = grab.target;
+            let rect = kurbo::Rect::new(0.0, 0.0, w.max(1.0), h.max(1.0));
+            let Some(snap) = self.tree.compose_subtree_in(node, rect) else {
+                continue;
+            };
+            let stretch = (tw / rect.width()).max(th / rect.height());
+            let Some(mut picture) = crate::effects::picture_at(&snap, (scale * stretch) as f32)
+            else {
+                continue;
+            };
+            let px = (
+                (tw * scale).round().max(1.0) as u32,
+                (th * scale).round().max(1.0) as u32,
+            );
+            if (picture.width(), picture.height()) != px {
+                match picture.resized(px.0, px.1) {
+                    Some(p) => picture = p,
+                    None => continue,
+                }
+            }
+            crate::grab::taken(engine, grab, picture);
+        }
+        self.grab_items.clear();
+        self.items_gen += 1;
+    }
+
     /// The top of the scene's tree that `obj` is in.
     fn top_of(&self, obj: ObjectId) -> ObjectId {
         let mut at = obj;
@@ -2934,6 +3004,7 @@ impl QuickScene {
             .filter_map(|(s, _)| s.source)
             .chain(self.layer_base.keys().copied())
             .chain(self.picture_items.iter().copied())
+            .chain(self.grab_items.iter().copied())
             .filter_map(|o| self.items.get(o).map(|e| e.node))
             .collect();
         let mut redrawn = redrawn;
@@ -3163,6 +3234,7 @@ impl QuickScene {
             .chain(self.source_base.values().filter_map(|(b, _)| b.source))
             .chain(self.layer_base.keys().copied())
             .chain(self.picture_items.iter().copied())
+            .chain(self.grab_items.iter().copied())
             .collect();
         sources.sort_unstable();
         sources.dedup();
