@@ -148,9 +148,9 @@ Keep these rules in mind when defining shortcuts:
 - Multi-chord sequences (two chords) activate on the second chord. Pressing a wrong second chord is swallowed and resets the sequence, and a complete single-chord shortcut wins over a two-chord shortcut that starts with the same chord.
 - If multiple enabled shortcuts match the same key, each press emits `activatedAmbiguously` on one of them in turn, starting with the last one declared; disabling the others means the remaining one emits `activated` instead.
 
-## Differences from Qt
+## Notes
 
-- On Linux, `StandardKey` chooses platform key bindings from the desktop environment via `XDG_CURRENT_DESKTOP` (falling back to `KDE_FULL_SESSION` and `DESKTOP_SESSION`), matching Qt's behaviour.
+- On Linux, `StandardKey` chooses platform key bindings from the desktop environment via `XDG_CURRENT_DESKTOP` (falling back to `KDE_FULL_SESSION` and `DESKTOP_SESSION`).
 
 ## See also
 

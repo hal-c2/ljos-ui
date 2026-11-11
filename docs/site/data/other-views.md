@@ -126,7 +126,7 @@ You can inspect and control scrolling through `contentX`, `contentY`, `originX`,
 - The margins count as part of the scrollable range: content starts after `topMargin` and `leftMargin`, and the scrollable end extends past the content by `bottomMargin` and `rightMargin`.
 - When the content is smaller than the `Flickable`, the whole content is visible, and `visibleArea` reports the visible fraction and start offset.
 
-## Differences from Qt
+## Limits and edge cases
 
 - While `ListView` does not implement `highlightRangeMode`, `preferredHighlightBegin`, or `preferredHighlightEnd`, `PathView` does support a strict highlight range.
 - `TableView` does not support Shift or Control pointer range selection, does not select a block across reordered columns, and does not drag header sections to reorder them. `movableColumns` and `movableRows` are accepted as properties without effect.

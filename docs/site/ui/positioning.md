@@ -138,7 +138,7 @@ Watch out for two common mistakes with `Grid` and positioners:
 - If you set both `rows` and `columns` and give the `Grid` more children than `rows * columns`, any children beyond the last cell are left where they are.
 - Never anchor a child along a positioner's axis (`top`, `bottom`, `verticalCenter`, `fill` or `centerIn` in a `Column`; `left`, `right`, `horizontalCenter`, `fill` or `centerIn` in a `Row`; or any anchor in a `Grid` or `Flow`). Doing so logs a warning (such as `QML Column: Cannot specify ... anchors for items inside Column. Column will not function.`), places nothing in that pass, and gives the positioner no implicit size. The positioner warns once on completion rather than on every pass. Only a child that the positioner skips (because it is invisible or has zero size along the axis) may have an anchor along that axis without warning.
 
-## Differences from Qt
+## Limits and edge cases
 
 - Anchoring a child along a positioner's axis logs a warning, places nothing in that pass and leaves the positioner with no implicit size.
 - Writing directly to a coordinate or size that an anchor or positioner has set is not yet implemented. <!-- check: scenarios in features/layouts/placed-geometry-writes.feature are marked @backlog -->

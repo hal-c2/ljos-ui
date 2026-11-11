@@ -133,9 +133,8 @@ Item {
 
 During input-method (IME) composition (`inputMethodComposing`), the uncommitted text appears at the cursor in `preeditText` and `displayText`, leaving `text` unchanged until committed. When committed, the text replaces any selection, counts as a single undo step, and is checked against `validator` and `maximumLength`. Losing focus or switching `readOnly` to `true` cancels an active composition without inserting it. <!-- check: input-method scenarios in features/text-input/input-method.feature are marked @ljos-only -->
 
-## Differences from Qt
+## Limits and edge cases
 
-- Input-method composition and selection highlighting scenarios are tested only against Ljós because the Qt test oracle does not drive an input method.
 - Assigning `text` on a `TextEdit` moves the cursor to the start (`0`), whereas on a `TextInput` it moves the cursor to the end.
 - A validator filters typed and committed characters only; assigning an unacceptable string to `text` from script keeps the string and sets `acceptableInput` to `false`.
 - `TextInput.NoEcho` keeps `text` but draws nothing (`displayText` is `""`, `contentWidth` is `0` and the cursor sits at `0`).

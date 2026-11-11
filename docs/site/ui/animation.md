@@ -137,10 +137,9 @@ When the operating system's reduced-motion setting is enabled (`EnterTransition`
 - **Fades and colour changes stay**: opacity fades and `ColorAnimation` transitions still animate rather than snapping, but long fades are capped at a maximum of 150 milliseconds.
 - **Endless loops and timers continue**: an `Animation.Infinite` turn or pulse keeps running at its own pace (and can still be stopped), and `Timer` intervals are unaffected because a timer is not motion.
 
-## Differences from Qt
+## Limits and edge cases
 
 - Automatic handling of the system reduced-motion setting (snapping spatial movement, capping fades to 150 ms, and leaving `Animation.Infinite` loops and timers alone) is specific to Ljós. <!-- check: features/a11y/reduced-motion.feature is marked @ljos-only @a11y -->
-- Animating one member of a point value type with a `Behavior` while leaving the other member unchanged differs from Qt. <!-- check: features/animation/behavior-on-value-member.feature:93 is marked @qt-diverges -->
 - A `Behavior` running in a desktop window without being read by script is covered by a desktop-specific scenario. <!-- check: features/animation/behavior-unread.feature:45 is marked @desktop -->
 
 ## See also

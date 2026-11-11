@@ -52,7 +52,7 @@ This 100,000-row list creates delegates only for the 300-pixel viewport plus 320
 
 A window with no active `Timer`, running animation or input stays completely asleep: after 1,000 milliseconds of rest, it wakes 0 times over the next 2,000 milliseconds. Script garbage collection runs once the window has rested after a burst of work, and a window with nothing to collect is never woken to check. <!-- check: idle-wake and rest scenarios in features/window/rest-wakes.feature are marked @ljos-only @desktop -->
 
-However, setting `visible: false` on an item only stops it from being painted—just as in Qt, a hidden item keeps its bindings re-evaluating, its `Behavior` animations running and its `Timer`s firing. To avoid waking the process while a page or indicator is hidden, bind `running` on every repeating `Timer` and every `Animation.Infinite` animation to the item's visibility or activity state.
+However, setting `visible: false` on an item only stops it from being painted: a hidden item keeps its bindings re-evaluating, its `Behavior` animations running and its `Timer`s firing. To avoid waking the process while a page or indicator is hidden, bind `running` on every repeating `Timer` and every `Animation.Infinite` animation to the item's visibility or activity state.
 
 ```qml
 import QtQuick
@@ -114,12 +114,12 @@ The architecture also defines the following **design targets** (these are design
 - **Visibility states and eviction**: from most to least active, the design states are `Active`, `VisibleUnfocused`, `Hidden`, `Suspended` and `Frozen`, with textures belonging to frozen pages evicted first under memory pressure.
 - **Memory and dispatch targets**: a decoded image cache target of at most 64 MiB on a phone and 256 MiB on a desktop, a GPU cache target of 24 MB on a phone and 64 MB on a desktop, a process RSS target of at most 150 MiB, and a 4 ms JavaScript dispatch target.
 
-## Differences from Qt
+## Limits and edge cases
 
 - `StackView` freezes the pages it covers so their timers do not fire until uncovered (with change signals of a frozen subtree coalesced to one per property on thaw as a documented divergence).
 - General frozen subtrees outside `StackView` (static analysis for freezing, `Loader` and delegate freezing, and dehydration after 30 seconds) are not built.
 - `Timer.suspendWhen`, `Window.frameRatePolicy`, `Ljos.Lifecycle`, `Ljos.ListView.incubationBudgetMs` (and its ~3 ms per-frame incubation design target) and `Ljos.Persist` are design names and are not built; bind `Timer.running` to visibility instead.
-- `reuseItems` defaults to `false` to match Qt, and `Repeater` creates all of its items without virtualisation just as in Qt.
+- `reuseItems` defaults to `false`, and `Repeater` creates all of its items without virtualisation.
 - CPU-drawn windows skip custom `ShaderEffect` programs and log a single message.
 
 ## See also

@@ -173,7 +173,7 @@ Item {
 }
 ```
 
-## Differences from Qt
+## Limits and edge cases
 
 - On macOS and Windows, dragging out of the application window to external applications is not supported because `winit` 0.30.13 provides no API to initiate an OS drag session; drags stay within the window.
 - `WheelHandler.margin` is stored as a property but has no effect on hit testing.

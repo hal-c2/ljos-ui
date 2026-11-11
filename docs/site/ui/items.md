@@ -176,7 +176,7 @@ For other image formats and items:
 - **`BorderImage`**: cuts its picture into nine parts using `border.left`, `border.top`, `border.right` and `border.bottom`, and tiles the edges and centre using `horizontalTileMode` and `verticalTileMode` (`BorderImage.Stretch` (0), `BorderImage.Repeat` (1), `BorderImage.Round` (2)). It loads a local file at once and uses the picture's size as its implicit size unless a size is set.
 - **`AnimatedImage`**: plays the frames of an animated GIF for the duration each frame sets in the file, controlled by `playing`, `paused` and `speed`, announcing each change of frame.
 
-## Differences from Qt
+## Limits and edge cases
 
 - A missing picture is warned about once per source rather than once per `Image` item.
 - A large local picture (more than 512 by 512 pixels) is decoded on another thread at its drawn size, so its pixels arrive a moment after its `status` becomes `Ready`.

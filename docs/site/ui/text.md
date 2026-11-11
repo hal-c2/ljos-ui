@@ -143,13 +143,11 @@ Text {
 
 Pressing and releasing on a link emits `linkActivated(link)` with the address as written; dragging off the link before release does not activate it, and pressing beside a link passes through to whatever lies beneath. Moving the pointer over a link updates `hoveredLink` and emits `linkHovered(link)` (emitting an empty string when the pointer leaves), and `linkAt(x, y)` returns the link address at a point or `""`. When a `Text` is in the Tab order, pressing Tab visits each link in reading order and Space or Return activates the focused link.
 
-## Differences from Qt
+## Limits and edge cases
 
-- Reaching links with the Tab key and activating them with Space or Return is specific to Ljós and is not checked against Qt. <!-- check: link-keys.feature is marked @ljos-only -->
-- Exposing links in the accessibility tree and exact font metrics with the bundled font are not checked against Qt. <!-- check: link-accessibility.feature and bundled-font.feature are marked @ljos-only -->
 - Links in `RichText` take the palette's colour instead of `linkColor` unless styled on the link element itself.
 - A `MarkdownText` document does not parse embedded HTML; HTML tags inside Markdown are shown as literal text.
-- The margin between blocks in `MarkdownText` is always 7 pixels each time `text` is set, whereas in Qt the margin depends on how many times the text has been set.
+- The margin between blocks in `MarkdownText` is always 7 pixels, however many times `text` is set.
 - An inline image in `RichText` that fits within its line leaves the line height unchanged, and a relative `baseUrl` resolves beside the QML file.
 
 ## See also
