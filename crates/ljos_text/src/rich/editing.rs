@@ -1718,6 +1718,77 @@ mod tests {
     }
 
     #[test]
+    fn a_nested_list_is_written_in_the_item_it_is_in() {
+        // hal-c2/ljos-ui#333: written where each item reads back at its
+        // depth, numbered within its own list.
+        for (source, written) in [
+            ("- a\n  - b\n", "- a\n  - b\n"),
+            ("- a\n  - b\n- c\n", "- a\n  - b\n- c\n"),
+            ("- a\n  - b\n    - c\n", "- a\n  - b\n    - c\n"),
+            ("1. a\n   1. b\n", "1.  a\n    1.  b\n"),
+            (
+                "1. a\n   1. b\n   2. c\n2. d\n",
+                "1.  a\n    1.  b\n    2.  c\n2.  d\n",
+            ),
+            ("- a\n  1. b\n", "- a\n  1.  b\n"),
+            ("1. a\n   - b\n", "1.  a\n    - b\n"),
+            ("- a\n  - b\n\n    x\n", "- a\n  - b\n\n    x\n\n"),
+            ("- a\n  - b\n\n    x\n- c\n", "- a\n  - b\n\n    x\n\n- c\n"),
+            (
+                "1. a\n   1. b\n\n      x\n",
+                "1.  a\n    1.  b\n\n        x\n\n",
+            ),
+        ] {
+            let t = md(source);
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn the_code_of_an_item_is_written_in_the_item() {
+        for (source, written) in [
+            ("- a\n\n  ```\n  x\n  ```\n", "- a\n\n  ```\n  x\n  ```\n\n"),
+            (
+                "- a\n  - b\n\n    ```\n    x\n    ```\n",
+                "- a\n  - b\n\n    ```\n    x\n    ```\n\n",
+            ),
+            (
+                "- a\n\n  ```\n  x\n\n  y\n  ```\n",
+                "- a\n\n  ```\n  x\n\n  y\n  ```\n\n",
+            ),
+        ] {
+            let t = md(source);
+            let kinds: Vec<_> = t.blocks.iter().map(|b| b.kind).collect();
+            assert_eq!(kinds[0], BlockKind::List, "{source:?}");
+            assert!(
+                kinds[1..]
+                    .iter()
+                    .all(|k| *k == BlockKind::List || *k == BlockKind::Code)
+            );
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
+    }
+
+    #[test]
+    fn the_lines_of_a_pre_are_the_lines_of_one_fence() {
+        // hal-c2/ljos-ui#323.
+        for (source, written) in [
+            ("<pre>x\ny</pre>", "```\nx\ny\n```\n\n"),
+            ("<pre>x\n\ny</pre>", "```\nx\n\ny\n```\n\n"),
+            ("<p>a</p><pre>\n\nx</pre>", "a\n\n```\n\nx\n```\n\n"),
+        ] {
+            let t = rich(source);
+            assert_eq!(t.markdown(), written, "{source:?}");
+            let back = md(written);
+            assert_eq!(back.text(), t.text(), "{source:?}");
+            let kinds = |t: &RichText| t.blocks.iter().map(|b| b.kind).collect::<Vec<_>>();
+            assert_eq!(kinds(&back), kinds(&t), "{source:?}");
+        }
+    }
+
+    #[test]
     fn code_after_a_list_item_reads_back_as_code() {
         for (source, written) in [
             (

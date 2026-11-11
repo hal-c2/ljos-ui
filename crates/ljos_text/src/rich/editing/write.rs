@@ -305,20 +305,23 @@ impl RichText {
     }
 
     /// Qt's Markdown of the text: a paragraph ends in an empty line, the
-    /// items of a list follow each other.
+    /// items of a list follow each other, and a nested item, an item's
+    /// later paragraph or its code is indented to the text of the item it
+    /// is in, so that it reads back in that item.
     pub fn markdown(&self) -> String {
         let mut out = String::new();
         let count = self.blocks.len();
-        let mut number = 0;
-        // How wide the marker of the item written last is, which the
-        // item's later paragraphs are indented by; 0 out of a list.
-        let mut item = 0;
+        // The items the block written last is in, outermost first.
+        let mut items: Vec<OpenItem> = Vec::new();
         // The marks of the fence open, which the block closes with.
         let mut fence = String::new();
         for (index, block) in self.blocks.iter().enumerate() {
             let range = self.block_range(index);
             let next = self.blocks.get(index + 1);
-            let next_in_list = next.is_some_and(|b| b.kind == BlockKind::List);
+            // A code block indented as a list is a block of the item it
+            // follows.
+            let in_item = |b: &BlockFormat| b.kind == BlockKind::Code && b.indent > 0.0;
+            let next_in_list = next.is_some_and(|b| b.kind == BlockKind::List || in_item(b));
             match block.kind {
                 // Each line of a code block is a paragraph, and lines of one
                 // fence run on under it: the editor keeps no edge between two
@@ -333,6 +336,17 @@ impl RichText {
                     let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
                     let joins_after = next.is_some_and(|n| code_run(n) == run);
                     let text = &self.text[range];
+                    let column = if in_item(block) && !items.is_empty() {
+                        close_items(&mut items, block.indent, false);
+                        items.last().map_or(0, |i| i.column)
+                    } else {
+                        items.clear();
+                        0
+                    };
+                    // A block of an item is apart from the item's text.
+                    if column > 0 && !joins_before && !out.ends_with("\n\n") {
+                        out.push('\n');
+                    }
                     if indented {
                         // Indented lines right after a list would be a
                         // paragraph of its last item; an empty comment ends
@@ -340,13 +354,16 @@ impl RichText {
                         // Qt 6.11: indented lines after a list item are
                         // written right after it, and read back they are a
                         // paragraph of the item (6.12 the same).
-                        if !joins_before
+                        if column == 0
+                            && !joins_before
                             && index > 0
                             && self.blocks[index - 1].kind == BlockKind::List
                         {
                             out.push_str("<!-- -->\n\n");
                         }
-                        out.push_str("    ");
+                        // Measured: an empty line of an indented block keeps
+                        // its indent.
+                        out.extend(std::iter::repeat_n(' ', column + 4));
                         out.push_str(text);
                         out.push('\n');
                     } else {
@@ -368,21 +385,32 @@ impl RichText {
                                 .unwrap_or(0);
                             fence.clear();
                             fence.extend(std::iter::repeat_n(mark, (marks + 1).max(3)));
+                            out.extend(std::iter::repeat_n(' ', column));
                             out.push_str(&fence);
                             out.push_str(info);
                             out.push('\n');
                         }
-                        out.push_str(text);
-                        out.push('\n');
+                        push_line(&mut out, column, text);
                         if !joins_after {
+                            // Qt 6.11: the fence that closes an item's code
+                            // is indented twice over, and in a nested item it
+                            // reads back as a line of the code (6.12 the
+                            // same).
+                            out.extend(std::iter::repeat_n(' ', column));
                             out.push_str(&fence);
                             out.push('\n');
                         }
                     }
+                    let leaves_list = column > 0 && !joins_after && !next_in_list;
                     let blank = match next {
                         None => true,
-                        Some(n) => !joins_after && indented && n.kind != BlockKind::Code,
+                        Some(n) => {
+                            leaves_list || (!joins_after && indented && n.kind != BlockKind::Code)
+                        }
                     };
+                    if leaves_list {
+                        items.clear();
+                    }
                     if blank {
                         out.push('\n');
                     }
@@ -392,32 +420,51 @@ impl RichText {
                     // A paragraph of an item after its first has no marker.
                     // It stays in the item: indented to the item's text, an
                     // empty line on each side.
-                    if block.marker.is_none() && item > 0 {
+                    if block.marker.is_none() && !items.is_empty() {
+                        close_items(&mut items, block.indent, false);
+                        let column = items.last().map_or(0, |i| i.column);
                         if !out.ends_with("\n\n") {
                             out.push('\n');
                         }
-                        out.extend(std::iter::repeat_n(' ', item));
+                        out.extend(std::iter::repeat_n(' ', column));
                         self.write_markdown_inline(&mut out, range);
                         out.push_str("\n\n");
                         if !next_in_list {
-                            number = 0;
-                            item = 0;
+                            items.clear();
                         }
                         continue;
                     }
-                    let start = out.len();
-                    if block.ordered() {
-                        number += 1;
+                    // The item before at this depth, which an item of the
+                    // same kind goes on counting from.
+                    let before = close_items(&mut items, block.indent, true);
+                    let ordered = block.ordered();
+                    let number = match before {
+                        Some(b) if b.ordered == ordered => b.number + 1,
+                        _ => 1,
+                    };
+                    // A nested item starts at the text of the item it is in.
+                    // Qt 6.11: a nested item is indented by its depth times
+                    // the width of its own marker, and an item of one kind
+                    // in an item of the other reads back at another depth
+                    // (6.12 the same).
+                    let start = items.last().map_or(0, |i| i.column);
+                    out.extend(std::iter::repeat_n(' ', start));
+                    let marker = out.len();
+                    if ordered {
                         let _ = write!(out, "{number}.  ");
                     } else {
                         out.push_str("- ");
                     }
-                    item = out.len() - start;
+                    items.push(OpenItem {
+                        indent: block.indent,
+                        column: start + out.len() - marker,
+                        ordered,
+                        number,
+                    });
                     self.write_markdown_inline(&mut out, range);
                     out.push('\n');
                     if !next_in_list {
-                        number = 0;
-                        item = 0;
+                        items.clear();
                         if index + 1 < count {
                             out.push('\n');
                         }
@@ -437,6 +484,8 @@ impl RichText {
                 BlockKind::Rule => out.push_str("- - -"),
                 _ => self.write_markdown_inline(&mut out, range),
             }
+            // Any other block ends the list.
+            items.clear();
             out.push_str("\n\n");
         }
         out
@@ -492,6 +541,43 @@ impl RichText {
             }
         }
     }
+}
+
+/// An item of a list that the Markdown written so far is in.
+struct OpenItem {
+    /// The item's indent in the document.
+    indent: f32,
+    /// The column its text starts at, which what is in it is indented to.
+    column: usize,
+    ordered: bool,
+    number: usize,
+}
+
+/// Close the items a block at `indent` is not in: those deeper than it,
+/// and with `same` the one at its depth too, which is returned.
+fn close_items(items: &mut Vec<OpenItem>, indent: f32, same: bool) -> Option<OpenItem> {
+    // Indents are whole points; half of one is room for rounding.
+    while let Some(top) = items.last() {
+        let deeper = top.indent > indent + 0.5;
+        let at = (top.indent - indent).abs() <= 0.5;
+        if deeper {
+            items.pop();
+        } else if at && same {
+            return items.pop();
+        } else {
+            break;
+        }
+    }
+    None
+}
+
+/// A line of fenced code, indented to `column` unless it is empty.
+fn push_line(out: &mut String, column: usize, text: &str) {
+    if !text.is_empty() {
+        out.extend(std::iter::repeat_n(' ', column));
+        out.push_str(text);
+    }
+    out.push('\n');
 }
 
 /// The most `mark`s in a row in `line`.
