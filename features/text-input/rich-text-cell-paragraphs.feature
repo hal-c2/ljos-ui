@@ -82,6 +82,30 @@ Feature: Paragraphs in the cells of a rich TextEdit
         | One right after a paragraph's start is not      | [table][tr][td style='white-space:pre-wrap']a[p]~b[/p][/td][/tr][/table]              | [=a#b=]   |
         | Nor one right after a paragraph's end           | [table][tr][td style='white-space:pre-wrap'][p]a[/p]~[p]b[/p][/td][/tr][/table]       | [=a#b=]   |
 
+  Rule: What comes after a cell ends is a paragraph of that cell
+
+    Text, a block or a line break between the end of a cell and the next
+    one goes on in the cell before as a paragraph of its own; white space
+    alone there is nothing. Before a row's first cell nothing is kept.
+    Measured on Qt 6.12.0.
+
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "plain" of "root" is called
+      Then the property "out" of "root" is "<text>"
+
+      Examples:
+        | case                                     | html                                                                   | text       |
+        | Text after a row's end                   | [table][tr][td]b[/td][/tr]c[/table]                                    | [=b#c=]    |
+        | Text after a cell's end                  | [table][tr][td]b[/td]  c[/tr][/table]                                  | [=b#c=]    |
+        | A paragraph and text after a cell's end  | [table][tr][td]b[/td][p]c[/p]d[/tr][/table]                            | [=b#c#d=]  |
+        | Text in a span is one paragraph          | [table][tr][td]b[/td][b]c[/b]d[td]e[/td][/tr][/table]                  | [=b#cd=e=] |
+        | A line break after a cell's end          | [table][tr][td]b[/td][br]c[/tr][/table]                                | [=b#/c=]   |
+        | Text after an empty cell fills it        | [table][tr][td][/td]c[/tr][/table]                                     | [=c=]      |
+        | White space between cells is nothing     | [table][tr][td]b[/td] [span] [/span] [td]e[/td][/tr][/table]           | [=b=e=]    |
+        | Text before a row's first cell is gone   | [table][tr][td]b[/td][/tr][tr]c[td]d[/td][/tr][/table]                 | [=b=d=]    |
+        | Text before the first row is gone        | [table]c[tr][td]b[/td][/tr][/table]                                    | [=b=]      |
+
   Rule: Return in a cell adds a paragraph to it
 
     Scenario Outline: <keys> at <at> in a cell of "ab" gives <text>
