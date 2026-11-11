@@ -765,6 +765,8 @@ enum Asked {
         callback: MediaAccessCallback,
         /// What the page asked for, all of it given if allowed.
         flags: u32,
+        /// The frame that asked; its document going refuses the question.
+        frame: String,
     },
     /// To show notifications, which CEF never asks about: the page's
     /// `Notification.requestPermission` waits in the script of
@@ -787,7 +789,9 @@ impl Asked {
             } else {
                 PermissionRequestResult::DENY
             }),
-            Asked::Media { callback, flags } if allow => callback.cont(flags),
+            Asked::Media {
+                callback, flags, ..
+            } if allow => callback.cont(flags),
             Asked::Media { callback, .. } => callback.cancel(),
             Asked::Notifications {
                 context,
@@ -1010,6 +1014,12 @@ fn frame_url(frame: &Frame) -> String {
     CefString::from(&frame.url()).to_string()
 }
 
+/// Which frame this is, for as long as it shows one document in one
+/// process.
+fn frame_id(frame: &Frame) -> String {
+    CefString::from(&frame.identifier()).to_string()
+}
+
 fn is_main(frame: Option<&mut Frame>) -> Option<String> {
     let frame = frame?;
     (frame.is_main() == 1).then(|| frame_url(frame))
@@ -1035,6 +1045,22 @@ wrap_client! {
         }
         fn permission_handler(&self) -> Option<PermissionHandler> {
             Some(PagePermissions::new(self.shared.clone()))
+        }
+        fn frame_handler(&self) -> Option<FrameHandler> {
+            Some(PageFrames::new(self.shared.clone()))
+        }
+    }
+}
+
+wrap_frame_handler! {
+    struct PageFrames { shared: Arc<Shared> }
+    impl FrameHandler {
+        // A frame that leaves for another process, or is taken out of
+        // the page, never starts a load of its own to say so.
+        fn on_frame_detached(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>) {
+            if let Some(frame) = frame {
+                media_gone(&self.shared, Some(&frame_id(frame)));
+            }
         }
     }
 }
@@ -1313,10 +1339,15 @@ wrap_load_handler! {
             if self.shared.booting() {
                 return;
             }
-            if is_main(frame).is_none() {
+            let Some(frame) = frame else {
+                return;
+            };
+            if frame.is_main() != 1 {
+                // Only that frame's document goes.
+                media_gone(&self.shared, Some(&frame_id(frame)));
                 return;
             }
-            media_gone(&self.shared);
+            media_gone(&self.shared, None);
             if let Some(host) = browser.and_then(|b| b.host()) {
                 // Chromium zooms by site; a view keeps its zoom on every page.
                 self.shared.apply_zoom(&host);
@@ -1587,12 +1618,12 @@ wrap_permission_handler! {
         fn on_request_media_access_permission(
             &self,
             _browser: Option<&mut Browser>,
-            _frame: Option<&mut Frame>,
+            frame: Option<&mut Frame>,
             requesting_origin: Option<&CefString>,
             requested_permissions: u32,
             callback: Option<&mut MediaAccessCallback>,
         ) -> c_int {
-            let Some(callback) = callback else {
+            let (Some(callback), Some(frame)) = (callback, frame) else {
                 return 0;
             };
             let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
@@ -1620,6 +1651,7 @@ wrap_permission_handler! {
                 Asked::Media {
                     callback: callback.clone(),
                     flags: r,
+                    frame: frame_id(frame),
                 },
             );
             self.shared.sink.send(event);
@@ -2006,13 +2038,17 @@ fn same_url(a: &str, b: &str) -> bool {
 }
 
 /// What the page before asked for its camera, microphone or screen is
-/// refused: a document that is gone cannot be given them.
-fn media_gone(shared: &Shared) {
+/// refused: a document that is gone cannot be given them. With `only`,
+/// just what that frame asked for, its own document gone.
+fn media_gone(shared: &Shared, only: Option<&str>) {
     let gone: Vec<(u64, Asked)> = {
         let mut asked = Shared::lock(&shared.asked);
         let ids: Vec<u64> = asked
             .iter()
-            .filter(|(_, a)| matches!(a, Asked::Media { .. }))
+            .filter(|(_, a)| match a {
+                Asked::Media { frame, .. } => only.is_none_or(|only| only == frame),
+                _ => false,
+            })
             .map(|(id, _)| *id)
             .collect();
         ids.into_iter()
