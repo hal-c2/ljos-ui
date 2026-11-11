@@ -38,6 +38,7 @@ Feature: Changing the format of a TextEdit
           chars = chars.indexOf("<body") >= 0 ? "html:" + simple(chars) : chars.split("\u2029").join("#").split("\n").join("~")
           out = edit.cursorPosition + " " + shown(edit.text) + " [" + chars + "]"
         }
+        function written(format) { change(format); out = edit.text.split("\n").join("~") }
         TextEdit { id: edit; objectName: "edit"; width: 280 }
       }
       """
@@ -72,3 +73,34 @@ Feature: Changing the format of a TextEdit
     Examples:
       | from         | text            | to       | out |
       | MarkdownText | a~~```~x y~```~ | RichText | 0 <p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p>~<pre style=' white-space:pre;'><span style=' font-family:'monospace';'>x y</span></pre> [a#x y] |
+
+  Scenario Outline: The pre of "<text>" is written in Markdown as "<markdown>"
+    Each line of a pre is a paragraph of code. In Markdown the lines are
+    those of one fenced block, so that they read back as the same lines.
+
+    When the method "start" of "root" is called with "RichText", "<text>"
+    And the method "written" of "root" is called with "MarkdownText"
+    Then the property "out" of "root" is "<markdown>"
+
+    Examples:
+      | text                   | markdown        |
+      | [pre]x[/pre][p]b[/p]   | ```~x~```~b~~   |
+      | [pre]x[br]y[/pre]      | ```~x~y~```~~   |
+      | [pre]x~~[/pre]         | ```~x~~~```~~   |
+      | [p]a[/p][pre]~~x[/pre] | a~~```~~x~```~~ |
+
+    # Qt 6.12 writes an empty line between a pre's lines, and read again
+    # each of those is a line of the code block. It also leaves out an empty
+    # pre, an empty line a pre starts the document with, and one a pre ends
+    # in before a paragraph. In Ljós each line is written as it is.
+    @qt-diverges
+    Examples:
+      | text                           | markdown          |
+      | [pre]x~y[/pre]                 | ```~x~y~```~~     |
+      | [pre]x~y~z[/pre]               | ```~x~y~z~```~~   |
+      | [pre]x[/pre][pre]y[/pre]       | ```~x~y~```~~     |
+      | [p]a[/p][pre]x~~y[/pre]        | a~~```~x~~y~```~~ |
+      | [pre]x~~[/pre][p]b[/p]         | ```~x~~~```~b~~   |
+      | [pre]~~x[/pre]                 | ```~~x~```~~      |
+      | [p]a[/p][pre]~~~[/pre][p]b[/p] | a~~```~~~~```~b~~ |
+      | [p]a[/p][pre][/pre][p]b[/p]    | a~~```~~```~b~~   |
