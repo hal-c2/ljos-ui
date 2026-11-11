@@ -1,4 +1,4 @@
-//! Renames of loading: `Loader`, components, dynamic creation.
+//! Rules of loading: `Loader`, components, dynamic creation.
 
 use super::Area;
 

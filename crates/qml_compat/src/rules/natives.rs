@@ -1,4 +1,4 @@
-//! Renames of shapes and paths: `Shape`, `Canvas`, gradients.
+//! Rules of a program's own native types and the natives that take the API's names.
 
 use super::Area;
 

@@ -1,14 +1,14 @@
-//! The names Ljós gives Qt's types and their members, one file per area of
-//! the API.
+//! What Ljós makes of Qt's types, one file per area of the API: for now,
+//! the names it gives the types and their members.
 //!
 //! The rule: a lane adds rows only to its own area's file. A new area is a
 //! new file here, in `src/tests/` and in `docs/dialect/status/`, plus one
 //! line in [`AREAS`] (the test
-//! `renames::every_area_has_renames_tests_and_status` holds the three lists
+//! `rules::every_area_has_rules_tests_and_status` holds the three lists
 //! equal). A Qt type's member renames live in
 //! exactly one area, and an old type name is renamed in one area only, so a
 //! type has one slice of member renames and one new name (the test
-//! `renames::one_area_per_type` holds them to it).
+//! `rules::one_area_per_type` holds them to it).
 
 mod controls;
 mod core;
@@ -58,6 +58,14 @@ const AREAS: &[&Area] = &[
     &types::AREA,
 ];
 
+/// What Ljós calls Qt's type `name`, where it calls it otherwise. Whether a
+/// file's `name` is Qt's type is the pass's to say (`Pass::renamed_type`).
+pub(crate) fn new_name(name: &str) -> Option<&'static str> {
+    type_renames()
+        .find(|(old, _)| *old == name)
+        .map(|(_, new)| *new)
+}
+
 /// The Qt types Ljós calls by another name. Every other type of the slice is
 /// called as Qt calls it.
 pub fn type_renames() -> impl Iterator<Item = &'static (&'static str, &'static str)> {
@@ -95,19 +103,19 @@ mod tests {
     // A lane starting an area finds its renames, tests and status files
     // already there, so no two lanes make the same file in their first PRs.
     #[test]
-    fn every_area_has_renames_tests_and_status() {
+    fn every_area_has_rules_tests_and_status() {
         let crate_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-        let renames = areas_in(&crate_dir.join("src/renames"), "rs", &["mod"]);
+        let renames = areas_in(&crate_dir.join("src/rules"), "rs", &["mod"]);
         // `groups` tests how a project's files lower together, which is
         // the pass's own, not an area's.
         let tests = areas_in(&crate_dir.join("src/tests"), "rs", &["mod", "groups"]);
         let status = areas_in(&crate_dir.join("../../docs/dialect/status"), "md", &[]);
-        assert_eq!(renames, tests, "src/renames and src/tests name other areas");
+        assert_eq!(renames, tests, "src/rules and src/tests name other areas");
         assert_eq!(
             renames, status,
-            "src/renames and docs/dialect/status name other areas"
+            "src/rules and docs/dialect/status name other areas"
         );
-        assert_eq!(renames.len(), AREAS.len(), "a renames file is not in AREAS");
+        assert_eq!(renames.len(), AREAS.len(), "a rules file is not in AREAS");
     }
 
     #[test]

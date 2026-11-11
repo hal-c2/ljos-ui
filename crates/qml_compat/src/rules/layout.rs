@@ -1,4 +1,4 @@
-//! Renames of states, transitions and animations.
+//! Rules of layout: anchors, positioners, `RowLayout` and `ColumnLayout`.
 
 use super::Area;
 

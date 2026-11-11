@@ -25,8 +25,8 @@ mod gesture;
 mod given;
 mod group;
 mod qt_members;
-mod renames;
 mod rows;
+mod rules;
 mod tables;
 
 use std::{
@@ -57,7 +57,7 @@ use rows::{Delegate, Owns, Rows};
 
 pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
-pub use renames::{FONT_RENAMES, member_renames, type_renames};
+pub use rules::{FONT_RENAMES, member_renames, type_renames};
 
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
@@ -1200,7 +1200,7 @@ impl<'s> Pass<'s> {
                 }
                 return self.core_type(name, ty, at);
             }
-            let new = renamed_type(name).unwrap_or(name);
+            let new = rules::new_name(name).unwrap_or(name);
             if self.ui.type_named(new).is_some() {
                 self.uis.set(true);
                 return Ok(Ty::Exact(ty));
@@ -1303,7 +1303,7 @@ impl<'s> Pass<'s> {
     /// it otherwise: a type of the same name imported after QtQuick is
     /// not Qt's, and keeps its name.
     fn renamed_type(&self, name: &str) -> Option<&'static str> {
-        let new = renamed_type(name)?;
+        let new = rules::new_name(name)?;
         let own_at = self
             .imported_root(name)
             .map(|(at, _)| at)
@@ -1411,7 +1411,7 @@ impl<'s> Pass<'s> {
         at: usize,
     ) -> Result<bool, Kept> {
         let last = |of: &dyn Fn(&Import) -> bool| self.imports.iter().rposition(of);
-        let new = renamed_type(name).unwrap_or(name);
+        let new = rules::new_name(name).unwrap_or(name);
         let (qt, lowered) = if !self.qml.has(ty) {
             // What arranges children is `Ljos.Layout`'s, on its own line.
             let lowered =
@@ -1491,7 +1491,7 @@ impl<'s> Pass<'s> {
                 self.members.object_type(Some(t));
                 // The lowered file's object is Ljós's, whose members are
                 // in sight there.
-                let ljos = renamed_type(t.name).unwrap_or(t.name);
+                let ljos = rules::new_name(t.name).unwrap_or(t.name);
                 if let Some(t) = self
                     .ui
                     .type_named(ljos)
@@ -2053,7 +2053,7 @@ impl<'s> Pass<'s> {
             // and `Drag.active`, which is `DragSource.active`.
             self.named_type(first, at, 0)?;
             self.attached_layout(first, at)?;
-            if let Some(new) = renamed_type(first)
+            if let Some(new) = rules::new_name(first)
                 && let Some(range) = part_range(self.source, name, 0)
             {
                 self.change(range, new);
@@ -2618,12 +2618,6 @@ fn has_own(on: Ty, name: &str) -> bool {
 /// An `Item`, or a type derived from one, in Qt's table or Ljós's own.
 fn is_item(ty: &'static qt_types::Type) -> bool {
     ty.is_a(&["QQuickItem", "QtQuick.Item"])
-}
-
-fn renamed_type(name: &str) -> Option<&'static str> {
-    type_renames()
-        .find(|(old, _)| *old == name)
-        .map(|(_, new)| *new)
 }
 
 fn renamed_layout(name: &str) -> Option<&'static str> {
@@ -3254,7 +3248,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         // anything else the name is a key of its own (`config.Drag`), and a
         // type that attaches nothing is never read off an object.
         if name.starts_with(|c: char| c.is_ascii_uppercase())
-            && let Some(new) = renamed_type(name)
+            && let Some(new) = rules::new_name(name)
             && self
                 .pass
                 .quick
@@ -3435,7 +3429,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             (!own).then(|| captured(self.root, name))?
         });
         if let Some((ty, old)) = captor {
-            let new = renamed_type(ty.name).unwrap_or(ty.name);
+            let new = rules::new_name(ty.name).unwrap_or(ty.name);
             self.keep(
                 Cause::OwnOnceLowered {
                     name: name.to_owned(),

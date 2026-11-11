@@ -1,4 +1,4 @@
-//! Renames of models and views: `ListModel`, `Repeater`, `ListView`.
+//! Rules of models and views: `ListModel`, `Repeater`, `ListView`.
 
 use super::Area;
 

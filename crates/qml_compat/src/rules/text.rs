@@ -1,4 +1,4 @@
-//! Renames of text: `Text`, `TextInput`, `TextEdit`, fonts.
+//! Rules of text: `Text`, `TextInput`, `TextEdit`, fonts.
 
 use super::Area;
 

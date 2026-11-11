@@ -1,4 +1,4 @@
-//! Renames of what the tools lower: `ljos migrate`, the MCP tools, Studio.
+//! Rules of typed scripts: TypeScript modules and `property T` of their types.
 
 use super::Area;
 
