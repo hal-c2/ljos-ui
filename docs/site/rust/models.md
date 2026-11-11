@@ -11,7 +11,7 @@ After reading this page, you will be able to expose Rust list data to QML views 
 
 ## Implementing `QmlListModel`
 
-To back a QML view with Rust list data (the role of `QAbstractListModel` in Qt), implement the `QmlListModel` trait and attach your model to an object on the `Engine` with `Engine::set_list_model`.
+To back a QML view with Rust list data, implement the `QmlListModel` trait and attach your model to an object on the `Engine` with `Engine::set_list_model`.
 
 `QmlListModel` requires three methods: `row_count`, `role_names` and `data`:
 

@@ -1,13 +1,13 @@
 ---
 title: Motion and reduced motion
-description: Choose easing curves, durations, and springs by how often an action occurs, and support reduced motion across Ljós and Qt.
+description: Choose easing curves, durations, and springs by how often an action occurs, and support reduced motion.
 section: quality
 order: 5
 ---
 
 # Motion and reduced motion
 
-This page explains how to choose easing curves, durations, and springs in QML, how Ljós handles reduced motion automatically while keeping your code portable to Qt, and what the `motion-*` rules check.
+This page explains how to choose easing curves, durations, and springs in QML, how Ljós handles reduced motion automatically, how a component gates its own motion, and what the `motion-*` rules check.
 
 ## Easing curves and durations
 
@@ -117,9 +117,9 @@ On Ljós, the runtime enforces reduced motion across every animation even if a c
 4. **Essential endless spinners keep running:** A `BusyIndicator` or indeterminate `ProgressBar` continues to turn. Endless decorative animations should still be gated by the application (`motion-reduced-ignored`).
 5. **Mid-flight changes never jump backwards:** Toggling reduced motion while an animation is running continues smoothly from its current state.
 
-### Writing portable reduced-motion QML for Ljós and Qt
+### Gating motion in your own components
 
-Qt exposes `Qt.styleHints.accessibility.motionPreference` but leaves the transition logic to the application. To write a component that respects reduced motion on both Ljós and Qt, include an explicit opacity fade and gate spatial motion and decorative loops on `motionPreference`:
+A component can also gate its own motion. Its file then says what it does under reduced motion, to a reader and to any runtime that leaves the transition logic to the application. Include an explicit opacity fade and gate spatial motion and decorative loops on `motionPreference`:
 
 ```qml
 import QtQuick
@@ -129,7 +129,7 @@ ApplicationWindow {
     width: 360
     height: 240
     visible: true
-    title: qsTr("Portable reduced motion")
+    title: qsTr("Reduced motion")
 
     readonly property bool reduced: Qt.styleHints.accessibility.motionPreference === Qt.MotionPreference.ReducedMotion
 
@@ -158,7 +158,7 @@ ApplicationWindow {
         }
 
         contentItem: Label {
-            text: qsTr("Fades in on both Ljós and Qt when reduced motion is enabled.")
+            text: qsTr("Fades in without moving when reduced motion is enabled.")
             wrapMode: Text.Wrap
         }
     }

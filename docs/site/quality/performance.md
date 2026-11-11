@@ -1,17 +1,24 @@
 ---
 title: Performance and benchmarks
-description: Understand how Ljós is benchmarked against Qt with ljos bench, what the startup, memory, and CPU numbers mean, and how to keep your application at 0 % CPU when idle.
+description: Learn the budget Ljós holds itself to (0 % CPU at rest, every frame within 16.7 ms, memory that fits a small board), how ljos bench measures it, and how to keep your application inside it.
 section: quality
 order: 7
 ---
 
 # Performance and benchmarks
 
-This page explains how Ljós is measured side by side against Qt (`qml6`) using `ljos bench`, what the reported memory, startup, and frame numbers mean, and how to write QML that stays within the 16.7 ms frame budget and uses 0 % CPU when idle.
+This page explains the budget Ljós holds itself to, how `ljos bench` measures an application against it from outside the process, what the reported memory, startup and frame numbers mean, and how to write QML that stays within it.
+
+## The budget
+
+- **At rest, 0 % CPU.** Nothing polls. The UI thread sleeps until input, a running timer or animation, a message or the windowing system wakes it, so an app that is not doing anything costs nothing.
+- **Every frame within 16.7 ms** (`limits::motion::FRAME_BUDGET_MS`). Frames are scheduled only when something changed, and only what changed is drawn again.
+- **Fast to start, light on memory.** The `pi-zero` profile below holds an application to a 1 GHz quad-core board with roughly 256 MB to spare. It is a stress test: what fits there is quick and light everywhere else.
+- **Faster and lighter than the reference.** The same QML is measured on Ljós and on Qt (`qml6`), the runtime most existing QML was written for, and Ljós aims to start sooner, lag less and use less memory. The comparison runs below show where it stands.
 
 ## Running `ljos bench`
 
-The benchmark suite runs the same QML applications—both synthetic workloads in `bench/*.qml` and examples from the Qt documentation corpus—on Ljós (`ljos run`) and on Qt (`qml6`). Both runtimes run inside a transient `systemd-run --user --scope` cgroup on a headless Wayland compositor (`sway` in `scripts/cua-sandbox.sh`) with `QT_QUICK_CONTROLS_STYLE=Basic`.
+To measure against that budget, the benchmark suite runs the same QML applications—both synthetic workloads in `bench/*.qml` and examples from the Qt documentation corpus—on Ljós (`ljos run`) and on Qt (`qml6`). Both runtimes run inside a transient `systemd-run --user --scope` cgroup on a headless Wayland compositor (`sway` in `scripts/cua-sandbox.sh`) with `QT_QUICK_CONTROLS_STYLE=Basic`.
 
 ```sh
 # Run every benchmark app on both runtimes (ljos and qt) and both profiles (desktop and pi-zero)

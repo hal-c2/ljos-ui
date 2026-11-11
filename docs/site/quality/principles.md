@@ -51,7 +51,7 @@ Every item can produce an AccessKit node for assistive technologies. Text is sha
 
 ### Behaviour specified in Gherkin
 
-Every behaviour is specified in Gherkin scenarios and checked against real Qt (`qml6`) wherever possible.
+Every behaviour is specified in a Gherkin scenario before it is built, and each scenario runs as a test.
 
 ## Non-goals
 
@@ -66,17 +66,17 @@ Some modules and features are outside Ljós's scope for now:
 
 ### Clean room
 
-No source code is copied from or read in Qt or Slint. Ljós is built solely from public documentation, published specifications, and black-box testing against running Qt binaries (`qml6`, `lupdate`, and `lrelease`). All Qt Quick Controls styles are authored from scratch.
+No source code is copied from or read in Qt or Slint. Ljós is built solely from public documentation, published specifications, and black-box testing against running Qt binaries (`qml6`, `lupdate`, and `lrelease`). All control styles are authored from scratch.
 
-### Existing QML keeps its behaviour; efficiency by structure or opt-in
+### Efficiency by structure or opt-in
 
-This is the rule for existing QML. Where Qt defines an observable behaviour, QML written for Qt Quick behaves that way on Ljós. For example, setting `visible: false` keeps bindings and timers running, and `reuseItems` defaults to `false`. Ljós saves work only in three ways:
+Ljós never changes what a program observably does to save work. Setting `visible: false` keeps bindings and timers running, and `reuseItems` defaults to `false`. Ljós saves work only in three ways:
 
 1. When the saving is unobservable, such as lazy render bindings or paint culling.
 2. When static analysis proves a structural optimisation safe, such as freezing covered `StackView` pages that have no observable handlers.
 3. When your application explicitly opts in, such as with `Timer.suspendWhen` or `Frozen`. <!-- check: exact property syntax for Timer.suspendWhen and Frozen in user QML -->
 
-Every deliberate divergence from Qt is recorded in a test scenario with a stated reason.
+Where Ljós deliberately behaves differently from what existing QML expects, a test scenario records the difference and its reason; [Bringing existing QML](../language/porting-from-qt.md) lists them.
 
 ### Ljós owns the retained tree; egui is the host
 

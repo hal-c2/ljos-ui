@@ -86,7 +86,7 @@ At the same time, each `Window` is an independent root with its own supervision 
 
 ## Window-scoped singletons
 
-Qt applications that create a separate `QQmlEngine` per window usually do so to give each window its own instance of document or window-controller singletons. In Ljós, you keep one `Engine` and mark those per-window types with `#[qml_singleton(scope = "window")]`:
+To give each window its own instance of a document or window-controller singleton, keep one `Engine` and mark those per-window types with `#[qml_singleton(scope = "window")]`:
 
 ```rust
 use ljos::prelude::*;
@@ -128,7 +128,7 @@ Window scopes follow clear rules:
 
 ## Pre-populating a window scope from Rust
 
-Sometimes the host creates a window's state object in Rust before instantiating the window's root QML component (similar to `qmlRegisterSingletonInstance` in Qt). You can open a window scope ahead of time, insert your object into it, and then create the root inside that scope:
+Sometimes the host creates a window's state object in Rust before instantiating the window's root QML component. You can open a window scope ahead of time, insert your object into it, and then create the root inside that scope:
 
 1. Call `engine.window_scope()` to open a fresh scope.
 2. Call `engine.set_singleton_in::<T>(scope, obj)` to place an already-created object of type `T` into the scope.
