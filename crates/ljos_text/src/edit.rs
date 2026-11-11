@@ -137,9 +137,29 @@ pub struct EditTable {
     pub background: Option<std::sync::Arc<str>>,
     /// The colour behind each cell of the row, inside its padding.
     pub cells: Vec<Option<std::sync::Arc<str>>>,
-    /// Which paragraphs of each cell of the row break their lines only at
-    /// their line breaks; one missing wraps.
-    pub no_wrap: Vec<Vec<bool>>,
+    /// How each paragraph of each cell of the row is set; one missing is
+    /// a default paragraph.
+    pub paragraphs: Vec<Vec<EditCellParagraph>>,
+}
+
+/// How a paragraph of a table's cell stands in its cell, as a rich `Text`
+/// sets it: between two paragraphs the larger of the one's bottom margin
+/// and the other's top counts, and at the cell's top and bottom none does;
+/// it stands in from both sides of its column by its indents, and is set
+/// in what they leave of it by its alignment.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EditCellParagraph {
+    pub margin_top: f64,
+    pub margin_bottom: f64,
+    pub indent: f64,
+    pub indent_right: f64,
+    /// The bullet or number of a list item, drawn in the indent.
+    pub marker: Option<std::sync::Arc<str>>,
+    /// None is the start of the line, as the text reads.
+    pub align: Option<crate::rich::HAlign>,
+    /// The paragraph breaks its lines only at its line breaks, however
+    /// narrow the column.
+    pub no_wrap: bool,
 }
 
 /// A table of an [`EditLayout`]: where its rows and columns are, for a
@@ -216,6 +236,12 @@ pub struct EditLayout {
     pub fills: Vec<(usize, Rect, std::sync::Arc<str>)>,
     /// The tables.
     pub tables: Vec<EditGrid>,
+    /// The markers of the list items in tables' cells, which
+    /// [`Self::blocks`] does not hold: each with its item's first line, its
+    /// left edge from where that line's runs are drawn from (they are moved
+    /// into their cell already), and its layout, whose baseline goes on the
+    /// line's.
+    pub cell_markers: Vec<(usize, f64, std::rc::Rc<EditLayout>)>,
 }
 
 impl EditLayout {

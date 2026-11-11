@@ -30,7 +30,9 @@ use ljos_text::rich::{
     BlockFormat, CharFormat, DocFont, HAlign, ImageFormat, OBJECT, ParseOptions, RichText,
     TextFormat, might_be_rich,
 };
-use ljos_text::{BUNDLED_FAMILY, EditBlock, EditTable, byte_to_utf16, utf16_to_byte};
+use ljos_text::{
+    BUNDLED_FAMILY, EditBlock, EditCellParagraph, EditTable, byte_to_utf16, utf16_to_byte,
+};
 
 use super::base::{SharedState, State, TextEditor};
 use super::edit::TextEdit;
@@ -820,12 +822,23 @@ pub(crate) fn edit_blocks(r: &RichEdit) -> Option<Vec<EditBlock>> {
                         padding: f64::from(t.table.padding),
                         background: t.table.background.clone(),
                         cells: t.cells.iter().map(|c| c.background.clone()).collect(),
-                        // For now the layout knows only which paragraphs of a
-                        // cell do not wrap.
-                        no_wrap: t
+                        paragraphs: t
                             .cells
                             .iter()
-                            .map(|c| c.paragraphs.iter().map(|p| p.no_wrap).collect())
+                            .map(|c| {
+                                c.paragraphs
+                                    .iter()
+                                    .map(|p| EditCellParagraph {
+                                        margin_top: f64::from(p.margin_top),
+                                        margin_bottom: f64::from(p.margin_bottom),
+                                        indent: f64::from(p.indent),
+                                        indent_right: f64::from(p.indent_right),
+                                        marker: p.marker.clone(),
+                                        align: p.align,
+                                        no_wrap: p.no_wrap,
+                                    })
+                                    .collect()
+                            })
                             .collect(),
                     }),
                 }
