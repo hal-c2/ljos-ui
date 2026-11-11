@@ -1,6 +1,7 @@
 //! The text written out as Qt writes it: [`RichText::html`] as its HTML
 //! document, [`RichText::markdown`] as its Markdown.
 
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -174,14 +175,18 @@ impl RichText {
                     if k == 0 && paragraph.is_empty() {
                         continue;
                     }
+                    // The paragraph's own record; one past the records'
+                    // end is a default paragraph.
+                    let mut block = format.and_then(|f| f.paragraphs.get(k)).map_or_else(
+                        || Cow::Owned(BlockFormat::default()),
+                        |p| Cow::Borrowed(&**p),
+                    );
                     // Measured: a th is written as a td in the middle.
-                    let paragraph_format = BlockFormat {
-                        align: format.is_some_and(|f| f.header).then_some(HAlign::Center),
-                        no_wrap: format.is_some_and(|f| f.paragraph_no_wrap(k)),
-                        ..BlockFormat::default()
-                    };
+                    if format.is_some_and(|f| f.header) && block.align.is_none() {
+                        block.to_mut().align = Some(HAlign::Center);
+                    }
                     out.push('\n');
-                    self.write_paragraph(out, &paragraph_format, paragraph, (false, false));
+                    self.write_paragraph(out, &block, paragraph, (false, false));
                 }
                 out.push_str("</td>");
             }
