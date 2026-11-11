@@ -4,7 +4,7 @@
 #   https://doc.qt.io/qt-6/qml-qtwebengine-webengineprofile.html
 #   https://doc.qt.io/qt-6/qml-qtwebengine-webenginesettings.html
 #   https://doc.qt.io/qt-6/qml-qtwebengine-webenginescript.html
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.12.0 (qml6, offscreen).
 # None of these load a page, so they run whether or not a web engine is
 # there to show one.
 
@@ -54,6 +54,27 @@ Feature: The types of QtWebEngine
     Then the property "loads" of "root" is "0 1 2 3"
     And the property "points" of "root" is "0 1 2"
     And the property "worlds" of "root" is "0 1 2"
+
+  @api-QtWebEngine.WebEngineNavigationRequest.navigationType @api-QtWebEngine.WebEngineNavigationRequest.action
+  Scenario: The kinds of navigation and the answers to it have their numbers
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        property string kinds: [WebEngineNavigationRequest.LinkClickedNavigation,
+          WebEngineNavigationRequest.TypedNavigation, WebEngineNavigationRequest.FormSubmittedNavigation,
+          WebEngineNavigationRequest.BackForwardNavigation, WebEngineNavigationRequest.ReloadNavigation,
+          WebEngineNavigationRequest.OtherNavigation, WebEngineNavigationRequest.RedirectNavigation].join(" ")
+        property string scoped: WebEngineNavigationRequest.NavigationType.ReloadNavigation
+        property string answers: [WebEngineNavigationRequest.AcceptRequest,
+          WebEngineNavigationRequest.IgnoreRequest].join(" ")
+      }
+      """
+    Then the property "kinds" of "root" is "0 1 2 3 4 5 6"
+    And the property "scoped" of "root" is "4"
+    And the property "answers" of "root" is "0 255"
 
   @api-QtWebEngine.WebEngine.defaultProfile
   Scenario: The default profile keeps nothing on disk
