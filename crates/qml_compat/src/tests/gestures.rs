@@ -132,13 +132,21 @@ fn a_new_name_a_script_binds_is_its_own() {
         "import QtQuick\nRectangle { opacity: { const fill = 1; return fill } }\n",
         "import QtQuick\nRectangle { function f() { if (true) { return fill } var fill = 1 } }\n",
         "import QtQuick\nRectangle { function f() { function fill() { return 1 } return fill() } }\n",
+        // A `var` is its function's, wherever in it it is declared.
+        "import QtQuick\nRectangle { function f() { if (true) { var fill = 1 } return fill } }\n",
+        // A loop's and a `catch`'s names are theirs.
+        "import QtQuick\nRectangle { function f() { let t = 0; for (const fill of [1]) t += fill; return t } }\n",
+        "import QtQuick\nRectangle { function f() { for (let fill = 0; fill < 2; fill++) {} return 0 } }\n",
+        "import QtQuick\nRectangle { function f() { try { return 1 } catch (fill) { return fill } } }\n",
     ] {
         lowered(source);
     }
     let capture = "`fill` would be the `Rectangle`'s own once lowered (Qt's `color`), not what it names in Qt";
     for source in [
-        // Declared in an inner block, read outside it.
-        "import QtQuick\nRectangle { function f() { if (true) { var fill = 1 } return fill } }\n",
+        // A `let` declared in an inner block, read outside it.
+        "import QtQuick\nRectangle { function f() { if (true) { let fill = 1 } return fill } }\n",
+        // A loop's name read after the loop.
+        "import QtQuick\nRectangle { function f() { for (const fill of [1]) {} return fill } }\n",
         // A parameter of another function.
         "import QtQuick\nRectangle { function f(fill) { return 1 }\n    function g() { return fill } }\n",
         "import QtQuick\nRectangle { function f() { const g = (fill) => fill; return fill } }\n",
@@ -165,6 +173,19 @@ fn a_name_a_script_binds_hides_an_id() {
             "import QtQuick\nRectangle { id: box; opacity: { const box = other; return box.color.a } }\n",
             "color",
         ),
+        // A loop's, a `catch`'s or an inner block's `var` hides it too.
+        (
+            "import QtQuick\nRectangle { id: box; function f() { for (const box of others) box.color = 1 } }\n",
+            "color",
+        ),
+        (
+            "import QtQuick\nRectangle { id: box; function f() { try {} catch (box) { return box.color } } }\n",
+            "color",
+        ),
+        (
+            "import QtQuick\nRectangle { id: box; function f() { if (true) { var box = other } return box.color } }\n",
+            "color",
+        ),
     ] {
         assert_eq!(
             kept_for(source),
@@ -177,6 +198,30 @@ fn a_name_a_script_binds_hides_an_id() {
         lowered("import QtQuick\nRectangle { id: box; function tint(c) { return box.color } }\n"),
         "pragma Scripts: JavaScript; import Ljos.Ui\n\
          Rectangle { id: box; function tint(c) { return box.fill } }\n"
+    );
+}
+
+/// A name a script binds hides a type of the file's and a member of the
+/// object around the script, as it hides an id: what is read off it is
+/// not the type's or the member's.
+#[test]
+fn a_name_a_script_binds_hides_a_type_and_a_member() {
+    for source in [
+        "import QtQuick\nItem { component Swatch: Rectangle {}\n    function f(list) { for (const Swatch of list) return Swatch.color } }\n",
+        "import QtQuick\nItem { component Swatch: Rectangle {}\n    function f() { try {} catch (Swatch) { return Swatch.color } } }\n",
+    ] {
+        assert_eq!(
+            kept_for(source),
+            "`.color` is read off something whose type is not known",
+            "{source}"
+        );
+    }
+    // What a local holds is not followed as a font (docs/DIALECT.md §4.13):
+    // the loop's `font` is not the Text's, so its `pixelSize` stays.
+    let source = "import QtQuick\nText { function f(list) { for (const font of list) return font.pixelSize } }\n";
+    assert!(
+        lowered(source).contains("return font.pixelSize"),
+        "{source}"
     );
 }
 

@@ -5,9 +5,10 @@
 //! A type name a file writes is looked up here and nowhere else, so the
 //! rules ([`crate::rules`]) ask the same question and get the same answer:
 //! [`Scope::ty`] says which type a name is, and why the file is kept when
-//! the lowered file would find another. A name a script reads is not yet:
-//! the script visitor first asks what the script declares and binds, and
-//! the qualifiers, in orders of its own.
+//! the lowered file would find another. A name a script reads is the
+//! script's own before it is anything here: the script visitor asks that,
+//! and then the qualifiers, types and ids here, in one place
+//! (`Script::meaning`), for a rename and a member's type alike.
 
 use std::{cell::RefCell, collections::HashMap};
 

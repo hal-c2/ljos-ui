@@ -1934,30 +1934,51 @@ impl Script<'_, '_> {
         }
     }
 
+    /// What `name`, read unqualified at `at`, is, asked in the order Qt
+    /// looks: the script's own scopes first, then the file's qualifiers and
+    /// types (a name starting in upper case is never an id or a member), then
+    /// its ids, then the objects around the script. Every name a script
+    /// reads is asked here, so what is read off a name and the name itself
+    /// are never told apart.
+    fn meaning(&self, name: &str, at: u32) -> Meaning {
+        if self.own.binds(name, at) {
+            Meaning::Own
+        } else if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            if self.pass.scope.qualifiers.iter().any(|q| q == name) {
+                Meaning::Qualifier
+            } else {
+                Meaning::Type
+            }
+        } else if let Some(ty) = self.pass.scope.id(name) {
+            Meaning::Id(ty)
+        } else {
+            Meaning::Free
+        }
+    }
+
     fn name(&self, name: &str, at: u32) -> Ty {
-        // A parameter or a local of the script is found before an id and
-        // before any member, and what it holds is not known here.
-        if self.own.declares(name, at) {
-            return Ty::Unknown;
-        }
-        if let Some(ty) = self.pass.scope.id(name) {
-            return ty;
-        }
-        if name.starts_with(|c: char| c.is_ascii_uppercase())
-            && self
-                .pass
-                .scope
-                .local_root(name, self.pass.scope.imported_root(name))
-                .is_some()
-        {
-            // A type of the project read as a value is a singleton: the
-            // one object its file makes, so of the type its root is and of
-            // no type built on that. What the file declares is its own.
-            return match self.pass.named_type(name, 0, 0) {
-                Ok(Ty::Exact(ty) | Ty::Derived(ty)) => Ty::Exact(ty),
-                Ok(other) => other,
-                Err(_) => Ty::Unknown,
-            };
+        match self.meaning(name, at) {
+            // What a parameter or a local holds, or a module's namespace,
+            // is not known here.
+            Meaning::Own | Meaning::Qualifier => return Ty::Unknown,
+            Meaning::Id(ty) => return ty,
+            Meaning::Type
+                if self
+                    .pass
+                    .scope
+                    .local_root(name, self.pass.scope.imported_root(name))
+                    .is_some() =>
+            {
+                // A type of the project read as a value is a singleton: the
+                // one object its file makes, so of the type its root is and of
+                // no type built on that. What the file declares is its own.
+                return match self.pass.named_type(name, 0, 0) {
+                    Ok(Ty::Exact(ty) | Ty::Derived(ty)) => Ty::Exact(ty),
+                    Ok(other) => other,
+                    Err(_) => Ty::Unknown,
+                };
+            }
+            Meaning::Type | Meaning::Free => {}
         }
         if name == "parent" {
             // An Item; which one is known when the file runs.
@@ -2380,14 +2401,8 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
             return;
         }
-        if name.starts_with(|c: char| c.is_ascii_uppercase()) {
-            if self.pass.scope.qualifiers.iter().any(|q| q == name)
-                || self.own.binds(name, it.span.start)
-            {
-                // The file's own, or the script's: it means in the lowered
-                // file what it means in Qt's, whatever type has its name.
-                return;
-            }
+        let meaning = self.meaning(name, it.span.start);
+        if matches!(meaning, Meaning::Type) {
             if let Some(new) = self.pass.scope.renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
@@ -2433,13 +2448,10 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             self.keep(Cause::GrabPermissions, it.span.start);
             return;
         }
-        // A parameter or a local is found before an id and the scope's
-        // members.
-        if self.own.declares(name, it.span.start) {
-            return;
-        }
-        // An id is found before the scope's members, in Qt as once lowered.
-        if self.pass.scope.id(name).is_some() {
+        // The script's own, the file's qualifier or id: it means in the
+        // lowered file what it means in Qt's, whatever type or member of
+        // Ljós's has its name.
+        if !matches!(meaning, Meaning::Free) {
             return;
         }
         // Not the scope's own, the name is looked up on the root next, in
@@ -2502,6 +2514,23 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             );
         }
     }
+}
+
+/// What a name a script reads unqualified is ([`Script::meaning`]).
+#[derive(Clone, Copy)]
+enum Meaning {
+    /// A parameter, a local, a function or a class of the script's, in
+    /// whose scope it is read.
+    Own,
+    /// A qualifier the file imports a module under.
+    Qualifier,
+    /// A type's name: of a module the file imports, of the project, or of
+    /// none, and then perhaps the context's.
+    Type,
+    /// An id of the file, of the type it names.
+    Id(Ty),
+    /// A member of an object around the script, or a global.
+    Free,
 }
 
 impl Ty {

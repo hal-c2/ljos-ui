@@ -9,7 +9,7 @@
 use oxc_ast::ast::{
     ArrowFunctionExpression, BindingPattern, BlockStatement, CatchClause, Class, ClassType,
     Expression, ForInStatement, ForOfStatement, ForStatement, FormalParameters, Function,
-    FunctionBody, FunctionType, Statement, SwitchStatement, VariableDeclaration,
+    FunctionType, Statement, SwitchStatement, VariableDeclaration,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::Span;
@@ -38,10 +38,6 @@ impl<'a> Node<'_, 'a> {
 #[derive(Debug, Default)]
 pub(crate) struct Bindings {
     bound: Vec<(String, Span)>,
-    /// Each name a function's parameters bind, or a block or a function's
-    /// body declares as a statement of its own, with that function, block
-    /// or body: what [`declares`](Self::declares) answers by.
-    declared: Vec<(String, Span)>,
 }
 
 impl Bindings {
@@ -50,28 +46,16 @@ impl Bindings {
             // What the script itself declares is seen all through it.
             scopes: vec![(Span::new(0, u32::MAX), true)],
             bound: Vec::new(),
-            declared: Vec::new(),
         };
         script.visit(&mut collect);
         Bindings {
             bound: collect.bound,
-            declared: collect.declared,
         }
     }
 
     /// Whether `name`, read at `at`, is one of the script's own.
     pub(crate) fn binds(&self, name: &str, at: u32) -> bool {
         seen(&self.bound, name, at)
-    }
-
-    /// Whether `name`, read at `at`, is a parameter of a function around
-    /// it, or declared by a statement of a block or a function's body
-    /// around it. A `var` in an inner block read outside it, or a `for`'s
-    /// or a `catch`'s name, is one of the script's own that this does not
-    /// see: a member renamed where one of those may be read keeps the file,
-    /// as it always has.
-    pub(crate) fn declares(&self, name: &str, at: u32) -> bool {
-        seen(&self.declared, name, at)
     }
 }
 
@@ -81,49 +65,11 @@ fn seen(bound: &[(String, Span)], name: &str, at: u32) -> bool {
         .any(|(bound, scope)| bound == name && scope.start <= at && at < scope.end)
 }
 
-/// The names a function's parameters bind.
-fn parameters(params: &FormalParameters<'_>) -> impl Iterator<Item = String> {
-    let rest = params.rest.iter().map(|rest| &rest.rest.argument);
-    params
-        .items
-        .iter()
-        .map(|item| &item.pattern)
-        .chain(rest)
-        .flat_map(|pattern| pattern.get_binding_identifiers())
-        .map(|id| id.name.to_string())
-}
-
-/// The names `statements` declare directly: their `var`s, `let`s,
-/// `const`s, functions and classes.
-fn declarations(statements: &[Statement<'_>]) -> Vec<String> {
-    let mut names = Vec::new();
-    for statement in statements {
-        match statement {
-            Statement::VariableDeclaration(declaration) => names.extend(
-                declaration
-                    .declarations
-                    .iter()
-                    .flat_map(|d| d.id.get_binding_identifiers())
-                    .map(|id| id.name.to_string()),
-            ),
-            Statement::FunctionDeclaration(function) => {
-                names.extend(function.id.as_ref().map(|id| id.name.to_string()));
-            }
-            Statement::ClassDeclaration(class) => {
-                names.extend(class.id.as_ref().map(|id| id.name.to_string()));
-            }
-            _ => {}
-        }
-    }
-    names
-}
-
 struct Collect {
     /// The scopes around the node being visited, innermost last, and
     /// whether each is a function's (where a `var` is seen).
     scopes: Vec<(Span, bool)>,
     bound: Vec<(String, Span)>,
-    declared: Vec<(String, Span)>,
 }
 
 impl Collect {
@@ -143,11 +89,6 @@ impl Collect {
         for id in pattern.get_binding_identifiers() {
             self.bound.push((id.name.to_string(), scope));
         }
-    }
-
-    fn declare(&mut self, names: impl IntoIterator<Item = String>, scope: Span) {
-        self.declared
-            .extend(names.into_iter().map(|name| (name, scope)));
     }
 
     fn within(&mut self, span: Span, function: bool, walk: impl FnOnce(&mut Self)) {
@@ -170,17 +111,10 @@ impl<'a> Visit<'a> for Collect {
             };
             self.bound.push((id.name.to_string(), scope));
         }
-        self.declare(parameters(&it.params), it.span);
         self.within(it.span, true, |c| walk::walk_function(c, it, flags));
     }
 
-    fn visit_function_body(&mut self, it: &FunctionBody<'a>) {
-        self.declare(declarations(&it.statements), it.span);
-        walk::walk_function_body(self, it);
-    }
-
     fn visit_arrow_function_expression(&mut self, it: &ArrowFunctionExpression<'a>) {
-        self.declare(parameters(&it.params), it.span);
         self.within(it.span, true, |c| {
             walk::walk_arrow_function_expression(c, it);
         });
@@ -221,7 +155,6 @@ impl<'a> Visit<'a> for Collect {
     }
 
     fn visit_block_statement(&mut self, it: &BlockStatement<'a>) {
-        self.declare(declarations(&it.body), it.span);
         self.within(it.span, false, |c| walk::walk_block_statement(c, it));
     }
 
