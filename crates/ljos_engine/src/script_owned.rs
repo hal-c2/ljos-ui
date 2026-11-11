@@ -42,7 +42,7 @@ impl Engine {
     /// Gives `obj` to the scripts: it lives as long as one holds it or a
     /// property does. Only before `obj` first crosses to JS; false, and
     /// nothing changes, after that or without a JS host.
-    pub(crate) fn give_to_script(&self, obj: ObjectId) -> bool {
+    pub fn give_to_script(&self, obj: ObjectId) -> bool {
         let Ok(js) = self.js() else { return false };
         if !js.host.give_to_script(obj_to_u64(obj)) {
             return false;
