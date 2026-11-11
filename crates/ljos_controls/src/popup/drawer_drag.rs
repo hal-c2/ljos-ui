@@ -29,7 +29,7 @@ use ljos_runtime::Time;
 
 use super::drawer::{Drawer, edge};
 use super::kind::kind_of;
-use super::overlay::{is_modal, point_in, stack};
+use super::overlay::{Shown, is_modal, point_in, stack};
 use super::{Popup, item_of, popup_of};
 use crate::util::{check, flag, num, set_derived};
 
@@ -188,7 +188,7 @@ fn drag_of(engine: &Engine, drawer: ObjectId, item: ObjectId, ev: &PointerEvent)
 /// The drawer a press can drag: the open one it is on, or a closed one at
 /// whose edge it is.
 fn candidate(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) -> Option<Drag> {
-    for (item, popup) in stack(engine, overlay).into_iter().rev() {
+    for &Shown { item, popup, .. } in stack(engine, overlay).iter().rev() {
         if point_in(engine, item, ev.pos) {
             let draggable = kind_of(engine, popup).is_drawer()
                 && flag(engine, popup, Drawer::INTERACTIVE.index)

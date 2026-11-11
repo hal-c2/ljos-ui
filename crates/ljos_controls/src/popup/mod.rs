@@ -29,6 +29,7 @@
 mod drawer;
 mod drawer_drag;
 mod item;
+mod keyboard;
 mod kind;
 mod lifecycle;
 mod overlay;
@@ -42,7 +43,7 @@ use ljos_engine::{
     ConnectionId, Cx, Engine, EngineError, Font, ObjectId, Prop, QmlList, QmlObject, QtObject,
     SignalIndex, Value, WriteKind, qml_impl,
 };
-use ljos_quick::focus::{FocusReason, active_focus_item, force_active_focus};
+use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_quick::{Item, is_item, set_parent_item};
 
 use crate::containers::{Host, content_size, host_complete};
@@ -121,9 +122,6 @@ pub(crate) struct PopupState {
     pub shown: Cell<bool>,
     /// The parent whose destruction clears the popup's logical parent.
     parent_destroyed: Cell<Option<(ObjectId, ConnectionId)>>,
-    /// What had the keyboard before the popup took it.
-    saved_focus: Cell<Option<ObjectId>>,
-    took_focus: Cell<bool>,
     /// `open()` and `close()` write `visible` themselves.
     switching: Cell<bool>,
     /// Which of the popup's transitions is running.
@@ -792,7 +790,7 @@ fn present(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), E
         WriteKind::Imperative,
     )?;
     overlay::changed(engine, home);
-    take_keyboard(engine, popup, state, item);
+    take_keyboard(engine, popup, item);
     item::set_modal(engine, popup, item)?;
     let then = state.when_shown.0.borrow().clone();
     if let Some(then) = then {
@@ -801,68 +799,55 @@ fn present(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), E
     Ok(())
 }
 
-/// Gives a shown popup the keyboard, if it wants it, and remembers who
-/// had it.
-fn take_keyboard(engine: &Engine, popup: ObjectId, state: &PopupState, item: ObjectId) {
-    if state.took_focus.get() || !flag(engine, popup, Popup::FOCUS.index) {
+/// Gives a shown popup the keyboard, if it wants it and has not taken it
+/// yet. Its overlay notes that it took it; what had it is known there.
+fn take_keyboard(engine: &Engine, popup: ObjectId, item: ObjectId) {
+    if !flag(engine, popup, Popup::FOCUS.index) {
         return;
     }
     let Some(home) = engine.visual_parent(item) else {
         return;
     };
-    let top = ljos_quick::window_item(engine, home);
-    state.saved_focus.set(active_focus_item(engine, top));
-    state.took_focus.set(true);
-    force_active_focus(engine, item, FocusReason::Popup);
+    if overlay::take_keyboard(engine, home, popup) {
+        force_active_focus(engine, item, FocusReason::Popup);
+    }
 }
 
-/// Gives the keyboard back to who had it before the popup took it.
-fn give_back_keyboard(
-    engine: &Engine,
-    state: &PopupState,
-    item: ObjectId,
-) -> Result<(), EngineError> {
-    if state.took_focus.replace(false) {
-        let saved = state.saved_focus.take().filter(|s| engine.is_alive(*s));
-        if flag(engine, item, Item::ACTIVE_FOCUS.index) {
-            match saved {
-                Some(s) => force_active_focus(engine, s, FocusReason::Popup),
-                None => engine.write(
-                    item,
-                    Item::FOCUS.index,
-                    Value::Bool(false),
-                    WriteKind::Imperative,
-                )?,
+/// The popup goes: if it has the keyboard, whether it took it or an item
+/// in it was given focus, the keyboard goes where its overlay says
+/// ([`keyboard`]), and never stays on something on its way out.
+fn give_back_keyboard(engine: &Engine, popup: ObjectId, item: ObjectId) -> Result<(), EngineError> {
+    let Some(home) = engine.visual_parent(item) else {
+        return Ok(());
+    };
+    let had = flag(engine, item, Item::ACTIVE_FOCUS.index);
+    match overlay::give_keyboard(engine, home, popup, had) {
+        keyboard::Give::Keep => {}
+        keyboard::Give::Popup(to) => {
+            if let Some(to) = item_of(engine, to) {
+                force_active_focus(engine, to, FocusReason::Popup);
             }
-        } else {
-            pass_on_saved_focus(engine, item, saved);
         }
+        keyboard::Give::Content(to) => force_active_focus(engine, to, FocusReason::Popup),
+        keyboard::Give::Nobody => engine.write(
+            item,
+            Item::FOCUS.index,
+            Value::Bool(false),
+            WriteKind::Imperative,
+        )?,
     }
     Ok(())
 }
 
-/// A popup that closes while another one above it has the keyboard
-/// hands what it saved to the one that saved something inside it: that
-/// one gives the keyboard back past both, never to an item that is
-/// hidden now (measured on Qt 6.11.2 and 6.12.0,
-/// `popup-focus.feature`).
-fn pass_on_saved_focus(engine: &Engine, item: ObjectId, saved: Option<ObjectId>) {
-    let Some(overlay) = engine.visual_parent(item) else {
-        return;
-    };
-    for (_, other) in overlay::stack(engine, overlay) {
-        let Some(st) = state_of(engine, other) else {
-            continue;
-        };
-        if st.took_focus.get()
-            && st
-                .saved_focus
-                .get()
-                .is_some_and(|s| item::is_inside(engine, s, item))
-        {
-            st.saved_focus.set(saved);
-        }
-    }
+/// Whether `popup` is shown and took the keyboard when it opened, so that
+/// what is in it may move the keyboard about: a menu's current item.
+pub(crate) fn holds_keyboard(engine: &Engine, popup: ObjectId) -> bool {
+    engine.untrack(|| {
+        is_shown(engine, popup)
+            && item_of(engine, popup)
+                .and_then(|i| engine.visual_parent(i))
+                .is_some_and(|home| overlay::holds_keyboard(engine, home, popup))
+    })
 }
 
 /// Takes a shown popup off the screen. The keyboard goes back first, so
@@ -872,7 +857,7 @@ fn withdraw(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), 
     let Some(item) = item_of(engine, popup) else {
         return Ok(());
     };
-    give_back_keyboard(engine, state, item)?;
+    give_back_keyboard(engine, popup, item)?;
     engine.write(
         item,
         Item::VISIBLE.index,
@@ -883,6 +868,7 @@ fn withdraw(engine: &Engine, popup: ObjectId, state: &PopupState) -> Result<(), 
         engine.destroy(d);
     }
     if let Some(home) = engine.visual_parent(item) {
+        overlay::remove_shown(engine, home, popup);
         overlay::changed(engine, home);
     }
     item::set_modal(engine, popup, item)
