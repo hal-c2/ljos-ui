@@ -171,6 +171,30 @@ Feature: A view is asked before its page goes somewhere
     Then the property "seen" of "view" is "asked"
     And the property "title" of "view" is "Fixture Page"
 
+  @api-QtWebEngine.WebEngineNavigationRequest.navigationType
+  Scenario: Reloading after a URL within the same page is asked for
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property bool moved: false
+        property string seen: ""
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus && !moved) {
+          moved = true; url = Qt.resolvedUrl("page.html#below") } }
+        onNavigationRequested: request => {
+          if (request.navigationType === WebEngineNavigationRequest.ReloadNavigation) seen = "asked" }
+      }
+      """
+    When 2 seconds pass
+    And the method "reload" of "view" is called
+    And 2 seconds pass
+    Then the property "seen" of "view" is "asked"
+    And the property "loading" of "view" is false
+
   @api-QtWebEngine.WebEngineNavigationRequest.reject @api-QtWebEngine.WebEngineView.url
   Scenario: A URL whose request is rejected leaves the view at the page before
     Given the QML:

@@ -716,9 +716,10 @@ struct Shared {
     browser: Mutex<Option<::cef::Browser>>,
     observer: Mutex<Option<Registration>>,
     /// The URL the view was given, and asked about: the browser going
-    /// there is not asked about again. Only that URL: a load Chromium
-    /// does not ask about (within the document, refused) leaves it here,
-    /// and the page going anywhere else is asked about.
+    /// there is not asked about again. Only that URL, and only until the
+    /// main frame starts there or shows it within the document; a load
+    /// refused before it starts leaves it here, and the page going
+    /// anywhere else is asked about.
     typed: Mutex<Option<String>>,
     /// Where the view kept the main frame from going: the load that
     /// would have been there stops before it starts.
@@ -1404,7 +1405,16 @@ wrap_display_handler! {
             url: Option<&CefString>,
         ) {
             if !self.shared.booting() && is_main(frame).is_some() {
-                self.shared.sink.send(Ev::Url(string_of(url)));
+                let url = string_of(url);
+                // A load within the document never passes
+                // `on_before_browse`: once the view's URL is there, the
+                // page going there again is the page's own and is asked.
+                let mut typed = Shared::lock(&self.shared.typed);
+                if typed.as_deref().is_some_and(|t| same_url(t, &url)) {
+                    *typed = None;
+                }
+                drop(typed);
+                self.shared.sink.send(Ev::Url(url));
             }
         }
 
