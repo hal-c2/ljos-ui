@@ -49,6 +49,10 @@
 //! reset of a colour, [`LOCALE_RESET`]): the object has what is above it again and follows
 //! it.
 //!
+//! A popup is one of them too, though it is no item: it takes its look
+//! from the window it belongs to, and its item takes its look from it, as
+//! a control does from the item it is in.
+//!
 //! Behaviour is pinned by `features/controls/control-font.feature`,
 //! `control-palette.feature`, `control-look-reset.feature`,
 //! `style-font.feature` and `application-font.feature`.
@@ -76,9 +80,9 @@ use crate::text_area::TextArea;
 use crate::text_field::TextField;
 use crate::util::{author_set, check, warn};
 use crate::window::{ApplicationWindow, Window};
-use ljos_quick::palette::{
-    FUSION_ROLES, ROLE_COUNT, ROLES, Role, group_props, has_groups, role_props,
-};
+use ljos_quick::palette::{FUSION_ROLES, ROLE_COUNT, ROLES, Role, group_props, role_props};
+
+use crate::popup::Popup;
 
 /// Which of the types that have a font or a palette an object is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -91,6 +95,8 @@ pub(crate) enum Kind {
     /// A palette and no font.
     Window,
     ApplicationWindow,
+    /// A popup: a font, a palette and a locale, for the item that draws it.
+    Popup,
     /// Any other item: a palette that hands down what was set on it and
     /// nothing else (checked on qml6: a `Row` with `palette.button` set
     /// gives it to the buttons inside it).
@@ -300,13 +306,7 @@ struct PlainItems {
     /// This module is writing a colour of a group: the write is not an
     /// author's.
     grouping: Cell<bool>,
-    /// Colours made the author's by a write of the value they had, which
-    /// their watches did not hear ([`made_own`]).
-    made_own: RefCell<HashSet<(ObjectId, PropIndex)>>,
     /// How many times a plain item looked for the colours above it.
-    /// What is handed down once [`handed_together`] returns: each object
-    /// with the roles of it that changed.
-    gathered: RefCell<Option<Vec<(ObjectId, u32)>>>,
     #[cfg(test)]
     looks: Cell<u64>,
 }
@@ -440,7 +440,9 @@ fn move_epoch(engine: &Engine, which: Which) {
 /// What kind of font-and-palette object `obj` is, if any.
 pub(crate) fn kind_of(engine: &Engine, obj: ObjectId) -> Option<Kind> {
     let meta = engine.meta_of(obj)?;
-    if meta.inherits(Control::static_meta()) {
+    if meta.inherits(Popup::static_meta()) {
+        Some(Kind::Popup)
+    } else if meta.inherits(Control::static_meta()) {
         Some(Kind::Control)
     } else if meta.inherits(Label::static_meta()) {
         Some(Kind::Label)
@@ -465,6 +467,7 @@ fn font_prop(kind: Kind) -> Option<PropIndex> {
         Kind::Label => Some(Text::FONT.index),
         Kind::TextField | Kind::TextArea => Some(TextEditor::FONT.index),
         Kind::ApplicationWindow => Some(ApplicationWindow::FONT.index),
+        Kind::Popup => Some(Popup::FONT.index),
         Kind::Window | Kind::Item => None,
     }
 }
@@ -473,6 +476,7 @@ fn locale_prop(kind: Kind) -> Option<PropIndex> {
     match kind {
         Kind::Control => Some(Control::LOCALE.index),
         Kind::ApplicationWindow => Some(ApplicationWindow::LOCALE.index),
+        Kind::Popup => Some(Popup::LOCALE.index),
         Kind::Label | Kind::TextField | Kind::TextArea | Kind::Window | Kind::Item => None,
     }
 }
@@ -484,12 +488,14 @@ fn roles_of(kind: Kind) -> &'static [PropIndex; ROLE_COUNT] {
     static TEXT_FIELD: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     static TEXT_AREA: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     static ITEM: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
+    static POPUP: OnceLock<[PropIndex; ROLE_COUNT]> = OnceLock::new();
     match kind {
         Kind::Control => CONTROL.get_or_init(|| role_props(Control::static_meta())),
         Kind::Label => LABEL.get_or_init(|| role_props(Label::static_meta())),
         Kind::TextField => TEXT_FIELD.get_or_init(|| role_props(TextField::static_meta())),
         Kind::TextArea => TEXT_AREA.get_or_init(|| role_props(TextArea::static_meta())),
         Kind::Item => ITEM.get_or_init(|| role_props(Item::static_meta())),
+        Kind::Popup => POPUP.get_or_init(|| role_props(Popup::static_meta())),
         // An ApplicationWindow's palette is its Window part's, which is its Item part's.
         Kind::Window | Kind::ApplicationWindow => {
             WINDOW.get_or_init(|| role_props(Window::static_meta()))
@@ -513,12 +519,14 @@ fn groups_of(kind: Kind) -> &'static [[PropIndex; ROLE_COUNT]; 3] {
     static TEXT_FIELD: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
     static TEXT_AREA: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
     static ITEM: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
+    static POPUP: OnceLock<[[PropIndex; ROLE_COUNT]; 3]> = OnceLock::new();
     match kind {
         Kind::Control => CONTROL.get_or_init(|| group_props(Control::static_meta())),
         Kind::Label => LABEL.get_or_init(|| group_props(Label::static_meta())),
         Kind::TextField => TEXT_FIELD.get_or_init(|| group_props(TextField::static_meta())),
         Kind::TextArea => TEXT_AREA.get_or_init(|| group_props(TextArea::static_meta())),
         Kind::Item => ITEM.get_or_init(|| group_props(Item::static_meta())),
+        Kind::Popup => POPUP.get_or_init(|| group_props(Popup::static_meta())),
         Kind::Window | Kind::ApplicationWindow => {
             WINDOW.get_or_init(|| group_props(Window::static_meta()))
         }
@@ -535,6 +543,7 @@ fn group_now(engine: &Engine, obj: ObjectId, kind: Kind) -> usize {
         Kind::Control | Kind::Label | Kind::TextField | Kind::TextArea => {
             engine.read(obj, Item::ENABLED.index).to_boolean()
         }
+        Kind::Popup => engine.read(obj, Popup::ENABLED.index).to_boolean(),
     };
     if enabled { ACTIVE } else { DISABLED }
 }
@@ -568,7 +577,7 @@ fn author_colour(
 /// Each slot's property on an object of kind `kind`: role `i` of slot
 /// `s` is at `s * ROLE_COUNT + i`.
 fn slots_of(kind: Kind) -> &'static [PropIndex; SLOTS] {
-    static SLOTS_OF: [OnceLock<[PropIndex; SLOTS]>; 6] = [const { OnceLock::new() }; 6];
+    static SLOTS_OF: [OnceLock<[PropIndex; SLOTS]>; 7] = [const { OnceLock::new() }; 7];
     let at = match kind {
         Kind::Control => 0,
         Kind::Label => 1,
@@ -576,6 +585,7 @@ fn slots_of(kind: Kind) -> &'static [PropIndex; SLOTS] {
         Kind::TextArea => 3,
         Kind::Item => 4,
         Kind::Window | Kind::ApplicationWindow => 5,
+        Kind::Popup => 6,
     };
     SLOTS_OF[at].get_or_init(|| {
         std::array::from_fn(|at| match at / ROLE_COUNT {
@@ -646,6 +656,7 @@ fn state_of(engine: &Engine, obj: ObjectId, kind: Kind) -> Option<Rc<InheritStat
         Kind::Window | Kind::ApplicationWindow => {
             engine.with::<Window, _>(obj, |c| c.inherit.clone())
         }
+        Kind::Popup => engine.with::<Popup, _>(obj, |c| c.inherit.clone()),
         Kind::Item => return None,
     }
     .ok()
@@ -749,27 +760,73 @@ pub(crate) fn attach(
     engine.effect_in(obj, move |e| {
         check(e, "palette", resolve_palette(e, obj, kind, &st));
     })?;
+    if kind == Kind::Popup {
+        hand_bound_down_together(engine, obj)?;
+    }
     Ok(())
 }
 
-/// Where the look of `obj` comes from next (tracked): the item it is in,
-/// and for a popup's item the window the popup belongs to, whatever the
-/// popup was written in (checked on qml6: a popup in a `Pane` has none of
-/// the pane's colours).
+/// A theme bound on a menu changes its colours together. One by one, each
+/// plain item in it looked for its colours once for each colour: the
+/// colours bound on a popup that change are handed down by one effect
+/// instead, once the bindings have run, and not by each colour's watch
+/// ([`group_written`]).
+fn hand_bound_down_together(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
+    let last: RefCell<Vec<(usize, Value)>> = RefCell::default();
+    engine
+        .effect_in(popup, move |e| {
+            let slots = slots_of(Kind::Popup);
+            let bound: Vec<(usize, Value)> = slots
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| e.untrack(|| e.provenance(popup, **p)) == Some(Provenance::Bound))
+                .map(|(at, p)| (at, e.read(popup, *p)))
+                .collect();
+            let before = last.replace(bound);
+            let now = last.borrow();
+            let roles = now
+                .iter()
+                .filter(|(at, v)| before.iter().any(|(b, w)| b == at && w != v))
+                .fold(0u32, |r, (at, _)| r | 1 << (at % ROLE_COUNT));
+            if roles != 0 {
+                e.untrack(|| hand_down(e, vec![popup], roles));
+            }
+        })
+        .map(|_| ())
+}
+
+/// Where the look of `obj` comes from next (tracked): the item it is in;
+/// for a popup's item, the popup; and for a popup, the window it belongs
+/// to, whatever it was written in (checked on qml6: a popup in a `Pane`
+/// has none of the pane's colours).
 fn above(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
     if let Some(popup) = crate::popup::popup_of(engine, obj) {
-        let parent = match engine.read(popup, crate::popup::Popup::PARENT.index) {
+        return Some(popup);
+    }
+    if crate::util::is_a::<Popup>(engine, obj) {
+        let parent = match engine.read(obj, Popup::PARENT.index) {
             Value::Object(p) => Some(p),
             _ => None,
         };
         // A drawer hangs from an overlay, which an item that hosts the
         // window may own: then the window it was written in.
         return window_above(engine, parent)
-            .or_else(|| window_above(engine, crate::popup::default_parent(engine, popup)));
+            .or_else(|| window_above(engine, crate::popup::default_parent(engine, obj)));
     }
     engine
         .visual_parent(obj)
         .or_else(|| ljos_quick::layer_host(engine, obj))
+}
+
+/// Whether a group of `obj`'s palette was ever written: until then its
+/// groups are Basic's. A popup's palette is its own, not an item's.
+fn has_groups(engine: &Engine, obj: ObjectId) -> bool {
+    engine
+        .with(obj, |p: &Popup| {
+            let p = &p.palette;
+            p.active.is_some() || p.inactive.is_some() || p.disabled.is_some()
+        })
+        .unwrap_or_else(|_| ljos_quick::palette::has_groups(engine, obj))
 }
 
 /// The nearest window at or above `cur` (tracked).
@@ -1153,7 +1210,9 @@ fn group_written(engine: &Engine, obj: ObjectId) {
                     // A colour already the author's was read by the
                     // controls that took it as they resolved; only the
                     // plain items below are handed it.
-                    if holds && was.get() {
+                    if holds && was.get() && kind == Kind::Popup {
+                        // [`hand_bound_down_together`] does.
+                    } else if holds && was.get() {
                         let i = role_index(kind, p);
                         e.after_creation(move |e| {
                             hand_down(e, vec![obj], i.map_or(ALL_ROLES, |i| 1 << i))
@@ -1167,11 +1226,11 @@ fn group_written(engine: &Engine, obj: ObjectId) {
             };
             if given {
                 over_groups(e, obj, kind, p, v);
-                colour_written(e, obj, role_index(kind, p), was_own(e, obj, p, &was));
+                colour_written(e, obj, role_index(kind, p), was.replace(true));
             } else if author_set(e, obj, p) {
                 was.set(true);
             } else {
-                not_own(e, obj, p, &was);
+                was.set(false);
             }
         });
         check(engine, "palette", watched.map(|_| ()));
@@ -1226,9 +1285,9 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
             let watched = engine.watch(item, p, move |e, v| {
                 if author_set(e, item, p) {
                     over_groups(e, item, Kind::Item, p, v);
-                    colour_written(e, item, Some(i), was_own(e, item, p, &was));
+                    colour_written(e, item, Some(i), was.replace(true));
                 } else {
-                    not_own(e, item, p, &was);
+                    was.set(false);
                 }
             });
             check(engine, "palette", watched.map(|_| ()));
@@ -1241,43 +1300,6 @@ fn item_palette_set(engine: &Engine, item: ObjectId, written: bool) {
         // Made inside items that hand colours down: they did so before it was.
         engine.untrack(|| take_from_above(engine, item, ALL_ROLES));
     }
-}
-
-/// `obj`'s colour `p` was the author's before the write being heard, by
-/// what this watch last heard of it or by [`made_own`]. It is from now.
-fn was_own(engine: &Engine, obj: ObjectId, p: PropIndex, was: &Cell<bool>) -> bool {
-    let told = || {
-        engine
-            .extension::<PlainItems>()
-            .made_own
-            .borrow()
-            .contains(&(obj, p))
-    };
-    was.replace(true) || told()
-}
-
-/// `obj`'s colour `p` is not the author's after the write being heard.
-fn not_own(engine: &Engine, obj: ObjectId, p: PropIndex, was: &Cell<bool>) {
-    was.set(false);
-    engine
-        .extension::<PlainItems>()
-        .made_own
-        .borrow_mut()
-        .remove(&(obj, p));
-}
-
-/// `obj`'s colour `p` was made the author's by a write of the value it
-/// had already. Its watch did not hear it, so the next change would be
-/// news to every object in the scene, as a colour that was not the
-/// author's: a theme bound on many menus moved the epoch once for each
-/// on its first switch. The controls below look again now instead.
-pub(crate) fn made_own(engine: &Engine, obj: ObjectId, p: PropIndex) {
-    engine
-        .extension::<PlainItems>()
-        .made_own
-        .borrow_mut()
-        .insert((obj, p));
-    colours_changed(engine, obj);
 }
 
 /// An author changed `obj`'s colours: the controls below look again, and
@@ -1321,25 +1343,6 @@ fn colour_written(engine: &Engine, obj: ObjectId, role: Option<usize>, was: bool
     }
 }
 
-/// Runs `f`, and hands the colours it changes down to the plain items
-/// once it returns, each object's once with all of its roles that changed.
-/// One by one, a theme bound on a menu had each plain item in it look for
-/// its colours twice for each colour: once for the watch on the popup's
-/// item, once for the watch on its groups.
-pub(crate) fn handed_together<R>(engine: &Engine, f: impl FnOnce() -> R) -> R {
-    let plain = engine.extension::<PlainItems>();
-    if plain.gathered.borrow().is_some() {
-        return f();
-    }
-    *plain.gathered.borrow_mut() = Some(Vec::new());
-    let r = f();
-    let gathered = plain.gathered.borrow_mut().take().unwrap_or_default();
-    for (obj, roles) in gathered {
-        hand_down(engine, vec![obj], roles);
-    }
-    r
-}
-
 /// Hands the colours of the objects an author changed down to the plain
 /// items below them.
 fn hand_down_to_plain_items(engine: &Engine) {
@@ -1350,15 +1353,6 @@ fn hand_down_to_plain_items(engine: &Engine) {
 /// Hands the colours of `from` down to the plain items below them: the
 /// roles in the set `roles`.
 fn hand_down(engine: &Engine, from: Vec<ObjectId>, roles: u32) {
-    if let Some(gathered) = &mut *engine.extension::<PlainItems>().gathered.borrow_mut() {
-        for obj in from {
-            match gathered.iter_mut().find(|(o, _)| *o == obj) {
-                Some((_, r)) => *r |= roles,
-                None => gathered.push((obj, roles)),
-            }
-        }
-        return;
-    }
     let mut seen = HashSet::new();
     let mut stack: Vec<ObjectId> = Vec::new();
     for obj in from {
@@ -1366,6 +1360,8 @@ fn hand_down(engine: &Engine, from: Vec<ObjectId>, roles: u32) {
             continue;
         }
         stack.extend(engine.visual_children(obj));
+        // A popup is no item: what is in it is in its item.
+        stack.extend(crate::popup::item_of(engine, obj));
         while let Some(item) = stack.pop() {
             // Under two of the objects: handed down once.
             if !seen.insert(item) {
@@ -1491,9 +1487,7 @@ fn role_at(
 /// role is a group's, a colour set on the object's palette is one.
 fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
     let Some((kind, group, i)) = role_at(engine, obj, prop) else {
-        // A popup's colours are its item's.
-        return crate::popup::look_from_above(engine, obj, prop)
-            .unwrap_or_else(|| engine.default_value(obj, prop));
+        return engine.default_value(obj, prop);
     };
     let g = match group {
         Some(g) => {
@@ -1559,10 +1553,7 @@ fn style_roles(engine: &Engine) -> Option<&'static [Role; ROLE_COUNT]> {
 
 fn take_role_back(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
     if role_at(engine, obj, prop).is_none() {
-        return match crate::popup::take_look_back(engine, obj, prop) {
-            Some(done) => done,
-            None => engine.reset_to_default(obj, prop),
-        };
+        return engine.reset_to_default(obj, prop);
     }
     let above = engine.untrack(|| role_from_above(engine, obj, prop));
     engine.reset_to(obj, prop, above)?;
