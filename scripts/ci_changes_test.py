@@ -158,6 +158,11 @@ class Plans(unittest.TestCase):
         self.assertEqual(tested(out), {"ljos_cli"})
         self.assertFalse(out["clippy"])
 
+    def test_a_rust_site_page_also_tests_the_skills_that_copy_it(self):
+        out = run("docs/site/rust/models.md")
+        self.assertEqual(tested(out), {"ljos_cli", "ljos_mcp_author"})
+        self.assertFalse(out["clippy"])
+
     def test_a_crates_notes_test_that_crate_only(self):
         out = run("crates/ljos_engine/README.md")
         self.assertEqual(tested(out), {"ljos_engine"})
