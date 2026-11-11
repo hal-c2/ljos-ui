@@ -14,7 +14,7 @@
 mod controls;
 mod core;
 mod dialogs;
-mod gestures;
+pub(crate) mod gestures;
 pub(crate) mod layout;
 mod loader;
 mod models;
@@ -27,14 +27,17 @@ mod types;
 mod ui;
 mod window;
 
+pub(crate) use gestures::gesture;
 pub use layout::LAYOUT_RENAMES;
 pub(crate) use layout::arrange;
 pub(crate) use text::font;
 pub use text::font::FONT_RENAMES;
 
+use std::ops::Range;
+
 use qml_edit::Change;
 use qml_syntax::ast::QmlObject;
-use qt_types::Type;
+use qt_types::{Module, Type};
 
 use crate::{Kept, Rename, Ty};
 
@@ -63,11 +66,37 @@ pub(crate) trait Rule: Sync {
     ) -> Result<Vec<Change>, Kept> {
         Ok(Vec::new())
     }
+    /// What the `index`th member of `parent`, an object of one of them, is
+    /// written as instead of what the pass makes of it, if the rule says.
+    fn child(
+        &self,
+        _parent: &QmlObject<'_>,
+        _on: Ty,
+        _index: usize,
+        _file: &dyn File,
+    ) -> Option<Child> {
+        None
+    }
     /// The members a script may name unqualified, in a scope one of them
     /// is in, that [`File::names_unqualified`] is asked about.
     fn unqualified(&self) -> &'static [&'static str] {
         &[]
     }
+}
+
+/// What a rule writes for a child: the pass lowers it as it would, then
+/// makes these edits of it.
+pub(crate) struct Child {
+    /// Text replaced as given; what the pass makes inside these ranges is
+    /// dropped.
+    pub(crate) replace: Vec<(Range<usize>, String)>,
+    /// Bindings copied, as the pass lowers them, into an object of their
+    /// own written at `end`.
+    pub(crate) copies: Vec<Range<usize>>,
+    /// The type of that object.
+    pub(crate) copied_into: &'static str,
+    /// Where it goes: the end of the child.
+    pub(crate) end: usize,
 }
 
 /// What a rule may ask of the file the pass is lowering.
@@ -91,26 +120,39 @@ pub(crate) trait File {
     /// root binds, with those of the roots it is built on; `None` for a
     /// type that is neither.
     fn root_bindings(&self, name: &str) -> Option<Vec<String>>;
+    /// Qt's QtQuick, as the file imports it.
+    fn quick(&self) -> &'static Module;
+    /// Ljós's Ljos.Ui, which the lowered file imports.
+    fn ui(&self) -> &'static Module;
+    /// Whether `name` is an id of the file.
+    fn is_id(&self, name: &str) -> bool;
+    /// Whether a script of the file reads `name` unqualified, or a
+    /// binding's name starts with it.
+    fn is_read(&self, name: &str) -> bool;
 }
 
-/// Every rule, joined here and nowhere else; a Qt type has one.
-const RULES: &[&dyn Rule] = &[&font::FONT, &loader::source::LOADER, &arrange::ARRANGE];
+/// Every rule, joined here and nowhere else; a Qt type is owned by one.
+const RULES: &[&dyn Rule] = &[
+    &font::FONT,
+    &loader::source::LOADER,
+    &arrange::ARRANGE,
+    &gesture::GESTURE,
+];
 
-/// The rule of what the pass knows as `on`, if one owns it or what it is
-/// built on.
-pub(crate) fn rule_of(on: Ty) -> Option<&'static dyn Rule> {
-    let mut ty = match on {
-        Ty::Font => return owner("font"),
-        Ty::Exact(ty) | Ty::Derived(ty) => Some(ty),
-        Ty::Plain | Ty::Unknown | Ty::Native(..) => return None,
+/// The rules of what the pass knows as `on`: the one that owns it, then
+/// those that own what it is built on, nearest first.
+pub(crate) fn rules_of(on: Ty) -> impl Iterator<Item = &'static dyn Rule> {
+    let (font, mut ty) = match on {
+        Ty::Font => (owner("font"), None),
+        Ty::Exact(ty) | Ty::Derived(ty) => (None, Some(ty)),
+        Ty::Plain | Ty::Unknown | Ty::Native(..) => (None, None),
     };
-    while let Some(at) = ty {
-        if let Some(rule) = owner(at.name) {
-            return Some(rule);
-        }
+    let built_on = std::iter::from_fn(move || {
+        let at = ty?;
         ty = at.prototype();
-    }
-    None
+        Some(at.name)
+    });
+    font.into_iter().chain(built_on.filter_map(owner))
 }
 
 /// The rule that owns `name`.
@@ -119,6 +161,26 @@ fn owner(name: &str) -> Option<&'static dyn Rule> {
         .iter()
         .copied()
         .find(|rule| rule.owns().contains(&name))
+}
+
+/// Whether `inner` lies within `outer`.
+pub(crate) fn within(inner: &Range<usize>, outer: &Range<usize>) -> bool {
+    outer.start <= inner.start && inner.end <= outer.end
+}
+
+/// `range` of `source` with the `changes` that lie in it made.
+pub(crate) fn lowered_text(source: &str, range: &Range<usize>, changes: &[Change]) -> String {
+    let mut inside: Vec<Change> = changes
+        .iter()
+        .filter(|c| within(&c.range, range))
+        .map(|c| Change {
+            range: c.range.start - range.start..c.range.end - range.start,
+            replacement: c.replacement.clone(),
+        })
+        .collect();
+    inside.sort_by_key(|c| c.range.start);
+    inside.dedup();
+    qml_edit::splice(&source[range.clone()], &inside)
 }
 
 /// Every name a rule asks about unqualified.

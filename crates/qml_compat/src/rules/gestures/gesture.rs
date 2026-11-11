@@ -26,7 +26,36 @@ use oxc_ast::ast::{Expression, IdentifierReference};
 use oxc_ast_visit::Visit;
 use oxc_syntax::scope::ScopeFlags;
 use qml_syntax::ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject};
-use qt_types::{Module, Type};
+use qt_types::Type;
+
+use crate::Ty;
+use crate::rules::{Child, File, Rule};
+
+/// The rule of a `MouseArea` that fills its parent, which is the parent's:
+/// it owns the items a gesture is put on, and what is built on them.
+pub(crate) struct GestureRule;
+
+pub(crate) const GESTURE: GestureRule = GestureRule;
+
+impl Rule for GestureRule {
+    fn owns(&self) -> &'static [&'static str] {
+        PARENTS
+    }
+
+    fn child(
+        &self,
+        parent: &QmlObject<'_>,
+        on: Ty,
+        index: usize,
+        file: &dyn File,
+    ) -> Option<Child> {
+        // A type built on one may take the pointer itself.
+        let Ty::Exact(parent_ty) = on else {
+            return None;
+        };
+        plan(file, parent, parent_ty, index)
+    }
+}
 
 /// What the area's `anchors.fill: parent` becomes: a tap is let go inside,
 /// and no hold is too long for one, as a click.
@@ -63,40 +92,15 @@ const INTERACTIVE: &[&str] = &[
     "Loader",
 ];
 
-/// The edits that make an area gestures.
-pub(crate) struct Plan {
-    /// Text replaced as given; what the pass makes inside these ranges is
-    /// dropped.
-    pub(crate) replace: Vec<(Range<usize>, String)>,
-    /// The bindings the `Hover` copies, as the pass lowers them.
-    pub(crate) hover: Vec<Range<usize>>,
-    /// The end of the area: where the `Hover` goes.
-    pub(crate) end: usize,
-}
-
-/// What the plan needs of the file.
-pub(crate) struct File<'f> {
-    pub(crate) source: &'f str,
-    pub(crate) quick: &'static Module,
-    pub(crate) ui: &'static Module,
-    /// The type a name of an object's type is in the file, where it is
-    /// Qt's.
-    pub(crate) qt_type: &'f dyn Fn(&str) -> Option<&'static Type>,
-    /// Whether a name is an id of the file.
-    pub(crate) is_id: &'f dyn Fn(&str) -> bool,
-    /// Every name a script of the file reads unqualified, or a binding's
-    /// name starts with.
-    pub(crate) read: &'f HashSet<String>,
-}
-
 /// The gestures the `index`th member of `parent`, of type `parent_ty`, is,
-/// or `None` where it stays a `PointerArea`.
-pub(crate) fn plan(
-    file: &File<'_>,
+/// or `None` where it stays a `PointerArea`. The `Hover` copies what the
+/// area binds of the cursor.
+fn plan(
+    file: &dyn File,
     parent: &QmlObject<'_>,
     parent_ty: &'static Type,
     index: usize,
-) -> Option<Plan> {
+) -> Option<Child> {
     let QmlMember::Object(area) = &parent.members[index] else {
         return None;
     };
@@ -141,7 +145,7 @@ pub(crate) fn plan(
     }
     if let Some(id) = find("id")
         && let QmlBindingValue::Expression(Expression::Identifier(id)) = &id.value
-        && file.read.contains(id.name.as_str())
+        && file.is_read(&id.name)
     {
         return None;
     }
@@ -159,9 +163,9 @@ pub(crate) fn plan(
 
     // A name read unqualified is the area's in Qt, and the gesture's once
     // lowered; one neither has is found further out in both.
-    let mouse_area = file.quick.type_named("MouseArea")?;
-    let tap = file.ui.type_named("Tap")?;
-    let hover = file.ui.type_named("Hover")?;
+    let mouse_area = file.quick().type_named("MouseArea")?;
+    let tap = file.ui().type_named("Tap")?;
+    let hover = file.ui().type_named("Hover")?;
     let mut names = Names::default();
     for (name, binding) in &bindings {
         if name != "id" && name != "anchors.fill" {
@@ -173,7 +177,7 @@ pub(crate) fn plan(
         if name == "mouse" {
             return None;
         }
-        if name == "parent" || (file.is_id)(name) {
+        if name == "parent" || file.is_id(name) {
             continue;
         }
         if has(mouse_area, name) || has(tap, name) || (cursor.is_some() && has(hover, name)) {
@@ -181,7 +185,7 @@ pub(crate) fn plan(
         }
     }
 
-    let source = file.source;
+    let source = file.source();
     let span = |b: &QmlBinding<'_>| b.span.start as usize..b.span.end as usize;
     let name_span = |b: &QmlBinding<'_>| b.name.span.start as usize..b.name.span.end as usize;
     let mut replace = vec![
@@ -209,9 +213,10 @@ pub(crate) fn plan(
         }
         replace.push((removal(source, span(cursor)), String::new()));
     }
-    Some(Plan {
+    Some(Child {
         replace,
-        hover: copies,
+        copies,
+        copied_into: "Hover",
         end: area.span.end as usize,
     })
 }
@@ -234,14 +239,14 @@ fn binds<'o, 'a>(object: &'o QmlObject<'a>, name: &str) -> Option<&'o QmlBinding
 /// Whether `object`, or anything in it, may take the pointer: a type that
 /// does, one of the project's (which may hold anything), or a `Text` with
 /// links.
-fn takes_pointer(file: &File<'_>, object: &QmlObject<'_>) -> bool {
+fn takes_pointer(file: &dyn File, object: &QmlObject<'_>) -> bool {
     if !is_type(object) {
         return false;
     }
     let Some(name) = object.type_name.as_simple() else {
         return true;
     };
-    if (file.qt_type)(name).is_none()
+    if file.qt_type(name).is_none()
         || INTERACTIVE.contains(&name)
         || name.ends_with("Handler")
         || binds(object, "onLinkActivated").is_some()
@@ -341,28 +346,4 @@ impl<'a> Visit<'a> for Names {
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
         self.0.insert(it.name.to_string());
     }
-}
-
-/// Whether `inner` lies within `outer`.
-pub(crate) fn within(inner: &Range<usize>, outer: &Range<usize>) -> bool {
-    outer.start <= inner.start && inner.end <= outer.end
-}
-
-/// `range` of `source` with the `changes` that lie in it made.
-pub(crate) fn lowered_text(
-    source: &str,
-    range: &Range<usize>,
-    changes: &[qml_edit::Change],
-) -> String {
-    let mut inside: Vec<qml_edit::Change> = changes
-        .iter()
-        .filter(|c| within(&c.range, range))
-        .map(|c| qml_edit::Change {
-            range: c.range.start - range.start..c.range.end - range.start,
-            replacement: c.replacement.clone(),
-        })
-        .collect();
-    inside.sort_by_key(|c| c.range.start);
-    inside.dedup();
-    qml_edit::splice(&source[range.clone()], &inside)
 }

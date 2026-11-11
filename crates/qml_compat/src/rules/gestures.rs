@@ -1,5 +1,7 @@
 //! Rules of gestures and handlers: `TapHandler`, `DragHandler`, flicking.
 
+pub(crate) mod gesture;
+
 use super::Area;
 
 /// What a pointer handler accepts is what a gesture takes (docs/DIALECT.md
