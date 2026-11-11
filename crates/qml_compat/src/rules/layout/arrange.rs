@@ -63,12 +63,71 @@ use qml_edit::Change;
 use qml_syntax::ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject};
 use qt_types::Type;
 
-use crate::Kept;
 use crate::cause::{Differs, Layout};
+use crate::rules::{File, Rule};
+use crate::{Kept, Ty};
+
+/// The rule of what the pass lowers to an arrangement.
+pub(crate) struct ArrangeRule;
+
+pub(crate) const ARRANGE: ArrangeRule = ArrangeRule;
+
+/// Each type of Qt's an arrangement is lowered from: its module, its name
+/// and its shape.
+const SHAPES: &[(&str, &str, Shape)] = &[
+    ("QtQuick", "Row", Shape::Positioner { vertical: false }),
+    ("QtQuick", "Column", Shape::Positioner { vertical: true }),
+    ("QtQuick", "Grid", Shape::Grid),
+    ("QtQuick", "Flow", Shape::Flow),
+    (
+        "QtQuick.Layouts",
+        "RowLayout",
+        Shape::Layout { vertical: false },
+    ),
+    (
+        "QtQuick.Layouts",
+        "ColumnLayout",
+        Shape::Layout { vertical: true },
+    ),
+    ("QtQuick.Layouts", "GridLayout", Shape::GridLayout),
+];
+
+impl Rule for ArrangeRule {
+    fn owns(&self) -> &'static [&'static str] {
+        // The names of `SHAPES`, which a test holds equal.
+        &[
+            "Row",
+            "Column",
+            "Grid",
+            "Flow",
+            "RowLayout",
+            "ColumnLayout",
+            "GridLayout",
+        ]
+    }
+
+    fn object(
+        &self,
+        object: &QmlObject<'_>,
+        on: Ty,
+        a_root: bool,
+        file: &dyn File,
+    ) -> Result<Vec<Change>, Kept> {
+        // An object of a type built on one is the type's own: its file
+        // says how it arranges.
+        let Ty::Exact(ty) = on else {
+            return Ok(Vec::new());
+        };
+        match Shape::of(ty) {
+            Some(shape) => arrange(file.source(), object, shape, a_root, file),
+            None => Ok(Vec::new()),
+        }
+    }
+}
 
 /// What of Qt's an object is that the pass lowers to an arrangement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Shape {
+enum Shape {
     /// `Row` or `Column` of QtQuick.
     Positioner { vertical: bool },
     /// `RowLayout` or `ColumnLayout` of QtQuick.Layouts.
@@ -82,17 +141,11 @@ pub(crate) enum Shape {
 }
 
 impl Shape {
-    pub(crate) fn of(ty: &Type) -> Option<Shape> {
-        match (ty.module, ty.name) {
-            ("QtQuick", "Row") => Some(Shape::Positioner { vertical: false }),
-            ("QtQuick", "Column") => Some(Shape::Positioner { vertical: true }),
-            ("QtQuick", "Grid") => Some(Shape::Grid),
-            ("QtQuick", "Flow") => Some(Shape::Flow),
-            ("QtQuick.Layouts", "RowLayout") => Some(Shape::Layout { vertical: false }),
-            ("QtQuick.Layouts", "ColumnLayout") => Some(Shape::Layout { vertical: true }),
-            ("QtQuick.Layouts", "GridLayout") => Some(Shape::GridLayout),
-            _ => None,
-        }
+    fn of(ty: &Type) -> Option<Shape> {
+        SHAPES
+            .iter()
+            .find(|(module, name, _)| *module == ty.module && *name == ty.name)
+            .map(|(_, _, shape)| *shape)
     }
 
     fn vertical(self) -> bool {
@@ -151,24 +204,13 @@ const POSITIONER_ONLY: &[&str] = &[
 /// Names a script or another object reads of a positioner only.
 const POSITIONER_ONLY_NAMES: &[&str] = &["effectiveLayoutDirection", "forceLayout", "Positioner."];
 
-/// What the pass knows of the types it meets.
-pub(crate) trait Types {
-    /// The type of Qt's (QtQuick, QtQuick.Layouts or the controls) `name` names
-    /// in the file.
-    fn qt_type(&self, name: &str) -> Option<&'static Type>;
-    /// For a file of the project or an inline component, the names its
-    /// root binds, with those of the roots it is built on; `None` for a
-    /// type that is neither.
-    fn root_bindings(&self, name: &str) -> Option<Vec<String>>;
-}
-
 /// The edits that lower `object`, a `shape`, or why its file is kept.
-pub(crate) fn arrange(
+fn arrange(
     source: &str,
     object: &QmlObject<'_>,
     shape: Shape,
     a_root: bool,
-    types: &dyn Types,
+    types: &dyn File,
 ) -> Result<Vec<Change>, Kept> {
     let mut a = Arrange {
         source,
@@ -194,7 +236,7 @@ struct Arrange<'s, 't> {
     /// The root of the file or of an inline component: a file that uses
     /// it may size it.
     a_root: bool,
-    types: &'t dyn Types,
+    types: &'t dyn File,
     changes: Vec<Change>,
 }
 
@@ -959,4 +1001,15 @@ fn after_brace(source: &str, object: &QmlObject<'_>) -> Option<usize> {
     let from = object.type_name.span.end as usize;
     let range: Range<usize> = from..object.span.end as usize;
     source.get(range)?.find('{').map(|i| from + i + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_rule_owns_the_names_of_its_shapes() {
+        let names: Vec<&str> = SHAPES.iter().map(|(_, name, _)| *name).collect();
+        assert_eq!(ARRANGE.owns(), names.as_slice());
+    }
 }

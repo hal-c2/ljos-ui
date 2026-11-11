@@ -15,7 +15,7 @@ mod controls;
 mod core;
 mod dialogs;
 mod gestures;
-mod layout;
+pub(crate) mod layout;
 mod loader;
 mod models;
 mod natives;
@@ -27,11 +27,14 @@ mod types;
 mod ui;
 mod window;
 
+pub use layout::LAYOUT_RENAMES;
+pub(crate) use layout::arrange;
 pub(crate) use text::font;
 pub use text::font::FONT_RENAMES;
 
 use qml_edit::Change;
 use qml_syntax::ast::QmlObject;
+use qt_types::Type;
 
 use crate::{Kept, Rename, Ty};
 
@@ -47,9 +50,17 @@ pub(crate) trait Rule: Sync {
     fn member(&self, _name: &str) -> Option<Rename> {
         None
     }
-    /// What an object of one of them is changed by, in the pass's
-    /// [`Change`]s, or why the file is kept.
-    fn object(&self, _object: &QmlObject<'_>, _file: &dyn File) -> Result<Vec<Change>, Kept> {
+    /// What an object of one of them, or built on one, is changed by, in
+    /// the pass's [`Change`]s, or why the file is kept. `on` is what the
+    /// pass knows of its type; `a_root` when what uses or holds it may
+    /// size it, which the file does not show.
+    fn object(
+        &self,
+        _object: &QmlObject<'_>,
+        _on: Ty,
+        _a_root: bool,
+        _file: &dyn File,
+    ) -> Result<Vec<Change>, Kept> {
         Ok(Vec::new())
     }
     /// The members a script may name unqualified, in a scope one of them
@@ -73,10 +84,17 @@ pub(crate) trait File {
     /// `names` unqualified; each is one of a rule's
     /// [`unqualified`](Rule::unqualified).
     fn names_unqualified(&self, object: &QmlObject<'_>, names: &[&str]) -> bool;
+    /// The type of Qt's (QtQuick, QtQuick.Layouts or the controls) `name`
+    /// names in the file.
+    fn qt_type(&self, name: &str) -> Option<&'static Type>;
+    /// For a file of the project or an inline component, the names its
+    /// root binds, with those of the roots it is built on; `None` for a
+    /// type that is neither.
+    fn root_bindings(&self, name: &str) -> Option<Vec<String>>;
 }
 
 /// Every rule, joined here and nowhere else; a Qt type has one.
-const RULES: &[&dyn Rule] = &[&font::FONT, &loader::source::LOADER];
+const RULES: &[&dyn Rule] = &[&font::FONT, &loader::source::LOADER, &arrange::ARRANGE];
 
 /// The rule of what the pass knows as `on`, if one owns it or what it is
 /// built on.
