@@ -13,13 +13,19 @@
 
 use std::{
     fs,
+    io::Read as _,
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::{
         OnceLock,
         atomic::{AtomicU32, Ordering},
+        mpsc,
     },
+    thread,
+    time::Duration,
 };
+
+use ljos_child::Reaped;
 
 use serde_json::Value;
 
@@ -317,24 +323,71 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     } else {
         r#"l=$0; d=$1; shift; exec "$l" check "$@" "$d" 2>&1"#
     };
-    let out = Command::new("sh")
+    let mut command = Command::new("sh");
+    command
         .args(["-c", script])
         .arg(ljos_bin()?)
         .arg(&staged.suite)
         .args(run.stats.then_some("--stats"))
         .args(run.tsc.then_some("--tsc"))
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    // Its own group, so that a check that never ends is ended with what it
+    // started: the migration before it, TypeScript under it.
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut command, 0);
+    let mut child = Reaped::spawn(&mut command)
         .map_err(|e| failed(format!("cannot start `ljos check`: {e}")))?;
-    let status = out
-        .status
+    let mut pipe = child.stdout.take().expect("stdout is piped");
+    // The pipe ends when every process that writes to it has: read on a
+    // thread, it is waited for with a deadline.
+    let (said, heard) = mpsc::channel();
+    thread::spawn(move || {
+        let mut out = Vec::new();
+        let read = pipe.read_to_end(&mut out).map(|_| out);
+        let _ = said.send(read);
+    });
+    let out = match heard.recv_timeout(CHECK_DEADLINE) {
+        Ok(read) => read.map_err(|e| failed(format!("cannot read `ljos check`: {e}")))?,
+        Err(_) => {
+            #[cfg(unix)]
+            end_group(child.id());
+            return Err(failed(format!(
+                "`ljos check` did not finish in {} seconds",
+                CHECK_DEADLINE.as_secs()
+            )));
+        }
+    };
+    let status = child
+        .finish()
+        .map_err(|e| failed(format!("cannot wait for `ljos check`: {e}")))?
         .code()
         .ok_or_else(|| failed("`ljos check` was killed"))?;
     Ok(TestReport {
-        lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
+        lines: normalise(&String::from_utf8_lossy(&out), &staged.suite),
         status,
         json: None,
     })
+}
+
+/// How long `ljos check` has. It reads a scenario's few files in well under
+/// a second, and TypeScript takes a few more: one still running after this
+/// never ends (#394), and failing its scenario says so where the run's
+/// watchdog would end every scenario after it.
+const CHECK_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Kills the process group `leader` leads.
+#[cfg(unix)]
+fn end_group(leader: u32) {
+    let Ok(group) = libc::pid_t::try_from(leader) else {
+        return;
+    };
+    // SAFETY: `kill` takes any pid; a group that has already ended is an
+    // error it returns, not undefined behaviour.
+    unsafe {
+        libc::kill(-group, libc::SIGKILL);
+    }
 }
 
 /// What `ljos types --dts` writes: the declarations of Ljós's API for
