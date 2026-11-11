@@ -107,9 +107,9 @@ pub struct Part {
     pub offset: usize,
     /// The piece stands where it is whatever the alignment (a table cell).
     pub fixed: bool,
-    /// A table cell that reads right to left: the width its lines stand at
-    /// the right of.
-    pub flush_right: Option<f64>,
+    /// A paragraph of a table cell: the width its lines are set in, and
+    /// how they are set in it.
+    pub set_in: Option<(f64, HAlign)>,
 }
 
 /// A block as laid out.
@@ -118,6 +118,9 @@ pub struct BlockLayout {
     pub parts: Vec<Part>,
     /// The bullet or number, in the block's indent.
     pub marker: Option<Part>,
+    /// The bullets and numbers of the list items in a table's cells, each
+    /// where its item's first line starts.
+    pub cell_markers: Vec<Part>,
     /// Frames of a table: from the document's left edge and the block's top.
     pub rules: Vec<Rect>,
     /// The colours behind a table and its cells, painted under the text,
@@ -574,8 +577,8 @@ impl RichDoc {
 
     /// Where line `line` of `part` of `block` starts, for a view.
     fn line_x(block: &Block, part: &Part, line: &Line, view: &View) -> f64 {
-        if let Some(width) = part.flush_right {
-            return part.x + (width - line.width).max(0.0);
+        if let Some((width, align)) = part.set_in {
+            return part.x + set_in(width, align, line);
         }
         if part.fixed || line.justified {
             return part.x;
@@ -612,9 +615,11 @@ impl RichDoc {
                     });
                 }
             }
-            if let Some(marker) = &laid.layout.marker {
-                // The marker goes with its line when that is centred or
-                // set to the right.
+            // The marker goes with its line when that is centred or set to
+            // the right; a cell's stand where their lines are already.
+            let markers = (laid.layout.marker.iter().map(|m| (m, shift)))
+                .chain(laid.layout.cell_markers.iter().map(|m| (m, 0.0)));
+            for (marker, shift) in markers {
                 for line in &marker.layout.lines {
                     out.push(PlacedLine {
                         block,
@@ -934,9 +939,10 @@ fn lay_flat(
             right: 0.0,
             offset: 0,
             fixed: false,
-            flush_right: None,
+            set_in: None,
         }],
         marker: None,
+        cell_markers: Vec::new(),
         rules: Vec::new(),
         fills: Vec::new(),
     }
@@ -979,7 +985,7 @@ fn lay_block(
             right: 0.0,
             offset: 0,
             fixed: true,
-            flush_right: None,
+            set_in: None,
             layout: marker,
         }
     });
@@ -996,11 +1002,25 @@ fn lay_block(
             right,
             offset: 0,
             fixed: false,
-            flush_right: None,
+            set_in: None,
         }],
         marker,
+        cell_markers: Vec::new(),
         rules: Vec::new(),
         fills: Vec::new(),
+    }
+}
+
+/// How far right of its left edge `line` starts when it is set by `align`
+/// in `room`. Measured on Qt 6.12: by its advance, without the ink its
+/// last glyph has past it.
+fn set_in(room: f64, align: HAlign, line: &Line) -> f64 {
+    let advance = line.clusters.iter().map(|c| c.x1).fold(0.0, f64::max);
+    let spare = (room - advance).max(0.0);
+    match align {
+        HAlign::Left | HAlign::Justify => 0.0,
+        HAlign::Center => spare / 2.0,
+        HAlign::Right => spare,
     }
 }
 
@@ -1065,21 +1085,41 @@ fn lay_table(
         + 2.0 * border
         + spacing * (table.columns + 1) as f64
         + around * table.columns as f64;
+    // Each paragraph of a cell is laid out on its own, as it wraps: bytes
+    // of the block's text, the line feed that ends one not included.
+    let paragraphs: Vec<Vec<Range<usize>>> = table
+        .cells
+        .iter()
+        .map(|cell| {
+            let mut start = cell.range.start;
+            let mut out = Vec::with_capacity(cell.paragraphs.len() + 1);
+            for &end in &cell.paragraphs {
+                out.push(start..end);
+                start = end + 1;
+            }
+            out.push(start..cell.range.end.max(start));
+            out
+        })
+        .collect();
+    let formats: Vec<Vec<super::ParagraphFormat>> = table
+        .cells
+        .iter()
+        .zip(&paragraphs)
+        .map(|(cell, ps)| (0..ps.len()).map(|k| cell.format(k)).collect())
+        .collect();
+    let inset = |f: &super::ParagraphFormat| f64::from(f.indent + f.indent_right);
     let mut maxs = vec![0.0_f64; table.columns];
-    let mut layouts = Vec::with_capacity(table.cells.len());
-    for cell in &table.cells {
-        let layout = lay_range(
-            engine,
-            block,
-            cell.range.clone(),
-            style,
-            &cell_params,
-            sizes,
-        );
-        if let Some(w) = maxs.get_mut(cell.column) {
-            *w = w.max(layout.natural_width.ceil());
+    let mut layouts: Vec<Vec<Arc<TextLayout>>> = Vec::with_capacity(table.cells.len());
+    for ((cell, ps), fs) in table.cells.iter().zip(&paragraphs).zip(&formats) {
+        let mut laid = Vec::with_capacity(ps.len());
+        for (range, f) in ps.iter().zip(fs) {
+            let layout = lay_range(engine, block, range.clone(), style, &cell_params, sizes);
+            if let Some(w) = maxs.get_mut(cell.column) {
+                *w = w.max(layout.natural_width.ceil() + inset(f));
+            }
+            laid.push(layout);
         }
-        layouts.push(layout);
+        layouts.push(laid);
     }
     let natural = maxs.iter().sum::<f64>() + chrome;
     let room = params
@@ -1093,38 +1133,63 @@ fn lay_table(
             ..cell_params
         };
         let mut mins = vec![0.0_f64; table.columns];
-        for cell in &table.cells {
-            let layout = lay_range(engine, block, cell.range.clone(), style, &words, sizes);
-            let mut widest = layout.lines.iter().map(|l| l.width).fold(0.0, f64::max);
+        for ((cell, ps), fs) in table.cells.iter().zip(&paragraphs).zip(&formats) {
+            let Some(w) = mins.get_mut(cell.column) else {
+                continue;
+            };
+            for (range, f) in ps.iter().zip(fs) {
+                let layout = lay_range(engine, block, range.clone(), style, &words, sizes);
+                let widest = layout.lines.iter().map(|l| l.width).fold(0.0, f64::max);
+                *w = w.max(widest.ceil() + inset(f));
+            }
             // A line that does not wrap is as narrow as its column can be.
             for line in &cell.no_wrap {
+                let k = ps.iter().position(|p| p.end >= line.end).unwrap_or(0);
                 let layout = lay_range(engine, block, line.clone(), style, &cell_params, sizes);
-                widest = widest.max(layout.natural_width);
-            }
-            if let Some(w) = mins.get_mut(cell.column) {
-                *w = w.max(widest.ceil());
+                *w = w.max(layout.natural_width.ceil() + fs.get(k).map_or(0.0, inset));
             }
         }
         let widths = column_widths(&mins, &maxs, room);
-        for (cell, layout) in table.cells.iter().zip(&mut layouts) {
+        for (((cell, ps), fs), laid) in table
+            .cells
+            .iter()
+            .zip(&paragraphs)
+            .zip(&formats)
+            .zip(&mut layouts)
+        {
             let width = widths.get(cell.column).copied().unwrap_or(0.0);
-            if layout.natural_width > width {
-                let wrapped = LayoutParams {
-                    width: Some(width),
-                    wrap: params.wrap,
-                    ..cell_params
-                };
-                *layout = lay_range(engine, block, cell.range.clone(), style, &wrapped, sizes);
+            for ((range, f), layout) in ps.iter().zip(fs).zip(laid) {
+                let room = (width - inset(f)).max(1.0);
+                if layout.natural_width > room {
+                    let wrapped = LayoutParams {
+                        width: Some(room),
+                        wrap: params.wrap,
+                        ..cell_params
+                    };
+                    *layout = lay_range(engine, block, range.clone(), style, &wrapped, sizes);
+                }
             }
         }
         widths
     } else {
         maxs
     };
+    // Between two paragraphs of a cell the larger margin counts, and at
+    // its top and bottom none does.
+    let gap = |fs: &[super::ParagraphFormat], k: usize| {
+        k.checked_sub(1).map_or(0.0, |above| {
+            f64::from(fs[above].margin_bottom.max(fs[k].margin_top))
+        })
+    };
     let mut heights = vec![0.0_f64; rows];
-    for (cell, layout) in table.cells.iter().zip(&layouts) {
+    for ((cell, laid), fs) in table.cells.iter().zip(&layouts).zip(&formats) {
+        let high = laid
+            .iter()
+            .enumerate()
+            .map(|(k, l)| gap(fs, k) + l.content_height)
+            .sum::<f64>();
         if let Some(h) = heights.get_mut(cell.row) {
-            *h = h.max(layout.content_height);
+            *h = h.max(high);
         }
     }
     // Left edges of the columns and top edges of the rows (of the cells'
@@ -1150,7 +1215,21 @@ fn lay_table(
         ));
     }
     let mut baseline = 0.0;
-    for (cell, layout) in table.cells.iter().zip(layouts) {
+    let mut cell_markers = Vec::new();
+    // A marker stands right-aligned in its item's indent, a space before
+    // the text, as in the body.
+    let space = if formats.iter().flatten().any(|f| f.marker.is_some()) {
+        engine.layout(" ", style, &LayoutParams::default()).advance
+    } else {
+        0.0
+    };
+    for (((cell, laid), ps), fs) in table
+        .cells
+        .iter()
+        .zip(layouts)
+        .zip(&paragraphs)
+        .zip(&formats)
+    {
         let (Some(&left), Some(&top)) = (lefts.get(cell.column), tops.get(cell.row)) else {
             continue;
         };
@@ -1172,20 +1251,45 @@ fn lay_table(
                 color.clone(),
             ));
         }
-        if parts.is_empty() {
-            baseline = top + frame + padding + layout.baseline;
+        // Measured on Qt 6.11: a cell that reads right to left stands at
+        // the right of its column, unless a paragraph says otherwise.
+        let rtl = laid.iter().any(|l| l.rtl);
+        let mut y = top + frame + padding;
+        for (k, ((layout, range), f)) in laid.into_iter().zip(ps).zip(fs).enumerate() {
+            y += gap(fs, k);
+            if parts.is_empty() {
+                baseline = y + layout.baseline;
+            }
+            let x = indent + left + frame + padding + f64::from(f.indent);
+            let room = widths[cell.column] - inset(f);
+            let align = f
+                .align
+                .unwrap_or(if rtl { HAlign::Right } else { HAlign::Left });
+            if let Some(marker) = f.marker.as_deref() {
+                let marker = engine.layout(marker, style, &LayoutParams::default());
+                let set = layout.lines.first().map_or(0.0, |l| set_in(room, align, l));
+                cell_markers.push(Part {
+                    x: x + set - space - marker.natural_width,
+                    y: y + layout.baseline - marker.baseline,
+                    right: 0.0,
+                    offset: 0,
+                    fixed: true,
+                    set_in: None,
+                    layout: marker,
+                });
+            }
+            let high = layout.content_height;
+            parts.push(Part {
+                layout,
+                x,
+                y,
+                right: 0.0,
+                offset: range.start,
+                fixed: true,
+                set_in: Some((room, align)),
+            });
+            y += high;
         }
-        // Measured on Qt 6.11.
-        let flush_right = layout.rtl.then_some(widths[cell.column]);
-        parts.push(Part {
-            layout,
-            x: indent + left + frame + padding,
-            y: top + frame + padding,
-            right: 0.0,
-            offset: cell.range.start,
-            fixed: true,
-            flush_right,
-        });
     }
     if border > 0.0 {
         let (x0, x1) = (indent, indent + total_width);
@@ -1200,6 +1304,7 @@ fn lay_table(
     BlockLayout {
         parts,
         marker: None,
+        cell_markers,
         rules,
         fills,
         natural_width: natural,
@@ -1459,6 +1564,54 @@ mod tests {
         assert_eq!(m.content_width, header + 9.0 + 4.0);
         assert_eq!(m.content_height, 2.0 * (line + 9.0) + 4.0);
         assert!(!d.frames().is_empty());
+    }
+
+    #[test]
+    fn a_cells_paragraphs_keep_their_own_format() {
+        // Measured on Qt 6.12
+        // (features/text-input/rich-text-cell-paragraphs.feature).
+        let mut engine = TextEngine::new();
+        let (line, abc) = base(&mut engine);
+        let cell = abc.ceil();
+        let laid = |source: &str, engine: &mut TextEngine| {
+            let mut d = doc(source, TextFormat::Rich);
+            let m = d.layout_simple(engine, &params(20.0));
+            let lines: Vec<(f64, f64, bool)> = d
+                .lines(&VIEW)
+                .iter()
+                .map(|l| (l.x, l.y, l.marker))
+                .collect();
+            (m.content_width, m.content_height, lines)
+        };
+        let table = |cell: &str| format!("<table><tr><td>{cell}</td></tr></table>");
+        // Between two paragraphs the larger margin counts; at the cell's
+        // top and bottom none does.
+        let (_, high, lines) = laid(
+            &table(
+                "<p style=\"margin-top:30px; margin-bottom:10px\">abc</p>\
+                 <p style=\"margin-top:20px; margin-bottom:30px\">abc</p>",
+            ),
+            &mut engine,
+        );
+        assert_eq!(high, 2.0 * line + 20.0 + 4.0);
+        assert_eq!(lines[1].1 - lines[0].1, line + 20.0);
+        // An indent stands in from the column's side, which widens it.
+        let (wide, _, lines) = laid(&table("<p style=\"margin-left:40px\">abc</p>"), &mut engine);
+        assert_eq!(wide, cell + 40.0 + 4.0);
+        assert_eq!(lines[0].0, 2.0 + 40.0);
+        // A centred paragraph is set in the middle of its column.
+        let (_, _, lines) = laid(
+            &table("<p>abcabc</p><p align=\"center\">abc</p>"),
+            &mut engine,
+        );
+        assert_eq!(lines[0].0, 2.0);
+        assert!((lines[1].0 - (2.0 + abc / 2.0)).abs() < 1.0, "{lines:?}");
+        // A list item has its marker in its indent, on its line.
+        let (_, _, lines) = laid(&table("<ul><li>abc</li></ul>"), &mut engine);
+        let text = lines.iter().find(|l| !l.2).expect("the item's text");
+        let marker = lines.iter().find(|l| l.2).expect("a bullet");
+        assert!(marker.0 < text.0 && marker.0 > 2.0, "{lines:?}");
+        assert_eq!(marker.1, text.1);
     }
 
     #[test]
