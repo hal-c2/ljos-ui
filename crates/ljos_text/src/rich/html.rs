@@ -38,9 +38,11 @@
 //! or a table cell that is `pre` or `nowrap` (a `<pre>` too) breaks its
 //! lines only at its line breaks ([`Block::no_wrap`]). Of a `td`'s style only
 //! `white-space` is read. HTML with the mark an editor writes,
-//! `<meta name="qrichtext" content="1">`, anywhere in it, is read as
-//! Qt 6.11 reads it: every space and tab is text, no line feed is,
-//! `white-space` is not read and every block wraps.
+//! `<meta name="qrichtext" content="1">`, anywhere in it, is read as the
+//! editor wrote it: every space and tab is text and no line feed is,
+//! whatever `white-space` says, which says only whether a block wraps. A
+//! `<pre>` there wraps unless its style says otherwise, as Qt reads the
+//! `<pre>` it writes.
 //!
 //! White space after a block ends and before the next one has text goes
 //! to the block before, as Qt 6.11 has it (hal-c2/ljos-ui#282): one space
@@ -102,9 +104,10 @@ enum WhiteSpace {
     Lines,
     /// All of a document an editor wrote (`<meta name="qrichtext"
     /// content="1">`), whatever its elements say: every space and tab is
-    /// kept, a line feed is not text at all, and every line wraps (measured
-    /// on Qt 6.11). It writes what it means with tags.
-    Verbatim,
+    /// kept, and a line feed is not text at all (measured on Qt 6.11). Its
+    /// `white-space` says only whether a block `wraps`, as the editor writes
+    /// a block that does not.
+    Verbatim { wraps: bool },
 }
 
 impl WhiteSpace {
@@ -131,7 +134,10 @@ impl WhiteSpace {
     /// A block of it wraps its lines where the item wraps them; one that
     /// does not breaks a line only where the text says so.
     fn wraps(self) -> bool {
-        !matches!(self, Self::NoWrap | Self::Pre)
+        !matches!(
+            self,
+            Self::NoWrap | Self::Pre | Self::Verbatim { wraps: false }
+        )
     }
 }
 
@@ -355,10 +361,11 @@ impl<'a> Parser<'a> {
 
     /// What white space in `open` is, `None` being the document.
     fn white_space_of(&self, open: Option<&Open>) -> WhiteSpace {
+        let own = open.map(|o| o.white_space).unwrap_or_default();
         if self.verbatim {
-            WhiteSpace::Verbatim
+            WhiteSpace::Verbatim { wraps: own.wraps() }
         } else {
-            open.map(|o| o.white_space).unwrap_or_default()
+            own
         }
     }
 
@@ -505,7 +512,7 @@ impl<'a> Parser<'a> {
     /// Text where it is: in a block, or one of its own.
     fn read(&mut self, s: &str) {
         let white_space = self.white_space();
-        if white_space == WhiteSpace::Verbatim {
+        if matches!(white_space, WhiteSpace::Verbatim { .. }) {
             let style = self.style();
             self.write(|buf| {
                 for line in s.split(['\n', '\r']) {
@@ -615,7 +622,7 @@ impl<'a> Parser<'a> {
     /// White space between the cells of a table: in an editor's document,
     /// as written, it goes to the cell before; elsewhere it is nothing.
     fn give_cell_before(&mut self, text: &str, style: &Inline, white_space: WhiteSpace) {
-        if white_space != WhiteSpace::Verbatim {
+        if !matches!(white_space, WhiteSpace::Verbatim { .. }) {
             return;
         }
         let cell = self
@@ -637,10 +644,10 @@ impl<'a> Parser<'a> {
         let after_table = self.flow.last_mut().is_none_or(|b| b.table.is_some());
         let ends_open = self.flow.ends_open();
         match white_space {
-            WhiteSpace::Verbatim | WhiteSpace::Pre | WhiteSpace::PreWrap if after_table => {
+            WhiteSpace::Verbatim { .. } | WhiteSpace::Pre | WhiteSpace::PreWrap if after_table => {
                 self.read(text);
             }
-            WhiteSpace::Verbatim => {
+            WhiteSpace::Verbatim { .. } => {
                 let text: String = text.chars().filter(|c| !matches!(c, '\n' | '\r')).collect();
                 self.flow.append(&text, style);
             }
@@ -1209,9 +1216,10 @@ impl<'a> Parser<'a> {
                 if let Some(level) = heading_level(name) {
                     self.push(name, |o| heading_style(&mut o.style, level));
                 } else if name == "pre" {
+                    let verbatim = self.verbatim;
                     self.push(name, |o| {
                         o.style.mono = true;
-                        o.white_space = WhiteSpace::Pre;
+                        pre_white_space(o, verbatim);
                     });
                 } else if name != "hr" {
                     self.push(name, |_| {});
@@ -1268,9 +1276,10 @@ impl<'a> Parser<'a> {
                     kind: Some(BlockKind::Code),
                     ..Ctx::default()
                 };
+                let verbatim = self.verbatim;
                 self.open_box(name, ctx, |o| {
                     o.always = true;
-                    o.white_space = WhiteSpace::Pre;
+                    pre_white_space(o, verbatim);
                     o.style.mono = true;
                 });
             }
@@ -1582,6 +1591,16 @@ fn is_editors_mark(attrs: &Attrs<'_>) -> bool {
         }
     }
     false
+}
+
+/// A `<pre>` keeps its spaces and does not wrap.
+// Qt 6.11: a `<pre>` of a document with the editor's mark wraps, as every
+// block of one does, and only its font says it was a pre (6.12 the same).
+// Ljós's editor says with `white-space` that a block does not wrap.
+fn pre_white_space(open: &mut Open, verbatim: bool) {
+    if !verbatim {
+        open.white_space = WhiteSpace::Pre;
+    }
 }
 
 fn apply_style(open: &mut Open, css: &str) {
@@ -2601,21 +2620,22 @@ mod tests {
         assert_eq!(with("<p>a\nb\r\nc&#10;d&#13;e</p>"), ["abcde"]);
         assert_eq!(with("<p>a&#9;&nbsp;b</p>"), ["a\t\u{a0}b"]);
         assert_eq!(with("<p>a  <br>  b</p>"), ["a  \n  b"]);
-        // white-space and style sheets are not read, and everything wraps.
+        // white-space keeps no space, and says only whether a block
+        // wraps, from a style sheet too; a pre that does not say wraps.
         let b = &parse(&format!(
-            "{mark}<style>p {{ white-space: nowrap }}</style><p style=\"white-space:pre\">a  b</p><pre>c</pre>"
+            "{mark}<style>p {{ white-space: nowrap }}</style><p>a  b</p>\
+             <p style=\"white-space:pre-wrap\">c</p><pre>d</pre><pre style=\"white-space:pre\">e</pre>"
         ));
         assert_eq!(b[0].text, "a  b");
-        assert!(b.iter().all(|b| !b.no_wrap));
+        let no_wrap: Vec<bool> = b.iter().map(|b| b.no_wrap).collect();
+        assert_eq!(no_wrap, [true, false, false, true]);
         let b = &parse(&format!(
-            "{mark}<table><tr><td style=\"white-space:nowrap\">a  b</td></tr></table>"
+            "{mark}<table><tr><td style=\"white-space:nowrap\">a  b</td><td><pre>c</pre></td></tr></table>"
         ))[0];
-        assert_eq!(b.text, "a  b");
-        assert!(
-            b.table.as_ref().expect("a table").cells[0]
-                .no_wrap
-                .is_empty()
-        );
+        assert_eq!(b.text, "a  b\tc");
+        let cells = &b.table.as_ref().expect("a table").cells;
+        assert!(!cells[0].no_wrap.is_empty());
+        assert!(cells[1].no_wrap.is_empty());
         // White space between blocks goes to the block before, without
         // its line feeds.
         assert_eq!(with("<p>a</p>\n  <p>b</p>\n"), ["a  ", "b"]);

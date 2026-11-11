@@ -91,13 +91,20 @@ Feature: Copying and pasting formatted text
       Then the property "out" of "root" is "<pasted>"
 
       Examples:
-        | copied                                       | html                                                      | pasted                                                                                                                                                                                   |
-        | a paragraph that does not wrap               | <p style='white-space:nowrap'>xy</p>                      | <p>xy</p>                                                                                                                                                                                |
-        | one that does not wrap and one that does     | <p style='white-space:nowrap'>xy</p><p>b</p>              | <p>xy</p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>                                                |
-        | one that does and one that does not wrap     | <p>a</p><p style='white-space:nowrap'>xy</p>              | <p>a</p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-family:'monospace';'>xy</span></p> |
-        | a list of one that does not wrap and another | <ul><li style='white-space:nowrap'>xy</li><li>b</li></ul> | <p>xy</p>\|<p style=' margin-top:0px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>                                                 |
-        | a bold paragraph                             | <p style='font-weight:700'>xy</p>                         | <p><span style=' font-weight:700;'>xy</span></p>                                                                                                                                         |
-        | a heading                                    | <h1>xy</h1>                                               | <p><span style=' font-size:xx-large; font-weight:700;'>xy</span></p>                                                                                                                     |
+        | copied                                       | html                                                      | pasted                                                                                                                                    |
+        | a paragraph that does not wrap               | <p style='white-space:nowrap'>xy</p>                      | <p>xy</p>                                                                                                                                 |
+        | one that does not wrap and one that does     | <p style='white-space:nowrap'>xy</p><p>b</p>              | <p>xy</p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
+        | a list of one that does not wrap and another | <ul><li style='white-space:nowrap'>xy</li><li>b</li></ul> | <p>xy</p>\|<p style=' margin-top:0px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>  |
+        | a bold paragraph                             | <p style='font-weight:700'>xy</p>                         | <p><span style=' font-weight:700;'>xy</span></p>                                                                                          |
+        | a heading                                    | <h1>xy</h1>                                               | <p><span style=' font-size:xx-large; font-weight:700;'>xy</span></p>                                                                      |
+
+      # Qt 6.12 copies the paragraph that does not wrap as a pre, which it
+      # reads back as a monospace paragraph that wraps; Ljós copies that the
+      # paragraph does not wrap, and pastes it so.
+      @qt-diverges
+      Examples:
+        | copied                                   | html                                         | pasted                                                                                                                                                     |
+        | one that does and one that does not wrap | <p>a</p><p style='white-space:nowrap'>xy</p> | <p>a</p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px; white-space:pre;'>xy</p> |
 
     Scenario: HTML another application copied with the marks pastes what is between them
       Given the HTML "<pre>a<!--StartFragment-->x y<!--EndFragment-->b</pre>" was copied in another application
@@ -105,9 +112,12 @@ Feature: Copying and pasting formatted text
       And the method "show" of "root" is called with "empty"
       Then the property "out" of "root" is "<p>x y</p>"
 
-  Rule: A code block of Markdown is copied as a paragraph in a monospace font
+  Rule: A code block of Markdown is copied in a monospace font
 
-    Scenario Outline: A <block> code block pastes as a paragraph in a monospace font
+    The format of the paragraph a selection starts in is not pasted, so a
+    code block that starts it pastes as a paragraph in a monospace font.
+
+    Scenario Outline: A <block> code block pastes in a monospace font
       When the method "markdown" of "root" is called with "<markdown>"
       And the method "selectAll" of "md" is called
       And the method "copy" of "md" is called
@@ -116,11 +126,18 @@ Feature: Copying and pasting formatted text
       Then the property "out" of "root" is "<pasted>"
 
       Examples:
-        | block    | markdown            | pasted                                                                                                                                                                                             |
-        | fenced   | ```~code~```~       | <p><span style=' font-family:'monospace';'>code</span></p>                                                                                                                                         |
-        | indented | ____code~           | <p><span style=' font-family:'monospace';'>code</span></p>                                                                                                                                         |
-        | fenced   | a~~```~code~```~~b~ | <p>a</p>\|<p><span style=' font-family:'monospace';'>code</span></p>\|<p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
-        | indented | a~~____code~~b~     | <p>a</p>\|<p><span style=' font-family:'monospace';'>code</span></p>\|<p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
+        | block    | markdown      | pasted                                                     |
+        | fenced   | ```~code~```~ | <p><span style=' font-family:'monospace';'>code</span></p> |
+        | indented | ____code~     | <p><span style=' font-family:'monospace';'>code</span></p> |
+
+      # Qt 6.12 copies a code block as a monospace paragraph, so pasted it is
+      # a paragraph; Ljós copies it as a pre that says whether it wraps, and
+      # pastes it as the code block it was.
+      @qt-diverges
+      Examples:
+        | block    | markdown            | pasted                                                                                                                                                                                                                                                                                                                                           |
+        | fenced   | a~~```~code~```~~b~ | <p>a</p>\|<pre style=' margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px; white-space:pre;'><span style=' font-family:'monospace';'>code</span></pre>\|<p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>      |
+        | indented | a~~____code~~b~     | <p>a</p>\|<pre style=' margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px; white-space:pre-wrap;'><span style=' font-family:'monospace';'>code</span></pre>\|<p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
 
   Rule: Cut and paste moves formatted text
 

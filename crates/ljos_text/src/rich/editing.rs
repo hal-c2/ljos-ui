@@ -1171,19 +1171,15 @@ impl RichText {
                 continue;
             }
             // Measured: a fragment's marks are in paragraphs, not in cells.
-            // A paragraph that does not wrap is a pre, whatever it is, and
-            // one that wraps is not, though a pre made it; read back, a pre
-            // is monospace and wraps, as every paragraph of the editor's
-            // HTML does (features/text/rich-text-white-space.feature). In a
-            // list the pre is in an li that is left open, as Qt 6.12 has it.
-            // A fenced code block of Markdown is a paragraph, as Qt 6.12
-            // writes it.
-            let pre = block.no_wrap && !matches!(block.fence, Some(Fence::Fenced { .. }));
-            if pre && block.kind == BlockKind::List {
-                out.push_str("<li>");
-            }
+            // A block is written with its own tag, a code block as a pre,
+            // and says whether it wraps, so that it reads back as it was
+            // (features/text/rich-text-white-space.feature).
+            // Qt 6.11: a paragraph that does not wrap is a pre, whatever it
+            // is, in an li left open in a list, and a code block that wraps,
+            // or a fenced one of Markdown, is a p; read back, every pre of
+            // the editor's HTML is monospace and wraps (6.12 the same).
             let tag = match block.kind {
-                _ if pre => "pre".to_owned(),
+                BlockKind::Code => "pre".to_owned(),
                 BlockKind::Heading(n) => format!("h{}", n.clamp(1, 6)),
                 BlockKind::List => "li".to_owned(),
                 _ => "p".to_owned(),
@@ -1197,7 +1193,7 @@ impl RichText {
             let _ = write!(
                 out,
                 " style=\"{}margin-top:{}px; margin-bottom:{}px; margin-left:{}px; \
-                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}\">",
+                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}{}\">",
                 if empty {
                     "-qt-paragraph-type:empty; "
                 } else {
@@ -1212,6 +1208,7 @@ impl RichText {
                     .as_deref()
                     .map(|c| format!(" background-color:{c};"))
                     .unwrap_or_default(),
+                white_space(block.no_wrap, block.kind == BlockKind::Code),
             );
             if fragment && index == 0 {
                 out.push_str("<!--StartFragment-->");
@@ -1291,12 +1288,8 @@ impl RichText {
                     if empty && k == 0 {
                         continue;
                     }
-                    let tag = if format.is_some_and(|f| f.paragraph_no_wrap(k)) {
-                        "pre"
-                    } else {
-                        "p"
-                    };
-                    let _ = write!(out, "\n<{tag}");
+                    let no_wrap = format.is_some_and(|f| f.paragraph_no_wrap(k));
+                    out.push_str("\n<p");
                     // Measured: a th is written as a td in the middle.
                     if format.is_some_and(|f| f.header) {
                         out.push_str(" align=\"center\"");
@@ -1310,13 +1303,14 @@ impl RichText {
                         "margin-top:0px; margin-bottom:0px; margin-left:0px; \
                          margin-right:0px; -qt-block-indent:0; text-indent:0px;",
                     );
+                    out.push_str(white_space(no_wrap, false));
                     out.push_str("\">");
                     if empty {
                         out.push_str("<br />");
                     } else {
                         self.write_inline(out, paragraph);
                     }
-                    let _ = write!(out, "</{tag}>");
+                    out.push_str("</p>");
                 }
                 out.push_str("</td>");
             }
@@ -1758,6 +1752,18 @@ fn resolved(
     out
 }
 
+/// The `white-space` a block's style says: `pre` where it does not wrap.
+/// A `pre` says it either way, as one that does not say wraps where the
+/// editor's mark is (see [`super::html`]); a paragraph that wraps need not,
+/// as the head says `pre-wrap` for it.
+fn white_space(no_wrap: bool, pre: bool) -> &'static str {
+    match (no_wrap, pre) {
+        (true, _) => " white-space:pre;",
+        (false, true) => " white-space:pre-wrap;",
+        (false, false) => "",
+    }
+}
+
 fn write_head(out: &mut String) {
     out.push_str(
         "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0//EN\" \
@@ -2106,16 +2112,18 @@ mod tests {
     }
 
     #[test]
-    fn a_code_block_of_markdown_is_written_as_a_paragraph() {
-        // Measured on Qt 6.12: fenced or indented, a monospace paragraph;
-        // a fenced one still does not wrap.
-        for source in ["```\ncode\n```\n", "    code\n"] {
-            assert_eq!(
-                body(&md(source)),
-                "<p><span style=' font-family:'monospace';'>code</span></p>",
-                "{source:?}"
-            );
-        }
+    fn a_code_block_of_markdown_is_written_as_a_pre() {
+        // A fenced one does not wrap, an indented one does.
+        // Qt 6.11: either is a monospace paragraph (6.12 the same).
+        let pre = |white_space: &str| {
+            format!(
+                "<pre style=' margin-top:0px; margin-bottom:0px; margin-left:0px; \
+                 margin-right:0px; -qt-block-indent:0; text-indent:0px; white-space:{white_space};'>\
+                 <span style=' font-family:'monospace';'>code</span></pre>"
+            )
+        };
+        assert_eq!(body(&md("```\ncode\n```\n")), pre("pre"));
+        assert_eq!(body(&md("    code\n")), pre("pre-wrap"));
         assert!(md("```\ncode\n```\n").blocks()[0].no_wrap);
     }
 
@@ -2365,7 +2373,7 @@ mod tests {
         };
         assert_eq!(t.text(), "\na\u{2029}b\u{1f}z\n");
         assert_eq!(no_wrap(&t), [true, false, false]);
-        assert_eq!(cell(&t), "<pre>a</pre>|<p>b</p>");
+        assert_eq!(cell(&t), "<p style=' white-space:pre;'>a</p>|<p>b</p>");
 
         // A paragraph split off takes the paragraph's format; an empty one
         // is written as empty, but not first.
@@ -2378,7 +2386,7 @@ mod tests {
         assert_eq!(no_wrap(&split), [true, false, false]);
         assert_eq!(
             cell(&split),
-            "<pre>a</pre>|<p>b</p>|\
+            "<p style=' white-space:pre;'>a</p>|<p>b</p>|\
              <p style='-qt-paragraph-type:empty;'><br /></p>"
         );
 
@@ -2387,7 +2395,35 @@ mod tests {
         joined.splice(2..5, "", None);
         assert_eq!(joined.text(), "\nab\u{1f}z\n");
         assert_eq!(no_wrap(&joined), [true, false, false]);
-        assert_eq!(cell(&joined), "<pre>ab</pre>");
+        assert_eq!(cell(&joined), "<p style=' white-space:pre;'>ab</p>");
+    }
+
+    #[test]
+    fn what_is_written_reads_back_as_it_was() {
+        // features/text/rich-text-white-space.feature: a block keeps its
+        // kind and whether it wraps, and its text keeps its font.
+        for source in [
+            "<p style='white-space:nowrap'>x y</p>",
+            "<p style='white-space:pre'>x  y</p>",
+            "<p>a</p><p style='white-space:nowrap'>x y</p><p>b</p>",
+            "<h2 style='white-space:nowrap'>x y</h2>",
+            "<ul><li>a</li><li style='white-space:pre'>x y</li><li>b</li></ul>",
+            "<pre>x y</pre>",
+            "<pre style='white-space:pre-wrap'>x y</pre>",
+            "<table><tr><td><p>x</p><p style='white-space:nowrap'>y z</p></td></tr></table>",
+            "<table><tr><td style='white-space:pre'>x y</td><td><pre>z</pre></td></tr></table>",
+        ] {
+            let t = rich(source);
+            let html = t.html(&DocFont::default());
+            let again = rich(&html);
+            assert_eq!(again.text(), t.text(), "{source}");
+            assert_eq!(again.blocks(), t.blocks(), "{source}");
+            assert_eq!(again.html(&DocFont::default()), html, "{source}");
+        }
+        let t = md("```\nx y\n```\n\n    z\n");
+        let again = rich(&t.html(&DocFont::default()));
+        let kinds: Vec<_> = again.blocks().iter().map(|b| (b.kind, b.no_wrap)).collect();
+        assert_eq!(kinds, [(BlockKind::Code, true), (BlockKind::Code, false)]);
     }
 
     #[test]
