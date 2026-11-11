@@ -103,6 +103,47 @@ pub mod appkit {
         })
     }
 
+    /// The `text/uri-list` of a drag whose pasteboard items have
+    /// `addresses`, one each. Finder drags a file as a file reference
+    /// URL ([`is_file_reference`]), whose path names no file, so each is
+    /// the path URL `resolve` (`-[NSURL filePathURL]`) gives it, as a
+    /// target that reads `drop.urls` as paths expects. One that resolves
+    /// to nothing, a file gone since the drag began, is kept as it is:
+    /// it still says a file was dragged. Every other address is itself.
+    pub fn uri_list<I, S>(addresses: I, mut resolve: impl FnMut(&str) -> Option<String>) -> String
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        let lines: Vec<String> = addresses
+            .into_iter()
+            .map(|address| {
+                let address = address.as_ref();
+                is_file_reference(address)
+                    .then(|| resolve(address))
+                    .flatten()
+                    .unwrap_or_else(|| address.to_owned())
+            })
+            .collect();
+        lines.join("\r\n")
+    }
+
+    /// Whether `url` is a file reference URL, `file:///.file/id=…`, which
+    /// names a file by the ids of its volume and itself rather than by
+    /// its path.
+    pub fn is_file_reference(url: &str) -> bool {
+        let Some((scheme, rest)) = url.split_once(':') else {
+            return false;
+        };
+        let Some(rest) = rest.strip_prefix("//") else {
+            return false;
+        };
+        let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+        scheme.eq_ignore_ascii_case("file")
+            && (host.is_empty() || host.eq_ignore_ascii_case("localhost"))
+            && path.starts_with("/.file/id=")
+    }
+
     /// Whether a pasteboard type is read as a string (`stringForType:`,
     /// which AppKit converts from any encoding) rather than as bytes.
     pub fn is_text(kind: &str) -> bool {
@@ -647,6 +688,53 @@ mod tests {
                 "{kind}"
             );
         }
+    }
+
+    #[test]
+    fn finder_file_references_are_dropped_as_paths() {
+        let reference = "file:///.file/id=6571367.2773272/";
+        let resolve =
+            |url: &str| (url == reference).then(|| "file:///Users/me/Desktop/shot.png".to_owned());
+        let list = appkit::uri_list([reference, "file:///Users/me/a.txt"], resolve);
+        assert_eq!(
+            DragData::from_formats([("text/uri-list", list)]).urls,
+            [
+                "file:///Users/me/Desktop/shot.png",
+                "file:///Users/me/a.txt"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_file_references_are_resolved() {
+        let mut asked = Vec::new();
+        let list = appkit::uri_list(
+            [
+                "file:///Users/me/a.txt",
+                "https://example.com/.file/id=1.2/",
+                "file://localhost/.file/id=1.2/",
+                "FILE:///.file/id=3.4",
+            ],
+            |url: &str| {
+                asked.push(url.to_owned());
+                Some(format!("file:///resolved/{}", asked.len()))
+            },
+        );
+        assert_eq!(
+            asked,
+            ["file://localhost/.file/id=1.2/", "FILE:///.file/id=3.4"]
+        );
+        assert_eq!(
+            list,
+            "file:///Users/me/a.txt\r\nhttps://example.com/.file/id=1.2/\r\n\
+             file:///resolved/1\r\nfile:///resolved/2"
+        );
+    }
+
+    #[test]
+    fn a_file_reference_that_resolves_to_nothing_is_kept() {
+        let reference = "file:///.file/id=6571367.2773272/";
+        assert_eq!(appkit::uri_list([reference], |_: &str| None), reference);
     }
 
     #[test]

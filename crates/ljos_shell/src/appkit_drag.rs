@@ -29,7 +29,7 @@ use objc2::rc::Retained;
 use objc2::runtime::{AnyClass, AnyObject, Bool, Imp, ProtocolObject, Sel};
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{NSDraggingInfo, NSPasteboard, NSView};
-use objc2_foundation::{NSArray, NSString};
+use objc2_foundation::{NSArray, NSString, NSURL};
 
 use crate::drags::{At, DragStep};
 use crate::native_drag::{Follower, NO_ACTIONS, Read};
@@ -285,7 +285,7 @@ fn read(pasteboard: &NSPasteboard, kinds: &[String]) -> DragData {
                 .filter_map(|item| item.stringForType(&name))
                 .map(|s| s.to_string())
                 .collect();
-            (!lines.is_empty()).then(|| lines.join("\r\n").into_bytes())
+            (!lines.is_empty()).then(|| appkit::uri_list(lines, path_url).into_bytes())
         } else if appkit::is_text(kind) {
             pasteboard
                 .stringForType(&name)
@@ -301,4 +301,11 @@ fn read(pasteboard: &NSPasteboard, kinds: &[String]) -> DragData {
         }
     }
     DragData::from_formats(formats)
+}
+
+/// The path URL of a file reference URL, `-[NSURL filePathURL]`: `None`
+/// when it names no file that is there.
+fn path_url(reference: &str) -> Option<String> {
+    let url = NSURL::URLWithString(&NSString::from_str(reference))?;
+    Some(url.filePathURL()?.absoluteString()?.to_string())
 }
