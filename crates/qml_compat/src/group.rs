@@ -45,7 +45,11 @@ pub struct References {
 /// not parse names nothing: it is kept anyway.
 pub fn references(source: &str) -> References {
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    references_in(&qml_syntax::parse(&allocator, source))
+}
+
+/// [`references`] of a file parsed already.
+pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
     let mut found = References::default();
     if parsed.panicked {
         return found;

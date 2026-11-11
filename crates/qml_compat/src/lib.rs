@@ -312,6 +312,17 @@ pub fn lower_as(source: &str, stem: &str, locals: &dyn Locals) -> Outcome {
 fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome {
     let allocator = Allocator::default();
     let parsed = qml_syntax::parse(&allocator, source);
+    lower_parsed(source, &parsed, stem, locals)
+}
+
+/// [`lower_file`] of a file parsed already, so that what else is read of
+/// it ([`root_in`], [`group::references_in`]) is read from the same parse.
+fn lower_parsed(
+    source: &str,
+    parsed: &qml_syntax::Parsed<'_>,
+    stem: Option<&str>,
+    locals: &dyn Locals,
+) -> Outcome {
     if !parsed.is_ok() {
         // The compiler says what is wrong with the file as written.
         return kept(Cause::Unparsed, 0);
@@ -353,7 +364,8 @@ fn lower_file(source: &str, stem: Option<&str>, locals: &dyn Locals) -> Outcome 
             changes.sort_by_key(|c| c.range.start);
             changes.dedup();
             let text = qml_edit::splice(source, &changes);
-            let again = qml_syntax::parse(&allocator, allocator.alloc_str(&text));
+            let allocator = Allocator::default();
+            let again = qml_syntax::parse(&allocator, &text);
             if !again.is_ok() {
                 return kept(Cause::LoweredUnparsed, 0);
             }
@@ -383,7 +395,11 @@ pub fn rows_module(stem: &str) -> String {
 /// [`Locals`].
 pub fn root(source: &str) -> Option<Root> {
     let allocator = Allocator::default();
-    let parsed = qml_syntax::parse(&allocator, source);
+    root_in(&qml_syntax::parse(&allocator, source))
+}
+
+/// [`root`] of a file parsed already.
+fn root_in(parsed: &qml_syntax::Parsed<'_>) -> Option<Root> {
     let root = Root::of(&parsed.document.root);
     (!parsed.panicked && !root.type_name.is_empty()).then_some(root)
 }
