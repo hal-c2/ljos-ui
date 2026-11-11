@@ -256,21 +256,10 @@ impl<O: TypeOracle> Project<O> {
             .or_else(|| self.source(key))
     }
 
-    /// What the compat pass is told of this project around its file `key`:
-    /// its types are the files beside it, and those of the project's
-    /// modules and directories it imports, as the front end finds them. A
-    /// file `held` holds is read from there. `ljos migrate` lowers its files
-    /// with this, as a run does ([`qml_compat::Lowering`]).
-    pub fn compat_locals<'a>(
-        &'a self,
-        key: &'a str,
-        held: Box<dyn qml_compat::Held + 'a>,
-    ) -> Box<dyn qml_compat::Locals + 'a> {
-        Box::new(self.around().locals_of(key, held))
-    }
-
-    /// The project as the compat pass reads it.
-    fn around(&self) -> Around<'_, O> {
+    /// The project as the compat pass reads it: a file's types are the
+    /// files beside it, and those of the project's modules and directories
+    /// it imports, as the front end finds them ([`crate::Roots`] too).
+    pub(crate) fn around(&self) -> Around<'_, O> {
         Around {
             front: &self.front,
             sources: &self.sources,
@@ -1122,7 +1111,7 @@ fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item =
 
 /// What the compat pass reads of a project: all of it but the lowering,
 /// so that the lowering settles against it.
-struct Around<'p, O> {
+pub(crate) struct Around<'p, O> {
     front: &'p project::Project,
     sources: &'p BTreeMap<String, String>,
     paths: &'p BTreeMap<String, PathBuf>,
@@ -1141,7 +1130,11 @@ impl<O> Clone for Around<'_, O> {
 impl<O> Copy for Around<'_, O> {}
 
 impl<'p, O: TypeOracle> Around<'p, O> {
-    fn locals_of(self, key: &'p str, held: Box<dyn qml_compat::Held + 'p>) -> Locals<'p, O> {
+    pub(crate) fn locals_of(
+        self,
+        key: &'p str,
+        held: Box<dyn qml_compat::Held + 'p>,
+    ) -> Locals<'p, O> {
         Locals {
             around: self,
             key,
@@ -1219,7 +1212,7 @@ impl<O: TypeOracle> qml_compat::Project for Around<'_, O> {
 }
 
 /// What the compat pass is told of the project around the file `key`.
-struct Locals<'p, O: TypeOracle> {
+pub(crate) struct Locals<'p, O: TypeOracle> {
     around: Around<'p, O>,
     key: &'p str,
     held: Box<dyn qml_compat::Held + 'p>,

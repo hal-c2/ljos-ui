@@ -26,6 +26,7 @@ mod oracle;
 mod project;
 pub mod reload;
 pub mod reload_lint;
+pub mod roots;
 mod script;
 mod style;
 pub mod tier1;
@@ -37,6 +38,7 @@ pub use dump::dump;
 pub use natives::OracleNatives;
 pub use project::{Project, declared_beside, described_in, resource_dirs, resources, skipped_dir};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
+pub use roots::Roots;
 pub use script::module::is_declarations;
 pub use style::{controls_style, controls_style_on, platform_style};
 
