@@ -174,3 +174,54 @@ Feature: A view chooses what a page that shares the screen is shown
     And the method "look" of "view" is called
     Then the property "title" of "view" is "left"
     And the property "seen" of "view" is "false 0"
+
+  # Here Qt never asks the view about the frame's capture at all.
+  @qt-diverges @api-QtWebEngine.WebEnginePermission.isValid
+  Scenario: A permission to capture the screen is no longer valid once its frame has gone elsewhere
+    Given the web server serves the text file "shared.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head>
+      <body style="margin:0; height:100px" onclick="navigator.mediaDevices.getDisplayMedia({ video: true })
+        .then(() => document.title = 'shared', error => document.title = 'refused')"></body></html>
+      """
+    And the web server serves the text file "framed.html":
+      """
+      <!doctype html>
+      <html><head><title>framed</title></head>
+      <body style="margin:0"><iframe src="shared.html" allow="display-capture"
+        style="border:0; width:200px; height:100px; display:block"></iframe></body></html>
+      """
+    And the web server serves the text file "left.html":
+      """
+      <!doctype html>
+      <html><head><title>left</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property var kept: null
+        property string seen: ""
+        settings.screenCaptureEnabled: true
+        url: "$SERVER/framed.html"
+        onDesktopMediaRequested: request => request.selectScreen(request.screensModel.index(0, 0))
+        onPermissionRequested: permission => kept = permission
+        function leave() { runJavaScript("document.querySelector('iframe').src = 'left.html'") }
+        function look() { seen = (kept ? kept.isValid + " " + kept.state : "none") }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 1 second passes
+    And the method "look" of "view" is called
+    Then the property "seen" of "view" is "true 1"
+    When the method "leave" of "view" is called
+    And 2 seconds pass
+    And the method "look" of "view" is called
+    Then the property "title" of "view" is "framed"
+    And the property "seen" of "view" is "false 0"
