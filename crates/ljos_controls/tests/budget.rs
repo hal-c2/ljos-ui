@@ -195,28 +195,56 @@ fn closed_and_opened(control: &str) -> (Budget, Budget) {
     let (ten, mut ts) = make(&e, "Ten");
     let c = now(&e);
     let closed = per(between(b, c), between(a, b), N);
-    let c0 = ljos_drive::find_below(&e, ten, "c0").unwrap();
+    // The first instance opened grows the engine's tables to fit; what an
+    // instance adds is counted on the next.
+    let open = |name: &str| {
+        let p = ljos_drive::find_below(&e, ten, name).unwrap();
+        e.invoke_by_name(p, "open", &[]).unwrap();
+        p
+    };
+    let c0 = open("c0");
+    settle(&mut ts, &e);
+    e.invoke_by_name(c0, "close", &[]).unwrap();
+    settle(&mut ts, &e);
     let before = now(&e);
-    e.invoke_by_name(c0, "open", &[]).unwrap();
+    open("c1");
     settle(&mut ts, &e);
     let opened = between(before, now(&e));
     (closed, opened)
 }
 
-fn report(name: &str, control: &str) {
+/// Reports what one closed `control` costs and what opening it adds, and
+/// holds the closed one to at most `most` objects, values, bindings and
+/// effects. Allocations and bytes follow the capacity of the engine's
+/// tables, so they are reported and not held.
+fn report(name: &str, control: &str, most: [i64; 4]) {
     let _alone = alone();
     let (closed, opened) = closed_and_opened(control);
     eprintln!("{name}: closed {closed:?}\n{name}: first open {opened:?}");
+    let got = [
+        closed.objects,
+        closed.values,
+        closed.bindings,
+        closed.effects,
+    ];
+    assert!(
+        got.iter().zip(most).all(|(g, m)| *g <= m),
+        "{name} closed: objects, values, bindings, effects {got:?}, at most {most:?}"
+    );
 }
 
 #[test]
 fn a_closed_popup() {
-    report("Popup", r#"Popup { objectName: "NAME" }"#);
+    report("Popup", r#"Popup { objectName: "NAME" }"#, [5, 20, 80, 28]);
 }
 
 #[test]
 fn a_closed_tool_tip() {
-    report("ToolTip", r#"ToolTip { objectName: "NAME"; text: "tip" }"#);
+    report(
+        "ToolTip",
+        r#"ToolTip { objectName: "NAME"; text: "tip" }"#,
+        [5, 21, 86, 30],
+    );
 }
 
 #[test]
@@ -224,6 +252,7 @@ fn a_closed_menu() {
     report(
         "Menu",
         r#"Menu { objectName: "NAME"; MenuItem { text: "a" } MenuItem { text: "b" } MenuItem { text: "c" } }"#,
+        [44, 147, 319, 122],
     );
 }
 
@@ -233,5 +262,6 @@ fn a_closed_combo_box() {
     report(
         "ComboBox",
         r#"ComboBox { model: ["a", "b", "c"]; popup.objectName: "NAME" }"#,
+        [26, 104, 217, 114],
     );
 }
