@@ -1992,6 +1992,11 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   Give it an application's directory, not a tree of several:
   the group's directory rule (§6.2) ties one application's module to
   another's directory of the same name.
+- A file of Ljós's API is nothing to migrate. A module of Ljós's own
+  (`Ljos.Design`, `Ljos.Models`) imported beside Qt's is Ljós's API
+  already: its import stays as written, what the file names of it keeps
+  its names, and the Qt imports and what they name are lowered, as beside
+  a module of the program's.
 - A lowered file says its scripts are still Qt's JavaScript:
   `pragma Scripts: JavaScript`, on the import's line so that every line
   stays where it was. The checker does not hold such a file to its rules,

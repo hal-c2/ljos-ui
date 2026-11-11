@@ -365,6 +365,11 @@ Feature: Qt's QML lowered to Ljós's API
         """
       When the author runs "ljos check app"
       Then the command exits with status 0
+      When the author runs "ljos migrate --write app"
+      Then the command prints:
+        """
+        1 files, 0 lowered, 0 kept
+        """
 
     @ljos-only @headless
     Scenario: A file whose scripts break the checker's rules keeps its scripts JavaScript
@@ -395,6 +400,47 @@ Feature: Qt's QML lowered to Ljós's API
           function bump(by) { taps += by }
           Rectangle { width: 20; height: 20; fill: taps == 2 ? "#c03030" : "#30a050" }
         }
+        """
+      When the author runs "ljos check app"
+      Then the command exits with status 0
+
+  Rule: Ljós's own modules are Ljós's API already
+
+    # A file of Ljós's API has nothing to lower. One that imports a module of Ljós's beside Qt's has
+    # its Qt imports and what they name lowered, and the import of Ljós's module kept as it is.
+    @ljos-only @headless
+    Scenario: A file in Ljós's API is left as it is
+      Given the file "app/Main.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Rectangle { fill: "red"; Column { } }
+        """
+      When the author runs "ljos migrate --write app"
+      Then the command prints:
+        """
+        1 files, 0 lowered, 0 kept
+        """
+
+    @ljos-only @headless
+    Scenario: A module of Ljós's beside Qt's stays, and the rest is lowered
+      Given the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import Ljos.Design
+        Rectangle { color: Colors.canvas }
+        """
+      When the author runs "ljos migrate --write app"
+      Then the command prints:
+        """
+        lowered app/Main.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "app/Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Design
+        Rectangle { fill: Colors.canvas }
         """
       When the author runs "ljos check app"
       Then the command exits with status 0
