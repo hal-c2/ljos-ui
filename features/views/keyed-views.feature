@@ -97,8 +97,6 @@ Feature: Keyed views
       When the property "rows" of "root" is set to [{"id": "b"}, {"id": "a"}]
       Then the property "made" of "root" is 4
 
-  # Blocked on U3: `Transition` is not in Ljos.Ui yet, so a Ljós file cannot say one.
-  @blocked
   Rule: A keyed Repeater plays enter on a new row's item and exit on a gone row's
 
     Background:
@@ -144,8 +142,6 @@ Feature: Keyed views
       Then the object "a" does not exist
       And the property "opacity" of "b" is 1
 
-  # Blocked on U3: `Transition` is not in Ljos.Ui yet, so a Ljós file cannot say one.
-  @blocked
   Rule: A ListView's add and remove are its enter and exit
 
     Background:
@@ -196,8 +192,7 @@ Feature: Keyed views
 
   Rule: Qt's add and remove of a ListView are lowered to enter and exit
 
-    # Blocked on U3: a file that makes a `Transition` is kept until Ljos.Ui has one.
-    @blocked @headless
+    @headless
     Scenario: A ListView's add and remove are written enter and exit
       Given the file "Main.qml":
         """qml

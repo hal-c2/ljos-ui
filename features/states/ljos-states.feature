@@ -161,6 +161,98 @@ Feature: States in Ljós's API
         }
         """
 
+  Rule: An animation names a member by the name its object has in Ljós
+
+    # An animation finds what it moves by name, on that object as it is: a `Rectangle`'s `color` is
+    # `fill` in Ljós's API, so `Behavior on color` and `property: "color"` are lowered with it.
+    @ljos-only
+    Scenario: Lowered, a Behavior and an animation move the member by its Ljós name
+      Given Qt QML is lowered to the Ljós API
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"; width: 100; height: 60
+          Rectangle {
+            id: left; objectName: "left"; width: 50; height: 60; color: "#000000"
+            Behavior on color { ColorAnimation { duration: 1000 } }
+          }
+          Rectangle { id: right; objectName: "right"; x: 50; width: 50; height: 60; color: "#000000" }
+          ColorAnimation { id: fade; target: right; property: "color"; to: "#ffffff"; duration: 1000 }
+          function give() {
+            left.color = "#ffffff"
+            fade.start()
+          }
+        }
+        """
+      When the method "give" of "root" is called
+      Then the property "fill" of "left" is "#000000"
+      And the property "fill" of "right" is "#000000"
+      When 1500 milliseconds pass
+      Then the property "fill" of "left" is "#ffffff"
+      And the property "fill" of "right" is "#ffffff"
+
+    @ljos-only @headless
+    Scenario: ljos migrate renames the members an animation names where it knows what it moves
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          Rectangle {
+            id: face
+            color: "#2060c0"
+            Behavior on color { ColorAnimation { duration: 200 } }
+          }
+          Text { id: label; color: "#202020" }
+          ColorAnimation { id: flash; target: face; properties: "color,opacity" }
+          NumberAnimation { target: label; property: "color" }
+          states: State { name: "lit"; PropertyChanges { face.color: "#ffffff" } }
+          transitions: Transition { ColorAnimation { property: "color"; duration: 300 } }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (6 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+        Item {
+          Rectangle {
+            id: face
+            fill: "#2060c0"
+            Behavior on fill { ColorAnimation { duration: 200 } }
+          }
+          Text { id: label; color: "#202020" }
+          ColorAnimation { id: flash; target: face; properties: "fill,opacity" }
+          NumberAnimation { target: label; property: "color" }
+          states: State { name: "lit"; PropertyChanges { face.fill: "#ffffff" } }
+          transitions: Transition { ColorAnimation { property: "fill"; duration: 300 } }
+        }
+        """
+
+    # One string names the member on each object the animation moves; where that is `fill` on one
+    # and `color` on another, no string is right for both, and a person splits the animation.
+    @ljos-only @headless
+    Scenario: An animation whose name is a different member on what it moves keeps the file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          Rectangle { id: face }
+          Text { id: label }
+          ColorAnimation { targets: [face, label]; property: "color" }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:5:55: an animation's "color" is `fill` on some of what it moves and `color` on the rest
+        1 files, 0 lowered, 1 kept
+        """
+
   Rule: A file's `state` is one of the names its states are given
 
     @ljos-only @headless
