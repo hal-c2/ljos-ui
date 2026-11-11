@@ -90,7 +90,7 @@ Feature: Qt's QML lowered to Ljós's API
         import QtQuick
         Rectangle {
           objectName: "swatch"; width: 40; height: 40; color: "#336699"
-          Behavior on color { ColorAnimation { duration: 100 } }
+          transitions: Transition { AnchorAnimation { duration: 100 } }
         }
         """
       Then the property "color" of "swatch" is "#336699"
