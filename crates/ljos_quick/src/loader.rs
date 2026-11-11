@@ -481,8 +481,14 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
     if !is_current(e, me, generation) {
         return;
     }
-    let (props, how) =
-        with_run(e, me, |r| (r.props.clone(), r.props_how.clone())).unwrap_or_default();
+    // setSource's properties are for the source: a sourceComponent set
+    // after `setSource("", props)` is made without them (qml6).
+    let (props, how) = match origin {
+        Origin::Url(_) => {
+            with_run(e, me, |r| (r.props.clone(), r.props_how.clone())).unwrap_or_default()
+        }
+        Origin::Component(_) => Default::default(),
+    };
     if asynchronous {
         start_job(e, me, generation, &origin, props, how);
         return;
