@@ -1878,7 +1878,7 @@ impl QuickScene {
             let mut s = self.shared.borrow_mut();
             let p = s.pending()
                 || self.a11y.pending()
-                || crate::grab::waiting(engine)
+                || crate::grab::waiting(engine, |item| self.items.contains(item))
                 || crate::item_picture::wanted_since(engine, self.pictures_seen);
             // Unfinished jobs need the next frame although nothing they
             // made shows yet.
@@ -2895,18 +2895,22 @@ impl QuickScene {
         }
         let scale = f64::from(self.scale_factor);
         for grab in std::mem::take(&mut self.grabs) {
+            // Left the scene during the frame: as one that left before it.
             let Some(node) = self.items.get(grab.item).map(|e| e.node) else {
+                crate::grab::not_drawn(engine, grab);
                 continue;
             };
             let (w, h) = grab.size;
             let (tw, th) = grab.target;
             let rect = kurbo::Rect::new(0.0, 0.0, w.max(1.0), h.max(1.0));
             let Some(snap) = self.tree.compose_subtree_in(node, rect) else {
+                crate::grab::failed(engine, grab);
                 continue;
             };
             let stretch = (tw / rect.width()).max(th / rect.height());
             let Some(mut picture) = crate::effects::picture_at(&snap, (scale * stretch) as f32)
             else {
+                crate::grab::failed(engine, grab);
                 continue;
             };
             let px = (
@@ -2916,7 +2920,10 @@ impl QuickScene {
             if (picture.width(), picture.height()) != px {
                 match picture.resized(px.0, px.1) {
                     Some(p) => picture = p,
-                    None => continue,
+                    None => {
+                        crate::grab::failed(engine, grab);
+                        continue;
+                    }
                 }
             }
             crate::grab::taken(engine, grab, picture);
