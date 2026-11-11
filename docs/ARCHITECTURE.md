@@ -220,6 +220,8 @@ ljos-ui/
 │   ├── ljos_platform/          system services behind traits (clipboard, dialogs,
 │   │                           settings, fetch, permissions, opening URLs, sensors),
 │   │                           QtCore, QtQuick.Dialogs, QtSensors
+│   ├── ljos_secrets/           secrets the system keeps by service and key (Secret Service,
+│   │                           Keychain, Credential Manager); no engine, no QML
 │   ├── ljos_media/             QtMultimedia playback: players, outputs, SoundEffect,
 │   │                           media clock, null sink [features decode, audio] (7.6)
 │   ├── ljos_lottie/            Qt.labs.lottieqt: LottieAnimation, own Lottie model (7.7)
