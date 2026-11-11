@@ -4,8 +4,11 @@
 //! one, as a `QQuickPaintedItem` subclass needs only the Qt Quick module.
 //!
 //! The type extends [`Item`] (`extends = Item` with a `#[qml(base)]`
-//! field) and is registered as any native type is. Its hooks are then
-//! registered for it:
+//! field) and is registered as any native type is. A type that is a
+//! `QQuickPaintedItem` in Qt extends [`PaintedItem`] instead and has what
+//! Qt's painted item has: what it paints is drawn `contentsScale` times
+//! as large, over `fillColor`, and cut off at the item and its
+//! `contentsSize`. Its hooks are then registered for it:
 //!
 //! - [`register_paint_item`]: what it shows. The `read` function reads
 //!   the item's properties ([`prop`]) and returns an [`ItemPaint`]; the
@@ -127,7 +130,7 @@ pub use ljos_quick::{
     contains_point,
 };
 pub use ljos_quick::{
-    Item, ItemPaint, KeyEvent, KeyKind, Modifiers, ReadPaint, ScrollPhase, WheelEvent,
+    Item, ItemPaint, KeyEvent, KeyKind, Modifiers, PaintedItem, ReadPaint, ScrollPhase, WheelEvent,
     flickable::WheelItem,
 };
 /// An item drawn off the screen for another (a 3D texture of it): see

@@ -275,6 +275,9 @@ does (a chart, a terminal, a video frame), is written against
 `ljos::item` alone. Its paint hook reads the item's own properties with
 `item::prop`; that read is tracked, so the item repaints when one of
 them changes. It paints into a display list in its own coordinates.
+A type that extends `item::PaintedItem` instead of `Item` has what
+Qt's painted item has (`contentsScale`, `fillColor`, `contentsSize`),
+applied to what it paints.
 `item::register_key_item` and `item::register_wheel_item` give it keys
 while it has the active focus (`item::force_active_focus`) and the
 wheel over it. A `TextEdit` that colours its text takes a highlighter

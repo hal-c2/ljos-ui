@@ -2653,6 +2653,7 @@ module QtQuick
 	MouseEvent QtQuick.MouseEvent
 	NumberAnimation QtQuick.NumberAnimation
 	OpacityAnimator QtQuick.OpacityAnimator
+	PaintedItem QtQuick.PaintedItem
 	Palette QtQuick.Palette
 	ParallelAnimation QtQuick.ParallelAnimation
 	ParentAnimation QtQuick.ParentAnimation
@@ -3630,6 +3631,21 @@ module QtQuick
 		prototype QtQuick.PropertyAnimation named
 	type QtQuick.OpacityAnimator OpacityAnimator
 		prototype QtQuick.Animator named
+	type QtQuick.PaintedItem PaintedItem
+		prototype QtQuick.Item named
+		is uncreatable
+		enum RenderTarget Image=0 FramebufferObject=1 InvertedYFramebufferObject=2
+		enum PerformanceHints FastFBOResizing=1
+		prop contentsSize QtQml.size named
+		prop fillColor QtQuick.color named
+		prop contentsScale QtQml.real named
+		prop renderTarget RenderTarget
+		prop textureSize QtQml.size named
+		signal contentsSizeChanged
+		signal fillColorChanged
+		signal contentsScaleChanged
+		signal renderTargetChanged
+		signal textureSizeChanged
 	type QtQuick.Palette Palette
 		prop accent QtQuick.color named reset
 		prop alternateBase QtQuick.color named reset
