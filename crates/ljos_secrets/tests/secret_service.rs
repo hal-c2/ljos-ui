@@ -25,6 +25,9 @@ enum Answer {
     #[default]
     Unlock,
     Dismiss,
+    /// The service quits (or crashes) while the dialog is open, and
+    /// nothing answers.
+    Vanish,
 }
 
 #[derive(Debug, Default)]
@@ -37,6 +40,9 @@ struct Keyring {
     sessions_closed: usize,
     /// By item number; a deleted item is `None`.
     items: Vec<Option<Stored>>,
+    /// Items that stay locked while the keyring is open: copies in
+    /// another collection, which is locked.
+    locked_items: Vec<usize>,
 }
 
 impl Keyring {
@@ -102,7 +108,13 @@ impl Service {
     ) -> Result<(Vec<OwnedObjectPath>, OwnedObjectPath), Refusal> {
         let prompt = {
             let mut keyring = lock(&self.0);
-            if !keyring.locked {
+            let locked_item = objects.iter().any(|object| {
+                keyring
+                    .locked_items
+                    .iter()
+                    .any(|&id| object.as_str() == item_path(id))
+            });
+            if !keyring.locked && !locked_item {
                 return Ok((objects, path("/")));
             }
             keyring.prompts += 1;
@@ -130,12 +142,14 @@ impl Service {
                         .all(|(name, value)| item.attributes.get(name) == Some(value))
                 })
             })
-            .map(|(id, _)| path(&item_path(id)))
-            .collect();
+            .map(|(id, _)| id);
         if keyring.locked {
-            (Vec::new(), found)
+            (Vec::new(), found.map(|id| path(&item_path(id))).collect())
         } else {
-            (found, Vec::new())
+            let (locked, unlocked): (Vec<usize>, Vec<usize>) =
+                found.partition(|id| keyring.locked_items.contains(id));
+            let paths = |ids: Vec<usize>| ids.into_iter().map(|id| path(&item_path(id))).collect();
+            (paths(unlocked), paths(locked))
         }
     }
 }
@@ -253,15 +267,20 @@ impl Prompt {
         &self,
         _window_id: String,
         #[zbus(signal_emitter)] emitter: SignalEmitter<'_>,
+        #[zbus(connection)] connection: &zbus::Connection,
     ) -> zbus::fdo::Result<()> {
-        let dismissed = {
-            let mut keyring = lock(&self.0);
-            match keyring.answer {
-                Answer::Unlock => {
-                    keyring.locked = false;
-                    false
-                }
-                Answer::Dismiss => true,
+        let answer = lock(&self.0).answer;
+        let dismissed = match answer {
+            Answer::Unlock => {
+                let mut keyring = lock(&self.0);
+                keyring.locked = false;
+                keyring.locked_items.clear();
+                false
+            }
+            Answer::Dismiss => true,
+            Answer::Vanish => {
+                connection.release_name(NAME).await?;
+                return Ok(());
             }
         };
         let result = if dismissed {
@@ -621,6 +640,50 @@ fn a_keyring_the_user_leaves_locked_reads_and_removes_nothing() {
             Err(SecretError::Locked)
         );
         assert_eq!(lock(&keyring).kept().len(), 1);
+    });
+}
+
+#[test]
+fn a_read_takes_an_unlocked_copy_without_asking_to_unlock_a_locked_one() {
+    with_service(Keyring::default(), |store, keyring| {
+        store
+            .write("org.example.mail", "alice", b"hunter2")
+            .unwrap();
+        {
+            let mut keyring = lock(&keyring);
+            let copy = Stored {
+                secret: b"elsewhere".to_vec(),
+                ..keyring.kept()[0].clone()
+            };
+            keyring.items.push(Some(copy));
+            let id = keyring.items.len() - 1;
+            keyring.locked_items.push(id);
+            keyring.answer = Answer::Dismiss;
+        }
+        assert_eq!(
+            read(&store, "org.example.mail", "alice"),
+            Some(b"hunter2".to_vec())
+        );
+        assert_eq!(lock(&keyring).prompts, 0);
+    });
+}
+
+#[test]
+fn a_secret_service_that_goes_while_the_user_is_asked_is_unavailable() {
+    let keyring = Keyring {
+        locked: true,
+        answer: Answer::Vanish,
+        ..Keyring::default()
+    };
+    with_service(keyring, |store, keyring| {
+        let written = store.write("org.example.mail", "alice", b"hunter2");
+        assert!(
+            matches!(written, Err(SecretError::Unavailable(_))),
+            "{written:?}"
+        );
+        let keyring = lock(&keyring);
+        assert_eq!(keyring.prompts, 1);
+        assert!(keyring.kept().is_empty());
     });
 }
 

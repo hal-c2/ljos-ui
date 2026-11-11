@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use zbus::blocking::fdo::DBusProxy;
 use zbus::blocking::{Connection, MessageIterator, connection};
 use zbus::message::Type as MessageType;
 use zbus::zvariant::{DynamicDeserialize, DynamicType, OwnedObjectPath, OwnedValue, Value};
@@ -154,39 +155,62 @@ impl Session {
         }
     }
 
-    /// Shows the prompt at `path`, if there is one, and waits for the user.
+    /// Shows the prompt at `path`, if there is one, and waits for the
+    /// user, for as long as they take. The service going away while it
+    /// waits (a crash, a restart, the user quitting it) ends the wait as
+    /// [`SecretError::Unavailable`]: nothing would ever answer.
     fn prompt(&self, path: &OwnedObjectPath) -> Result<Answered, SecretError> {
         if path.as_str() == NONE {
             return Ok(Answered::Completed);
         }
-        let rule = MatchRule::builder()
+        let completed = MatchRule::builder()
             .msg_type(MessageType::Signal)
             .path(path.as_str())
             .and_then(|b| b.interface(PROMPT))
             .and_then(|b| b.member("Completed"))
             .map_err(failed)?
             .build();
-        // Listening before the prompt is shown, so its answer cannot come
-        // first and be missed.
-        let mut completed =
-            MessageIterator::for_match_rule(rule, &self.bus, Some(4)).map_err(from_bus)?;
+        let gone = MatchRule::builder()
+            .msg_type(MessageType::Signal)
+            .sender("org.freedesktop.DBus")
+            .and_then(|b| b.interface("org.freedesktop.DBus"))
+            .and_then(|b| b.member("NameOwnerChanged"))
+            .and_then(|b| b.arg(0, BUS_NAME))
+            .map_err(failed)?
+            .build();
+        // One iterator over everything the connection receives, so both
+        // can be waited for at once, made before the prompt is shown so
+        // neither can come first and be missed.
+        let messages = MessageIterator::from(&self.bus);
+        let bus = DBusProxy::new(&self.bus).map_err(from_bus)?;
+        bus.add_match_rule(completed.clone())
+            .map_err(|e| from_bus(e.into()))?;
+        bus.add_match_rule(gone.clone())
+            .map_err(|e| from_bus(e.into()))?;
         // No window to attach the dialog to: the service shows its own.
         call(&self.bus, path.as_str(), PROMPT, "Prompt", &("",))?;
-        let answer = completed
-            .next()
-            .ok_or_else(|| {
-                SecretError::Unavailable("the bus closed before the prompt was answered".to_owned())
-            })?
-            .map_err(from_bus)?;
-        let (dismissed, _): (bool, OwnedValue) = reply(&answer)?;
-        Ok(if dismissed {
-            Answered::Dismissed
-        } else {
-            Answered::Completed
-        })
+        for message in messages {
+            let message = message.map_err(from_bus)?;
+            if completed.matches(&message).unwrap_or(false) {
+                let (dismissed, _): (bool, OwnedValue) = reply(&message)?;
+                return Ok(if dismissed {
+                    Answered::Dismissed
+                } else {
+                    Answered::Completed
+                });
+            }
+            if gone.matches(&message).unwrap_or(false) {
+                return Err(SecretError::Unavailable(
+                    "the Secret Service went away before the prompt was answered".to_owned(),
+                ));
+            }
+        }
+        Err(SecretError::Unavailable(
+            "the bus closed before the prompt was answered".to_owned(),
+        ))
     }
 
-    /// The items with these attributes, unlocked (asking the user if need
+    /// Every item with these attributes, unlocked (asking the user if need
     /// be); none when there are none.
     fn unlocked_items(
         &self,
@@ -198,6 +222,23 @@ impl Session {
             unlocked.extend(locked);
         }
         Ok(unlocked)
+    }
+
+    /// One item with these attributes: an unlocked one when there is one,
+    /// so the user is asked only when every copy is locked.
+    fn unlocked_item(
+        &self,
+        attributes: &HashMap<&str, &str>,
+    ) -> Result<Option<OwnedObjectPath>, SecretError> {
+        let (unlocked, locked) = self.search(attributes)?;
+        if let Some(item) = unlocked.into_iter().next() {
+            return Ok(Some(item));
+        }
+        let Some(item) = locked.into_iter().next() else {
+            return Ok(None);
+        };
+        self.unlock(std::slice::from_ref(&item))?;
+        Ok(Some(item))
     }
 }
 
@@ -246,8 +287,7 @@ impl SecretBackend for SecretService {
 
     fn read(&self, service: &str, key: &str) -> Result<Option<Secret>, SecretError> {
         let session = self.open()?;
-        let items = session.unlocked_items(&attributes(service, key))?;
-        let Some(item) = items.first() else {
+        let Some(item) = session.unlocked_item(&attributes(service, key))? else {
             return Ok(None);
         };
         let (_, _, value, _): WireSecret = reply(&call(
