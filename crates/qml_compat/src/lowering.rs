@@ -298,7 +298,9 @@ impl Lowering {
     /// The pass writes a module where the project has no script, or where
     /// the one there is the pass's. It drops the ones it wrote before and
     /// does not now. A script of that path the project has already is the
-    /// project's, and stays.
+    /// project's, and stays. The edits are to be applied in the order
+    /// given: each file's are decided against the scripts as the edits
+    /// before them leave the project.
     pub fn settle(&mut self, project: &dyn Project) -> Vec<ScriptEdit> {
         self.lower(project);
         let mut scripts = Vec::new();
@@ -336,7 +338,7 @@ impl Lowering {
         }
         let mut wrote = Vec::new();
         for (path, text) in modules {
-            let there = project.script(key, &path).map(|script| script.text);
+            let there = script_after(project, scripts, key, &path);
             if before.contains(&path) || there.is_none() {
                 if there != Some(text.as_str()) {
                     scripts.push(ScriptEdit::Put {
@@ -412,6 +414,24 @@ impl Held for Lowering {
             .entry(key.to_string())
             .or_insert_with(|| crate::root(&file.text));
         Some(root.clone())
+    }
+}
+
+/// The text of the script at `path` once `edits` are applied to the
+/// project's scripts.
+fn script_after<'a>(
+    project: &'a dyn Project,
+    edits: &'a [ScriptEdit],
+    key: &str,
+    path: &str,
+) -> Option<&'a str> {
+    let last = edits.iter().rev().find(|edit| match edit {
+        ScriptEdit::Put { path: at, .. } | ScriptEdit::Drop(at) => at == path,
+    });
+    match last {
+        Some(ScriptEdit::Put { text, .. }) => Some(text),
+        Some(ScriptEdit::Drop(_)) => None,
+        None => project.script(key, path).map(|script| script.text),
     }
 }
 
