@@ -21,8 +21,28 @@ const MEMBERS: &[&str] = &[
 /// `source`, `setSource` and the signal of its change; then
 /// `sourceComponent` and the signal of its change.
 const SOURCE_AND_COMPONENT: (&[&str], &[&str]) = MEMBERS.split_at(3);
-const SOURCE: &[&str] = SOURCE_AND_COMPONENT.0;
-const COMPONENT: &[&str] = SOURCE_AND_COMPONENT.1;
+
+/// A property of the Loader's and what a file reads or hears it by.
+struct Property {
+    /// Its name, which an object aimed at the Loader sets.
+    name: &'static str,
+    /// The members a script reads or calls it by.
+    read_by: &'static [&'static str],
+    /// The handler of its change.
+    handler: &'static str,
+}
+
+const SOURCE: Property = Property {
+    name: "source",
+    read_by: SOURCE_AND_COMPONENT.0,
+    handler: "onSourceChanged",
+};
+
+const COMPONENT: Property = Property {
+    name: "sourceComponent",
+    read_by: SOURCE_AND_COMPONENT.1,
+    handler: "onSourceComponentChanged",
+};
 
 /// The rule of Qt's `Loader`.
 pub(crate) struct LoaderRule;
@@ -73,13 +93,13 @@ impl Rule for LoaderRule {
         }
         // The Loader's `source` is then empty: whatever reads it, or hears
         // it change, would be told otherwise.
-        if reads(object, file, SOURCE, "onSourceChanged") {
+        if reads(object, file, &SOURCE) {
             return Err(no(Loader::SourceRead));
         }
         // Qt's `sourceComponent` stays empty beside a `source`; lowered, it
         // is the component, and whatever reads it or hears it change would
         // be told so.
-        if reads(object, file, COMPONENT, "onSourceComponentChanged") {
+        if reads(object, file, &COMPONENT) {
             return Err(no(Loader::ComponentRead));
         }
         let span = binding.name.span;
@@ -104,20 +124,39 @@ fn own<'o, 'a>(object: &'o QmlObject<'a>, name: &str) -> Option<&'o QmlBinding<'
     })
 }
 
-/// Whether anything reads one of `members` of the Loader `object`, by its
-/// id, unqualified in its scope, or as an object aimed at it does, or hears
-/// it change through `handler`.
-fn reads(object: &QmlObject<'_>, file: &dyn File, members: &[&str], handler: &str) -> bool {
+/// Whether anything reads `property` of the Loader `object`, by its id,
+/// unqualified in its scope, or as an object aimed at it does, or hears it
+/// change.
+fn reads(object: &QmlObject<'_>, file: &dyn File, property: &Property) -> bool {
     let id = object_id(object);
     id.is_some_and(|id| {
-        members
+        property
+            .read_by
             .iter()
             .any(|member| names_member(file.source(), id, member))
-    }) || own(object, handler).is_some()
+    }) || own(object, property.handler).is_some()
         || id.is_some_and(|id| {
             // An object aimed at it names the member it sets: the property,
             // not its signal.
-            file.aimed_at(id, members[0]) || file.aimed_at(id, handler)
+            file.aimed_at(id, property.name) || file.aimed_at(id, property.handler)
         })
-        || file.names_unqualified(object, members)
+        || file.names_unqualified(object, property.read_by)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_property_is_read_by_its_own_name_and_signal() {
+        for property in [SOURCE, COMPONENT] {
+            assert!(
+                property.read_by.contains(&property.name),
+                "{}",
+                property.name
+            );
+            let signal = format!("{}Changed", property.name);
+            assert!(property.read_by.contains(&signal.as_str()), "{signal}");
+        }
+    }
 }
