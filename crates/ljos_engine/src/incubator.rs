@@ -3124,9 +3124,9 @@ impl CreationJob {
     }
 
     /// Whether a reload makes the object again as one a script made
-    /// ([`By::Script`] under an object of the tree).
+    /// ([`Request::remade_as_script`]).
     pub(crate) fn kept_for_reload(&self) -> bool {
-        self.record.as_ref().is_some_and(|r| r.by == By::Script)
+        self.record.as_ref().is_some_and(Request::remade_as_script)
     }
 
     /// Splits the job in two: the job to queue, and the means to finish
@@ -3300,7 +3300,8 @@ impl CreationJob {
                                 allocated(&e, root, top.context);
                             }
                             self.handle.0.root.set(Some(root));
-                            let scripted = self.record.as_ref().is_some_and(|r| r.by == By::Script);
+                            let scripted =
+                                self.record.as_ref().is_some_and(Request::remade_as_script);
                             e.reload_assign(&cr, root, scripted);
                             self.phase = Phase::Making(sliced::Making::new(
                                 cr,
