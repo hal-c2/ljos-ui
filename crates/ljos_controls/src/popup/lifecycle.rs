@@ -264,11 +264,13 @@ pub(super) fn intercepts(s: &Snapshot, on: bool) -> bool {
     }
 }
 
-/// The popup as [`plan`] sees it.
+/// The popup as [`plan`] sees it. Read untracked: the `visible`
+/// interceptor builds one on every write, which may come from an effect,
+/// and what the popup is about to do is no dependency of whoever wrote.
 fn snapshot(engine: &Engine, popup: ObjectId, state: &PopupState) -> Snapshot {
     let kind = super::kind::of(engine, popup, state);
-    Snapshot {
-        visible: engine.untrack(|| flag(engine, popup, Popup::VISIBLE.index)),
+    engine.untrack(|| Snapshot {
+        visible: flag(engine, popup, Popup::VISIBLE.index),
         phase: state.phase.get(),
         shown: state.shown.get(),
         has_enter: transition(engine, popup, Popup::ENTER.index).is_some(),
@@ -276,7 +278,7 @@ fn snapshot(engine: &Engine, popup: ObjectId, state: &PopupState) -> Snapshot {
         kind,
         delays: kind.delays(engine, popup),
         waiting: kind.is_waiting(engine, popup),
-    }
+    })
 }
 
 /// Does what `popup` does about `event`.
