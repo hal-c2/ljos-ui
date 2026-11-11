@@ -1376,6 +1376,9 @@ impl RichText {
         let mut out = String::new();
         let count = self.blocks.len();
         let mut number = 0;
+        // How wide the marker of the item written last is, which the
+        // item's later paragraphs are indented by; 0 out of a list.
+        let mut item = 0;
         // The marks of the fence open, which the block closes with.
         let mut fence = String::new();
         for (index, block) in self.blocks.iter().enumerate() {
@@ -1452,16 +1455,35 @@ impl RichText {
                     continue;
                 }
                 BlockKind::List => {
+                    // A paragraph of an item after its first has no marker.
+                    // It stays in the item: indented to the item's text, an
+                    // empty line on each side.
+                    if block.marker.is_none() && item > 0 {
+                        if !out.ends_with("\n\n") {
+                            out.push('\n');
+                        }
+                        out.extend(std::iter::repeat_n(' ', item));
+                        self.write_markdown_inline(&mut out, range);
+                        out.push_str("\n\n");
+                        if !next_in_list {
+                            number = 0;
+                            item = 0;
+                        }
+                        continue;
+                    }
+                    let start = out.len();
                     if block.ordered() {
                         number += 1;
                         let _ = write!(out, "{number}.  ");
                     } else {
                         out.push_str("- ");
                     }
+                    item = out.len() - start;
                     self.write_markdown_inline(&mut out, range);
                     out.push('\n');
                     if !next_in_list {
                         number = 0;
+                        item = 0;
                         if index + 1 < count {
                             out.push('\n');
                         }
@@ -2168,6 +2190,27 @@ mod tests {
     }
 
     #[test]
+    fn a_list_item_s_second_paragraph_is_written_in_the_item() {
+        // Measured on Qt 6.12 (hal-c2/ljos-ui#327).
+        for (source, written) in [
+            ("- a\n\n  x\n", "- a\n\n  x\n\n"),
+            ("- a\n\n    x\n", "- a\n\n  x\n\n"),
+            ("1. a\n\n   x\n", "1.  a\n\n    x\n\n"),
+            ("- a\n\n  x\n- b\n", "- a\n\n  x\n\n- b\n"),
+            ("- a\n\n  x\n\n  y\n", "- a\n\n  x\n\n  y\n\n"),
+            ("- a\n\n  x\n\nafter\n", "- a\n\n  x\n\nafter\n\n"),
+            (
+                "1. a\n2. b\n\n   x\n3. c\n",
+                "1.  a\n2.  b\n\n    x\n\n3.  c\n",
+            ),
+        ] {
+            let t = md(source);
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
+    }
+
+    #[test]
     fn code_after_a_list_item_reads_back_as_code() {
         for (source, written) in [
             (
@@ -2175,6 +2218,10 @@ mod tests {
                 "1.  a\n\n<!-- -->\n\n    x\n\n",
             ),
             ("- a\n\n```\nx\n```\n", "- a\n\n```\nx\n```\n\n"),
+            (
+                "- a\n\n  x\n\n<!-- -->\n\n    y\n",
+                "- a\n\n  x\n\n<!-- -->\n\n    y\n\n",
+            ),
         ] {
             let t = md(source);
             assert_eq!(t.blocks.last().map(|b| b.kind), Some(BlockKind::Code));
