@@ -91,7 +91,15 @@ Feature: Editing Markdown in a TextEdit
       | a~~    x~~```~y~```~ | a\|\|    x\|```\|y\|```\|\| |
       | ```~x~```~~    y~ | ```\|x\|```\|    y\|\| |
       | ```js  rest~x~```~ | ```js\|x\|```\|\| |
-      | ````~```~x~```~````~ | ```\|```\|x\|```\|```\|\| |
+
+    # Qt 6.12 writes a fence of three marks whatever the lines hold, so a
+    # line of three marks closes it when the text is read again. In Ljós the
+    # fence is longer than any run of its mark in the lines, and the block
+    # reads back as it was.
+    @qt-diverges
+    Examples:
+      | text                 | out                             |
+      | ````~```~x~```~````~ | ````\|```\|x\|```\|````\|\| |
 
   Scenario: Typing in an indented code block keeps it indented
     When the method "read" of "root" is called with "a~~    x y~"
@@ -100,10 +108,16 @@ Feature: Editing Markdown in a TextEdit
     And the method "markdown" of "root" is called
     Then the property "out" of "root" is "a||    xz y||"
 
-  Scenario: An indented code block after a list item stays indented
-    Read back, the lines are a paragraph of the item, in Qt 6.12 as well.
+  Scenario: A block of HTML comments is not read
+    When the method "read" of "root" is called with "a~~<!-- note -->~~b~"
+    Then the property "out" of "root" is "a||b||"
 
+  # Qt 6.12 writes indented lines right after a list item, and read again
+  # they are a paragraph of the item. Ljós ends the list with an empty
+  # comment first, as CommonMark has it, so the lines read back as code.
+  @qt-diverges
+  Scenario: An indented code block after a list item is written apart from it
     When the method "read" of "root" is called with "- a~~b~~    x~"
     And the method "remove" of "edit" is called with 1, 3
     And the method "markdown" of "root" is called
-    Then the property "out" of "root" is "- a||    x||"
+    Then the property "out" of "root" is "- a||<!-- -->||    x||"
