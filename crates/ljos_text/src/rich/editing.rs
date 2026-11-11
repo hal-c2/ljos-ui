@@ -254,18 +254,24 @@ impl CellFormat {
         self.no_wrap.get(index).copied().unwrap_or(false)
     }
 
-    /// The format after the paragraphs `index + 1..=index + removed` were
-    /// taken out and `added` put in after paragraph `index`: the ones put
-    /// in are as it is, and a join keeps the first one's.
-    fn spliced(&self, index: usize, removed: usize, added: usize) -> Self {
+    /// The format after `removed` paragraph ends were taken out of
+    /// paragraph `index` and `added` put in: the paragraphs put in are as
+    /// it is, and the one left keeps the format of the paragraph the
+    /// removal ended in when it started at paragraph `index`'s start
+    /// (`from_start`), and its own when it started inside it.
+    fn spliced(&self, index: usize, removed: usize, added: usize, from_start: bool) -> Self {
         let mut no_wrap = self.no_wrap.clone();
-        let from = (index + 1).min(no_wrap.len());
-        let to = (index + 1 + removed).min(no_wrap.len());
-        no_wrap.drain(from..to);
-        if index < no_wrap.len() {
-            let flag = no_wrap[index];
-            no_wrap.splice(index + 1..index + 1, std::iter::repeat_n(flag, added));
+        // One past the end wraps: made explicit while the ones that are
+        // taken out are picked.
+        if no_wrap.len() <= index + removed {
+            no_wrap.resize(index + removed + 1, false);
         }
+        if from_start {
+            no_wrap.swap(index, index + removed);
+        }
+        no_wrap.drain(index + 1..=index + removed);
+        let flag = no_wrap[index];
+        no_wrap.splice(index + 1..index + 1, std::iter::repeat_n(flag, added));
         while no_wrap.last() == Some(&false) {
             no_wrap.pop();
         }
@@ -775,9 +781,10 @@ impl RichText {
         let b = self.block_index(range.start);
         let cell_paragraphs = self.cell_paragraphs_spliced(range.clone(), &other.text);
         let removed = self.text[range.clone()].matches('\n').count();
-        // Measured on Qt 6.11: paragraphs joined keep the first one's
-        // format, but an empty one's goes with it (hal-c2/ljos-ui#287).
-        let joined = (edit && removed > 0 && self.block_range(b).is_empty())
+        // Measured on Qt 6.12 (hal-c2/ljos-ui#287, #329): the paragraph left
+        // keeps the format of the one the removal ends in when it starts at
+        // a paragraph's start, and its own when it starts inside one.
+        let joined = (edit && removed > 0 && range.start == self.block_range(b).start)
             .then(|| Arc::clone(&self.blocks[b + removed]))
             .filter(|f| f.table.is_none() && self.blocks[b].table.is_none());
         self.blocks.drain(b + 1..=b + removed);
@@ -819,9 +826,13 @@ impl RichText {
         }
         let (block, column, index) = self.cell_paragraph(range.start)?;
         let row = self.blocks[block].table.as_ref()?;
+        let from_start = self.text[..range.start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| matches!(c, PARAGRAPH | CELL | CELL_PARAGRAPH));
         let mut cells = row.cells.to_vec();
         let cell = cells.get_mut(column)?;
-        *cell = cell.spliced(index, removed, added);
+        *cell = cell.spliced(index, removed, added, from_start);
         Some(Arc::new(BlockFormat {
             table: Some(TableRow {
                 table: Arc::clone(&row.table),
@@ -1959,6 +1970,76 @@ mod tests {
         let mut t = rich("<p>x</p><h1>b</h1>");
         t.splice(1..2, "", None);
         assert_eq!(t.blocks[0].kind, BlockKind::Paragraph);
+    }
+
+    /// Measured on Qt 6.12 (hal-c2/ljos-ui#329): a removal from a
+    /// paragraph's start leaves the format of the paragraph it ends in, one
+    /// from inside a paragraph leaves that paragraph's own.
+    #[test]
+    fn the_paragraph_a_removal_leaves_keeps_its_own_format() {
+        let kinds = |t: &RichText| t.blocks.iter().map(|b| b.kind).collect::<Vec<_>>();
+        let mut t = rich("<p>a</p><h1>b</h1><p>c</p>");
+        t.splice(2..4, "", None);
+        assert_eq!(t.text(), "a\nc");
+        assert_eq!(kinds(&t), [BlockKind::Paragraph, BlockKind::Paragraph]);
+        let mut t = rich("<p>a</p><p>b</p><h1>c</h1>");
+        t.splice(2..4, "", None);
+        assert_eq!(kinds(&t), [BlockKind::Paragraph, BlockKind::Heading(1)]);
+        let mut t = rich("<p>ab</p><h1>cd</h1>");
+        t.splice(0..4, "", None);
+        assert_eq!(t.text(), "d");
+        assert_eq!(kinds(&t), [BlockKind::Heading(1)]);
+        let mut t = rich("<h1>ab</h1><p>cd</p>");
+        t.splice(1..4, "", None);
+        assert_eq!(t.text(), "ad");
+        assert_eq!(kinds(&t), [BlockKind::Heading(1)]);
+        // Written and read again, it is the same document.
+        let again = rich(&t.html(&DocFont::default()));
+        assert_eq!((again.text(), kinds(&again)), (t.text(), kinds(&t)));
+    }
+
+    /// Measured on Qt 6.12 (hal-c2/ljos-ui#329): in a cell as outside one.
+    #[test]
+    fn the_cell_paragraph_a_removal_leaves_keeps_its_own_format() {
+        let no_wrap = |t: &RichText| {
+            let row = t.blocks().iter().find_map(|b| b.table.clone()).unwrap();
+            (0..2)
+                .map(|k| row.cells[0].paragraph_no_wrap(k))
+                .collect::<Vec<_>>()
+        };
+        let nowrap = "<p style='white-space:nowrap'>";
+        let t = rich(&format!(
+            "<table><tr><td>{nowrap}x</p><p>y</p></td></tr></table>"
+        ));
+        assert_eq!(t.text(), "\nx\u{2029}y\n");
+        let mut from_start = t.clone();
+        from_start.splice(1..5, "", None);
+        assert_eq!(from_start.text(), "\ny\n");
+        assert_eq!(no_wrap(&from_start), [false, false]);
+        let mut inside = rich(&format!(
+            "<table><tr><td><p>xy</p>{nowrap}z</p></td></tr></table>"
+        ));
+        inside.splice(2..6, "", None);
+        assert_eq!(inside.text(), "\nxz\n");
+        assert_eq!(no_wrap(&inside), [false, false]);
+        let mut kept = rich(&format!(
+            "<table><tr><td><p>x</p>{nowrap}y</p></td></tr></table>"
+        ));
+        kept.splice(1..5, "", None);
+        assert_eq!(no_wrap(&kept), [true, false]);
+        assert!(
+            body(&kept).contains(" white-space:pre;'>y</p></td>"),
+            "{}",
+            body(&kept)
+        );
+        // Written and read again, the cell is as it was left.
+        for left in [&from_start, &inside, &kept] {
+            let again = rich(&left.html(&DocFont::default()));
+            assert_eq!(
+                (again.text(), no_wrap(&again)),
+                (left.text(), no_wrap(left))
+            );
+        }
     }
 
     /// A slice is cut out of the document, not edited in it: its last
