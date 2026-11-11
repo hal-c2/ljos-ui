@@ -2056,16 +2056,20 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
 Lanes build areas side by side, and each PR touches only its own area's
 files, so that one merging does not put the others in conflict:
 
-- **Renames** go only in your area's
-  `crates/qml_compat/src/rules/<area>.rs`. A new area is three new
+- **Renames and rules** go only in your area's
+  `crates/qml_compat/src/rules/<area>.rs`, and a rule's code in a module
+  beneath it (`rules/text/font.rs`). A new area is three new
   files, `rules/<area>.rs`, `tests/<area>.rs` and
   `docs/dialect/status/<area>.md`, and one line in `AREAS`
-  (`rules/mod.rs`); a unit test holds the three lists equal. A Qt type's member renames live
-  in one area, and a type is renamed in one area; a unit test holds both.
+  (`rules/mod.rs`); a unit test holds the three lists equal. A new rule
+  is one line in `RULES` there. A Qt type's member renames live in one
+  area, a type is renamed in one area, and a type has one rule; a unit
+  test holds all three.
 - **Tests** go only in `crates/qml_compat/src/tests/<area>.rs`. Shared
   helpers stay in `tests/mod.rs`.
-- **Pass logic** for an area goes in its own module, as `arrange.rs` does
-  for layouts, with one call line in `lib.rs`.
+- **Pass logic** for an area goes in its rule, as `rules/text/font.rs`
+  does for fonts, or for now in its own module, as `arrange.rs` does for
+  layouts, with one call line in `lib.rs`.
 - **Status** goes only in `docs/dialect/status/<area>.md`. The Status line
   at the top of this file and §6.4's numbers are the track lead's, after
   merges; a lane puts its corpus counts in its PR body.
