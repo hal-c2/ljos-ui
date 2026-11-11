@@ -160,6 +160,26 @@ Feature: Paragraphs in the cells of a rich TextEdit
       And the method "written" of "root" is called
       Then the property "out" of "root" is "<table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p>~<p style='-qt-paragraph-type:empty;'><br /></p>~<p>b</p></td>~<td>~<p>z</p></td></tr></table>"
 
+    # Ljós reads a cell's paragraphs into records that hold only whether
+    # they wrap (hal-c2/ljos-ui#293), so it writes each as a plain <p>.
+    @backlog
+    Scenario Outline: A cell's <case> is written back with its own format
+      A paragraph of a cell is written with its own tag, margins and
+      alignment, as a paragraph outside a table is, so that the cell reads
+      back as the same paragraphs.
+
+      When the property "html" of "root" is set to "<doc>"
+      And the method "written" of "root" is called
+      Then the property "out" of "root" is "<html>"
+
+      Examples:
+        | case                        | doc                                                              | html                                                                                                                                                                                                                                                                               |
+        | heading                     | [table][tr][td][h1]a[/h1][/td][/tr][/table]                      | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:xx-large; font-weight:700;'>a</span></h1></td></tr></table>         |
+        | pre                         | [table][tr][td][pre]a[/pre][/td][/tr][/table]                    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-family:'monospace';'>a</span></pre></td></tr></table>                   |
+        | paragraph set right         | [table][tr][td][p align='right']a[/p][/td][/tr][/table]          | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p></td></tr></table>                                                        |
+        | paragraph with a margin     | [table][tr][td][p style='margin-top:5px']a[/p][/td][/tr][/table] | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style=' margin-top:5px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p></td></tr></table>                                                                       |
+        | second paragraph, a heading | [table][tr][td]a[h2]b[/h2][/td][/tr][/table]                     | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p>~<h2 style=' margin-top:16px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><span style=' font-size:x-large; font-weight:700;'>b</span></h2></td></tr></table> |
+
     Scenario Outline: The text from <from> to <to> after Return is <out>
       When the property "html" of "root" is set to "[table][tr][td]ab[/td][td]z[/td][/tr][/table]"
       And the method "typing" of "root" is called with 2

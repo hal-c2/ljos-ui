@@ -107,57 +107,8 @@ impl RichText {
                 continue;
             }
             // Measured: a fragment's marks are in paragraphs, not in cells.
-            // A block is written with its own tag, a code block as a pre,
-            // and says whether it wraps, so that it reads back as it was
-            // (features/text/rich-text-white-space.feature).
-            // Qt 6.11: a paragraph that does not wrap is a pre, whatever it
-            // is, in an li left open in a list, and a code block that wraps,
-            // or a fenced one of Markdown, is a p; read back, every pre of
-            // the editor's HTML is monospace and wraps (6.12 the same).
-            let tag = match block.kind {
-                BlockKind::Code => "pre".to_owned(),
-                BlockKind::Heading(n) => format!("h{}", n.clamp(1, 6)),
-                BlockKind::List => "li".to_owned(),
-                _ => "p".to_owned(),
-            };
-            let empty = range.is_empty();
-            out.push('<');
-            out.push_str(&tag);
-            if let Some(align) = block.align.and_then(align_name) {
-                let _ = write!(out, " align=\"{align}\"");
-            }
-            let _ = write!(
-                out,
-                " style=\"{}margin-top:{}px; margin-bottom:{}px; margin-left:{}px; \
-                 margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}{}\">",
-                if empty {
-                    "-qt-paragraph-type:empty; "
-                } else {
-                    " "
-                },
-                num(block.margin_top),
-                num(block.margin_bottom),
-                num(if in_list { 0.0 } else { block.indent }),
-                num(block.indent_right),
-                block
-                    .background
-                    .as_deref()
-                    .map(|c| format!(" background-color:{c};"))
-                    .unwrap_or_default(),
-                white_space(block.no_wrap, block.kind == BlockKind::Code),
-            );
-            if fragment && index == 0 {
-                out.push_str("<!--StartFragment-->");
-            }
-            if empty {
-                out.push_str("<br />");
-            } else {
-                self.write_inline(out, range);
-            }
-            if fragment && index + 1 == count {
-                out.push_str("<!--EndFragment-->");
-            }
-            let _ = write!(out, "</{tag}>");
+            let marks = (fragment && index == 0, fragment && index + 1 == count);
+            self.write_paragraph(out, block, range, marks);
         }
         if let Some(was) = list {
             out.push_str(if was { "</ol>" } else { "</ul>" });
@@ -218,41 +169,94 @@ impl RichText {
                 for (k, text) in self.text[cell].split(CELL_PARAGRAPH).enumerate() {
                     let paragraph = start..start + text.len();
                     start = paragraph.end + CELL_PARAGRAPH.len_utf8();
-                    let empty = paragraph.is_empty();
                     // Measured: an empty first paragraph is not written, an
                     // empty cell is none.
-                    if empty && k == 0 {
+                    if k == 0 && paragraph.is_empty() {
                         continue;
                     }
-                    let no_wrap = format.is_some_and(|f| f.paragraph_no_wrap(k));
-                    out.push_str("\n<p");
                     // Measured: a th is written as a td in the middle.
-                    if format.is_some_and(|f| f.header) {
-                        out.push_str(" align=\"center\"");
-                    }
-                    out.push_str(if empty {
-                        " style=\"-qt-paragraph-type:empty; "
-                    } else {
-                        " style=\" "
-                    });
-                    out.push_str(
-                        "margin-top:0px; margin-bottom:0px; margin-left:0px; \
-                         margin-right:0px; -qt-block-indent:0; text-indent:0px;",
-                    );
-                    out.push_str(white_space(no_wrap, false));
-                    out.push_str("\">");
-                    if empty {
-                        out.push_str("<br />");
-                    } else {
-                        self.write_inline(out, paragraph);
-                    }
-                    out.push_str("</p>");
+                    let paragraph_format = BlockFormat {
+                        align: format.is_some_and(|f| f.header).then_some(HAlign::Center),
+                        no_wrap: format.is_some_and(|f| f.paragraph_no_wrap(k)),
+                        ..BlockFormat::default()
+                    };
+                    out.push('\n');
+                    self.write_paragraph(out, &paragraph_format, paragraph, (false, false));
                 }
                 out.push_str("</td>");
             }
             out.push_str("</tr>");
         }
         out.push_str("</table>");
+    }
+
+    /// Paragraph `range`, set as `block` says, as Qt writes it out of a
+    /// table or in a cell; `marks` says whether the fragment starts or ends
+    /// in it.
+    fn write_paragraph(
+        &self,
+        out: &mut String,
+        block: &BlockFormat,
+        range: Range<usize>,
+        (starts, ends): (bool, bool),
+    ) {
+        // A block is written with its own tag, a code block as a pre, and
+        // says whether it wraps, so that it reads back as it was
+        // (features/text/rich-text-white-space.feature).
+        // Qt 6.11: a paragraph that does not wrap is a pre, whatever it is,
+        // in an li left open in a list, and a code block that wraps, or a
+        // fenced one of Markdown, is a p; read back, every pre of the
+        // editor's HTML is monospace and wraps (6.12 the same).
+        let tag = match block.kind {
+            BlockKind::Code => "pre".to_owned(),
+            BlockKind::Heading(n) => format!("h{}", n.clamp(1, 6)),
+            BlockKind::List => "li".to_owned(),
+            _ => "p".to_owned(),
+        };
+        // Qt 6.11: a paragraph with no text says so in its style, and holds
+        // a line break (6.12 the same).
+        let empty = range.is_empty();
+        out.push('<');
+        out.push_str(&tag);
+        if let Some(align) = block.align.and_then(align_name) {
+            let _ = write!(out, " align=\"{align}\"");
+        }
+        let _ = write!(
+            out,
+            " style=\"{}margin-top:{}px; margin-bottom:{}px; margin-left:{}px; \
+             margin-right:{}px; -qt-block-indent:0; text-indent:0px;{}{}\">",
+            if empty {
+                "-qt-paragraph-type:empty; "
+            } else {
+                " "
+            },
+            num(block.margin_top),
+            num(block.margin_bottom),
+            num(if block.kind == BlockKind::List {
+                0.0
+            } else {
+                block.indent
+            }),
+            num(block.indent_right),
+            block
+                .background
+                .as_deref()
+                .map(|c| format!(" background-color:{c};"))
+                .unwrap_or_default(),
+            white_space(block.no_wrap, block.kind == BlockKind::Code),
+        );
+        if starts {
+            out.push_str("<!--StartFragment-->");
+        }
+        if empty {
+            out.push_str("<br />");
+        } else {
+            self.write_inline(out, range);
+        }
+        if ends {
+            out.push_str("<!--EndFragment-->");
+        }
+        let _ = write!(out, "</{tag}>");
     }
 
     fn write_inline(&self, out: &mut String, range: Range<usize>) {
@@ -535,6 +539,10 @@ fn white_space(no_wrap: bool, pre: bool) -> &'static str {
     }
 }
 
+/// The head of the document: what the text is, and the style sheet that
+/// makes paragraphs keep their spaces and draws a task's box.
+// Qt 6.11: an HTML 4.0 doctype, a qrichtext meta and this style sheet head
+// every document, whatever it holds (6.12 the same).
 fn write_head(out: &mut String) {
     out.push_str(
         "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0//EN\" \
