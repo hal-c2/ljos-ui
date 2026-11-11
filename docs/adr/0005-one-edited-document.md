@@ -43,7 +43,9 @@ This costs three things:
 1. **One document.** While a `TextEdit` edits rich text, its `RichText`
    is the model. An edit is an operation on that document (insert, remove,
    format, split, join), and the operation says what changed. Nothing
-   diffs strings. Plain text is the same document with one format.
+   diffs strings. A rich `TextEdit` whose text is plain is the same
+   document with one format. Plain `TextInput` and `TextEdit` are left
+   open: see Consequences.
 2. **One undo log, of operations.** An undo step holds the operations
    and what they replaced, never a copy of the document.
 3. **One set of text rules.** Words, paragraphs, UTF-16 units and
