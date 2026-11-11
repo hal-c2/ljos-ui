@@ -264,7 +264,7 @@ const AREAS: &[&Area] = &[
 ];
 
 /// What Ljós calls Qt's type `name`, where it calls it otherwise. Whether a
-/// file's `name` is Qt's type is the pass's to say (`Pass::renamed_type`).
+/// file's `name` is Qt's type is the scope's to say (`Scope::renamed_type`).
 pub(crate) fn new_name(name: &str) -> Option<&'static str> {
     type_renames()
         .find(|(old, _)| *old == name)

@@ -17,7 +17,6 @@
 //! file is lowered all the same. A project lowers a file again when a file of
 //! a name the pass gives comes beside it or goes ([`introduced`]).
 
-use std::cell::RefCell;
 use std::ops::Range;
 
 use qt_types::Type;
@@ -85,17 +84,11 @@ pub(crate) struct Members {
     uses: Vec<Use>,
     /// The types of the file's objects, whose members are in sight.
     types: Vec<&'static Type>,
-    /// What the roots of the files beside it, that the file's objects are
-    /// built on, declare.
-    declared: RefCell<Vec<String>>,
     /// Where the types of the properties the file declares are written:
     /// `point` of `property point at` is no name in sight.
     typed: Vec<Range<usize>>,
     /// An object whose type the pass does not know, or a delegate.
     unsure: bool,
-    /// The file imports a directory by path, or a module of the project,
-    /// not under a name: a type it may bring takes a name the pass gives.
-    pathed: bool,
 }
 
 impl Members {
@@ -126,18 +119,8 @@ impl Members {
         }
     }
 
-    /// `import "qml"` or `import Gauges`: what the directory or the
-    /// project's module has is in sight.
-    pub(crate) fn imports_by_path(&mut self) {
-        self.pathed = true;
-    }
-
     pub(crate) fn delegate(&mut self) {
         self.unsure = true;
-    }
-
-    pub(crate) fn declared_beside(&self, names: &[String]) {
-        self.declared.borrow_mut().extend(names.iter().cloned());
     }
 
     pub(crate) fn typed(&mut self, range: Range<usize>) {
@@ -145,7 +128,9 @@ impl Members {
     }
 
     /// The changes that lower the members whose names are free, and whether
-    /// there are any (the file then imports `Ljos.Core`).
+    /// there are any (the file then imports `Ljos.Core`). `beside` says
+    /// whether a name may be one of what is beside the file
+    /// ([`Scope::may_be_beside`](crate::scope::Scope::may_be_beside)).
     pub(crate) fn settle(
         self,
         source: &str,
@@ -154,11 +139,8 @@ impl Members {
         if self.unsure {
             return Vec::new();
         }
-        let declared = self.declared.borrow();
         let free = |name: &str| {
-            !(self.pathed && name.starts_with(|c: char| c.is_ascii_uppercase()))
-                && !beside(name)
-                && !declared.iter().any(|d| d == name)
+            !beside(name)
                 && !self.types.iter().any(|ty| {
                     ty.property(name).is_some() || ty.has_method(name) || ty.signal(name).is_some()
                 })
