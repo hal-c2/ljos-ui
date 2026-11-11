@@ -1,24 +1,26 @@
 ---
 source: crates/ljos_compiler/tests/golden.rs
-expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    Item { id: other }\n    property var whole: parent?.Keys.enabled\n    property var alone: parent?.Keys\n    property var later: other.children?.[0].Keys.enabled\n    property var nested: other?.Keys.forwardTo[0]?.Keys.priority\n    property var argument: parent?.contains(other.Keys.enabled)\n    property var unconditional: other.Keys.enabled\n}\n\"##,)])"
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    Item { id: other }\n    property var whole: parent?.Keys.enabled\n    property var alone: parent?.Keys\n    property var later: other.children?.[0].Keys.enabled\n    property var nested: other?.Keys.forwardTo[0]?.Keys.priority\n    property var argument: parent?.contains(other.Keys.enabled)\n    property var plainKey: parent?.Keys.forwardTo.Foo.x\n    property var unconditional: other.Keys.enabled\n}\n\"##,)])"
 ---
 file Main
 import QtQuick
 
-component c0 Main (file) id=Main signature=99e6dd06
+component c0 Main (file) id=Main signature=a19af039
   o0 QtQuick/Item key=/
     property var whole
     property var alone
     property var later
     property var nested
     property var argument
+    property var plainKey
     property var unconditional
     whole := e0
     alone := e1
     later := e2
     nested := e3
     argument := e4
-    unconditional := e5
+    plainKey := e5
+    unconditional := e6
     child o1
   o1 QtQuick/Item key=/other parent=o0
 
@@ -28,7 +30,8 @@ exprs
   e2 property f2 scope=c0o0 at 8:25 params[other=c0o1] args[] refs[other:id c0o1]
   e3 property f3 scope=c0o0 at 9:26 params[other=c0o1] args[] refs[other:id c0o1]
   e4 property f4 scope=c0o0 at 10:28 params[$scope=c0o0, other=c0o1] args[] refs[parent:scope, other:id c0o1]
-  e5 property f5 scope=c0o0 at 11:33 params[other=c0o1] args[] refs[other:id c0o1]
+  e5 property f5 scope=c0o0 at 11:28 params[$scope=c0o0] args[] refs[parent:scope]
+  e6 property f6 scope=c0o0 at 12:33 params[other=c0o1] args[] refs[other:id c0o1]
 
 module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
@@ -58,7 +61,12 @@ export function f4($scope, other) {
   return ($scope.parent?.contains(__ljos_att(other, "QtQuick", "Keys").enabled));
 }
 
-// Main.qml:11:33 Item.unconditional
-export function f5(other) {
+// Main.qml:11:28 Item.plainKey
+export function f5($scope) {
+  return (__ljos_atq($scope.parent, "QtQuick", "Keys", (__ljos_o) => __ljos_o.forwardTo.Foo.x));
+}
+
+// Main.qml:12:33 Item.unconditional
+export function f6(other) {
   return (__ljos_att(other, "QtQuick", "Keys").enabled);
 }

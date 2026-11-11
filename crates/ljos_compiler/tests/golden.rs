@@ -140,6 +140,7 @@ Item {
     property var later: other.children?.[0].Keys.enabled
     property var nested: other?.Keys.forwardTo[0]?.Keys.priority
     property var argument: parent?.contains(other.Keys.enabled)
+    property var plainKey: parent?.Keys.forwardTo.Foo.x
     property var unconditional: other.Keys.enabled
 }
 "##,

@@ -351,42 +351,50 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 js::ValueSource::Free(_) => {}
             }
         }
-        for member in &analysis.type_members {
-            // `Text.AlignLeft`, `Controls.Button`: a name that is a type or
-            // a module has no object a type could have attached to.
-            let named = member.base.is_some_and(|start| {
-                analysis
-                    .free
-                    .iter()
-                    .filter(|free| free.span.start == start)
-                    .filter_map(|free| {
-                        plans.get(&(free.name.clone(), free.chain.clone(), free.instance_type))
-                    })
-                    .any(|plan| {
-                        matches!(
-                            plan.resolved,
-                            Resolved::ImportNs(_)
-                                | Resolved::Type(_)
-                                | Resolved::Enum(_)
-                                | Resolved::Attached { .. }
-                                | Resolved::Global { .. }
-                        )
-                    })
-            });
-            if named {
-                continue;
-            }
-            // `item.L.Layout`: the type is named through a namespace, and
-            // what it attached to is `item`.
-            let through = member
-                .through
-                .as_ref()
-                .and_then(|(ns, object)| Some((self.attaching(&[ns, &member.name])?, *object)));
-            let Some(((module, name), object)) =
-                through.or_else(|| Some((self.attaching(&[&member.name])?, member.object)))
-            else {
-                continue;
-            };
+        // Which members are read as attached objects, settled before any is
+        // rewritten: a chain's rest ends only where one of these wraps it,
+        // never at a member named like a type that stays a plain read
+        // (`parent?.Keys.forwardTo.Foo.x`).
+        let attached: Vec<(&js::TypeMember, (String, String), Span)> = analysis
+            .type_members
+            .iter()
+            .filter_map(|member| {
+                // `Text.AlignLeft`, `Controls.Button`: a name that is a type
+                // or a module has no object a type could have attached to.
+                let named = member.base.is_some_and(|start| {
+                    analysis
+                        .free
+                        .iter()
+                        .filter(|free| free.span.start == start)
+                        .filter_map(|free| {
+                            plans.get(&(free.name.clone(), free.chain.clone(), free.instance_type))
+                        })
+                        .any(|plan| {
+                            matches!(
+                                plan.resolved,
+                                Resolved::ImportNs(_)
+                                    | Resolved::Type(_)
+                                    | Resolved::Enum(_)
+                                    | Resolved::Attached { .. }
+                                    | Resolved::Global { .. }
+                            )
+                        })
+                });
+                if named {
+                    return None;
+                }
+                // `item.L.Layout`: the type is named through a namespace,
+                // and what it attached to is `item`.
+                let through = member
+                    .through
+                    .as_ref()
+                    .and_then(|(ns, object)| Some((self.attaching(&[ns, &member.name])?, *object)));
+                let (type_name, object) =
+                    through.or_else(|| Some((self.attaching(&[&member.name])?, member.object)))?;
+                Some((member, type_name, object))
+            })
+            .collect();
+        for (member, (module, name), object) in &attached {
             let Some(chain_end) = member.chain_end else {
                 edits.push(js::Edit {
                     span: Span::new(object.start, object.start),
@@ -401,16 +409,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             // `parent?.Window.window`: where `parent` is nothing the whole
             // chain is `undefined`, so the rest of it is given as a
             // function that is not called then. The rest ends where
-            // another type's member of the chain is read off it
+            // another attached read of the chain is made off it
             // (`a?.Window.contentItem.Layout`), which wraps this one.
-            let rest_end = analysis
-                .type_members
+            let rest_end = attached
                 .iter()
-                .filter(|other| other.chain_end == Some(chain_end))
-                .filter(|other| {
-                    other.object.start <= object.start && other.object.end >= member.end
-                })
-                .map(|other| other.object.end)
+                .filter(|(other, _, _)| other.chain_end == Some(chain_end))
+                .filter(|(_, _, other)| other.start <= object.start && other.end >= member.end)
+                .map(|(_, _, other)| other.end)
                 .min()
                 .unwrap_or(chain_end);
             edits.push(js::Edit {
