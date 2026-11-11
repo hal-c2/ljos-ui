@@ -7,9 +7,10 @@ use std::cell::Cell;
 
 use common::*;
 use ljos_engine::{Engine, ObjectId};
+use ljos_quick::focus::{FocusReason, force_active_focus};
 use ljos_quick::{
-    Item, LayerHooks, MouseArea, PointerEvent, layer_host, layer_of, set_layer, set_layer_hooks,
-    window_item, window_of,
+    Item, LayerHooks, MouseArea, PointerEvent, add_data, layer_host, layer_of, set_layer,
+    set_layer_focus, set_layer_hooks, window_item, window_of,
 };
 use ljos_runtime::Time;
 
@@ -19,6 +20,8 @@ thread_local! {
     static RELEASES: Cell<u32> = const { Cell::new(0) };
     /// The hook keeps the pointer from everything under the layer.
     static MODAL: Cell<bool> = const { Cell::new(false) };
+    /// The layer and the item it last heard was refused focus.
+    static REFUSED: Cell<Option<(ObjectId, ObjectId)>> = const { Cell::new(None) };
 }
 
 fn hooks() -> LayerHooks {
@@ -117,4 +120,34 @@ fn a_layer_that_was_destroyed_is_no_layer() {
     let out = frame(&mut s, &e);
     assert_eq!(out.next_wake, None);
     assert!(!s.needs_frame());
+}
+
+/// An item made under `parent` with `focus: true`.
+fn made_with_focus(e: &Engine, parent: ObjectId) -> ObjectId {
+    let o = e
+        .create_native_incomplete(Item::default(), Some(parent))
+        .unwrap();
+    add_data(e, parent, o).unwrap();
+    set(e, o, "focus", ljos_engine::Value::Bool(true));
+    e.complete(o).unwrap();
+    o
+}
+
+#[test]
+fn the_layer_hears_of_content_refused_focus_because_the_layer_has_it() {
+    let e = engine();
+    set_layer_focus(&e, |_, layer, item| REFUSED.set(Some((layer, item))));
+    let (root, under, layer, over) = world(&e);
+    force_active_focus(&e, over, FocusReason::Other);
+    let first = made_with_focus(&e, root);
+    assert_eq!(REFUSED.get(), Some((layer, first)));
+    assert!(!get(&e, first, "focus").to_boolean());
+
+    // Refused because the content has its own focus item: not the
+    // layer's business.
+    REFUSED.set(None);
+    force_active_focus(&e, under, FocusReason::Other);
+    let second = made_with_focus(&e, root);
+    assert_eq!(REFUSED.get(), None);
+    assert!(!get(&e, second, "focus").to_boolean());
 }

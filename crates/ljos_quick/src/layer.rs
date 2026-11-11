@@ -42,6 +42,12 @@ pub struct LayerHooks {
 /// so nothing else would give it the pointer.
 pub type LayerTake = fn(&Engine, ObjectId, kurbo::Point, &PointerEvent) -> Option<ObjectId>;
 
+/// An item of the tree under a layer was made with `focus: true` and was
+/// refused its scope, because something in the layer holds it: the layer
+/// and that item. Had the layer not taken the keyboard first, the item
+/// would have it; it is what the layer can give the keyboard back to.
+pub type LayerFocus = fn(&Engine, ObjectId, ObjectId);
+
 #[derive(Default)]
 struct Layers {
     /// The layer of each tree, by the tree's top item.
@@ -49,6 +55,7 @@ struct Layers {
     by_layer: RefCell<HashMap<ObjectId, ObjectId>>,
     hooks: Cell<Option<LayerHooks>>,
     take: Cell<Option<LayerTake>>,
+    focus: Cell<Option<LayerFocus>>,
     /// Bumped when a layer comes or goes, for bindings that found none.
     epoch: Cell<Option<NodeId>>,
 }
@@ -70,6 +77,12 @@ pub fn set_layer_hooks(engine: &Engine, hooks: LayerHooks) {
 /// button is held ([`LayerTake`]).
 pub fn set_layer_take(engine: &Engine, take: LayerTake) {
     engine.extension::<Layers>().take.set(Some(take));
+}
+
+/// Says who hears of an item of the content refused its scope while the
+/// layer holds it ([`LayerFocus`]).
+pub fn set_layer_focus(engine: &Engine, focus: LayerFocus) {
+    engine.extension::<Layers>().focus.set(Some(focus));
 }
 
 /// Makes `layer` the layer above the tree that hangs from `top`. The
@@ -181,6 +194,23 @@ pub(crate) fn take(
     let layer = layer.filter(|l| engine.is_alive(*l))?;
     let take = engine.extension::<Layers>().take.get()?;
     take(engine, layer, press, ev).filter(|o| engine.is_alive(*o))
+}
+
+/// `item`, in the tree under `top`, was made with `focus: true` and its
+/// scope is held by `holder`: tells the layer above, if `holder` is in it.
+pub(crate) fn focus_refused(engine: &Engine, top: ObjectId, holder: ObjectId, item: ObjectId) {
+    let layers = engine.extension::<Layers>();
+    let Some(focus) = layers.focus.get() else {
+        return;
+    };
+    let layer = layers.by_top.borrow().get(&top).copied();
+    let Some(layer) = layer.filter(|l| engine.is_alive(*l)) else {
+        return;
+    };
+    let under = |o: ObjectId| crate::focus::tree::is_under(engine, o, layer);
+    if under(holder) && !under(item) {
+        focus(engine, layer, item);
+    }
 }
 
 pub(crate) fn release(engine: &Engine, layer: Option<ObjectId>, ev: &PointerEvent) {
