@@ -15,7 +15,7 @@ Every `.qml` file whose name starts with an upper-case letter defines a QML comp
 
 Form files ending in `.ui.qml`, as visual design tools write them, such as `PanelForm.ui.qml`, define a component named by the part before `.ui.qml` (`PanelForm`). A companion `Panel.qml` file can use `PanelForm` as its root element and attach bindings and signal handlers to the objects exposed through aliases on the form:
 
-```qml
+```qml file=PanelForm.ui.qml group=panel
 // PanelForm.ui.qml
 import QtQuick
 
@@ -32,7 +32,7 @@ Item {
 }
 ```
 
-```qml
+```qml group=panel
 // Panel.qml
 import QtQuick
 

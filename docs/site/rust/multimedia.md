@@ -78,6 +78,8 @@ Item {
     }
 
     MouseArea {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Play chime"
         anchors.fill: parent
         onClicked: chime.play()
     }

@@ -46,7 +46,7 @@ lowered Main.qml (3 edits)
 
 Given this file:
 
-```qml
+```qml before
 import QtQuick
 
 Rectangle {
