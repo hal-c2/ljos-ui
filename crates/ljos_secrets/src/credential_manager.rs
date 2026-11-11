@@ -6,11 +6,13 @@
 //! same secret is found by either. Windows keeps it encrypted with the
 //! user's logon credentials, and lets it roam with the user's profile.
 //!
-//! A dot in a name makes the target ambiguous: service `b.c` with key `a`,
-//! and service `c` with key `a.b`, are both `a.b.c`. The key the
-//! credential was written for is its user name, so a credential whose user
-//! name is another key is another secret: it is not read, replaced or
-//! removed for this one.
+//! Two names can come to one target: through a dot (service `b.c` with
+//! key `a`, and service `c` with key `a.b`, are both `a.b.c`), and through
+//! case, which Windows ignores when it finds a target (`Mail` and `mail`).
+//! A credential keeps its target as it was written and its key as its user
+//! name, so one whose target or user name differs from this secret's, even
+//! only in case, is another secret: it is not read, replaced or removed
+//! for this one.
 
 use std::ffi::c_void;
 use std::ptr;
@@ -50,8 +52,8 @@ fn last_error() -> SecretError {
     }
 }
 
-/// The credential at `target`, if there is one: its user name, and its
-/// blob when `with_blob`.
+/// The credential Windows finds at `target`, if there is one: its names as
+/// written, and its blob when `with_blob`.
 fn existing(target: &[u16], with_blob: bool) -> Result<Option<Found>, SecretError> {
     let mut credential: *mut CREDENTIALW = ptr::null_mut();
     // SAFETY: a NUL-terminated target, and a place for the result.
@@ -64,15 +66,11 @@ fn existing(target: &[u16], with_blob: bool) -> Result<Option<Found>, SecretErro
     }
     // SAFETY: CredReadW succeeded, so `credential` points to a credential
     // it allocated, whose blob holds CredentialBlobSize bytes and whose
-    // user name, when not null, is NUL-terminated, until CredFree.
+    // names, when not null, are NUL-terminated, until CredFree.
     let found = unsafe {
         let read = &*credential;
-        let user_name = if read.UserName.is_null() {
-            Vec::new()
-        } else {
-            let len = (0..).take_while(|&i| *read.UserName.add(i) != 0).count();
-            std::slice::from_raw_parts(read.UserName, len).to_vec()
-        };
+        let target_name = until_nul(read.TargetName);
+        let user_name = until_nul(read.UserName);
         let blob = if with_blob && !read.CredentialBlob.is_null() {
             std::slice::from_raw_parts(read.CredentialBlob, read.CredentialBlobSize as usize)
                 .to_vec()
@@ -81,6 +79,7 @@ fn existing(target: &[u16], with_blob: bool) -> Result<Option<Found>, SecretErro
         };
         CredFree(credential.cast::<c_void>());
         Found {
+            target_name,
             user_name,
             secret: Secret::new(blob),
         }
@@ -88,15 +87,36 @@ fn existing(target: &[u16], with_blob: bool) -> Result<Option<Found>, SecretErro
     Ok(Some(found))
 }
 
+/// The UTF-16 string at `text` without its NUL; empty when null.
+///
+/// # Safety
+///
+/// `text` is null or points to a NUL-terminated UTF-16 string.
+unsafe fn until_nul(text: *const u16) -> Vec<u16> {
+    if text.is_null() {
+        return Vec::new();
+    }
+    // SAFETY: the string ends at a NUL, as the caller promises.
+    unsafe {
+        let len = (0..).take_while(|&i| *text.add(i) != 0).count();
+        std::slice::from_raw_parts(text, len).to_vec()
+    }
+}
+
 struct Found {
+    /// UTF-16, without the NUL.
+    target_name: Vec<u16>,
     /// UTF-16, without the NUL.
     user_name: Vec<u16>,
     secret: Secret,
 }
 
 impl Found {
-    fn is_for(&self, key: &str) -> bool {
-        self.user_name.iter().copied().eq(key.encode_utf16())
+    /// Whether this is the credential of `key` at `target` (which ends in
+    /// its NUL), compared exactly, case and all.
+    fn is_for(&self, target: &[u16], key: &str) -> bool {
+        target.strip_suffix(&[0]) == Some(self.target_name.as_slice())
+            && self.user_name.iter().copied().eq(key.encode_utf16())
     }
 }
 
@@ -111,11 +131,12 @@ impl SecretBackend for CredentialManager {
         }
         let mut target = target(service, key);
         if let Some(found) = existing(&target, false)?
-            && !found.is_for(key)
+            && !found.is_for(&target, key)
         {
             return Err(SecretError::Failed(format!(
-                "the credential for key {key:?} of {service:?} has the name of another \
-                 key's, as a dot in the service or the key makes it; it is left as it is"
+                "the Credential Manager keeps another secret where key {key:?} of \
+                 {service:?} would go: its name differs only in case, or in where a dot \
+                 falls; it is left as it is"
             )));
         }
         let mut user = wide(key);
@@ -146,15 +167,16 @@ impl SecretBackend for CredentialManager {
     }
 
     fn read(&self, service: &str, key: &str) -> Result<Option<Secret>, SecretError> {
-        Ok(existing(&target(service, key), true)?
-            .filter(|found| found.is_for(key))
+        let target = target(service, key);
+        Ok(existing(&target, true)?
+            .filter(|found| found.is_for(&target, key))
             .map(|found| found.secret))
     }
 
     fn remove(&self, service: &str, key: &str) -> Result<bool, SecretError> {
         let target = target(service, key);
         match existing(&target, false)? {
-            Some(found) if found.is_for(key) => {}
+            Some(found) if found.is_for(&target, key) => {}
             _ => return Ok(false),
         }
         // SAFETY: a NUL-terminated target.
