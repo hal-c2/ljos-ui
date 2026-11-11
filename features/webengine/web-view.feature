@@ -70,6 +70,32 @@ Feature: A web page in a WebEngineView
     Then the pixel at 50, 50 of the window is "#ff0000"
     And the pixel at 150, 50 of the window is "#00ff00"
 
+  @api-QtQuick.Item.grabToImage
+  Scenario: A picture of the view holds the page it shows
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Rectangle {
+        id: root; objectName: "root"
+        width: 200; height: 100
+        color: "#ff0000"
+        property var asked: "not yet"
+        function grab() { asked = view.grabToImage(r => shot.source = r.url) }
+        WebEngineView {
+          id: view
+          width: 100; height: 100
+          url: Qt.resolvedUrl("page.html")
+        }
+        Image { id: shot; x: 100 }
+      }
+      """
+    When 2 seconds pass
+    And the method "grab" of "root" is called
+    And 1 second passes
+    Then the property "asked" of "root" is true
+    And the pixel at 150, 50 of the window is "#00ff00"
+
   @api-QtWebEngine.WebEngineView.url
   Scenario: A page that changes one part at a time is drawn whole after each change
     Given the text file "halves.html":
