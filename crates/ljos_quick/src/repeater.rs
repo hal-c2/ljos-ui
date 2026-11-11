@@ -281,14 +281,19 @@ impl Repeater {
     #[qml(signal, name = "itemRemoved")]
     fn item_removed(index: i32, item: Option<ObjectId>);
 
-    /// The item for row `index`; `null` when there is none.
+    /// The item for row `index`; `null` when there is none. A binding
+    /// that calls it runs again when the Repeater's items change.
     #[qml(invokable, name = "itemAt")]
-    fn item_at(&self, index: Value) -> Value {
-        let at = index.as_number().filter(|n| *n >= 0.0).map(|n| n as usize);
-        match (at, &self.delegates) {
-            (Some(i), Some(d)) => d.object_at(i).map_or(Value::Null, Value::Object),
-            _ => Value::Null,
-        }
+    fn item_at(cx: &ljos_engine::Cx, index: Value) -> Value {
+        let Ok(Some(delegates)) = cx.with::<Repeater, _>(|r| r.delegates.clone()) else {
+            return Value::Null;
+        };
+        delegates.track(cx.engine);
+        index
+            .as_number()
+            .filter(|n| *n >= 0.0)
+            .and_then(|n| delegates.object_at(n as usize))
+            .map_or(Value::Null, Value::Object)
     }
 
     /// Items are made from completion on, and all of them again whenever

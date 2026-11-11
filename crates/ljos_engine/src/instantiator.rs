@@ -97,14 +97,19 @@ impl Instantiator {
     #[qml(signal, name = "objectRemoved")]
     fn object_removed(index: i32, object: Option<ObjectId>);
 
-    /// The object for row `index`; `null` when there is none.
+    /// The object for row `index`; `null` when there is none. A binding
+    /// that calls it runs again when the Instantiator's objects change.
     #[qml(invokable, name = "objectAt")]
-    fn object_at(&self, index: Value) -> Value {
-        let at = index.as_number().filter(|n| *n >= 0.0).map(|n| n as usize);
-        match (at, &self.delegates) {
-            (Some(i), Some(d)) => d.object_at(i).map_or(Value::Null, Value::Object),
-            _ => Value::Null,
-        }
+    fn object_at(cx: &Cx, index: Value) -> Value {
+        let Ok(Some(delegates)) = cx.with::<Instantiator, _>(|i| i.delegates.clone()) else {
+            return Value::Null;
+        };
+        delegates.track(cx.engine);
+        index
+            .as_number()
+            .filter(|n| *n >= 0.0)
+            .and_then(|n| delegates.object_at(n as usize))
+            .map_or(Value::Null, Value::Object)
     }
 
     /// Objects are made from completion on, and all of them again
