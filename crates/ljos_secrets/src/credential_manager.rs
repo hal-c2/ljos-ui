@@ -25,20 +25,12 @@ use windows_sys::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW,
 };
 
+use crate::credential_names::{target, wide};
 use crate::{Secret, SecretBackend, SecretError};
 
 /// The Credential Manager backend.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct CredentialManager;
-
-/// `text` as a NUL-terminated UTF-16 string.
-fn wide(text: &str) -> Vec<u16> {
-    text.encode_utf16().chain(std::iter::once(0)).collect()
-}
-
-fn target(service: &str, key: &str) -> Vec<u16> {
-    wide(&format!("{key}.{service}"))
-}
 
 fn last_error() -> SecretError {
     // SAFETY: reads the calling thread's last error, nothing else.
@@ -112,11 +104,8 @@ struct Found {
 }
 
 impl Found {
-    /// Whether this is the credential of `key` at `target` (which ends in
-    /// its NUL), compared exactly, case and all.
     fn is_for(&self, target: &[u16], key: &str) -> bool {
-        target.strip_suffix(&[0]) == Some(self.target_name.as_slice())
-            && self.user_name.iter().copied().eq(key.encode_utf16())
+        crate::credential_names::is_for(&self.target_name, &self.user_name, target, key)
     }
 }
 
