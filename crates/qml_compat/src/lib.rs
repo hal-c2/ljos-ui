@@ -1938,8 +1938,10 @@ impl Script<'_, '_> {
     /// looks: the script's own scopes first, then the file's qualifiers and
     /// types (a name starting in upper case is never an id or a member), then
     /// its ids, then the objects around the script. Every name a script
-    /// reads is asked here, so what is read off a name and the name itself
-    /// are never told apart.
+    /// reads is asked here, and every name a rewrite would make it read (a
+    /// row's `index` for `model.index`), so what is read off a name and the
+    /// name itself are never told apart. `model` alone is asked of the
+    /// delegate first ([`Self::model`]).
     fn meaning(&self, name: &str, at: u32) -> Meaning {
         if self.own.binds(name, at) {
             Meaning::Own
@@ -2067,14 +2069,14 @@ impl Script<'_, '_> {
         }
     }
 
-    /// Whether `name`, read unqualified here, is the row's.
-    fn free(&self, name: &str) -> bool {
+    /// Whether `name`, read unqualified at `at`, is the row's.
+    fn free(&self, name: &str, at: u32) -> bool {
         let behind = self
             .pass
             .delegate
             .as_ref()
             .map_or(self.pass.root_owns, |d| d.owns);
-        self.pass.scope.id(name).is_none()
+        matches!(self.meaning(name, at), Meaning::Free)
             && self.pass.scope_owns.get(name) == Some(false)
             && behind.get(name) == Some(false)
     }
@@ -2091,7 +2093,14 @@ impl Script<'_, '_> {
     /// Writes `span` as `name`, which a delegate's row gives, unless
     /// something here has a member of that name.
     fn row_write(&mut self, span: oxc_span::Span, name: &'static str, what: &str) {
-        if self.free(name) {
+        if matches!(self.meaning(name, span.start), Meaning::Own) {
+            self.row_keep(
+                Row::LocalRow {
+                    name: name.to_owned(),
+                },
+                span.start,
+            );
+        } else if self.free(name, span.start) {
             self.row.changes.push(Change {
                 range: span.start as usize..span.end as usize,
                 replacement: name.to_string(),
