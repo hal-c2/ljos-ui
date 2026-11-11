@@ -158,7 +158,7 @@ pub use paint_item::{ItemPaint, ReadPaint, register_paint_item, request_repaint}
 pub use palette::{ColorGroup, Palette};
 pub use pinch_area::{Pinch, PinchArea, PinchEvent};
 pub use pointer_item::{
-    HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored,
+    HoverMove, PointerItem, contains_point, follows_implicit_size, give_size, is_mirrored, place,
     register_hover_move, register_pointer_item, takes_pointer,
 };
 pub use pointer_item::{PointerCondition, register_pointer_condition};

@@ -13,7 +13,7 @@
 
 use std::cell::RefCell;
 
-use ljos_engine::{Engine, MetaRef, ObjectId};
+use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, PropIndex, Value};
 
 use crate::by_type::ByType;
 use ljos_render::kurbo;
@@ -215,6 +215,14 @@ pub fn follows_implicit_size(engine: &Engine, obj: ObjectId, horizontal: bool) -
 /// on both axes from now on, so a text in it wraps to that width.
 pub fn give_size(engine: &Engine, obj: ObjectId) {
     crate::item::give_size(engine, obj);
+}
+
+/// A control places a part it lays out as a layout places a child: not an
+/// assignment, so a binding the author put on the property stays and
+/// gives the value again when its inputs change, and a size that followed
+/// the implicit size is a given size from then on.
+pub fn place(engine: &Engine, obj: ObjectId, p: PropIndex, v: Value) -> Result<(), EngineError> {
+    crate::item::write_placed(engine, obj, p, v)
 }
 
 /// Whether `LayoutMirroring` mirrors the item (tracked).
