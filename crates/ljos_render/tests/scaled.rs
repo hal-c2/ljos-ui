@@ -3,10 +3,12 @@
 
 use std::sync::Arc;
 
-use ljos_render::kurbo::{BezPath, Point, Rect, Stroke};
+use ljos_render::kurbo::{BezPath, Point, Rect, Stroke, Vec2};
+use ljos_render::peniko::{Blob, FontData};
 use ljos_render::{
-    Border, Brush, BrushGradient, DisplayListBuilder, DrawOp, FillRule, GradientGeometry,
-    GradientStop, Paint, PathStyle, Rgba, ShapeStyle, Spread,
+    Border, Brush, BrushGradient, Decorations, DisplayListBuilder, DrawOp, FillRule, GlyphRun,
+    GradientGeometry, GradientStop, ImageHandle, Insets, Paint, PathStyle, PositionedGlyph, Rgba,
+    ShapeStyle, Spread, TileMode,
 };
 
 const RED: Rgba = Rgba::from_premul(1.0, 0.0, 0.0, 1.0);
@@ -118,6 +120,115 @@ fn a_fill_keeps_its_rule() {
         panic!("still a shape");
     };
     assert_eq!(style, ShapeStyle::Fill(FillRule::EvenOdd));
+}
+
+#[test]
+fn a_glyph_run_grows_with_its_origin_and_decorations() {
+    // Scaling never reads the font, so any bytes stand in for one.
+    let run = GlyphRun {
+        font: FontData::new(Blob::new(Arc::new([0u8; 4])), 0),
+        font_size: 10.0,
+        glyphs: vec![
+            PositionedGlyph {
+                id: 1,
+                x: 0.0,
+                y: 8.0,
+            },
+            PositionedGlyph {
+                id: 2,
+                x: 6.0,
+                y: 8.0,
+            },
+        ],
+        baseline: 8.0,
+        bounds: Rect::new(0.0, 0.0, 12.0, 10.0),
+        normalized_coords: Vec::new(),
+        embolden: false,
+        skew: 0.0,
+    };
+    let op = DrawOp::Glyphs {
+        run: Arc::new(run),
+        origin: Vec2::new(3.0, 4.0),
+        paint: Paint::Solid(RED),
+        decorations: Decorations {
+            underline: Some(Rect::new(0.0, 9.0, 12.0, 10.0)),
+            strike_through: None,
+        },
+    };
+    let DrawOp::Glyphs {
+        run,
+        origin,
+        decorations,
+        ..
+    } = op.scaled(2.0)
+    else {
+        panic!("still glyphs");
+    };
+    assert_eq!(run.font_size, 20.0);
+    assert_eq!(run.baseline, 16.0);
+    assert_eq!(run.bounds, Rect::new(0.0, 0.0, 24.0, 20.0));
+    let at: Vec<(f32, f32)> = run.glyphs.iter().map(|g| (g.x, g.y)).collect();
+    assert_eq!(at, [(0.0, 16.0), (12.0, 16.0)]);
+    assert_eq!(origin, Vec2::new(6.0, 8.0));
+    assert_eq!(
+        decorations.underline,
+        Some(Rect::new(0.0, 18.0, 24.0, 20.0))
+    );
+    assert_eq!(decorations.strike_through, None);
+}
+
+fn pixels() -> ImageHandle {
+    ImageHandle::from_straight(4, 4, vec![255; 4 * 4 * 4]).unwrap()
+}
+
+#[test]
+fn an_image_grows_where_it_lands_and_its_tile() {
+    let op = DrawOp::Image {
+        image: pixels(),
+        src: Rect::new(0.0, 0.0, 4.0, 4.0),
+        dst: Rect::new(1.0, 2.0, 5.0, 6.0),
+        tile: Some(Rect::new(1.0, 2.0, 3.0, 4.0)),
+        mirror: [false; 2],
+        smooth: true,
+        opacity: 1.0,
+        tint: None,
+    };
+    let DrawOp::Image { src, dst, tile, .. } = op.scaled(2.0) else {
+        panic!("still an image");
+    };
+    assert_eq!(
+        src,
+        Rect::new(0.0, 0.0, 4.0, 4.0),
+        "the image's own pixels stay"
+    );
+    assert_eq!(dst, Rect::new(2.0, 4.0, 10.0, 12.0));
+    assert_eq!(tile, Some(Rect::new(2.0, 4.0, 6.0, 8.0)));
+}
+
+#[test]
+fn a_nine_patch_grows_where_it_lands_and_keeps_its_insets() {
+    let insets = Insets {
+        left: 1.0,
+        top: 1.0,
+        right: 2.0,
+        bottom: 2.0,
+    };
+    let op = DrawOp::NinePatch {
+        image: pixels(),
+        insets,
+        dst: Rect::new(1.0, 2.0, 21.0, 12.0),
+        tile: [TileMode::Stretch; 2],
+        mirror: false,
+        smooth: true,
+    };
+    let DrawOp::NinePatch {
+        insets: kept, dst, ..
+    } = op.scaled(2.0)
+    else {
+        panic!("still a nine-patch");
+    };
+    assert_eq!(kept, insets);
+    assert_eq!(dst, Rect::new(2.0, 4.0, 42.0, 24.0));
 }
 
 #[test]
