@@ -3,7 +3,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use ljos_engine::{Engine, ObjectId, Value};
+use ljos_engine::{Engine, MetaRef, ObjectId, QmlType, Value};
 use ljos_quick::{PointerEvent, QuickScene};
 use ljos_render::kurbo;
 use ljos_runtime::{Clock, Time, VirtualClock};
@@ -1004,4 +1004,57 @@ Item {
         assert!(!e.is_alive(p), "{how}");
         assert_eq!(warnings(&e), Vec::<String>::new(), "{how}");
     }
+}
+
+/// A menu 120 wide at `x` whose one item opens a sub-menu of the same
+/// width.
+fn mirrored_menu(x: f64) -> String {
+    format!(
+        r#"import QtQuick
+import QtQuick.Controls.Basic
+Item {{
+    width: 400; height: 400
+    Menu {{
+        objectName: "m"
+        x: {x}; y: 220; width: 120
+        Menu {{ objectName: "sub"; title: "More"; width: 120; MenuItem {{ text: "Deep" }} }}
+    }}
+}}"#
+    )
+}
+
+/// Where a mirrored menu puts its cascading sub-menu, as `x` relative to
+/// the item that opened it. QML cannot make a menu read `mirrored` on
+/// Ljós yet (#346), so the test mirrors the menu's item from Rust.
+fn sub_menu_x_of_mirrored_menu(x: f64) -> f64 {
+    let e = engine();
+    let root = load(&e, &mirrored_menu(x));
+    let mut s = scene(&e, root);
+    let m = find(&e, root, "m");
+    let sub = find(&e, root, "sub");
+    let item = ljos_controls::popup_item(&e, m).unwrap();
+    let meta = MetaRef::Static(ljos_quick::LayoutMirroring::static_meta());
+    let att = e.attached_object(item, &meta).unwrap();
+    e.write_by_name(att, "enabled", Value::Bool(true)).unwrap();
+    call(&e, m, "open", &[]);
+    settle(&mut s, &e, Time::ZERO);
+    assert!(flag(&e, m, "mirrored"));
+    click(&mut s, &e, x + 60.0, 240.0);
+    settle(&mut s, &e, Time::ZERO);
+    assert!(flag(&e, sub, "visible"));
+    e.read_by_name(sub, "x").to_number()
+}
+
+#[test]
+fn a_mirrored_menu_opens_its_sub_menu_on_the_left() {
+    // Beside the item on its left, overlapping it by `overlap` (1). Not
+    // mirrored, it would fit on the right (at 259, up to 379).
+    assert_eq!(sub_menu_x_of_mirrored_menu(140.0), -119.0);
+}
+
+#[test]
+fn a_mirrored_menu_by_the_left_edge_opens_its_sub_menu_on_the_right() {
+    // On the left it would start at -109; it goes across to the right,
+    // where it fits.
+    assert_eq!(sub_menu_x_of_mirrored_menu(10.0), 119.0);
 }
