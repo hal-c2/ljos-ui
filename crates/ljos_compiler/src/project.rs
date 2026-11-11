@@ -96,17 +96,10 @@ pub struct Project<O> {
     /// For a project [`open`](Self::open)ed: what is known of the tree
     /// before its files are read.
     tree: Option<Tree>,
-    /// Qt's QML is lowered to Ljós's API as each file comes in
-    /// ([`set_compat`](Self::set_compat)).
-    compat: bool,
-    /// Per file the compat pass was given: the text as written, what the
-    /// pass made of it alone, and what it made of it with its group.
-    written: BTreeMap<String, String>,
-    alone: BTreeMap<String, qml_compat::Alone>,
-    lowered: BTreeMap<String, qml_compat::Outcome>,
-    /// Per lowered file, the scripts the pass wrote beside it: the row
-    /// types of its constant `ListModel`s (docs/DIALECT.md §4.8).
-    generated: BTreeMap<String, Vec<String>>,
+    /// Where Qt's QML is lowered to Ljós's API as each file comes in
+    /// ([`set_compat`](Self::set_compat)): each file as it is written, and
+    /// what the pass made of it.
+    compat: Option<qml_compat::Lowering>,
 }
 
 /// A project's tree as a program loads it: the modules are known from the
@@ -152,11 +145,7 @@ impl<O: TypeOracle> Project<O> {
             callable: RefCell::new(HashMap::new()),
             summarising: Cell::new(false),
             tree: None,
-            compat: false,
-            written: BTreeMap::new(),
-            alone: BTreeMap::new(),
-            lowered: BTreeMap::new(),
-            generated: BTreeMap::new(),
+            compat: None,
         }
     }
 
@@ -227,29 +216,27 @@ impl<O: TypeOracle> Project<O> {
     /// ([`qml_compat::group`]). Set it once the files are in: each file
     /// put while it is on decides its group again.
     pub fn set_compat(&mut self, lower: bool) {
-        if self.compat == lower {
+        if self.compat.is_some() == lower {
             return;
         }
-        self.compat = lower;
         if !lower {
-            for (key, written) in std::mem::take(&mut self.written) {
+            let Some(lowering) = self.compat.take() else {
+                return;
+            };
+            let (written, generated) = lowering.into_written();
+            for (key, written) in written {
                 self.put_text(&key, written);
             }
-            self.alone.clear();
-            self.lowered.clear();
-            for path in std::mem::take(&mut self.generated).into_values().flatten() {
+            for path in generated {
                 self.drop_script(&path);
             }
             return;
         }
-        let keys: Vec<String> = self.sources.keys().cloned().collect();
-        for key in &keys {
-            let text = self.sources[key].clone();
-            self.written.insert(key.clone(), text);
+        let mut lowering = qml_compat::Lowering::new();
+        for (key, text) in &self.sources {
+            lowering.put(key, text.clone());
         }
-        for key in &keys {
-            self.lower_alone(key);
-        }
+        self.compat = Some(lowering);
         self.settle_compat();
     }
 
@@ -257,261 +244,115 @@ impl<O: TypeOracle> Project<O> {
     /// lowered together with: none when it was not given the file
     /// ([`set_compat`](Self::set_compat)).
     pub fn lowering(&self, key: &str) -> Option<&qml_compat::Outcome> {
-        self.lowered.get(key)
+        self.compat.as_ref()?.lowering(key)
     }
 
     /// The file `key` as it is written, which [`source`](Self::source) is
     /// but for a file the compat pass lowered.
     pub fn written(&self, key: &str) -> Option<&str> {
-        match self.written.get(key) {
-            Some(written) => Some(written),
-            None => self.source(key),
+        self.compat
+            .as_ref()
+            .and_then(|lowering| lowering.written(key))
+            .or_else(|| self.source(key))
+    }
+
+    /// What the compat pass is told of this project around its file `key`:
+    /// its types are the files beside it, and those of the project's
+    /// modules and directories it imports, as the front end finds them. A
+    /// file `held` holds is read from there. `ljos migrate` lowers its files
+    /// with this, as a run does ([`qml_compat::Lowering`]).
+    pub fn compat_locals<'a>(
+        &'a self,
+        key: &'a str,
+        held: Box<dyn qml_compat::Held + 'a>,
+    ) -> Box<dyn qml_compat::Locals + 'a> {
+        Box::new(self.around().locals_of(key, held))
+    }
+
+    /// The project as the compat pass reads it.
+    fn around(&self) -> Around<'_, O> {
+        Around {
+            front: &self.front,
+            sources: &self.sources,
+            paths: &self.paths,
+            tree: self.tree.as_ref(),
+            described: &self.described,
+            scripts: &self.scripts,
+            oracle: &self.oracle,
         }
     }
 
-    /// What the pass makes of the written file `key` alone.
-    fn lower_alone(&mut self, key: &str) {
-        let Some(text) = self.written.get(key) else {
-            return;
+    /// The lowering, with the project as the compat pass reads it: what the
+    /// lowering does not hold.
+    fn compat_parts(&mut self) -> Option<(&mut qml_compat::Lowering, Around<'_, O>)> {
+        let Self {
+            compat,
+            front,
+            sources,
+            paths,
+            tree,
+            described,
+            scripts,
+            oracle,
+            ..
+        } = self;
+        let lowering = compat.as_mut()?;
+        let around = Around {
+            front,
+            sources,
+            paths,
+            tree: tree.as_ref(),
+            described,
+            scripts,
+            oracle,
         };
-        let alone = self.compat_alone(key, text);
-        self.alone.insert(key.to_string(), alone);
+        Some((lowering, around))
     }
 
-    /// What the compat pass makes of `text` as the file `key` of this
-    /// project, alone: its types are the files beside it, and those of the
-    /// project's modules and directories it imports, as the front end finds
-    /// them. `ljos migrate` asks this of a file, and lowers it with its
-    /// group as a run does (`qml_compat::group`).
-    pub fn compat_alone(&self, key: &str, text: &str) -> qml_compat::Alone {
-        // The program's own types, as the checker has them.
-        let natives = crate::OracleNatives::new(&self.oracle);
-        let locals = Locals {
-            project: self,
-            key,
-            natives: &natives,
-        };
-        // The file's name names the module of its constant tables' rows.
-        let stem = key.rsplit_once('/').map_or(key, |(_, stem)| stem);
-        let mut outcome = qml_compat::lower_as(text, stem, &locals);
-        // A script of the rows module's path that the pass did not write,
-        // and that is not the module it would write, is the project's, and
-        // does not declare the rows the lowered file imports: the file is
-        // kept, as `ljos migrate` keeps it.
-        if let qml_compat::Outcome::Lowered(lowered) = &outcome
-            && !lowered.modules.is_empty()
-            && !self.owns_rows(key, &lowered.modules)
-        {
-            outcome = qml_compat::Outcome::Kept(qml_compat::Kept {
-                cause: qml_compat::Cause::RowsScript {
-                    path: Self::rows_path(key),
-                },
-                at: 0,
-            });
-        }
-        let references = qml_compat::references(text);
-        let uses = references
-            .modules
-            .iter()
-            .flat_map(|uri| self.front.module_files(uri))
-            .map(str::to_owned)
-            .collect();
-        qml_compat::Alone {
-            outcome,
-            references,
-            uses,
-        }
+    /// Marks the files that read `what`; whether there was one, so that
+    /// the groups are to settle.
+    fn compat_changed(&mut self, what: qml_compat::Changed<'_>) -> bool {
+        self.compat
+            .as_mut()
+            .is_some_and(|lowering| lowering.changed(what))
     }
 
-    /// Lowers again, alone, each file that imports the module `uri`, which
-    /// was told to the front end after they came in: a project opened reads
-    /// a module as a file reaches it. Whether there was one; the caller
-    /// settles the groups once for all it tells.
-    fn lower_importing(&mut self, uri: &str) -> bool {
-        if !self.compat {
-            return false;
-        }
-        let importing: Vec<String> = self
-            .alone
-            .iter()
-            .filter(|(_, alone)| alone.references.modules.iter().any(|m| m == uri))
-            .map(|(key, _)| key.clone())
-            .collect();
-        for key in &importing {
-            self.lower_alone(key);
-        }
-        !importing.is_empty()
-    }
-
-    /// The root object of the file `file` (a key), from its text if it is
-    /// in, else from the disk.
-    fn root_of(&self, file: &str) -> Option<qml_compat::Root> {
-        if let Some(text) = self.written(file) {
-            return qml_compat::root(text);
-        }
-        let path = match (self.paths.get(file), &self.tree) {
-            (Some(path), _) => path.clone(),
-            (None, Some(tree)) => tree.root.join(format!("{file}.qml")),
-            (None, None) => return None,
-        };
-        qml_compat::root(&std::fs::read_to_string(path).ok()?)
-    }
-
-    /// The path of the module of the file `key`'s rows, from the root.
-    fn rows_path(key: &str) -> String {
-        match key.rsplit_once('/') {
-            Some((dir, stem)) => format!("{dir}/{}", qml_compat::rows_module(stem)),
-            None => qml_compat::rows_module(key),
-        }
-    }
-
-    /// Whether the pass may give the file `key` its rows module, one of
-    /// `modules` (their names beside the file, and their text): no script
-    /// is at its path, the one there is the pass's, or the one there is
-    /// the module to the byte. That last is what `ljos migrate` wrote
-    /// before: the file lowered again imports it as it is, so a file put
-    /// back to its Qt text beside its module is lowered again.
-    fn owns_rows(&self, key: &str, modules: &[(String, String)]) -> bool {
-        let path = Self::rows_path(key);
-        let Some(there) = self.scripts.get(&path) else {
-            return true;
-        };
-        let name = path
-            .rsplit_once('/')
-            .map_or(path.as_str(), |(_, name)| name);
-        self.generated
-            .get(key)
-            .is_some_and(|wrote| wrote.contains(&path))
-            || modules
-                .iter()
-                .any(|(module, text)| module == name && text == there)
-    }
-
-    /// Lowers again the files whose rows module is at `path`, a script the
-    /// project was given or lost.
-    fn rows_changed(&mut self, path: &str) {
-        if !self.compat {
-            return;
-        }
-        let keys: Vec<String> = self
-            .alone
-            .keys()
-            .filter(|key| Self::rows_path(key) == path)
-            .cloned()
-            .collect();
-        if keys.is_empty() {
-            return;
-        }
-        for key in &keys {
-            self.lower_alone(key);
-        }
-        self.settle_compat();
-    }
-
-    /// Gives the front end each file as its group is lowered, where that
-    /// changed.
+    /// Lowers what changed, and gives the front end each file as its group
+    /// is lowered, where that changed, and the project the rows modules
+    /// the lowered files import.
     fn settle_compat(&mut self) {
-        for (key, outcome) in qml_compat::group(&self.alone) {
-            let text = match &outcome {
-                qml_compat::Outcome::Lowered(lowered) => Some(lowered.text.clone()),
-                qml_compat::Outcome::Unchanged | qml_compat::Outcome::Kept(_) => {
-                    self.written.get(&key).cloned()
-                }
-            };
-            self.settle_modules(&key, &outcome);
-            if let Some(text) = text
-                && self.sources.get(&key) != Some(&text)
-            {
-                self.put_text(&key, text);
-            }
-            self.lowered.insert(key, outcome);
-        }
-    }
-
-    /// Gives the project the modules `outcome` of the file `key` imports
-    /// that the pass wrote, and forgets those it wrote before and does not
-    /// now. A script of that path the project has already is the
-    /// project's, and stays.
-    fn settle_modules(&mut self, key: &str, outcome: &qml_compat::Outcome) {
-        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
-        let modules: Vec<(String, String)> = match outcome {
-            qml_compat::Outcome::Lowered(lowered) => lowered
-                .modules
-                .iter()
-                .map(|(name, text)| {
-                    let path = dir.map_or_else(|| name.clone(), |dir| format!("{dir}/{name}"));
-                    (path, text.clone())
-                })
-                .collect(),
-            qml_compat::Outcome::Unchanged | qml_compat::Outcome::Kept(_) => Vec::new(),
+        let Some((lowering, around)) = self.compat_parts() else {
+            return;
         };
-        let before = self.generated.remove(key).unwrap_or_default();
-        for path in &before {
-            if !modules.iter().any(|(p, _)| p == path) {
-                self.drop_script(path);
+        for script in lowering.settle(&around) {
+            match script {
+                qml_compat::ScriptEdit::Put { path, text } => self.put_script(&path, text),
+                qml_compat::ScriptEdit::Drop(path) => self.drop_script(&path),
             }
         }
-        let mut wrote = Vec::new();
-        for (path, text) in modules {
-            if before.contains(&path) || !self.scripts.contains_key(&path) {
-                if self.scripts.get(&path) != Some(&text) {
-                    self.put_script(&path, text);
-                }
-                wrote.push(path);
-            }
-        }
-        if !wrote.is_empty() {
-            self.generated.insert(key.to_string(), wrote);
-        }
-    }
-
-    /// The type the root object of the file `name` beside the file `key` is
-    /// written as, from its text if it is in, else from the disk: the pass
-    /// lowers one file of a directory before it has the others.
-    fn root_beside(&self, key: &str, name: &str) -> Option<qml_compat::Root> {
-        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
-        let sibling = dir.map_or_else(|| name.to_string(), |dir| format!("{dir}/{name}"));
-        if let Some(text) = self.written(&sibling) {
-            return qml_compat::root(text);
-        }
-        let path = match (self.paths.get(key), &self.tree) {
-            (Some(path), _) => path.parent()?.join(format!("{name}.qml")),
-            (None, Some(tree)) => tree.root.join(format!("{sibling}.qml")),
-            (None, None) => return None,
+        let Some(lowering) = &self.compat else {
+            return;
         };
-        let text = std::fs::read_to_string(path).ok()?;
-        qml_compat::root(&text)
+        let changed: Vec<(String, String)> = lowering
+            .keys()
+            .filter_map(|key| {
+                let text = lowering.compiled(key)?;
+                (self.sources.get(key).map(String::as_str) != Some(text))
+                    .then(|| (key.to_string(), text.to_string()))
+            })
+            .collect();
+        for (key, text) in changed {
+            self.put_text(&key, text);
+        }
     }
 
     fn put(&mut self, key: &str, source: String) {
-        if !self.compat {
+        let Some(lowering) = &mut self.compat else {
             self.put_text(key, source);
             return;
-        }
-        self.written.insert(key.to_string(), source);
-        self.lower_alone(key);
-        self.lower_naming(key);
+        };
+        lowering.put(key, source);
         self.settle_compat();
-    }
-
-    /// Lowers again, alone, each file beside `key` that names it: the pass
-    /// read the root type of `key` for it, which is now another or none.
-    fn lower_naming(&mut self, key: &str) {
-        let (dir, name) = key.rsplit_once('/').unwrap_or(("", key));
-        let naming: Vec<String> = self
-            .alone
-            .iter()
-            .filter(|(other, alone)| {
-                other.as_str() != key
-                    && other.rsplit_once('/').map_or("", |(d, _)| d) == dir
-                    && (alone.references.types.iter().any(|t| t == name)
-                        || alone.references.introduced.iter().any(|t| t == name))
-            })
-            .map(|(other, _)| other.clone())
-            .collect();
-        for other in &naming {
-            self.lower_alone(other);
-        }
     }
 
     fn put_text(&mut self, key: &str, source: String) {
@@ -535,7 +376,11 @@ impl<O: TypeOracle> Project<O> {
                     && let Some(text) = self.sources.remove(plain)
                 {
                     // As written: it is lowered again when it is put back.
-                    let text = self.written.get(plain).cloned().unwrap_or(text);
+                    let text = self
+                        .compat
+                        .as_ref()
+                        .and_then(|lowering| lowering.written(plain))
+                        .map_or(text, str::to_owned);
                     self.displaced.insert(plain.to_string(), text);
                 }
                 let text = self.variants[&variant].clone();
@@ -557,7 +402,9 @@ impl<O: TypeOracle> Project<O> {
     pub fn add_script(&mut self, path: &str, source: impl Into<String>) {
         self.disown(path);
         self.put_script(path, source.into());
-        self.rows_changed(path);
+        if self.compat_changed(qml_compat::Changed::Script(path)) {
+            self.settle_compat();
+        }
     }
 
     fn put_script(&mut self, path: &str, source: String) {
@@ -621,15 +468,16 @@ impl<O: TypeOracle> Project<O> {
     pub fn remove_script(&mut self, path: &str) {
         self.disown(path);
         self.drop_script(path);
-        self.rows_changed(path);
+        if self.compat_changed(qml_compat::Changed::Script(path)) {
+            self.settle_compat();
+        }
     }
 
     /// Forgets that the pass wrote the script at `path`.
     fn disown(&mut self, path: &str) {
-        for wrote in self.generated.values_mut() {
-            wrote.retain(|p| p != path);
+        if let Some(lowering) = &mut self.compat {
+            lowering.disown(path);
         }
-        self.generated.retain(|_, wrote| !wrote.is_empty());
     }
 
     fn drop_script(&mut self, path: &str) {
@@ -657,14 +505,11 @@ impl<O: TypeOracle> Project<O> {
     fn forget(&mut self, key: &str) {
         self.front.remove(key);
         self.sources.remove(key);
-        self.written.remove(key);
         self.paths.remove(key);
-        if self.alone.remove(key).is_some() {
-            self.lowered.remove(key);
-            for path in self.generated.remove(key).unwrap_or_default() {
+        if let Some(generated) = self.compat.as_mut().and_then(|l| l.forget(key)) {
+            for path in generated {
                 self.drop_script(&path);
             }
-            self.lower_naming(key);
             self.settle_compat();
         }
         self.dynamic = OnceCell::new();
@@ -708,7 +553,8 @@ impl<O: TypeOracle> Project<O> {
 
     /// Tells the front end the module `module` of the directory `dir`;
     /// whether a file lowered before it was lowered again, so that its
-    /// group is to settle.
+    /// group is to settle. They are lowered now, against what the front
+    /// end has of the project now, as each module is told.
     fn add_module(&mut self, dir: &str, module: &Module) -> bool {
         if !module.native.is_empty() {
             self.native
@@ -722,7 +568,14 @@ impl<O: TypeOracle> Project<O> {
                 self.add_type(&module.uri, &ty.name, file);
             }
         }
-        self.lower_importing(&module.uri)
+        let Some((lowering, around)) = self.compat_parts() else {
+            return false;
+        };
+        let again = lowering.changed(qml_compat::Changed::Module(&module.uri));
+        if again {
+            lowering.lower(&around);
+        }
+        again
     }
 
     /// Every `.qml` file under `root`, and the modules its `qmldir` and
@@ -783,11 +636,7 @@ impl<O: TypeOracle> Project<O> {
     pub fn set_controls_style(&mut self, style: Option<ControlsStyle>) {
         self.front.set_controls_style(style);
         // What `import QtQuick.Controls` lowers to depends on it.
-        if self.compat {
-            let keys: Vec<String> = self.written.keys().cloned().collect();
-            for key in &keys {
-                self.lower_alone(key);
-            }
+        if self.compat_changed(qml_compat::Changed::Style) {
             self.settle_compat();
         }
         self.settle_all();
@@ -1278,22 +1127,121 @@ fn active<'a>(mounts: &'a [Mount], aliases: &'a Aliases) -> impl Iterator<Item =
         .filter(|m| aliases.iter().any(|(_, dir)| dir == m.dir))
 }
 
+/// What the compat pass reads of a project: all of it but the lowering,
+/// so that the lowering settles against it.
+struct Around<'p, O> {
+    front: &'p project::Project,
+    sources: &'p BTreeMap<String, String>,
+    paths: &'p BTreeMap<String, PathBuf>,
+    tree: Option<&'p Tree>,
+    described: &'p BTreeSet<String>,
+    scripts: &'p BTreeMap<String, String>,
+    oracle: &'p O,
+}
+
+impl<O> Clone for Around<'_, O> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<O> Copy for Around<'_, O> {}
+
+impl<'p, O: TypeOracle> Around<'p, O> {
+    fn locals_of(self, key: &'p str, held: Box<dyn qml_compat::Held + 'p>) -> Locals<'p, O> {
+        Locals {
+            around: self,
+            key,
+            held,
+            // The program's own types, as the checker has them.
+            natives: crate::OracleNatives::new(self.oracle),
+        }
+    }
+
+    /// The root object of the file `file` (a key): held, else from its
+    /// text if it is in, else from the disk.
+    fn root_of(&self, held: &dyn qml_compat::Held, file: &str) -> Option<qml_compat::Root> {
+        if let Some(root) = held.root(file) {
+            return root;
+        }
+        if let Some(text) = self.sources.get(file) {
+            return qml_compat::root(text);
+        }
+        let path = match (self.paths.get(file), self.tree) {
+            (Some(path), _) => path.clone(),
+            (None, Some(tree)) => tree.root.join(format!("{file}.qml")),
+            (None, None) => return None,
+        };
+        qml_compat::root(&std::fs::read_to_string(path).ok()?)
+    }
+
+    /// The root object of the file `name` beside the file `key`, held, else
+    /// from its text if it is in, else from the disk: the pass lowers one
+    /// file of a directory before it has the others.
+    fn root_beside(
+        &self,
+        held: &dyn qml_compat::Held,
+        key: &str,
+        name: &str,
+    ) -> Option<qml_compat::Root> {
+        let dir = key.rsplit_once('/').map(|(dir, _)| dir);
+        let sibling = dir.map_or_else(|| name.to_string(), |dir| format!("{dir}/{name}"));
+        if let Some(root) = held.root(&sibling) {
+            return root;
+        }
+        if let Some(text) = self.sources.get(&sibling) {
+            return qml_compat::root(text);
+        }
+        let path = match (self.paths.get(key), self.tree) {
+            (Some(path), _) => path.parent()?.join(format!("{name}.qml")),
+            (None, Some(tree)) => tree.root.join(format!("{sibling}.qml")),
+            (None, None) => return None,
+        };
+        let text = std::fs::read_to_string(path).ok()?;
+        qml_compat::root(&text)
+    }
+}
+
+impl<O: TypeOracle> qml_compat::Project for Around<'_, O> {
+    fn locals<'a>(
+        &'a self,
+        key: &'a str,
+        held: &'a dyn qml_compat::Held,
+    ) -> Box<dyn qml_compat::Locals + 'a> {
+        Box::new(self.locals_of(key, Box::new(held)))
+    }
+
+    fn module_files(&self, _: &str, uri: &str) -> Vec<String> {
+        self.front.module_files(uri).map(str::to_owned).collect()
+    }
+
+    fn script(&self, _: &str, path: &str) -> Option<qml_compat::ProjectScript<'_>> {
+        self.scripts
+            .get_key_value(path)
+            .map(|(path, text)| qml_compat::ProjectScript {
+                path: path.clone(),
+                text,
+            })
+    }
+}
+
 /// What the compat pass is told of the project around the file `key`.
 struct Locals<'p, O: TypeOracle> {
-    project: &'p Project<O>,
+    around: Around<'p, O>,
     key: &'p str,
-    natives: &'p crate::OracleNatives<'p, O>,
+    held: Box<dyn qml_compat::Held + 'p>,
+    natives: crate::OracleNatives<'p, O>,
 }
 
 impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
     fn natives(&self) -> Option<&dyn qml_compat::Natives> {
-        Some(self.natives)
+        Some(&self.natives)
     }
 
     fn controls_style(&self) -> Option<&str> {
         // No style chosen is Basic, as in Qt 6.
         Some(
-            self.project
+            self.around
                 .front
                 .controls_style()
                 .map_or(qml_compat::CONTROLS_STYLE, |style| style.name.as_str()),
@@ -1301,22 +1249,23 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
     }
 
     fn root(&self, name: &str) -> Option<qml_compat::Root> {
-        self.project.root_beside(self.key, name).or_else(|| {
+        let held = &*self.held;
+        self.around.root_beside(held, self.key, name).or_else(|| {
             // A type of a module the file is a type of, wherever the
             // module's files are, as the front end sees it.
-            let front = &self.project.front;
+            let front = self.around.front;
             front
                 .modules_of(self.key)
                 .iter()
                 .find_map(|uri| front.module_type(uri, name))
-                .and_then(|file| self.project.root_of(file))
+                .and_then(|file| self.around.root_of(held, file))
         })
     }
 
     fn module(&self, uri: &str) -> Option<qml_compat::ProjectModule> {
-        if self.project.front.has_module(uri) {
+        if self.around.front.has_module(uri) {
             Some(qml_compat::ProjectModule::Files)
-        } else if self.project.described.contains(uri) {
+        } else if self.around.described.contains(uri) {
             Some(qml_compat::ProjectModule::Native)
         } else {
             None
@@ -1324,15 +1273,12 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
     }
 
     fn imported(&self, from: qml_compat::Imported<'_>, name: &str) -> Option<qml_compat::Root> {
+        let front = self.around.front;
         let file = match from {
-            qml_compat::Imported::Module(uri) => {
-                self.project.front.module_type(uri, name)?.to_owned()
-            }
-            qml_compat::Imported::Dir(path) => {
-                join(&self.project.front.import_dir(self.key, path), name)
-            }
+            qml_compat::Imported::Module(uri) => front.module_type(uri, name)?.to_owned(),
+            qml_compat::Imported::Dir(path) => join(&front.import_dir(self.key, path), name),
         };
-        self.project.root_of(&file)
+        self.around.root_of(&*self.held, &file)
     }
 }
 
