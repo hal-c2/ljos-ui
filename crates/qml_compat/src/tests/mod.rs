@@ -306,3 +306,29 @@ fn a_file_of_a_kept_group_says_which_file_keeps_it() {
         }
     );
 }
+
+#[test]
+fn a_file_is_kept_for_a_name_the_lowered_file_finds_first() {
+    // Nothing the file imports, nor the project, has the name: Qt finds it
+    // in the context, and the lowered file in one of Ljós's modules.
+    assert_eq!(
+        cause_of("import QtQuick\nItem { property var d: PointerArea }\n"),
+        Cause::FoundFirst {
+            name: "PointerArea".into(),
+            is: None,
+            module: MODULE
+        }
+    );
+    let boxed = |name: &str| (name == "Box").then(|| root_of("Rectangle", &[]));
+    match lower("import QtQuick\nItem { Box { } }\n", &boxed) {
+        Outcome::Kept(kept) => assert_eq!(
+            kept.cause,
+            Cause::FoundFirst {
+                name: "Box".into(),
+                is: Some(Owner::Project),
+                module: LAYOUT
+            }
+        ),
+        other => panic!("lowered: {other:?}"),
+    }
+}
