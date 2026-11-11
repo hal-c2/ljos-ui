@@ -25,7 +25,7 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
-use super::{Popup, close_policy, dismiss, popup_of};
+use super::{Popup, popup_of};
 use crate::containers::{Page, Pane};
 use crate::control::{Control, ignore, no_key};
 use crate::util::{author_set, check, flag, set_derived};
@@ -374,14 +374,7 @@ fn key_press(engine: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {
         return true;
     }
     match ev.key {
-        key::ESCAPE => {
-            let policy = engine.untrack(|| engine.read(popup, Popup::CLOSE_POLICY.index));
-            if policy.to_number() as i32 & close_policy::ON_ESCAPE == 0 {
-                return false;
-            }
-            check(engine, "close", dismiss(engine, popup));
-            true
-        }
+        key::ESCAPE => super::escape(engine, popup),
         key::TAB | key::BACKTAB => {
             // Tab stays in the popup that has the keyboard. Nothing in it
             // stopping Tab is no reason to hand the key to the content.
