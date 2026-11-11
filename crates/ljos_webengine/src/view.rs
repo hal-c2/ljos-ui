@@ -831,6 +831,13 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                         e.set_internal(o, WebEnginePermission::STATE, permission_state::INVALID);
                     let _ = e.set_internal(o, WebEnginePermission::IS_VALID, false);
                 }
+                // A choice of what to share made after its page went is
+                // no choice.
+                let _ = e.with_mut::<WebEngineDesktopMediaRequest, _>(o, |r| {
+                    if r.id == id {
+                        r.answered = true;
+                    }
+                });
             }
         }
         Event::DesktopMedia { id, audio } => ask_desktop_media(e, me, id, audio),

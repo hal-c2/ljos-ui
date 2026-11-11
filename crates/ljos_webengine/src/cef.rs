@@ -715,9 +715,11 @@ struct Shared {
     closing: AtomicBool,
     browser: Mutex<Option<::cef::Browser>>,
     observer: Mutex<Option<Registration>>,
-    /// The view was asked about the URL it was given: the browser going
-    /// there is not asked about again.
-    typed: AtomicBool,
+    /// The URL the view was given, and asked about: the browser going
+    /// there is not asked about again. Only that URL: a load Chromium
+    /// does not ask about (within the document, refused) leaves it here,
+    /// and the page going anywhere else is asked about.
+    typed: Mutex<Option<String>>,
     /// Where the view kept the main frame from going: the load that
     /// would have been there stops before it starts.
     rejected: Mutex<Option<String>>,
@@ -936,7 +938,7 @@ impl Shared {
             .as_ref()
             .and_then(|b| b.main_frame());
         if let Some(frame) = frame {
-            self.typed.store(true, Ordering::Relaxed);
+            *Self::lock(&self.typed) = Some(url.to_owned());
             frame.load_url(Some(&cef_string(url)));
         }
     }
@@ -1310,9 +1312,11 @@ wrap_load_handler! {
             if self.shared.booting() {
                 return;
             }
-            if is_main(frame).is_some()
-                && let Some(host) = browser.and_then(|b| b.host())
-            {
+            if is_main(frame).is_none() {
+                return;
+            }
+            media_gone(&self.shared);
+            if let Some(host) = browser.and_then(|b| b.host()) {
                 // Chromium zooms by site; a view keeps its zoom on every page.
                 self.shared.apply_zoom(&host);
             }
@@ -1697,13 +1701,16 @@ wrap_request_handler! {
                 return 0;
             }
             let main_frame = frame.is_main() == 1;
-            if main_frame && is_redirect == 0 && self.shared.typed.swap(false, Ordering::Relaxed) {
-                return 0;
+            let url = CefString::from(&request.url()).to_string();
+            if main_frame && is_redirect == 0 {
+                let typed = Shared::lock(&self.shared.typed).take();
+                if typed.is_some_and(|t| same_url(&t, &url)) {
+                    return 0;
+                }
             }
             let Some(e) = engine_of(&self.shared) else {
                 return 0;
             };
-            let url = CefString::from(&request.url()).to_string();
             let nav = Navigation {
                 url: url.clone(),
                 kind: navigation_kind(request.transition_type(), is_redirect != 0),
@@ -1983,6 +1990,31 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
     }
 }
 
+/// Whether `a` and `b`, as a view and Chromium write them, are one URL.
+fn same_url(a: &str, b: &str) -> bool {
+    a == b || matches!((url::Url::parse(a), url::Url::parse(b)), (Ok(a), Ok(b)) if a == b)
+}
+
+/// What the page before asked for its camera, microphone or screen is
+/// refused: a document that is gone cannot be given them.
+fn media_gone(shared: &Shared) {
+    let gone: Vec<(u64, Asked)> = {
+        let mut asked = Shared::lock(&shared.asked);
+        let ids: Vec<u64> = asked
+            .iter()
+            .filter(|(_, a)| matches!(a, Asked::Media { .. }))
+            .map(|(id, _)| *id)
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| asked.remove(&id).map(|a| (id, a)))
+            .collect()
+    };
+    for (id, a) in gone {
+        a.answer(false, shared);
+        shared.sink.send(Ev::PermissionGone { id });
+    }
+}
+
 /// `WebEnginePermission.Notifications`.
 const NOTIFICATIONS_KIND: i32 = 7;
 
@@ -2124,7 +2156,7 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         closing: AtomicBool::new(false),
         browser: Mutex::default(),
         observer: Mutex::default(),
-        typed: AtomicBool::new(false),
+        typed: Mutex::default(),
         rejected: Mutex::default(),
         asked: Mutex::default(),
         boot: Mutex::new(Boot {
