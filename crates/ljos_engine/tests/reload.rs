@@ -1295,6 +1295,43 @@ Item {{
 }
 
 #[test]
+fn a_remade_object_tells_what_its_create_object_call_cannot_set_at_that_call() {
+    let src = |inner: &str, more: &str| {
+        format!(
+            r#"import QtQuick
+Item {{
+  id: root
+  objectName: "root"
+  function fill() {{ tile.createObject(area, {{ "q.zz": 3 }}) }}
+  Component {{
+    id: tile
+    Item {{ objectName: "tile"; property QtObject q: QtObject {{ {inner} }} }}
+  }}
+  Item {{ id: area; objectName: "area" }}{more}
+}}
+"#
+        )
+    };
+    let mut r = rig(&[("Main", &src("property int zz", ""))]);
+    r.call("root", "fill");
+    assert!(support::find(&r.h.engine, r.root, "tile").is_some());
+    let _ = r.h.log();
+
+    // No script runs in a reload: the place is the one the call had.
+    // (The signal makes the file again rather than editing it in place.)
+    r.edit("Main", &src("property int y", "\n  signal remade"))
+        .unwrap();
+    let log = r.h.log();
+    assert_eq!(support::find(&r.h.engine, r.root, "tile"), None, "{log:?}");
+    assert!(
+        log.iter().any(
+            |l| l.ends_with("Main.qml:5: Error: Cannot assign to non-existent property \"zz\"")
+        ),
+        "{log:?}"
+    );
+}
+
+#[test]
 fn an_object_incubate_object_made_follows_its_member_binding_after_a_reload() {
     let src = r#"import QtQuick
 Item {

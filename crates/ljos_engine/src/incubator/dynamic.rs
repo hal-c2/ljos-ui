@@ -314,13 +314,20 @@ impl Engine {
                             // createObject is still in its call: the place
                             // is that of the script running now (Qt 6.11
                             // and 6.12 both tell it, and 6.12 also gives
-                            // back no object).
-                            let here = at.is_none().then(|| self.js_origin()).flatten();
-                            let at = at.or(here.as_ref().map(At::Call)).unwrap_or(At::File(url));
+                            // back no object), or, in a reload, the one
+                            // its call had.
+                            let given = match how {
+                                Initial::Created(Some(p)) => Some(At::Call(p)),
+                                _ => at,
+                            };
+                            let here = given.is_none().then(|| self.js_origin()).flatten();
+                            let at = given
+                                .or(here.as_ref().map(At::Call))
+                                .unwrap_or(At::File(url));
                             self.warn(format!(
                                 "{at}: Error: Cannot assign to non-existent property \"{leaf}\""
                             ));
-                            if matches!(how, Initial::Created) {
+                            if matches!(how, Initial::Created(_)) {
                                 withhold();
                             }
                         }

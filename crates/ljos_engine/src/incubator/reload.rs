@@ -892,6 +892,14 @@ impl Engine {
         let Some(parent) = parent.filter(|_| st.tracking.get()) else {
             return self.create_from_template_for_script(&template, parent, props, how);
         };
+        // A remake runs no script to take the call's place from: it is
+        // taken now, while the call runs, as incubateObject takes its own.
+        let how = match how {
+            Initial::Created(None) if !props.is_empty() => {
+                Initial::Created(self.js_origin().map(Box::new))
+            }
+            how => how,
+        };
         st.scripting.set(true);
         let made = self.create_from_template_for_script(
             &template,
