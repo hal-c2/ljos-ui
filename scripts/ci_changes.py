@@ -84,7 +84,10 @@ NOTHING = (
 READERS = {
     "docs/design/": ("ljos_design", "ljos_mcp_author"),
     "docs/declarative.md": ("ljos_mcp_author",),
-    # tests/docs_site.rs checks every example of the site.
+    # tests/docs_site.rs checks every example of the site; the skills under skills/ copy
+    # pages of its rust section as references, and ljos_mcp_author's tests compare them.
+    # The first prefix that matches wins, so the section comes before the site.
+    "docs/site/rust/": ("ljos_cli", "ljos_mcp_author"),
     "docs/site/": ("ljos_cli",),
     "skills/": ("ljos_mcp_author",),
     "ledger/": ("ljos_bdd", "ljos_cli", "ljos_mcp_author"),
