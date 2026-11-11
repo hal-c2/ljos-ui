@@ -1,0 +1,36 @@
+[package]
+name = "ljos_secrets"
+description = "Secrets the system keeps safe (passwords, tokens, keys), written, read and removed by service and key: the Secret Service on Linux, the Keychain on macOS, the Credential Manager on Windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+# The Secret Service on the session bus, spoken with zbus (pure Rust; the
+# version the shell already uses).
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
+# Not used directly: holds zbus's thread pool at a version whose idle
+# threads end (see the workspace's Cargo.toml).
+blocking.workspace = true
+
+# The Keychain: Security.framework's item calls take Core Foundation
+# dictionaries.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-core-foundation = { workspace = true, features = ["CFDictionary", "CFData", "CFNumber"] }
+
+# The Credential Manager.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Credentials"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+# A bus of the test's own, for the Secret Service the tests stand up.
+tempfile.workspace = true
+
+[lints]
+workspace = true
