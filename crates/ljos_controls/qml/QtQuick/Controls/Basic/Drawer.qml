@@ -6,6 +6,15 @@ import QtQuick.Templates as T
 T.Drawer {
     id: control
 
+    // What is under the popup while it dims it: the palette's shadow,
+    // half as strong behind a modal popup as it is.
+    T.Overlay.modal: Rectangle {
+        color: Qt.alpha(control.palette.shadow, 0.5)
+    }
+    T.Overlay.modeless: Rectangle {
+        color: Qt.alpha(control.palette.shadow, 0.12)
+    }
+
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             contentWidth + leftPadding + rightPadding)
     implicitHeight: Math.max(implicitBackgroundHeight + topInset + bottomInset,

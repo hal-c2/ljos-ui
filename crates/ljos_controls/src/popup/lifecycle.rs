@@ -425,6 +425,7 @@ fn leave(engine: &Engine, popup: ObjectId, state: &Rc<PopupState>) -> Result<(),
     if let Some(item) = item_of(engine, popup) {
         engine.untrack(|| give_back_keyboard(engine, popup, item))?;
     }
+    engine.untrack(|| super::overlay::clear_shade(engine, popup, state))?;
     state.phase.set(Phase::Going);
     let (opacity, scale) = engine.untrack(|| {
         (

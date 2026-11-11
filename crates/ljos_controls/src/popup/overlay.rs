@@ -15,12 +15,10 @@
 //! pinned by `features/controls/overlay.feature`, `overlay-window.feature`,
 //! `popup-close-policy.feature` and `popup-pointer.feature`.
 
-use ljos_engine::{
-    Color, Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Value, WriteKind,
-};
+use ljos_engine::{Engine, EngineError, MetaRef, ObjectId, QmlObject, QmlType, Value, WriteKind};
 use ljos_quick::{
-    Item, LayerHooks, PointerEvent, Rectangle, child_items, contains_point, is_item,
-    scene_transform, set_parent_item,
+    Item, LayerHooks, PointerEvent, child_items, contains_point, is_item, scene_transform,
+    set_parent_item,
 };
 use ljos_render::kurbo;
 
@@ -35,9 +33,6 @@ use crate::util::{check, flag, is_a, num, object, set_computed, warn};
 /// The overlay is above everything a window's content can be (the number
 /// is the one Qt's reads).
 const OVERLAY_Z: f64 = 1_000_001.0;
-/// The shade behind a modal popup, and behind one that only dims.
-const MODAL_SHADE: Color = Color::from_rgba8(0x28, 0x28, 0x2a, 0x7f);
-const MODELESS_SHADE: Color = Color::from_rgba8(0x28, 0x28, 0x2a, 0x1e);
 
 /// `Overlay` (QtQuick.Controls): only ever used attached, as
 /// `Overlay.overlay` on an item and `Overlay.modal` on a popup.
@@ -313,6 +308,12 @@ fn has_own_item(engine: &Engine, overlay: ObjectId) -> bool {
 }
 
 /// Makes the shade of `popup`, if it has one, as a child of `overlay`.
+///
+/// What it looks like is the style's: the component its `Overlay.modal`
+/// or `Overlay.modeless` holds, which each style's popups set. A popup
+/// with neither has a plain item behind it when it is modal, which only
+/// keeps the pointer from what is under it, and nothing when it only
+/// dims (measured on Qt 6.11.2 and 6.12.0, `overlay-shade.feature`).
 fn make_shade(
     engine: &Engine,
     popup: ObjectId,
@@ -332,15 +333,24 @@ fn make_shade(
             };
             object(engine, att, prop)
         });
-    let shade = match component {
-        Some(c) => engine.component_create(c, Some(popup), Vec::new())?,
-        None => {
-            let r = engine.create_native_incomplete(Rectangle::default(), Some(popup))?;
-            let colour = if modal { MODAL_SHADE } else { MODELESS_SHADE };
-            engine.set(r, Rectangle::COLOR, colour)?;
-            engine.complete(r)?;
-            r
+    let drawer = super::kind_of(engine, popup).is_drawer();
+    // A shade starts clear and is then made opaque, so that a style that
+    // animates its opacity fades it in. A drawer's follows the drawer.
+    let clear = || {
+        if drawer {
+            Vec::new()
+        } else {
+            vec![("opacity".to_owned(), Value::Real(0.0))]
         }
+    };
+    let shade = match component {
+        Some(c) => engine.component_create(c, Some(popup), clear())?,
+        None if modal => {
+            let item = engine.create_native_incomplete(Item::default(), Some(popup))?;
+            engine.complete(item)?;
+            item
+        }
+        None => return Ok(None),
     };
     if !is_item(engine, shade) {
         engine.destroy(shade);
@@ -350,14 +360,43 @@ fn make_shade(
         engine.bind(shade, size, move |e| e.read(overlay, size))?;
     }
     engine.bind(shade, Item::Z.index, move |e| e.read(popup, Popup::Z.index))?;
-    if super::kind_of(engine, popup).is_drawer() {
+    if drawer {
         // The shade fades in as the drawer comes in.
         engine.bind(shade, Item::OPACITY.index, move |e| {
             super::drawer::shade_opacity(e, popup)
         })?;
     }
     set_parent_item(engine, shade, Some(overlay))?;
+    if !drawer {
+        set_opacity(engine, shade, 1.0)?;
+    }
     Ok(Some(shade))
+}
+
+fn set_opacity(engine: &Engine, shade: ObjectId, to: f64) -> Result<(), EngineError> {
+    engine.write(
+        shade,
+        Item::OPACITY.index,
+        Value::Real(to),
+        WriteKind::Imperative,
+    )
+}
+
+/// `popup` starts to go: its shade goes clear at once, or as its style
+/// animates it, while the popup's exit runs. A drawer's follows the
+/// drawer out.
+pub(super) fn clear_shade(
+    engine: &Engine,
+    popup: ObjectId,
+    state: &PopupState,
+) -> Result<(), EngineError> {
+    if super::kind_of(engine, popup).is_drawer() {
+        return Ok(());
+    }
+    match state.dimmer.get().filter(|d| engine.is_alive(*d)) {
+        Some(shade) => set_opacity(engine, shade, 0.0),
+        None => Ok(()),
+    }
 }
 
 fn drop_shade(engine: &Engine, state: &PopupState) -> Result<(), EngineError> {
