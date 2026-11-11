@@ -97,7 +97,7 @@ You can control how fields and methods are exposed to QML with `#[qml(...)]` att
 - `enumeration = "Name"` and `flags = "Name"` associate a property with a registered enum or bitflags type.
 - `#[qml(on_complete)]` on a method in `#[qml_impl]` runs during component creation right before `Component.onCompleted`.
 
-When a property needs a custom setter that clamps or rejects values (like a `WRITE` function on a `Q_PROPERTY` in Qt), use `#[qml(write = Self::name)]`:
+When a property needs a custom setter that clamps or rejects values, use `#[qml(write = Self::name)]`:
 
 - **Validating or clamping the value alone:** write a method `fn(&self, T) -> Option<T>`. Every write—from QML, a binding, an animation or Rust—passes through this function before being stored. Return `Some(new_value)` to store the (possibly clamped) value, or `None` to refuse the write. If the returned value equals the value already stored, no change notification is emitted.
 - **Updating sibling properties during a write:** write a method `fn(cx: &Cx, T) -> Option<T>`. You can update other properties on the same object via `cx.set(Self::OTHER, ...)` before returning `Some(new_value)`. Those sibling writes go through their own setters and notify their observers before the assignment returns. A setter may not call `cx.set` on its own property (doing so returns `EngineError::WriteInOwnSetter`); instead, it returns the value to store.

@@ -13,7 +13,7 @@ This page shows you how to check your QML code for design and accessibility defe
 
 Prose guidelines are easy to overlook, so Ljós turns its design rules into executable checks across four layers that all read from the same rule table (`ljos_design::RULES`):
 
-1. **Design tokens (`Ljos.Design`):** A built-in QML module gives you colour roles grown from a single seed in OKLCH, motion durations and easing curves by frequency, a 4 px spacing scale, and a type scale. Because `ljos design export <dir>` writes the same module out as plain QML files, an application that also runs on Qt can use the exact same tokens.
+1. **Design tokens (`Ljos.Design`):** A built-in QML module gives you colour roles grown from a single seed in OKLCH, motion durations and easing curves by frequency, a 4 px spacing scale, and a type scale. `ljos design export <dir>` writes the same module out as plain QML files, so the tokens can also live in your repository.
 2. **Static lints (`ljos check` and `qml_lint`):** Static analysis inspects your QML source files for mistakes that are visible without running the app, such as ease-in on an entrance animation, scaling from zero, animating `width` or `height`, setting anchors on a direct child of a layout, dynamic text in a bounded box without `elide` or `wrapMode`, pointer-only actions, literal colours in components, or unnamed interactive items.
 3. **Runtime audit (`ljos audit` and `app_audit`):** The runtime audit lays out and draws the live scene across a test matrix—light and dark schemes, normal and high contrast, font scales up to 200 %, and narrow and short window sizes—and measures what was actually painted. It catches low contrast against composited backgrounds, clipped text, controls pushed outside the window or covered by overlays, missing keyboard focus rings, and popups that do not fit.
 4. **MCP design tools (`ljos mcp`):** Authoring tools (`design_palette`, `design_contrast`, `design_motion`, and `design_rules`) compute passing values before you write code.
@@ -45,7 +45,7 @@ ApplicationWindow {
 }
 ```
 
-If your application also runs on Qt (`qml6`), export the token module as plain QML files into your repository:
+To keep the token module as plain QML files in your repository, export it:
 
 ```sh
 ljos design export qml/
