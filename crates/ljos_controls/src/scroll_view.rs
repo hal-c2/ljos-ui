@@ -8,7 +8,7 @@
 //!
 //! A `TextArea` that is the one item of a view fills it: as wide as the
 //! view while it wraps and no narrower while it does not, no lower than
-//! the view, and the view follows its cursor (the TextArea documentation's
+//! the view, whatever size it was given, and the view follows its cursor (the TextArea documentation's
 //! "Scrollable TextArea"; `features/controls/text-area-in-scroll-view.feature`).
 //!
 //! Documentation: doc.qt.io/qt-6/qml-qtquick-controls-scrollview.html.
@@ -28,8 +28,7 @@ use ljos_engine::{
 use ljos_quick::keys::{KeyItem, key, register_key_item};
 use ljos_quick::{AccessibleAction, AccessibleItem, register_accessible_item};
 use ljos_quick::{
-    Flickable, Item, KeyEvent, TextEditor, flickable, follows_implicit_size, give_size, is_item,
-    set_parent_item,
+    Flickable, Item, KeyEvent, TextEditor, flickable, is_item, place, set_parent_item,
 };
 
 use crate::containers::Pane;
@@ -271,34 +270,44 @@ impl ScrollView {
 }
 
 /// Sizes a TextArea to the Flickable a view made for it, and keeps its
-/// cursor in view. A size the author gave the area stays theirs.
+/// cursor in view. The view owns the size of the area it scrolls, as a
+/// layout owns its items' sizes, so a size the area declares or a script
+/// assigns does not take it out of the view's hands.
 fn fill_with_text_area(e: &Engine, f: ObjectId, area: ObjectId) -> Result<(), EngineError> {
-    let follows = [true, false].map(|h| e.untrack(|| follows_implicit_size(e, area, h)));
-    if follows.contains(&true) {
-        // Given a width, a wrapping area wraps to it.
-        give_size(e, area);
-    }
-    if follows[0] {
-        e.bind_computed(area, Item::WIDTH.index, move |e| {
-            let width = num(e, f, Item::WIDTH.index);
+    // Qt 6.11: the view sizes the area again only when the Flickable's
+    // size or the size the area asks for changes, so a size given in
+    // between stands until then, and turning wrapping on leaves an area
+    // wider than the view as wide.
+    e.effect_in(area, move |e| {
+        let (width, height) = (num(e, f, Item::WIDTH.index), num(e, f, Item::HEIGHT.index));
+        let (implicit_width, implicit_height) = (
+            num(e, area, Item::IMPLICIT_WIDTH.index),
+            num(e, area, Item::IMPLICIT_HEIGHT.index),
+        );
+        e.untrack(|| {
             // A wrapping area asks for the width of its wrapped lines,
             // which would never let them wrap wider.
-            Value::Real(if num(e, area, TextEditor::WRAP_MODE.index) as i32 == 0 {
-                width.max(num(e, area, Item::IMPLICIT_WIDTH.index))
-            } else {
+            let wraps = num(e, area, TextEditor::WRAP_MODE.index) as i32 != 0;
+            let width = if wraps {
                 width
-            })
-        })?;
-    }
-    if follows[1] {
-        e.bind_computed(area, Item::HEIGHT.index, move |e| {
-            Value::Real(num(e, f, Item::HEIGHT.index).max(num(
-                e,
-                area,
-                Item::IMPLICIT_HEIGHT.index,
-            )))
-        })?;
-    }
+            } else {
+                width.max(implicit_width)
+            };
+            // Placed rather than assigned: a binding the author gave the
+            // size stays, as it does in Qt, and gives its value again
+            // when it next runs.
+            for (prop, v) in [
+                (Item::WIDTH.index, width),
+                (Item::HEIGHT.index, height.max(implicit_height)),
+            ] {
+                crate::util::check(
+                    e,
+                    "the size of a text area",
+                    place(e, area, prop, Value::Real(v)),
+                );
+            }
+        });
+    })?;
     // Only the cursor moving scrolls: the user scrolling away from it
     // does not bring it back.
     e.effect_in(area, move |e| {
