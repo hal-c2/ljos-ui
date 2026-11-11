@@ -216,6 +216,62 @@ fn without_a_style_the_controls_are_those_of_the_environment() {
     );
 }
 
+/// A file named in a directory that cannot be listed is still read, but
+/// its directory is not a project: the file is lowered with nothing beside
+/// it, in the style a program started there would get.
+#[cfg(unix)]
+#[test]
+fn a_file_of_a_directory_that_is_not_a_project_has_nothing_beside_it() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    write(dir.path(), "app/Main.qml", CONTROLS);
+    // Beside it in a project, `Tile` would be a Rectangle.
+    write(
+        dir.path(),
+        "app/Tiles.qml",
+        "import QtQuick\nItem { Tile { color: \"blue\" } }\n",
+    );
+    write(dir.path(), "app/Tile.qml", BUTTON);
+    let app = dir.path().join("app");
+    // Its files can be opened by name, but it cannot be listed.
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o311)).unwrap();
+    let run = |style: &str| {
+        let out = Command::new(env!("CARGO_BIN_EXE_ljos"))
+            .current_dir(dir.path())
+            .args(["migrate", "app/Main.qml", "app/Tiles.qml"])
+            .env("QT_QUICK_CONTROLS_STYLE", style)
+            .env_remove("QT_QUICK_CONTROLS_CONF")
+            .output()
+            .expect("ljos runs");
+        (
+            out.status.code().expect("ljos exits"),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let basic = run("Basic");
+    let fusion = run("Fusion");
+    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let (status, out, err) = basic;
+    assert_eq!(status, 2, "{out}{err}");
+    assert!(err.contains("app: "), "{err}");
+    assert_eq!(
+        out,
+        "would lower app/Main.qml (2 edits)\n\
+         kept app/Tiles.qml:2:15: `color` is set on the object, whose type is not known\n\
+         2 files, 1 lowered, 1 kept\n"
+    );
+    let (status, out, err) = fusion;
+    assert_eq!(status, 2, "{out}{err}");
+    assert_eq!(
+        out,
+        "kept app/Main.qml:2:1: it imports `QtQuick.Controls`, which is the Fusion style where it runs, and Ljos.Controls.Basic is Basic\n\
+         kept app/Tiles.qml:2:15: `color` is set on the object, whose type is not known\n\
+         2 files, 0 lowered, 2 kept\n"
+    );
+}
+
 /// A module file named alone is of the project that imports its module: the
 /// directory its `qmldir` is found from, not its own. So a file there that
 /// names it and was not named keeps it, as when the importer alone is named.
