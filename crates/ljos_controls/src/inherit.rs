@@ -124,6 +124,12 @@ pub(crate) struct InheritState {
     /// Whether the object is made to hold other controls: a colour of its
     /// palette that a binding gives it again is news to them.
     holds: Cell<bool>,
+    /// For one that holds, the slots of its palette that were the
+    /// author's as it completed: the colours the controls in it took as
+    /// they resolved. A binding a script gives later is the author's
+    /// before its first value is written, so what the slot says then
+    /// is not what they took.
+    given_at_completion: Cell<u128>,
 }
 
 mod attr {
@@ -744,7 +750,7 @@ pub(crate) fn attach(
     // After that, the objects made with this one read its colours as they
     // resolve (a creation assigns before anything completes), and one
     // bump per object would resolve every palette again for each.
-    let grouped = has_groups(engine, obj)
+    let grouped = groups_written(engine, obj, kind)
         && groups_of(kind)
             .iter()
             .flatten()
@@ -755,6 +761,12 @@ pub(crate) fn attach(
     // A colour set later is heard through its setter, which listens from
     // then on ([`group_written`]): most containers never have one set, and
     // a graph node per colour per container is most of what one costs.
+    if has_children {
+        let groups = groups_written(engine, obj, kind);
+        state
+            .given_at_completion
+            .set(authored(engine, obj, kind, groups, ALL_SLOTS));
+    }
     state.holds.set(has_children);
     let st = state;
     engine.effect_in(obj, move |e| {
@@ -770,29 +782,49 @@ pub(crate) fn attach(
 /// plain item in it looked for its colours once for each colour: the
 /// colours bound on a popup that change are handed down by one effect
 /// instead, once the bindings have run, and not by each colour's watch
-/// ([`group_written`]).
+/// ([`group_written`]): the palette's colours, as a bound colour of a
+/// group is handed down by its own watch. The effect hears only the
+/// colours that were bound when it last ran, so it marks them in
+/// [`Popup::handed`]: a colour a script binds later is handed down by its
+/// watch until the effect runs again and reads it.
 fn hand_bound_down_together(engine: &Engine, popup: ObjectId) -> Result<(), EngineError> {
     let last: RefCell<Vec<(usize, Value)>> = RefCell::default();
     engine
         .effect_in(popup, move |e| {
             let slots = slots_of(Kind::Popup);
-            let bound: Vec<(usize, Value)> = slots
+            let bound: Vec<(usize, Value)> = slots[..ROLE_COUNT]
                 .iter()
                 .enumerate()
                 .filter(|(_, p)| e.untrack(|| e.provenance(popup, **p)) == Some(Provenance::Bound))
                 .map(|(at, p)| (at, e.read(popup, *p)))
                 .collect();
+            let read = bound.iter().fold(0u128, |w, (at, _)| w | 1 << at);
+            check(e, "palette", e.with(popup, |p: &Popup| p.handed.set(read)));
             let before = last.replace(bound);
             let now = last.borrow();
             let roles = now
                 .iter()
                 .filter(|(at, v)| before.iter().any(|(b, w)| b == at && w != v))
-                .fold(0u32, |r, (at, _)| r | 1 << (at % ROLE_COUNT));
+                .fold(0u32, |r, (at, _)| r | 1 << at);
             if roles != 0 {
                 e.untrack(|| hand_down(e, vec![popup], roles));
             }
         })
         .map(|_| ())
+}
+
+/// Whether the colour `p` of `obj` is one [`hand_bound_down_together`]
+/// read at its last run, and so hands down when it changes.
+fn handed_together(engine: &Engine, obj: ObjectId, kind: Kind, p: PropIndex) -> bool {
+    kind == Kind::Popup
+        && slots_of(Kind::Popup)
+            .iter()
+            .position(|q| *q == p)
+            .is_some_and(|at| {
+                engine
+                    .with(obj, |c: &Popup| c.handed.get() >> at & 1 != 0)
+                    .unwrap_or(false)
+            })
 }
 
 /// Where the look of `obj` comes from next (tracked): the item it is in;
@@ -818,15 +850,19 @@ fn above(engine: &Engine, obj: ObjectId) -> Option<ObjectId> {
         .or_else(|| ljos_quick::layer_host(engine, obj))
 }
 
-/// Whether a group of `obj`'s palette was ever written: until then its
-/// groups are Basic's. A popup's palette is its own, not an item's.
-fn has_groups(engine: &Engine, obj: ObjectId) -> bool {
+/// Whether a group of `obj`'s palette, of kind `kind`, was ever written:
+/// until then its groups are Basic's. A popup's palette is its own, not
+/// an item's.
+fn groups_written(engine: &Engine, obj: ObjectId, kind: Kind) -> bool {
+    if kind != Kind::Popup {
+        return ljos_quick::palette::has_groups(engine, obj);
+    }
     engine
         .with(obj, |p: &Popup| {
             let p = &p.palette;
             p.active.is_some() || p.inactive.is_some() || p.disabled.is_some()
         })
-        .unwrap_or_else(|_| ljos_quick::palette::has_groups(engine, obj))
+        .unwrap_or(false)
 }
 
 /// The nearest window at or above `cur` (tracked).
@@ -1075,14 +1111,14 @@ fn resolve_palette(
         0 => now,
         s => s - 1,
     };
-    let mine_groups = has_groups(engine, obj);
+    let mine_groups = groups_written(engine, obj, kind);
     let mut found: [Option<Color>; SLOTS] = [None; SLOTS];
     let given = authored(engine, obj, kind, mine_groups, ALL_SLOTS);
     let mine: [bool; SLOTS] = std::array::from_fn(|at| given >> at & 1 != 0);
     let mut open = SLOTS - mine.iter().filter(|m| **m).count();
     // What `p` gives the slots still open.
     let mut look_in = |p: ObjectId, k: Kind, open: &mut usize| {
-        let groups = has_groups(engine, p);
+        let groups = groups_written(engine, p, k);
         let open_slots = (0..SLOTS)
             .filter(|at| !mine[*at] && found[*at].is_none())
             .fold(0u128, |w, at| w | 1 << at);
@@ -1190,7 +1226,9 @@ fn group_written(engine: &Engine, obj: ObjectId) {
         return;
     };
     plain.groups_watched.borrow_mut().insert(obj);
-    let holds = state_of(engine, obj, kind).is_some_and(|s| s.holds.get());
+    let state = state_of(engine, obj, kind);
+    let holds = state.as_ref().is_some_and(|s| s.holds.get());
+    let given_then = state.map_or(0, |s| s.given_at_completion.get());
     let palette = (kind != Kind::Item).then(|| roles_of(kind));
     for p in groups_of(kind)
         .iter()
@@ -1201,7 +1239,17 @@ fn group_written(engine: &Engine, obj: ObjectId) {
         // It hears the write about to be stored. A colour of the palette
         // that is bound is written over as it resolves, which is no news.
         let role = roles_of(kind).contains(&p);
-        let was = Cell::new(author_set(engine, obj, p));
+        // Whether the controls inside took the colour as they resolved:
+        // the slot was the author's as the object completed. A binding a
+        // script gives now is the author's already.
+        let was = Cell::new(if holds {
+            slots_of(kind)
+                .iter()
+                .position(|q| *q == p)
+                .is_some_and(|at| given_then >> at & 1 != 0)
+        } else {
+            author_set(engine, obj, p)
+        });
         let watched = engine.watch(obj, p, move |e, v| {
             let given = match e.provenance(obj, p) {
                 Some(Provenance::Assigned) => true,
@@ -1210,7 +1258,7 @@ fn group_written(engine: &Engine, obj: ObjectId) {
                     // A colour already the author's was read by the
                     // controls that took it as they resolved; only the
                     // plain items below are handed it.
-                    if holds && was.get() && kind == Kind::Popup {
+                    if holds && was.get() && handed_together(e, obj, kind, p) {
                         // [`hand_bound_down_together`] does.
                     } else if holds && was.get() {
                         let i = role_index(kind, p);
@@ -1399,7 +1447,13 @@ fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
     // A group's colour the item gave on its palette is its own too.
     // The slots of the roles looked for.
     let looked = (0..4).fold(0u128, |w, s| w | u128::from(roles) << (s * ROLE_COUNT));
-    let given = authored(engine, item, Kind::Item, has_groups(engine, item), looked);
+    let given = authored(
+        engine,
+        item,
+        Kind::Item,
+        groups_written(engine, item, Kind::Item),
+        looked,
+    );
     // A role not looked for is as good as the item's own.
     let mine: [bool; SLOTS] = std::array::from_fn(|at| {
         let i = at % ROLE_COUNT;
@@ -1415,7 +1469,7 @@ fn take_from_above(engine: &Engine, item: ObjectId, roles: u32) {
             break;
         }
         if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k)) {
-            let groups = has_groups(engine, p);
+            let groups = groups_written(engine, p, k);
             let open_slots = (0..SLOTS)
                 .filter(|at| !mine[*at] && inherited[*at].is_none())
                 .fold(0u128, |w, at| w | 1 << at);
@@ -1500,7 +1554,7 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
         None => {
             let g = group_now(engine, obj, kind);
             let p = groups_of(kind)[g][i];
-            if has_groups(engine, obj) && author_set(engine, obj, p) {
+            if groups_written(engine, obj, kind) && author_set(engine, obj, p) {
                 return engine.read(obj, p);
             }
             g
@@ -1513,7 +1567,7 @@ fn role_from_above(engine: &Engine, obj: ObjectId, prop: PropIndex) -> Value {
                 break;
             };
             if let Some(k) = kind_of(engine, p).filter(|k| hands_down(engine, p, *k))
-                && let Some(c) = author_colour(engine, p, k, has_groups(engine, p), g, i)
+                && let Some(c) = author_colour(engine, p, k, groups_written(engine, p, k), g, i)
             {
                 return Value::Color(c);
             }

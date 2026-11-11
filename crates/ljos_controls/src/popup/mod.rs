@@ -318,6 +318,10 @@ pub struct Popup {
     pub(crate) state: Rc<PopupState>,
     #[qml(skip)]
     pub(crate) inherit: Rc<crate::inherit::InheritState>,
+    /// The colours bound on the popup that it hands down together, as
+    /// bits of its palette's slots ([`crate::inherit`]).
+    #[qml(skip)]
+    pub(crate) handed: Cell<u128>,
 }
 
 impl Default for Popup {
@@ -383,6 +387,7 @@ impl Default for Popup {
             anchors: PopupAnchors::default(),
             state: Rc::default(),
             inherit: Rc::default(),
+            handed: Cell::new(0),
         }
     }
 }
