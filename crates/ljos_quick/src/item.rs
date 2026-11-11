@@ -787,6 +787,15 @@ impl Item {
             .find(|c| under(*c))
     }
 
+    /// `grabToImage(callback, targetSize)`: a picture of the item, drawn by
+    /// its scene's next frame and handed to `callback` as an
+    /// `ItemGrabResult` ([`crate::grab`]). False, and no call, for a grab
+    /// the item cannot give.
+    #[qml(invokable, name = "grabToImage")]
+    fn grab_to_image(cx: &Cx, callback: Value, target_size: Value) -> Result<bool, EngineError> {
+        crate::grab::grab_to_image(cx.engine, cx.this, callback, target_size)
+    }
+
     /// `forceActiveFocus(reason)`: focus for the item and for every focus
     /// scope around it. Without a reason, `Qt.OtherFocusReason`.
     #[qml(invokable, name = "forceActiveFocus")]

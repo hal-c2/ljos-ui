@@ -1149,6 +1149,10 @@ const NOT_YET: &[(&str, &str)] = &[
         "an Item to Qt that holds a VideoOutput and declares no default property; here it is a VideoOutput, and so an item with one",
     ),
     (
+        "QtQuick: ItemGrabResult",
+        "what `Item.grabToImage` calls back with, anonymous to Qt; named here so that the table can describe its `url`, `image` and `saveToFile`",
+    ),
+    (
         "QtQuick.Templates: SwipeDelegateSwipe",
         "the type of `SwipeDelegate.swipe`, anonymous to Qt; named here so that the table can describe it and a file's `swipe.left: Rectangle {}` is read as a component",
     ),

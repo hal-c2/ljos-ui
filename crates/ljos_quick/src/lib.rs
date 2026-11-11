@@ -28,6 +28,7 @@ pub mod focus;
 mod font_enums;
 mod font_loader;
 mod font_set;
+mod grab;
 mod gradient;
 mod handlers;
 mod image;
@@ -114,6 +115,7 @@ pub use error_boundary::{BoundaryFault, ErrorBoundary};
 pub use flickable::Flickable;
 pub use font_loader::{FontFamilies, FontLoader};
 pub use frame_times::{FrameTimes, Woke};
+pub use grab::{ItemGrabResult, grabbed_image};
 pub use gradient::{Gradient, GradientPaint, GradientStop};
 pub use handlers::{
     DragAxis, DragHandler, HoverHandler, PinchGesture, PinchHandler, PinchPhase, PointHandler,
@@ -324,6 +326,7 @@ pub fn register(engine: &Engine) {
     sprites::register(engine);
     handlers::register(engine);
     drag::register(engine);
+    grab::register(engine);
     drop_area::register(engine);
     // FontLoader, SystemPalette, a Palette to give whole, Qt.fontFamilies,
     // and the platform's modules (QtQuick.Dialogs, QtCore) whose drawn
