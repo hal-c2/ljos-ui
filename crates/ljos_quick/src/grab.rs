@@ -10,8 +10,10 @@
 //! is drawn while nothing is asked. An item that leaves every shown window
 //! before the frame calls back with an empty result, as in Qt, and wakes
 //! no scene while it waits. A window is there while a scene shows it: a
-//! grab whose scene is dropped gets the same result as the scene goes, as
-//! no frame may come after it.
+//! grab whose scene is dropped gets the same result, as no frame of that
+//! scene comes. The scene only queues it as it goes; the callback runs
+//! where every callback after a frame does, in the turn the engine wakes
+//! its host for, not under a host that is dropping a scene.
 
 use std::cell::{Cell, RefCell};
 
@@ -255,8 +257,10 @@ pub(crate) fn waiting(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> bool
 }
 
 /// A scene that showed the items `showed` holds is gone: each grab of one
-/// that no scene shows now calls back with an empty result here, as no
-/// frame may come to settle it. A grab of an item that is gone is dropped.
+/// that no scene shows now gets an empty result, as no frame of that
+/// scene comes to settle it. Its callback is queued, not run: the scene
+/// is going, and the host dropping it is in the middle of its own work.
+/// A grab of an item that is gone is dropped.
 pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool) {
     let settled: Vec<Grab> = {
         let grabs = engine.extension::<Grabs>();
@@ -270,10 +274,9 @@ pub(crate) fn settle_unshown(engine: &Engine, showed: impl Fn(ObjectId) -> bool)
         *pending = kept;
         gone
     };
-    // Unborrowed: a callback may ask for another grab.
     for grab in settled {
         if engine.is_alive(grab.item) {
-            deliver(engine, grab, None);
+            not_drawn(engine, grab);
         }
     }
 }

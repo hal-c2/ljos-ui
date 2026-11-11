@@ -614,3 +614,69 @@ fn a_window_that_is_shown_from_the_start_takes_the_keys_when_its_host_says_so() 
     assert!(flag(&e, main, "active"));
     assert!(!flag(&e, tool, "active"));
 }
+
+const GRAB_THEN_OPEN: &str = r#"
+import QtQuick
+Window {
+    id: main
+    objectName: "main"
+    width: 100; height: 100
+    visible: true
+    property var got: "not yet"
+    Window {
+        objectName: "shot"
+        width: 40; height: 40
+        visible: true
+        Rectangle { id: src; width: 20; height: 10; color: "red" }
+    }
+    Window { id: after; objectName: "after"; width: 40; height: 40 }
+    function grab() {
+        src.grabToImage(r => { got = r.url; after.show() })
+    }
+}
+"#;
+
+/// A host drops the scene of a window while a grab of an item in it waits
+/// for that scene's frame. The grab is settled empty, but its callback is
+/// not run under the host while it drops the scene, where a window the
+/// callback opens would come after the host listed its windows: it runs
+/// where every callback after a frame runs, when the host wakes for the
+/// engine's timers, and the host is told of the window it opens there.
+#[test]
+fn a_grab_whose_window_s_scene_goes_calls_back_where_the_host_frames() {
+    let (e, told) = hosted();
+    let main = load(&e, GRAB_THEN_OPEN);
+    let shot = find(&e, main, "shot");
+    let after = find(&e, main, "after");
+    let mut main_scene = scene(&e, main);
+    let shot_scene = scene(&e, shot);
+    // The scene that stays keeps the engine's timers, as a host's root
+    // window does.
+    main_scene.take_timer_wake(&e);
+    ljos_drive::settle_at(&e, &mut main_scene, Time::ZERO).unwrap();
+    assert!(!main_scene.needs_frame(), "the main window rests");
+
+    call(&e, main, "grab");
+    let sys = WindowSystem::of(&e);
+    let before = told.get();
+    drop(shot_scene);
+    assert_eq!(
+        e.read_by_name(main, "got").to_js_string().to_string(),
+        "not yet",
+        "no script runs while the host drops a scene"
+    );
+    assert_eq!(told.get(), before, "nothing changed under the host");
+    assert!(!flag(&e, after, "visible"));
+    assert!(main_scene.needs_frame(), "the engine wakes the host");
+
+    // As a host that wakes at the engine's next deadline.
+    let due = e.next_timer_deadline().expect("the callback is due");
+    e.advance_timers(due);
+    // An empty result: its url names no picture.
+    assert_eq!(e.read_by_name(main, "got").to_js_string().to_string(), "");
+    assert!(told.get() > before, "the host heard of the window");
+    assert!(sys.windows(&e).contains(&after));
+    assert!(sys.spec(&e, after).is_some_and(|s| s.visible), "it shows");
+    ljos_drive::settle_at(&e, &mut main_scene, Time::ZERO).unwrap();
+    assert_eq!(e.next_timer_deadline(), None, "nothing is scheduled");
+}
