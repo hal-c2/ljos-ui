@@ -298,6 +298,11 @@ fn initial_claim(engine: &Engine, obj: ObjectId) {
         },
     };
     if !takes {
+        // A popup that took the keyboard while its window was being made
+        // holds the scope the content's own `focus: true` asks for later.
+        if let (Some(h), ScopeKey::Top(top)) = (holder, key) {
+            crate::layer::focus_refused(engine, top, h, obj);
+        }
         write_flag(engine, obj, Item::FOCUS.index, false);
         return;
     }
@@ -516,6 +521,16 @@ pub fn active_focus_item(engine: &Engine, root: ObjectId) -> Option<ObjectId> {
     let st = t.state.borrow();
     let w = st.windows.iter().find(|w| w.root == root)?;
     w.chain.last().copied().filter(|o| engine.is_alive(*o))
+}
+
+/// The item of the tree under `root` that has active focus while the tree
+/// is shown in a window that has the keyboard: the end of its path of
+/// focus items. Known before the tree is in a window and while that
+/// window does not have the keyboard, when [`active_focus_item`] is
+/// `None`, and up to date within a batch, which `Window.activeFocusItem`
+/// is only once the batch ends. Untracked.
+pub fn tree_focus_item(engine: &Engine, root: ObjectId) -> Option<ObjectId> {
+    engine.untrack(|| path(engine, &tree(engine), root).last().copied())
 }
 
 /// `Window.activeFocusItem` of the window of `root`, read as a dependency:
