@@ -51,9 +51,10 @@ use qml_syntax::{
 };
 use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
+use rules::states::animation::Animating;
 use rules::{arrange, font, gesture};
 
-pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
+pub use cause::{Animated, Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
 pub use migrated::migrated;
@@ -358,6 +359,8 @@ fn lower_parsed(
         inline_roots: Vec::new(),
         unqualified: Vec::new(),
         aimed: Vec::new(),
+        animating: Animating::None,
+        changed: Vec::new(),
     };
     let mut unqualified = Unqualified::default();
     unqualified.object(&parsed.document.root);
@@ -512,6 +515,11 @@ struct Pass<'s> {
     unqualified: Vec<(u32, &'static str)>,
     /// What objects aimed at an id (`target: loader`) set or handle there.
     aimed: Vec<(String, String)>,
+    /// What an animation here moves when it names no target.
+    animating: Animating,
+    /// What the file's `PropertyChanges` set: the id of the object, where
+    /// it is one, and the member.
+    changed: Vec<(Option<String>, String)>,
 }
 
 type Step = Result<(), Kept>;
@@ -629,6 +637,9 @@ impl<'s> Pass<'s> {
             }) if name.as_simple() == Some("target") => Some(id.name.to_string()),
             _ => None,
         });
+        if object.type_name.as_simple() == Some("PropertyChanges") {
+            self.collect_changed(object, aimed_at.as_deref());
+        }
         if let Some(id) = aimed_at {
             for member in &object.members {
                 let name = match member {
@@ -692,6 +703,33 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Signal(_) | QmlMember::Function(_) | QmlMember::Enum(_) => {}
             }
+        }
+    }
+
+    /// What a `PropertyChanges` sets, on its `target` or, without one, on
+    /// the id each member is written through (`box.width: 30`).
+    fn collect_changed(&mut self, object: &QmlObject<'_>, target: Option<&str>) {
+        let targeted = object.members.iter().any(|member| {
+            matches!(member, QmlMember::Binding(b) if b.name.as_simple() == Some("target"))
+        });
+        for member in &object.members {
+            let QmlMember::Binding(binding) = member else {
+                continue;
+            };
+            let parts = &binding.name.parts;
+            let set = if targeted {
+                if matches!(parts[0], "target" | "explicit" | "restoreEntryValues") {
+                    continue;
+                }
+                // A target that is not an id: what it is, the file does
+                // not say.
+                (target.map(str::to_owned), parts[0].to_string())
+            } else if let [id, name, ..] = parts.as_slice() {
+                (Some(id.to_string()), name.to_string())
+            } else {
+                continue;
+            };
+            self.changed.push(set);
         }
     }
 
@@ -796,7 +834,9 @@ impl<'s> Pass<'s> {
             self.view_rows.clone(),
             self.root_owns,
             self.loose,
+            self.animating,
         );
+        self.animating = animating(ty, self.animating);
         let done = self.object_in(object, ty, root, a_root, given);
         (
             self.delegate,
@@ -804,6 +844,7 @@ impl<'s> Pass<'s> {
             self.view_rows,
             self.root_owns,
             self.loose,
+            self.animating,
         ) = saved;
         done
     }
@@ -859,9 +900,6 @@ impl<'s> Pass<'s> {
             Ty::Plain => root,
             other => other,
         };
-        if let Some(on) = &object.on {
-            self.member_name(on, scope, "a value source's target")?;
-        }
         // A group's names are the object's it is a group of.
         let outer = (!matches!(ty, Ty::Plain))
             .then(|| std::mem::replace(&mut self.declared, declared(object)));
@@ -919,14 +957,34 @@ impl<'s> Pass<'s> {
                     if delegates_inside && !matches!(child_ty, Ty::Plain) {
                         self.given = Some(self.view_rows.clone().unwrap_or(Rows::Unknown));
                     }
-                    self.object(child, child_ty, child_root, made)?;
+                    // `Behavior on color`: a member of this object, which
+                    // what the child animates is too.
+                    let animating = self.animating;
+                    if let Some(on) = &child.on {
+                        self.member_name(on, scope, "a value source's target")?;
+                        // On a member of a group (`border.color`) a name is
+                        // the group's, which the pass does not type here.
+                        self.animating = match on.as_simple() {
+                            Some(_) => Animating::On(scope),
+                            None => Animating::None,
+                        };
+                    }
+                    let done = self.object(child, child_ty, child_root, made);
+                    self.animating = animating;
+                    done?;
                 }
                 QmlMember::Binding(binding) => {
                     if binding.name.as_simple() == Some("delegate") {
                         self.members.delegate();
                     }
                     let made = self.changes.len();
-                    self.binding(binding, ty, scope, root, aim.as_ref(), &names)?;
+                    let animating = self.animating;
+                    if binding.name.as_simple() == Some("transitions") {
+                        self.animating = Animating::Transitions;
+                    }
+                    let done = self.binding(binding, ty, scope, root, aim.as_ref(), &names);
+                    self.animating = animating;
+                    done?;
                     if let Some(id) = prefix {
                         self.prefix(binding, id, own, made)?;
                     }
@@ -1550,6 +1608,26 @@ impl rules::File for Pass<'_> {
         self.read.contains(name)
     }
 
+    fn animating(&self) -> Animating {
+        self.animating
+    }
+
+    fn member_of(&self, name: &str, on: Ty) -> Rename {
+        self.member(name, on)
+    }
+
+    fn changed(&self, name: &str) -> Vec<Ty> {
+        self.changed
+            .iter()
+            .filter(|(_, member)| member == name)
+            .map(|(id, _)| {
+                id.as_deref()
+                    .and_then(|id| self.scope.id(id))
+                    .unwrap_or(Ty::Unknown)
+            })
+            .collect()
+    }
+
     fn is_beside(&self, name: &str) -> bool {
         self.scope.locals.root(name).is_some()
     }
@@ -1624,6 +1702,28 @@ impl rules::File for Pass<'_> {
             name = root.type_name;
         }
         found
+    }
+}
+
+/// What an animation in an object of type `ty` moves, when it names no
+/// target, given what one around it moves. A `Transition` is in one
+/// object's `transitions`, or another's that the file does not say; an
+/// animation or a `Behavior` animates what the one it is in does; anything
+/// else starts over.
+fn animating(ty: Ty, around: Animating) -> Animating {
+    let (Ty::Exact(t) | Ty::Derived(t)) = ty else {
+        return Animating::None;
+    };
+    let is = |name: &str| std::iter::successors(Some(t), |t| t.prototype()).any(|t| t.name == name);
+    if is("Transition") {
+        match around {
+            Animating::Transitions => Animating::Transitions,
+            _ => Animating::Elsewhere,
+        }
+    } else if is("Animation") || is("Behavior") {
+        around
+    } else {
+        Animating::None
     }
 }
 

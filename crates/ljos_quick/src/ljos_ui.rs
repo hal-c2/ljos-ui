@@ -24,10 +24,13 @@ use crate::shapes::{
     PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
 };
 use crate::{
-    Accessible, DoubleValidator, Drag, DragHandler, DropArea, Flickable, FontMetrics, Gradient,
-    GradientStop, HoverHandler, Image, IntValidator, Item, ListView, Loader, MouseArea,
-    PointHandler, PropertyChanges, Rectangle, RegularExpressionValidator, Repeater, State,
-    TapHandler, Text, TextEdit, TextInput, TextMetrics, WheelHandler, focus, keys,
+    Accessible, Animation, Behavior, ColorAnimation, DoubleValidator, Drag, DragHandler, DropArea,
+    Easing, Flickable, FontMetrics, Gradient, GradientStop, HoverHandler, Image, IntValidator,
+    Item, ListView, Loader, MouseArea, NumberAnimation, ParallelAnimation, PauseAnimation,
+    PointHandler, PropertyAction, PropertyAnimation, PropertyChanges, Rectangle,
+    RegularExpressionValidator, Repeater, RotationAnimation, ScriptAction, SequentialAnimation,
+    SmoothedAnimation, SpringAnimation, State, TapHandler, Text, TextEdit, TextInput, TextMetrics,
+    Transition, WheelHandler, focus, keys,
 };
 
 /// The module's name, as a file imports it.
@@ -213,6 +216,19 @@ pub(crate) fn register(engine: &Engine) {
         TextInput, TextEdit, IntValidator, DoubleValidator, RegularExpressionValidator,
         TextMetrics, FontMetrics,
         keys::Keys, keys::KeyEventObject, keys::Shortcut, Accessible,
+    ]));
+    // Qt's animations, as they are (docs/DIALECT.md §4.9, M1): a `Behavior`,
+    // a `Transition` and what they run. An animation's `property` names a
+    // member of what it moves by the name that object has, so in a file of
+    // Ljós's API it is `fill` on a `Rectangle`; the compat pass renames it.
+    // Those that move what Ljós does not have yet stay `QtQuick`'s:
+    // `AnchorAnimation` and `ParentAnimation` (with `AnchorChanges` and
+    // `ParentChange`), the Animators, `AnimationController`,
+    // `FrameAnimation` and the 3D ones.
+    engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
+        Animation, PropertyAnimation, NumberAnimation, ColorAnimation, RotationAnimation,
+        SmoothedAnimation, SpringAnimation, SequentialAnimation, ParallelAnimation,
+        PauseAnimation, ScriptAction, PropertyAction, Behavior, Transition, Easing,
     ]));
     let version = Version::new(1, 0);
     for face in [
@@ -430,6 +446,29 @@ mod tests {
         }
         // A model is not an item, and a view not a model.
         assert!(engine.lookup_type("Ljos.Models", "ListView").is_none());
+    }
+
+    #[test]
+    fn the_animations_are_qt_s_own() {
+        let engine = engine();
+        for (name, native) in [
+            ("Behavior", Behavior::static_meta()),
+            ("Transition", Transition::static_meta()),
+            ("NumberAnimation", NumberAnimation::static_meta()),
+            ("ColorAnimation", ColorAnimation::static_meta()),
+            ("PropertyAnimation", PropertyAnimation::static_meta()),
+            ("RotationAnimation", RotationAnimation::static_meta()),
+            ("SequentialAnimation", SequentialAnimation::static_meta()),
+            ("ParallelAnimation", ParallelAnimation::static_meta()),
+            ("PauseAnimation", PauseAnimation::static_meta()),
+            ("ScriptAction", ScriptAction::static_meta()),
+            ("PropertyAction", PropertyAction::static_meta()),
+        ] {
+            let ty = engine.lookup_type(MODULE, name).expect(name);
+            assert!(MetaRef::ptr_eq(&ty, &MetaRef::Static(native)), "{name}");
+        }
+        // What moves a change Ljos.Ui does not have yet is not its own.
+        assert!(engine.lookup_type(MODULE, "AnchorAnimation").is_none());
     }
 
     #[test]
