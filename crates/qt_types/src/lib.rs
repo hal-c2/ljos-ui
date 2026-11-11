@@ -101,6 +101,8 @@
 //!     type Ljos.ErrorBoundary ErrorBoundary
 //!         prototype QtQuick.Item named  `named`: what a file that imports QtQuick calls `Item`
 //!         prop failed QtQml.bool named readonly
+//!     type Ljos.Ui.Text Text
+//!         prop wrap WrapMode was=wrapMode   what the type it is a face of calls it
 //! ```
 //!
 //! A `named` type is the module and the name: it is looked up as a file
@@ -109,6 +111,11 @@
 //! named` is Qt's `QQuickItem` beside Qt's table and Ljós's `QtQuick.Item`
 //! without it. Naming a type of another module gives the module nothing: a
 //! file that imports `Ljos` has no `Item`.
+//!
+//! A face (a native type under other names) says the old name of each
+//! member it renames, with `was=`, so that what lowers a file written for
+//! the faced type has the rename from the runtime that makes it
+//! ([`Type::renamed`]).
 //!
 //! # How the committed table is made, and why that is not a circle
 //!
@@ -409,6 +416,15 @@ impl Type {
         self.prototype.map(|index| &table().types[index])
     }
 
+    /// The properties a face calls otherwise than the type it faces does,
+    /// its bases' too: (that type's name, this one's). None but a type of
+    /// Ljós's own table is a face.
+    pub fn renamed(&'static self) -> impl Iterator<Item = (&'static str, &'static str)> {
+        std::iter::successors(Some(self), |ty| ty.prototype())
+            .flat_map(|ty| ty.properties.iter())
+            .filter_map(|property| Some((property.was?, property.name)))
+    }
+
     /// The class whose properties, signals and methods are the type's own
     /// too, looked in before what it inherits. None when it has none, or
     /// one that is there for its enums only.
@@ -628,6 +644,9 @@ pub struct Property {
     /// What is written there is run when its time comes and is worth nothing
     /// until then: the `script` of a `ScriptAction`.
     pub is_script: bool,
+    /// Of a property of a face, what the type it faces calls it: `wrap` of
+    /// `Ljos.Ui`'s `Text` was `wrapMode`. Only Ljós's own table has faces.
+    pub was: Option<&'static str>,
 }
 
 impl Property {
@@ -1155,6 +1174,7 @@ fn read_member(
                 // the property of that name and type.
                 is_script: flags.contains(&"script")
                     || (type_name == "QQmlScriptString" && name == "script"),
+                was: flags.iter().find_map(|flag| flag.strip_prefix("was=")),
             });
             return flags.contains(&"named");
         }

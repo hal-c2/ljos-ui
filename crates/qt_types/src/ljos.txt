@@ -886,10 +886,10 @@ module Ljos.Ui
 		prop margin QtQml.real named
 		prop dragThreshold QtQml.int named reset
 		prop cursorShape Qt::CursorShape reset
-		prop devices DeviceTypes
-		prop pointerTypes PointerTypes
-		prop buttons Qt::MouseButtons
-		prop modifiers Qt::KeyboardModifiers
+		prop devices DeviceTypes was=acceptedDevices
+		prop pointerTypes PointerTypes was=acceptedPointerTypes
+		prop buttons Qt::MouseButtons was=acceptedButtons
+		prop modifiers Qt::KeyboardModifiers was=acceptedModifiers
 		prop minimumPointCount QtQml.int named
 		prop maximumPointCount QtQml.int named
 		prop centroid Ljos.Ui.HandlerPoint pointer readonly
@@ -959,10 +959,10 @@ module Ljos.Ui
 		prop margin QtQml.real named
 		prop dragThreshold QtQml.int named reset
 		prop cursorShape Qt::CursorShape reset
-		prop devices DeviceTypes
-		prop pointerTypes PointerTypes
-		prop buttons Qt::MouseButtons
-		prop modifiers Qt::KeyboardModifiers
+		prop devices DeviceTypes was=acceptedDevices
+		prop pointerTypes PointerTypes was=acceptedPointerTypes
+		prop buttons Qt::MouseButtons was=acceptedButtons
+		prop modifiers Qt::KeyboardModifiers was=acceptedModifiers
 		prop point Ljos.Ui.HandlerPoint pointer readonly
 		prop hovered QtQml.bool named readonly
 		prop blocking QtQml.bool named
@@ -1014,7 +1014,7 @@ module Ljos.Ui
 		prototype QtQuick.Item named
 		enum Status Null=0 Ready=1 Loading=2 Error=3
 		prop source QtQml.url named
-		prop component QtQml.Component named pointer reset
+		prop component QtQml.Component named pointer reset was=sourceComponent
 		prop active QtQml.bool named
 		prop asynchronous QtQml.bool named
 		prop item QtQml.QtObject named pointer readonly
@@ -1044,10 +1044,10 @@ module Ljos.Ui
 		prop margin QtQml.real named
 		prop dragThreshold QtQml.int named reset
 		prop cursorShape Qt::CursorShape reset
-		prop devices DeviceTypes
-		prop pointerTypes PointerTypes
-		prop buttons Qt::MouseButtons
-		prop modifiers Qt::KeyboardModifiers
+		prop devices DeviceTypes was=acceptedDevices
+		prop pointerTypes PointerTypes was=acceptedPointerTypes
+		prop buttons Qt::MouseButtons was=acceptedButtons
+		prop modifiers Qt::KeyboardModifiers was=acceptedModifiers
 		prop point Ljos.Ui.HandlerPoint pointer readonly
 		prop translation QtQuick.vector2d named readonly
 		signal enabledChanged
@@ -1102,7 +1102,7 @@ module Ljos.Ui
 		signal wheel wheel:QtObject
 	type Ljos.Ui.Rectangle Rectangle
 		prototype QtQuick.Item named
-		prop fill QtQuick.color named
+		prop fill QtQuick.color named was=color
 		prop radius QtQml.real named
 		prop topLeftRadius QtQml.real named reset
 		prop topRightRadius QtQml.real named reset
@@ -1128,16 +1128,16 @@ module Ljos.Ui
 		prop pressed QtQml.bool named readonly
 		prop tapCount QtQml.int named readonly
 		prop gesturePolicy GesturePolicy
-		prop buttons Qt::MouseButtons
+		prop buttons Qt::MouseButtons was=acceptedButtons
 		prop parent QtQml.QtObject named pointer readonly
 		prop point Ljos.Ui.HandlerPoint pointer readonly
 		prop target QtQml.QtObject named pointer
 		prop margin QtQml.real named
 		prop dragThreshold QtQml.int named reset
 		prop grabPermissions GrabPermissions
-		prop devices DeviceTypes
-		prop pointerTypes PointerTypes
-		prop modifiers Qt::KeyboardModifiers
+		prop devices DeviceTypes was=acceptedDevices
+		prop pointerTypes PointerTypes was=acceptedPointerTypes
+		prop modifiers Qt::KeyboardModifiers was=acceptedModifiers
 		prop cursorShape Qt::CursorShape reset
 		prop longPressThreshold QtQml.real named reset
 		prop timeHeld QtQml.real named readonly
@@ -1180,10 +1180,10 @@ module Ljos.Ui
 		prop font QtQuick.font named
 		prop style TextStyle
 		prop styleColor QtQuick.color named
-		prop align HAlignment reset
+		prop align HAlignment reset was=horizontalAlignment
 		prop effectiveHorizontalAlignment HAlignment readonly
 		prop verticalAlignment VAlignment
-		prop wrap WrapMode
+		prop wrap WrapMode was=wrapMode
 		prop elide TextElideMode
 		prop maximumLineCount QtQml.int named reset
 		prop fontSizeMode FontSizeMode
@@ -1198,7 +1198,7 @@ module Ljos.Ui
 		prop lineCount QtQml.int named readonly
 		prop truncated QtQml.bool named readonly
 		prop baseUrl QtQml.url named reset
-		prop format TextFormat
+		prop format TextFormat was=textFormat
 		prop linkColor QtQuick.color named
 		prop hoveredLink QtQml.string named readonly
 		prop padding QtQml.real named reset
@@ -1253,9 +1253,9 @@ module Ljos.Ui
 		prop rotation QtQml.real named
 		prop rotationScale QtQml.real named
 		prop orientation Qt::Orientation
-		prop devices DeviceTypes
-		prop pointerTypes PointerTypes
-		prop modifiers Qt::KeyboardModifiers
+		prop devices DeviceTypes was=acceptedDevices
+		prop pointerTypes PointerTypes was=acceptedPointerTypes
+		prop modifiers Qt::KeyboardModifiers was=acceptedModifiers
 		prop invertible QtQml.bool named
 		prop targetScaleMultiplier QtQml.real named
 		prop targetTransformAroundCursor QtQml.bool named
@@ -1369,11 +1369,11 @@ module Ljos.Ui
 		prop footer QtQml.Component named pointer
 		prop footerItem QtQml.QtObject named pointer readonly
 		prop populate QtQml.QtObject named pointer
-		prop enter QtQml.QtObject named pointer
+		prop enter QtQml.QtObject named pointer was=add
 		prop addDisplaced QtQml.QtObject named pointer
 		prop move QtQml.QtObject named pointer
 		prop moveDisplaced QtQml.QtObject named pointer
-		prop exit QtQml.QtObject named pointer
+		prop exit QtQml.QtObject named pointer was=remove
 		prop removeDisplaced QtQml.QtObject named pointer
 		prop displaced QtQml.QtObject named pointer
 		prop highlight QtQml.Component named pointer

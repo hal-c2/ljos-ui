@@ -1229,3 +1229,38 @@ fn a_method_gives_what_its_nearest_declaration_says() {
     assert_eq!(dial.method_returns_in(table, "level"), Some("real"));
     assert_eq!(dial.method_returns_in(table, "missing"), None);
 }
+
+/// A face of a type of Qt's, under other names.
+const FACE: &str = "\
+module Mine
+\tLabel Mine.Label
+\ttype Mine.Label Label
+\t\tprop wrap int was=wrapMode
+\t\tprop text QtQml.string named
+";
+
+#[test]
+fn a_face_says_what_the_type_it_faces_calls_a_member() {
+    let table = read("", FACE);
+    let label = &table.types[table.classes["Mine.Label"]];
+    let was: Vec<_> = label.properties.iter().map(|p| (p.name, p.was)).collect();
+    assert_eq!(was, [("wrap", Some("wrapMode")), ("text", None)]);
+}
+
+/// What lowers a file written for Qt renames by what a face says, so each
+/// rename has to be one the face makes: the new name is there and the old
+/// one is not.
+#[test]
+fn every_rename_of_a_face_is_what_the_face_has() {
+    let ui = module("Ljos.Ui").expect("Ljos.Ui is described");
+    let mut renames = 0;
+    for name in native_types("Ljos.Ui").expect("Ljos.Ui is described") {
+        let ty = ui.type_named(name).expect("exported");
+        for (old, new) in ty.renamed() {
+            renames += 1;
+            assert!(ty.property(new).is_some(), "{name}.{new}");
+            assert!(ty.property(old).is_none(), "{name}.{old}");
+        }
+    }
+    assert!(renames > 0, "no face of Ljos.Ui says what it renames");
+}

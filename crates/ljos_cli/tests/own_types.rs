@@ -476,7 +476,8 @@ impl<'a, 'c> Module<'a, 'c> {
                 _ => None,
             })
             .collect();
-        for property in meta.own_properties() {
+        let faced = meta.face_of();
+        for (at, property) in meta.own_properties().iter().enumerate() {
             // `fault.kind` is a property of what `fault` is.
             if let PropertyAccess::Group { meta: group, .. } = &property.access {
                 let _ = self.link(&MetaRef::from(*group));
@@ -522,6 +523,15 @@ impl<'a, 'c> Module<'a, 'c> {
             }
             if engine.is_script_property_of(meta, &property.name) {
                 out.push_str(" script");
+            }
+            // A face's own members are the faced type's, at its indices:
+            // what lowers a file written for that type renames this one.
+            if let Some(old) = faced
+                .and_then(|of| of.properties.get(meta.property_offset as usize + at))
+                .map(|old| &old.name)
+                .filter(|old| **old != property.name)
+            {
+                let _ = write!(out, " was={old}");
             }
             out.push('\n');
         }
