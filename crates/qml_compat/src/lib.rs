@@ -23,6 +23,7 @@ mod cause;
 mod given;
 mod group;
 mod lowering;
+mod migrated;
 mod modules;
 mod qt_members;
 mod rows;
@@ -55,6 +56,7 @@ use rules::{arrange, font, gesture};
 pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
+pub use migrated::migrated;
 pub use rules::{FONT_RENAMES, LAYOUT_RENAMES, member_renames, type_renames};
 
 /// The module a lowered file imports.
@@ -95,8 +97,9 @@ pub const LAYOUT: &str = "Ljos.Layout";
 
 /// What a lowered file says of its scripts: they are Qt's JavaScript, which
 /// the checker of Ljós's API does not hold to its rules. A file is typed by
-/// taking the pragma out, and `ljos check` then says what to change
-/// (docs/DIALECT.md §8).
+/// taking the pragma out, and `ljos check` then says what to change;
+/// `ljos migrate` takes it out where the checker finds nothing more in the
+/// file without it ([`migrated`], docs/DIALECT.md §8).
 pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
 
 /// What [`lower`] made of a file.
