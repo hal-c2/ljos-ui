@@ -146,3 +146,28 @@ Feature: A Loader shows what the file it loads now says
         | how            | later |
         | at once        | false |
         | asynchronously | true  |
+
+    Scenario: A Loader that names the file itself is given the properties too
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          Loader { id: loader; objectName: "loader"; source: "Side.qml" }
+          function show() { loader.setSource("Side.qml", { text: "given" }) }
+        }
+        """
+      When the method "show" of "root" is called
+      And the file "Scenario.qml" is changed to:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          signal remade
+          Loader { id: loader; objectName: "loader"; source: "Side.qml" }
+          function show() { loader.setSource("Side.qml", { text: "given" }) }
+        }
+        """
+      And a reload happens
+      Then there is no reload error
+      And the property "text" of "loader/side" is "given"

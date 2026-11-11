@@ -342,7 +342,10 @@ impl Migrate for Loader {
             r.completed && r.origin == Some(Origin::Url(r.props_for.clone()))
         })
         .ok_or("not a Loader")?;
-        // Made and completed already, without them.
+        // A Loader that names the file itself has loaded it without them by
+        // now: a migrator runs once the remade tree is complete, so that
+        // item, its handlers run, goes and is made again with them. For
+        // one that loads in the background, `item` is null in between.
         if loaded {
             reload(engine, obj, true);
         }
