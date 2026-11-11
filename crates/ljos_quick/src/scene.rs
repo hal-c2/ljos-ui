@@ -624,6 +624,19 @@ pub(crate) fn pictures_wanted(e: &Engine) {
     }
 }
 
+/// A grab of `item` is asked for ([`crate::grab`]): the scenes that show
+/// it, and no other, take it at their next frame. One at work now sees
+/// the grab as its frame ends; one that shows the item only once its
+/// frame syncs it is dirty already.
+pub(crate) fn grab_wanted(e: &Engine, item: ObjectId) {
+    for s in e.extension::<Scenes>().live() {
+        let shows = s.try_borrow().is_ok_and(|s| s.marks.contains(item));
+        if shows {
+            mark(&s, |_| {});
+        }
+    }
+}
+
 /// Marks `obj` with `f` in each scene that shows it.
 fn mark_shown(e: &Engine, obj: ObjectId, f: impl Fn(&mut Shared)) {
     for s in e.extension::<Scenes>().live() {

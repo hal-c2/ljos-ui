@@ -1,14 +1,15 @@
 //! `Item.grabToImage` and `ItemGrabResult` (QtQuick).
 //!
 //! A grab is only asked for when it is called: the scene that shows the
-//! item takes it at its next frame, which the ask wakes. The item is drawn
-//! there in its own coordinates and cut to its bounds, as that frame left
-//! it, with its own opacity and visibility not counted. The picture goes
-//! to the callback after the frame, between turns, as an `ItemGrabResult`
-//! that scripts own: its `url` names the picture for an image source for
-//! as long as the result lives. Nothing is drawn while nothing is asked.
-//! An item that leaves every shown window before the frame calls back with
-//! an empty result, as in Qt, and wakes no scene while it waits.
+//! item takes it at its next frame, which the ask wakes in that scene and
+//! no other. The item is drawn there in its own coordinates and cut to its
+//! bounds, as that frame left it, with its own opacity and visibility not
+//! counted. The picture goes to the callback after the frame, between
+//! turns, as an `ItemGrabResult` that scripts own: its `url` names the
+//! picture for an image source for as long as the result lives. Nothing
+//! is drawn while nothing is asked. An item that leaves every shown window
+//! before the frame calls back with an empty result, as in Qt, and wakes
+//! no scene while it waits.
 
 use std::cell::{Cell, RefCell};
 
@@ -177,7 +178,7 @@ pub(crate) fn grab_to_image(
         size,
         target,
     });
-    crate::scene::pictures_wanted(engine);
+    crate::scene::grab_wanted(engine, item);
     Ok(true)
 }
 
