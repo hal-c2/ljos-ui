@@ -49,7 +49,7 @@ use ljos_js::Bytecode;
 
 pub(super) mod in_place;
 
-use super::initial::Settled;
+use super::request::{By, Request, Source};
 use super::{Creation, Initial, Instance, Template};
 use crate::atom::Atom;
 use crate::engine::Engine;
@@ -200,39 +200,16 @@ struct Info {
     tree: u64,
 }
 
-/// An object a script made (`createObject`) under an object of the tree,
-/// which nothing in the new tree makes: a reload makes it again under the
-/// object that goes on for its parent.
-struct Scripted {
-    /// In the order they were made, which is the order they are made
-    /// again: one may be the parent of the next.
+/// What an object was asked for with ([`Engine::make`]), to ask for it
+/// again: a root of a file, which a reload makes again from the file as
+/// it is now, or an object a script made under an object of the tree
+/// (`createObject`, `incubateObject`), which nothing in the new tree
+/// makes, made again under the object that goes on for its parent.
+struct Asked {
+    /// For a script's, the order they were made in, which is the order
+    /// they are made again: one may be the parent of the next.
     serial: u64,
-    component: ObjectId,
-    template: Rc<Template>,
-    parent: ObjectId,
-    props: Vec<(String, Value)>,
-    /// Who gave `props`: a remake sets them as the call that made it did.
-    how: Initial,
-}
-
-/// A script's call that made an object, to keep it as a [`Scripted`].
-pub(crate) struct ScriptCall {
-    component: ObjectId,
-    template: Rc<Template>,
-    parent: ObjectId,
-    props: Vec<(String, Value)>,
-    how: Initial,
-}
-
-/// How a root was made, to make it again.
-#[derive(Clone)]
-struct Origin {
-    url: String,
-    parent: Option<ObjectId>,
-    props: Vec<(String, Value)>,
-    /// See [`Engine::create_from_url_in`].
-    scope: Option<ObjectId>,
-    how: Initial,
+    request: Request,
 }
 
 #[derive(Clone)]
@@ -377,12 +354,7 @@ pub(crate) struct ReloadState {
     by_path: RefCell<HashMap<Rc<str>, ObjectId>>,
     /// What scripts assigned, by the object that holds the value.
     assigned: RefCell<HashMap<ObjectId, Vec<PropIndex>>>,
-    origins: RefCell<HashMap<ObjectId, Origin>>,
-    scripted: RefCell<HashMap<ObjectId, Scripted>>,
-    /// The creation that starts next is a script's: its root is given a
-    /// path of its own beside the ones made before it from the same
-    /// component under the same parent.
-    scripting: Cell<bool>,
+    asked: RefCell<HashMap<ObjectId, Asked>>,
     /// The path of the root made next: the one it replaces.
     forced: RefCell<Option<Rc<str>>>,
     /// The row a view is making a delegate for, where the delegate has
@@ -745,9 +717,14 @@ impl Engine {
                 engine: st.generation.get(),
             });
         }
-        let mut plan: Vec<(ObjectId, Origin, Rc<str>)> = Vec::with_capacity(roots.len());
+        let mut plan: Vec<(ObjectId, Request, Rc<str>)> = Vec::with_capacity(roots.len());
         for &root in roots {
-            let origin = st.origins.borrow().get(&root).cloned();
+            let origin = st
+                .asked
+                .borrow()
+                .get(&root)
+                .filter(|a| matches!(a.request.source, Source::Url(_)))
+                .map(|a| a.request.copy());
             let path = st.info.borrow().get(&root).map(|i| i.path.clone());
             match (origin, path) {
                 (Some(o), Some(p)) if self.is_alive(root) => plan.push((root, o, p)),
@@ -783,14 +760,8 @@ impl Engine {
             *st.forced.borrow_mut() = Some(path.clone());
             // The window keeps its singletons.
             self.singleton_scope_adopt(*old_root);
-            match self.create_from_url_in(
-                &origin.url,
-                origin.parent,
-                origin.props.clone(),
-                origin.scope,
-                origin.how.clone(),
-            ) {
-                Ok(new) => made.push((*old_root, new)),
+            match self.make(origin.copy()) {
+                Ok((new, _)) => made.push((*old_root, new)),
                 Err(e) => {
                     failure = Some(e);
                     break;
@@ -878,122 +849,61 @@ impl Engine {
         })
     }
 
-    /// `createObject` and `incubateObject` of `component`: a reload makes
-    /// what it makes under an object of the tree again. Its time is not the
-    /// script's ([`Engine::native_for_script`]).
-    pub(crate) fn create_for_script(
-        &self,
-        component: ObjectId,
-        template: Rc<Template>,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        how: Initial,
-    ) -> Result<(ObjectId, Settled), EngineError> {
-        self.native_for_script(|| {
-            self.create_for_script_now(component, template, parent, props, how)
-        })
-    }
-
-    fn create_for_script_now(
-        &self,
-        component: ObjectId,
-        template: Rc<Template>,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        how: Initial,
-    ) -> Result<(ObjectId, Settled), EngineError> {
-        let st = &self.inner.reload;
-        let Some(parent) = parent.filter(|_| st.tracking.get()) else {
-            return self.create_from_template_for_script(&template, parent, props, how);
-        };
+    /// What a reload keeps of `req` to ask for its object again, once it is
+    /// made: a file's root, or what a script asks for under an object.
+    /// `None` when nothing is tracked or the object is not made again.
+    pub(super) fn reload_asked(&self, req: &mut Request) -> Option<Request> {
+        if !self.inner.reload.tracking.get() {
+            return None;
+        }
+        match (&req.source, req.by) {
+            (Source::Url(_), _) => return Some(req.copy()),
+            (Source::Component { .. }, By::Script) if req.parent.is_some() => {}
+            _ => return None,
+        }
         // A remake runs no script to take the call's place from: it is
         // taken now, while the call runs, as incubateObject takes its own.
         // Only a path can name what an object lacks, so only a call given
         // one pays for the stack.
-        let how = match how {
-            Initial::Created(None) if props.iter().any(|(n, _)| n.contains('.')) => {
-                Initial::Created(self.js_origin().map(Box::new))
-            }
-            how => how,
-        };
-        st.scripting.set(true);
-        let made = self.create_from_template_for_script(
-            &template,
-            Some(parent),
-            props.clone(),
-            how.clone(),
-        );
-        st.scripting.set(false);
-        if let Ok((obj, _)) = made {
-            self.reload_note_scripted(
-                obj,
-                ScriptCall {
-                    component,
-                    template,
-                    parent,
-                    props,
-                    how,
-                },
-            );
+        if matches!(req.how, Initial::Created(None))
+            && req.props.iter().any(|(n, _)| n.contains('.'))
+        {
+            req.how = Initial::Created(self.js_origin().map(Box::new));
         }
-        made
-    }
-
-    /// [`Engine::create_for_script`]'s call, for an object made later
-    /// by a job ([`CreationJob::by_script`]): what to keep the object as
-    /// once it is made. `None` when nothing is tracked.
-    pub(crate) fn reload_script_call(
-        &self,
-        component: ObjectId,
-        parent: Option<ObjectId>,
-        props: &[(String, Value)],
-        how: &Initial,
-    ) -> Option<ScriptCall> {
-        let parent = parent.filter(|_| self.inner.reload.tracking.get())?;
-        Some(ScriptCall {
+        let mut record = req.copy();
+        // What the component makes now; the job asking makes what it
+        // makes when its turn comes.
+        if let Source::Component {
             component,
-            template: self.component_template(component).ok()?,
-            parent,
-            props: props.to_vec(),
-            how: how.clone(),
-        })
+            template: t @ None,
+        } = &mut record.source
+        {
+            *t = Some(self.component_template(*component).ok()?);
+        }
+        Some(record)
     }
 
-    /// `obj` was made by a script's `call`: a reload makes it again under
-    /// the object that goes on for its parent.
-    pub(crate) fn reload_note_scripted(&self, obj: ObjectId, call: ScriptCall) {
+    /// `obj` was made as `record` asks ([`Engine::reload_asked`]).
+    pub(super) fn reload_note_asked(&self, obj: ObjectId, record: Request) {
         let st = &self.inner.reload;
         if !self.is_alive(obj) {
             return;
         }
-        let ScriptCall {
-            component,
-            template,
-            parent,
-            props,
-            how,
-        } = call;
-        st.serial.set(st.serial.get() + 1);
-        st.scripted.borrow_mut().insert(
+        // Only a script's are made again in order; a file's root takes no
+        // number, which would move the paths of the roots made after it.
+        let serial = if record.by == By::Script {
+            st.serial.set(st.serial.get() + 1);
+            st.serial.get()
+        } else {
+            0
+        };
+        st.asked.borrow_mut().insert(
             obj,
-            Scripted {
-                serial: st.serial.get(),
-                component,
-                template,
-                parent,
-                props,
-                how,
+            Asked {
+                serial,
+                request: record,
             },
         );
-    }
-
-    /// The root a job makes next is a script's: it gets a path of its own
-    /// beside the ones made before it from the same component.
-    pub(super) fn reload_by_script(&self) {
-        let st = &self.inner.reload;
-        if st.tracking.get() {
-            st.scripting.set(true);
-        }
     }
 
     /// The objects scripts made under objects of the old tree, made again
@@ -1003,7 +913,11 @@ impl Engine {
     /// as it is; one whose parent is gone goes with it.
     fn reload_remake_scripted(&self) {
         let st = &self.inner.reload;
-        let mut all: Vec<(ObjectId, Scripted)> = st.scripted.borrow_mut().drain().collect();
+        let mut all: Vec<(ObjectId, Asked)> = st
+            .asked
+            .borrow_mut()
+            .extract_if(|_, a| a.request.by == By::Script)
+            .collect();
         all.sort_by_key(|(_, s)| s.serial);
         let tree = st.tree.get();
         for (old, s) in all {
@@ -1019,32 +933,45 @@ impl Engine {
                     .as_ref()
                     .and_then(|p| p.counterpart.get(&o).copied())
             };
-            let (Some(path), Some(parent)) = (path, counterpart(s.parent)) else {
+            let req = &s.request;
+            let (Some(path), Some(parent)) = (path, req.parent.and_then(counterpart)) else {
                 if self.is_alive(old) {
-                    st.scripted.borrow_mut().insert(old, s);
+                    st.asked.borrow_mut().insert(old, s);
                 }
+                continue;
+            };
+            let Source::Component {
+                component,
+                template: Some(template),
+            } = &req.source
+            else {
                 continue;
             };
             // A component declared in a file is the one that goes on for
             // it; one made from a file's address is made from the file as
             // it is now.
-            let (component, template) = match counterpart(s.component) {
+            let again = match counterpart(*component) {
                 Some(c) => match self.component_template(c) {
-                    Ok(t) => (c, t),
+                    Ok(t) => Request::component_from(c, t),
                     Err(_) => continue,
                 },
-                None if s.template.outer.is_none() => {
-                    (s.component, self.fresh_template(&s.template))
+                None if template.outer.is_none() => {
+                    Request::component_from(*component, self.fresh_template(template))
                 }
                 None => continue,
             };
-            let props: Vec<(String, Value)> = s
+            let props: Vec<(String, Value)> = req
                 .props
                 .iter()
                 .filter_map(|(k, v)| self.reload_translate(v.clone()).map(|v| (k.clone(), v)))
                 .collect();
             *st.forced.borrow_mut() = Some(path);
-            let made = self.create_for_script(component, template, Some(parent), props, s.how);
+            let made = self.make(
+                again
+                    .parent(Some(parent))
+                    .props(props, req.how.clone())
+                    .by(By::Script),
+            );
             st.forced.borrow_mut().take();
             match made {
                 // What its call's properties would keep back now is not
@@ -1465,28 +1392,6 @@ impl Engine {
         }
     }
 
-    /// `root` was asked for by URL: a root a reload can make again.
-    pub(crate) fn reload_note_origin(
-        &self,
-        root: ObjectId,
-        url: &str,
-        parent: Option<ObjectId>,
-        props: &[(String, Value)],
-        scope: Option<ObjectId>,
-        how: Initial,
-    ) {
-        self.inner.reload.origins.borrow_mut().insert(
-            root,
-            Origin {
-                url: url.to_owned(),
-                parent,
-                props: props.to_vec(),
-                scope,
-                how,
-            },
-        );
-    }
-
     /// Keeps what a native type binds `prop` of `obj` to when not given
     /// it, while a reload may take a given value away.
     pub(crate) fn reload_default(&self, obj: ObjectId, prop: PropIndex, f: &DefaultBinding) {
@@ -1523,7 +1428,7 @@ impl Engine {
         }
         let mut by_path = st.by_path.borrow_mut();
         let mut assigned = st.assigned.borrow_mut();
-        let mut origins = st.origins.borrow_mut();
+        let mut asked = st.asked.borrow_mut();
         let mut given = st.given.borrow_mut();
         let mut defaults = st.defaults.borrow_mut();
         for id in dead {
@@ -1533,20 +1438,14 @@ impl Engine {
                 by_path.remove(&i.path);
             }
             assigned.remove(id);
-            origins.remove(id);
+            asked.remove(id);
             given.remove(id);
         }
         if !defaults.is_empty() {
             let dead: HashSet<&ObjectId> = dead.iter().collect();
             defaults.retain(|(id, _), _| !dead.contains(id));
         }
-        drop((info, by_path, assigned, origins, given, defaults));
-        let mut scripted = st.scripted.borrow_mut();
-        if !scripted.is_empty() {
-            for id in dead {
-                scripted.remove(id);
-            }
-        }
+        drop((info, by_path, assigned, asked, given, defaults));
     }
 
     /// Destroys the root of a creation that failed. While a reload makes
@@ -1630,14 +1529,15 @@ impl Engine {
 
     /// Gives the objects of a creation their paths, once they exist and
     /// before anything of them runs, and says which of them go on for an
-    /// object of the old tree.
-    pub(super) fn reload_assign(&self, cr: &Creation, root: ObjectId) {
+    /// object of the old tree. A `scripted` root is given a path of its
+    /// own beside the ones made before it from the same component under
+    /// the same parent.
+    pub(super) fn reload_assign(&self, cr: &Creation, root: ObjectId, scripted: bool) {
         let st = &self.inner.reload;
         if !st.tracking.get() {
             return;
         }
         let noted = st.rows.borrow_mut().remove(&root);
-        let scripted = st.scripting.replace(false);
         let Some(top) = cr.top.clone() else {
             return;
         };

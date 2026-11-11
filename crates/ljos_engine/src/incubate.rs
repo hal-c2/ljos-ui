@@ -31,7 +31,8 @@ use crate::cx::Cx;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::ObjectId;
-use crate::incubator::{CreationHandle, CreationJob, Initial, SharedCreation};
+use crate::incubator::request::{By, Request};
+use crate::incubator::{CreationHandle, Initial, SharedCreation};
 use crate::js::obj_to_u64;
 use crate::value::Value;
 use crate::{QmlObject, TypeTag, WriteKind, qml_impl};
@@ -123,32 +124,20 @@ impl Engine {
             WriteKind::Initial,
         )?;
         let how = Initial::incubated_here(self, &props);
+        let req = Request::component(component)
+            .parent(parent)
+            .props(props, how)
+            .by(By::Script);
         if synchronous {
-            let made = self.component_template(component).and_then(|template| {
-                self.create_for_script(component, template, parent, props, how)
-                    .map(|(obj, _)| obj)
-            });
+            let made = self.make(req).map(|(obj, _)| obj);
             self.incubated(inc, &made);
             return Ok(inc);
         }
         let owner = parent.map_or(APPLICATION_PROC, |p| self.proc_for(p));
+        let (job, handle) = self.make_later(req, Lane::Visible, owner);
         // Made later, it is kept for a reload as one made at once is.
-        let call = self.reload_script_call(component, parent, &props, &how);
-        let (mut job, handle) =
-            CreationJob::for_component(self, component, parent, props, Lane::Visible, owner);
-        let recorded = call.is_some();
-        if recorded {
-            job = job.by_script();
-        }
-        let (job, shared) = job
-            .initial(how)
-            .on_done(move |e, made| {
-                if let (Some(call), Ok(obj)) = (call, made) {
-                    e.reload_note_scripted(*obj, call);
-                }
-                e.incubated(inc, made)
-            })
-            .shared();
+        let recorded = job.kept_for_reload();
+        let (job, shared) = job.on_done(move |e, made| e.incubated(inc, made)).shared();
         let running = self.extension::<Running>();
         running.handles.borrow_mut().push(handle.clone());
         if recorded {

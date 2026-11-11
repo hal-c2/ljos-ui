@@ -46,13 +46,14 @@ use crate::qtqml::{Component, Connections};
 use crate::types::{TypeTag, Url};
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
-use initial::Settled;
+use request::{Allocated, By, Request};
 
 pub(crate) mod aot;
 pub(crate) mod direct_methods;
 pub(crate) mod dynamic;
 pub(crate) mod initial;
 pub(crate) mod reload;
+pub(crate) mod request;
 pub(crate) mod scripts;
 pub(crate) mod singletons;
 mod sliced;
@@ -409,55 +410,23 @@ impl Engine {
     /// Makes the file component at `url` (a [`crate::ComponentSource`]
     /// key, or `file:///key.qml`), owned by `parent`, with
     /// `initial_props` set before completion (they count for `required`).
+    /// [`Engine::make`] with [`Request::url`] says more.
     pub fn create_from_url(
         &self,
         url: &str,
         parent: Option<ObjectId>,
         initial_props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
-        self.create_from_url_in(url, parent, initial_props, None, Initial::Native)
+        self.make(
+            Request::url(url)
+                .parent(parent)
+                .props(initial_props, Initial::Native),
+        )
+        .map(|(root, _)| root)
     }
 
-    /// [`Engine::create_from_url`] in a context of `scope`'s own, which a
-    /// name the file cannot place finds the members of `scope` in, and then
-    /// what `scope` finds: a Loader's item reads the Loader's members
-    /// first (checked on qml6). `how` says how `initial_props` are set.
-    pub fn create_from_url_in(
-        &self,
-        url: &str,
-        parent: Option<ObjectId>,
-        initial_props: Vec<(String, Value)>,
-        scope: Option<ObjectId>,
-        how: Initial,
-    ) -> Result<ObjectId, EngineError> {
-        let mut template = self.not_script_time(|| self.file_template(url))?;
-        let ctx = scope.map(|s| self.scope_context(s));
-        template.context = ctx;
-        // Kept for a reload to make the file again with.
-        let (props, noted) = if self.inner.reload.tracking.get() {
-            (initial_props.clone(), Some(initial_props))
-        } else {
-            (initial_props, None)
-        };
-        let noted_how = noted.as_ref().map(|_| how.clone());
-        let made = self.as_host_root(|| {
-            self.create_from_template_with(&template, parent, props, how, |_| {})
-                .map(|(root, _)| root)
-        });
-        match (&made, ctx) {
-            (Ok(root), Some(ctx)) => self.add_context(*root, ctx),
-            (Err(_), Some(ctx)) => self.destroy_context(ctx),
-            _ => {}
-        }
-        let root = made?;
-        if let (Some(props), Some(how)) = (noted, noted_how) {
-            self.reload_note_origin(root, url, parent, &props, scope, how);
-        }
-        Ok(root)
-    }
-
-    /// A context for what is made in `scope`; see
-    /// [`Engine::create_from_url_in`]. It goes with the object made in it.
+    /// A context for what is made in `scope`; see [`Request::in_scope`].
+    /// It goes with the object made in it.
     fn scope_context(&self, scope: ObjectId) -> ContextId {
         let ctx = self.create_context(self.context_of(scope));
         self.set_context_root(ctx, scope);
@@ -495,117 +464,25 @@ impl Engine {
         })
     }
 
-    pub(crate) fn create_from_template(
-        &self,
-        template: &Template,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-    ) -> Result<ObjectId, EngineError> {
-        self.create_from_template_noting(template, parent, props, |_| {})
-    }
-
-    /// [`Engine::create_from_template`] for a script (`createObject`,
-    /// `incubateObject`): an initial property that cannot be set is a
-    /// warning and the object is made all the same, and `Qt.binding(f)` is
-    /// a binding. As Qt 6.11.2 does, by running qml6. The object comes
-    /// with what became of its initial properties.
-    pub(crate) fn create_from_template_for_script(
-        &self,
-        template: &Template,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        how: Initial,
-    ) -> Result<(ObjectId, Settled), EngineError> {
-        self.create_from_template_with(template, parent, props, how, |_| {})
-    }
-
-    /// [`Engine::create_from_template`], telling `allocated` the root once
-    /// it exists and before any of its bindings has run.
-    fn create_from_template_noting(
-        &self,
-        template: &Template,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        allocated: impl FnOnce(ObjectId),
-    ) -> Result<ObjectId, EngineError> {
-        self.create_from_template_with(template, parent, props, Initial::Native, allocated)
-            .map(|(root, _)| root)
-    }
-
-    fn create_from_template_with(
-        &self,
-        template: &Template,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        how: Initial,
-        allocated: impl FnOnce(ObjectId),
-    ) -> Result<(ObjectId, Settled), EngineError> {
-        self.make_now(
-            |_| Ok(template),
-            parent,
-            true,
-            props,
-            how,
-            |_, root, _| {
-                allocated(root);
-            },
-        )
-    }
-
-    /// Makes an instance of what `template` gives under `parent` at once:
-    /// the steps of a [`CreationJob`] ([`sliced::Making`]) with nothing to
-    /// stop them, on the stack. `allocated` gets the root and its context
-    /// once every object exists and before any of their bindings has run.
-    /// Without `append` the root is owned by `parent` and is not a value
-    /// of its default property.
-    fn make_now<T: std::ops::Deref<Target = Template>>(
-        &self,
-        template: impl FnOnce(&Engine) -> Result<T, EngineError>,
-        parent: Option<ObjectId>,
-        append: bool,
-        props: Vec<(String, Value)>,
-        how: Initial,
-        allocated: impl FnOnce(&Engine, ObjectId, ContextId),
-    ) -> Result<(ObjectId, Settled), EngineError> {
-        self.not_script_time(|| {
-            let errors = self.open_creation();
-            let made = (|| {
-                let template = template(self)?;
-                let mut cr = Creation::default();
-                let root = self.allocate_template(&mut cr, &template, parent, append)?;
-                if let Some(top) = &cr.top {
-                    allocated(self, root, top.context);
-                }
-                // After `allocated`: a delegate's path has its row in it.
-                self.reload_assign(&cr, root);
-                let mut making = sliced::Making::new(cr, root, props, how);
-                loop {
-                    if let Some(r) = making.step(self, &|| false) {
-                        let withheld = making.withheld();
-                        return r.map(|root| (root, Settled { withheld }));
-                    }
-                }
-            })();
-            self.close_creation(errors);
-            made
-        })
-    }
-
     /// Makes every object of an instance of `template` under `parent`.
     /// Without `append` the root is owned by `parent` but is not a value
     /// of its default property (a view's delegates are not its children).
-    /// On an error nothing of it is left, as for a [`CreationJob`].
+    /// On an error nothing of it is left, as for a [`CreationJob`]. A
+    /// `host` root with no parent opens a singleton scope ([`By::Native`]).
     fn allocate_template(
         &self,
         cr: &mut Creation,
         template: &Template,
         parent: Option<ObjectId>,
         append: bool,
+        host: bool,
     ) -> Result<ObjectId, EngineError> {
         let mut a = self.template_allocation(template, parent)?;
         let made = loop {
             match self.allocate_step(cr, &mut a) {
-                Ok(Some(inst)) => break self.allocated_template(cr, inst, parent, append),
+                Ok(Some(inst)) => {
+                    break self.allocated_template(cr, inst, parent, append, host);
+                }
                 Ok(None) => {}
                 Err(e) => break Err(e),
             }
@@ -648,10 +525,11 @@ impl Engine {
         inst: Rc<Instance>,
         parent: Option<ObjectId>,
         append: bool,
+        host: bool,
     ) -> Result<ObjectId, EngineError> {
         let root = inst.objects[0];
         cr.top = Some(inst.clone());
-        self.singleton_scope_enter(&inst, parent);
+        self.singleton_scope_enter(&inst, parent, host);
         // The instance (and so its contexts) lives as long as its root.
         self.keep_with(root, inst);
         // A parent without a default property (a Loader) places what it
@@ -664,28 +542,6 @@ impl Engine {
             self.list_append_default(p, root)?;
         }
         Ok(root)
-    }
-
-    /// Makes one delegate of a view from the `Component` object
-    /// `component`, owned by `owner`. `setup` gets the root and the
-    /// delegate's context as soon as they exist and before anything in
-    /// the delegate runs: the place to give the context its row and the
-    /// root its visual parent.
-    pub(crate) fn create_delegate(
-        &self,
-        component: ObjectId,
-        owner: Option<ObjectId>,
-        setup: impl FnOnce(&Engine, ObjectId, ContextId),
-    ) -> Result<ObjectId, EngineError> {
-        self.make_now(
-            |e| e.component_template(component),
-            owner,
-            false,
-            Vec::new(),
-            Initial::Native,
-            setup,
-        )
-        .map(|(root, _)| root)
     }
 
     /// Every required property left unset, one line each, as Qt tells
@@ -3156,13 +3012,13 @@ impl CreationHandle {
 /// What a [`CreationJob`] calls when it ends without being cancelled.
 type DoneFn = Box<dyn FnOnce(&Engine, &Result<ObjectId, EngineError>)>;
 
-/// See [`Engine::create_delegate`].
-type DelegateSetup = Box<dyn FnOnce(&Engine, ObjectId, ContextId)>;
+/// See [`request::Allocated`].
+type AllocatedFn = Box<dyn FnOnce(&Engine, ObjectId, ContextId)>;
 
-/// What a [`CreationJob`] makes its object from.
+/// What a [`CreationJob`] makes.
 enum JobSource {
-    Url(String),
-    Component(ObjectId),
+    /// What [`Engine::make_later`] was asked for.
+    Asked(Request),
     /// The job's steps are another job's, which whoever holds its
     /// [`SharedCreation`] may also finish early.
     Shared(Rc<RefCell<CreationJob>>),
@@ -3209,85 +3065,40 @@ pub struct CreationJob {
     /// keep its engine alive.
     engine: Weak<crate::engine::Inner>,
     source: JobSource,
-    parent: Option<ObjectId>,
-    props: Vec<(String, Value)>,
-    /// How `props` are set.
-    initial: Initial,
     phase: Phase,
     lane: Lane,
     owner: ProcId,
     handle: CreationHandle,
     done: Option<DoneFn>,
-    /// Set for a view's delegate, which is not a child of its owner.
-    setup: Option<DelegateSetup>,
+    /// See [`request::Allocated`].
+    allocated: Option<AllocatedFn>,
     /// What its bindings say, held from the first slice to the last.
     errors: Option<crate::delayed_errors::CreationErrors>,
-    /// See [`CreationJob::in_scope`].
-    scope: Option<ObjectId>,
-    /// The context made for `scope`, until the object made in it owns it.
+    /// The context made for the request's scope ([`Request::in_scope`]),
+    /// until the object made in it owns it.
     scope_ctx: Option<ContextId>,
-    /// Made for a script's call, which a reload makes again.
-    by_script: bool,
+    /// What a reload asks with to make the object again, once it is made.
+    record: Option<Request>,
 }
 
 impl std::fmt::Debug for CreationJob {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut d = f.debug_struct("CreationJob");
         match &self.source {
-            JobSource::Url(url) => d.field("url", url),
-            JobSource::Component(c) => d.field("component", c),
+            JobSource::Asked(req) => d.field("asked", req),
             JobSource::Shared(_) => d.field("shared", &true),
         };
-        d.field("parent", &self.parent)
-            .field("lane", &self.lane)
-            .finish_non_exhaustive()
+        d.field("lane", &self.lane).finish_non_exhaustive()
     }
 }
 
 impl CreationJob {
-    pub fn new(
+    /// See [`Engine::make_later`].
+    pub(super) fn asked(
         engine: &Engine,
-        url: &str,
-        parent: Option<ObjectId>,
-        initial_props: Vec<(String, Value)>,
-        lane: Lane,
-        owner: ProcId,
-    ) -> (Self, CreationHandle) {
-        Self::with_source(
-            engine,
-            JobSource::Url(url.to_owned()),
-            parent,
-            initial_props,
-            lane,
-            owner,
-        )
-    }
-
-    /// [`Engine::component_create`] as a job: makes an object from the
-    /// `Component` object `component`.
-    pub fn for_component(
-        engine: &Engine,
-        component: ObjectId,
-        parent: Option<ObjectId>,
-        initial_props: Vec<(String, Value)>,
-        lane: Lane,
-        owner: ProcId,
-    ) -> (Self, CreationHandle) {
-        Self::with_source(
-            engine,
-            JobSource::Component(component),
-            parent,
-            initial_props,
-            lane,
-            owner,
-        )
-    }
-
-    fn with_source(
-        engine: &Engine,
-        source: JobSource,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
+        req: Request,
+        allocated: impl Allocated + 'static,
+        record: Option<Request>,
         lane: Lane,
         owner: ProcId,
     ) -> (Self, CreationHandle) {
@@ -3295,58 +3106,27 @@ impl CreationJob {
         (
             Self {
                 engine: Rc::downgrade(&engine.inner),
-                source,
-                parent,
-                props,
-                initial: Initial::Native,
+                source: JobSource::Asked(req),
                 phase: Phase::Load,
                 lane,
                 owner,
                 handle: handle.clone(),
                 done: None,
-                setup: None,
+                allocated: Some(Box::new(move |e, root, ctx| {
+                    allocated.allocated(e, root, ctx);
+                })),
                 errors: None,
-                scope: None,
                 scope_ctx: None,
-                by_script: false,
+                record,
             },
             handle,
         )
     }
 
-    /// The job with its initial properties set as `how` sets them.
-    #[must_use]
-    pub fn initial(mut self, how: Initial) -> Self {
-        self.initial = how;
-        self
-    }
-
-    /// The job making the object of a script's call.
-    #[must_use]
-    pub(crate) fn by_script(mut self) -> Self {
-        self.by_script = true;
-        self
-    }
-
-    /// [`Engine::create_delegate`] as a job.
-    pub(crate) fn for_delegate(
-        engine: &Engine,
-        component: ObjectId,
-        owner: Option<ObjectId>,
-        lane: Lane,
-        proc: ProcId,
-        setup: impl FnOnce(&Engine, ObjectId, ContextId) + 'static,
-    ) -> (Self, CreationHandle) {
-        let (mut job, handle) = Self::with_source(
-            engine,
-            JobSource::Component(component),
-            owner,
-            Vec::new(),
-            lane,
-            proc,
-        );
-        job.setup = Some(Box::new(setup));
-        (job, handle)
+    /// Whether a reload makes the object again as one a script made
+    /// ([`By::Script`] under an object of the tree).
+    pub(crate) fn kept_for_reload(&self) -> bool {
+        self.record.as_ref().is_some_and(|r| r.by == By::Script)
     }
 
     /// Splits the job in two: the job to queue, and the means to finish
@@ -3358,30 +3138,18 @@ impl CreationJob {
             Self {
                 engine,
                 source: JobSource::Shared(inner.clone()),
-                parent: None,
-                props: Vec::new(),
-                initial: Initial::Native,
                 phase: Phase::Load,
                 lane,
                 owner,
                 handle: CreationHandle::default(),
                 done: None,
-                setup: None,
+                allocated: None,
                 errors: None,
-                scope: None,
                 scope_ctx: None,
-                by_script: false,
+                record: None,
             },
             SharedCreation(inner),
         )
-    }
-
-    /// The job making a file in a context of `scope`'s own, as
-    /// [`Engine::create_from_url_in`] does.
-    #[must_use]
-    pub fn in_scope(mut self, scope: ObjectId) -> Self {
-        self.scope = Some(scope);
-        self
     }
 
     /// Calls `f` with the result when the job ends, unless it was
@@ -3402,6 +3170,9 @@ impl CreationJob {
             e.destroy_context(ctx);
         }
         self.handle.0.progress.set(1.0);
+        if let (Some(e), Ok(root), Some(record)) = (engine, &r, self.record.take()) {
+            e.reload_note_asked(*root, record);
+        }
         *self.handle.0.result.borrow_mut() = Some(r.clone());
         if let (Some(e), Some(f)) = (engine, self.done.take())
             && !self.handle.is_cancelled()
@@ -3477,33 +3248,25 @@ impl CreationJob {
             if self.handle.is_cancelled() {
                 return self.abandon(Some(&e), EngineError::Load("creation was cancelled".into()));
             }
-            if let Some(p) = self.parent.filter(|p| !e.is_alive(*p)) {
+            let JobSource::Asked(req) = &mut self.source else {
+                // Stepped in `step`, never here.
+                return JobPoll::Done;
+            };
+            if let Some(p) = req.parent.filter(|p| !e.is_alive(*p)) {
                 // Nobody called the job off, so whoever waits is told:
                 // there is nowhere to put the object.
                 self.unmake(Some(&e));
                 return self.finish(Some(&e), Err(EngineError::DeadObject(p)));
             }
             match std::mem::replace(&mut self.phase, Phase::Done) {
-                Phase::Load => {
-                    let template = match &self.source {
-                        JobSource::Url(url) => e.file_template(url).map(|mut t| {
-                            if let Some(scope) = self.scope {
-                                let ctx = e.scope_context(scope);
-                                self.scope_ctx = Some(ctx);
-                                t.context = Some(ctx);
-                            }
-                            Rc::new(t)
-                        }),
-                        JobSource::Component(c) => e.component_template(*c),
-                        // Stepped above, never here.
-                        JobSource::Shared(_) => Err(EngineError::Load("a shared job".into())),
-                    };
-                    match template {
-                        Ok(t) => self.phase = Phase::Allocate(t),
-                        Err(err) => return self.finish(Some(&e), Err(err)),
+                Phase::Load => match e.template_of(&req.source, req.scope) {
+                    Ok((t, ctx)) => {
+                        self.scope_ctx = ctx;
+                        self.phase = Phase::Allocate(t.into_rc());
                     }
-                }
-                Phase::Allocate(t) => match e.template_allocation(&t, self.parent) {
+                    Err(err) => return self.finish(Some(&e), Err(err)),
+                },
+                Phase::Allocate(t) => match e.template_allocation(&t, req.parent) {
                     Ok(a) => self.phase = Phase::Allocating(Creation::default(), a),
                     Err(err) => return self.finish(Some(&e), Err(err)),
                 },
@@ -3527,26 +3290,23 @@ impl CreationJob {
                             return self.finish(Some(&e), Err(err));
                         }
                     };
-                    let setup = self.setup.take();
-                    let append = setup.is_none();
-                    match e.allocated_template(&mut cr, inst, self.parent, append) {
+                    let host = req.by == By::Native;
+                    match e.allocated_template(&mut cr, inst, req.parent, req.append, host) {
                         Ok(root) => {
                             if let Some(ctx) = self.scope_ctx.take() {
                                 e.add_context(root, ctx);
                             }
-                            if let (Some(setup), Some(top)) = (setup, &cr.top) {
-                                setup(&e, root, top.context);
+                            if let (Some(allocated), Some(top)) = (self.allocated.take(), &cr.top) {
+                                allocated(&e, root, top.context);
                             }
                             self.handle.0.root.set(Some(root));
-                            if self.by_script {
-                                e.reload_by_script();
-                            }
-                            e.reload_assign(&cr, root);
+                            let scripted = self.record.as_ref().is_some_and(|r| r.by == By::Script);
+                            e.reload_assign(&cr, root, scripted);
                             self.phase = Phase::Making(sliced::Making::new(
                                 cr,
                                 root,
-                                std::mem::take(&mut self.props),
-                                std::mem::take(&mut self.initial),
+                                std::mem::take(&mut req.props),
+                                std::mem::take(&mut req.how),
                             ));
                         }
                         Err(err) => {

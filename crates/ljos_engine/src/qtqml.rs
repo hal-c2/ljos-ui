@@ -24,6 +24,7 @@ use crate::error::{EngineError, JsError};
 use crate::ids::{ConnectionId, ContextId, ObjectId};
 use crate::incubator::Initial;
 use crate::incubator::Template;
+use crate::incubator::request::{By, Request};
 use crate::meta::MetaRef;
 use crate::object::{ObjectFlags, QmlType};
 use crate::signal::Handler;
@@ -182,9 +183,12 @@ impl Component {
             return Value::Null;
         };
         let props = cx.engine.js_object_entries(&props);
-        let made =
-            cx.engine
-                .create_for_script(cx.this, template, parent, props, Initial::Created(None));
+        let made = cx.engine.make(
+            Request::component_from(cx.this, template)
+                .parent(parent)
+                .props(props, Initial::Created(None))
+                .by(By::Script),
+        );
         match made {
             // Complete, it goes again before the script holds it (Qt 6.12).
             // It was made all the same, so the component is Ready again,
@@ -1285,24 +1289,12 @@ impl Engine {
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
     ) -> Result<ObjectId, EngineError> {
-        self.component_create_as(component, parent, props, Initial::Native)
-    }
-
-    /// [`Engine::component_create`] with `props` set as `how` says: what a
-    /// view makes for a script that gave them (`StackView.push`) sets them
-    /// as `incubateObject` does.
-    pub fn component_create_as(
-        &self,
-        component: ObjectId,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        how: Initial,
-    ) -> Result<ObjectId, EngineError> {
-        let template = self.component_template(component)?;
-        self.as_host_root(|| {
-            self.create_from_template_for_script(&template, parent, props, how)
-                .map(|(obj, _)| obj)
-        })
+        self.make(
+            Request::component(component)
+                .parent(parent)
+                .props(props, Initial::Native),
+        )
+        .map(|(obj, _)| obj)
     }
 
     /// Sets `props` on `obj`, which exists already, as `how` says the

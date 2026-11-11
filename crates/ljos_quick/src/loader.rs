@@ -2,7 +2,7 @@
 //! replaces it when `active`, `source` or `sourceComponent` change.
 //!
 //! A plain Loader makes its item on the spot. An `asynchronous` one hands
-//! a [`CreationJob`] to the engine ([`Engine::incubate`]); the scene's
+//! a [`ljos_engine::CreationJob`] to the engine ([`Engine::incubate`]); the scene's
 //! incubation step runs it in slices, so a large component does not cost
 //! a whole frame (ARCHITECTURE §6.3). While the job runs the half-made
 //! root is already a child of the Loader, because `parent` must read
@@ -29,9 +29,9 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use ljos_engine::{
-    Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
-    FaultReport, Initial, Interception, LogLevel, MetaRef, Migrate, ObjectId, PropIndex, QmlObject,
-    QmlType, Url, Value, WriteKind, qml_impl,
+    Atom, Boundary, BoundaryConfig, CreationHandle, Cx, Engine, EngineError, FaultReport, Initial,
+    Interception, LogLevel, MetaRef, Migrate, ObjectId, PropIndex, QmlObject, QmlType, Request,
+    Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 
@@ -552,19 +552,19 @@ fn reload(e: &Engine, me: ObjectId, force: bool) {
         }
         Origin::Component(_) => Default::default(),
     };
+    let req = match &origin {
+        Origin::Url(url) => Request::url(e.resolve_url(me, url)).in_scope(me),
+        Origin::Component(c) => Request::component(*c),
+    }
+    .parent(Some(me))
+    .props(props, how);
     if asynchronous {
-        start_job(e, me, generation, &origin, props, how);
+        start_job(e, me, generation, req);
         return;
     }
     // Made at once, the new item takes the old one's place with no empty
     // item told between (qml6).
-    let made = match &origin {
-        Origin::Url(url) => {
-            e.create_from_url_in(&e.resolve_url(me, url), Some(me), props, Some(me), how)
-        }
-        Origin::Component(c) => e.component_create(*c, Some(me), props),
-    };
-    finish(e, me, generation, made);
+    finish(e, me, generation, e.make(req).map(|(item, _)| item));
 }
 
 /// Empties `item` while the next one is made, without a change: in Qt
@@ -589,26 +589,10 @@ fn is_current(e: &Engine, me: ObjectId, generation: u64) -> bool {
     e.is_alive(me) && with_run(e, me, |r| r.generation) == Some(generation)
 }
 
-fn start_job(
-    e: &Engine,
-    me: ObjectId,
-    generation: u64,
-    origin: &Origin,
-    props: Vec<(String, Value)>,
-    how: Initial,
-) {
+fn start_job(e: &Engine, me: ObjectId, generation: u64, req: Request) {
     // The Loader is the boundary of what it makes, and so its owner.
     let owner = e.boundary_proc(me);
-    let (job, handle) = match origin {
-        Origin::Url(url) => {
-            let url = e.resolve_url(me, url);
-            let (job, handle) = CreationJob::new(e, &url, Some(me), props, Lane::Visible, owner);
-            (job.in_scope(me), handle)
-        }
-        Origin::Component(c) => {
-            CreationJob::for_component(e, *c, Some(me), props, Lane::Visible, owner)
-        }
-    };
+    let (job, handle) = e.make_later(req, Lane::Visible, owner);
     with_run(e, me, |r| r.job = Some(handle));
     set(e, me, Loader::STATUS.index, loader_status::LOADING.into());
     set(e, me, Loader::PROGRESS.index, 0.0.into());
@@ -616,10 +600,7 @@ fn start_job(
     if !is_current(e, me, generation) {
         return;
     }
-    e.incubate(
-        job.initial(how)
-            .on_done(move |e, made| finish(e, me, generation, made.clone())),
-    );
+    e.incubate(job.on_done(move |e, made| finish(e, me, generation, made.clone())));
 }
 
 /// Publishes what a creation made, or its error.

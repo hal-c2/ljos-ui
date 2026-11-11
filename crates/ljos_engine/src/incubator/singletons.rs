@@ -37,6 +37,7 @@ use ljos_ir::{Arg, TypeRef};
 use ljos_js::JsValue;
 
 use super::Instance;
+use super::request::Request;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId};
@@ -200,8 +201,6 @@ pub(crate) struct Singletons {
     /// singleton may have.
     sources: Cell<u64>,
     scopes: RefCell<Scopes>,
-    /// The root about to be made is the host's own: it opens a scope.
-    host: Cell<bool>,
     /// The scope the host's next root opens is this one (a reload's).
     adopt: Cell<Option<ScopeId>>,
     /// A QML singleton is being made: it is in no window.
@@ -840,7 +839,12 @@ impl Engine {
                 };
                 // Not a root of a window, whoever reads it first.
                 all.unscoped.set(all.unscoped.get() + 1);
-                let made = self.create_from_template_noting(&template, None, Vec::new(), allocated);
+                let made = self
+                    .make(
+                        Request::template(Rc::new(template))
+                            .allocated(move |_: &Engine, root, _| allocated(root)),
+                    )
+                    .map(|(root, _)| root);
                 all.unscoped.set(all.unscoped.get() - 1);
                 made.map(|obj| (obj, Some(file)))
             }
@@ -907,22 +911,18 @@ impl Engine {
         None
     }
 
-    /// Runs `f`, a creation the host asked for: the root it makes with no
-    /// parent object opens a scope.
-    pub(crate) fn as_host_root<R>(&self, f: impl FnOnce() -> R) -> R {
-        let all = self.extension::<Singletons>();
-        let before = all.host.replace(true);
-        let r = f();
-        all.host.set(before);
-        r
-    }
-
     /// The instance `inst` of a template, made under `parent`, now has
     /// all its objects: its root takes its place in a scope, when it is a
-    /// root of a file in no other instance.
-    pub(super) fn singleton_scope_enter(&self, inst: &Instance, parent: Option<ObjectId>) {
+    /// root of a file in no other instance. A `host` root with no parent
+    /// opens a scope, or takes the one it is handed; any other reads in
+    /// the scope of the script that asked for it.
+    pub(super) fn singleton_scope_enter(
+        &self,
+        inst: &Instance,
+        parent: Option<ObjectId>,
+        host: bool,
+    ) {
         let all = self.extension::<Singletons>();
-        let host = all.host.replace(false);
         if all.unscoped.get() > 0 || self.context_parent(inst.context) != Some(self.root_context())
         {
             return;

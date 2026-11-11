@@ -910,9 +910,13 @@ impl Engine {
                 let _ = self.with_mut::<Component, _>(c, |c| c.template = Some(new));
             }
         }
-        for s in st.scripted.borrow_mut().values_mut() {
-            if let Some(new) = renew_template(&s.template, &mut memo) {
-                s.template = new;
+        for a in st.asked.borrow_mut().values_mut() {
+            if let crate::incubator::request::Source::Component {
+                template: Some(t), ..
+            } = &mut a.request.source
+                && let Some(new) = renew_template(t, &mut memo)
+            {
+                *t = new;
             }
         }
         phases.mark("templates");
