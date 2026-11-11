@@ -8,7 +8,7 @@ use qml_edit::Change;
 use qml_syntax::ast::{QmlBinding, QmlBindingValue, QmlMember, QmlObject};
 
 use crate::rules::{File, Rule};
-use crate::{Kept, Loader, is_type_name, names_member, object_id};
+use crate::{Kept, Loader, Ty, is_type_name, names_member, object_id};
 
 /// The Loader's members a script may name unqualified in its scope.
 const MEMBERS: &[&str] = &[
@@ -58,7 +58,13 @@ impl Rule for LoaderRule {
         MEMBERS
     }
 
-    fn object(&self, object: &QmlObject<'_>, file: &dyn File) -> Result<Vec<Change>, Kept> {
+    fn object(
+        &self,
+        object: &QmlObject<'_>,
+        _on: Ty,
+        _a_root: bool,
+        file: &dyn File,
+    ) -> Result<Vec<Change>, Kept> {
         let Some(binding) = own(object, "source") else {
             return Ok(Vec::new());
         };

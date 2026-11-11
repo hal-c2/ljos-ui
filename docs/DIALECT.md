@@ -2077,11 +2077,11 @@ files, so that one merging does not put the others in conflict:
 - **Tests** go only in `crates/qml_compat/src/tests/<area>.rs`. Shared
   helpers stay in `tests/mod.rs`.
 - **Pass logic** for an area goes in its rule, as `rules/text/font.rs`
-  does for fonts and `rules/loader/source.rs` for a `Loader`'s `source`:
-  a rule answers for a type's members and objects, and asks the file
-  only through `rules::File`. Until its area moves, it stays in its own
-  module, as `arrange.rs` does for layouts, with one call line in
-  `lib.rs`.
+  does for fonts, `rules/loader/source.rs` for a `Loader`'s `source` and
+  `rules/layout/arrange.rs` for positioners and layouts: a rule answers
+  for a type's members and objects, and asks the file only through
+  `rules::File`. Until its area moves, it stays in its own module, as
+  `gesture.rs` does for gestures, with one call line in `lib.rs`.
 - **Status** goes only in `docs/dialect/status/<area>.md`. The Status line
   at the top of this file and §6.4's numbers are the track lead's, after
   merges; a lane puts its corpus counts in its PR body.

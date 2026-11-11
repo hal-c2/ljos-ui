@@ -255,7 +255,7 @@ pub enum Row {
     LocalRow { name: String },
 }
 
-/// Why a positioner or a layout keeps a file (arrange.rs).
+/// Why a positioner or a layout keeps a file (`rules/layout/arrange.rs`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Layout {

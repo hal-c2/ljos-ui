@@ -18,7 +18,6 @@
 //! Files that name one another are lowered together or not at all
 //! ([`group`]): what one sets on another is then called the same in both.
 
-mod arrange;
 mod bindings;
 mod cause;
 mod gesture;
@@ -54,11 +53,11 @@ use qml_syntax::{
 };
 use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
-use rules::font;
+use rules::{arrange, font};
 
 pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
-pub use rules::{FONT_RENAMES, member_renames, type_renames};
+pub use rules::{FONT_RENAMES, LAYOUT_RENAMES, member_renames, type_renames};
 
 /// The module a lowered file imports.
 pub const MODULE: &str = "Ljos.Ui";
@@ -101,11 +100,6 @@ pub const LAYOUT: &str = "Ljos.Layout";
 /// taking the pragma out, and `ljos check` then says what to change
 /// (docs/DIALECT.md §8).
 pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
-
-/// The types of QtQuick.Layouts Ljos.Layout calls by another name. A
-/// `GridLayout` object is renamed where it is arranged (arrange.rs), with
-/// what the pass checks of it; a name of one in a script is renamed here.
-pub const LAYOUT_RENAMES: &[(&str, &str)] = &[("GridLayout", "Grid"), ("StackLayout", "Pages")];
 
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1107,7 +1101,7 @@ impl<'s> Pass<'s> {
             self.change(at.start as usize..at.end as usize, new);
         } else if name != "GridLayout"
             && matches!(ty, Ty::Exact(t) if t.module == "QtQuick.Layouts")
-            && let Some(new) = renamed_layout(name)
+            && let Some(new) = rules::layout::new_name(name)
         {
             self.change(at.start as usize..at.end as usize, new);
         }
@@ -1589,10 +1583,8 @@ impl<'s> Pass<'s> {
             }
             _ => false,
         };
-        if let Ty::Exact(t) = ty
-            && let Some(shape) = arrange::Shape::of(t)
-        {
-            let changes = arrange::arrange(self.source, object, shape, a_root, self)?;
+        if let Some(rule) = rules::rule_of(ty) {
+            let changes = rule.object(object, ty, a_root, self)?;
             self.changes.extend(changes);
         }
         let scope = match ty {
@@ -1607,10 +1599,6 @@ impl<'s> Pass<'s> {
             .then(|| std::mem::replace(&mut self.declared, declared(object)));
         let is_changes = matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges");
         let is_connections = matches!(ty, Ty::Exact(t) if t.name == "Connections");
-        if let Some(rule) = rules::rule_of(ty) {
-            let changes = rule.object(object, self)?;
-            self.changes.extend(changes);
-        }
         let target = if is_changes || is_connections {
             Some(self.target(object))
         } else {
@@ -1767,7 +1755,7 @@ impl<'s> Pass<'s> {
         let Ty::Exact(parent_ty) = ty else {
             return None;
         };
-        let qt_type = |name: &str| arrange::Types::qt_type(self, name);
+        let qt_type = |name: &str| rules::File::qt_type(self, name);
         let is_id = |name: &str| self.id(name).is_some();
         let file = gesture::File {
             source: self.source,
@@ -2293,7 +2281,7 @@ impl<'s> Pass<'s> {
     /// Whether the type `name` has the property `member`: Qt's, or one a
     /// file of the project or an inline component declares.
     fn type_declares(&self, name: &str, member: &str, depth: usize) -> Option<bool> {
-        use arrange::Types;
+        use rules::File;
         if let Some(t) = self.qt_type(name) {
             return Some(t.property(member).is_some());
         }
@@ -2382,9 +2370,7 @@ impl rules::File for Pass<'_> {
             bare().any(|at| (span.start..span.end).contains(&at))
         })
     }
-}
 
-impl arrange::Types for Pass<'_> {
     fn qt_type(&self, name: &str) -> Option<&'static Type> {
         self.quick
             .type_named(name)
@@ -2519,13 +2505,6 @@ fn has_own(on: Ty, name: &str) -> bool {
 /// An `Item`, or a type derived from one, in Qt's table or Ljós's own.
 fn is_item(ty: &'static qt_types::Type) -> bool {
     ty.is_a(&["QQuickItem", "QtQuick.Item"])
-}
-
-fn renamed_layout(name: &str) -> Option<&'static str> {
-    LAYOUT_RENAMES
-        .iter()
-        .find(|(old, _)| *old == name)
-        .map(|(_, new)| *new)
 }
 
 /// The names of `object`'s bindings, as written: `font.bold`, and a
@@ -3249,7 +3228,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 match self.pass.of_layouts(name, it.span.start as usize) {
                     // Its enumerations: `GridLayout.TopToBottom` is `Grid`'s.
                     Ok(true) => {
-                        if let Some(new) = renamed_layout(name) {
+                        if let Some(new) = rules::layout::new_name(name) {
                             self.pass
                                 .change(it.span.start as usize..it.span.end as usize, new);
                         }
