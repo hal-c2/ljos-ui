@@ -40,7 +40,7 @@ impl Rule for FontRule {
 
 /// A member of a font the pass lowers, or keeps a file for.
 pub(crate) fn is_member(name: &str) -> bool {
-    matches!(name, "pixelSize" | "bold" | "pointSize")
+    matches!(name, "bold" | "pointSize") || FONT_RENAMES.iter().any(|(old, _)| *old == name)
 }
 
 /// What a binding of a font's member `part`, given `value`, is written as.
@@ -121,7 +121,9 @@ fn weight(value: &QmlBindingValue<'_>) -> Result<Value, Font> {
 pub(crate) fn read(name: &str, on: Ty, could_be_font: impl FnOnce() -> bool) -> Option<Rename> {
     match on {
         Ty::Font => Some(FONT.member(name)),
-        // A row's role or a script's object may be called so too.
+        // A row's role or a script's object may be called so too. Where an
+        // area renames the name as well, `Pass::member` answers `Unknown`
+        // off an unknown object too, so this adds only what it leaves.
         Ty::Unknown if is_member(name) && could_be_font() => Some(Rename::Unknown),
         _ => None,
     }
@@ -155,5 +157,13 @@ mod tests {
         assert!(read("bold", Ty::Unknown, || false).is_none());
         assert!(read("family", Ty::Unknown, || unreachable!()).is_none());
         assert!(read("bold", Ty::Plain, || unreachable!()).is_none());
+    }
+
+    #[test]
+    fn every_renamed_font_member_is_one_the_pass_lowers() {
+        for (old, _) in FONT_RENAMES {
+            assert!(is_member(old), "`{old}`");
+        }
+        assert!(!is_member("pixelSizeChanged") && !is_member("family"));
     }
 }
