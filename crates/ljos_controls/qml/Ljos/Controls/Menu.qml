@@ -1,8 +1,9 @@
 // Ljós's own style (docs/DIALECT.md §4.16): a menu on the overlay surface,
-// as wide as its widest row within bounds, that fades in and closes at once.
+// as wide as its widest row within bounds, that fades in, closes at once
+// and shades as a popup does (Popup.qml, with the same parts).
 import QtQuick
-import QtQuick.Effects
 import QtQuick.Templates as T
+import Ljos.Controls.impl
 
 T.Menu {
     id: control
@@ -46,11 +47,11 @@ T.Menu {
 
     delegate: MenuItem {}
 
-    enter: Transition {
-        NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120; easing.type: Easing.OutCubic }
-    }
-    // Closing is at once: a fade could swallow the next open.
+    enter: PopupEnter {}
     exit: null
+
+    T.Overlay.modal: PopupShade {}
+    T.Overlay.modeless: PopupShade { modal: false }
 
     contentItem: Component {
         ListView {
@@ -63,30 +64,9 @@ T.Menu {
     }
 
     background: Component {
-        Item {
+        PopupSurface {
             implicitWidth: 220
             implicitHeight: Theme.controlHeight
-
-            RectangularShadow {
-                x: frame.x
-                y: frame.y
-                width: frame.width
-                height: frame.height
-                radius: frame.radius
-                offset.y: 8
-                blur: 24
-                color: Qt.rgba(0, 0, 0, Theme.dark ? 0.5 : 0.12)
-            }
-
-            Rectangle {
-                id: frame
-                width: parent.width
-                height: parent.height
-                radius: Theme.radiusLarge
-                color: Theme.surfaceOverlay
-                border.width: 1
-                border.color: Theme.border
-            }
         }
     }
 }

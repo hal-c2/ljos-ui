@@ -4,7 +4,6 @@
 // list opens upward where the window has no room below. An `editable` one
 // is a field, framed as `outline` gives, with a text field's edit menu.
 import QtQuick
-import QtQuick.Effects
 import QtQuick.Templates as T
 
 T.ComboBox {
@@ -179,7 +178,7 @@ T.ComboBox {
     }
 
     popup: Component {
-        T.Popup {
+        Popup {
             // The combo box flips it above where the window has no room
             // below; its rows are not made yet as it says it is about to
             // show, so only where it was put can say which way it opened.
@@ -187,13 +186,7 @@ T.ComboBox {
             y: control.height + Theme.spacingSmall
             width: Math.max(control.width, 160)
             implicitHeight: Math.min(320, contentItem.implicitHeight + topPadding + bottomPadding)
-            padding: Theme.spacingSmall
             closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-
-            enter: Transition {
-                NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 120; easing.type: Easing.OutCubic }
-            }
-            exit: null
 
             contentItem: Component {
                 ListView {
@@ -203,31 +196,6 @@ T.ComboBox {
                     currentIndex: control.highlightedIndex
                     highlightMoveDuration: 0
                     boundsBehavior: Flickable.StopAtBounds
-                }
-            }
-
-            background: Component {
-                Item {
-                    RectangularShadow {
-                        x: frame.x
-                        y: frame.y
-                        width: frame.width
-                        height: frame.height
-                        radius: frame.radius
-                        offset.y: 8
-                        blur: 24
-                        color: Qt.rgba(0, 0, 0, Theme.dark ? 0.5 : 0.12)
-                    }
-
-                    Rectangle {
-                        id: frame
-                        width: parent.width
-                        height: parent.height
-                        radius: Theme.radiusLarge
-                        color: Theme.surfaceOverlay
-                        border.width: 1
-                        border.color: Theme.border
-                    }
                 }
             }
         }

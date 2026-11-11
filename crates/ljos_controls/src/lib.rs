@@ -298,6 +298,7 @@ pub fn register(engine: &Engine) {
         styles
             .get(ljos_style::DIRECTORY)
             .map_or(&[][..], Vec::as_slice),
+        styles.get(ljos_style::PARTS).map_or(&[][..], Vec::as_slice),
         basic,
     );
     // The parts a style draws with, for controls that customise it.
