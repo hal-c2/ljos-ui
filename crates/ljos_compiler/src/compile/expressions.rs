@@ -12,8 +12,9 @@ use qml_front::{
 use qml_syntax::Span;
 
 use super::{
-    ATTACHED, Compiler, HELD, PLACE, Plan, SINGLETON, VALUE_AT, VALUE_HELD, VALUE_IN, block, held,
-    import_source, is_key_name, or_throw, read_or_throw, the_type, type_name, value_in,
+    ATTACHED, ATTACHED_CHAIN, CHAIN_REST, Compiler, HELD, PLACE, Plan, SINGLETON, VALUE_AT,
+    VALUE_HELD, VALUE_IN, block, held, import_source, is_key_name, or_throw, read_or_throw,
+    the_type, type_name, value_in,
 };
 use crate::{
     Code, Diagnostic,
@@ -386,13 +387,43 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             else {
                 continue;
             };
+            let Some(chain_end) = member.chain_end else {
+                edits.push(js::Edit {
+                    span: Span::new(object.start, object.start),
+                    text: format!("{ATTACHED}("),
+                });
+                edits.push(js::Edit {
+                    span: Span::new(object.end, member.end),
+                    text: format!(", {module:?}, {name:?})"),
+                });
+                continue;
+            };
+            // `parent?.Window.window`: where `parent` is nothing the whole
+            // chain is `undefined`, so the rest of it is given as a
+            // function that is not called then. The rest ends where
+            // another type's member of the chain is read off it
+            // (`a?.Window.contentItem.Layout`), which wraps this one.
+            let rest_end = analysis
+                .type_members
+                .iter()
+                .filter(|other| other.chain_end == Some(chain_end))
+                .filter(|other| {
+                    other.object.start <= object.start && other.object.end >= member.end
+                })
+                .map(|other| other.object.end)
+                .min()
+                .unwrap_or(chain_end);
             edits.push(js::Edit {
                 span: Span::new(object.start, object.start),
-                text: format!("{ATTACHED}("),
+                text: format!("{ATTACHED_CHAIN}("),
             });
             edits.push(js::Edit {
                 span: Span::new(object.end, member.end),
-                text: format!(", {module:?}, {name:?})"),
+                text: format!(", {module:?}, {name:?}, ({CHAIN_REST}) => {CHAIN_REST}"),
+            });
+            edits.push(js::Edit {
+                span: Span::new(rest_end, rest_end),
+                text: ")".into(),
             });
         }
         // A handler that is a function takes the signal's arguments as its

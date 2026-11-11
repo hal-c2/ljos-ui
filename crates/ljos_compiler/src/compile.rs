@@ -2376,6 +2376,14 @@ fn or_throw(free: &js::Free) -> String {
 /// defines it.
 pub(crate) const ATTACHED: &str = "__ljos_att";
 
+/// `parent?.Window.window`, compiled: what the type attached to an object
+/// that may be nothing, and the rest of the chain as a function of it,
+/// which is not called when the object is nothing. The engine defines it.
+pub(crate) const ATTACHED_CHAIN: &str = "__ljos_atq";
+
+/// The parameter of the rest of a chain [`ATTACHED_CHAIN`] is given.
+pub(crate) const CHAIN_REST: &str = "__ljos_o";
+
 /// `__ljos_single($s_Theme)`: the one object a singleton type is, made on
 /// the first call. What the function is given for the type only stands for
 /// it.

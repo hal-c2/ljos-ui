@@ -2533,6 +2533,12 @@ const PRELUDE: &str = r##"
     const a = hostAttached(o, module, name);
     return a === undefined ? o[name] : a;
   };
+  // `parent?.Window.window`, compiled: as `__ljos_att`, with the rest of
+  // the chain as `rest`. An object that is nothing makes the whole chain
+  // `undefined`, as `?.` does, and the rest is never read.
+  g.__ljos_atq = function (o, module, name, rest) {
+    return o === undefined || o === null ? undefined : rest(g.__ljos_att(o, module, name));
+  };
 
   // A name nothing in sight declares, compiled: what the engine found for
   // it when the function was called. Where it found nothing it gave this
