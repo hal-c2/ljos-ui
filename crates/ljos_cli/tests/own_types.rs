@@ -535,6 +535,32 @@ impl<'a, 'c> Module<'a, 'c> {
             }
             out.push('\n');
         }
+        // A description says what a face renames of a property only: a
+        // signal or a method renamed would lower a file to a name the face
+        // does not have, so a face that renames one is refused here.
+        let kept = |new: &str, old: Option<&str>| {
+            if let Some(old) = old.filter(|old| *old != new) {
+                panic!(
+                    "{}: `{old}` is renamed `{new}`, which no description says yet",
+                    meta.name
+                );
+            }
+        };
+        for (at, signal) in meta.own_signals().iter().enumerate() {
+            // A property's change signal is renamed with it.
+            if signal.notify_of.is_none() {
+                let old = faced
+                    .and_then(|of| of.signals.get(meta.signal_offset as usize + at))
+                    .map(|old| &*old.name);
+                kept(&signal.name, old);
+            }
+        }
+        for (at, method) in meta.own_methods().iter().enumerate() {
+            let old = faced
+                .and_then(|of| of.methods.get(meta.method_offset as usize + at))
+                .map(|old| &*old.name);
+            kept(&method.name, old);
+        }
         for signal in meta.own_signals() {
             let _ = write!(out, "\t\tsignal {}", signal.name);
             for (name, ty) in &signal.params {
