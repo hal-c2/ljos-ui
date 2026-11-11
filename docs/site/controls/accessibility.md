@@ -111,14 +111,12 @@ Item {
 You can inspect system accessibility preferences through `Qt.styleHints.accessibility`:
 
 - `Qt.styleHints.accessibility.contrastPreference` and `Qt.styleHints.accessibility.motionPreference` read the system's contrast and motion settings.
-- When reduced motion is active, movement animations jump straight to their end state (still emitting `started` and `finished`), fades and colour transitions are capped at `150` ms, and animations that run for ever keep running. Qt documents `motionPreference` for a release later than 6.11, so Ljós provides it ahead of Qt.
-- Ljós also provides `fontScale`, `screenReaderActive`, and `font.scaleWithSystem` as extensions beyond Qt's standard style hints.
+- When reduced motion is active, movement animations jump straight to their end state (still emitting `started` and `finished`), fades and colour transitions are capped at `150` ms, and animations that run for ever keep running.
+- `Qt.styleHints.accessibility` also has `fontScale` and `screenReaderActive`, and a font has `font.scaleWithSystem`.
 
-## Differences from Qt
+## Limits
 
-- Default control roles and states are implemented from Qt's specification rather than compared against Qt at run time, because Qt does not expose default assistive-technology roles to QML queries.
-- `fontScale`, `screenReaderActive`, and `font.scaleWithSystem` are Ljós extensions.
-- The Basic style's default `palette.placeholderText` (`3.04:1` on white, `3.95:1` in the dark scheme) matches Qt's value but is below the `4.5:1` minimum for normal text; set `palette.placeholderText` when you need higher contrast.
+- The Basic style's default `palette.placeholderText` (`3.04:1` on white, `3.95:1` in the dark scheme) is below the `4.5:1` minimum for normal text; set `palette.placeholderText` when you need higher contrast. `Ljos.Controls` draws its `placeholder` role at `4.5:1` or more.
 
 ## See also
 

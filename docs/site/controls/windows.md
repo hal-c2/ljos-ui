@@ -109,7 +109,7 @@ Keep in mind that closing a window only hides it—it does not exit the applicat
 
 When an application has multiple windows, only the active window (`Qt.application.active`, `Qt.application.state`) gives `activeFocus` to its focused item. Declaring a `Window` inside another `Window` makes the inner window transient for the outer one (`transientParent`): it is a separate top-level window and is not shown automatically when the outer window is shown, but while the transient window holds keyboard focus, the parent window remains active. A `Dialog` has no position of its own: centre it by setting `anchors.centerIn: parent` (inside an `ApplicationWindow`, the window's content item) or by giving it `x` and `y`. Open popups stay in the window where they were opened and move with their parent item.
 
-## Differences from Qt
+## Limits
 
 - Because `winit` cannot express window modality (`modality`) or `transientParent` natively, Ljós emulates both in the shell; only some `flags` are passed on to the platform (the window type bits such as `Qt.Dialog`, `Qt.Popup`, `Qt.Tool`, `Qt.ToolTip` and `Qt.SplashScreen`, `Qt.WindowStaysOnTopHint`, `Qt.WindowStaysOnBottomHint` and `Qt.FramelessWindowHint`), and on Wayland a window cannot position or activate itself.
 
