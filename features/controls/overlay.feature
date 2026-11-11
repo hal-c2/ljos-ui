@@ -3,7 +3,7 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#modal-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#dim-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#z-prop
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 (qml6, offscreen); the shade colours on 6.12.0 too.
 
 @qt-parity
 Feature: Overlay
@@ -239,20 +239,26 @@ Feature: Overlay
       And the method "look" of "root" is called
       Then the property "shadeWidth" of "root" is 0
 
-    @api-QtQuick.Controls.Popup.modal
+    # Qt 6.11.2 drops the fraction of the shade's alpha (#7f…, #1e…) and
+    # 6.12.0 rounds it (#80…, #1f…); Ljós follows 6.12.
+    # overlay-shade.feature holds what both versions agree on.
+    @qt-diverges @api-QtQuick.Controls.Popup.modal
     Scenario: A modal popup darkens what is under it
       When the property "modal" of "p" is set to true
       And the method "open" of "p" is called
       And the method "look" of "root" is called
-      Then the property "shade" of "root" is "#7f28282a"
+      Then the property "shade" of "root" is "#8028282a"
       And the property "shadeWidth" of "root" is 400
 
-    @api-QtQuick.Controls.Popup.dim
+    # Qt 6.11.2 drops the fraction of the shade's alpha (#7f…, #1e…) and
+    # 6.12.0 rounds it (#80…, #1f…); Ljós follows 6.12.
+    # overlay-shade.feature holds what both versions agree on.
+    @qt-diverges @api-QtQuick.Controls.Popup.dim
     Scenario: A popup that dims without being modal has a lighter shade
       When the property "dim" of "p" is set to true
       And the method "open" of "p" is called
       And the method "look" of "root" is called
-      Then the property "shade" of "root" is "#1e28282a"
+      Then the property "shade" of "root" is "#1f28282a"
 
     Scenario: A modal popup dims unless it is told not to
       When the property "modal" of "p" is set to true
@@ -272,12 +278,16 @@ Feature: Overlay
       And the method "look" of "root" is called
       Then the property "shadeWidth" of "root" is 0
 
+    # Qt 6.11.2 drops the fraction of the shade's alpha (#7f…, #1e…) and
+    # 6.12.0 rounds it (#80…, #1f…); Ljós follows 6.12.
+    # overlay-shade.feature holds what both versions agree on.
+    @qt-diverges
     Scenario: The shade follows the popup becoming modal while it is open
       When the property "dim" of "p" is set to true
       And the method "open" of "p" is called
       And the property "modal" of "p" is set to true
       And the method "look" of "root" is called
-      Then the property "shade" of "root" is "#7f28282a"
+      Then the property "shade" of "root" is "#8028282a"
 
   Rule: The shade can be replaced
 
