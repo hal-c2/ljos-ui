@@ -26,7 +26,7 @@ use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use ljos_engine::{Engine, ObjectId, Value};
-use ljos_platform::{Fetcher, Platform, reason_phrase};
+use ljos_platform::{Fetcher, PathEnv, Platform, reason_phrase};
 use ljos_reactive::NodeId;
 use ljos_render::ImageHandle;
 use ljos_runtime::{
@@ -398,6 +398,9 @@ pub struct ImageStore {
     tx: UiHandle<Done>,
     signal: Arc<Signal>,
     gate: Arc<Gate>,
+    /// Where this run's files are ([`Platform::env`]): a sandboxed run's
+    /// `/` is a directory of its own, for the pictures it reads too.
+    env: RefCell<Rc<PathEnv>>,
 }
 
 impl std::fmt::Debug for ImageStore {
@@ -448,6 +451,7 @@ impl Default for ImageStore {
             tx,
             signal,
             gate: Arc::default(),
+            env: RefCell::default(),
         }
     }
 }
@@ -468,7 +472,12 @@ pub(crate) const TEXTURE: Request = Request {
 impl ImageStore {
     /// The store of `engine`, made on first use.
     pub fn of(engine: &Engine) -> Rc<ImageStore> {
-        engine.extension::<ImageStore>()
+        let store = engine.extension::<ImageStore>();
+        let env = Platform::of(engine).env();
+        if !Rc::ptr_eq(&store.env.borrow(), &env) {
+            *store.env.borrow_mut() = env;
+        }
+        store
     }
 
     /// Makes `bytes` what `url` (absolute, as an Image resolves it) loads:
@@ -1393,7 +1402,17 @@ impl ImageStore {
         };
         match registered {
             Some(origin) => Ok(origin),
-            None => decode::locate(&key.url, None),
+            // A program's own files above are where it was built; a file a
+            // URL names is where the run keeps its files.
+            None => match decode::locate(&key.url, None)? {
+                Origin::File(path) => self
+                    .env
+                    .borrow()
+                    .real(&path)
+                    .map(Origin::File)
+                    .map_err(|_| LoadError::CannotOpen(key.url.clone())),
+                other => Ok(other),
+            },
         }
     }
 
