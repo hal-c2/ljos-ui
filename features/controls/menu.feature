@@ -658,6 +658,37 @@ Feature: Menu
         | 100 | 450 | -1 | 160 | 119  |
         | 100 | 450 | 0  | 160 | -100 |
 
+    Scenario Outline: A sub-menu opened again by open() comes back on the side it went to, margins <m>
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 400; height: 400
+          Menu {
+            id: m; objectName: "m"; x: 250; y: 220; width: 120; cascade: true
+            Menu {
+              objectName: "sub"; title: "Sub"; width: 120; margins: <m>; cascade: true
+              MenuItem { text: "Deep" }
+            }
+            MenuItem { text: "Two" }
+          }
+        }
+        """
+      When the method "open" of "m" is called
+      And the user touches 310, 240
+      Then the property "x" of "sub" is -119
+      When the method "close" of "sub" is called
+      And 500 milliseconds pass
+      And the method "open" of "sub" is called
+      Then the property "visible" of "sub" is true
+      And the property "x" of "sub" is -119
+
+      Examples:
+        | m  |
+        | -1 |
+        | 0  |
+
   Rule: A menu that does not cascade
 
     Background:
