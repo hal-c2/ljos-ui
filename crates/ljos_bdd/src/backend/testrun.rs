@@ -348,14 +348,19 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         let read = pipe.read_to_end(&mut out).map(|_| out);
         let _ = said.send(read);
     });
-    let out = match heard.recv_timeout(CHECK_DEADLINE) {
+    let deadline = if run.tsc {
+        TSC_CHECK_DEADLINE
+    } else {
+        CHECK_DEADLINE
+    };
+    let out = match heard.recv_timeout(deadline) {
         Ok(read) => read.map_err(|e| failed(format!("cannot read `ljos check`: {e}")))?,
         Err(_) => {
             #[cfg(unix)]
             end_group(child.id());
             return Err(failed(format!(
                 "`ljos check` did not finish in {} seconds",
-                CHECK_DEADLINE.as_secs()
+                deadline.as_secs()
             )));
         }
     };
@@ -372,10 +377,16 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
 }
 
 /// How long `ljos check` has. It reads a scenario's few files in well under
-/// a second, and TypeScript takes a few more: one still running after this
-/// never ends (#394), and failing its scenario says so where the run's
-/// watchdog would end every scenario after it.
+/// a second: one still running after this never ends (#394), and failing
+/// its scenario says so where the run's watchdog would end every scenario
+/// after it.
 const CHECK_DEADLINE: Duration = Duration::from_secs(60);
+
+/// How long `ljos check --tsc` has. TypeScript starting cold on a loaded
+/// machine can take most of a minute without anything being wrong, so it
+/// has longer, still inside the scenario watchdog's default 300 seconds.
+const TSC_CHECK_DEADLINE: Duration = Duration::from_secs(240);
+const _: () = assert!(TSC_CHECK_DEADLINE.as_secs() < crate::watchdog::DEFAULT_TIMEOUT.as_secs());
 
 /// Kills the process group `leader` leads.
 #[cfg(unix)]
