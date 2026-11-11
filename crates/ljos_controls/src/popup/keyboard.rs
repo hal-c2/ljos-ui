@@ -53,7 +53,10 @@ impl<Id: Copy + Eq> Ledger<Id> {
     /// `item` of the window's content asked for the keyboard as it was
     /// made, while a popup has it. It gets it back unless the content had
     /// it before, which keeps it, as an item that joins a focus scope with
-    /// a focus item does not take that scope.
+    /// a focus item does not take that scope. That holds even once what
+    /// the content had is destroyed: the keyboard then goes nowhere, not
+    /// to what replaced it (measured on Qt 6.11.2 and 6.12.0,
+    /// `popup-keyboard-at-once.feature`).
     pub(super) fn content_wants(&mut self, item: Id) {
         self.content.get_or_insert(item);
     }
@@ -307,6 +310,17 @@ mod tests {
         l.take(P);
         l.content_wants(OUTSIDE);
         assert_eq!(l.leave(P, true, |_| true), Give::Content(OTHER));
+    }
+
+    #[test]
+    fn content_made_after_what_the_content_had_was_destroyed_does_not_get_the_keyboard() {
+        // OUTSIDE had it, P took it, then OUTSIDE went (a Loader swapped
+        // the page) and the new page's OTHER asked for it.
+        let mut l = Ledger::default();
+        l.content_has(OUTSIDE);
+        l.take(P);
+        l.content_wants(OTHER);
+        assert_eq!(l.leave(P, true, |id| id != OUTSIDE), Give::Nobody);
     }
 
     #[test]
