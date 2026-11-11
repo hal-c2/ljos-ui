@@ -304,7 +304,7 @@ Feature: Ljós's gestures: Drag, Pointer, Wheel and DragSource
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Rectangle {
           id: box
           DragSource.active: drag.active; DragSource.dragType: DragSource.Automatic

@@ -139,7 +139,8 @@ Feature: A ListModel of constants is a typed list
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import "Main.rows.ts" as Rows
+        import Ljos.Ui
+        import "Main.rows.ts" as Rows
         Rectangle {
           width: 120; height: 60; fill: "white"
           readonly property list<Rows.ZonesRow> zones: [
@@ -200,7 +201,8 @@ Feature: A ListModel of constants is a typed list
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import "Main.rows.ts" as Rows
+        import Ljos.Ui
+        import "Main.rows.ts" as Rows
         Item {
           width: 120; height: 40
           readonly property list<Rows.ZonesRow> zones: [
@@ -303,7 +305,8 @@ Feature: A ListModel of constants is a typed list
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import "Main.rows.ts" as Rows
+        import Ljos.Ui
+        import "Main.rows.ts" as Rows
         Item {
           width: 200; height: 60
           ListView {
@@ -359,7 +362,9 @@ Feature: A ListModel of constants is a typed list
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Models
         Item {
           ListModel { id: edited; ListElement { city: "Reykjavík"; shift: 0 } }
           Component.onCompleted: edited.append({ city: "Tokyo", shift: 9 })

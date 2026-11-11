@@ -225,7 +225,8 @@ Feature: The views of Ljós's API and the models of Ljos.Models
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        import Ljos.Ui
+        import Ljos.Models
         Rectangle {
           width: 120; height: 60; fill: "white"
           ListModel {
@@ -263,7 +264,8 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        import Ljos.Ui
+        import Ljos.Core
         import Ljos.Models
         Item {
           Instantiator { model: ['a', 'b']; QtObject { objectName: modelData } }
@@ -309,7 +311,8 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        import Ljos.Ui
+        import Ljos.Models
         Item {
           Repeater {
             model: ListModel { ListElement { city: qsTr("Reykjavík") } }
@@ -347,7 +350,9 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core; import Ljos.Models
+        import Ljos.Ui
+        import Ljos.Core
+        import Ljos.Models
         Item {
           width: 120; height: 60
           ListModel {
@@ -375,11 +380,13 @@ Feature: The views of Ljós's API and the models of Ljos.Models
       Then the command prints:
         """
         lowered ./Main.qml (3 edits)
+        scripts of ./Main.qml stay JavaScript: typed, ljos check finds 2
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        pragma Scripts: JavaScript
+        import Ljos.Ui
         Item {
           property unknown model: ({ city: "Reykjavík" })
           Text { text: model.city }

@@ -170,11 +170,14 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       Then the command prints:
         """
         lowered ./Badge.qml (8 edits)
+        scripts of ./Badge.qml stay JavaScript: typed, ljos check finds 2
         1 files, 1 lowered, 0 kept
         """
       And the file "Badge.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
         Item {
           property point at: point(3, 4)
           property vector3d v: vector3d(1, 2, 3)
@@ -201,7 +204,9 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the file "Frame.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
         Item {
           property size size: Qt.size(5, 6)
           property point at: point(3, 4)
@@ -225,7 +230,8 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the file "Dots.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        pragma Scripts: JavaScript
+        import Ljos.Ui
         List {
           delegate: Item { property point at: Qt.point(1, 0) }
         }
@@ -250,7 +256,9 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
         import "qml"
         Item {
           property string os: Qt.platform.os
@@ -271,7 +279,9 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the file "Icons.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        pragma Scripts: JavaScript
+        import Ljos.Ui
+        import Ljos.Core
         Item {
           property url plain: url("a.png")
           property url placed: Qt.resolvedUrl("b.png", this)

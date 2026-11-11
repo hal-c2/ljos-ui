@@ -1,13 +1,16 @@
 //! `ljos migrate`: rewrites files written in Qt's QML in Ljós's own API
 //! (`Ljos.Ui`), with the edits `--compat=lower` makes as a file loads
 //! (docs/DIALECT.md, docs/adr/0004-compat-lowering-before-the-ir.md). The
-//! two are one pass, so a migrated file is the file a lowered run compiled.
-//! Its import line says `pragma Scripts: JavaScript`, so its scripts are not
-//! held to the checker's rules until a person takes the pragma out.
+//! two are one pass, so a migrated file compiles to the program a lowered
+//! run compiled. It is written as a file in Ljós's API is: each import on a
+//! line of its own, and typed where its scripts already keep the checker's
+//! rules. Where they do not, it says `pragma Scripts: JavaScript`, so they
+//! are not held to the rules until a person types them and takes the pragma
+//! out; `ljos check` without it says what to change.
 //!
 //! | To | What |
 //! |---|---|
-//! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
+//! | stdout | `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, and `scripts of <file> stay JavaScript: typed, ljos check finds N` where its scripts break the checker's rules, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
 //! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file, or a description of the program's types that could not be read (one found beside the files is named with its directory) |
 //!
 //! A file's constant `ListModel`s are written as typed lists, with their
@@ -41,7 +44,7 @@ use ljos_compiler::{
     roots::{absolute, file_key},
 };
 use qml_compat::Outcome;
-use qml_front::project::ControlsStyle;
+use qml_front::{TypeOracle, project::ControlsStyle};
 
 use crate::render::oracle_for_modules;
 use crate::stdout::outln;
@@ -239,6 +242,7 @@ impl Migrate {
         // The modules the lowered files import are written below, to the
         // disk, by rules of the command's own.
         let _ = lowering.settle(&around);
+        let typed = findings_typed(&lowering, &mut around, shown.keys());
         for (key, file) in shown {
             let (Some(outcome), Some(text)) = (lowering.lowering(&key), lowering.written(&key))
             else {
@@ -284,6 +288,16 @@ impl Migrate {
                         .collect();
                     lowered += 1;
                     let edits = done.changes.len();
+                    let findings = typed.get(&key).copied().unwrap_or(0);
+                    let migrated = qml_compat::migrated(text, &done.text, findings == 0);
+                    let javascript = || {
+                        if findings > 0 {
+                            outln!(
+                                "scripts of {} stay JavaScript: typed, ljos check finds {findings}",
+                                file.display()
+                            );
+                        }
+                    };
                     if self.write {
                         // The modules first: one that fails to be written
                         // leaves the file as it was, never a file that
@@ -300,7 +314,7 @@ impl Migrate {
                         if wrote.len() < modules.len() {
                             continue;
                         }
-                        if let Err(e) = std::fs::write(file, &done.text) {
+                        if let Err(e) = std::fs::write(file, &migrated) {
                             eprintln!("{}: {e}", file.display());
                             failed = true;
                             continue;
@@ -309,11 +323,13 @@ impl Migrate {
                         for path in wrote {
                             outln!("wrote {}", path.display());
                         }
+                        javascript();
                     } else {
                         outln!("would lower {} ({edits} edits)", file.display());
                         for (path, _) in &modules {
                             outln!("would write {}", path.display());
                         }
+                        javascript();
                     }
                 }
             }
@@ -321,6 +337,75 @@ impl Migrate {
         outln!("{} files, {lowered} lowered, {kept} kept", files.len());
         if failed { 2 } else { 0 }
     }
+}
+
+/// Per lowered file of `keys`, what the checker finds in it typed, without
+/// `pragma Scripts: JavaScript`, that it does not find in it with the
+/// pragma: the findings of its scripts that typing it would add. Where that
+/// is none the file is written typed, as it compiles to the same program
+/// either way (the pragma only turns the checker's rules off).
+///
+/// Each file is compiled as it will be written: every lowered file is put in
+/// its project first, as JavaScript, with the modules the pass writes beside
+/// it, so a file is checked against the files and rows it will be read with.
+/// A finding is told from another by its severity, code and message, not
+/// where it is, as the pragma's line moves the lines below it.
+fn findings_typed<O: TypeOracle>(
+    lowering: &qml_compat::Lowering,
+    around: &mut Roots<O>,
+    keys: impl Iterator<Item = impl AsRef<str>>,
+) -> BTreeMap<String, usize> {
+    let lowered: Vec<(String, &str, &qml_compat::Lowered)> = keys
+        .filter_map(|key| {
+            let key = key.as_ref();
+            match lowering.lowering(key)? {
+                Outcome::Lowered(done) => Some((key.to_owned(), lowering.written(key)?, done)),
+                _ => None,
+            }
+        })
+        .collect();
+    for (key, written, done) in &lowered {
+        let Some((project, in_project)) = around.project_mut(key) else {
+            continue;
+        };
+        let in_project = in_project.to_owned();
+        for (name, text) in &done.modules {
+            let path = match in_project.rsplit_once('/') {
+                Some((dir, _)) => format!("{dir}/{name}"),
+                None => name.clone(),
+            };
+            project.add_script(&path, text.clone());
+        }
+        project.add(&in_project, qml_compat::migrated(written, &done.text, false));
+    }
+    let findings = |compiled: Result<ljos_compiler::Compiled, Vec<ljos_compiler::Diagnostic>>| {
+        let mut found: BTreeMap<String, usize> = BTreeMap::new();
+        let mut count = |d: &ljos_compiler::Diagnostic| {
+            *found
+                .entry(format!("{:?} {} {}", d.severity, d.code, d.message))
+                .or_default() += 1;
+        };
+        match &compiled {
+            Ok(compiled) => compiled.all_diagnostics().for_each(|(_, d)| count(d)),
+            Err(diagnostics) => diagnostics.iter().for_each(count),
+        }
+        found
+    };
+    lowered
+        .iter()
+        .filter_map(|(key, written, done)| {
+            let (project, in_project) = around.project_mut(key)?;
+            let in_project = in_project.to_owned();
+            let javascript = findings(ljos_compiler::compile_file(project, &in_project));
+            let typed = qml_compat::migrated(written, &done.text, true);
+            let typed = findings(ljos_compiler::compile_text(project, &in_project, &typed));
+            let more = typed
+                .iter()
+                .map(|(finding, n)| n.saturating_sub(javascript.get(finding).copied().unwrap_or(0)))
+                .sum();
+            Some((key.clone(), more))
+        })
+        .collect()
 }
 
 /// The files of `candidates` whose imports name the directory of a file of

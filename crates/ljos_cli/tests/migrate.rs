@@ -55,7 +55,9 @@ fn a_dry_run_says_what_it_would_do_and_writes_nothing() {
     assert_eq!(status, 0, "{err}");
     assert_eq!(
         out,
-        "would lower app/Swatch.qml (2 edits)\n1 files, 1 lowered, 0 kept\n"
+        "would lower app/Swatch.qml (2 edits)\n\
+         scripts of app/Swatch.qml stay JavaScript: typed, ljos check finds 4\n\
+         1 files, 1 lowered, 0 kept\n"
     );
     assert_eq!(read(dir.path(), "app/Swatch.qml"), SWATCH);
 }
@@ -68,12 +70,15 @@ fn a_migrated_file_compiles_as_the_file_did() {
     assert_eq!(status, 0, "{err}");
     assert_eq!(
         out,
-        "lowered app/Swatch.qml (2 edits)\n1 files, 1 lowered, 0 kept\n"
+        "lowered app/Swatch.qml (2 edits)\n\
+         scripts of app/Swatch.qml stay JavaScript: typed, ljos check finds 4\n\
+         1 files, 1 lowered, 0 kept\n"
     );
     let written = read(dir.path(), "app/Swatch.qml");
-    assert_eq!(written.lines().count(), SWATCH.lines().count());
+    // The pragma takes a line of its own.
+    assert_eq!(written.lines().count(), SWATCH.lines().count() + 1);
     assert!(
-        written.starts_with("pragma Scripts: JavaScript; import Ljos.Ui\n"),
+        written.starts_with("pragma Scripts: JavaScript\nimport Ljos.Ui\n"),
         "{written}"
     );
     assert!(written.contains("    fill: level == 0"), "{written}");
@@ -81,11 +86,35 @@ fn a_migrated_file_compiles_as_the_file_did() {
     assert_eq!(status, 0, "{out}{err}");
     // Taking the pragma out is how the file is typed: the checker then says
     // what to change.
-    let typed = written.replace("pragma Scripts: JavaScript; ", "");
+    let typed = written.replace("pragma Scripts: JavaScript\n", "");
     write(dir.path(), "app/Swatch.qml", &typed);
     let (status, _, err) = ljos(dir.path(), &["check", "app"]);
     assert_ne!(status, 0);
     assert!(err.contains("[ts-loose-equality]"), "{err}");
+}
+
+/// Scripts that already keep the checker's rules are left typed: the
+/// pragma would only turn rules off that the file keeps.
+#[test]
+fn a_file_whose_scripts_keep_the_rules_is_written_typed() {
+    let dir = tempfile::tempdir().unwrap();
+    let typed = SWATCH
+        .replace("level == 0", "level === 0")
+        .replace(
+            "var was = level; if (level) { level = null }",
+            "if (level !== 0) { level = 0 }",
+        );
+    write(dir.path(), "app/Swatch.qml", &typed);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(
+        out,
+        "lowered app/Swatch.qml (2 edits)\n1 files, 1 lowered, 0 kept\n"
+    );
+    let written = read(dir.path(), "app/Swatch.qml");
+    assert!(written.starts_with("import Ljos.Ui\nRectangle {\n"), "{written}");
+    let (status, out, err) = ljos(dir.path(), &["check", "app"]);
+    assert_eq!(status, 0, "{out}{err}");
 }
 
 #[test]

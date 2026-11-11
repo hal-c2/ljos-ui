@@ -135,7 +135,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Bas
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Item {
           id: root
@@ -166,9 +166,8 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Bas
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
-
         Button {
           text: "Open"
           onClicked: dialog.open()
@@ -273,11 +272,13 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Bas
       Then the command prints:
         """
         lowered ./Main.qml (2 edits)
+        scripts of ./Main.qml stay JavaScript: typed, ljos check finds 1
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        pragma Scripts: JavaScript
+        import Ljos.Ui
         import Ljos.Controls.Basic
         import "box.js" as Box
         Item {
@@ -339,11 +340,13 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Bas
       Then the command prints:
         """
         lowered ./Main.qml (2 edits)
+        scripts of ./Main.qml stay JavaScript: typed, ljos check finds 1
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        pragma Scripts: JavaScript
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Item {
           function size() { var Box = { w: 4 }; return Box.w }

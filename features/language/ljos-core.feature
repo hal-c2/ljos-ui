@@ -175,7 +175,8 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """
       And the file "Pulse.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        import Ljos.Ui
+        import Ljos.Core
         Item {
           property int ticks: 0
           Timer { interval: 100; running: true; onTriggered: parent.ticks += 1 }
@@ -183,14 +184,14 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """
       And the file "Clock.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Core
+        import Ljos.Core
         QtObject {
           property int hours: 0
         }
         """
       And the file "Dial.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Core
         Rectangle {
           fill: "#336699"
@@ -218,7 +219,8 @@ Feature: Ljos.Core: timers, connections, bindings and components
       When the author runs "ljos migrate --write ."
       Then the file "Holder.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core
+        import Ljos.Ui
+        import Ljos.Core
         Item {
           property QtObject o
           property Component c
@@ -249,7 +251,8 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """
       And the file "Names.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Models
+        import Ljos.Ui
+        import Ljos.Models
         Item {
           ListModel { id: names; ListElement { name: "a" } }
         }
@@ -265,6 +268,6 @@ Feature: Ljos.Core: timers, connections, bindings and components
       When the author runs "ljos migrate --write ."
       Then the file "Swatch.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Rectangle { width: 40; height: 40; fill: "#336699" }
         """

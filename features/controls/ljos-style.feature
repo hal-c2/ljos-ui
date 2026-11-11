@@ -957,7 +957,7 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Button { text: "Save" }
         """
