@@ -296,15 +296,17 @@ impl Making {
                         // Whatever else listens to the attached object: a
                         // `Connections { target: Component }`, a
                         // `connect()`.
-                        let attached = completed
-                            .then(|| {
-                                e.existing_attached_object(
-                                    o,
-                                    &MetaRef::Static(<Component as QmlType>::static_meta()),
-                                )
-                            })
-                            .flatten();
-                        if (!handlers.is_empty() && e.is_alive(o)) || attached.is_some() {
+                        let attached = || {
+                            completed
+                                .then(|| {
+                                    e.existing_attached_object(
+                                        o,
+                                        &MetaRef::Static(<Component as QmlType>::static_meta()),
+                                    )
+                                })
+                                .flatten()
+                        };
+                        if (!handlers.is_empty() && e.is_alive(o)) || attached().is_some() {
                             if spent(&mut self.due, check) {
                                 // Its turn again in the next slice.
                                 stack.push(o);
@@ -320,7 +322,11 @@ impl Making {
                                     e.call_expr(inst, *expr, &[]);
                                 }
                             }
-                            if let Some(att) = attached {
+                            // Looked up again after the handlers: one that
+                            // is the first to touch the attached object
+                            // (`Component.completed.connect(f)`) makes it,
+                            // and `f` is told.
+                            if let Some(att) = attached() {
                                 let _ = e.emit_by_name(att, "completed", &[]);
                             }
                             self.due = true;
