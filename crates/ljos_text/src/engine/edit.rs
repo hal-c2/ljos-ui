@@ -14,10 +14,10 @@ use super::{
 };
 use crate::direction::in_right_to_left_block;
 use crate::edit::{
-    CaretCluster, EditBlock, EditCell, EditGrid, EditLayout, EditLine, EditParams, EditRun,
-    EditTable, PlacedBlock,
+    CaretCluster, EditBlock, EditCell, EditCellParagraph, EditGrid, EditLayout, EditLine,
+    EditParams, EditRun, EditTable, PlacedBlock,
 };
-use crate::rich::{CELL, CELL_PARAGRAPH, column_widths};
+use crate::rich::{CELL, CELL_PARAGRAPH, HAlign, column_widths};
 use crate::style::{InlineObject, Ranged, StyleSpan, TextStyle, WrapMode};
 
 /// The characters of one line and, for every glyph run that has glyphs, the
@@ -280,6 +280,51 @@ struct Grid {
     /// The frames and the backgrounds, from the table's top left.
     rules: Vec<Rect>,
     fills: Vec<(Rect, Arc<str>)>,
+    /// The markers of its list items: each with its item's first line, as
+    /// [`EditLayout::cell_markers`] has them.
+    markers: Vec<(usize, f64, std::rc::Rc<EditLayout>)>,
+}
+
+/// A paragraph of a cell that says nothing of how it is set.
+static PLAIN_CELL_PARAGRAPH: EditCellParagraph = EditCellParagraph {
+    margin_top: 0.0,
+    margin_bottom: 0.0,
+    indent: 0.0,
+    indent_right: 0.0,
+    marker: None,
+    align: None,
+    no_wrap: false,
+};
+
+/// How paragraph `k` of cell `c` of row `r` is set.
+fn cell_paragraph<'a>(
+    tables: &[&'a EditTable],
+    r: usize,
+    c: usize,
+    k: usize,
+) -> &'a EditCellParagraph {
+    tables
+        .get(r)
+        .and_then(|t| t.paragraphs.get(c))
+        .and_then(|p| p.get(k))
+        .unwrap_or(&PLAIN_CELL_PARAGRAPH)
+}
+
+impl EditCellParagraph {
+    /// How much narrower than its column it is.
+    fn inset(&self) -> f64 {
+        self.indent + self.indent_right
+    }
+}
+
+/// The room between paragraph `k` of a cell and the one before it: the
+/// larger of their margins, and none above the first.
+fn cell_gap(tables: &[&EditTable], r: usize, c: usize, k: usize) -> f64 {
+    if k == 0 {
+        return 0.0;
+    }
+    let above = cell_paragraph(tables, r, c, k - 1).margin_bottom;
+    above.max(cell_paragraph(tables, r, c, k).margin_top)
 }
 
 /// A line moved right by `dx` into its cell: its characters, its glyphs
@@ -493,14 +538,7 @@ impl TextEngine {
                     .collect()
             })
             .collect();
-        let no_wrap = |r: usize, c: usize, k: usize| {
-            tables
-                .get(r)
-                .and_then(|t| t.no_wrap.get(c))
-                .and_then(|p| p.get(k))
-                .copied()
-                .unwrap_or(false)
-        };
+        let para = |r: usize, c: usize, k: usize| cell_paragraph(tables, r, c, k);
         let mut laid: Vec<Vec<Vec<LaidCell>>> = Vec::with_capacity(cells.len());
         for row in &paragraphs {
             let mut out = Vec::with_capacity(row.len());
@@ -516,10 +554,11 @@ impl TextEngine {
             laid.push(out);
         }
         let mut maxs = vec![0.0_f64; columns];
-        for row in &laid {
+        for (r, row) in laid.iter().enumerate() {
             for (c, cell) in row.iter().enumerate() {
-                for (_, natural) in cell {
-                    maxs[c] = maxs[c].max(f64::from(*natural).ceil());
+                for (k, (_, natural)) in cell.iter().enumerate() {
+                    let wide = f64::from(*natural).ceil() + para(r, c, k).inset();
+                    maxs[c] = maxs[c].max(wide);
                 }
             }
         }
@@ -538,8 +577,9 @@ impl TextEngine {
             });
             for (r, c, k, bytes) in all {
                 // A paragraph that does not wrap needs all of its width.
-                if no_wrap(r, c, k) {
-                    mins[c] = mins[c].max(f64::from(laid[r][c][k].1).ceil());
+                let p = para(r, c, k);
+                if p.no_wrap {
+                    mins[c] = mins[c].max(f64::from(laid[r][c][k].1).ceil() + p.inset());
                     continue;
                 }
                 let (lines, _) = self.cell(
@@ -555,14 +595,16 @@ impl TextEngine {
                     .iter()
                     .map(|(l, _)| f64::from(l.width))
                     .fold(0.0, f64::max);
-                mins[c] = mins[c].max(widest.ceil());
+                mins[c] = mins[c].max(widest.ceil() + p.inset());
             }
             let widths = column_widths(&mins, &maxs, room);
             for (r, row) in paragraphs.iter().enumerate() {
                 for (c, cell) in row.iter().enumerate() {
                     for (k, bytes) in cell.iter().enumerate() {
-                        if f64::from(laid[r][c][k].1) > widths[c] && !no_wrap(r, c, k) {
-                            let max = Some(widths[c] as f32);
+                        let p = para(r, c, k);
+                        let room = (widths[c] - p.inset()).max(1.0);
+                        if f64::from(laid[r][c][k].1) > room && !p.no_wrap {
+                            let max = Some(room as f32);
                             laid[r][c][k] =
                                 self.cell(text, style, ranged, bytes.clone(), class, max, fallback);
                         }
@@ -578,9 +620,16 @@ impl TextEngine {
         };
         let heights: Vec<f64> = laid
             .iter()
-            .map(|row| {
+            .enumerate()
+            .map(|(r, row)| {
                 row.iter()
-                    .map(|cell| cell.iter().map(|(l, _)| high(l)).sum::<f64>())
+                    .enumerate()
+                    .map(|(c, cell)| {
+                        cell.iter()
+                            .enumerate()
+                            .map(|(k, (l, _))| cell_gap(tables, r, c, k) + high(l))
+                            .sum::<f64>()
+                    })
                     .fold(0.0, f64::max)
             })
             .collect();
@@ -622,6 +671,16 @@ impl TextEngine {
             rules.extend(frame_of(0.0, 0.0, width, height, border));
         }
         let mut out = Vec::new();
+        let mut markers = Vec::new();
+        // A marker stands right-aligned in its item's indent, a space
+        // before the text, as in the body.
+        let mut items = tables.iter().flat_map(|t| t.paragraphs.iter().flatten());
+        let space = if items.any(|p| p.marker.is_some()) {
+            self.layout(" ", style, &crate::LayoutParams::default())
+                .advance
+        } else {
+            0.0
+        };
         let mut grid_cells = Vec::with_capacity(laid.len());
         for (r, row) in laid.into_iter().enumerate() {
             let mut row_cells = Vec::with_capacity(row.len());
@@ -632,43 +691,55 @@ impl TextEngine {
                 let rtl = crate::direction::reads_right_to_left(&text[bytes.clone()]);
                 let first = out.len();
                 let mut top = 0.0;
-                let lines = cell
-                    .into_iter()
-                    .zip(&paragraphs[r][c])
-                    .flat_map(|((lines, _), p)| {
-                        let count = lines.len();
-                        lines
-                            .into_iter()
-                            .enumerate()
-                            .map(move |(k, line)| (line, (k + 1 == count).then_some(p.end)))
-                    });
-                for ((mut line, places), paragraph_end) in lines {
-                    let height = line.vertical.natural();
-                    let flush = if rtl {
-                        (widths[c] - f64::from(line.width)).max(0.0)
-                    } else {
-                        0.0
-                    };
-                    // The last line of a paragraph holds what ends it: the
-                    // CELL_PARAGRAPH, the CELL or the row's line break.
-                    let mut end = None;
-                    if let Some(at) = paragraph_end {
-                        if text[at..].starts_with(CELL_PARAGRAPH) {
-                            line.range.end = at + CELL_PARAGRAPH.len_utf8();
-                        } else if text[at..].starts_with([CELL, '\n']) {
-                            line.range.end = at + 1;
+                for (k, ((lines, _), bytes)) in cell.into_iter().zip(&paragraphs[r][c]).enumerate()
+                {
+                    let p = para(r, c, k);
+                    top += cell_gap(tables, r, c, k);
+                    let room = widths[c] - p.inset();
+                    let count = lines.len();
+                    for (n, (mut line, places)) in lines.into_iter().enumerate() {
+                        let height = line.vertical.natural();
+                        // Measured on Qt 6.12: a line is set by its advance,
+                        // without the ink its last glyph has past it.
+                        let advance = places.clusters.iter().map(|c| c.x1).fold(0.0, f64::max);
+                        let spare = (room - advance).max(0.0);
+                        let offset = match p.align {
+                            Some(HAlign::Right) => spare,
+                            Some(HAlign::Center) => spare / 2.0,
+                            None if rtl => spare,
+                            _ => 0.0,
+                        };
+                        // The last line of a paragraph holds what ends it:
+                        // the CELL_PARAGRAPH, the CELL or the row's line
+                        // break.
+                        let mut end = None;
+                        if n + 1 == count {
+                            let at = bytes.end;
+                            if text[at..].starts_with(CELL_PARAGRAPH) {
+                                line.range.end = at + CELL_PARAGRAPH.len_utf8();
+                            } else if text[at..].starts_with([CELL, '\n']) {
+                                line.range.end = at + 1;
+                            }
+                            end = Some(at);
                         }
-                        end = Some(at);
+                        let dx = lefts[c] + frame + padding + p.indent + offset;
+                        if n == 0
+                            && let Some(m) = p.marker.as_deref()
+                        {
+                            let marker = self.edit_layout(m, style, &EditParams::default());
+                            let x = dx - space - marker.natural_width;
+                            markers.push((out.len(), x, std::rc::Rc::new(marker)));
+                        }
+                        let place = CellLine {
+                            grid: 0,
+                            row: r,
+                            top,
+                            dx,
+                            end,
+                        };
+                        out.push((line, places, place));
+                        top += height;
                     }
-                    let place = CellLine {
-                        grid: 0,
-                        row: r,
-                        top,
-                        dx: lefts[c] + frame + padding + flush,
-                        end,
-                    };
-                    out.push((line, places, place));
-                    top += height;
                 }
                 row_cells.push((first..out.len(), bytes, top));
             }
@@ -684,6 +755,7 @@ impl TextEngine {
             natural,
             rules,
             fills,
+            markers,
         };
         (out, grid)
     }
@@ -830,6 +902,9 @@ impl TextEngine {
                         grid.lines = first..first + lines.len();
                         for (lines, _, _) in grid.cells.iter_mut().flatten() {
                             *lines = lines.start + first..lines.end + first;
+                        }
+                        for (line, _, _) in &mut grid.markers {
+                            *line += first;
                         }
                         cell_of.resize(first, None);
                         for (line, places, mut place) in lines {
@@ -1111,6 +1186,7 @@ impl TextEngine {
             rules,
             fills,
             tables,
+            cell_markers: grids.into_iter().flat_map(|g| g.markers).collect(),
         }
     }
 }
@@ -1482,7 +1558,17 @@ mod tests {
         let row = |no_wrap: Vec<Vec<bool>>| EditBlock {
             table: Some(EditTable {
                 border: 1.0,
-                no_wrap,
+                paragraphs: no_wrap
+                    .into_iter()
+                    .map(|cell| {
+                        cell.into_iter()
+                            .map(|no_wrap| EditCellParagraph {
+                                no_wrap,
+                                ..EditCellParagraph::default()
+                            })
+                            .collect()
+                    })
+                    .collect(),
                 ..EditTable::default()
             }),
             ..EditBlock::default()
@@ -1515,5 +1601,63 @@ mod tests {
         let neither = lay(&mut engine, room, vec![vec![true], vec![true]]);
         assert_eq!(neither.lines.len(), wide.lines.len());
         assert_eq!(neither.content_width, wide.natural_width);
+    }
+
+    #[test]
+    fn a_cells_paragraphs_keep_their_own_format() {
+        // Measured on Qt 6.12
+        // (features/text-input/rich-text-cell-paragraphs.feature).
+        let text = "\nab\u{2029}ab\u{2029}ab\n";
+        let mut engine = TextEngine::new();
+        let style = TextStyle::default();
+        let mut lay = |paragraphs: Vec<EditCellParagraph>| {
+            let row = EditBlock {
+                table: Some(EditTable {
+                    paragraphs: vec![paragraphs],
+                    ..EditTable::default()
+                }),
+                ..EditBlock::default()
+            };
+            let blocks = [EditBlock::default(), row, EditBlock::default()];
+            let params = EditParams::default();
+            engine.edit_layout_blocks(text, &style, &Ranged::NONE, &params, &blocks)
+        };
+        let plain = lay(vec![]);
+        let set = lay(vec![
+            EditCellParagraph {
+                margin_top: 30.0,
+                margin_bottom: 10.0,
+                ..EditCellParagraph::default()
+            },
+            EditCellParagraph {
+                margin_top: 20.0,
+                indent: 40.0,
+                marker: Some("\u{2022}".into()),
+                ..EditCellParagraph::default()
+            },
+            EditCellParagraph {
+                align: Some(HAlign::Right),
+                ..EditCellParagraph::default()
+            },
+        ]);
+        // The table's lines come after the empty paragraph before it.
+        let (p, s) = (&plain.lines[1..4], &set.lines[1..4]);
+        // No margin at the cell's top; the larger one between two
+        // paragraphs; none at its bottom.
+        assert_eq!(s[0].top, p[0].top);
+        assert_eq!(s[1].top - s[0].top, p[1].top - p[0].top + 20.0);
+        assert_eq!(s[2].top - s[1].top, p[2].top - p[1].top);
+        assert_eq!(set.content_height, plain.content_height + 20.0);
+        // The indent widens the column and the marker stands in it; the
+        // last paragraph is set at the column's right.
+        assert_eq!(s[1].left, p[1].left + 40.0);
+        assert_eq!(set.content_width, plain.content_width + 40.0);
+        assert_eq!(set.cell_markers.len(), 1);
+        let (line, x, marker) = &set.cell_markers[0];
+        assert_eq!(*line, 2);
+        assert!(*x + marker.natural_width < s[1].left, "{x}");
+        // Its column is a whole number of pixels wider than its text.
+        let right = s[2].left - p[2].left - 40.0;
+        assert!((0.0..1.0).contains(&right), "{right}");
     }
 }

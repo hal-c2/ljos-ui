@@ -57,8 +57,8 @@ mod substitute;
 
 pub use direction::reads_right_to_left;
 pub use edit::{
-    Caret, CaretCluster, EditBlock, EditCell, EditGrid, EditLayout, EditLine, EditParams, EditRun,
-    EditTable, PlacedBlock,
+    Caret, CaretCluster, EditBlock, EditCell, EditCellParagraph, EditGrid, EditLayout, EditLine,
+    EditParams, EditRun, EditTable, PlacedBlock,
 };
 pub use engine::{CacheStats, TextEngine, TextMemory, TextTimes};
 pub use face_info::FaceInfo;

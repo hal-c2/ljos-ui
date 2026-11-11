@@ -301,16 +301,17 @@ impl EditorPaint {
             }
         }
         // A list item's bullet or number, in its indent on its first line.
-        for block in &layout.blocks {
-            let (Some((dx, marker)), Some(line)) =
-                (&block.marker, layout.lines.get(block.first_line))
-            else {
+        let body = layout.blocks.iter().filter_map(|b| {
+            let (dx, marker) = b.marker.as_ref()?;
+            Some((b.first_line, *dx, marker))
+        });
+        let cells = layout.cell_markers.iter().map(|(l, dx, m)| (*l, *dx, m));
+        for (line, dx, marker) in body.chain(cells) {
+            let Some(l) = layout.lines.get(line) else {
                 continue;
             };
-            let origin = kurbo::Vec2::new(
-                self.line_x(block.first_line) + dx,
-                top + line.baseline - marker.baseline,
-            );
+            let origin =
+                kurbo::Vec2::new(self.line_x(line) + dx, top + l.baseline - marker.baseline);
             for run in marker.lines.iter().flat_map(|l| &l.runs) {
                 out.glyphs(
                     Arc::clone(&run.run.glyphs),
