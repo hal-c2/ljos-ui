@@ -321,3 +321,60 @@ Feature: Qt's QML lowered to Ljós's API
           }
         }
         """
+
+  Rule: A name a script binds is the script's wherever the script reads it
+
+    # A loop's, a `catch`'s or a function's name is found before an id and before the members of the
+    # objects around the script, in Qt as once lowered: what is read off it is not the id's, and it is
+    # no member a rename would give the object. The pass asks one question for every name a script
+    # reads, so a member read off the name and the name itself are told the same.
+    @qt-parity
+    Scenario: A loop's name is the loop's, not an id or a member of the same name
+      Given the QML:
+        """qml
+        import QtQuick
+        Rectangle {
+          id: swatch; objectName: "swatch"; width: 40; height: 40; color: "#336699"
+          property string painted: {
+            let c = ""
+            for (const swatch of [{ color: "#ffffff" }]) c = swatch.color
+            return c
+          }
+          property int total: { let t = 0; for (const fill of [1, 2]) t += fill; return t }
+        }
+        """
+      Then the property "painted" of "swatch" is "#ffffff"
+      And the property "total" of "swatch" is 3
+
+    # What is read off a loop's name is not known, and `color` is a member Ljós renames: the file is
+    # kept rather than lowered as if the loop's object were the Rectangle the id names.
+    @ljos-only
+    Scenario: A member read off a loop's name is not renamed as the id's
+      Given Qt QML is lowered to the Ljós API
+      And the QML:
+        """qml
+        import QtQuick
+        Rectangle {
+          id: swatch; objectName: "swatch"; width: 40; height: 40; color: "#336699"
+          property string painted: {
+            let c = ""
+            for (const swatch of [{ color: "#ffffff" }]) c = swatch.color
+            return c
+          }
+        }
+        """
+      Then the property "painted" of "swatch" is "#ffffff"
+
+    @ljos-only
+    Scenario: A loop's name that a lowered type has as a member keeps no file
+      Given Qt QML is lowered to the Ljós API
+      And the QML:
+        """qml
+        import QtQuick
+        Rectangle {
+          objectName: "swatch"; width: 40; height: 40; color: "#336699"
+          property int total: { let t = 0; for (const fill of [1, 2]) t += fill; return t }
+        }
+        """
+      Then the property "fill" of "swatch" is "#336699"
+      And the property "total" of "swatch" is 3
