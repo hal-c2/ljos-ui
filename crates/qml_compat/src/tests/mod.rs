@@ -93,6 +93,24 @@ fn a_file_without_qt_imports_is_unchanged() {
     assert_eq!(lower("Item { }\n", &no_locals), Outcome::Unchanged);
 }
 
+/// A Qt module imported twice is one Ljós module's line, the last import's,
+/// and the other import is emptied: the lowered file imports nothing of Qt.
+#[test]
+fn a_module_imported_twice_is_lowered_once() {
+    assert_eq!(
+        lowered("import QtQuick\nimport QtQuick\nItem { }\n"),
+        "\npragma Scripts: JavaScript; import Ljos.Ui\nItem { }\n"
+    );
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport QtQuick.Layouts\nimport QtQuick.Layouts\n\
+             Item { RowLayout { } }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\n\nimport Ljos.Layout\n\
+         Item { Row { spacing: 5; } }\n"
+    );
+}
+
 /// The corpus is a submodule, not this repository's (CLEAN_ROOM.md): the
 /// file is read where it is checked out, and the test says so where it is not.
 fn corpus_file(path: &str) -> Option<String> {

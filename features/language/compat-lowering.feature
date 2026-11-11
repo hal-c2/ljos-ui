@@ -283,3 +283,41 @@ Feature: Qt's QML lowered to Ljós's API
         kept app/Main.qml:2:1: it imports `Sensors`, a module of the project whose types are native: they are not lowered
         1 files, 0 lowered, 1 kept
         """
+
+  Rule: Every Qt import is lowered, and none is left as Qt's
+
+    # A Qt module imported twice is one Ljós module's line, the last import's: the other import's
+    # line is emptied, as a module whose types are another's is, so the lowered file has no import
+    # of Qt's that a file of Ljós's API could not load.
+    @ljos-only @headless
+    Scenario: A module imported twice is imported once lowered
+      Given the file "twice/Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        import QtQuick.Layouts
+        Rectangle {
+          width: 80; height: 40; color: "#202020"
+          RowLayout {
+            Rectangle { implicitWidth: 20; implicitHeight: 20; color: "#c03030" }
+            Rectangle { implicitWidth: 20; implicitHeight: 20; color: "#30a050" }
+          }
+        }
+        """
+      When the author runs "ljos render twice --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render twice --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate --write twice"
+      Then the file "twice/Main.qml" is:
+        """qml
+        pragma Scripts: JavaScript; import Ljos.Ui
+
+        import Ljos.Layout
+        Rectangle {
+          width: 80; height: 40; fill: "#202020"
+          Row { spacing: 5;
+            Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 20; fill: "#c03030" }
+            Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 20; fill: "#30a050" }
+          }
+        }
+        """

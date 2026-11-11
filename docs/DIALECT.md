@@ -1756,7 +1756,9 @@ is to a name of the Ljós API, and the text keeps every line. The edits are:
   `property QtObject o`, `signal picked(QtObject o)`) gets
   `; import Ljos.Core` on the import's line. A file of `QtQml` alone is
   lowered to `Ljos.Core` alone. A `QtQuick.Shapes` import is left an empty
-  line, since `Ljos.Ui` has the shapes;
+  line, since `Ljos.Ui` has the shapes. A module imported twice is lowered
+  on the last import's line (the first, for the controls), and the other
+  import is left an empty line: no import of Qt's is left in a lowered file;
 - a type, `MouseArea` → `PointerArea`, made or written
   (`property MouseArea area`);
 - a member, its handler (`onColorChanged`), `PropertyChanges` and
