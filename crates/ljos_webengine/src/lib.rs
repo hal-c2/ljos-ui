@@ -45,7 +45,8 @@ use ljos_engine::{Engine, Version};
 
 pub use backend::{shutdown, unavailable};
 pub use types::{
-    WebEngine, WebEngineLoadingInfo, WebEngineNewWindowRequest, WebEngineProfile, WebEngineScript,
+    WebEngine, WebEngineDesktopMediaRequest, WebEngineLoadingInfo, WebEngineNavigationRequest,
+    WebEngineNewWindowRequest, WebEnginePermission, WebEngineProfile, WebEngineScript,
     WebEngineScriptCollection, WebEngineSettings,
 };
 pub use view::WebEngineView;
@@ -63,6 +64,9 @@ pub fn register(engine: &Engine) {
         WebEngineSettings,
         WebEngineLoadingInfo,
         WebEngineNewWindowRequest,
+        WebEngineNavigationRequest,
+        WebEnginePermission,
+        WebEngineDesktopMediaRequest,
     ]));
     engine.register_singleton_with::<WebEngine>("QtWebEngine", Version::new(6, 0), WebEngine::make);
     view::register_paint(engine);

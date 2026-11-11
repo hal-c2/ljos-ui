@@ -17,19 +17,19 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CString, c_char, c_int};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use ::cef::*;
-use ljos_engine::{Engine, LogLevel};
+use ljos_engine::{Engine, LogLevel, WeakEngine};
 use ljos_platform::{Platform, Post, Reply};
 use ljos_render::{ImageHandle, PixelRect};
 use serde_json::{Value as Json, json};
 
 use crate::backend::{
     self, Browser as Page, Event as Ev, Key as PageKey, LoadStatus, Mouse as PageMouse, MouseKind,
-    Sink, Start,
+    Navigation, Sink, Start,
 };
 use crate::types::{DEFERRED, DOCUMENT_CREATION, DOCUMENT_READY, ProfileSpec, Script};
 
@@ -637,6 +637,10 @@ enum Pending {
     Isolated(i32),
     AddScript,
     FrameTree,
+    /// The renderer of the boot page has what every page gets.
+    Boot,
+    /// The blank page is out of the history.
+    Forgot,
     Ignore,
 }
 
@@ -653,6 +657,8 @@ struct Dev {
     worlds: HashSet<i32>,
     /// The `userScripts` now installed.
     installed: Vec<String>,
+    /// The origin of every context scripts run in, in any frame.
+    origins: HashMap<i64, String>,
 }
 
 impl Dev {
@@ -709,6 +715,172 @@ struct Shared {
     closing: AtomicBool,
     browser: Mutex<Option<::cef::Browser>>,
     observer: Mutex<Option<Registration>>,
+    /// The view was asked about the URL it was given: the browser going
+    /// there is not asked about again.
+    typed: AtomicBool,
+    /// Where the view kept the main frame from going: the load that
+    /// would have been there stops before it starts.
+    rejected: Mutex<Option<String>>,
+    /// What the page asked and the view has not answered yet, by the id
+    /// the view answers with.
+    asked: Mutex<HashMap<u64, Asked>>,
+    boot: Mutex<Boot>,
+}
+
+/// The blank page a browser starts on. What every page gets (the
+/// notifications script, the view's scripts) is told to a renderer that
+/// is not there yet, and may reach it after the first page's scripts ran;
+/// on a blank page it is in before any page of the view's loads. The view
+/// hears nothing of that page.
+#[derive(Default)]
+struct Boot {
+    /// A renderer answered after what every page gets.
+    told: bool,
+    /// The blank page loaded.
+    loaded: bool,
+    /// Where the view asked to go before both: it goes there then.
+    url: Option<String>,
+    /// The blank page is still in the history behind the view's pages.
+    behind: bool,
+    /// The view's first page asked for the blank page to go.
+    forgetting: bool,
+}
+
+impl Boot {
+    fn done(&self) -> bool {
+        self.told && self.loaded
+    }
+}
+
+/// A question of the page waiting for the view's answer.
+enum Asked {
+    Prompt {
+        prompt: u64,
+        callback: PermissionPromptCallback,
+    },
+    Media {
+        callback: MediaAccessCallback,
+        /// What the page asked for, all of it given if allowed.
+        flags: u32,
+    },
+    /// To show notifications, which CEF never asks about: the page's
+    /// `Notification.requestPermission` waits in the script of
+    /// [`NOTIFICATIONS`] until the view answers.
+    Notifications {
+        /// Where the page's script runs.
+        context: i64,
+        /// The question's number there.
+        number: u64,
+        origin: String,
+    },
+}
+
+impl Asked {
+    fn answer(self, allow: bool, shared: &Shared) {
+        schedule_work(0);
+        match self {
+            Asked::Prompt { callback, .. } => callback.cont(if allow {
+                PermissionRequestResult::ACCEPT
+            } else {
+                PermissionRequestResult::DENY
+            }),
+            Asked::Media { callback, flags } if allow => callback.cont(flags),
+            Asked::Media { callback, .. } => callback.cancel(),
+            Asked::Notifications {
+                context,
+                number,
+                origin,
+            } => {
+                // The profile keeps the answer, as it does one to a prompt.
+                // Chromium refuses a file's page notifications itself, and
+                // one allowed them anyway never hears back.
+                if !origin.starts_with("file:")
+                    && let Some(profile) = shared.host().and_then(|h| h.request_context())
+                {
+                    let origin = cef_string(&origin);
+                    profile.set_content_setting(
+                        Some(&origin),
+                        Some(&origin),
+                        ContentSettingTypes::NOTIFICATIONS,
+                        if allow {
+                            ContentSettingValues::ALLOW
+                        } else {
+                            ContentSettingValues::BLOCK
+                        },
+                    );
+                }
+                // The page asks Chromium now, which says what the view did.
+                pass_to_chromium(shared, context, number);
+            }
+        }
+    }
+}
+
+/// The page's question `number` in `context` goes on to Chromium.
+fn pass_to_chromium(shared: &Shared, context: i64, number: u64) {
+    let out = vec![Shared::lock(&shared.dev).call(
+        "Runtime.evaluate",
+        json!({
+            "expression": format!("globalThis.{ANSWERED}({number})"),
+            "contextId": context,
+        }),
+        Pending::Ignore,
+    )];
+    shared.send_dev(out);
+}
+
+/// What a page's script calls to ask the view about notifications.
+const ASKING: &str = "__ljosPermission";
+/// What the view calls in the page's script when it answered.
+const ANSWERED: &str = "__ljosAnswered";
+
+/// Every document's `Notification.requestPermission`, which asks the view
+/// first while the page has no answer yet, with the question's number. The
+/// binding is looked for when the page asks: it may come to a new document
+/// after this script does.
+const NOTIFICATIONS: &str = r#"(() => {
+  const N = globalThis.Notification;
+  if (!N || typeof N.requestPermission !== "function") return;
+  const ask = N.requestPermission.bind(N);
+  const waiting = new Map();
+  let next = 0;
+  Object.defineProperty(globalThis, "__ljosAnswered", {
+    value: number => { const go = waiting.get(number); waiting.delete(number); if (go) go(); }
+  });
+  N.requestPermission = function requestPermission(callback) {
+    const asking = globalThis.__ljosPermission;
+    const asked = N.permission !== "default" || typeof asking !== "function"
+      ? Promise.resolve()
+      : new Promise(go => {
+          const number = ++next;
+          waiting.set(number, go);
+          asking(String(number));
+        });
+    const answer = asked.then(() => ask());
+    if (typeof callback === "function") answer.then(callback);
+    return answer;
+  };
+})();"#;
+
+/// The ids of the questions pages ask, unique in the process.
+static QUESTIONS: AtomicU64 = AtomicU64::new(1);
+
+thread_local! {
+    /// The engine of each browser's view, to ask the view there and then
+    /// what the browser may do; CEF calls on the Engine thread.
+    static ENGINES: RefCell<Vec<(std::sync::Weak<Shared>, WeakEngine)>> =
+        const { RefCell::new(Vec::new()) };
+}
+
+/// The engine `shared`'s view lives in, while it does.
+fn engine_of(shared: &Arc<Shared>) -> Option<Engine> {
+    ENGINES.with(|engines| {
+        engines
+            .borrow()
+            .iter()
+            .find(|(s, _)| std::ptr::eq(s.as_ptr(), Arc::as_ptr(shared)))
+            .and_then(|(_, e)| e.upgrade())
+    })
 }
 
 impl Shared {
@@ -731,6 +903,41 @@ impl Shared {
             for m in messages {
                 host.send_dev_tools_message(Some(&m));
             }
+        }
+    }
+
+    /// Whether the browser is still on its blank first page.
+    fn booting(&self) -> bool {
+        !Self::lock(&self.boot).done()
+    }
+
+    /// One more of what the blank page waits for came; once both have,
+    /// the view's first page loads.
+    fn boot_step(&self, step: impl FnOnce(&mut Boot)) {
+        let url = {
+            let mut boot = Self::lock(&self.boot);
+            if boot.done() {
+                return;
+            }
+            step(&mut boot);
+            if !boot.done() {
+                return;
+            }
+            boot.url.take()
+        };
+        if let Some(url) = url {
+            self.load(&url);
+        }
+    }
+
+    /// The main frame goes to `url`, a page the view asked for.
+    fn load(&self, url: &str) {
+        let frame = Self::lock(&self.browser)
+            .as_ref()
+            .and_then(|b| b.main_frame());
+        if let Some(frame) = frame {
+            self.typed.store(true, Ordering::Relaxed);
+            frame.load_url(Some(&cef_string(url)));
         }
     }
 
@@ -774,6 +981,16 @@ impl Shared {
     }
 }
 
+/// What the page asked and nobody answered is refused: the page goes.
+fn refuse_asked(shared: &Shared) {
+    let asked = std::mem::take(&mut *Shared::lock(&shared.asked));
+    for (_, a) in asked {
+        if !matches!(a, Asked::Notifications { .. }) {
+            a.answer(false, shared);
+        }
+    }
+}
+
 /// Chromium's `net::ERR_HTTP_RESPONSE_CODE_FAILURE`.
 const ERR_HTTP_RESPONSE_CODE_FAILURE: i32 = -379;
 
@@ -812,6 +1029,9 @@ wrap_client! {
         }
         fn request_handler(&self) -> Option<RequestHandler> {
             Some(PageRequests::new(self.shared.clone()))
+        }
+        fn permission_handler(&self) -> Option<PermissionHandler> {
+            Some(PagePermissions::new(self.shared.clone()))
         }
     }
 }
@@ -879,7 +1099,7 @@ wrap_render_handler! {
             width: c_int,
             height: c_int,
         ) {
-            if buffer.is_null() || width <= 0 || height <= 0 {
+            if buffer.is_null() || width <= 0 || height <= 0 || self.shared.booting() {
                 return;
             }
             let (w, h) = (width as u32, height as u32);
@@ -1031,13 +1251,44 @@ wrap_load_handler! {
             can_go_back: c_int,
             can_go_forward: c_int,
         ) {
+            if is_loading == 0 && self.shared.booting() {
+                self.shared.boot_step(|b| b.loaded = true);
+                return;
+            }
+            if self.shared.booting() {
+                return;
+            }
+            // The blank page behind the first is no page to go back to.
+            let (can_go_back, forget) = {
+                let mut boot = Shared::lock(&self.shared.boot);
+                // Asked once the first page is in: while its renderer is
+                // swapped DevTools is attached to no page.
+                let forget = boot.behind && is_loading == 0 && !boot.forgetting;
+                boot.forgetting |= forget;
+                (if boot.behind { 0 } else { can_go_back }, forget)
+            };
+            if forget {
+                let m = Shared::lock(&self.shared.dev).call(
+                    "Page.resetNavigationHistory",
+                    json!({}),
+                    Pending::Forgot,
+                );
+                self.shared.send_dev(vec![m]);
+            }
             let url = browser
                 .as_ref()
                 .and_then(|b| b.main_frame())
                 .map(|f| frame_url(&f))
                 .unwrap_or_default();
             let none_told = Shared::lock(&self.shared.load).url.is_none();
-            if is_loading != 0 && none_told {
+            // The view was told the rejected load stopped before it began.
+            let rejected = Shared::lock(&self.shared.rejected).is_some();
+            if is_loading == 0 {
+                Shared::lock(&self.shared.rejected).take();
+            }
+            if rejected && none_told {
+                // Nothing loads, and the view knows.
+            } else if is_loading != 0 && none_told {
                 // The page went somewhere by itself (a link, a script).
                 self.shared.started(&url);
             } else if is_loading == 0 && !none_told {
@@ -1056,6 +1307,9 @@ wrap_load_handler! {
             frame: Option<&mut Frame>,
             _transition_type: TransitionType,
         ) {
+            if self.shared.booting() {
+                return;
+            }
             if is_main(frame).is_some()
                 && let Some(host) = browser.and_then(|b| b.host())
             {
@@ -1070,6 +1324,9 @@ wrap_load_handler! {
             frame: Option<&mut Frame>,
             http_status_code: c_int,
         ) {
+            if self.shared.booting() {
+                return;
+            }
             let Some(url) = is_main(frame) else {
                 return;
             };
@@ -1090,11 +1347,14 @@ wrap_load_handler! {
             _error_text: Option<&CefString>,
             failed_url: Option<&CefString>,
         ) {
-            if is_main(frame).is_none() {
+            if self.shared.booting() || is_main(frame).is_none() {
                 return;
             }
             let code = *error_code.as_ref() as i32;
             let url = string_of(failed_url);
+            if code == -3 && Shared::lock(&self.shared.rejected).as_deref() == Some(url.as_str()) {
+                return;
+            }
             let http = {
                 // A load another replaced was already said to have stopped.
                 let load = Shared::lock(&self.shared.load);
@@ -1139,17 +1399,21 @@ wrap_display_handler! {
             frame: Option<&mut Frame>,
             url: Option<&CefString>,
         ) {
-            if is_main(frame).is_some() {
+            if !self.shared.booting() && is_main(frame).is_some() {
                 self.shared.sink.send(Ev::Url(string_of(url)));
             }
         }
 
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            self.shared.sink.send(Ev::Title(string_of(title)));
+            if !self.shared.booting() {
+                self.shared.sink.send(Ev::Title(string_of(title)));
+            }
         }
 
         fn on_loading_progress_change(&self, _browser: Option<&mut Browser>, progress: f64) {
-            self.shared.sink.send(Ev::Progress(progress));
+            if !self.shared.booting() {
+                self.shared.sink.send(Ev::Progress(progress));
+            }
         }
 
         fn on_console_message(
@@ -1161,6 +1425,9 @@ wrap_display_handler! {
             line: c_int,
         ) -> c_int {
             use sys::cef_log_severity_t as L;
+            if self.shared.booting() {
+                return 0;
+            }
             let level = match *level.as_ref() {
                 L::LOGSEVERITY_WARNING => 1,
                 L::LOGSEVERITY_ERROR | L::LOGSEVERITY_FATAL => 2,
@@ -1221,8 +1488,178 @@ wrap_life_span_handler! {
         }
 
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
+            refuse_asked(&self.shared);
             Shared::lock(&self.shared.observer).take();
             Shared::lock(&self.shared.browser).take();
+        }
+    }
+}
+
+/// The `WebEngineNavigationRequest.NavigationType` of a navigation that
+/// came with `transition`.
+fn navigation_kind(transition: TransitionType, redirect: bool) -> i32 {
+    // The transition is a source with qualifier bits on it, which the
+    // enum CEF's bindings read it as has no variants for: its bits are
+    // read as the number it is.
+    // SAFETY: `cef_transition_type_t` is `repr(u32)`, so the value is
+    // four bytes that are a `u32`.
+    let raw: u32 = unsafe { std::mem::transmute_copy(transition.as_ref()) };
+    let source = raw & 0xFF;
+    if redirect {
+        6
+    } else if raw & 0x0100_0000 != 0 {
+        3
+    } else {
+        match source {
+            8 => 4,
+            7 => 2,
+            0 => 0,
+            1 => 1,
+            _ => 5,
+        }
+    }
+}
+
+/// The `WebEnginePermission.PermissionType` of what a prompt asks for, as
+/// CEF's `cef_permission_request_types_t` bits say; `None` for what a view
+/// has no word for.
+fn permission_kind(requested: u32) -> Option<i32> {
+    const CAMERA: u32 = 4;
+    const MIC: u32 = 4096;
+    Some(match requested {
+        r if r == CAMERA | MIC => 3,
+        MIC => 1,
+        CAMERA => 2,
+        131_072 => 6,
+        32_768 => 7,
+        256 => 8,
+        16 => 9,
+        128 => 10,
+        _ => return None,
+    })
+}
+
+/// The content settings a profile keeps the answer to a
+/// `WebEnginePermission.PermissionType` in.
+fn content_settings(kind: i32) -> &'static [ContentSettingTypes] {
+    match kind {
+        1 => &[ContentSettingTypes::MEDIASTREAM_MIC],
+        2 => &[ContentSettingTypes::MEDIASTREAM_CAMERA],
+        3 => &[
+            ContentSettingTypes::MEDIASTREAM_MIC,
+            ContentSettingTypes::MEDIASTREAM_CAMERA,
+        ],
+        4 | 5 => &[ContentSettingTypes::DISPLAY_CAPTURE],
+        6 => &[ContentSettingTypes::POINTER_LOCK],
+        7 => &[ContentSettingTypes::NOTIFICATIONS],
+        8 => &[ContentSettingTypes::GEOLOCATION],
+        9 => &[ContentSettingTypes::CLIPBOARD_READ_WRITE],
+        10 => &[ContentSettingTypes::LOCAL_FONTS],
+        _ => &[],
+    }
+}
+
+/// `cef_media_access_permission_types_t`.
+const DEVICE_AUDIO: u32 = 1;
+const DEVICE_VIDEO: u32 = 2;
+const DESKTOP_AUDIO: u32 = 4;
+const DESKTOP_VIDEO: u32 = 8;
+
+// A page asks to be allowed something: the view is asked, and the page
+// waits for its answer, however long that is.
+wrap_permission_handler! {
+    struct PagePermissions { shared: Arc<Shared> }
+    impl PermissionHandler {
+        fn on_request_media_access_permission(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            requesting_origin: Option<&CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut MediaAccessCallback>,
+        ) -> c_int {
+            let Some(callback) = callback else {
+                return 0;
+            };
+            let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
+            let r = requested_permissions;
+            let event = if r & (DESKTOP_AUDIO | DESKTOP_VIDEO) != 0 {
+                Ev::DesktopMedia {
+                    id,
+                    audio: r & DESKTOP_AUDIO != 0,
+                }
+            } else {
+                let kind = match (r & DEVICE_AUDIO != 0, r & DEVICE_VIDEO != 0) {
+                    (true, true) => 3,
+                    (true, false) => 1,
+                    (false, true) => 2,
+                    (false, false) => return 0,
+                };
+                Ev::Permission {
+                    id,
+                    origin: string_of(requesting_origin),
+                    kind,
+                }
+            };
+            Shared::lock(&self.shared.asked).insert(
+                id,
+                Asked::Media {
+                    callback: callback.clone(),
+                    flags: r,
+                },
+            );
+            self.shared.sink.send(event);
+            1
+        }
+
+        fn on_show_permission_prompt(
+            &self,
+            _browser: Option<&mut Browser>,
+            prompt_id: u64,
+            requesting_origin: Option<&CefString>,
+            requested_permissions: u32,
+            callback: Option<&mut PermissionPromptCallback>,
+        ) -> c_int {
+            let Some(callback) = callback else {
+                return 0;
+            };
+            let Some(kind) = permission_kind(requested_permissions) else {
+                // What a view cannot be asked about is not allowed.
+                callback.cont(PermissionRequestResult::DENY);
+                return 1;
+            };
+            let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
+            Shared::lock(&self.shared.asked).insert(
+                id,
+                Asked::Prompt {
+                    prompt: prompt_id,
+                    callback: callback.clone(),
+                },
+            );
+            self.shared.sink.send(Ev::Permission {
+                id,
+                origin: string_of(requesting_origin),
+                kind,
+            });
+            1
+        }
+
+        fn on_dismiss_permission_prompt(
+            &self,
+            _browser: Option<&mut Browser>,
+            prompt_id: u64,
+            _result: PermissionRequestResult,
+        ) {
+            let mut asked = Shared::lock(&self.shared.asked);
+            let gone: Vec<u64> = asked
+                .iter()
+                .filter(|(_, a)| matches!(a, Asked::Prompt { prompt, .. } if *prompt == prompt_id))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in gone {
+                asked.remove(&id);
+                self.shared.sink.send(Ev::PermissionGone { id });
+            }
         }
     }
 }
@@ -1243,6 +1680,63 @@ fn destination_of(disposition: &WindowOpenDisposition) -> Option<i32> {
 wrap_request_handler! {
     struct PageRequests { shared: Arc<Shared> }
     impl RequestHandler {
+        // The view is asked where a page or a frame of it goes, before it
+        // goes: there and then, so it hears of it before the load.
+        fn on_before_browse(
+            &self,
+            _browser: Option<&mut Browser>,
+            frame: Option<&mut Frame>,
+            request: Option<&mut Request>,
+            _user_gesture: c_int,
+            is_redirect: c_int,
+        ) -> c_int {
+            let (Some(frame), Some(request)) = (frame, request) else {
+                return 0;
+            };
+            if self.shared.booting() {
+                return 0;
+            }
+            let main_frame = frame.is_main() == 1;
+            if main_frame && is_redirect == 0 && self.shared.typed.swap(false, Ordering::Relaxed) {
+                return 0;
+            }
+            let Some(e) = engine_of(&self.shared) else {
+                return 0;
+            };
+            let url = CefString::from(&request.url()).to_string();
+            let nav = Navigation {
+                url: url.clone(),
+                kind: navigation_kind(request.transition_type(), is_redirect != 0),
+                main_frame,
+                form_data: request.post_data().is_some(),
+            };
+            if crate::view::ask_navigation(&e, self.shared.sink.view(), nav) {
+                return 0;
+            }
+            if main_frame {
+                *Shared::lock(&self.shared.rejected) = Some(url.clone());
+                // A link may have started the load the view was told of
+                // before it was asked: that load stops here.
+                let told = Shared::lock(&self.shared.load).url.clone();
+                if told.is_none() {
+                    self.shared.sink.send(Ev::LoadStarted { url: url.clone() });
+                }
+                let error = crate::errors::name(-3);
+                let domain = crate::errors::domain(-3);
+                match told {
+                    Some(told) => self.shared.ended(told, LoadStatus::Stopped, -3, error, domain),
+                    None => self.shared.sink.send(Ev::LoadEnded {
+                        url,
+                        status: LoadStatus::Stopped,
+                        code: -3,
+                        error,
+                        domain,
+                    }),
+                }
+            }
+            1
+        }
+
         // A link clicked holding Ctrl or Shift, or with the middle button,
         // asks for another window here rather than as a popup. The view
         // is asked, as for a popup, and the page stays where it is.
@@ -1361,6 +1855,7 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     let mut out = Vec::new();
     // Scripts whose result goes to the view once the lock is let go.
     let mut answered = Vec::new();
+    let mut booted = false;
     {
         let mut dev = Shared::lock(&shared.dev);
         match dev.pending.remove(&id) {
@@ -1387,6 +1882,18 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
                     dev.main_frame = Some(id.to_owned());
                 }
             }
+            Some(Pending::Boot) => booted = true,
+            Some(Pending::Forgot) if success => {
+                Shared::lock(&shared.boot).behind = false;
+                // The browser's own answer is the one before: the page is
+                // the only one left.
+                shared.sink.send(Ev::Navigation {
+                    back: false,
+                    forward: false,
+                });
+            }
+            // Asked again when the next page is in.
+            Some(Pending::Forgot) => Shared::lock(&shared.boot).forgetting = false,
             Some(Pending::Ignore) | None => {}
         }
     }
@@ -1394,6 +1901,9 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
         script_result(shared, script, success, &result);
     }
     shared.send_dev(out);
+    if booted {
+        shared.boot_step(|b| b.told = true);
+    }
 }
 
 fn dev_event(shared: &Shared, method: &str, params: &Json) {
@@ -1409,6 +1919,9 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
         }
         "Runtime.executionContextCreated" => {
             let c = &params["context"];
+            if let (Some(id), Some(origin)) = (c["id"].as_i64(), c["origin"].as_str()) {
+                dev.origins.insert(id, origin.to_owned());
+            }
             let main = c["auxData"]["frameId"].as_str() == dev.main_frame.as_deref();
             if let (true, Some(name), Some(id)) = (main, c["name"].as_str(), c["id"].as_i64())
                 && let Some(world) = name
@@ -1421,10 +1934,72 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
         "Runtime.executionContextDestroyed" => {
             if let Some(gone) = params["executionContextId"].as_i64() {
                 dev.contexts.retain(|_, c| *c != gone);
+                dev.origins.remove(&gone);
+                drop(dev);
+                notifications_gone(shared, Some(gone));
             }
         }
-        "Runtime.executionContextsCleared" => dev.contexts.clear(),
+        "Runtime.executionContextsCleared" => {
+            dev.contexts.clear();
+            dev.origins.clear();
+            drop(dev);
+            notifications_gone(shared, None);
+        }
+        "Runtime.bindingCalled" if params["name"].as_str() == Some(ASKING) => {
+            // Who asks is the context's origin, not what its script says.
+            let context = params["executionContextId"].as_i64();
+            let origin = context.and_then(|c| dev.origins.get(&c)).cloned();
+            drop(dev);
+            let number = params["payload"]
+                .as_str()
+                .and_then(|p| p.parse::<u64>().ok());
+            let (Some(context), Some(number), Some(origin)) = (context, number, origin) else {
+                return;
+            };
+            // A page with no origin of its own (a sandboxed frame, data:)
+            // has nothing to be allowed: Chromium refuses it.
+            if origin.is_empty() || origin == "null" {
+                pass_to_chromium(shared, context, number);
+                return;
+            }
+            // As a URL, the way a view is told an origin.
+            let origin = format!("{origin}/");
+            let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
+            Shared::lock(&shared.asked).insert(
+                id,
+                Asked::Notifications {
+                    context,
+                    number,
+                    origin: origin.clone(),
+                },
+            );
+            shared.sink.send(Ev::Permission {
+                id,
+                origin,
+                kind: NOTIFICATIONS_KIND,
+            });
+        }
         _ => {}
+    }
+}
+
+/// `WebEnginePermission.Notifications`.
+const NOTIFICATIONS_KIND: i32 = 7;
+
+/// The questions about notifications asked where scripts ran in
+/// `context` (in any, with `None`) are no longer asked: the page went.
+fn notifications_gone(shared: &Shared, context: Option<i64>) {
+    let mut asked = Shared::lock(&shared.asked);
+    let gone: Vec<u64> = asked
+        .iter()
+        .filter(|(_, a)| {
+            matches!(a, Asked::Notifications { context: c, .. } if context.is_none_or(|g| g == *c))
+        })
+        .map(|(id, _)| *id)
+        .collect();
+    for id in gone {
+        asked.remove(&id);
+        shared.sink.send(Ev::PermissionGone { id });
     }
 }
 
@@ -1549,6 +2124,18 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         closing: AtomicBool::new(false),
         browser: Mutex::default(),
         observer: Mutex::default(),
+        typed: AtomicBool::new(false),
+        rejected: Mutex::default(),
+        asked: Mutex::default(),
+        boot: Mutex::new(Boot {
+            behind: true,
+            ..Boot::default()
+        }),
+    });
+    ENGINES.with(|engines| {
+        let mut engines = engines.borrow_mut();
+        engines.retain(|(s, _)| s.strong_count() > 0);
+        engines.push((Arc::downgrade(&shared), e.downgrade()));
     });
     let window = WindowInfo::default().set_as_windowless(Default::default());
     let [r, g, b, a] = start.background;
@@ -1589,6 +2176,16 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         let mut dev = Shared::lock(&shared.dev);
         out.push(dev.call("Runtime.enable", json!({}), Pending::Ignore));
         out.push(dev.call("Page.enable", json!({}), Pending::Ignore));
+        out.push(dev.call(
+            "Runtime.addBinding",
+            json!({ "name": ASKING }),
+            Pending::Ignore,
+        ));
+        out.push(dev.call(
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": NOTIFICATIONS }),
+            Pending::Ignore,
+        ));
         let p = &start.profile;
         if !p.user_agent.is_empty() || !p.accept_language.is_empty() {
             let mut params = json!({ "userAgent": p.user_agent });
@@ -1597,23 +2194,25 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
             }
             out.push(dev.call("Emulation.setUserAgentOverride", params, Pending::Ignore));
         }
-        // Scripts given before the first page has a renderer did not reach
-        // that page's first document, only the ones after it; so they also
-        // run in the documents there are when they arrive. A script with a
-        // later injection point still waits for its moment.
-        install_scripts(&mut dev, &start.scripts, true, &mut out);
+        // In before the view's first page, which waits for the blank one.
+        install_scripts(&mut dev, &start.scripts, false, &mut out);
         out.push(dev.call("Page.getFrameTree", json!({}), Pending::FrameTree));
-        // The first page is asked for after the scripts, on the same
-        // session, so it cannot load before they are in, as a load the
-        // frame were told of directly could.
+        // A renderer answers this after all that came before it, so the
+        // view's first page waits for it (see `Boot`).
+        out.push(dev.call(
+            "Runtime.evaluate",
+            json!({ "expression": "0" }),
+            Pending::Boot,
+        ));
         if !start.url.is_empty() {
             shared.started(&start.url);
-            out.push(dev.call(
-                "Page.navigate",
-                json!({ "url": start.url }),
-                Pending::Ignore,
-            ));
+            Shared::lock(&shared.boot).url = Some(start.url.clone());
         }
+        out.push(dev.call(
+            "Page.navigate",
+            json!({ "url": "about:blank" }),
+            Pending::Ignore,
+        ));
     }
     // Told before the first page is asked for: the effect that tells a
     // view's browser it is hidden ran before there was one.
@@ -1645,11 +2244,18 @@ impl CefPage {
 
 impl Page for CefPage {
     fn navigate(&self, url: &str) {
-        let Some(frame) = self.browser().and_then(|b| b.main_frame()) else {
+        if self.browser().is_none() {
             return;
-        };
+        }
         self.shared.started(url);
-        frame.load_url(Some(&cef_string(url)));
+        {
+            let mut boot = Shared::lock(&self.shared.boot);
+            if !boot.done() {
+                boot.url = Some(url.to_owned());
+                return;
+            }
+        }
+        self.shared.load(url);
     }
 
     fn go_back(&self) {
@@ -1675,13 +2281,22 @@ impl Page for CefPage {
     }
 
     fn stop(&self) {
+        // A page still waiting for the blank one never loads.
+        let held = Shared::lock(&self.shared.boot).url.take();
+        if let Some(url) = held {
+            let code = -3;
+            self.shared.ended(
+                url,
+                LoadStatus::Stopped,
+                code,
+                crate::errors::name(code),
+                crate::errors::domain(code),
+            );
+            return;
+        }
         if let Some(b) = self.browser() {
             b.stop_load();
         }
-        // The first page was asked for through DevTools and may not have
-        // begun yet; this comes after it there.
-        let m = Shared::lock(&self.shared.dev).call("Page.stopLoading", json!({}), Pending::Ignore);
-        self.shared.send_dev(vec![m]);
     }
 
     fn resize(&self, width: f64, height: f64, scale: f64) {
@@ -1878,10 +2493,33 @@ impl Page for CefPage {
         }
     }
 
+    fn answer(&self, id: u64, allow: bool) {
+        let asked = Shared::lock(&self.shared.asked).remove(&id);
+        if let Some(a) = asked {
+            a.answer(allow, &self.shared);
+        }
+    }
+
+    fn forget_permission(&self, origin: &str, kind: i32) {
+        let Some(context) = self.host().and_then(|h| h.request_context()) else {
+            return;
+        };
+        let origin = cef_string(origin);
+        for setting in content_settings(kind) {
+            context.set_content_setting(
+                Some(&origin),
+                Some(&origin),
+                *setting,
+                ContentSettingValues::DEFAULT,
+            );
+        }
+    }
+
     fn close(&self) {
         if self.shared.closing.swap(true, Ordering::Relaxed) {
             return;
         }
+        refuse_asked(&self.shared);
         if let Some(host) = self.host() {
             host.close_browser(1);
         }
@@ -2002,6 +2640,20 @@ pub(crate) fn clear_http_cache(e: &Engine, _spec: &ProfileSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_notifications_script_calls_the_names_the_view_uses() {
+        assert!(NOTIFICATIONS.contains(&format!("globalThis.{ASKING};")));
+        assert!(NOTIFICATIONS.contains(&format!("\"{ANSWERED}\"")));
+    }
+
+    #[test]
+    fn what_a_page_may_be_asked_is_a_permission_type() {
+        assert_eq!(permission_kind(4 | 4096), Some(3));
+        assert_eq!(permission_kind(4096), Some(1));
+        assert_eq!(permission_kind(256), Some(8));
+        assert_eq!(permission_kind(1 << 30), None);
+    }
 
     #[test]
     fn bgra_becomes_rgba_where_it_changed() {
