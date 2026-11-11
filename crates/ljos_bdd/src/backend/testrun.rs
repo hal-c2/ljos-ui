@@ -348,11 +348,10 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         let read = pipe.read_to_end(&mut out).map(|_| out);
         let _ = said.send(read);
     });
-    let deadline = if run.tsc {
-        TSC_CHECK_DEADLINE
-    } else {
-        CHECK_DEADLINE
-    };
+    let deadline = check_deadline(
+        run.tsc,
+        crate::watchdog::timeout_from_env().unwrap_or(Some(crate::watchdog::DEFAULT_TIMEOUT)),
+    );
     let out = match heard.recv_timeout(deadline) {
         Ok(read) => read.map_err(|e| failed(format!("cannot read `ljos check`: {e}")))?,
         Err(_) => {
@@ -360,7 +359,7 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
             end_group(child.id());
             return Err(failed(format!(
                 "`ljos check` did not finish in {} seconds",
-                deadline.as_secs()
+                deadline.as_secs_f64()
             )));
         }
     };
@@ -384,9 +383,22 @@ const CHECK_DEADLINE: Duration = Duration::from_secs(60);
 
 /// How long `ljos check --tsc` has. TypeScript starting cold on a loaded
 /// machine can take most of a minute without anything being wrong, so it
-/// has longer, still inside the scenario watchdog's default 300 seconds.
+/// has longer.
 const TSC_CHECK_DEADLINE: Duration = Duration::from_secs(240);
-const _: () = assert!(TSC_CHECK_DEADLINE.as_secs() < crate::watchdog::DEFAULT_TIMEOUT.as_secs());
+
+/// How long `ljos check` has inside a scenario that has `scenario`, `None`
+/// for no deadline. It ends a fifth before the scenario's own: a check that
+/// never ends then fails its scenario as one, where the watchdog, set
+/// shorter than the check's own deadline, would end the run and name only
+/// the step.
+fn check_deadline(tsc: bool, scenario: Option<Duration>) -> Duration {
+    let own = if tsc {
+        TSC_CHECK_DEADLINE
+    } else {
+        CHECK_DEADLINE
+    };
+    scenario.map_or(own, |scenario| own.min(scenario.mul_f64(0.8)))
+}
 
 /// Kills the process group `leader` leads.
 #[cfg(unix)]
@@ -481,6 +493,19 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_check_ends_before_the_scenario_it_is_in() {
+        let default = Some(crate::watchdog::DEFAULT_TIMEOUT);
+        assert_eq!(check_deadline(false, default), CHECK_DEADLINE);
+        assert_eq!(check_deadline(true, default), TSC_CHECK_DEADLINE);
+        // A scenario deadline set shorter than the check's own.
+        let short = Some(Duration::from_secs(100));
+        assert_eq!(check_deadline(false, short), CHECK_DEADLINE);
+        assert_eq!(check_deadline(true, short), Duration::from_secs(80));
+        // A run with no scenario deadline.
+        assert_eq!(check_deadline(true, None), TSC_CHECK_DEADLINE);
+    }
 
     /// The issue repro: run from a test, the build of `ljos` was told the
     /// test's `CARGO_MANIFEST_DIR`, which ring's build script follows, so
