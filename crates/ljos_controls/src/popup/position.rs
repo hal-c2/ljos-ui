@@ -1,7 +1,9 @@
 //! Where a popup is: at `x`, `y` from the corner of its parent or
-//! centred in an item, and then pushed back inside the window as far as
-//! its margins ask (doc.qt.io/qt-6/qml-qtquick-controls-popup.html,
-//! "Popup Positioning"; pinned by `features/controls/popup-geometry.feature`).
+//! centred in an item, and then, by `placement`, flipped and pushed back
+//! inside the window as far as its margins ask
+//! (doc.qt.io/qt-6/qml-qtquick-controls-popup.html, "Popup Positioning";
+//! pinned by `features/controls/popup-geometry.feature`). This file reads
+//! the numbers and writes the answer back.
 
 use std::sync::OnceLock;
 
@@ -9,6 +11,7 @@ use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, QmlType, Value};
 use ljos_quick::{Item, is_item, scene_transform};
 use ljos_render::kurbo;
 
+use super::placement::{self, Axis};
 use super::{Popup, item_of, state_of};
 use crate::util::{flag, num, object, set_computed, set_derived};
 
@@ -19,53 +22,6 @@ fn center_in() -> PropIndex {
             .property_index("anchors.centerIn")
             .expect("a popup has anchors")
     })
-}
-
-/// Moves `pos` so that `size` stays `near` from the start and `far` from
-/// the end of `bound`; a negative margin asks for nothing. What does not
-/// fit keeps to the start.
-fn clamp(mut pos: f64, size: f64, bound: f64, near: f64, far: f64) -> f64 {
-    if far >= 0.0 && pos + size > bound - far {
-        pos = bound - far - size;
-    }
-    if near >= 0.0 && pos < near {
-        pos = near;
-    }
-    pos
-}
-
-/// Where a popup that flips goes along the vertical, given where it was
-/// put (`y`) and where it would be mirrored around its parent
-/// (`flipped`), in the overlay. Read off qml6: a popup that runs past the
-/// window, or past a margin it has, goes to the mirrored place when less
-/// of it runs past there (a tie stays), and then, when it is no taller
-/// than the room, is pushed inside; one taller than the room stays.
-fn flipped_y(
-    engine: &Engine,
-    popup: ObjectId,
-    overlay: ObjectId,
-    y: f64,
-    flipped: f64,
-    h: f64,
-) -> f64 {
-    let bound = num(engine, overlay, Item::HEIGHT.index);
-    if bound <= 0.0 {
-        return y;
-    }
-    let top = num(engine, popup, Popup::TOP_MARGIN.index).max(0.0);
-    let bottom = bound - num(engine, popup, Popup::BOTTOM_MARGIN.index).max(0.0);
-    let over = |p: f64| (top - p).max(0.0) + (p + h - bottom).max(0.0);
-    let mut y = y;
-    if over(y) <= 0.0 {
-        return y;
-    }
-    if over(flipped) < over(y) {
-        y = flipped;
-    }
-    if over(y) > 0.0 && h <= bottom - top {
-        y = y.min(bottom - h).max(top);
-    }
-    y
 }
 
 /// How large an open popup that was given no size of its own is along
@@ -126,14 +82,18 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
     );
     let to_scene = scene_transform(engine, parent);
     let centre = object(engine, popup, center_in()).filter(|t| is_item(engine, *t));
-    let mut pos = match centre {
+    let flips = state.flips.get();
+    // Where it was put, and where it would be on the other side of its
+    // parent along each axis it flips on, in the overlay.
+    let (pos, mirrored) = match centre {
         Some(t) => {
             let middle = scene_transform(engine, t)
                 * kurbo::Point::new(
                     num(engine, t, Item::WIDTH.index) / 2.0,
                     num(engine, t, Item::HEIGHT.index) / 2.0,
                 );
-            kurbo::Point::new(middle.x - w / 2.0, middle.y - h / 2.0)
+            let pos = kurbo::Point::new(middle.x - w / 2.0, middle.y - h / 2.0);
+            (pos, (None, None))
         }
         None => {
             // A binding on `x` or `y` that reads the size runs when the
@@ -157,38 +117,39 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
                 state.requested.set((x, y));
             }
             let (x, y) = state.requested.get();
-            let mut pos = to_scene * kurbo::Point::new(x, y);
-            if state.flips.get() {
-                let above = num(engine, parent, Item::HEIGHT.index) - y - h;
-                let flipped = (to_scene * kurbo::Point::new(x, above)).y;
-                pos.y = flipped_y(engine, popup, overlay, pos.y, flipped, h);
-            }
-            pos
+            let pos = to_scene * kurbo::Point::new(x, y);
+            // Mirrored around the middle of the parent, one axis at a
+            // time: the other one stays as it was put.
+            let beside = flips.horizontal.then(|| {
+                let other = num(engine, parent, Item::WIDTH.index) - x - w;
+                (to_scene * kurbo::Point::new(other, y)).x
+            });
+            let above = flips.vertical.then(|| {
+                let other = num(engine, parent, Item::HEIGHT.index) - y - h;
+                (to_scene * kurbo::Point::new(x, other)).y
+            });
+            (pos, (beside, above))
         }
     };
-    let (bw, bh) = (
-        num(engine, overlay, Item::WIDTH.index),
-        num(engine, overlay, Item::HEIGHT.index),
-    );
     let margin = |p: ljos_engine::Prop<f64>| num(engine, popup, p.index);
-    if bw > 0.0 {
-        pos.x = clamp(
-            pos.x,
-            w,
-            bw,
-            margin(Popup::LEFT_MARGIN),
-            margin(Popup::RIGHT_MARGIN),
-        );
-    }
-    if bh > 0.0 {
-        pos.y = clamp(
-            pos.y,
-            h,
-            bh,
-            margin(Popup::TOP_MARGIN),
-            margin(Popup::BOTTOM_MARGIN),
-        );
-    }
+    let pos = kurbo::Point::new(
+        placement::settle(Axis {
+            at: pos.x,
+            mirrored: mirrored.0,
+            size: w,
+            bound: num(engine, overlay, Item::WIDTH.index),
+            near: margin(Popup::LEFT_MARGIN),
+            far: margin(Popup::RIGHT_MARGIN),
+        }),
+        placement::settle(Axis {
+            at: pos.y,
+            mirrored: mirrored.1,
+            size: h,
+            bound: num(engine, overlay, Item::HEIGHT.index),
+            near: margin(Popup::TOP_MARGIN),
+            far: margin(Popup::BOTTOM_MARGIN),
+        }),
+    );
     engine.untrack(|| {
         set_computed(engine, item, Item::X.index, Value::Real(pos.x))?;
         set_computed(engine, item, Item::Y.index, Value::Real(pos.y))?;
@@ -200,30 +161,4 @@ pub(super) fn place(engine: &Engine, popup: ObjectId) -> Result<(), EngineError>
         state.placed.set(Some((local.x, local.y)));
         wrote
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::clamp;
-
-    #[test]
-    fn no_margin_leaves_the_popup_where_it_is() {
-        assert_eq!(clamp(450.0, 100.0, 400.0, -1.0, -1.0), 450.0);
-        assert_eq!(clamp(-50.0, 100.0, 400.0, -1.0, -1.0), -50.0);
-    }
-
-    #[test]
-    fn a_margin_pushes_the_popup_back_in() {
-        assert_eq!(clamp(350.0, 100.0, 400.0, 0.0, 0.0), 300.0);
-        assert_eq!(clamp(350.0, 100.0, 400.0, 20.0, 20.0), 280.0);
-        assert_eq!(clamp(-30.0, 100.0, 400.0, 5.0, 5.0), 5.0);
-        // One side only.
-        assert_eq!(clamp(350.0, 100.0, 400.0, -1.0, 0.0), 300.0);
-        assert_eq!(clamp(-30.0, 100.0, 400.0, -1.0, 0.0), -30.0);
-    }
-
-    #[test]
-    fn what_does_not_fit_keeps_to_the_start() {
-        assert_eq!(clamp(10.0, 500.0, 400.0, 0.0, 0.0), 0.0);
-    }
 }

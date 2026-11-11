@@ -1101,13 +1101,13 @@ fn wire_popup(engine: &Engine, combo: ObjectId, st: &ComboState) {
         engine.disconnect(conn);
         if engine.is_alive(old) {
             popup::when_shown(engine, old, None);
-            popup::set_flips(engine, old, false);
+            popup::set_flips(engine, old, popup::Flips::NONE);
         }
     }
     let Some(popup) = popup else {
         return;
     };
-    popup::set_flips(engine, popup, true);
+    popup::set_flips(engine, popup, popup::Flips::VERTICAL);
     popup::when_shown(
         engine,
         popup,

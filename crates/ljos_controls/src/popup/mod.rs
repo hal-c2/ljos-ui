@@ -32,6 +32,7 @@ mod item;
 mod kind;
 mod lifecycle;
 mod overlay;
+mod placement;
 mod position;
 
 use std::cell::{Cell, RefCell};
@@ -59,6 +60,7 @@ pub(crate) use lifecycle::{close, dismiss, is_going, open, visible_written};
 use lifecycle::{close_at_once, hold, settle_open, show_still};
 pub(crate) use overlay::last_pointer;
 pub use overlay::{Overlay, OverlayAttached};
+pub(crate) use placement::Flips;
 
 /// `Popup.closePolicy` flags.
 pub(crate) mod close_policy {
@@ -139,9 +141,9 @@ pub(crate) struct PopupState {
     pub placed: Cell<Option<(f64, f64)>>,
     /// The press that is down began outside the popup.
     pub pressed_outside: Cell<bool>,
-    /// It opens on the other side of its parent when that has more room,
-    /// as a combo box's popup does.
-    pub flips: Cell<bool>,
+    /// The axes along which it opens on the other side of its parent when
+    /// that has more room, as a combo box's popup and a sub-menu do.
+    pub flips: Cell<Flips>,
     /// What the control the popup belongs to does each time the popup is
     /// shown, once it has its size and its place.
     when_shown: WhenShown,
@@ -172,9 +174,9 @@ pub(crate) fn when_shown(engine: &Engine, popup: ObjectId, f: Option<Shown>) {
     }
 }
 
-/// Lets `popup` open above its parent when it does not fit below it, and
-/// below when it does not fit above (`popup/position.rs`).
-pub(crate) fn set_flips(engine: &Engine, popup: ObjectId, flips: bool) {
+/// Lets `popup` open on the other side of its parent, along `flips`, when
+/// it does not fit where it was put (`popup/placement.rs`).
+pub(crate) fn set_flips(engine: &Engine, popup: ObjectId, flips: Flips) {
     if let Some(state) = state_of(engine, popup) {
         state.flips.set(flips);
     }
