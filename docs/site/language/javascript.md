@@ -1,13 +1,27 @@
 ---
-title: JavaScript in QML
-description: Write JavaScript in bindings, functions, handlers, and imported script files, and understand how Ljós splits execution between its register VM and QuickJS.
+title: TypeScript and JavaScript
+description: Write typed TypeScript in bindings, handlers and modules, know what the checker holds it to, and understand how Ljós runs scripts in its register VM and QuickJS.
 section: language
 order: 6
 ---
 
-# JavaScript in QML
+# TypeScript and JavaScript
 
-After reading this page, you will know what JavaScript expressions and built-ins are available in QML, how imported `.js` files and `.pragma library` scripts work, how value types and QML objects behave in JavaScript, and which expressions run in the tier-1 register VM versus QuickJS.
+After reading this page, you will know what the checker holds TypeScript to, what JavaScript expressions and built-ins are available in QML, how imported `.js` files and `.pragma library` scripts work, how value types and QML objects behave in scripts, and which expressions run in the tier-1 register VM versus QuickJS.
+
+## TypeScript first
+
+In a file of Ljós's own API (one that imports `Ljos.Ui` and the other `Ljos.*` modules), handlers, functions and bindings are a strict subset of TypeScript. `ljos check`, the MCP `check` tool and hot reload check them in Rust before anything runs. Every program the checker accepts is valid TypeScript with the same meaning, so `tsc` and editors work on it as they do on any TypeScript. The checker closes the places where TypeScript lets a mistake through:
+
+- no `==` or `!=` (`ts-loose-equality`), no `var` (`ts-no-var`) and no `null`: a value that may be missing is optional (`ts-no-null`);
+- `if`, `while`, `?:` and `!` take a boolean, not a value's truthiness (`ts-condition-boolean`);
+- no `any`, written or inferred, and no casts or `!`: a decoder narrows an `unknown` value instead (`ts-no-any`, `ts-no-cast`);
+- a `switch` on a union covers every case (`ts-switch-exhaustive`), and indexing an array gives `T | undefined` (`ts-index-undefined`);
+- a value goes only where its type does: a string goes to a `color`, and a union of literals takes only its members (`ts-assign-type`).
+
+A `.ts` module imported with `import "filter.ts" as Logic` is held to the same rules, and every call the QML makes into it is checked against its types. A `.js` file a Ljós file imports is typed by a `.d.ts` file beside it. The types are erased when the file compiles, and what is left runs as the JavaScript described below.
+
+Files of existing QML (those that import `QtQuick`) keep plain JavaScript and are not held to these rules.
 
 ## Expressions, functions, and string literals
 
@@ -100,8 +114,8 @@ When serialising with `JSON.stringify`:
 
 In addition to the `Qt` global object and `qsTr`, Ljós provides standard JavaScript built-ins alongside QML-specific behaviours:
 
-- **String and Array methods**: Qt's `String.prototype.arg` (`"%1 of %2".arg(a).arg(b)`) is supported, alongside standard methods including `String.prototype.trimStart`, `trimEnd`, `replaceAll`, `at`, and `Array.prototype.flat` and `at`. Note that searching an empty string for `""` with `"".indexOf("")` returns `-1` to match Qt's JavaScript engine.
-- **`Math.hypot`**: Divides arguments by the largest magnitude and sums squares in order to match Qt's numeric output.
+- **String and Array methods**: `String.prototype.arg` fills numbered placeholders (`"%1 of %2".arg(a).arg(b)`), alongside standard methods including `String.prototype.trimStart`, `trimEnd`, `replaceAll`, `at`, and `Array.prototype.flat` and `at`. Searching an empty string for `""` with `"".indexOf("")` returns `-1`, not the `0` that ECMAScript gives.
+- **`Math.hypot`**: Divides its arguments by the largest magnitude and sums the squares in order.
 - **`Date` and pinned wall clock**: `Date.parse` accepts ISO dates, standard written dates, and `Date`'s own output formats, returning `NaN` for single numbers or out-of-range days. In tests and replays, the host can pin the wall clock so `new Date()` and `Date.now()` advance deterministically with application time.
 - **`URL`**: The `new URL(text, base)` global parses URLs and exposes `href`, `protocol`, `username`, `password`, `host`, `hostname`, `port`, `pathname`, `search`, `hash`, `origin`, and `searchParams` following the WHATWG URL standard (dropping default ports and returning `""` for missing parts).
 

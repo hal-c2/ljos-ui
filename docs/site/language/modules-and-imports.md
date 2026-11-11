@@ -34,10 +34,11 @@ Item {
 }
 ```
 
-Ljós supports three forms of `import`:
+Ljós supports four forms of `import`:
 
-- **Module imports** (`import QtQuick`, `import QtQuick.Controls`, `import QtQuick.Layouts`, `import Qt.labs.synchronizer`): bring the types and singletons of a named module into scope. Adding `as <Namespace>` qualifies those types and their enumerations under `<Namespace>` (for example, `T.Control` or `T.ScrollBar.AlwaysOff`).
+- **Module imports** (`import Ljos.Ui`, `import Ljos.Controls`, `import Ljos.Design`, or the modules existing QML uses, such as `import QtQuick`, `import QtQuick.Controls` and `import QtQuick.Layouts`): bring the types and singletons of a named module into scope. Adding `as <Namespace>` qualifies those types and their enumerations under `<Namespace>` (for example, `T.Control` or `T.ScrollBar.AlwaysOff`).
 - **Directory imports** (`import "parts"` or `import "look"`): bring all `.qml` component files (and any `pragma Singleton` files or `qmldir` declarations) in that relative directory into scope.
+- **TypeScript imports** (`import "filter.ts" as Logic`): load a `.ts` module, check it, and expose what it exports under the qualifier `Logic`. Its types are checked against every call the QML makes.
 - **JavaScript imports** (`import "rules.js" as Rules`): load a `.js` file and expose its top-level functions and variables under the qualifier `Rules`.
 
 Enumeration keys can be read from any imported type, whether or not the script is inside an instance of that type (`Text.AlignHCenter`, `Font.Bold`, `ScrollBar.AlwaysOn`, `ScrollBar.Policy.AlwaysOff`), or through the module's import namespace (`T.ScrollBar.AlwaysOff`).
@@ -103,7 +104,7 @@ Applications can expose native Rust types to QML using `#[derive(QmlObject)]`, `
 During ahead-of-time compilation, `TypeOracle` resolves types from three sources:
 
 1. Ljós's built-in type table.
-2. The optional generated Qt type table (used by `ljos check --port`).
+2. An optional table of the upstream modules' types, which `ljos check --port` compares against (see [Bringing existing QML](porting-from-qt.md)).
 3. Your application's native Rust types, read either directly from `MetaObject`s in an `EngineOracle` or from a `ljostypes.json` file.
 
 Running your application with `LJOS_TYPES=write` writes out `ljostypes.json`, which you can pass to `ljos::build::compile_dir_with_types` (or let `ljos::build::compile_dir` pick up) so that unknown properties or handlers on your native Rust types are caught as compile errors at build time. `ljos run` reads the same file to [preview a project without its Rust](../rust/native-types.md#previewing-without-your-rust).
@@ -112,5 +113,5 @@ Running your application with `LJOS_TYPES=write` writes out `ljostypes.json`, wh
 
 - [QML in Ljós](overview.md)
 - [Components and dynamic objects](components.md)
-- [JavaScript in QML](javascript.md)
-- [Porting from Qt](porting-from-qt.md)
+- [TypeScript and JavaScript](javascript.md)
+- [Bringing existing QML](porting-from-qt.md)

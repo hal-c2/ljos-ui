@@ -7,13 +7,18 @@ order: 1
 
 # What is Ljós?
 
-This page explains what Ljós is, what it gives you when you build an interface in QML and Rust, and where to go next in the documentation.
+This page explains what Ljós is, what it gives you when you build an interface with it, and where to go next in the documentation.
 
 ## Overview
 
-*Ljós* is Icelandic for "light". It is a Rust UI toolkit for malleable software: apps that people and their agents can reshape while they run. Interfaces are declarative, scripts are typed TypeScript, and every part of a running app can be observed and driven. Existing QML runs as a way in.
+*Ljós* is Icelandic for "light". It is a Rust UI toolkit for malleable software: apps that people and their agents can reshape while they run. Four things set it apart:
 
-Ljós renders through `egui`, runs scripts with `rquickjs`, and targets desktop and mobile under the MIT licence. You write the interface declaratively and keep application logic, data models and domain services in Rust. You can run a standalone `.qml` file directly from the command line with `ljos run`, bring an existing QML application across with the help of `ljos check --port`, or embed the `ljos` crate in a Rust binary and register your own native types.
+- **Malleable.** A running app takes changes to its interface and scripts and shows them live, keeping its state.
+- **TypeScript first.** Handlers, functions and bindings are typed TypeScript, checked before anything runs.
+- **Observable.** Every part of a running app can be inspected and driven, by a person in `ljos observe` or by a coding agent over MCP.
+- **Stable.** A fault stays inside the part of the interface that caused it, and an app at rest uses 0 % CPU.
+
+You write the interface declaratively in QML, script it in TypeScript, and keep application logic, data models and domain services in Rust. Ljós renders through `egui`, runs scripts with `rquickjs`, and targets desktop and mobile under the MIT licence. You can run a `.qml` file directly with `ljos run`, embed the `ljos` crate in a Rust binary and register your own native types, or start from QML you already have.
 
 ## What you get
 
@@ -25,7 +30,7 @@ When you run an application with `ljos run --watch`, Ljós watches your `.qml`, 
 
 ### Typed TypeScript scripts
 
-Scripts can be TypeScript, checked before anything runs. A QML file imports a `.ts` module as it imports a script and reaches what the module exports through its name. The types are for the checker only: they are erased, and what is left runs as a script does.
+Scripts are TypeScript, checked before anything runs. A QML file imports a `.ts` module as it imports a script and reaches what the module exports through its name. The types are for the checker only: they are erased, and what is left runs as a script does.
 
 ```ts
 // filter.ts
@@ -36,13 +41,15 @@ export function only(tag: Tag): number {
 ```
 
 ```qml
-import QtQuick
+import Ljos.Ui
 import "filter.ts" as Logic
 
 Item {
     property int shown: Logic.only("b")
 }
 ```
+
+The file imports `Ljos.Ui`, Ljós's own API. Change the call to `Logic.only("c")` and `ljos check` stops with ``error: `tag` is `"a" | "b"`; this gives it `"c"` [ts-assign-type]`` before the app runs. Handlers and bindings in a file of Ljós's API are held to the same rules. Every program the checker accepts is valid TypeScript with the same meaning, so `tsc`, editors and coding agents keep working on it.
 
 ### Observe and drive a running app
 
@@ -53,7 +60,7 @@ Every part of a running app can be inspected and driven, by a person or by a cod
 
 ### Fault isolation
 
-Erlang-style `ErrorBoundary` items isolate faults at run time, so a failing subtree can restart or show a fallback item without taking down the window.
+Erlang-style `ErrorBoundary` items isolate faults at run time, so a failing subtree can restart or show a fallback item without taking down the window. A runaway script is interrupted, and a Rust panic in a handler becomes a fault that the nearest boundary handles.
 
 ### 0 % CPU when idle
 
@@ -63,9 +70,9 @@ An application at rest runs nothing. The UI thread sleeps until input, a running
 
 Interactive controls expose their role and accessible name through AccessKit, and the same tree drives screen readers, Gherkin behaviour tests and the MCP inspector. `ljos check` and `qml_lint` audit your QML source for unnamed interactive items, pointer-only focus traps, contrast and motion rules, and untranslated strings.
 
-### Existing QML
+### Bring existing QML
 
-Existing QML runs, so an app you already have is a place to start. Ljós compiles and runs QML files that use the `QtQuick` and `QtQuick.Controls` modules, along with `QtQuick.Layouts`, `QtQuick.LocalStorage`, `QtQml.Models`, `QtQml.XmlListModel`, `Qt.labs.folderlistmodel` and `QtTest`. Expressions that only read a property path run in tier 0, arithmetic and simple expressions run in the tier-1 binding VM, and full JavaScript runs in `rquickjs`.
+QML you already have runs on Ljós, so an app you already have is a place to start. Files that import `QtQuick`, `QtQuick.Controls`, `QtQuick.Layouts`, `QtQml.Models` and the other common modules compile and run as they are written:
 
 ```qml
 import QtQuick
@@ -84,7 +91,7 @@ Rectangle {
 }
 ```
 
-The [porting guide](../language/porting-from-qt.md) covers bringing an existing application across.
+`ljos migrate` then rewrites such files in Ljós's own API. [Bringing existing QML](../language/porting-from-qt.md) covers the whole path.
 
 ### Rust native types
 
@@ -125,4 +132,4 @@ pub fn register(engine: &Engine) {
 
 - [Install Ljós](./install.md)
 - [Your first app](./first-app.md)
-- [Language overview](../language/overview.md) <!-- check: verify relative path to language overview page in the site layout -->
+- [Language overview](../language/overview.md)

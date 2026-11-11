@@ -21,7 +21,7 @@ Opens a window on a QML file. With `--watch`, every save to the project's QML, J
 ljos run [OPTIONS] <FILE> [-- <ARGS>...]
 ```
 
-Arguments placed after `--` are passed to the QML application in `Application.arguments` (with the program and entry file first, matching `qml6`). Passing `-style NAME` after `--` selects the `QtQuick.Controls` style before `QT_QUICK_CONTROLS_STYLE` and the configuration file.
+Arguments placed after `--` are passed to the QML application in `Application.arguments` (with the program and entry file first). Passing `-style NAME` after `--` selects the `QtQuick.Controls` style before `QT_QUICK_CONTROLS_STYLE` and the configuration file.
 
 ### Important options
 
@@ -61,7 +61,7 @@ ljos check [OPTIONS] <DIRS>...
 - `--summary`: Print one summary line per directory instead of per-file diagnostics.
 - `--quiet`: Print only totals and errors.
 - `--no-lint`: Skip accessibility and internationalisation lints.
-- `--port`: Report Qt Quick types and members used by the project that Ljós does not yet support, grouped by module and ordered by frequency.
+- `--port`: Report the types and members the project uses that Ljós does not yet support, grouped by module and ordered by frequency.
 - `--json`: Emit the `--port` report as JSON.
 - `--deny-missing`: Exit with status `1` if `--port` finds any unsupported or dropped APIs.
 - `--ledger <FILE>`: Path to `ledger/qtquick.toml` (auto-detected from the working directory by default).
@@ -105,7 +105,7 @@ formatted Main.qml
 
 ## `ljos test`
 
-Runs `TestCase` items in `tst_*.qml` files headlessly on a virtual clock and prints the report in the same format as Qt's `qmltestrunner`. The exit status is the number of failed tests (clamped to `254`).
+Runs `TestCase` items in `tst_*.qml` files headlessly on a virtual clock and prints the report in `qmltestrunner`'s text format. The exit status is the number of failed tests (clamped to `254`).
 
 ```sh
 ljos test [OPTIONS] [PATHS]...
@@ -177,7 +177,7 @@ ljos shaders --check .
 
 ## `ljos i18n`
 
-Extracts translatable strings (`qsTr`, `qsTranslate`, `QT_TR_NOOP` and related calls) from a QML directory tree and merges them into a Qt Linguist `.ts` catalogue file. Existing translations are kept, new strings are added as `unfinished`, and strings no longer present in the source are marked `vanished`.
+Extracts translatable strings (`qsTr`, `qsTranslate`, `QT_TR_NOOP` and related calls) from a QML directory tree and merges them into a Linguist `.ts` catalogue file. Existing translations are kept, new strings are added as `unfinished`, and strings no longer present in the source are marked `vanished`.
 
 ```sh
 ljos i18n extract --out <OUT> <DIRS>...
