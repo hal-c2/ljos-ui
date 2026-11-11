@@ -779,7 +779,7 @@ impl RichText {
     fn replace_with(&mut self, range: Range<usize>, other: &RichText, edit: bool) {
         let range = self.clamp(range);
         let b = self.block_index(range.start);
-        let cell_paragraphs = self.cell_paragraphs_spliced(range.clone(), &other.text);
+        let cell_paragraphs = self.cell_paragraphs_spliced(range.clone(), &other.text, edit);
         let removed = self.text[range.clone()].matches('\n').count();
         // Measured on Qt 6.12 (hal-c2/ljos-ui#287, #329): the paragraph left
         // keeps the format of the one the removal ends in when it starts at
@@ -810,8 +810,14 @@ impl RichText {
     }
 
     /// The format of the row `range` is in once `text` replaced it, where
-    /// that takes paragraphs out of one cell or puts some in.
-    fn cell_paragraphs_spliced(&self, range: Range<usize>, text: &str) -> Option<Arc<BlockFormat>> {
+    /// that takes paragraphs out of one cell or puts some in; `edit` as for
+    /// [`Self::replace_with`]: a cut keeps the first paragraph's format.
+    fn cell_paragraphs_spliced(
+        &self,
+        range: Range<usize>,
+        text: &str,
+        edit: bool,
+    ) -> Option<Arc<BlockFormat>> {
         let removed = &self.text[range.clone()];
         let in_cell = |t: &str| !t.contains([CELL, PARAGRAPH]);
         if !in_cell(removed) || !in_cell(text) {
@@ -826,10 +832,11 @@ impl RichText {
         }
         let (block, column, index) = self.cell_paragraph(range.start)?;
         let row = self.blocks[block].table.as_ref()?;
-        let from_start = self.text[..range.start]
-            .chars()
-            .next_back()
-            .is_none_or(|c| matches!(c, PARAGRAPH | CELL | CELL_PARAGRAPH));
+        let from_start = edit
+            && self.text[..range.start]
+                .chars()
+                .next_back()
+                .is_none_or(|c| matches!(c, PARAGRAPH | CELL | CELL_PARAGRAPH));
         let mut cells = row.cells.to_vec();
         let cell = cells.get_mut(column)?;
         *cell = cell.spliced(index, removed, added, from_start);
@@ -2040,6 +2047,29 @@ mod tests {
                 (left.text(), no_wrap(left))
             );
         }
+    }
+
+    /// A slice of a cell is cut out of it, not edited in it: from a
+    /// paragraph's start, each paragraph of the slice keeps its own format,
+    /// not the one a removal from there would leave (review of
+    /// hal-c2/ljos-ui#360).
+    #[test]
+    fn a_slice_of_a_cell_from_a_paragraph_start_keeps_its_own_formats() {
+        let nowrap = "<p style='white-space:nowrap'>";
+        let t = rich(&format!(
+            "<table><tr><td><p>x</p>{nowrap}y</p><p>z</p></td></tr></table>"
+        ));
+        assert_eq!(t.text(), "\nx\u{2029}y\u{2029}z\n");
+        let no_wrap = |t: &RichText| t.blocks().iter().map(|b| b.no_wrap).collect::<Vec<_>>();
+        let x = t.text().find('x').unwrap();
+        let y = t.text().find('y').unwrap();
+        let z = t.text().find('z').unwrap();
+        let from_x = t.slice(x..y + 1);
+        assert_eq!(from_x.text(), "x\ny");
+        assert_eq!(no_wrap(&from_x), [false, true]);
+        let from_y = t.slice(y..z + 1);
+        assert_eq!(from_y.text(), "y\nz");
+        assert_eq!(no_wrap(&from_y), [true, false]);
     }
 
     /// A slice is cut out of the document, not edited in it: its last
