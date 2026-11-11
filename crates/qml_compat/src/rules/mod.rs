@@ -30,33 +30,84 @@ mod window;
 pub(crate) use text::font;
 pub use text::font::FONT_RENAMES;
 
-use crate::{Rename, Ty};
+use qml_edit::Change;
+use qml_syntax::ast::QmlObject;
+
+use crate::{Kept, Rename, Ty};
 
 /// What Ljós makes of the Qt types one rule owns. The pass asks the rule of
 /// a type, and knows none of their names itself.
 pub(crate) trait Rule: Sync {
-    /// The Qt types, or value types (`font`), the rule owns, by name.
+    /// The Qt types, or value types (`font`), the rule owns, by name. A
+    /// type built on one of them is the rule's too.
     fn owns(&self) -> &'static [&'static str];
     /// What a member `name` of one of them is in Ljós, where the pass has
     /// only the name: read in a script, or bound by a name the rule does
-    /// not write itself.
-    fn member(&self, name: &str) -> Rename;
+    /// not write itself. `None` leaves it to the area's renames.
+    fn member(&self, _name: &str) -> Option<Rename> {
+        None
+    }
+    /// What an object of one of them is changed by, in the pass's
+    /// [`Change`]s, or why the file is kept.
+    fn object(&self, _object: &QmlObject<'_>, _file: &dyn File) -> Result<Vec<Change>, Kept> {
+        Ok(Vec::new())
+    }
+    /// The members a script may name unqualified, in a scope one of them
+    /// is in, that [`File::names_unqualified`] is asked about.
+    fn unqualified(&self) -> &'static [&'static str] {
+        &[]
+    }
+}
+
+/// What a rule may ask of the file the pass is lowering.
+pub(crate) trait File {
+    /// The file's text.
+    fn source(&self) -> &str;
+    /// Whether `name` is a file of the project beside this one.
+    fn is_beside(&self, name: &str) -> bool;
+    /// Whether an object aimed at the id `id` (`target: loader`) sets or
+    /// handles `member` there.
+    fn aimed_at(&self, id: &str, member: &str) -> bool;
+    /// Whether a script of `object`'s own, or anywhere in its scope when it
+    /// is the root of the file or of an inline component, names one of
+    /// `names` unqualified; each is one of a rule's
+    /// [`unqualified`](Rule::unqualified).
+    fn names_unqualified(&self, object: &QmlObject<'_>, names: &[&str]) -> bool;
 }
 
 /// Every rule, joined here and nowhere else; a Qt type has one.
-const RULES: &[&dyn Rule] = &[&font::FONT];
+const RULES: &[&dyn Rule] = &[&font::FONT, &loader::source::LOADER];
 
-/// The rule of what the pass knows as `on`, if one owns it.
+/// The rule of what the pass knows as `on`, if one owns it or what it is
+/// built on.
 pub(crate) fn rule_of(on: Ty) -> Option<&'static dyn Rule> {
-    let name = match on {
-        Ty::Font => "font",
-        Ty::Exact(ty) | Ty::Derived(ty) => ty.name,
+    let mut ty = match on {
+        Ty::Font => return owner("font"),
+        Ty::Exact(ty) | Ty::Derived(ty) => Some(ty),
         Ty::Plain | Ty::Unknown | Ty::Native(..) => return None,
     };
+    while let Some(at) = ty {
+        if let Some(rule) = owner(at.name) {
+            return Some(rule);
+        }
+        ty = at.prototype();
+    }
+    None
+}
+
+/// The rule that owns `name`.
+fn owner(name: &str) -> Option<&'static dyn Rule> {
     RULES
         .iter()
         .copied()
         .find(|rule| rule.owns().contains(&name))
+}
+
+/// Every name a rule asks about unqualified.
+pub(crate) fn unqualified() -> impl Iterator<Item = &'static str> {
+    RULES
+        .iter()
+        .flat_map(|rule| rule.unqualified().iter().copied())
 }
 
 /// The renames of one area.

@@ -27,14 +27,14 @@ impl Rule for FontRule {
         &["font"]
     }
 
-    fn member(&self, name: &str) -> Rename {
-        match name {
+    fn member(&self, name: &str) -> Option<Rename> {
+        Some(match name {
             // A script's value is not followed, so it cannot be made the
             // weight it means.
             "bold" => Rename::No(Font::BoldRead.into()),
             "pointSize" => Rename::No(Font::PointSize.into()),
             _ => lookup_rename(FONT_RENAMES, name).map_or(Rename::Keep, Rename::To),
-        }
+        })
     }
 }
 
@@ -120,7 +120,7 @@ fn weight(value: &QmlBindingValue<'_>) -> Result<Value, Font> {
 /// `object` the pass does not know may be a font.
 pub(crate) fn read(name: &str, on: Ty, could_be_font: impl FnOnce() -> bool) -> Option<Rename> {
     match on {
-        Ty::Font => Some(FONT.member(name)),
+        Ty::Font => FONT.member(name),
         // A row's role or a script's object may be called so too. Where an
         // area renames the name as well, `Pass::member` answers `Unknown`
         // off an unknown object too, so this adds only what it leaves.
