@@ -73,10 +73,21 @@ fn a_local_of_a_name_of_the_row_keeps_the_file() {
         "Repeater { model: zones; Text { text: { var model = 1; return model.city } } }",
     ));
     assert!(reason.contains("a local is called `model`"), "{reason}");
-    let reason = kept_for(&with_zones(
-        "Repeater { model: zones; Text { text: { var index = 1; return model.index } } }",
-    ));
-    assert!(reason.contains("a local is called `index`"), "{reason}");
+    // A loop's or a `catch`'s name is the script's too: `model.index`
+    // written as `index` there would read it.
+    for script in [
+        "{ var index = 1; return model.index }",
+        "{ for (const index of [1]) return model.index; return 0 }",
+        "{ try {} catch (index) { return model.index } return 0 }",
+    ] {
+        let reason = kept_for(&with_zones(&format!(
+            "Repeater {{ model: zones; Text {{ text: {script} }} }}"
+        )));
+        assert!(
+            reason.contains("a local is called `index`"),
+            "{script}: {reason}"
+        );
+    }
 }
 
 #[test]
