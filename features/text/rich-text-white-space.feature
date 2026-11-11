@@ -42,7 +42,7 @@ Feature: White space in rich text
         function wide() { measure(edit) }
         function again() { other.text = edit.text; show(other) }
         function againWide() { other.text = edit.text; measure(other) }
-        function bare(h) { return h.replace(/^[\s\S]*<body[^>]*>\n?/, "").replace(/<\/body>[\s\S]*$/, "").replace(/ style="(?! font-family:'monospace';")[^"]*"/g, "").split("\"").join("'").split("\n").join("~").split("\u00a0").join("_") }
+        function bare(h) { return h.replace(/^[\s\S]*<body[^>]*>\n?/, "").replace(/<\/body>[\s\S]*$/, "").replace(/ style="[^"]*?(white-space:[a-z-]+;)[^"]*"/g, " style='$1'").replace(/ style="(?! font-family:'monospace';")[^"]*"/g, "").split("\"").join("'").split("\n").join("~").split("\u00a0").join("_") }
         function written() { out = bare(edit.text) }
         function againWritten() { other.text = edit.text; out = bare(other.text) }
         function markdownWide() { measure(md) }
@@ -358,13 +358,16 @@ Feature: White space in rich text
       And the method "again" of "root" is called
       Then the property "out" of "root" is "[a#    b  c]"
 
-  Rule: HTML with the editor's mark is read as written, and wraps
+  Rule: HTML with the editor's mark is read as written
 
     The HTML a TextEdit writes starts with the mark
     `<meta name="qrichtext" content="1">`. Where it stands, anywhere in the
-    document, every space and tab of the HTML is text and no line feed is;
-    white-space is not read, and every paragraph wraps. The name must come
-    before the content, and the content must be 1.
+    document, every space and tab of the HTML is text and no line feed is,
+    whatever white-space says. The name must come before the content, and
+    the content must be 1. Qt 6.12 reads no white-space there, and every
+    paragraph wraps, a `pre` too; in Ljós white-space says whether a
+    paragraph wraps, as the editor writes it, and a `pre` that does not say
+    wraps, as Qt reads one it wrote.
 
     Scenario Outline: <case>
       When the property "html" of "root" is set to "<html>"
@@ -375,28 +378,67 @@ Feature: White space in rich text
         | case                                  | html                                                                      | text      |
         | Every space is kept                   | <meta name='qrichtext' content='1'><p>  a   b</p>                         | [  a   b] |
         | A line feed is no text                | <meta name='qrichtext' content='1'><p>a~b</p>                             | [ab]      |
-        | white-space is not read               | <meta name='qrichtext' content='1'><p style='white-space:nowrap'>a  b</p> | [a  b]    |
+        | white-space keeps no space            | <meta name='qrichtext' content='1'><p style='white-space:nowrap'>a  b</p> | [a  b]    |
         | The mark counts after the text too    | <p>a   b</p><meta name='qrichtext' content='1'>                           | [a   b]   |
         | The name must come before the content | <meta content='1' name='qrichtext'><p>a   b</p>                           | [a b]     |
         | Another content is no mark            | <meta name='qrichtext' content='2'><p>a   b</p>                           | [a b]     |
 
-    Scenario: A paragraph that does not wrap is written so that it reads back wrapping
-      When the property "html" of "root" is set to "<p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>"
+    Scenario Outline: <case>
+      When the property "html" of "root" is set to "<html>"
+      And the method "wide" of "root" is called
+      Then the property "out" of "root" is "<width>"
+
+      Examples:
+        | case                   | html                                                                                                      | width           |
+        | A pre wraps            | <meta name='qrichtext' content='1'><pre>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</pre> | within the item |
+
+      # Qt 6.12 reads no white-space in HTML with the editor's mark, so every
+      # paragraph of it wraps; Ljós reads whether a paragraph wraps, which is
+      # how its editor writes one that does not.
+      @qt-diverges
+      Examples:
+        | case                                | html                                                                                                                                 | width               |
+        | A paragraph says it does not wrap   | <meta name='qrichtext' content='1'><p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>         | wider than the item |
+        | A pre says it does not wrap         | <meta name='qrichtext' content='1'><pre style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</pre>     | wider than the item |
+        | A heading says it does not wrap     | <meta name='qrichtext' content='1'><h2 style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</h2>       | wider than the item |
+        | An item says it does not wrap       | <meta name='qrichtext' content='1'><ul><li style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</li></ul> | wider than the item |
+        | A cell's paragraph says it          | <meta name='qrichtext' content='1'><table><tr><td><p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> | wider than the item |
+
+  Rule: What a TextEdit writes reads back as it was
+
+    A paragraph that does not wrap is written with its own tag, saying
+    `white-space: pre`, in a table cell or out of one; a code block is a
+    `pre`, saying whether it wraps. A space nowrap made one that does not
+    break stays so (shown as "_"). Read again, each is what it was. The HTML
+    below is shown without its style attributes, but for a monospace font
+    and white-space.
+
+    Qt 6.12 writes a paragraph that does not wrap as a `pre`, whatever it
+    is, in an `li` that is not closed in a list, and a code block that wraps
+    as a `p`; read back, every `pre` of the editor's HTML is in a monospace
+    font and wraps.
+
+    Scenario Outline: Read back, <case> is not wrapped
+      When the property "html" of "root" is set to "<html>"
       And the method "againWide" of "root" is called
-      Then the property "out" of "root" is "within the item"
+      Then the property "out" of "root" is "wider than the item"
 
-  Rule: A paragraph that does not wrap is written as a pre
+      # Its spaces are ones that do not break, so it stays on one line.
+      Examples:
+        | case                         | html                                                                                                                       |
+        | a nowrap paragraph           | <p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                              |
+        | a nowrap paragraph of a cell | <table><tr><td><p>x</p><p style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> |
+        | a nowrap heading             | <h2 style='white-space:nowrap'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</h2>                            |
 
-    The HTML a TextEdit writes has a paragraph that does not wrap, from
-    nowrap or pre, in a table cell or out of one, as a `pre` element with
-    the paragraph's own format and no font of its own; a space nowrap made
-    one that does not break stays so (shown as "_"). A heading that does
-    not wrap is a `pre` too, and so is an item of a list, inside an `li`
-    that is not closed; every item starts a line. A paragraph that wraps,
-    pre-wrap or pre-line, is a `p`, even one a `pre` element made. Read
-    back, such a `pre` is set in a monospace font and wraps, as every
-    paragraph of a TextEdit's own HTML does. The HTML below is shown
-    without its style attributes, but for a monospace font.
+      # Qt 6.12 writes the paragraph as a pre, and reads a pre of its own HTML
+      # wrapping; Ljós writes that the paragraph does not wrap.
+      @qt-diverges
+      Examples:
+        | case                         | html                                                                                                                     |
+        | a pre paragraph              | <p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p>                               |
+        | a pre element                | <pre>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</pre>                                                   |
+        | a pre item of a list         | <ul><li style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</li></ul>                    |
+        | a pre paragraph of a cell    | <table><tr><td><p>x</p><p style='white-space:pre'>aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll</p></td></tr></table> |
 
     Scenario Outline: <case>
       When the property "html" of "root" is set to "<html>"
@@ -404,29 +446,42 @@ Feature: White space in rich text
       Then the property "out" of "root" is "<written>"
 
       Examples:
-        | case                             | html                                                                         | written                                                                                              |
-        | A nowrap paragraph               | <p style='white-space:nowrap'>x y</p>                                        | <pre>x_y</pre>                                                                                       |
-        | A pre paragraph                  | <p style='white-space:pre'>x y</p>                                           | <pre>x y</pre>                                                                                       |
-        | A pre-wrap paragraph wraps       | <p style='white-space:pre-wrap'>x y</p>                                      | <p>x y</p>                                                                                           |
-        | A pre-line paragraph wraps       | <p style='white-space:pre-line'>x y</p>                                      | <p>x y</p>                                                                                           |
-        | Between paragraphs that wrap     | <p>a</p><p style='white-space:nowrap'>x y</p><p>b</p>                        | <p>a</p>~<pre>x_y</pre>~<p>b</p>                                                                     |
-        | It keeps its alignment           | <p align='center' style='white-space:nowrap'>x y</p>                         | <pre align='center'>x_y</pre>                                                                        |
-        | Its text keeps its formats       | <p style='white-space:nowrap'><b>x</b> y</p>                                 | <pre><span>x</span>_y</pre>                                                                          |
-        | A div                            | <div style='white-space:nowrap'>x y</div>                                    | <pre>x_y</pre>                                                                                       |
-        | Text after a div's end           | <div style='white-space:nowrap'>x y</div>z                                   | <pre>x_yz</pre>                                                                                      |
-        | A heading                        | <h2 style='white-space:nowrap'>x y</h2>                                      | <pre><span>x_y</span></pre>                                                                          |
-        | An item of a list, in an open li | <ul><li>a</li><li style='white-space:nowrap'>x y</li></ul>                   | <ul>~<li>a</li>~<li><pre>x_y</pre></ul>                                                              |
-        | A pre that wraps                 | <pre style='white-space:pre-wrap'>x y</pre>                                  | <p><span style=' font-family:'monospace';'>x y</span></p>                                            |
-        | A pre element keeps its font     | <pre>x y</pre>                                                               | <pre><span style=' font-family:'monospace';'>x y</span></pre>                                        |
-        | A cell that does not wrap        | <table><tr><td style='white-space:nowrap'>x y</td></tr></table>              | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre>x_y</pre></td></tr></table>        |
-        | A paragraph of a cell            | <table><tr><td><p style='white-space:nowrap'>x</p><p>y</p></td></tr></table> | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<pre>x</pre>~<p>y</p></td></tr></table> |
+        | case                       | html                                    | written    |
+        | A pre-wrap paragraph wraps | <p style='white-space:pre-wrap'>x y</p> | <p>x y</p> |
+        | A pre-line paragraph wraps | <p style='white-space:pre-line'>x y</p> | <p>x y</p> |
 
-    Scenario Outline: Read back, <case> is monospace and wraps
+      # Qt 6.12 writes a paragraph that does not wrap as a pre, whatever it
+      # is, and a code block that wraps as a p, so read again it is another
+      # paragraph; Ljós writes each with its own tag and its white-space.
+      @qt-diverges
+      Examples:
+        | case                             | html                                                                         | written                                                                                                                        |
+        | A nowrap paragraph               | <p style='white-space:nowrap'>x y</p>                                        | <p style='white-space:pre;'>x_y</p>                                                                                            |
+        | A pre paragraph                  | <p style='white-space:pre'>x y</p>                                           | <p style='white-space:pre;'>x y</p>                                                                                            |
+        | Between paragraphs that wrap     | <p>a</p><p style='white-space:nowrap'>x y</p><p>b</p>                        | <p>a</p>~<p style='white-space:pre;'>x_y</p>~<p>b</p>                                                                          |
+        | It keeps its alignment           | <p align='center' style='white-space:nowrap'>x y</p>                         | <p align='center' style='white-space:pre;'>x_y</p>                                                                             |
+        | Its text keeps its formats       | <p style='white-space:nowrap'><b>x</b> y</p>                                 | <p style='white-space:pre;'><span>x</span>_y</p>                                                                               |
+        | A div                            | <div style='white-space:nowrap'>x y</div>                                    | <p style='white-space:pre;'>x_y</p>                                                                                            |
+        | Text after a div's end           | <div style='white-space:nowrap'>x y</div>z                                   | <p style='white-space:pre;'>x_yz</p>                                                                                           |
+        | A heading                        | <h2 style='white-space:nowrap'>x y</h2>                                      | <h2 style='white-space:pre;'><span>x_y</span></h2>                                                                             |
+        | An item of a list                | <ul><li>a</li><li style='white-space:nowrap'>x y</li></ul>                   | <ul>~<li>a</li>~<li style='white-space:pre;'>x_y</li></ul>                                                                     |
+        | A pre that wraps                 | <pre style='white-space:pre-wrap'>x y</pre>                                  | <pre style='white-space:pre-wrap;'><span style=' font-family:'monospace';'>x y</span></pre>                                    |
+        | A pre element keeps its font     | <pre>x y</pre>                                                               | <pre style='white-space:pre;'><span style=' font-family:'monospace';'>x y</span></pre>                                         |
+        | A cell that does not wrap        | <table><tr><td style='white-space:nowrap'>x y</td></tr></table>              | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style='white-space:pre;'>x_y</p></td></tr></table>             |
+        | A paragraph of a cell            | <table><tr><td><p style='white-space:nowrap'>x</p><p>y</p></td></tr></table> | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style='white-space:pre;'>x</p>~<p>y</p></td></tr></table>      |
+
+    Scenario Outline: Read back, <case> is written as it was
       When the property "html" of "root" is set to "<html>"
       And the method "againWritten" of "root" is called
       Then the property "out" of "root" is "<written>"
 
+      # Qt 6.12 reads a pre of its own HTML in a monospace font, wrapping, and
+      # writes it as a p; Ljós reads back what it wrote.
+      @qt-diverges
       Examples:
-        | case               | html                                  | written                                                   |
-        | a nowrap paragraph | <p style='white-space:nowrap'>x y</p> | <p><span style=' font-family:'monospace';'>x_y</span></p> |
-        | a pre element      | <pre>x y</pre>                        | <p><span style=' font-family:'monospace';'>x y</span></p> |
+        | case                 | html                                                       | written                                                                                    |
+        | a nowrap paragraph   | <p style='white-space:nowrap'>x y</p>                      | <p style='white-space:pre;'>x_y</p>                                                        |
+        | a pre element        | <pre>x y</pre>                                             | <pre style='white-space:pre;'><span style=' font-family:'monospace';'>x y</span></pre>     |
+        | a pre that wraps     | <pre style='white-space:pre-wrap'>x y</pre>                | <pre style='white-space:pre-wrap;'><span style=' font-family:'monospace';'>x y</span></pre> |
+        | a nowrap heading     | <h2 style='white-space:nowrap'>x y</h2>                    | <h2 style='white-space:pre;'><span>x_y</span></h2>                                         |
+        | a nowrap item        | <ul><li>a</li><li style='white-space:nowrap'>x y</li></ul> | <ul>~<li>a</li>~<li style='white-space:pre;'>x_y</li></ul>                                 |
