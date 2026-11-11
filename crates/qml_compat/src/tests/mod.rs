@@ -148,12 +148,13 @@ fn var_is_unknown() {
     assert!(text.contains("property unknown old: 1"));
 }
 
-/// `Behavior on color` would be `on fill`, once `Ljos.Ui` has `Behavior`.
+/// A value source Ljos.Ui does not have keeps the file, though what it is
+/// on is a member Ljós renames.
 #[test]
 fn a_type_outside_the_slice_keeps_the_file_whatever_it_is_on() {
     assert!(
-        kept_for("import QtQuick\nRectangle {\n    Behavior on color { }\n}\n")
-            .contains("`Behavior` is not in Ljos.Ui yet")
+        kept_for("import QtQuick\nRectangle {\n    OpacityAnimator on color { }\n}\n")
+            .contains("`OpacityAnimator` is not in Ljos.Ui yet")
     );
 }
 

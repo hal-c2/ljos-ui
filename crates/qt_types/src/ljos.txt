@@ -831,11 +831,15 @@ module Ljos.Models
 
 module Ljos.Ui
 	Accessible QtQuick.Accessible
+	Animation QtQuick.Animation
+	Behavior QtQuick.Behavior
+	ColorAnimation QtQuick.ColorAnimation
 	ConicalGradient QtQuick.Shapes.ConicalGradient
 	DoubleValidator QtQuick.DoubleValidator
 	Drag Ljos.Ui.Drag
 	DragSource Ljos.Ui.DragSource
 	DropArea QtQuick.DropArea
+	Easing QtQuick.Easing
 	Flickable QtQuick.Flickable
 	Font QtQuick.Font
 	FontMetrics QtQuick.FontMetrics
@@ -850,6 +854,8 @@ module Ljos.Ui
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
 	Loader Ljos.Ui.Loader
+	NumberAnimation QtQuick.NumberAnimation
+	ParallelAnimation QtQuick.ParallelAnimation
 	Path QtQuick.Path
 	PathAngleArc QtQuick.PathAngleArc
 	PathArc QtQuick.PathArc
@@ -864,25 +870,34 @@ module Ljos.Ui
 	PathQuad QtQuick.PathQuad
 	PathRectangle QtQuick.PathRectangle
 	PathSvg QtQuick.PathSvg
+	PauseAnimation QtQuick.PauseAnimation
 	Pointer Ljos.Ui.Pointer
 	PointerArea Ljos.Ui.PointerArea
 	PointerDevice QtQuick.PointerDevice
+	PropertyAction QtQuick.PropertyAction
+	PropertyAnimation QtQuick.PropertyAnimation
 	PropertyChanges QtQuick.PropertyChanges
 	RadialGradient QtQuick.Shapes.RadialGradient
 	Rectangle Ljos.Ui.Rectangle
 	RegularExpressionValidator QtQuick.RegularExpressionValidator
 	Repeater QtQuick.Repeater
+	RotationAnimation QtQuick.RotationAnimation
 	Screen QtQuick.Screen
+	ScriptAction QtQuick.ScriptAction
+	SequentialAnimation QtQuick.SequentialAnimation
 	Shape QtQuick.Shapes.Shape
 	ShapeGradient QtQuick.Shapes.ShapeGradient
 	ShapePath QtQuick.Shapes.ShapePath
 	Shortcut QtQuick.Shortcut
+	SmoothedAnimation QtQuick.SmoothedAnimation
+	SpringAnimation QtQuick.SpringAnimation
 	State QtQuick.State
 	Tap Ljos.Ui.Tap
 	Text Ljos.Ui.Text
 	TextEdit QtQuick.TextEdit
 	TextInput QtQuick.TextInput
 	TextMetrics QtQuick.TextMetrics
+	Transition QtQuick.Transition
 	Wheel Ljos.Ui.Wheel
 	Window QtQuick.Window
 	type Ljos.Ui.Drag Drag

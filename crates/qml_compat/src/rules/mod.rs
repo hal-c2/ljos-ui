@@ -21,7 +21,7 @@ mod loader;
 mod models;
 mod natives;
 mod shapes;
-mod states;
+pub(crate) mod states;
 mod text;
 mod tools;
 mod types;
@@ -171,6 +171,14 @@ pub(crate) trait File {
     /// Whether a script of the file reads `name` unqualified, or a
     /// binding's name starts with it.
     fn is_read(&self, name: &str) -> bool;
+    /// What an animation here moves when it says no target: the object of
+    /// a `Behavior` or value source, or what a state changes.
+    fn animating(&self) -> states::animation::Animating;
+    /// What a member `name` of an object the pass knows as `on` is in Ljós.
+    fn member_of(&self, name: &str, on: Ty) -> Rename;
+    /// What the file's states change `name` of: the objects, as the pass
+    /// knows them, a `PropertyChanges` sets it on.
+    fn changed(&self, name: &str) -> Vec<Ty>;
 }
 
 /// Every rule, joined here and nowhere else; a Qt type is owned by one.
@@ -180,6 +188,7 @@ const RULES: &[&dyn Rule] = &[
     &arrange::ARRANGE,
     &gesture::GESTURE,
     &states::changes::CHANGES,
+    &states::animation::ANIMATION,
     &core::connections::CONNECTIONS,
 ];
 

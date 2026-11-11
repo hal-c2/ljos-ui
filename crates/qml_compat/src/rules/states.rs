@@ -1,5 +1,6 @@
 //! Rules of states, transitions and animations.
 
+pub(crate) mod animation;
 pub(crate) mod changes;
 
 use super::Area;

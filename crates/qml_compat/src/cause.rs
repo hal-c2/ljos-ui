@@ -148,6 +148,7 @@ pub enum Cause {
     },
     Font(Font),
     Loader(Loader),
+    Animated(Animated),
     Row(Row),
     Layout(Layout),
     /// A file lowered alone, grouped with `with`, which is kept.
@@ -219,6 +220,22 @@ pub enum Loader {
     SourceRead,
     /// `sourceComponent` is read or heard.
     ComponentRead,
+}
+
+/// Why an animation's `property` or `properties` keeps a file: the names
+/// it holds as strings are members (docs/DIALECT.md R7), renamed as the
+/// objects it animates rename them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Animated {
+    /// `property` or `properties` (`binding`) is not a string written out.
+    Made { binding: String },
+    /// `name` is a member Ljós renames, and what the animation moves is
+    /// not known.
+    Unknown { name: String },
+    /// `name` is `new` on some of what the animation moves and keeps its
+    /// name on others.
+    Split { name: String, new: String },
 }
 
 /// Why what a delegate reads of its model's row keeps a file.
@@ -486,6 +503,7 @@ impl fmt::Display for Cause {
             }
             Cause::Font(font) => font.fmt(f),
             Cause::Loader(loader) => loader.fmt(f),
+            Cause::Animated(animated) => animated.fmt(f),
             Cause::Row(row) => row.fmt(f),
             Cause::Layout(layout) => layout.fmt(f),
             Cause::Group { with, cause } => {
@@ -790,6 +808,31 @@ impl fmt::Display for Differs {
 impl From<Font> for Cause {
     fn from(font: Font) -> Self {
         Cause::Font(font)
+    }
+}
+
+impl fmt::Display for Animated {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Animated::Made { binding } => write!(
+                f,
+                "an animation's `{binding}` is made as it runs, so the members it names are not known"
+            ),
+            Animated::Unknown { name } => write!(
+                f,
+                "an animation's \"{name}\" names a member Ljós renames, on objects whose type is not known"
+            ),
+            Animated::Split { name, new } => write!(
+                f,
+                "an animation's \"{name}\" is `{new}` on some of what it moves and `{name}` on the rest"
+            ),
+        }
+    }
+}
+
+impl From<Animated> for Cause {
+    fn from(animated: Animated) -> Self {
+        Cause::Animated(animated)
     }
 }
 
