@@ -17,22 +17,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos_ir::CompiledFile;
-use ljos_js::{HostError, HostFn, JsRef, JsValue};
+use ljos_js::{HostError, HostFn, JsValue};
 
-use super::{Initial, Instance, Template};
+use super::{Instance, Template};
 use crate::WriteKind;
 use crate::atom::Atom;
-use crate::engine::{Engine, Free};
+use crate::engine::Engine;
 use crate::error::EngineError;
-use crate::ids::{ContextId, ObjectId, PropIndex};
-use crate::introspect::SourcePlace;
+use crate::ids::{ContextId, ObjectId};
 use crate::js::{JsState, obj_to_u64, u64_to_obj};
 use crate::loader::{LoadedFile, join_url};
-use crate::meta::{MetaRef, PropertyFlags};
+use crate::meta::MetaRef;
 use crate::object::QmlType;
 use crate::qtqml::Component;
 use crate::types::{TypeTag, Url};
-use crate::value::{Color, Value};
+use crate::value::Value;
 
 /// The function of a compiled module the runtime calls with the module's
 /// address, once, before any other. The compiler writes it.
@@ -73,36 +72,6 @@ struct Dynamic {
     texts: Cell<u64>,
     /// While a text is made: the properties it names that no type has.
     refused: RefCell<Option<Vec<String>>>,
-    /// The object `createObject` is making is not to be given back
-    /// ([`Engine::withholding`]).
-    withheld: Cell<bool>,
-}
-
-/// Where the name of an initial property leads.
-struct Reached {
-    obj: ObjectId,
-    prop: PropIndex,
-    /// The member of the value `prop` holds (`pixelSize` of `font`).
-    member: Option<String>,
-    /// `prop` is of what a type attaches (`Layout.fillWidth`).
-    attached: bool,
-}
-
-/// Why the name of an initial property leads nowhere.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Missing {
-    /// A plain name the object has no property of.
-    Property,
-    /// A path whose start is nothing with members: no property, a property
-    /// of a type without (`count.x` of an int, a `var`), an object, or no
-    /// attaching type.
-    Start,
-    /// A path to a group or an attached object that has no such member
-    /// (`border.nosuch`, `Layout.nosuch`).
-    Member,
-    /// A path through properties that hold objects to a name the last
-    /// object does not have (`q.zz`, `q.r.zz`).
-    ObjectMember,
 }
 
 /// The component instance whose script is running: its context, and the
@@ -118,87 +87,6 @@ fn object(e: &Engine, a: Option<&JsValue>) -> Option<ObjectId> {
     match a {
         Some(JsValue::Object(o)) => Some(u64_to_obj(*o)).filter(|o| e.is_alive(*o)),
         _ => None,
-    }
-}
-
-/// What Qt makes of `v` as the initial value of a property of type `ty`,
-/// or `None` when it takes nothing. `createObject` converts as a value
-/// from outside QML is: a text "0" is no bool, a number is rounded to an
-/// int, and what is no colour an invalid one. `incubateObject` converts as
-/// a script does, but a text that is no number is not 0 for an int. A list of numbers is the text of those character codes
-/// (Qt 6.11.2, by running qml6).
-fn initial_value(ty: &TypeTag, v: &Value, created: bool) -> Option<Value> {
-    let number = |s: &Atom| s.trim().parse::<f64>().ok().filter(|n| n.is_finite());
-    let plain = || Some(v.clone());
-    match (ty, v) {
-        (TypeTag::Var | TypeTag::Data | TypeTag::Copied, _) => plain(),
-        (_, Value::Undefined) => None,
-        (TypeTag::Bool, Value::String(s)) if created => Some(Value::Bool(
-            !(s.is_empty() || &**s == "0" || s.eq_ignore_ascii_case("false")),
-        )),
-        (TypeTag::Bool, Value::Real(n)) if created => Some(Value::Bool(n.round() != 0.0)),
-        (TypeTag::Bool, Value::Null | Value::List(_) | Value::Map(_) | Value::Js(_)) if created => {
-            None
-        }
-        (TypeTag::Int, Value::String(s)) if created => number(s).map(|n| Value::Real(n.round())),
-        (TypeTag::Int, Value::Real(n)) if created => Some(*n)
-            .filter(|n| !n.is_nan())
-            .map(|n| Value::Real(n.round())),
-        (
-            TypeTag::Real,
-            Value::Null | Value::String(_) | Value::List(_) | Value::Map(_) | Value::Js(_),
-        ) if !created => Some(Value::Real(v.to_number())),
-        (TypeTag::Int | TypeTag::Real, Value::String(s)) => number(s).map(|_| v.clone()),
-        (TypeTag::Int | TypeTag::Real, v) => matches!(
-            v,
-            Value::Bool(_) | Value::Int(_) | Value::Real(_) | Value::Enum(_)
-        )
-        .then(|| v.clone()),
-        (TypeTag::String, Value::List(items)) => Some(Value::String(char_codes(items).into())),
-        (TypeTag::Color, Value::List(_)) if created => None,
-        (TypeTag::Color, Value::String(_) | Value::Color(_)) => plain(),
-        (TypeTag::Color, _) => Some(Value::Color(Color::INVALID)),
-        (TypeTag::Url, v) => matches!(v, Value::String(_) | Value::Url(_)).then(|| v.clone()),
-        (TypeTag::Object(_), v) => matches!(v, Value::Object(_) | Value::Null).then(|| v.clone()),
-        _ => plain(),
-    }
-}
-
-/// A list as Qt makes it a text: a character for each item, a text's first
-/// and the code a number gives.
-fn char_codes(items: &[Value]) -> String {
-    let units: Vec<u16> = items
-        .iter()
-        .map(|item| match item {
-            Value::String(s) => s.encode_utf16().next().unwrap_or(0),
-            // ToUint16: what is no number is 0, the rest is cut to its whole part and wraps.
-            item => {
-                let n = item.to_number();
-                if n.is_finite() {
-                    n.trunc().rem_euclid(65536.0) as u16
-                } else {
-                    0
-                }
-            }
-        })
-        .collect();
-    String::from_utf16_lossy(&units)
-}
-
-/// Where what the initial properties could not set is told.
-#[derive(Clone, Copy)]
-enum At<'a> {
-    /// The place of the call, `file:line`.
-    Call(&'a SourcePlace),
-    File(&'a str),
-}
-
-impl std::fmt::Display for At<'_> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            At::Call(p) => write!(f, "{}:{}", p.file, p.line),
-            At::File(file) => f.write_str(file),
-        }
     }
 }
 
@@ -261,179 +149,6 @@ impl Engine {
         CallingGuard { js: Some(js), prev }
     }
 
-    /// Runs `make`, the making of an object by `createObject`, and says
-    /// whether its initial properties withhold the object. Qt 6.12 (qml6)
-    /// completes an object it could not set a value on, or given a path
-    /// whose start has no members, then destroys it and gives back none.
-    /// What is made while `make` runs has its own say.
-    pub(crate) fn withholding<T>(&self, make: impl FnOnce() -> T) -> (T, bool) {
-        let state = self.extension::<Dynamic>();
-        let prev = state.withheld.replace(false);
-        let made = make();
-        (made, state.withheld.replace(prev))
-    }
-
-    /// The initial properties of `createObject` and `incubateObject`. What
-    /// cannot be set is a warning in Qt's words and the others are still
-    /// set; a value made with `Qt.binding` is a binding, except on a member
-    /// of a value when `createObject` sets it: that is given the value it
-    /// gives now. `createObject` passes over in silence a name that leads
-    /// nowhere and a member a value, group or attached object does not
-    /// have, as Qt 6.12 does; `incubateObject` tells them. Both tell, at
-    /// the place of the call, a name an object on the path does not have.
-    /// `url` is the component's.
-    pub(crate) fn initial_props(
-        &self,
-        url: &Atom,
-        root: ObjectId,
-        props: &[(String, Value)],
-        how: &Initial,
-    ) {
-        // Where `incubateObject` was called: it says what it could not set
-        // as the call's error, where `createObject` speaks for the file.
-        // A path that leads nowhere is told by the caller's file alone.
-        // Both are only written out when something is told.
-        let (at, caller) = match how {
-            Initial::Incubated(Some(p)) => (Some(At::Call(p)), At::File(&p.file)),
-            Initial::Incubated(None) => (Some(At::File(url)), At::File(url)),
-            _ => (None, At::File(url)),
-        };
-        let withhold = || self.extension::<Dynamic>().withheld.set(true);
-        for (name, v) in props {
-            let Reached {
-                obj,
-                prop: p,
-                member,
-                attached,
-            } = match self.initial_target(root, name) {
-                Ok(reached) => reached,
-                Err(missing) => {
-                    match (&at, missing) {
-                        (_, Missing::ObjectMember) => {
-                            let leaf = name.rsplit('.').next().unwrap_or(name);
-                            // createObject is still in its call: the place
-                            // is that of the script running now (Qt 6.11
-                            // and 6.12 both tell it, and 6.12 also gives
-                            // back no object), or, in a reload, the one
-                            // its call had.
-                            let given = match how {
-                                Initial::Created(Some(p)) => Some(At::Call(p)),
-                                _ => at,
-                            };
-                            let here = given.is_none().then(|| self.js_origin()).flatten();
-                            let at = given
-                                .or(here.as_ref().map(At::Call))
-                                .unwrap_or(At::File(url));
-                            self.warn(format!(
-                                "{at}: Error: Cannot assign to non-existent property \"{leaf}\""
-                            ));
-                            if matches!(how, Initial::Created(_)) {
-                                withhold();
-                            }
-                        }
-                        (Some(at), Missing::Property) => self.warn(format!(
-                            "{at}: Error: Cannot assign to non-existent property \"{name}\""
-                        )),
-                        (Some(_), _) => {
-                            self.warn(format!("{caller}: Cannot resolve property \"{name}\"."));
-                        }
-                        (None, Missing::Start) => withhold(),
-                        (None, _) => {}
-                    }
-                    continue;
-                }
-            };
-            let (ty, readonly) = self
-                .meta_of(obj)
-                .and_then(|m| m.property(p).map(|i| (i.ty.clone(), i.is_readonly())))
-                .unzip();
-            // A member a value does not have, as a member a group does not.
-            if at.is_none()
-                && let (Some(member), Some(ty)) = (&member, &ty)
-                && Value::Undefined.with_member(ty, member, v).is_none()
-            {
-                continue;
-            }
-            // createObject sets a read-only property; incubateObject
-            // assigns it, as a script would.
-            if let (Some(at), None, Some(true)) = (at, &member, readonly) {
-                self.warn(format!(
-                    "{at}: TypeError: Cannot assign to read-only property \"{name}\""
-                ));
-                continue;
-            }
-            let set = match &member {
-                Some(member) => self.initial_member(obj, p, member, v, at.is_some()),
-                None => {
-                    let given = match &ty {
-                        Some(ty) => initial_value(ty, v, at.is_none()),
-                        None => Some(v.clone()),
-                    };
-                    match (self.initial_binding(obj, p, v), given) {
-                        (Some(bound), _) => bound.is_ok(),
-                        (None, Some(v)) => self
-                            .write_internal(obj, p, v, WriteKind::Imperative)
-                            .is_ok(),
-                        // createObject has taken the binding away before it
-                        // finds it cannot convert: the type's default is left.
-                        (None, None) => {
-                            if at.is_none() && self.is_bound(obj, p) {
-                                let _ = self.reset_to_default(obj, p);
-                            }
-                            false
-                        }
-                    }
-                }
-            };
-            if set {
-                continue;
-            }
-            match (at, &member, &ty) {
-                (Some(at), None, Some(ty)) => self.warn(format!(
-                    "{at}: Error: Cannot assign {} to {}",
-                    self.assigned_type(v),
-                    self.qt_type(ty)
-                )),
-                (Some(_), ..) => self.warn(format!("{url}: Could not set initial property {name}")),
-                // What an attached object cannot take keeps nothing back.
-                (None, ..) if attached => {}
-                (None, ..) => {
-                    self.warn(format!("{url}: Could not set initial property {name}"));
-                    withhold();
-                }
-            }
-        }
-    }
-
-    /// The C++ type Qt's engine names a value by when it cannot assign it.
-    fn assigned_type(&self, v: &Value) -> &'static str {
-        match v {
-            Value::Undefined => "[undefined]",
-            Value::Null => "std::nullptr_t",
-            Value::Bool(_) => "bool",
-            Value::Int(_) | Value::Enum(_) => "int",
-            // A script's number is an int while it is a whole one.
-            Value::Real(n) if n.fract() == 0.0 && n.abs() <= f64::from(i32::MAX) => "int",
-            Value::Real(_) => "double",
-            Value::String(_) => "QString",
-            Value::Color(_) => "QColor",
-            Value::Point(_) => "QPointF",
-            Value::IntPoint(_) => "QPoint",
-            Value::Size(_) => "QSizeF",
-            Value::Rect(_) => "QRectF",
-            Value::Font(_) => "QFont",
-            Value::Vector2d(_) => "QVector2D",
-            Value::Vector3d(_) => "QVector3D",
-            Value::Vector4d(_) => "QVector4D",
-            Value::Quaternion(_) => "QQuaternion",
-            Value::Url(_) => "QUrl",
-            Value::Object(_) => "QObject*",
-            Value::Js(_) if self.is_callable(v) => "JavaScript function",
-            Value::List(_) | Value::Map(_) | Value::Js(_) => "QJSValue",
-            Value::Custom(c) => c.ty().name(),
-        }
-    }
-
     /// The C++ type Qt's engine names a property's type by: an object
     /// type is a pointer to its class, a list of values a sequence.
     pub(crate) fn qt_type(&self, ty: &TypeTag) -> String {
@@ -480,114 +195,6 @@ impl Engine {
             .map_or_else(|| name.to_string(), |meta| self.printed_class(&meta))
     }
 
-    /// Where the name of an initial property leads, as it would in the
-    /// declaration: a property of the new object, of a group or an object on
-    /// the way (`border.width`), of what a type attaches to it
-    /// (`Accessible.name`), or a member of a value (`font.pixelSize`), whose
-    /// name is then given too.
-    fn initial_target(&self, root: ObjectId, name: &str) -> Result<Reached, Missing> {
-        let reached = |obj, prop, member, attached| Reached {
-            obj,
-            prop,
-            member,
-            attached,
-        };
-        if let Some(p) = self.find_property(root, name) {
-            return Ok(reached(root, p, None, false));
-        }
-        let mut path: Vec<String> = name.split('.').map(str::to_owned).collect();
-        if path.len() < 2 {
-            return Err(Missing::Property);
-        }
-        let mut obj = root;
-        let attached = path[0].starts_with(|c: char| c.is_ascii_uppercase());
-        if attached {
-            // The component's imports are not at hand here; the type is
-            // looked for in every module, as a script's `Qt` does.
-            obj = self
-                .attached_by_name(root, "", &path[0])
-                .ok_or(Missing::Start)?;
-            path.remove(0);
-        }
-        let (leaf, through) = path.split_last().ok_or(Missing::Start)?;
-        if !through.is_empty()
-            && let Some((t, _)) = self.value_target(obj, through)
-        {
-            return Ok(reached(t.obj, t.prop, Some(leaf.clone()), attached));
-        }
-        match self.member_target(obj, through, leaf) {
-            Ok(t) => Ok(reached(t.obj, t.prop, None, attached)),
-            Err(_) if attached || self.is_group(obj, &through[0]) => Err(Missing::Member),
-            Err(_) if self.reaches_object(obj, through) => Err(Missing::ObjectMember),
-            Err(_) => Err(Missing::Start),
-        }
-    }
-
-    /// Whether each name of `through`, from `obj`, holds an object.
-    fn reaches_object(&self, obj: ObjectId, through: &[String]) -> bool {
-        through
-            .iter()
-            .try_fold(obj, |cur, seg| {
-                self.untrack(|| self.read_by_name(cur, seg)).as_object()
-            })
-            .is_some()
-    }
-
-    /// Whether `name` of `obj` is a group (`border` of a `Rectangle`).
-    fn is_group(&self, obj: ObjectId, name: &str) -> bool {
-        self.find_property(obj, name)
-            .zip(self.meta_of(obj))
-            .and_then(|(p, mm)| {
-                mm.property(p)
-                    .map(|i| i.flags.contains(PropertyFlags::GROUP))
-            })
-            .unwrap_or(false)
-    }
-
-    /// Sets the member `member` of the value `obj`'s `prop` holds, or binds
-    /// it when `v` is what `Qt.binding` gave and `follow`. Another script
-    /// object is not a value of a member.
-    fn initial_member(
-        &self,
-        obj: ObjectId,
-        prop: PropIndex,
-        member: &str,
-        v: &Value,
-        follow: bool,
-    ) -> bool {
-        let v = match self.binding_function(obj, v) {
-            Some(f) if follow => {
-                let to = self.redirect(obj, prop);
-                return self
-                    .bind_member(
-                        (to.0, to.1, Atom::from(member)),
-                        Box::new(f),
-                        false,
-                        Free::Never,
-                    )
-                    .is_ok();
-            }
-            Some(mut f) => match f(self) {
-                Some(v) => v,
-                None => return false,
-            },
-            None if matches!(v, Value::Js(_)) => return false,
-            None => v.clone(),
-        };
-        let v = &self.plain(&v);
-        let Some(ty) = self
-            .meta_of(obj)
-            .and_then(|m| m.property(prop).map(|p| p.ty.clone()))
-        else {
-            return false;
-        };
-        let whole = self.untrack(|| self.read(obj, prop));
-        whole.with_member(&ty, member, v).is_some_and(|whole| {
-            self.write_internal(obj, prop, whole, WriteKind::Imperative)
-                .is_ok()
-        })
-    }
-
     /// An object declaration names a property its type does not have.
     ///
     /// Qt refuses the whole document. A compiled file is made without the
@@ -612,60 +219,6 @@ impl Engine {
             Some(first) => Err(EngineError::Load(first.clone())),
             None => Ok(()),
         }
-    }
-
-    /// Binds `prop` when `v` is what `Qt.binding(f)` gave; `None` for any
-    /// other value.
-    pub(crate) fn initial_binding(
-        &self,
-        obj: ObjectId,
-        prop: PropIndex,
-        v: &Value,
-    ) -> Option<Result<(), EngineError>> {
-        let f = self.qt_binding(v)?;
-        let (target, target_prop) = self.redirect(obj, prop);
-        let hint = self
-            .meta_of(target)
-            .and_then(|m| m.property(target_prop).map(|i| i.ty.clone()))
-            .unwrap_or(TypeTag::Var);
-        let this = JsValue::Object(obj_to_u64(target));
-        Some(self.bind_fallible_checked(target, target_prop, move |e| {
-            e.run_js("Qt.binding", |s| {
-                let out = s.call_ref(&f, &this, &[])?;
-                Ok(e.js_to_value(s, out, &hint))
-            })
-        }))
-    }
-
-    /// The function `Qt.binding(f)` was given, when `v` is what it gave.
-    fn qt_binding(&self, v: &Value) -> Option<JsRef> {
-        let Value::Js(h) = v else {
-            return None;
-        };
-        let r = h.0.clone();
-        self.run_js("Qt.binding", |s| {
-            Ok(match s.get_field(&r, "__ljosBinding")? {
-                JsValue::Handle(f) if s.is_function(&f) => Some(f),
-                _ => None,
-            })
-        })?
-    }
-
-    /// What computes a member's value when `v` is what `Qt.binding(f)`
-    /// gave: `f`, called on `this` as a binding of a property of it is.
-    fn binding_function(
-        &self,
-        this: ObjectId,
-        v: &Value,
-    ) -> Option<impl FnMut(&Engine) -> Option<Value> + 'static> {
-        let f = self.qt_binding(v)?;
-        let this = JsValue::Object(obj_to_u64(this));
-        Some(move |e: &Engine| {
-            e.run_js("Qt.binding", |s| {
-                let out = s.call_ref(&f, &this, &[])?;
-                Ok(e.js_to_value(s, out, &TypeTag::Var))
-            })
-        })
     }
 
     /// `Qt.createComponent(url)` from a script of the file at `base`: the

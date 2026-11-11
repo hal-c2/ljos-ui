@@ -27,9 +27,11 @@ use std::rc::Rc;
 
 use ljos_runtime::{Lane, ProcId};
 
+use crate::atom::Atom;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::{ContextId, ObjectId, PropIndex};
+use crate::incubator::initial::Mode;
 use crate::incubator::{CreationHandle, CreationJob, SharedCreation};
 use crate::log::LogLevel;
 use crate::meta::{MetaObject, MetaRef, PropertyFlags};
@@ -1125,11 +1127,14 @@ impl Engine {
                     e.set_context_object(ctx, Some(row));
                 }
             }
-            for (p, name) in required {
-                if let Some((_, v)) = values.iter().find(|(n, _)| *n == name) {
-                    let _ = e.write_internal(root, p, v.clone(), WriteKind::Initial);
-                }
-            }
+            let given: Vec<(String, Value)> = required
+                .into_iter()
+                .filter_map(|(_, name)| {
+                    let (_, v) = values.iter().find(|(n, _)| *n == name)?;
+                    Some((name, v.clone()))
+                })
+                .collect();
+            let _ = e.apply_initial(&Atom::default(), root, &given, Mode::Required);
             allocated(e, root);
         })
     }

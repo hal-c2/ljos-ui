@@ -171,7 +171,8 @@ impl std::fmt::Debug for Component {
 impl Component {
     /// `createObject(parent, properties)`: `null` and a warning on failure,
     /// as in Qt. An object its initial properties withhold
-    /// ([`Engine::withholding`]) is `null` too.
+    /// ([`Verdict::Withhold`](crate::incubator::initial::Verdict)) is
+    /// `null` too.
     #[qml(invokable, name = "createObject")]
     fn create_object(cx: &Cx, parent: Value, props: Value) -> Value {
         let parent = parent.as_object();
@@ -181,20 +182,19 @@ impl Component {
             return Value::Null;
         };
         let props = cx.engine.js_object_entries(&props);
-        let (made, withheld) = cx.engine.withholding(|| {
+        let made =
             cx.engine
-                .create_for_script(cx.this, template, parent, props, Initial::Created(None))
-        });
+                .create_for_script(cx.this, template, parent, props, Initial::Created(None));
         match made {
             // Complete, it goes again before the script holds it (Qt 6.12).
             // It was made all the same, so the component is Ready again,
             // as in 6.11, which gives the object back.
-            Ok(o) if withheld => {
+            Ok((o, settled)) if settled.withheld => {
                 cx.engine.component_made(cx.this, None);
                 cx.engine.destroy_now(o);
                 Value::Null
             }
-            Ok(o) => {
+            Ok((o, _)) => {
                 cx.engine.component_made(cx.this, None);
                 Value::Object(o)
             }
@@ -1299,7 +1299,10 @@ impl Engine {
         how: Initial,
     ) -> Result<ObjectId, EngineError> {
         let template = self.component_template(component)?;
-        self.as_host_root(|| self.create_from_template_for_script(&template, parent, props, how))
+        self.as_host_root(|| {
+            self.create_from_template_for_script(&template, parent, props, how)
+                .map(|(obj, _)| obj)
+        })
     }
 
     /// Sets `props` on `obj`, which exists already, as `how` says the
@@ -1312,19 +1315,8 @@ impl Engine {
         props: &[(String, Value)],
         how: &Initial,
     ) -> Result<(), EngineError> {
-        match how {
-            Initial::Native => {
-                for (name, v) in props {
-                    self.write_by_name(obj, name, v.clone())?;
-                }
-                Ok(())
-            }
-            how => {
-                let url = self.document_url(obj).unwrap_or_default();
-                self.initial_props(&url, obj, props, how);
-                Ok(())
-            }
-        }
+        let url = self.document_url(obj).unwrap_or_default();
+        self.apply_initial(&url, obj, props, how.into()).map(|_| ())
     }
 
     /// What a `createObject` of `component` left it in: Error with
