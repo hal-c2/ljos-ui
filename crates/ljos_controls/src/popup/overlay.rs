@@ -334,17 +334,16 @@ fn make_shade(
             object(engine, att, prop)
         });
     let drawer = super::kind_of(engine, popup).is_drawer();
-    // A shade starts clear and is then made opaque, so that a style that
-    // animates its opacity fades it in. A drawer's follows the drawer.
-    let clear = || {
-        if drawer {
-            Vec::new()
-        } else {
-            vec![("opacity".to_owned(), Value::Real(0.0))]
-        }
-    };
     let shade = match component {
-        Some(c) => engine.component_create(c, Some(popup), clear())?,
+        // The popup owns its shade, but the shade is not the popup's
+        // content: a popup with one item in it takes that item's size.
+        // It starts clear and is then made opaque, so that a style that
+        // animates its opacity fades it in; a drawer's follows the drawer.
+        Some(c) => engine.component_create_owned(c, popup, |e, shade| {
+            if !drawer && is_item(e, shade) {
+                check(e, "shade", set_opacity(e, shade, 0.0));
+            }
+        })?,
         None if modal => {
             let item = engine.create_native_incomplete(Item::default(), Some(popup))?;
             engine.complete(item)?;
