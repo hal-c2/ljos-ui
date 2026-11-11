@@ -1230,6 +1230,9 @@ fn open_sub(
                 num(e, item, Item::WIDTH.index) - overlap
             };
             let y = -num(e, sub, Popup::TOP_PADDING.index);
+            // The policy stays after it closes: a sub-menu opened again
+            // by `open()` while its menu is open comes back where it
+            // went, on the other side (measured on qml6, menu.feature).
             popup::set_flips(e, sub, popup::Flips::HORIZONTAL);
             popup::move_to(e, sub, x, y)?;
             let first = if select_first {

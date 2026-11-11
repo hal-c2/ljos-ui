@@ -148,7 +148,8 @@ mod tests {
     /// where it goes). The sideways rows are the sub-menus of
     /// `features/controls/menu.feature` in the overlay's coordinates: a
     /// menu at `mx` 120 wide with an overlap of 1 puts a sub-menu at
-    /// `mx + 119`, or `mx + 1 - width` on the other side.
+    /// `mx + 119`, or `mx + 1 - width` on the other side; a mirrored one
+    /// asks for the other side first.
     const FLIPS: &[(f64, f64, f64, f64, f64)] = &[
         // It fits: it stays.
         (129.0, -109.0, 120.0, 0.0, 129.0),
@@ -168,6 +169,14 @@ mod tests {
         // A margin it has is an edge to flip from; inside it, it stays.
         (250.0, 50.0, 120.0, 40.0, 50.0),
         (250.0, 50.0, 120.0, 20.0, 250.0),
+        // A mirrored menu asks for the left of its item first (`mx + 1 -
+        // width`), and the right (`mx + 119`) is where it is mirrored to:
+        // it stays on the left where it fits, and comes back to the right
+        // where less runs past there.
+        (131.0, 369.0, 120.0, 0.0, 131.0),
+        (-109.0, 129.0, 120.0, 0.0, 129.0),
+        (-109.0, 129.0, 120.0, -1.0, 129.0),
+        (-149.0, 219.0, 250.0, -1.0, 150.0),
     ];
 
     #[test]
