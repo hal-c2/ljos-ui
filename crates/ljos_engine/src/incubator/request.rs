@@ -230,6 +230,13 @@ impl<A> Request<A> {
 }
 
 impl Request {
+    /// Whether a reload makes the object again as one a script made: what
+    /// a `Component` makes, asked for by a script. A file is made again as
+    /// a root of its own, whoever asked for it.
+    pub(super) fn remade_as_script(&self) -> bool {
+        matches!(self.source, Source::Component { .. }) && self.by == By::Script
+    }
+
     /// The request again, for a reload to ask with.
     pub(super) fn copy(&self) -> Self {
         Self {
@@ -325,7 +332,7 @@ impl Engine {
     fn make_now<A: Allocated>(&self, req: Request<A>) -> Result<(ObjectId, Settled), EngineError> {
         let (mut req, allocated) = req.split();
         let record = self.reload_asked(&mut req);
-        let scripted = record.as_ref().is_some_and(|r| r.by == By::Script);
+        let scripted = record.as_ref().is_some_and(Request::remade_as_script);
         let Request {
             source,
             parent,
@@ -372,5 +379,27 @@ impl Engine {
             self.reload_note_asked(*root, record);
         }
         made
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A file is a root of its own whoever asks for it; a reload that
+    /// took it for a script's object would find no component to make it
+    /// from, and drop it.
+    #[test]
+    fn only_what_a_component_makes_for_a_script_is_made_again_as_a_script_s() {
+        let c = ObjectId::default();
+        assert!(Request::component(c).by(By::Script).remade_as_script());
+        assert!(!Request::component(c).remade_as_script());
+        assert!(
+            !Request::url("Page")
+                .parent(Some(c))
+                .by(By::Script)
+                .remade_as_script()
+        );
+        assert!(!Request::url("Page").remade_as_script());
     }
 }

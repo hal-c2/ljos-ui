@@ -891,7 +891,7 @@ impl Engine {
         }
         // Only a script's are made again in order; a file's root takes no
         // number, which would move the paths of the roots made after it.
-        let serial = if record.by == By::Script {
+        let serial = if record.remade_as_script() {
             st.serial.set(st.serial.get() + 1);
             st.serial.get()
         } else {
@@ -916,7 +916,7 @@ impl Engine {
         let mut all: Vec<(ObjectId, Asked)> = st
             .asked
             .borrow_mut()
-            .extract_if(|_, a| a.request.by == By::Script)
+            .extract_if(|_, a| a.request.remade_as_script())
             .collect();
         all.sort_by_key(|(_, s)| s.serial);
         let tree = st.tree.get();
