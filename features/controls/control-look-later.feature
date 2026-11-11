@@ -3,7 +3,7 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-control.html#font-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-loader.html
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#palette-prop
-# Verified on Qt 6.11.2 (qml6, offscreen).
+# Verified on Qt 6.11.2 and 6.12.0 (qml6, offscreen).
 
 @qt-parity @api-QtQuick.Controls.Control.palette @api-QtQuick.Controls.Control.font
 Feature: The look of a control made after others set theirs
@@ -124,3 +124,86 @@ Feature: The look of a control made after others set theirs
     Then the property "palette.button" of "inside" is "#e0e0e0"
     And the property "palette.window" of "plain" is "#fafafa"
     And the property "palette.inactive.button" of "popup" is "#e0e0e0"
+
+  Scenario: A colour bound on a popup from a script reaches what it holds each time it changes
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root
+        objectName: "root"
+        width: 300; height: 200
+        property bool dark: false
+        function bindLater() { popup.palette.button = Qt.binding(() => root.dark ? "#000000" : "#e0e0e0") }
+        Popup {
+          id: popup
+          Column {
+            Button { objectName: "inside" }
+            Item { objectName: "plain" }
+          }
+        }
+      }
+      """
+    When the method "bindLater" of "root" is called
+    And the property "dark" of "root" is set to true
+    Then the property "palette.button" of "inside" is "#000000"
+    And the property "palette.button" of "plain" is "#000000"
+    When the property "dark" of "root" is set to false
+    Then the property "palette.button" of "inside" is "#e0e0e0"
+    And the property "palette.button" of "plain" is "#e0e0e0"
+    When the property "dark" of "root" is set to true
+    Then the property "palette.button" of "plain" is "#000000"
+
+  Scenario: A colour of a group bound on a popup reaches what it holds each time it changes
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        objectName: "root"
+        width: 300; height: 200
+        property bool dark: false
+        Popup {
+          palette.disabled.button: parent.dark ? "#101010" : "#d0d0d0"
+          Column {
+            Button { objectName: "inside"; enabled: false }
+            Item { objectName: "plain" }
+          }
+        }
+      }
+      """
+    When the property "dark" of "root" is set to true
+    Then the property "palette.disabled.button" of "plain" is "#101010"
+    And the property "palette.button" of "inside" is "#101010"
+    When the property "dark" of "root" is set to false
+    Then the property "palette.disabled.button" of "plain" is "#d0d0d0"
+    And the property "palette.button" of "inside" is "#d0d0d0"
+
+  Scenario: A colour bound on a control from a script reaches what it holds each time it changes
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root
+        objectName: "root"
+        width: 300; height: 200
+        property bool dark: false
+        function bindLater() { pane.palette.button = Qt.binding(() => root.dark ? "#000000" : "#e0e0e0") }
+        Pane {
+          id: pane
+          Column {
+            Button { objectName: "inside" }
+            Item { objectName: "plain" }
+          }
+        }
+      }
+      """
+    When the method "bindLater" of "root" is called
+    And the property "dark" of "root" is set to true
+    Then the property "palette.button" of "inside" is "#000000"
+    And the property "palette.button" of "plain" is "#000000"
+    When the property "dark" of "root" is set to false
+    Then the property "palette.button" of "inside" is "#e0e0e0"
+    And the property "palette.button" of "plain" is "#e0e0e0"
