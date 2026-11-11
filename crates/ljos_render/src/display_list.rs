@@ -744,6 +744,211 @@ impl DrawOp {
     }
 }
 
+impl DrawOp {
+    /// The same drawing made `s` times as large about the origin, as a
+    /// painter scaled by `s` would draw it: geometry, line widths, blurs,
+    /// font sizes and gradients all grow, colours stay. A nine-patch's
+    /// corners keep their size, since its insets are in image pixels.
+    #[must_use]
+    pub fn scaled(&self, s: f64) -> Self {
+        let sf = s as f32;
+        let r = |rect: &Rect| rect.scale_from_origin(s);
+        let radii = |radii: &[f32; 4]| radii.map(|x| x * sf);
+        let point = |p: Point| (p.to_vec2() * s).to_point();
+        let path = |p: &Arc<BezPath>| {
+            let mut p = (**p).clone();
+            p.apply_affine(vello_cpu::kurbo::Affine::scale(s));
+            Arc::new(p)
+        };
+        let paint = |p: &Paint| match p {
+            Paint::LinearGradient(g) => Paint::LinearGradient(Arc::new(LinearGradient {
+                start: point(g.start),
+                end: point(g.end),
+                stops: g.stops.clone(),
+            })),
+            other => other.clone(),
+        };
+        match self {
+            Self::Rect {
+                rect,
+                radii: rr,
+                fill,
+                border,
+                aa,
+            } => Self::Rect {
+                rect: r(rect),
+                radii: radii(rr),
+                fill: paint(fill),
+                border: border.as_ref().map(|b| Border {
+                    width: b.width * sf,
+                    paint: paint(&b.paint),
+                }),
+                aa: *aa,
+            },
+            Self::Shadow {
+                rect,
+                radii: rr,
+                blur,
+                spread,
+                color,
+            } => Self::Shadow {
+                rect: r(rect),
+                radii: radii(rr),
+                blur: blur * sf,
+                spread: spread * sf,
+                color: *color,
+            },
+            Self::Image {
+                image,
+                src,
+                dst,
+                tile,
+                mirror,
+                smooth,
+                opacity,
+                tint,
+            } => Self::Image {
+                image: image.clone(),
+                src: *src,
+                dst: r(dst),
+                tile: tile.as_ref().map(r),
+                mirror: *mirror,
+                smooth: *smooth,
+                opacity: *opacity,
+                tint: *tint,
+            },
+            Self::NinePatch {
+                image,
+                insets,
+                dst,
+                tile,
+                mirror,
+                smooth,
+            } => Self::NinePatch {
+                image: image.clone(),
+                insets: *insets,
+                dst: r(dst),
+                tile: *tile,
+                mirror: *mirror,
+                smooth: *smooth,
+            },
+            Self::Glyphs {
+                run,
+                origin,
+                paint: p,
+                decorations,
+            } => {
+                let mut run = (**run).clone();
+                run.font_size *= sf;
+                run.baseline *= sf;
+                run.bounds = r(&run.bounds);
+                for g in &mut run.glyphs {
+                    g.x *= sf;
+                    g.y *= sf;
+                }
+                Self::Glyphs {
+                    run: Arc::new(run),
+                    origin: *origin * s,
+                    paint: paint(p),
+                    decorations: Decorations {
+                        underline: decorations.underline.as_ref().map(r),
+                        strike_through: decorations.strike_through.as_ref().map(r),
+                    },
+                }
+            }
+            Self::Text {
+                rect,
+                text,
+                size,
+                color,
+                align,
+            } => Self::Text {
+                rect: r(rect),
+                text: text.clone(),
+                size: size * sf,
+                color: *color,
+                align: *align,
+            },
+            Self::Path {
+                path: p,
+                style,
+                paint: pt,
+            } => Self::Path {
+                path: path(p),
+                style: match style {
+                    PathStyle::Stroke { width } => PathStyle::Stroke { width: width * sf },
+                    other => other.clone(),
+                },
+                paint: paint(pt),
+            },
+            Self::Shape {
+                path: p,
+                style,
+                brush,
+            } => Self::Shape {
+                path: path(p),
+                style: match style {
+                    ShapeStyle::Fill(rule) => ShapeStyle::Fill(*rule),
+                    ShapeStyle::Stroke(k) => {
+                        let mut k = (**k).clone();
+                        k.width *= s;
+                        k.dash_offset *= s;
+                        for d in k.dash_pattern.iter_mut() {
+                            *d *= s;
+                        }
+                        ShapeStyle::Stroke(Arc::new(k))
+                    }
+                },
+                brush: match brush {
+                    Brush::Solid(c) => Brush::Solid(*c),
+                    Brush::Gradient(g) => {
+                        let geometry = match g.geometry {
+                            GradientGeometry::Linear { start, end } => GradientGeometry::Linear {
+                                start: point(start),
+                                end: point(end),
+                            },
+                            GradientGeometry::Radial {
+                                focal,
+                                focal_radius,
+                                center,
+                                radius,
+                            } => GradientGeometry::Radial {
+                                focal: point(focal),
+                                focal_radius: focal_radius * s,
+                                center: point(center),
+                                radius: radius * s,
+                            },
+                            GradientGeometry::Conical { center, angle } => {
+                                GradientGeometry::Conical {
+                                    center: point(center),
+                                    angle,
+                                }
+                            }
+                        };
+                        Brush::Gradient(Arc::new(BrushGradient {
+                            geometry,
+                            stops: g.stops.clone(),
+                            spread: g.spread,
+                        }))
+                    }
+                },
+            },
+            Self::Shader { rect, op } => Self::Shader {
+                rect: r(rect),
+                op: op.clone(),
+            },
+            Self::View3d { rect, view } => Self::View3d {
+                rect: r(rect),
+                view: view.clone(),
+            },
+            Self::Embed { surface, rect } => Self::Embed {
+                surface: *surface,
+                rect: r(rect),
+            },
+        }
+    }
+}
+
 static NEXT_LIST_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Unique identity of a built [`DisplayList`]. Backends key their caches on it,
@@ -923,6 +1128,18 @@ impl DisplayListBuilder {
     /// Embedded surface placeholder.
     pub fn embed(&mut self, surface: EmbedId, rect: Rect) -> &mut Self {
         self.push(DrawOp::Embed { surface, rect })
+    }
+
+    /// Append the ops of `other`, each made `s` times as large about the
+    /// origin (see [`DrawOp::scaled`]): what a painter that scales its
+    /// drawing paints. A scale of 1 moves the ops over as they are.
+    pub fn append_scaled(&mut self, other: DisplayListBuilder, s: f64) -> &mut Self {
+        if s == 1.0 {
+            self.ops.extend(other.ops);
+        } else {
+            self.ops.extend(other.ops.iter().map(|op| op.scaled(s)));
+        }
+        self
     }
 
     /// Number of ops so far.
