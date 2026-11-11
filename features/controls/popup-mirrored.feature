@@ -31,6 +31,10 @@ Feature: A popup is mirrored with the window it is shown in
           Item {
             Popup { objectName: "inner"; width: 100; height: 50 }
           }
+          Popup {
+            objectName: "outer"; width: 200; height: 100
+            Popup { objectName: "nested"; width: 50; height: 30 }
+          }
         }
         """
 
@@ -45,6 +49,13 @@ Feature: A popup is mirrored with the window it is shown in
         | dialog  |
         | drawer  |
         | inner   |
+
+    Scenario: A popup written in another popup takes the mirroring of that popup's window
+      When the method "open" of "outer" is called
+      And the method "open" of "nested" is called
+      Then the property "mirrored" of "nested" is true
+      When the property "rtl" of "window" is set to false
+      Then the property "mirrored" of "nested" is false
 
     Scenario: A popup is not mirrored by a window that keeps its mirroring to itself
       When the property "inherit" of "window" is set to false
