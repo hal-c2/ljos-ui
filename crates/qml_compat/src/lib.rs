@@ -1220,7 +1220,7 @@ impl<'s> Pass<'s> {
                 return Err(self.no(
                     Cause::FoundFirst {
                         name: name.to_owned(),
-                        is: Owner::Program,
+                        is: Some(Owner::Program),
                         module,
                     },
                     at,
@@ -1240,11 +1240,8 @@ impl<'s> Pass<'s> {
             && let Some((module, line)) = self.ljos_module_with(name)
             && !matches!((&imported, line), (Some((at, _)), Some(line)) if *at > line)
         {
-            let is = if imported.is_some() || self.locals.root(name).is_some() {
-                Owner::Project
-            } else {
-                Owner::Nowhere
-            };
+            let is =
+                (imported.is_some() || self.locals.root(name).is_some()).then_some(Owner::Project);
             return Err(self.no(
                 Cause::FoundFirst {
                     name: name.to_owned(),
@@ -1465,7 +1462,7 @@ impl<'s> Pass<'s> {
             (true, false) => Err(self.no(
                 Cause::FoundFirst {
                     name: name.to_owned(),
-                    is: owner,
+                    is: Some(owner),
                     module,
                 },
                 at,
