@@ -319,6 +319,66 @@ pub struct Cell {
     /// feed that ends one, in order. The other line feeds in it are line
     /// breaks in a paragraph.
     pub paragraphs: Vec<usize>,
+    /// The format of each of its paragraphs, in order. A paragraph past
+    /// the end has the default one.
+    pub formats: Vec<ParagraphFormat>,
+}
+
+impl Cell {
+    /// The format of paragraph `k` of the cell.
+    pub fn format(&self, k: usize) -> ParagraphFormat {
+        self.formats.get(k).cloned().unwrap_or_default()
+    }
+}
+
+/// How one paragraph of a table cell is set. Measured on Qt 6.12, a
+/// paragraph keeps its own format in a cell as anywhere else
+/// (features/text-input/rich-text-cell-paragraphs.feature): its margins
+/// count between the paragraphs of the cell but not at its top or bottom,
+/// and its indents in the column's width.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParagraphFormat {
+    pub kind: BlockKind,
+    pub margin_top: f32,
+    pub margin_bottom: f32,
+    pub indent: f32,
+    pub indent_right: f32,
+    /// The bullet or number of a list item, drawn in its indent.
+    pub marker: Option<Arc<str>>,
+    pub align: Option<HAlign>,
+}
+
+impl Default for ParagraphFormat {
+    fn default() -> Self {
+        Self {
+            kind: BlockKind::Paragraph,
+            margin_top: 0.0,
+            margin_bottom: 0.0,
+            indent: 0.0,
+            indent_right: 0.0,
+            marker: None,
+            align: None,
+        }
+    }
+}
+
+impl Eq for ParagraphFormat {}
+
+impl Hash for ParagraphFormat {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (
+            self.kind,
+            &self.marker,
+            self.align,
+            [
+                self.margin_top.to_bits(),
+                self.margin_bottom.to_bits(),
+                self.indent.to_bits(),
+                self.indent_right.to_bits(),
+            ],
+        )
+            .hash(state);
+    }
 }
 
 impl Hash for Table {

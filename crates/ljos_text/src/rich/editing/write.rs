@@ -66,12 +66,8 @@ impl RichText {
                             && b.list.as_ref().is_some_and(|o| Arc::ptr_eq(o, l))
                     })
                 });
-            if let Some(was) = list
-                && !between
-                && (!in_list || was != ordered)
-            {
-                out.push_str(if was { "</ol>" } else { "</ul>" });
-                list = None;
+            if !between {
+                end_list(out, &mut list, in_list.then_some(ordered));
             }
             if written {
                 out.push('\n');
@@ -92,16 +88,8 @@ impl RichText {
             }
             index += 1;
             let index = index - 1;
-            if in_list && list.is_none() {
-                let _ = write!(
-                    out,
-                    "<{} style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; \
-                     margin-right: 0px; -qt-list-indent: 1;\">",
-                    if ordered { "ol" } else { "ul" }
-                );
-                // Measured on Qt 6.12: every item is on a line of its own.
-                out.push('\n');
-                list = Some(ordered);
+            if in_list {
+                start_list(out, &mut list, ordered);
             }
             if block.kind == BlockKind::Rule {
                 out.push_str("<hr />");
@@ -111,9 +99,7 @@ impl RichText {
             let marks = (fragment && index == 0, fragment && index + 1 == count);
             self.write_paragraph(out, block, range, marks);
         }
-        if let Some(was) = list {
-            out.push_str(if was { "</ol>" } else { "</ul>" });
-        }
+        end_list(out, &mut list, None);
     }
 
     /// Paragraph `index` is the empty one Qt has after every table, or
@@ -166,6 +152,9 @@ impl RichText {
                     let _ = write!(out, " bgcolor=\"{bg}\"");
                 }
                 out.push('>');
+                // A cell's items are in a list of their own, as out of a
+                // table.
+                let mut list = None;
                 let mut start = cell.start;
                 for (k, text) in self.text[cell].split(CELL_PARAGRAPH).enumerate() {
                     let paragraph = start..start + text.len();
@@ -185,9 +174,15 @@ impl RichText {
                     if format.is_some_and(|f| f.header) && block.align.is_none() {
                         block.to_mut().align = Some(HAlign::Center);
                     }
+                    let in_list = block.kind == BlockKind::List;
+                    end_list(out, &mut list, in_list.then(|| block.ordered()));
                     out.push('\n');
+                    if in_list {
+                        start_list(out, &mut list, block.ordered());
+                    }
                     self.write_paragraph(out, &block, paragraph, (false, false));
                 }
+                end_list(out, &mut list, None);
                 out.push_str("</td>");
             }
             out.push_str("</tr>");
@@ -630,6 +625,33 @@ fn code_run(block: &BlockFormat) -> Option<CodeRun<'_>> {
 /// A `pre` says it either way, as one that does not say wraps where the
 /// editor's mark is (see [`super::html`]); a paragraph that wraps need not,
 /// as the head says `pre-wrap` for it.
+/// Close the list open, `Some(ordered)` when one is, unless the item
+/// `next` (`Some(ordered)` when it is one) is of it.
+fn end_list(out: &mut String, list: &mut Option<bool>, next: Option<bool>) {
+    if let Some(was) = *list
+        && next != Some(was)
+    {
+        out.push_str(if was { "</ol>" } else { "</ul>" });
+        *list = None;
+    }
+}
+
+/// Open a list for an item, numbered when `ordered`, unless one is open.
+fn start_list(out: &mut String, list: &mut Option<bool>, ordered: bool) {
+    if list.is_some() {
+        return;
+    }
+    let _ = write!(
+        out,
+        "<{} style=\"margin-top: 0px; margin-bottom: 0px; margin-left: 0px; \
+         margin-right: 0px; -qt-list-indent: 1;\">",
+        if ordered { "ol" } else { "ul" }
+    );
+    // Measured on Qt 6.12: every item is on a line of its own.
+    out.push('\n');
+    *list = Some(ordered);
+}
+
 fn white_space(no_wrap: bool, pre: bool) -> &'static str {
     match (no_wrap, pre) {
         (true, _) => " white-space:pre;",
