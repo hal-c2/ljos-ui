@@ -152,6 +152,46 @@ Item {
     assert_eq!(e.next_timer_deadline(), None);
 }
 
+/// What a popup is about to do when `visible` is written is no dependency
+/// of the effect that wrote it: closed from elsewhere, the popup stays
+/// closed rather than running that effect, and being opened, again. Only
+/// a popup with a transition has its writes of `visible` intercepted.
+#[test]
+fn an_effect_that_opens_a_popup_does_not_depend_on_it() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    Popup {
+        objectName: "p"; width: 100; height: 100
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 100 } }
+    }
+}
+"#,
+    );
+    let p = find(&e, root, "p");
+    let runs = Rc::new(std::cell::Cell::new(0));
+    let counted = runs.clone();
+    e.effect(move |e| {
+        counted.set(counted.get() + 1);
+        e.write_by_name(p, "visible", Value::Bool(true)).unwrap();
+    })
+    .unwrap();
+    assert_eq!(runs.get(), 1);
+    assert!(flag(&e, p, "visible"));
+    e.invoke_by_name(p, "close", &[]).unwrap();
+    assert_eq!(
+        runs.get(),
+        1,
+        "closing the popup ran the effect that opened it"
+    );
+    assert!(!flag(&e, p, "visible"));
+}
+
 /// The nodes of the tree as (role word, name, modal).
 fn nodes(s: &QuickScene) -> Vec<(String, String, bool)> {
     let mut out = Vec::new();
