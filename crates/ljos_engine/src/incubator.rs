@@ -154,8 +154,11 @@ pub enum Initial {
     #[default]
     Native,
     /// `createObject`: one that cannot be set is a warning, and a member
-    /// of a value given `Qt.binding` takes the value it gives then.
-    Created,
+    /// of a value given `Qt.binding` takes the value it gives then. A
+    /// name an object on a path lacks is told at the place of the call:
+    /// the one given, or that of the script running now. A reload, which
+    /// runs no script, makes the object again with the place its call had.
+    Created(Option<Box<SourcePlace>>),
     /// `incubateObject`, and `Loader.setSource`, which Qt sets the same
     /// way: as `createObject`, except that such a member follows its
     /// binding, and what cannot be set is an error of the script that

@@ -183,7 +183,7 @@ impl Component {
         let props = cx.engine.js_object_entries(&props);
         let (made, withheld) = cx.engine.withholding(|| {
             cx.engine
-                .create_for_script(cx.this, template, parent, props, Initial::Created)
+                .create_for_script(cx.this, template, parent, props, Initial::Created(None))
         });
         match made {
             // Complete, it goes again before the script holds it (Qt 6.12).
