@@ -2,10 +2,12 @@
 //! written, the files of the project and the program's own types they
 //! bring, and its ids and inline components.
 //!
-//! A name a file writes is looked up here and nowhere else, so the rules
-//! ([`crate::rules`]) and the script visitor ask the same question and get
-//! the same answer: [`Scope::ty`] says which type a name is, and why the
-//! file is kept when the lowered file would find another.
+//! A type name a file writes is looked up here and nowhere else, so the
+//! rules ([`crate::rules`]) ask the same question and get the same answer:
+//! [`Scope::ty`] says which type a name is, and why the file is kept when
+//! the lowered file would find another. A name a script reads is not yet:
+//! the script visitor first asks what the script declares and binds, and
+//! the qualifiers, in orders of its own.
 
 use std::{cell::RefCell, collections::HashMap};
 
