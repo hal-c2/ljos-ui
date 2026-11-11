@@ -77,3 +77,41 @@ Feature: Popup parent and open order parity
     When the property "open" of "root" is set to true
     And the user touches 202, 132
     Then the property "last" of "root" is "ok"
+
+  # A handler may destroy the popup that is telling it something. What
+  # QML destroys goes once the handler is done (measured on Qt 6.11.2 and
+  # 6.12.0), so the popup still finishes what it was doing; nothing is
+  # written to it once it has gone.
+  Rule: A popup a handler destroys as it shows or hides finishes first
+
+    Scenario Outline: A popup destroyed as it says it is <saying> finishes <doing>, then goes
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        Item {
+          id: root; objectName: "root"; width: 200; height: 200
+          property string log: ""
+          function show() { pop.visible = true }
+          function hide() { pop.visible = false }
+          Popup {
+            id: pop; objectName: "pop"
+            enter: null; exit: null
+            visible: <declared>
+            on<signal>: { root.log += "<saying>;"; destroy() }
+            onOpened: root.log += "opened;"
+            onClosed: root.log += "closed;"
+            Component.onDestruction: root.log += "destroyed;"
+          }
+        }
+        """
+      When the property "log" of "root" is set to ""
+      And the method "<call>" of "root" is called
+      And 50 milliseconds pass
+      Then the property "log" of "root" is "<log>"
+      And the log has no warnings
+
+      Examples:
+        | saying      | doing   | signal      | declared | call | log                          |
+        | aboutToShow | opening | AboutToShow | false    | show | aboutToShow;opened;destroyed; |
+        | aboutToHide | closing | AboutToHide | true     | hide | aboutToHide;closed;destroyed; |
