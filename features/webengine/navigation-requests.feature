@@ -147,6 +147,31 @@ Feature: A view is asked before its page goes somewhere
     And the property "title" of "view" is "Fixture Page"
 
   @api-QtWebEngine.WebEngineNavigationRequest.reject @api-QtWebEngine.WebEngineView.url
+  Scenario: A link after a URL within the same page is still asked for
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property bool moved: false
+        property string seen: ""
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus && !moved) {
+          moved = true; url = Qt.resolvedUrl("page.html#below") } }
+        onNavigationRequested: request => { if (request.url.toString().endsWith("/second.html")) {
+          seen = "asked"; request.reject() } }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 25
+    And the user releases the pointer at 100, 25
+    And 2 seconds pass
+    Then the property "seen" of "view" is "asked"
+    And the property "title" of "view" is "Fixture Page"
+
+  @api-QtWebEngine.WebEngineNavigationRequest.reject @api-QtWebEngine.WebEngineView.url
   Scenario: A URL whose request is rejected leaves the view at the page before
     Given the QML:
       """qml

@@ -135,3 +135,42 @@ Feature: A view chooses what a page that shares the screen is shown
     And 1 second passes
     Then the property "seen" of "view" is "4 1"
     And the property "title" of "view" is "waiting"
+
+  # Qt keeps such a permission valid and asking while its view lives, so
+  # it can be granted to a page that is no longer there. Here the page
+  # going refuses it, as it does notifications, and it says so.
+  @qt-diverges @api-QtWebEngine.WebEnginePermission.isValid
+  Scenario: A permission to capture the screen is no longer valid once its page is gone
+    Given the text file "left.html":
+      """
+      <!doctype html>
+      <html><head><title>left</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property var kept: null
+        property string seen: ""
+        settings.screenCaptureEnabled: true
+        url: Qt.resolvedUrl("share.html")
+        onDesktopMediaRequested: request => request.selectScreen(request.screensModel.index(0, 0))
+        onPermissionRequested: permission => kept = permission
+        function leave() { url = Qt.resolvedUrl("left.html") }
+        function look() { seen = kept.isValid + " " + kept.state }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 1 second passes
+    And the method "look" of "view" is called
+    Then the property "seen" of "view" is "true 1"
+    When the method "leave" of "view" is called
+    And 2 seconds pass
+    And the method "look" of "view" is called
+    Then the property "title" of "view" is "left"
+    And the property "seen" of "view" is "false 0"
