@@ -88,7 +88,7 @@ fn passed_on(engine: &Engine, att: ObjectId, _enabled: PropIndex) -> Value {
     // What an item is attached to owns it.
     let mirrored = engine
         .owner(att)
-        .and_then(|item| engine.visual_parent(item))
+        .and_then(|item| crate::layer::inherits_from(engine, item))
         .is_some_and(|parent| walk(engine, parent, false));
     Value::Bool(mirrored)
 }
@@ -129,7 +129,9 @@ fn walk(engine: &Engine, from: ObjectId, own: bool) -> bool {
             }
         }
         own = false;
-        match engine.visual_parent(cur) {
+        // An item of a layer (a popup's) inherits from what the layer's
+        // maker says it is in.
+        match crate::layer::inherits_from(engine, cur) {
             Some(p) if engine.is_alive(p) => cur = p,
             _ => return false,
         }

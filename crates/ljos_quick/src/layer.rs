@@ -48,6 +48,13 @@ pub type LayerTake = fn(&Engine, ObjectId, kurbo::Point, &PointerEvent) -> Optio
 /// would have it; it is what the layer can give the keyboard back to.
 pub type LayerFocus = fn(&Engine, ObjectId, ObjectId);
 
+/// A direct child of a layer and the layer: what the child inherits from
+/// in place of the layer, as the window's content would pass it on. A
+/// layer lies above the tree of its window, but whatever made it may say
+/// it stands inside some item of it (a popup inside its window's content).
+/// Asked inside a tracked walk, so reads in it are followed.
+pub type LayerInherit = fn(&Engine, ObjectId, ObjectId) -> Option<ObjectId>;
+
 #[derive(Default)]
 struct Layers {
     /// The layer of each tree, by the tree's top item.
@@ -56,6 +63,7 @@ struct Layers {
     hooks: Cell<Option<LayerHooks>>,
     take: Cell<Option<LayerTake>>,
     focus: Cell<Option<LayerFocus>>,
+    inherit: Cell<Option<LayerInherit>>,
     /// Bumped when a layer comes or goes, for bindings that found none.
     epoch: Cell<Option<NodeId>>,
 }
@@ -97,6 +105,27 @@ pub fn set_layer(engine: &Engine, top: ObjectId, layer: ObjectId) {
         crate::item::bump_node(engine, n);
     }
     engine.request_wake();
+}
+
+/// Says who answers what an item of a layer inherits ([`LayerInherit`]).
+pub fn set_layer_inherit(engine: &Engine, inherit: LayerInherit) {
+    engine.extension::<Layers>().inherit.set(Some(inherit));
+}
+
+/// What `item` inherits from (`LayoutMirroring`): its visual parent, or,
+/// for an item of a layer, what the layer's maker says it is in.
+pub(crate) fn inherits_from(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
+    let parent = engine.visual_parent(item)?;
+    let layers = engine.extension::<Layers>();
+    let Some(inherit) = layers.inherit.get() else {
+        return Some(parent);
+    };
+    if !layers.by_layer.borrow().contains_key(&parent) {
+        return Some(parent);
+    }
+    // The layer itself is out of every tree: what it holds inherits from
+    // what its maker names, or from nothing.
+    Some(inherit(engine, parent, item).unwrap_or(parent))
 }
 
 /// The layer above the tree that hangs from `top`. Inside a binding or an
