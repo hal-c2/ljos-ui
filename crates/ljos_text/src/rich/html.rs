@@ -377,6 +377,7 @@ impl<'a> Parser<'a> {
     /// block around what landed, does not wrap: white space that collapses
     /// to nothing is not something.
     fn write(&mut self, f: impl FnOnce(&mut InlineBuf)) {
+        let reopened = self.reopen_last_cell();
         let block_no_wrap = self.table.as_ref().is_some_and(|t| t.cell) && !self.cell_line_wraps();
         match &mut self.table {
             Some(t) if t.cell => {
@@ -396,6 +397,11 @@ impl<'a> Parser<'a> {
                     if ended {
                         cell.paragraphs.pop();
                         cell.buf.truncate(before);
+                    }
+                    if let Some(was) = reopened {
+                        cell.paragraph = was;
+                        t.cell = false;
+                        self.between = Between::Cells;
                     }
                     return;
                 }
@@ -419,6 +425,25 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    /// Opens the last cell of the table again when something comes after
+    /// it ended and before the next cell, as a paragraph of its own: no
+    /// part of the text is lost to the space between cells. Measured on Qt
+    /// 6.12, where a row or a table has no cell yet it is dropped. What
+    /// the cell's paragraph was, when one was opened.
+    fn reopen_last_cell(&mut self) -> Option<CellParagraph> {
+        let t = self.table.as_mut().filter(|t| !t.cell)?;
+        let cell = t.rows.last_mut().and_then(|row| row.last_mut())?;
+        let was = cell.paragraph;
+        if was == CellParagraph::Filled {
+            cell.paragraph = CellParagraph::Ended;
+        }
+        t.cell = true;
+        t.no_wrap = false;
+        t.fresh = true;
+        self.between = Between::Text;
+        Some(was)
     }
 
     /// The open table cell.
@@ -1114,6 +1139,14 @@ impl<'a> Parser<'a> {
         } else if name == "table" {
             self.start_table(attrs);
             return;
+        } else if matches!(name, "tr" | "td" | "th") {
+            // A cell or a row with no table reads as if one started before
+            // it, and ends as a table whose end tag is left out.
+            // Qt 6.11: a header cell with no table opens none, and is a
+            // paragraph in the middle (6.12 the same).
+            self.start_table(&Attrs(""));
+            self.table_tag(name, attrs);
+            return;
         }
         let in_cell = self.table.is_some();
         match name {
@@ -1466,7 +1499,9 @@ impl<'a> Parser<'a> {
             }
             // A table in a table is read as more rows of the outer one.
             "table" => true,
-            _ => !t.cell && is_block(name),
+            // A block after a cell is in it, one before any is nothing.
+            _ if !t.cell && is_block(name) => self.reopen_last_cell().is_none(),
+            _ => false,
         }
     }
 
@@ -2948,6 +2983,93 @@ mod tests {
             (Paragraph, String::new(), (0.0, 0.0), (0.0, 0.0))
         );
         assert_eq!(shapes[2].2, (12.0, 12.0));
+    }
+
+    #[test]
+    fn a_cell_or_a_row_with_no_table_opens_one() {
+        // Measured on Qt 6.12 (features/text/rich-text-cells-without-a-table.feature).
+        type Read = Vec<(BlockKind, String, Option<(usize, Vec<crate::rich::Cell>)>)>;
+        let read = |source: &str| -> Read {
+            parse(source)
+                .into_iter()
+                .map(|b| (b.kind, b.text, b.table.map(|t| (t.columns, t.cells))))
+                .collect()
+        };
+        let t = "<table>";
+        for (stray, table) in [
+            ("<p>a</p><td>b</td>", format!("<p>a</p>{t}<td>b</td>")),
+            ("<td>b</td>", format!("{t}<td>b</td>")),
+            ("<p>a<td>b</td></p>", format!("<p>a</p>{t}<td>b</td>")),
+            ("<p>a</p><td>b", format!("<p>a</p>{t}<td>b")),
+            (
+                "<td>b</td><td>c</td>",
+                format!("{t}<tr><td>b</td><td>c</td></tr>"),
+            ),
+            (
+                "<tr><td>b</td></tr><tr><td>c</td></tr>",
+                format!("{t}<tr><td>b</td></tr><tr><td>c</td></tr>"),
+            ),
+            (
+                "<td>b</td><tr><td>c</td></tr>",
+                format!("{t}<tr><td>b</td></tr><tr><td>c</td></tr>"),
+            ),
+            ("<p>a</p><tr>b</tr>", "<p>a</p>".to_owned()),
+            ("<td>b</td></table>c", format!("{t}<td>b</td></table>c")),
+            ("a<td>b</td>c", format!("a{t}<td>b</td>c</table>")),
+            ("<th>b</th><td>c</td>", format!("{t}<th>b</th><td>c</td>")),
+        ] {
+            assert_eq!(read(stray), read(&table), "{stray:?}");
+        }
+        let blocks = parse("<p>a</p><td>b</td><td>c</td>");
+        assert_eq!(blocks[1].kind, BlockKind::Table);
+        assert_eq!(blocks[1].table.as_ref().map(|t| t.columns), Some(2));
+        let header = parse("<th>b</th>");
+        assert!(header[0].table.as_ref().is_some_and(|t| t.cells[0].header));
+    }
+
+    #[test]
+    fn what_comes_after_a_cell_is_a_paragraph_of_it() {
+        // Measured on Qt 6.12: nothing between cells is lost, but before a
+        // row's first cell it is.
+        let cells = |source: &str| -> Vec<(String, Vec<usize>)> {
+            parse(source)
+                .iter()
+                .filter_map(|b| Some((b, b.table.as_ref()?)))
+                .flat_map(|(b, t)| {
+                    t.cells
+                        .iter()
+                        .map(|c| (b.text[c.range.clone()].to_owned(), c.paragraphs.clone()))
+                })
+                .collect()
+        };
+        let texts = |source: &str| -> Vec<String> {
+            cells(source).into_iter().map(|(text, _)| text).collect()
+        };
+        assert_eq!(texts("<table><tr><td>b</td></tr>c</table>"), ["b\nc"]);
+        assert_eq!(texts("<table><tr><td>b</td>  c</tr></table>"), ["b\nc"]);
+        assert_eq!(
+            texts("<table><tr><td>b</td><p>c</p>d</tr></table>"),
+            ["b\nc\nd"]
+        );
+        assert_eq!(
+            texts("<table><tr><td>b</td><b>c</b>d<td>e</td></tr></table>"),
+            ["b\ncd", "e"]
+        );
+        assert_eq!(texts("<table><tr><td></td>c</tr></table>"), ["c"]);
+        assert_eq!(
+            texts("<table><tr><td>b</td> <span> </span> <td>e</td></tr></table>"),
+            ["b", "e"]
+        );
+        assert_eq!(texts("<table>c<tr><td>b</td></tr></table>"), ["b"]);
+        assert_eq!(
+            texts("<table><tr><td>b</td></tr><tr>c<td>d</td></tr></table>"),
+            ["b", "d"]
+        );
+        assert_eq!(texts("a<td>b</td>c"), ["b\nc"]);
+        assert_eq!(texts("<p>a</p><td>b</td><p>c</p>"), ["b\nc"]);
+        // Each one a paragraph of the cell, not a line of one.
+        let (_, paragraphs) = &cells("<table><tr><td>b</td><p>c</p>d</tr></table>")[0];
+        assert_eq!(paragraphs.len(), 2, "{paragraphs:?}");
     }
 
     #[test]
