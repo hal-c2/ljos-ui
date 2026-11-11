@@ -82,6 +82,41 @@ pub(crate) trait Rule: Sync {
     fn unqualified(&self) -> &'static [&'static str] {
         &[]
     }
+    /// What the members of an object of one of them are aimed at, when it
+    /// is not the object itself.
+    fn aim(&self, _object: &QmlObject<'_>, _on: Ty, _file: &dyn File) -> Option<Aim> {
+        None
+    }
+}
+
+/// What an object's members are aimed at, as a rule says.
+pub(crate) struct Aim {
+    /// What the pass knows of the target.
+    pub(crate) at: Ty,
+    pub(crate) aimed: Aimed,
+    /// The id the members are written through, where Ljós names the
+    /// target in each member rather than once.
+    pub(crate) through: Option<Through>,
+}
+
+/// Which of an object's members are its target's.
+#[derive(Clone, Copy)]
+pub(crate) enum Aimed {
+    /// Every one but those named `own`, and its ids. `what` names the
+    /// target where a member keeps the file.
+    All {
+        own: &'static [&'static str],
+        what: &'static str,
+    },
+    /// Only its handlers: `onClicked: …` and `function onClicked() …`.
+    Handlers,
+}
+
+/// The id an object's members are written through.
+pub(crate) struct Through {
+    pub(crate) id: String,
+    /// The binding of the target, which goes.
+    pub(crate) taken_out: Range<usize>,
 }
 
 /// What a rule writes for a child: the pass lowers it as it would, then
@@ -124,8 +159,13 @@ pub(crate) trait File {
     fn quick(&self) -> &'static Module;
     /// Ljós's Ljos.Ui, which the lowered file imports.
     fn ui(&self) -> &'static Module;
+    /// What the pass knows of the object with the id `name`, if it is an
+    /// id of the file.
+    fn id(&self, name: &str) -> Option<Ty>;
     /// Whether `name` is an id of the file.
-    fn is_id(&self, name: &str) -> bool;
+    fn is_id(&self, name: &str) -> bool {
+        self.id(name).is_some()
+    }
     /// Whether a script of the file reads `name` unqualified, or a
     /// binding's name starts with it.
     fn is_read(&self, name: &str) -> bool;
@@ -137,6 +177,8 @@ const RULES: &[&dyn Rule] = &[
     &loader::source::LOADER,
     &arrange::ARRANGE,
     &gesture::GESTURE,
+    &states::changes::CHANGES,
+    &core::connections::CONNECTIONS,
 ];
 
 /// The rules of what the pass knows as `on`: the one that owns it, then

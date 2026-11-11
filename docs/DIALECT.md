@@ -2078,10 +2078,12 @@ files, so that one merging does not put the others in conflict:
   helpers stay in `tests/mod.rs`.
 - **Pass logic** for an area goes in its rule, as `rules/text/font.rs`
   does for fonts, `rules/loader/source.rs` for a `Loader`'s `source`,
-  `rules/layout/arrange.rs` for positioners and layouts and
-  `rules/gestures/gesture.rs` for a `MouseArea` that fills its parent: a
-  rule answers for a type's members, its objects and their children, and
-  asks the file only through `rules::File`.
+  `rules/layout/arrange.rs` for positioners and layouts,
+  `rules/gestures/gesture.rs` for a `MouseArea` that fills its parent, and
+  `rules/states/changes.rs` and `rules/core/connections.rs` for what a
+  `PropertyChanges` and a `Connections` are aimed at: a rule answers for a
+  type's members, its objects, their children and what they are aimed at,
+  and asks the file only through `rules::File`.
 - **Status** goes only in `docs/dialect/status/<area>.md`. The Status line
   at the top of this file and §6.4's numbers are the track lead's, after
   merges; a lane puts its corpus counts in its PR body.
