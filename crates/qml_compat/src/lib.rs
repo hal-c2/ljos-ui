@@ -1596,19 +1596,17 @@ impl<'s> Pass<'s> {
         // A group's names are the object's it is a group of.
         let outer = (!matches!(ty, Ty::Plain))
             .then(|| std::mem::replace(&mut self.declared, declared(object)));
-        let is_changes = matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges");
-        let is_connections = matches!(ty, Ty::Exact(t) if t.name == "Connections");
-        let target = if is_changes || is_connections {
-            Some(self.target(object))
-        } else {
-            None
-        };
-        // Ljós's API names a change's object in the change: `target: box;
-        // width: 30` is `box.width: 30`.
-        let prefix = if is_changes {
-            self.through_id(object)
-        } else {
-            None
+        let aim = rules::rules_of(ty).find_map(|rule| rule.aim(object, ty, self));
+        let prefix = aim
+            .as_ref()
+            .and_then(|aim| aim.through.as_ref())
+            .map(|through| {
+                self.change(through.taken_out.clone(), "");
+                through.id.as_str()
+            });
+        let own = match aim.as_ref().map(|aim| aim.aimed) {
+            Some(rules::Aimed::All { own, .. }) => own,
+            _ => &[],
         };
         let names = binding_names(object);
         for (index, member) in object.members.iter().enumerate() {
@@ -1629,10 +1627,9 @@ impl<'s> Pass<'s> {
                             child.type_name.span.start as usize,
                         ));
                     }
-                    let on = if is_changes {
-                        target.unwrap_or(Ty::Unknown)
-                    } else {
-                        scope
+                    let on = match &aim {
+                        Some(aim) if matches!(aim.aimed, rules::Aimed::All { .. }) => aim.at,
+                        _ => scope,
                     };
                     if let Some(group) = child.type_name.as_simple()
                         && group.starts_with(|c: char| c.is_ascii_lowercase())
@@ -1660,9 +1657,9 @@ impl<'s> Pass<'s> {
                         self.members.delegate();
                     }
                     let made = self.changes.len();
-                    self.binding(binding, ty, scope, root, target, &names)?;
-                    if let Some(id) = &prefix {
-                        self.prefix(binding, id, made)?;
+                    self.binding(binding, ty, scope, root, aim.as_ref(), &names)?;
+                    if let Some(id) = prefix {
+                        self.prefix(binding, id, own, made)?;
                     }
                 }
                 QmlMember::Property(property) => {
@@ -1695,15 +1692,12 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Function(function) => {
                     let name = function.id.as_ref().map(|id| id.name.as_str());
-                    if is_connections
+                    if let Some(aim) = &aim
+                        && matches!(aim.aimed, rules::Aimed::Handlers)
                         && let (Some(name), Some(span)) =
                             (name, function.id.as_ref().map(|id| id.span))
                     {
-                        self.handler_name(
-                            name,
-                            span.start as usize..span.end as usize,
-                            target.unwrap_or(Ty::Unknown),
-                        )?;
+                        self.handler_name(name, span.start as usize..span.end as usize, aim.at)?;
                     }
                     self.script(scope, root, Node::Function(function))?;
                 }
@@ -1783,59 +1777,14 @@ impl<'s> Pass<'s> {
         Ok(())
     }
 
-    /// What a `PropertyChanges` or `Connections` acts on.
-    fn target(&self, object: &QmlObject<'_>) -> Ty {
-        for member in &object.members {
-            if let QmlMember::Binding(binding) = member
-                && binding.name.as_simple() == Some("target")
-            {
-                return match &binding.value {
-                    QmlBindingValue::Expression(Expression::Identifier(id)) => {
-                        self.id(&id.name).unwrap_or(Ty::Unknown)
-                    }
-                    _ => Ty::Unknown,
-                };
-            }
-        }
-        // Without a target, a `Connections` is on its parent.
-        Ty::Unknown
-    }
-
-    /// The id a `PropertyChanges`'s `target` names, with the target taken
-    /// out; none when it has no target, or one that is not an id.
-    ///
-    /// DECISION: a target that is not an id (a property, `parent`, a path)
-    /// stays a target. The id form has no spelling for it, and Ljos.Ui's
-    /// `PropertyChanges` still has `target`, so the file is lowered as
-    /// before rather than kept.
-    fn through_id(&mut self, object: &QmlObject<'_>) -> Option<String> {
-        let binding = object.members.iter().find_map(|member| match member {
-            QmlMember::Binding(binding) if binding.name.as_simple() == Some("target") => {
-                Some(binding)
-            }
-            _ => None,
-        })?;
-        let QmlBindingValue::Expression(Expression::Identifier(id)) = &binding.value else {
-            return None;
-        };
-        self.id(&id.name)?;
-        let id = id.name.to_string();
-        let range = member_extent(
-            self.source,
-            binding.span.start as usize,
-            binding.span.end as usize,
-        );
-        self.change(range, "");
-        Some(id)
-    }
-
-    /// Writes the id of a `PropertyChanges`'s target into a change of it:
-    /// `width: 30` is `box.width: 30`, `onClicked` `box.onClicked`. What
-    /// the pass renamed of it since `made` is renamed under the id too.
-    fn prefix(&mut self, binding: &QmlBinding<'_>, id: &str, made: usize) -> Step {
+    /// Writes `id`, the target a rule aims an object at, into a binding of
+    /// it: `width: 30` is `box.width: 30`, `onClicked` `box.onClicked`.
+    /// The object's `own` names stay its own. What the pass renamed of it
+    /// since `made` is renamed under the id too.
+    fn prefix(&mut self, binding: &QmlBinding<'_>, id: &str, own: &[&str], made: usize) -> Step {
         let name = &binding.name;
         let first = name.parts[0];
-        if matches!(first, "target" | "explicit" | "restoreEntryValues" | "id") {
+        if first == "id" || own.contains(&first) {
             return Ok(());
         }
         if first.starts_with(|c: char| c.is_ascii_uppercase()) {
@@ -1868,12 +1817,15 @@ impl<'s> Pass<'s> {
         ty: Ty,
         scope: Ty,
         root: Ty,
-        target: Option<Ty>,
+        aim: Option<&rules::Aim>,
         names: &[String],
     ) -> Step {
         let name = &binding.name;
         let at = name.span.start as usize;
         let first = name.parts[0];
+        // `rect.color` in a `PropertyChanges` is through an id of the
+        // target's.
+        let aims_all = aim.is_some_and(|aim| matches!(aim.aimed, rules::Aimed::All { .. }));
         if name.parts.len() == 1 {
             if first == "id" {
                 return Ok(());
@@ -1881,22 +1833,15 @@ impl<'s> Pass<'s> {
             if is_grab_permissions(first) {
                 return Err(self.no(Cause::GrabPermissions, at));
             }
-            match (
-                target,
-                matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges"),
-            ) {
+            match aim.map(|aim| (aim.at, aim.aimed)) {
                 // `PropertyChanges { target: rect; color: ... }` sets the
                 // target's members.
-                (Some(target), true)
-                    if first != "target"
-                        && first != "explicit"
-                        && first != "restoreEntryValues" =>
-                {
-                    self.member_name(name, target, "the target of a `PropertyChanges`")?;
+                Some((at, rules::Aimed::All { own, what })) if !own.contains(&first) => {
+                    self.member_name(name, at, what)?;
                 }
-                (Some(target), false) if first.starts_with("on") => {
+                Some((at, rules::Aimed::Handlers)) if first.starts_with("on") => {
                     let span = name.span;
-                    self.handler_name(first, span.start as usize..span.end as usize, target)?;
+                    self.handler_name(first, span.start as usize..span.end as usize, at)?;
                 }
                 _ if matches!(ty, Ty::Plain) => {}
                 _ => self.member_name(name, ty, "the object")?,
@@ -1912,7 +1857,7 @@ impl<'s> Pass<'s> {
                 self.change(range, new);
             }
         } else if let Some(id) = self.id(first)
-            && matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges")
+            && aims_all
         {
             // `PropertyChanges { rect.color: ... }`, `{ label.font.bold: ... }`.
             self.part(name, 1, id)?;
@@ -1922,8 +1867,8 @@ impl<'s> Pass<'s> {
         } else {
             // A group's member: `font.pixelSize`, on the object or on the
             // target of a `PropertyChanges`.
-            let on = match target {
-                Some(target) if matches!(ty, Ty::Exact(t) if t.name == "PropertyChanges") => target,
+            let on = match aim {
+                Some(aim) if aims_all => aim.at,
                 _ => ty,
             };
             self.font_part(binding, 1, member_ty(on, first), names)?;
@@ -2323,8 +2268,8 @@ impl rules::File for Pass<'_> {
         self.ui
     }
 
-    fn is_id(&self, name: &str) -> bool {
-        self.id(name).is_some()
+    fn id(&self, name: &str) -> Option<Ty> {
+        Pass::id(self, name)
     }
 
     fn is_read(&self, name: &str) -> bool {
@@ -2672,7 +2617,7 @@ fn could_be_renaming(ty: &'static Type, name: &str) -> bool {
 /// What of the text a member from `start` to `end` takes, with the `;`
 /// after it and the blanks after that; on a line of its own, the line but
 /// its line break, so that every other line stays where it was.
-fn member_extent(source: &str, start: usize, end: usize) -> Range<usize> {
+pub(crate) fn member_extent(source: &str, start: usize, end: usize) -> Range<usize> {
     let bytes = source.as_bytes();
     let blanks = |mut at: usize| {
         while bytes.get(at).is_some_and(|b| matches!(b, b' ' | b'\t')) {
