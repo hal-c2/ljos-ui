@@ -1,18 +1,15 @@
 //! The item that draws a popup.
 //!
 //! It is a `Page` underneath: a page already places a background, a
-//! content item inside the padding and a header and a footer, and already
-//! takes its font and palette from what it is inside. The popup hands it
-//! its properties with bindings and reads back what the page works out.
-//! QML cannot name the type.
-
-use std::cell::Cell;
-use std::rc::Rc;
-use std::sync::OnceLock;
+//! content item inside the padding and a header and a footer. The popup
+//! hands it its properties with bindings and reads back what the page
+//! works out. It takes its font, palette and locale from the popup, as a
+//! control does from the item it is in ([`crate::inherit`]). QML cannot
+//! name the type.
 
 use ljos_a11y::Role;
 use ljos_engine::{
-    Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Reset, Value, WriteKind,
+    Engine, EngineError, MetaRef, ObjectId, PropIndex, QmlObject, QmlType, Value, WriteKind,
 };
 use ljos_quick::focus::{
     FocusReason, active_focus_item, force_active_focus, next_item_in_focus_chain,
@@ -28,8 +25,7 @@ use ljos_render::kurbo;
 use super::{Popup, popup_of};
 use crate::containers::{Page, Pane};
 use crate::control::{Control, ignore, no_key};
-use crate::util::{author_set, check, flag, set_derived};
-use ljos_quick::palette::{ROLE_COUNT, group_props, role_props};
+use crate::util::{flag, set_derived};
 
 /// The item of a popup.
 #[derive(Debug, Default, QmlObject)]
@@ -80,7 +76,6 @@ pub(super) fn create(engine: &Engine, popup: ObjectId) -> Result<ObjectId, Engin
         (Control::RIGHT_INSET.index, Popup::RIGHT_INSET.index),
         (Control::BOTTOM_INSET.index, Popup::BOTTOM_INSET.index),
         (Control::SPACING.index, Popup::SPACING.index),
-        (Control::LOCALE.index, Popup::LOCALE.index),
         (Pane::CONTENT_WIDTH.index, Popup::CONTENT_WIDTH.index),
         (Pane::CONTENT_HEIGHT.index, Popup::CONTENT_HEIGHT.index),
         (Item::WIDTH.index, Popup::WIDTH.index),
@@ -134,217 +129,6 @@ pub(super) fn set_modal(
         AccessibleAttached::MODAL.index,
         Value::Bool(modal),
     )
-}
-
-/// Every colour of a palette: its roles, then each group's.
-const COLOURS: usize = ROLE_COUNT * 4;
-
-fn colours_of(meta: &ljos_engine::MetaObject) -> [PropIndex; COLOURS] {
-    let (roles, groups) = (role_props(meta), group_props(meta));
-    std::array::from_fn(|i| match i / ROLE_COUNT {
-        0 => roles[i],
-        g => groups[g - 1][i % ROLE_COUNT],
-    })
-}
-
-fn popup_colours() -> &'static [PropIndex; COLOURS] {
-    static COLOURS_OF: OnceLock<[PropIndex; COLOURS]> = OnceLock::new();
-    COLOURS_OF.get_or_init(|| colours_of(Popup::static_meta()))
-}
-
-fn item_colours() -> &'static [PropIndex; COLOURS] {
-    static COLOURS_OF: OnceLock<[PropIndex; COLOURS]> = OnceLock::new();
-    COLOURS_OF.get_or_init(|| colours_of(Control::static_meta()))
-}
-
-/// Keeps the popup's `font` and `palette` and its item's the same: what
-/// the author sets on the popup goes to the item, and what the item takes
-/// from the window is what the popup reads.
-pub(super) fn mirror_look(
-    engine: &Engine,
-    popup: ObjectId,
-    item: ObjectId,
-) -> Result<(), EngineError> {
-    let (mine, theirs) = (Popup::FONT.index, Control::FONT.index);
-    let hand_down = move |e: &Engine, from: PropIndex, to: PropIndex, v: &Value| {
-        if !author_set(e, popup, from) {
-            return;
-        }
-        let same = e.untrack(|| e.read(item, to)).change_equals(v);
-        if same && author_set(e, item, to) {
-            return;
-        }
-        check(
-            e,
-            "popup",
-            e.write(item, to, v.clone(), WriteKind::Imperative),
-        );
-        // A colour the item has already is still made its own, and its
-        // watches do not hear that.
-        if same && item_colours().contains(&to) {
-            crate::inherit::made_own(e, item, to);
-        }
-    };
-    hand_down(
-        engine,
-        mine,
-        theirs,
-        &engine.untrack(|| engine.read(popup, mine)),
-    );
-    engine.watch(popup, mine, move |e, v| hand_down(e, mine, theirs, v))?;
-    let (my_locale, their_locale) = (Popup::LOCALE.index, Control::LOCALE.index);
-    hand_down(
-        engine,
-        my_locale,
-        their_locale,
-        &engine.untrack(|| engine.read(popup, my_locale)),
-    );
-    engine.watch(popup, my_locale, move |e, v| {
-        hand_down(e, my_locale, their_locale, v);
-    })?;
-    engine.effect_in(popup, move |e| {
-        let font = e.read(item, theirs);
-        let locale = e.read(item, their_locale);
-        e.untrack(|| {
-            check(e, "font", set_derived(e, popup, mine, font));
-            if !author_set(e, popup, my_locale) {
-                check(e, "locale", set_derived(e, popup, my_locale, locale));
-            }
-        });
-    })?;
-
-    // The colour groups too: the item resolves them from the window, and
-    // what it reads now from them (checked on qml6).
-    //
-    // The colours the author gave the popup are handed down together, by
-    // one effect that reads them: a watch for each wrote each to the item
-    // as its own change, and the controls in the popup resolved their
-    // palettes again for each colour of a theme switch. A colour the
-    // effect did not read when it ran is handed down by its watch.
-    let (mine, theirs) = (popup_colours(), item_colours());
-    let carried = Rc::new(Cell::new(0u128));
-    for i in 0..COLOURS {
-        let (from, to) = (mine[i], theirs[i]);
-        let v = engine.untrack(|| engine.read(popup, from));
-        hand_down(engine, from, to, &v);
-        let carried = Rc::clone(&carried);
-        engine.watch(popup, from, move |e, v| {
-            if carried.get() & 1 << i == 0 {
-                hand_down(e, from, to, v);
-            }
-        })?;
-        // Each of the item's colours the popup has not set goes to the
-        // popup as it changes: one effect that read all of them read them
-        // all again for each.
-        let take = move |e: &Engine, v: &Value| {
-            if !author_set(e, popup, from) {
-                check(e, "palette", set_derived(e, popup, from, v.clone()));
-            }
-        };
-        take(engine, &engine.untrack(|| engine.read(item, to)));
-        engine.watch(item, to, take)?;
-    }
-    engine.effect_in(popup, move |e| {
-        let mut read = 0u128;
-        let mut given = Vec::new();
-        for (i, p) in mine.iter().copied().enumerate() {
-            if e.untrack(|| author_set(e, popup, p)) {
-                read |= 1 << i;
-                given.push((i, e.read(popup, p)));
-            }
-        }
-        carried.set(read);
-        // The plain items in the item take the colours together too.
-        e.untrack(|| {
-            crate::inherit::handed_together(e, || {
-                e.batch(|| {
-                    for (i, v) in &given {
-                        hand_down(e, mine[*i], theirs[*i], v);
-                    }
-                })
-            });
-        });
-    })?;
-    Ok(())
-}
-
-/// `font = undefined` and `locale = undefined` on a popup: its item hands
-/// its own back, and the popup has what the item then has.
-pub(super) const FONT_RESET: Reset = Reset::Custom {
-    apply: take_back,
-    value: from_above,
-};
-/// A popup has a locale from the start, before it has an item to take
-/// one from: the application's.
-pub(super) const LOCALE_RESET: Reset = Reset::CustomFromCreation {
-    apply: take_back,
-    value: locale_from_above,
-};
-
-/// The property of the popup's item that `prop` of the popup is kept the
-/// same as.
-fn of_item(popup_prop: PropIndex) -> Option<PropIndex> {
-    if popup_prop == Popup::FONT.index {
-        Some(Control::FONT.index)
-    } else if popup_prop == Popup::LOCALE.index {
-        Some(Control::LOCALE.index)
-    } else {
-        let i = popup_colours().iter().position(|p| *p == popup_prop)?;
-        Some(item_colours()[i])
-    }
-}
-
-fn from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Value {
-    look_from_above(engine, popup, prop).unwrap_or_else(|| engine.default_value(popup, prop))
-}
-
-fn locale_from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Value {
-    look_from_above(engine, popup, prop)
-        .unwrap_or_else(|| crate::inherit::application_locale(engine))
-}
-
-/// What the popup's item would have in the property of a popup's look if
-/// nobody gave it one (tracked). None for an object that is no popup, a
-/// popup without an item, or another property.
-pub(crate) fn look_from_above(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Option<Value> {
-    if !crate::util::is_a::<Popup>(engine, popup) {
-        return None;
-    }
-    let item = super::item_of(engine, popup)?;
-    let theirs = of_item(prop)?;
-    let reset = engine.reset_of(item, theirs)?;
-    Some(match reset {
-        Reset::Default => engine.default_value(item, theirs),
-        Reset::Follow(value)
-        | Reset::FollowFromCreation(value)
-        | Reset::Custom { value, .. }
-        | Reset::CustomFromCreation { value, .. }
-        | Reset::Absent { value, .. } => value(engine, item, theirs),
-    })
-}
-
-fn take_back(engine: &Engine, popup: ObjectId, prop: PropIndex) -> Result<(), EngineError> {
-    match take_look_back(engine, popup, prop) {
-        Some(done) => done,
-        None => engine.reset_to_default(popup, prop),
-    }
-}
-
-/// Hands a property of a popup's look back; None as [`look_from_above`].
-pub(crate) fn take_look_back(
-    engine: &Engine,
-    popup: ObjectId,
-    prop: PropIndex,
-) -> Option<Result<(), EngineError>> {
-    if !crate::util::is_a::<Popup>(engine, popup) {
-        return None;
-    }
-    let item = super::item_of(engine, popup)?;
-    let theirs = of_item(prop)?;
-    Some(engine.reset(item, theirs).and_then(|()| {
-        let now = engine.untrack(|| engine.read(item, theirs));
-        engine.reset_to(popup, prop, now)
-    }))
 }
 
 // ------------------------------------------------------------------ input

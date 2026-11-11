@@ -54,7 +54,7 @@ use crate::window::Window;
 use ljos_quick::Palette;
 
 pub use drawer::Drawer;
-pub(crate) use item::{PopupItem, follow, look_from_above, set_role, take_look_back};
+pub(crate) use item::{PopupItem, follow, set_role};
 pub(crate) use kind::{PopupKind, kind_of};
 use lifecycle::{Event, Phase};
 pub(crate) use lifecycle::{close, dismiss, is_going, open, visible_written};
@@ -303,12 +303,12 @@ pub struct Popup {
     /// The `Transition` that takes the popup away.
     #[qml(notify)]
     pub exit: Option<ObjectId>,
-    #[qml(notify, reset = item::FONT_RESET)]
+    #[qml(notify, reset = crate::inherit::FONT_RESET)]
     pub font: Font,
     #[qml(group, reset)]
     pub palette: Palette,
-    /// Its item's, which has the window's until it is given one.
-    #[qml(notify, reset = item::LOCALE_RESET)]
+    /// The window's until it is given one.
+    #[qml(notify, reset = crate::inherit::LOCALE_RESET)]
     pub locale: Value,
     #[qml(notify, readonly)]
     pub mirrored: bool,
@@ -316,6 +316,8 @@ pub struct Popup {
     pub anchors: PopupAnchors,
     #[qml(skip)]
     pub(crate) state: Rc<PopupState>,
+    #[qml(skip)]
+    pub(crate) inherit: Rc<crate::inherit::InheritState>,
 }
 
 impl Default for Popup {
@@ -380,6 +382,7 @@ impl Default for Popup {
             mirrored: false,
             anchors: PopupAnchors::default(),
             state: Rc::default(),
+            inherit: Rc::default(),
         }
     }
 }
@@ -595,6 +598,8 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
     })?;
 
     host_complete(e, popup, POPUP)?;
+    // Before the item, which takes its look from the popup.
+    crate::inherit::attach(e, popup, crate::inherit::Kind::Popup, true)?;
     let kind = kind::of(e, popup, &state);
     bind_default(e, popup, Popup::CONTENT_WIDTH.index, move |e| {
         Value::Real(
@@ -696,7 +701,6 @@ fn init_popup(e: &Engine, popup: ObjectId) -> Result<(), EngineError> {
             check(e, "popup", overlay::reshade(e, popup));
         })?;
     }
-    item::mirror_look(e, popup, item)?;
 
     // Where the popup's item lives follows the window its parent is in.
     let st = state.clone();
