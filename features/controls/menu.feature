@@ -608,6 +608,56 @@ Feature: Menu
       Then the property "currentIndex" of "sub" is 1
       And the property "currentIndex" of "m" is 4
 
+  Rule: A sub-menu that does not fit beside its menu
+
+    A cascading sub-menu that runs past the window goes to the other side
+    of its menu only when less of it runs past there, and then, when it
+    is no wider than the window, is pushed inside. Its margins push it in
+    as well, as any popup's do.
+
+    Scenario Outline: A sub-menu <sw> wide from a menu at <mx> with margins <m> is at <x>
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 400; height: 400
+          Menu {
+            id: m; objectName: "m"; x: <mx>; y: 220; width: 120; cascade: true
+            Menu {
+              objectName: "sub"; title: "Sub"; width: <sw>; margins: <m>; cascade: true
+              MenuItem { text: "Deep" }
+            }
+            MenuItem { text: "Two" }
+          }
+        }
+        """
+      When the method "open" of "m" is called
+      And the user touches <tx>, 240
+      Then the property "visible" of "sub" is true
+      And the property "x" of "sub" is <x>
+
+      Examples: It fits beside the menu
+        | mx  | sw  | m  | tx  | x    |
+        | 10  | 120 | 0  | 70  | 119  |
+
+      Examples: Less of it runs past on the other side
+        | mx  | sw  | m  | tx  | x    |
+        | 250 | 120 | 0  | 310 | -119 |
+        | 200 | 250 | 0  | 260 | -200 |
+        | 200 | 250 | -1 | 260 | -200 |
+
+      Examples: As much or more of it runs past on the other side
+        | mx  | sw  | m  | tx  | x    |
+        | 120 | 250 | 0  | 180 | 30   |
+        | 120 | 250 | -1 | 180 | 30   |
+        | 140 | 250 | -1 | 200 | 10   |
+
+      Examples: It is wider than the window
+        | mx  | sw  | m  | tx  | x    |
+        | 100 | 450 | -1 | 160 | 119  |
+        | 100 | 450 | 0  | 160 | -100 |
+
   Rule: A menu that does not cascade
 
     Background:
