@@ -230,8 +230,22 @@ pub(super) fn remove_shown(engine: &Engine, overlay: ObjectId, popup: ObjectId) 
 /// `popup` takes the keyboard of `overlay` as it opens. False when it has
 /// already taken it.
 pub(super) fn take_keyboard(engine: &Engine, overlay: ObjectId, popup: ObjectId) -> bool {
+    // What has the keyboard in the content, read now: the effect in
+    // `ensure` hears of it only when the flush ends, after a popup that
+    // opens in the same one has taken it, and never for a popup shown
+    // before its window, whose content has not had the keyboard yet.
+    let content = ljos_quick::layer_host(engine, overlay)
+        .and_then(|top| ljos_quick::focus::tree_focus_item(engine, top))
+        .filter(|c| !is_inside(engine, *c, overlay));
     engine
-        .with::<OverlayItem, _>(overlay, |o| o.keyboard.borrow_mut().take(popup))
+        .with::<OverlayItem, _>(overlay, |o| {
+            let mut k = o.keyboard.borrow_mut();
+            let took = k.take(popup);
+            if let Some(c) = content.filter(|_| took) {
+                k.content_has(c);
+            }
+            took
+        })
         .unwrap_or(false)
 }
 
@@ -574,6 +588,9 @@ pub(super) fn register(engine: &Engine) {
         },
     );
     ljos_quick::set_layer_take(engine, super::drawer_drag::take);
+    ljos_quick::set_layer_focus(engine, |e, overlay, item| {
+        let _ = e.with::<OverlayItem, _>(overlay, |o| o.keyboard.borrow_mut().content_wants(item));
+    });
     engine.on_attached_created_of::<OverlayAttached>(|e, owner, att| {
         let bound = e.bind_initial(att, OverlayAttached::OVERLAY.index, move |e| {
             // On a popup it is the overlay the popup is shown in. Its

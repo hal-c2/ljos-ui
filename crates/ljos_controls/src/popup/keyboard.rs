@@ -50,6 +50,14 @@ impl<Id: Copy + Eq> Ledger<Id> {
         self.content = Some(item);
     }
 
+    /// `item` of the window's content asked for the keyboard as it was
+    /// made, while a popup has it. It gets it back unless the content had
+    /// it before, which keeps it, as an item that joins a focus scope with
+    /// a focus item does not take that scope.
+    pub(super) fn content_wants(&mut self, item: Id) {
+        self.content.get_or_insert(item);
+    }
+
     /// `popup` takes the keyboard as it opens. False when it already had.
     pub(super) fn take(&mut self, popup: Id) -> bool {
         if self.took.contains(&popup) {
@@ -285,6 +293,20 @@ mod tests {
         assert!(l.holds(P));
         assert_eq!(l.leave(P, true, |_| true), Give::Nobody);
         assert!(!l.holds(P));
+    }
+
+    #[test]
+    fn content_made_while_a_popup_has_the_keyboard_gets_it_back_unless_the_content_had_it() {
+        let mut l = Ledger::default();
+        l.take(P);
+        l.content_wants(OUTSIDE);
+        l.content_wants(OTHER);
+        assert_eq!(l.leave(P, true, |_| true), Give::Content(OUTSIDE));
+        let mut l = Ledger::default();
+        l.content_has(OTHER);
+        l.take(P);
+        l.content_wants(OUTSIDE);
+        assert_eq!(l.leave(P, true, |_| true), Give::Content(OTHER));
     }
 
     #[test]
