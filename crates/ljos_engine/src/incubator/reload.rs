@@ -894,8 +894,10 @@ impl Engine {
         };
         // A remake runs no script to take the call's place from: it is
         // taken now, while the call runs, as incubateObject takes its own.
+        // Only a path can name what an object lacks, so only a call given
+        // one pays for the stack.
         let how = match how {
-            Initial::Created(None) if !props.is_empty() => {
+            Initial::Created(None) if props.iter().any(|(n, _)| n.contains('.')) => {
                 Initial::Created(self.js_origin().map(Box::new))
             }
             how => how,
