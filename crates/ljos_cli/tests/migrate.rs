@@ -235,6 +235,26 @@ fn a_file_of_a_directory_that_is_not_a_project_has_nothing_beside_it() {
     let app = dir.path().join("app");
     // Its files can be opened by name, but it cannot be listed.
     std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o311)).unwrap();
+    // Listable again however the test ends, or the temporary directory
+    // cannot be removed.
+    struct Listable<'a>(&'a std::path::Path);
+    impl Drop for Listable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _listable = Listable(&app);
+    // A process that reads past permissions (root, CAP_DAC_READ_SEARCH)
+    // lists it anyway, so its directory is a project there and the case
+    // cannot be made. ljos_compiler's compat tests read such a root
+    // without permission bits.
+    if std::fs::read_dir(&app).is_ok() {
+        eprintln!(
+            "skipped: {} can still be listed by this process (root or CAP_DAC_READ_SEARCH), so it loads as a project",
+            app.display()
+        );
+        return;
+    }
     let run = |style: &str| {
         let out = Command::new(env!("CARGO_BIN_EXE_ljos"))
             .current_dir(dir.path())
@@ -251,7 +271,6 @@ fn a_file_of_a_directory_that_is_not_a_project_has_nothing_beside_it() {
     };
     let basic = run("Basic");
     let fusion = run("Fusion");
-    std::fs::set_permissions(&app, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let (status, out, err) = basic;
     assert_eq!(status, 2, "{out}{err}");
