@@ -77,3 +77,38 @@ Feature: A popup that takes the keyboard as the content's keyboard moves
     When the method "close" of "p" is called
     Then the property "activeFocus" of "other" is true
     And the property "activeFocus" of "outside" is false
+
+  Scenario: A popup whose content's keyboard holder was replaced gives the keyboard to nobody
+    The page the content had the keyboard in is gone when the popup closes,
+    so the keyboard goes nowhere, not to the page that replaced it, though
+    that page asked for focus.
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root
+        objectName: "root"
+        width: 400; height: 400
+        Component { id: first; Item { objectName: "firstPage"; focus: true } }
+        Component { id: second; Item { objectName: "secondPage"; focus: true } }
+        Loader { id: loader; objectName: "loader"; focus: true; sourceComponent: first }
+        Popup {
+          id: p
+          objectName: "p"
+          focus: true
+          Item { objectName: "one"; focus: true }
+        }
+        function swap() { loader.sourceComponent = second }
+      }
+      """
+    Then the property "activeFocus" of "firstPage" is true
+    When the method "open" of "p" is called
+    And the method "swap" of "root" is called
+    Then the property "activeFocus" of "one" is true
+    When the method "close" of "p" is called
+    Then the property "activeFocus" of "secondPage" is false
+    And the property "focus" of "secondPage" is true
+    And the property "activeFocus" of "loader" is false
+    And the property "activeFocus" of "root" is false
+    And the property "activeFocus" of "one" is false
