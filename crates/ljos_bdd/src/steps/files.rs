@@ -22,6 +22,15 @@ fn the_file(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     Ok(())
 }
 
+// A file as it is written outside a scenario, from its first column: a doc
+// string keeps the spaces it is indented by, so a file given the plain way
+// never starts with its first word (`import`), as nearly every file does.
+#[given(regex = r#"^the file "([^"]+)" without its indentation:$"#)]
+fn the_file_flush(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    w.stage(&name, &crate::author::text_of(&docstring(step)?));
+    Ok(())
+}
+
 // What `ljos design export` writes: the module Ljos.Design as a directory
 // of plain QML, which Qt imports as well.
 #[given("the files of the module Ljos.Design")]
