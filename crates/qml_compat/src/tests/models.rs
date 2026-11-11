@@ -74,17 +74,36 @@ fn a_local_of_a_name_of_the_row_keeps_the_file() {
     ));
     assert!(reason.contains("a local is called `model`"), "{reason}");
     // A loop's or a `catch`'s name is the script's too: `model.index`
-    // written as `index` there would read it.
-    for script in [
-        "{ var index = 1; return model.index }",
-        "{ for (const index of [1]) return model.index; return 0 }",
-        "{ try {} catch (index) { return model.index } return 0 }",
+    // written as `index`, or a row's role or the row itself written off
+    // `modelData`, would read it there.
+    for (script, name) in [
+        ("{ var index = 1; return model.index }", "index"),
+        (
+            "{ for (const index of [1]) return model.index; return 0 }",
+            "index",
+        ),
+        (
+            "{ try {} catch (index) { return model.index } return 0 }",
+            "index",
+        ),
+        (
+            "{ for (const modelData of [1]) return model.city; return 0 }",
+            "modelData",
+        ),
+        (
+            "{ for (const modelData of [1]) return model; return 0 }",
+            "modelData",
+        ),
+        (
+            "{ try {} catch (modelData) { return model.modelData } return 0 }",
+            "modelData",
+        ),
     ] {
         let reason = kept_for(&with_zones(&format!(
             "Repeater {{ model: zones; Text {{ text: {script} }} }}"
         )));
         assert!(
-            reason.contains("a local is called `index`"),
+            reason.contains(&format!("a local is called `{name}`")),
             "{script}: {reason}"
         );
     }
