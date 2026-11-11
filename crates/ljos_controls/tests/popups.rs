@@ -155,7 +155,9 @@ Item {
 /// What a popup is about to do when `visible` is written is no dependency
 /// of the effect that wrote it: closed from elsewhere, the popup stays
 /// closed rather than running that effect, and being opened, again. Only
-/// a popup with a transition has its writes of `visible` intercepted.
+/// a popup with a transition has its writes of `visible` intercepted. It
+/// guards the snapshot the interceptor reads: a tracked read of `visible`
+/// put into it makes the effect run twice.
 #[test]
 fn an_effect_that_opens_a_popup_does_not_depend_on_it() {
     let e = engine();
@@ -190,6 +192,41 @@ Item {
         "closing the popup ran the effect that opened it"
     );
     assert!(!flag(&e, p, "visible"));
+}
+
+/// The same for what only a tool tip's snapshot reads: its delay is no
+/// dependency of the effect that showed it. A tracked read of `delay` put
+/// into the snapshot makes the effect run again when the delay changes.
+/// The tip has a transition, as a Fusion or Material one does, so that
+/// its writes of `visible` are intercepted.
+#[test]
+fn an_effect_that_shows_a_tool_tip_does_not_depend_on_its_delay() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    ToolTip {
+        objectName: "tip"; text: "Hint"; delay: 100
+        enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 100 } }
+    }
+}
+"#,
+    );
+    let tip = find(&e, root, "tip");
+    let runs = Rc::new(std::cell::Cell::new(0));
+    let counted = runs.clone();
+    e.effect(move |e| {
+        counted.set(counted.get() + 1);
+        e.write_by_name(tip, "visible", Value::Bool(true)).unwrap();
+    })
+    .unwrap();
+    assert_eq!(runs.get(), 1);
+    e.write_by_name(tip, "delay", Value::Int(200)).unwrap();
+    assert_eq!(runs.get(), 1, "changing the delay ran the effect again");
 }
 
 /// The nodes of the tree as (role word, name, modal).
