@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
     Argument, AssignmentTargetPropertyIdentifier, BinaryExpression, BindingPattern, CallExpression,
-    ChainExpression, Expression, IdentifierReference, NewExpression, ObjectProperty, Program,
-    SimpleAssignmentTarget, Statement, StaticMemberExpression, StringLiteral, TSAsExpression,
-    TSNonNullExpression, TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion,
+    ChainElement, ChainExpression, Expression, IdentifierReference, NewExpression, ObjectProperty,
+    Program, SimpleAssignmentTarget, Statement, StaticMemberExpression, StringLiteral,
+    TSAsExpression, TSNonNullExpression, TSSatisfiesExpression, TSTypeAnnotation, TSTypeAssertion,
     TSTypeParameterDeclaration, TSTypeParameterInstantiation, TaggedTemplateExpression,
     UnaryExpression, VariableDeclaration, VariableDeclarationKind,
 };
@@ -80,6 +80,9 @@ pub(crate) struct TypeMember {
     /// `object` as `value.Name`, where `Name` may be a namespace the type
     /// is named through (`item.L.Layout`): the name and `value`, whole.
     pub through: Option<(String, Span)>,
+    /// Where the `a?.b` chain the member is in ends, when an earlier `?.`
+    /// of the chain (or its own) may cut the rest of it short.
+    pub chain_end: Option<u32>,
 }
 
 /// What a member is written on: `a.b` of `a.b.x = 1`. Where that is a value
@@ -247,7 +250,7 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
         args,
         chains: HashMap::new(),
         not_values: Vec::new(),
-        optional: 0,
+        short_circuits: HashMap::new(),
         asked: Vec::new(),
         constructed: Vec::new(),
         instance_types: Vec::new(),
@@ -421,8 +424,9 @@ struct Reader<'s, 'r> {
     /// Member expressions that are not read for their value: one that is
     /// assigned to, or called (the call needs its `this`).
     not_values: Vec<Span>,
-    /// How many `a?.b` chains the visitor is inside.
-    optional: u32,
+    /// The members on the spine of an `a?.b` chain from its first `?.`
+    /// on, by where their names start: where the chain ends.
+    short_circuits: HashMap<u32, u32>,
     /// Where the names start that a `typeof` is asked of.
     asked: Vec<u32>,
     /// Where the names start that a `new` makes one of.
@@ -657,12 +661,70 @@ impl Reader<'_, '_> {
         }
     }
 
+    /// Notes the members of `it`'s spine that a `?.` at or before them
+    /// may cut short: `Window` of `parent?.Window.window` is read off
+    /// `parent` only when `parent` is something, and when it is not, the
+    /// whole chain is `undefined`. An argument of a call in the chain is
+    /// not on the spine.
+    fn chain_spine(&mut self, it: &ChainExpression<'_>) {
+        // Outermost first: where a member's name starts (a named member
+        // only), and whether it is written with `?.`.
+        let mut spine: Vec<(Option<u32>, bool)> = Vec::new();
+        let mut next = match &it.expression {
+            ChainElement::StaticMemberExpression(m) => {
+                spine.push((Some(m.property.span.start), m.optional));
+                Some(&m.object)
+            }
+            ChainElement::ComputedMemberExpression(m) => {
+                spine.push((None, m.optional));
+                Some(&m.object)
+            }
+            ChainElement::PrivateFieldExpression(m) => {
+                spine.push((None, m.optional));
+                Some(&m.object)
+            }
+            ChainElement::CallExpression(c) => {
+                spine.push((None, c.optional));
+                Some(&c.callee)
+            }
+            ChainElement::TSNonNullExpression(n) => Some(&n.expression),
+        };
+        while let Some(e) = next {
+            next = match e {
+                Expression::StaticMemberExpression(m) => {
+                    spine.push((Some(m.property.span.start), m.optional));
+                    Some(&m.object)
+                }
+                Expression::ComputedMemberExpression(m) => {
+                    spine.push((None, m.optional));
+                    Some(&m.object)
+                }
+                Expression::PrivateFieldExpression(m) => {
+                    spine.push((None, m.optional));
+                    Some(&m.object)
+                }
+                Expression::CallExpression(c) => {
+                    spine.push((None, c.optional));
+                    Some(&c.callee)
+                }
+                Expression::TSNonNullExpression(n) => Some(&n.expression),
+                _ => None,
+            };
+        }
+        let end = it.span.end - self.offset;
+        let mut cut = false;
+        for (name, optional) in spine.iter().rev() {
+            cut |= optional;
+            if cut && let Some(start) = name {
+                self.short_circuits.insert(*start, end);
+            }
+        }
+    }
+
     /// `object.Name`, where it is a value the script reads.
     fn type_member(&mut self, it: &StaticMemberExpression<'_>) {
         let name = it.property.name.as_str();
         if !name.starts_with(|c: char| c.is_ascii_uppercase())
-            || it.optional
-            || self.optional > 0
             || it.span.start < self.offset
             || self.not_values.contains(&it.span)
         {
@@ -685,6 +747,7 @@ impl Reader<'_, '_> {
             end: it.property.span.end - self.offset,
             base,
             through,
+            chain_end: self.short_circuits.get(&it.property.span.start).copied(),
         });
     }
 }
@@ -873,9 +936,10 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_chain_expression(&mut self, it: &ChainExpression<'a>) {
-        self.optional += 1;
+        if it.span.start >= self.offset {
+            self.chain_spine(it);
+        }
         walk::walk_chain_expression(self, it);
-        self.optional -= 1;
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
@@ -1162,7 +1226,7 @@ mod tests {
     fn members_named_as_types_are_noticed_where_they_are_read() {
         let text = "a.Layout.row + (b.c).Keys.enabled + d?.Layout.row + e.Run() + (f.Layout = 1)";
         let analysis = analyze(text, Form::Expression, &[]).unwrap();
-        let found: Vec<(&str, &str, bool)> = analysis
+        let found: Vec<(&str, &str, bool, Option<&str>)> = analysis
             .type_members
             .iter()
             .map(|m| {
@@ -1170,12 +1234,20 @@ mod tests {
                     &text[m.object.start as usize..m.object.end as usize],
                     &text[m.object.start as usize..m.end as usize],
                     m.base.is_some(),
+                    m.chain_end
+                        .map(|e| &text[m.object.start as usize..e as usize]),
                 )
             })
             .collect();
+        // A member after `?.` is read too, and knows where its chain ends so
+        // the whole rest of it can stop when the object is nothing.
         assert_eq!(
             found,
-            [("a", "a.Layout", true), ("(b.c)", "(b.c).Keys", false)]
+            [
+                ("a", "a.Layout", true, None),
+                ("(b.c)", "(b.c).Keys", false, None),
+                ("d", "d?.Layout", true, Some("d?.Layout.row")),
+            ]
         );
     }
 

@@ -127,6 +127,26 @@ Item {
 }
 
 #[test]
+fn attached_in_optional_chains() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    Item { id: other }
+    property var whole: parent?.Keys.enabled
+    property var alone: parent?.Keys
+    property var later: other.children?.[0].Keys.enabled
+    property var nested: other?.Keys.forwardTo[0]?.Keys.priority
+    property var argument: parent?.contains(other.Keys.enabled)
+    property var unconditional: other.Keys.enabled
+}
+"##,
+    )]));
+}
+
+#[test]
 fn assignments_to_names_from_outside() {
     insta::assert_snapshot!(compile(&[(
         "Main",
