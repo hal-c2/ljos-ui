@@ -28,7 +28,7 @@ use std::rc::Rc;
 use super::item::is_inside;
 use super::keyboard::{Give, Ledger};
 use super::{Popup, PopupState, close_policy, dismiss, item_of, popup_of, state_of};
-use crate::util::{check, flag, is_a, num, object, set_computed, warn};
+use crate::util::{author_set, check, flag, is_a, num, object, set_computed, warn};
 
 /// The overlay is above everything a window's content can be (the number
 /// is the one Qt's reads).
@@ -314,9 +314,14 @@ fn has_own_item(engine: &Engine, overlay: ObjectId) -> bool {
 /// with neither has a plain item behind it when it is modal, which only
 /// keeps the pointer from what is under it, and nothing when it only
 /// dims (measured on Qt 6.11.2 and 6.12.0, `overlay-shade.feature`).
+///
+/// The overlay owns the shade's opacity, as Qt's does. A shade is shown at
+/// the opacity its component gave it, or at 1, and `state` keeps that for
+/// the popup that is opened again as it goes.
 fn make_shade(
     engine: &Engine,
     popup: ObjectId,
+    state: &PopupState,
     overlay: ObjectId,
 ) -> Result<Option<ObjectId>, EngineError> {
     if !flag(engine, popup, Popup::DIM.index) {
@@ -337,11 +342,13 @@ fn make_shade(
     let shade = match component {
         // The popup owns its shade, but the shade is not the popup's
         // content: a popup with one item in it takes that item's size.
-        // It starts clear and is then made opaque, so that a style that
+        // It starts clear and is then shown, so that a style that
         // animates its opacity fades it in; a drawer's follows the drawer.
+        // The toolkit makes it clear, so that an opacity the component
+        // gives is still the author's once it has been made.
         Some(c) => engine.component_create_owned(c, popup, |e, shade| {
             if !drawer && is_item(e, shade) {
-                check(e, "shade", set_opacity(e, shade, 0.0));
+                check(e, "shade", write_opacity(e, shade, 0.0, WriteKind::Host));
             }
         })?,
         None if modal => {
@@ -367,18 +374,30 @@ fn make_shade(
     }
     set_parent_item(engine, shade, Some(overlay))?;
     if !drawer {
-        set_opacity(engine, shade, 1.0)?;
+        // Qt 6.11: a bound opacity is taken once, as the shade is shown;
+        // the write that shows it ends the binding (6.12.0 too).
+        let to = if author_set(engine, shade, Item::OPACITY.index) {
+            engine.untrack(|| num(engine, shade, Item::OPACITY.index))
+        } else {
+            1.0
+        };
+        state.shade_opacity.set(to);
+        set_opacity(engine, shade, to)?;
     }
     Ok(Some(shade))
 }
 
 fn set_opacity(engine: &Engine, shade: ObjectId, to: f64) -> Result<(), EngineError> {
-    engine.write(
-        shade,
-        Item::OPACITY.index,
-        Value::Real(to),
-        WriteKind::Imperative,
-    )
+    write_opacity(engine, shade, to, WriteKind::Imperative)
+}
+
+fn write_opacity(
+    engine: &Engine,
+    shade: ObjectId,
+    to: f64,
+    kind: WriteKind,
+) -> Result<(), EngineError> {
+    engine.write(shade, Item::OPACITY.index, Value::Real(to), kind)
 }
 
 /// `popup` starts to go: its shade goes clear at once, or as its style
@@ -394,6 +413,23 @@ pub(super) fn clear_shade(
     }
     match state.dimmer.get().filter(|d| engine.is_alive(*d)) {
         Some(shade) => set_opacity(engine, shade, 0.0),
+        None => Ok(()),
+    }
+}
+
+/// `popup` is opened again as it goes: its shade, which went clear as it
+/// started to, is shown again at once (measured on Qt 6.11.2 and 6.12.0,
+/// `overlay-shade.feature`). A drawer's follows the drawer.
+pub(super) fn show_shade_again(
+    engine: &Engine,
+    popup: ObjectId,
+    state: &PopupState,
+) -> Result<(), EngineError> {
+    if super::kind_of(engine, popup).is_drawer() {
+        return Ok(());
+    }
+    match state.dimmer.get().filter(|d| engine.is_alive(*d)) {
+        Some(shade) => set_opacity(engine, shade, state.shade_opacity.get()),
         None => Ok(()),
     }
 }
@@ -417,7 +453,7 @@ pub(super) fn raise(
     overlay: ObjectId,
 ) -> Result<(), EngineError> {
     drop_shade(engine, state)?;
-    let shade = make_shade(engine, popup, overlay)?;
+    let shade = make_shade(engine, popup, state, overlay)?;
     state.dimmer.set(shade);
     let last = child_items(engine, overlay).last().copied();
     if last != Some(item) {
@@ -449,7 +485,7 @@ pub(super) fn reshade(engine: &Engine, popup: ObjectId) -> Result<(), EngineErro
             return Ok(());
         };
         drop_shade(engine, &state)?;
-        if let Some(shade) = make_shade(engine, popup, overlay)? {
+        if let Some(shade) = make_shade(engine, popup, &state, overlay)? {
             state.dimmer.set(Some(shade));
             // The shade goes right before the popup it is for.
             let children = child_items(engine, overlay);
