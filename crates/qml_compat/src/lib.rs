@@ -54,6 +54,7 @@ use qml_syntax::{
 };
 use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
+use rules::font;
 
 pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
@@ -2130,7 +2131,7 @@ impl<'s> Pass<'s> {
         names: &[String],
     ) -> Step {
         let name = &binding.name;
-        if index + 1 != name.parts.len() || !is_font_member(name.parts[index]) {
+        if index + 1 != name.parts.len() || !font::is_member(name.parts[index]) {
             return Ok(());
         }
         let Some(range) = part_range(self.source, name, index) else {
@@ -2150,54 +2151,31 @@ impl<'s> Pass<'s> {
             }
             _ => return Ok(()),
         }
-        match name.parts[index] {
-            "pointSize" => {
-                // A point is the screen's logical DPI / 72 of a pixel,
-                // known only when the file runs (docs/DIALECT.md §4.13).
-                return Err(self.no(Font::PointSize, range.start));
-            }
-            "bold" => {
-                let weight: Vec<&str> = name.parts[..index]
-                    .iter()
-                    .copied()
-                    .chain(["weight"])
-                    .collect();
-                // Which one wins in Qt depends on the order they are set in.
-                if names.contains(&weight.join(".")) {
-                    return Err(self.no(Font::BoldAndWeight, range.start));
-                }
-                let at = range.start;
-                self.change(range, "weight");
-                self.bold_value(&binding.value, at)?;
-            }
-            _ => {
-                if let Rename::To(new) = self.member(name.parts[index], Ty::Font) {
-                    self.change(range, new);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// What `font.bold` is given, as the weight it means: `Font.Bold`
-    /// (700) for true, `Font.Normal` (400) for false, as in Qt.
-    fn bold_value(&mut self, value: &QmlBindingValue<'_>, at: usize) -> Step {
-        let QmlBindingValue::Expression(expression) = value else {
-            return Err(self.no(Font::BoldBlock, at));
+        let beside = |member: &str| {
+            let beside: Vec<&str> = name.parts[..index]
+                .iter()
+                .copied()
+                .chain([member])
+                .collect();
+            names.contains(&beside.join("."))
         };
-        let span = expression.span();
-        let (start, end) = (span.start as usize, span.end as usize);
-        if let Expression::BooleanLiteral(literal) = expression {
-            let weight = if literal.value {
-                "Font.Bold"
-            } else {
-                "Font.Normal"
-            };
-            self.change(start..end, weight);
-        } else {
-            // Around what the expression's own renames change, so first.
-            self.change(start..start, "(");
-            self.change(end..end, ") ? Font.Bold : Font.Normal");
+        let written = font::written(name.parts[index], &binding.value, beside)
+            .map_err(|cause| self.no(cause, range.start))?;
+        if let Some(new) = written.name {
+            self.change(range, new);
+        }
+        match written.value {
+            font::Value::AsWritten => {}
+            font::Value::Replaced { range, with } => self.change(range, with),
+            font::Value::Around {
+                range,
+                before,
+                after,
+            } => {
+                // Around what the expression's own renames change, so first.
+                self.change(range.start..range.start, before);
+                self.change(range.end..range.end, after);
+            }
         }
         Ok(())
     }
@@ -2286,11 +2264,8 @@ impl<'s> Pass<'s> {
 
     /// What `name`, read off something of type `on`, is called in Ljós.
     fn member(&self, name: &str, on: Ty) -> Rename {
-        if let Ty::Font = on {
-            return match lookup_rename(FONT_RENAMES, name) {
-                Some(new) => Rename::To(new),
-                None => Rename::Keep,
-            };
+        if let Some(rule) = rules::rule_of(on) {
+            return rule.member(name);
         }
         if !is_renamed_member(name) {
             return Rename::Keep;
@@ -2625,11 +2600,6 @@ fn renamed_layout(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(old, _)| *old == name)
         .map(|(_, new)| *new)
-}
-
-/// A member of a font the pass lowers, or keeps a file for.
-fn is_font_member(name: &str) -> bool {
-    matches!(name, "pixelSize" | "bold" | "pointSize")
 }
 
 /// The names of `object`'s bindings, as written: `font.bold`, and a
@@ -3292,25 +3262,13 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 ),
             }
         }
-        if (is_renamed_member(name) || is_font_member(name))
+        if (is_renamed_member(name) || font::is_member(name))
             && !self.called.contains(&it.property.span.start)
         {
             let on = self.ty(&it.object);
-            match (on, name) {
-                (Ty::Font, "bold") => self.keep(Font::BoldRead, it.property.span.start),
-                (Ty::Font, "pointSize") => self.keep(Font::PointSize, it.property.span.start),
-                // A row's role or a script's object may be called so too.
-                (Ty::Unknown, _) if !is_renamed_member(name) && self.could_be_font(&it.object) => {
-                    self.keep(
-                        Cause::ReadOffUnknown {
-                            name: name.to_owned(),
-                        },
-                        it.property.span.start,
-                    );
-                }
-                _ => {}
-            }
-            match self.pass.member(name, on) {
+            let read = font::read(name, on, || self.could_be_font(&it.object))
+                .unwrap_or_else(|| self.pass.member(name, on));
+            match read {
                 Rename::To(new) => {
                     let span = it.property.span;
                     self.pass
@@ -3331,7 +3289,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
 
     fn visit_computed_member_expression(&mut self, it: &ComputedMemberExpression<'a>) {
         if let Expression::StringLiteral(key) = &it.expression
-            && (is_renamed_member(&key.value) || is_font_member(&key.value))
+            && (is_renamed_member(&key.value) || font::is_member(&key.value))
         {
             self.keep(
                 Cause::ComputedRenamed {

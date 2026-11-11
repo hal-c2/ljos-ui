@@ -1,5 +1,6 @@
-//! What Ljós makes of Qt's types, one file per area of the API: for now,
-//! the names it gives the types and their members.
+//! What Ljós makes of Qt's types, one file per area of the API: the names
+//! it gives the types and their members, and the [`Rule`]s that say the
+//! rest.
 //!
 //! The rule: a lane adds rows only to its own area's file. A new area is a
 //! new file here, in `src/tests/` and in `docs/dialect/status/`, plus one
@@ -26,7 +27,37 @@ mod types;
 mod ui;
 mod window;
 
-pub use text::FONT_RENAMES;
+pub(crate) use text::font;
+pub use text::font::FONT_RENAMES;
+
+use crate::{Rename, Ty};
+
+/// What Ljós makes of the Qt types one rule owns. The pass asks the rule of
+/// a type, and knows none of their names itself.
+pub(crate) trait Rule: Sync {
+    /// The Qt types, or value types (`font`), the rule owns, by name.
+    fn owns(&self) -> &'static [&'static str];
+    /// What a member `name` of one of them is in Ljós, where the pass has
+    /// only the name: read in a script, or bound by a name the rule does
+    /// not write itself.
+    fn member(&self, name: &str) -> Rename;
+}
+
+/// Every rule, joined here and nowhere else; a Qt type has one.
+const RULES: &[&dyn Rule] = &[&font::FONT];
+
+/// The rule of what the pass knows as `on`, if one owns it.
+pub(crate) fn rule_of(on: Ty) -> Option<&'static dyn Rule> {
+    let name = match on {
+        Ty::Font => "font",
+        Ty::Exact(ty) | Ty::Derived(ty) => ty.name,
+        Ty::Plain | Ty::Unknown | Ty::Native(..) => return None,
+    };
+    RULES
+        .iter()
+        .copied()
+        .find(|rule| rule.owns().contains(&name))
+}
 
 /// The renames of one area.
 struct Area {
@@ -123,6 +154,10 @@ mod tests {
         let mut renamed = HashSet::new();
         for (old, _) in type_renames() {
             assert!(renamed.insert(*old), "`{old}` is renamed in two areas");
+        }
+        let mut ruled = HashSet::new();
+        for name in RULES.iter().flat_map(|rule| rule.owns()) {
+            assert!(ruled.insert(*name), "`{name}` is owned by two rules");
         }
         let mut with_members = HashSet::new();
         for (ty, _) in member_renames() {
