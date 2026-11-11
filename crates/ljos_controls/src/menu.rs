@@ -1220,16 +1220,17 @@ fn open_sub(
             if let Some(other) = st.open_sub.get().filter(|o| *o != sub) {
                 popup::close(e, other)?;
             }
+            // Beside the item, or on its other side when the menu is
+            // mirrored; the placement moves it across when the other side
+            // has more room.
             let overlap = num(e, menu, Menu::OVERLAP.index);
-            let beside = num(e, item, Item::WIDTH.index) - overlap;
-            let window_width = popup::item_of(e, menu)
-                .and_then(|i| e.visual_parent(i))
-                .map_or(0.0, |o| num(e, o, Item::WIDTH.index));
-            let right_edge = (scene_transform(e, item) * kurbo::Point::new(beside + sw, 0.0)).x;
-            let other_side = flag(e, menu, Popup::MIRRORED.index)
-                || (window_width > 0.0 && right_edge > window_width);
-            let x = if other_side { overlap - sw } else { beside };
+            let x = if flag(e, menu, Popup::MIRRORED.index) {
+                overlap - sw
+            } else {
+                num(e, item, Item::WIDTH.index) - overlap
+            };
             let y = -num(e, sub, Popup::TOP_PADDING.index);
+            popup::set_flips(e, sub, popup::Flips::HORIZONTAL);
             popup::move_to(e, sub, x, y)?;
             let first = if select_first {
                 first_choice(e, sub)
@@ -1251,6 +1252,7 @@ fn open_sub(
             popup::close(e, menu)?;
             let middle = kurbo::Point::new(corner.x + (mw - sw) / 2.0, corner.y + (mh - sh) / 2.0);
             let local = scene_transform(e, item).inverse() * middle;
+            popup::set_flips(e, sub, popup::Flips::NONE);
             popup::move_to(e, sub, local.x, local.y)?;
             set_current(e, sub, first_choice(e, sub));
             popup::open(e, sub)
