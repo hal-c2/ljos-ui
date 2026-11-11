@@ -8,6 +8,15 @@ import QtQuick.Templates as T
 T.Dialog {
     id: control
 
+    // What is under the popup while it dims it: the same faint black,
+    // modal or not.
+    T.Overlay.modal: Rectangle {
+        color: Fusion.topShadow
+    }
+    T.Overlay.modeless: Rectangle {
+        color: Fusion.topShadow
+    }
+
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             contentWidth + leftPadding + rightPadding,
                             implicitHeaderWidth,

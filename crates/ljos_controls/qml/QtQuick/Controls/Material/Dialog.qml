@@ -7,6 +7,18 @@ import QtQuick.Templates as T
 T.Dialog {
     id: control
 
+    // What is under the popup while it dims it: a dark shade in the light
+    // theme and a light one in the dark, modal or not. It fades in as the
+    // popup opens and out as it closes.
+    T.Overlay.modal: Rectangle {
+        color: control.Material.theme === Material.Dark ? "#99fafafa" : "#99303030"
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+    }
+    T.Overlay.modeless: Rectangle {
+        color: control.Material.theme === Material.Dark ? "#99fafafa" : "#99303030"
+        Behavior on opacity { NumberAnimation { duration: 150 } }
+    }
+
     implicitWidth: Math.max(implicitBackgroundWidth + leftInset + rightInset,
                             contentWidth + leftPadding + rightPadding,
                             implicitHeaderWidth,

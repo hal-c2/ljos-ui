@@ -235,7 +235,10 @@ fn report(name: &str, control: &str, most: [i64; 4]) {
 
 #[test]
 fn a_closed_popup() {
-    report("Popup", r#"Popup { objectName: "NAME" }"#, [5, 20, 80, 28]);
+    // Three of the objects and one binding are the style's shade: the
+    // components of `T.Overlay.modal` and `.modeless`, and the attached
+    // Overlay that holds them, as in every style that dims.
+    report("Popup", r#"Popup { objectName: "NAME" }"#, [8, 20, 81, 28]);
 }
 
 #[test]
@@ -252,7 +255,8 @@ fn a_closed_menu() {
     report(
         "Menu",
         r#"Menu { objectName: "NAME"; MenuItem { text: "a" } MenuItem { text: "b" } MenuItem { text: "c" } }"#,
-        [44, 147, 319, 122],
+        // With the style's shade, as a popup's.
+        [47, 147, 320, 122],
     );
 }
 
