@@ -1,0 +1,4 @@
+module Ljos.Controls.impl
+PopupEnter 1.0 PopupEnter.qml
+PopupShade 1.0 PopupShade.qml
+PopupSurface 1.0 PopupSurface.qml

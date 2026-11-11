@@ -23,7 +23,12 @@ pub const MODULE: &str = "Ljos.Controls";
 /// The style's directory in the component library.
 pub(crate) const DIRECTORY: &str = "Ljos/Controls";
 
-pub(crate) fn register(engine: &Engine, own: &[String], basic: &[String]) {
+/// The module of the parts the style's controls share, such as the
+/// surface a popup and a menu are drawn on, and its directory.
+const PARTS_MODULE: &str = "Ljos.Controls.impl";
+pub(crate) const PARTS: &str = "Ljos/Controls/impl";
+
+pub(crate) fn register(engine: &Engine, own: &[String], parts: &[String], basic: &[String]) {
     let version = Version::new(1, 0);
     // A template draws nothing, so it is the same type in every style.
     engine.register_type(
@@ -57,6 +62,12 @@ pub(crate) fn register(engine: &Engine, own: &[String], basic: &[String]) {
     {
         if let Err(err) = engine.register_qml_type(MODULE, version, &key) {
             util::warn(engine, format!("{MODULE}: {err}"));
+        }
+    }
+    for name in parts {
+        let key = format!("{PARTS}/{name}");
+        if let Err(err) = engine.register_qml_type(PARTS_MODULE, version, &key) {
+            util::warn(engine, format!("{PARTS_MODULE}: {err}"));
         }
     }
 }

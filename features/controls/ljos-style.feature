@@ -808,6 +808,83 @@ Feature: Ljós's own style: the controls of Ljos.Controls
         | with room below           | below  | 100 | false  | true  |
         | at the foot of the window | upward | 250 | true   | false |
 
+  Rule: A popup, a menu and a combo box's list share one surface
+
+    # Ljos.Controls' Popup is the style's own, and its Menu and its combo
+    # box's list are drawn with the same parts: the overlay surface in a
+    # rounded frame with a shadow, a 120 ms fade in, no fade out, and the
+    # style's shade under it.
+    Scenario: A popup is drawn on the style's surface
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 300
+          Popup { id: p; objectName: "p"; width: 120; height: 80 }
+          Menu { id: m; objectName: "m"; MenuItem { text: "Cut" } }
+          ComboBox { id: c; objectName: "c"; model: ["One", "Two"] }
+          function onSurface(bg) {
+            return bg.children.length === 2 && bg.children[1].radius === Theme.radiusLarge
+              && bg.children[1].color === Theme.surfaceOverlay
+          }
+          readonly property real popupPadding: p.padding
+          readonly property real listPadding: c.popup.padding
+          readonly property bool popupFades: p.enter !== null
+          readonly property bool popupOnSurface: onSurface(p.background)
+          readonly property bool menuOnSurface: onSurface(m.background)
+          readonly property bool listOnSurface: onSurface(c.popup.background)
+        }
+        """
+      Then the property "popupPadding" of "root" is 4
+      And the property "listPadding" of "root" is 4
+      And the property "popupFades" of "root" is true
+      And the property "popupOnSurface" of "root" is true
+      And the property "menuOnSurface" of "root" is true
+      And the property "listOnSurface" of "root" is true
+
+    Scenario Outline: A <control> fades in, closes at once and shades what is under it
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Controls
+        Item {
+          id: root; objectName: "root"
+          width: 300; height: 300
+          Popup { id: p; width: 120; height: 80 }
+          Menu { id: m; MenuItem { text: "Cut" } }
+          property var c: <control>
+          function show() { c.modal = true; c.open() }
+          function hide() { c.close() }
+          function shadeOf() {
+            const items = [p, m].map(x => x.contentItem.parent)
+            const kids = c.contentItem.parent.parent.children
+            for (let i = 0; i < kids.length; i++)
+              if (items.indexOf(kids[i]) < 0) return kids[i]
+            return null
+          }
+          readonly property string shade: {
+            const s = shadeOf(); if (!s || !s.color) return "none"
+            return Math.round(s.color.r * 255) + " " + Math.round(s.color.g * 255) + " "
+              + Math.round(s.color.b * 255) + " " + s.color.a.toFixed(2)
+          }
+          property real fade: c.opacity
+        }
+        """
+      When the method "show" of "root" is called
+      Then the property "fade" of "root" is within 0.15 of 0
+      And the property "shade" of "root" is "40 40 42 0.50"
+      When 200 milliseconds pass
+      Then the property "fade" of "root" is 1
+      When the method "hide" of "root" is called
+      Then the property "c.visible" of "root" is false
+
+      Examples:
+        | control |
+        | p       |
+        | m       |
+
   Rule: The tool tip of a control is drawn in the control's style
 
     Scenario: A button's tool tip is the style's
@@ -851,7 +928,6 @@ Feature: Ljós's own style: the controls of Ljos.Controls
           TextArea { objectName: "notes"; text: "Notes" }
           ItemDelegate { objectName: "row"; text: "Row" }
           Dialog { objectName: "confirm"; title: "Delete?" }
-          Popup { objectName: "popup" }
           ScrollView { objectName: "scroll" }
           FileDialog { objectName: "open"; title: "Open notes" }
           FolderDialog { objectName: "where"; title: "Where" }
