@@ -202,11 +202,11 @@ Feature: A TextArea that is the one item of a ScrollView
       Then the property "height" of "view" is 200
       And the property "height" of "area" is 204
 
-  Rule: The view sizes the area, whatever size the area was given
+  Rule: The view sizes a wrapping area, whatever size it was given
 
     The view gives the area its size again each time the view, or the
-    size the area asks for, changes. A size a script assigns or the area
-    declares lasts only until then (checked on qml6).
+    size the area asks for, changes. A size a script assigns lasts only
+    until then (checked on qml6).
 
     Background:
       Given the QML:
@@ -218,7 +218,6 @@ Feature: A TextArea that is the one item of a ScrollView
           objectName: "root"
           width: 400; height: 400
           function addLines() { area.text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve" }
-          function longer() { short.text = "a line of words that is a great deal wider than the two hundred pixels" }
           ScrollView {
             id: view
             objectName: "view"
@@ -230,17 +229,6 @@ Feature: A TextArea that is the one item of a ScrollView
               font.family: "Liberation Sans"; font.pixelSize: 14
               text: "a line of words that is a great deal wider than the two hundred pixels of the view it is in"
               Component.onCompleted: width = view.contentItem.width
-            }
-          }
-          ScrollView {
-            objectName: "small"
-            y: 200; width: 180; height: 100
-            TextArea {
-              id: short
-              objectName: "short"
-              width: 120
-              font.family: "Liberation Sans"; font.pixelSize: 14
-              text: "one"
             }
           }
         }
@@ -268,6 +256,36 @@ Feature: A TextArea that is the one item of a ScrollView
       When the property "height" of "area" is set to 50
       And the method "addLines" of "root" is called
       Then the property "height" of "area" is 204
+
+  Rule: The view sizes an area that does not wrap, whatever size it was given
+
+    A width the area declares gives way to the view at once, and one a
+    script assigns stands until the view, or the width the text asks for,
+    changes (checked on qml6).
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root
+          objectName: "root"
+          width: 400; height: 400
+          function longer() { short.text = "a line of words that is a great deal wider than the two hundred pixels" }
+          ScrollView {
+            objectName: "small"
+            width: 180; height: 100
+            TextArea {
+              id: short
+              objectName: "short"
+              width: 120
+              font.family: "Liberation Sans"; font.pixelSize: 14
+              text: "one"
+            }
+          }
+        }
+        """
 
     Scenario: A width the area declares gives way to the view
       Then the property "width" of "short" is 180
