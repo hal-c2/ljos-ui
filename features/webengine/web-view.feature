@@ -210,6 +210,28 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "1230"
     And the property "stayed" of "view" is true
 
+  @api-QtWebEngine.WebEngineView.triggerWebAction @api-QtWebEngine.WebEngineNewWindowRequest.requestedUrl
+  Scenario: Viewing a page's source asks for a new window showing it
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
+          triggerWebAction(WebEngineView.ViewSource) }
+        onNewWindowRequested: request => seen = WebEngineView.ViewSource + " "
+          + (request.requestedUrl.toString() === "view-source:" + url) + " "
+          + request.destination + " " + request.userInitiated
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is "32 true 1 true"
+    And the property "title" of "view" is "Fixture Page"
+
   Scenario: A port a browser does not visit fails to load and says why
     Given the QML:
       """qml
