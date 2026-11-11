@@ -26,6 +26,8 @@
 
 #[cfg(target_os = "windows")]
 mod credential_manager;
+#[cfg(any(target_os = "windows", test))]
+mod credential_names;
 #[cfg(target_os = "macos")]
 mod keychain;
 mod memory;
