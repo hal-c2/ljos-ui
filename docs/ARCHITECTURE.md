@@ -553,7 +553,7 @@ The item paints `DrawOp::Shader`: the programs, the uniform bytes, the sampler p
 
 `visible: false` or `opacity: 0` prunes a subtree from paint and hit-testing. Keyboard focus is still possible there, as the Qt docs say.
 
-**Colour.** Premultiplied sRGB, blended in gamma space, which is egui's model and Qt's default. One QML logical pixel equals one egui point.
+**Colour.** Premultiplied sRGB, blended in gamma space, which is egui's model and Qt's default. One QML logical pixel equals one egui point. The windows tell the system their pixels are sRGB, so a colour looks the same on a wide-gamut display as on any other: on macOS the shell tags the wgpu painter's Metal layers `kCGColorSpaceSRGB` before each frame, since egui-wgpu leaves them with no colour space (#192). Qt Quick's windows say none, so there the same values look more saturated; an application that should look as its Qt original does chooses `ShellConfig::color_space` `ColorSpace::Untagged`, and the user can choose either way with `LJOS_COLOR_SPACE=srgb` or `untagged` (#382). It is one choice for every window, the application's and not a QML property: Qt's `Window` has none, and the colours an application is written in are the same in all its windows. `ColorSpace` is non-exhaustive, for Display P3 to come. A window drawn on the processor keeps the colour space softbuffer gives its pictures either way, and the other platforms are told nothing.
 
 **Rejected:**
 - pure immediate mode, whose per-frame cost grows with the whole tree;
