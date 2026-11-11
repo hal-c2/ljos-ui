@@ -77,7 +77,7 @@ fn view_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
             "NewViewDestination",
             vec![
                 ("NewViewInWindow", 0),
-                ("NewViewInTab", 1),
+                ("NewViewInTab", NEW_VIEW_IN_TAB.into()),
                 ("NewViewInDialog", 2),
                 ("NewViewInBackgroundTab", 3),
             ],
@@ -90,10 +90,16 @@ fn view_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
                 ("Forward", 1),
                 ("Stop", 2),
                 ("Reload", 3),
+                ("ViewSource", WEB_ACTION_VIEW_SOURCE.into()),
             ],
         ),
     ]
 }
+
+/// `WebEngineView.ViewSource`.
+const WEB_ACTION_VIEW_SOURCE: i32 = 32;
+/// `WebEngineView.NewViewInTab`.
+const NEW_VIEW_IN_TAB: i32 = 1;
 
 /// The zoom a page can have, as Chromium allows it.
 const ZOOM_MIN: f64 = 0.25;
@@ -349,10 +355,22 @@ impl WebEngineView {
         browser.run_script(id, &source, world);
     }
 
-    /// Zooms by Chromium's steps.
+    /// What a person could ask of the page: going back or forward,
+    /// stopping, reloading, or viewing its source.
     #[qml(invokable, name = "triggerWebAction")]
     fn trigger_web_action(cx: &Cx, action: i32) {
-        let Some(b) = browser(cx.engine, cx.this) else {
+        let (e, me) = (cx.engine, cx.this);
+        if action == WEB_ACTION_VIEW_SOURCE {
+            // The source opens where the application opens new pages: it
+            // is asked for a tab showing it, as a person asked.
+            let Ok(url) = e.get(me, WebEngineView::URL) else {
+                return;
+            };
+            let source = format!("view-source:{}", url.0.as_str());
+            new_window(e, me, &source, NEW_VIEW_IN_TAB, (0.0, 0.0, 0.0, 0.0), true);
+            return;
+        }
+        let Some(b) = browser(e, me) else {
             return;
         };
         match action {
