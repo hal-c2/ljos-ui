@@ -207,3 +207,38 @@ Feature: The look of a control made after others set theirs
     When the property "dark" of "root" is set to false
     Then the property "palette.button" of "inside" is "#e0e0e0"
     And the property "palette.button" of "plain" is "#e0e0e0"
+
+  Scenario: A colour bound later beside a colour bound from the start both reach what the popup holds
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        id: root
+        objectName: "root"
+        width: 300; height: 200
+        property bool dark: false
+        function bindLater() { popup.palette.button = Qt.binding(() => root.dark ? "#000000" : "#e0e0e0") }
+        Popup {
+          id: popup
+          palette.window: root.dark ? "#202020" : "#f0f0f0"
+          Column {
+            Button { objectName: "inside" }
+            Item { objectName: "plain" }
+          }
+        }
+      }
+      """
+    When the method "bindLater" of "root" is called
+    And the property "dark" of "root" is set to true
+    Then the property "palette.button" of "inside" is "#000000"
+    And the property "palette.button" of "plain" is "#000000"
+    And the property "palette.window" of "plain" is "#202020"
+    When the property "dark" of "root" is set to false
+    Then the property "palette.button" of "inside" is "#e0e0e0"
+    And the property "palette.button" of "plain" is "#e0e0e0"
+    And the property "palette.window" of "plain" is "#f0f0f0"
+    When the property "dark" of "root" is set to true
+    Then the property "palette.button" of "inside" is "#000000"
+    And the property "palette.button" of "plain" is "#000000"
+    And the property "palette.window" of "inside" is "#202020"
