@@ -2,7 +2,7 @@
 title: Testing
 description: Test QML applications with tst_*.qml files and ljos test, render deterministic pictures with ljos render, and write Gherkin behaviour scenarios.
 section: start
-order: 6
+order: 7
 ---
 
 # Testing
@@ -26,6 +26,8 @@ Item {
     height: 200
 
     MouseArea {
+        Accessible.role: Accessible.Button
+        Accessible.name: "Click area"
         id: area
         x: 20
         y: 30

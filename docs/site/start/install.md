@@ -2,7 +2,7 @@
 title: Install Ljós
 description: Install the Ljós toolchain, run the repository checks and add the ljos crate to a Rust project.
 section: start
-order: 2
+order: 3
 ---
 
 # Install Ljós

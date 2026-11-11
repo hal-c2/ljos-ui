@@ -2,7 +2,7 @@
 title: Your First App
 description: Write a QML file, check it from the command line, open it in a window with ljos run and update it live with --watch.
 section: start
-order: 3
+order: 4
 ---
 
 # Your First App

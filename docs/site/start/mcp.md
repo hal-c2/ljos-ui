@@ -2,7 +2,7 @@
 title: MCP Servers for Agents
 description: Connect coding agents to Ljós with the authoring MCP server (ljos mcp) and the live application inspector (ljos run --mcp and ljos attach).
 section: start
-order: 7
+order: 8
 ---
 
 # MCP Servers for Agents

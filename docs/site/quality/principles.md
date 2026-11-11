@@ -15,7 +15,7 @@ Ljós is a Rust UI toolkit for malleable software: apps that people and their ag
 
 ### Malleable software
 
-People tailor the applications they use, alone or with a coding agent, instead of accepting what they are given. An application can let its user change its interface and scripts on their own device and see the change live, checked by the same compiler and lints the development tools use. Where a platform forbids code generated at run time, the changed code still runs, interpreted by the engine.
+People tailor the applications they use, alone or with a coding agent, instead of accepting what they are given. An application can let its user replace its interface with a shell of their own, which lays out the pieces the application and its plugins contribute to named slots; when theirs does not work, the application's own shell comes back and says what broke and where ([Let users replace the shell](../start/your-own-shell.md)). The user's change shows live, checked by the same compiler and lints the development tools use. Where a platform forbids code generated at run time, the changed code still runs, interpreted by the engine.
 
 ### Typed scripts
 
