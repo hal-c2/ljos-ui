@@ -4783,6 +4783,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ljos_secrets"
+version = "0.0.0"
+dependencies = [
+ "blocking",
+ "objc2-core-foundation",
+ "tempfile",
+ "thiserror 2.0.21",
+ "windows-sys 0.52.0",
+ "zbus",
+]
+
+[[package]]
 name = "ljos_shader"
 version = "0.0.0"
 dependencies = [
