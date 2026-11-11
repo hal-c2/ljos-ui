@@ -1,4 +1,4 @@
-//! Renames of dialogs: `QtQuick.Dialogs`, popups.
+//! Rules of states, transitions and animations.
 
 use super::Area;
 

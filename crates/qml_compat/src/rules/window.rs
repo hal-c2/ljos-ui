@@ -1,4 +1,4 @@
-//! Renames of windows: `Window`, `ApplicationWindow`, screens.
+//! Rules of windows: `Window`, `ApplicationWindow`, screens.
 
 use super::Area;
 

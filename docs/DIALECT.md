@@ -2057,10 +2057,10 @@ Lanes build areas side by side, and each PR touches only its own area's
 files, so that one merging does not put the others in conflict:
 
 - **Renames** go only in your area's
-  `crates/qml_compat/src/renames/<area>.rs`. A new area is three new
-  files, `renames/<area>.rs`, `tests/<area>.rs` and
+  `crates/qml_compat/src/rules/<area>.rs`. A new area is three new
+  files, `rules/<area>.rs`, `tests/<area>.rs` and
   `docs/dialect/status/<area>.md`, and one line in `AREAS`
-  (`renames/mod.rs`); a unit test holds the three lists equal. A Qt type's member renames live
+  (`rules/mod.rs`); a unit test holds the three lists equal. A Qt type's member renames live
   in one area, and a type is renamed in one area; a unit test holds both.
 - **Tests** go only in `crates/qml_compat/src/tests/<area>.rs`. Shared
   helpers stay in `tests/mod.rs`.

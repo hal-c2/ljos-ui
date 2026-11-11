@@ -1,4 +1,4 @@
-//! Renames of the core visual types: `Item`, `Rectangle`, pointer input.
+//! Rules of the core visual types: `Item`, `Rectangle`, pointer input.
 
 use super::Area;
 

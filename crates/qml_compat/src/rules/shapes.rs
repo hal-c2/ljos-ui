@@ -1,4 +1,4 @@
-//! Renames of layout: anchors, positioners, `RowLayout` and `ColumnLayout`.
+//! Rules of shapes and paths: `Shape`, `Canvas`, gradients.
 
 use super::Area;
 

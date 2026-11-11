@@ -1,4 +1,4 @@
-//! Renames of the controls: `QtQuick.Controls` lowered to `Ljos.Controls.Basic`.
+//! Rules of the controls: `QtQuick.Controls` lowered to `Ljos.Controls.Basic`.
 
 use super::Area;
 

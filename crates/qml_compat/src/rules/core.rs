@@ -1,4 +1,4 @@
-//! Renames of typed scripts: TypeScript modules and `property T` of their types.
+//! Rules of the non-visual core: `QtObject`, `Timer`, `Connections`, `Binding`.
 
 use super::Area;
 

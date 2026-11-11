@@ -1,4 +1,4 @@
-//! Renames of gestures and handlers: `TapHandler`, `DragHandler`, flicking.
+//! Rules of gestures and handlers: `TapHandler`, `DragHandler`, flicking.
 
 use super::Area;
 

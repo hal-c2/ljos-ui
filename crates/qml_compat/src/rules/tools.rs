@@ -1,4 +1,4 @@
-//! Renames of the non-visual core: `QtObject`, `Timer`, `Connections`, `Binding`.
+//! Rules of what the tools lower: `ljos migrate`, the MCP tools, Studio.
 
 use super::Area;
 
