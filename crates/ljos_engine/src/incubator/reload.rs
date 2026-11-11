@@ -721,9 +721,10 @@ impl Engine {
     /// before any old one goes: where the host moves whatever points at
     /// the root (a window's content, its own list of roots).
     ///
-    /// On `Err` nothing has changed: the old objects, files and
-    /// generation are as they were, and [`Engine::last_reload_error`]
-    /// says why.
+    /// What a script's `incubateObject` is still making is finished first,
+    /// so that a full reload has it on record to make again. On `Err`
+    /// nothing else has changed: the old objects, files and generation
+    /// are as they were, and [`Engine::last_reload_error`] says why.
     ///
     /// Call it between frames, outside any batch, with roots made by
     /// [`Engine::create_from_url`] while tracking was on.
