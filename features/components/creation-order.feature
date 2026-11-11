@@ -1,5 +1,6 @@
 # Sources:
 #   https://doc.qt.io/qt-6/qml-qtqml-component.html#createObject-method
+#   https://doc.qt.io/qt-6/qml-qtqml-component.html#incubateObject-method
 #   https://doc.qt.io/qt-6/qtqml-syntax-propertybinding.html
 #   docs/DIALECT.md (section 4.11, creation order)
 #
@@ -20,7 +21,9 @@ Feature: An object's handlers run once its initial properties and bindings have 
   An object made with initial properties is given them and has its
   bindings run before any of its change handlers is told. The handlers
   then run, each seeing every property as the object will have it, and
-  the object is completed after them.
+  the object is completed after them. createObject and incubateObject,
+  at once or later, do the same, and a property given through an alias
+  is no different.
 
   Background:
     Given the file "Shown.qml":
@@ -42,6 +45,19 @@ Feature: An object's handlers run once its initial properties and bindings have 
         Component.onCompleted: root.say("completed" + w + "/" + dbl)
       }
       """
+    And the file "Aliased.qml":
+      """qml
+      import QtQuick
+      Item {
+        objectName: "aliased"
+        property alias a: inner.v
+        property int dbl: { root.say("eval" + a); return a * 2 }
+        onAChanged: root.say("a" + a + "/" + dbl)
+        onDblChanged: root.say("dbl" + dbl)
+        Component.onCompleted: root.say("completed" + a + "/" + dbl)
+        QtObject { id: inner; property int v: 0 }
+      }
+      """
     And the QML:
       """qml
       import QtQuick
@@ -53,10 +69,18 @@ Feature: An object's handlers run once its initial properties and bindings have 
         function say(s) { seen.push(s) }
         Component { id: shown; Shown { } }
         Component { id: writer; Shown { writes: true } }
-        function make(writes) {
-          (writes ? writer : shown).createObject(root, { w: 3 })
-          log = seen.join(" ")
+        Component { id: aliased; Aliased { } }
+        function make(writes, how) { give(writes ? writer : shown, { w: 3 }, how) }
+        function alias(how) { give(aliased, { a: 3 }, how) }
+        function told() { log = seen.join(" ") }
+        function give(c, props, how) {
+          if (!how || how === "create") { c.createObject(root, props); return told() }
+          const inc = c.incubateObject(root, props,
+                                       how === "later" ? Qt.Asynchronous : Qt.Synchronous)
+          if (inc.status === Component.Ready) told()
+          else inc.onStatusChanged = s => { if (s === Component.Ready) told() }
         }
+        function incubate(o) { make(o.writes, o.how) }
       }
       """
 
@@ -67,3 +91,26 @@ Feature: An object's handlers run once its initial properties and bindings have 
   Scenario: A binding a handler makes stale runs again after it
     When the method "make" of "root" is called with true
     Then the property "log" of "root" is "eval3 evtri w3/6 dbl6 evtri tri2 completed3/6"
+
+  Scenario Outline: An incubated object settles as a created one does, <how>
+    When the method "incubate" of "root" is called with {"writes": <writes>, "how": "<how>"}
+    And 50 milliseconds pass
+    Then the property "log" of "root" is "<log>"
+
+    Examples:
+      | how   | writes | log                                           |
+      | sync  | false  | eval3 evtri w3/6 dbl6 tri8 completed3/6       |
+      | later | false  | eval3 evtri w3/6 dbl6 tri8 completed3/6       |
+      | sync  | true   | eval3 evtri w3/6 dbl6 evtri tri2 completed3/6 |
+      | later | true   | eval3 evtri w3/6 dbl6 evtri tri2 completed3/6 |
+
+  Scenario Outline: A property given through an alias settles before its handler, <how>
+    When the method "alias" of "root" is called with "<how>"
+    And 50 milliseconds pass
+    Then the property "log" of "root" is "eval3 a3/6 dbl6 completed3/6"
+
+    Examples:
+      | how    |
+      | create |
+      | sync   |
+      | later  |
