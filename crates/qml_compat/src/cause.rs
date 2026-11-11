@@ -53,10 +53,12 @@ pub enum Cause {
     QualifiedType {
         name: String,
     },
-    /// A name that a Ljós module the lowered file imports would take.
+    /// A name that a Ljós module the lowered file imports would take;
+    /// `is` is whose the name is, `None` when no module the file imports
+    /// has it.
     FoundFirst {
         name: String,
-        is: Owner,
+        is: Option<Owner>,
         module: &'static str,
     },
     /// Qt's type, which in the lowered file the project's or the program's
@@ -169,8 +171,6 @@ pub enum Owner {
     Program,
     /// A file of the project.
     Project,
-    /// None of the modules the file imports has it.
-    Nowhere,
 }
 
 impl Owner {
@@ -178,14 +178,13 @@ impl Owner {
         match self {
             Owner::Program => "is one of the program's own types",
             Owner::Project => "is a file of the project",
-            Owner::Nowhere => "is not a type of the modules the file imports",
         }
     }
 
     fn whose(self) -> &'static str {
         match self {
             Owner::Program => "the program's",
-            Owner::Project | Owner::Nowhere => "the project's",
+            Owner::Project => "the project's",
         }
     }
 }
@@ -405,7 +404,10 @@ impl fmt::Display for Cause {
             Cause::FoundFirst { name, is, module } => write!(
                 f,
                 "`{name}` {}, and {module}, which the lowered file imports, has a `{name}` that would be found first",
-                is.is()
+                match is {
+                    Some(owner) => owner.is(),
+                    None => "is not a type of the modules the file imports",
+                }
             ),
             Cause::ShadowedInLowered { name, by, module } => write!(
                 f,
