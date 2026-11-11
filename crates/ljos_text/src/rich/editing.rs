@@ -832,6 +832,10 @@ impl RichText {
         }
         let (block, column, index) = self.cell_paragraph(range.start)?;
         let row = self.blocks[block].table.as_ref()?;
+        // Only an edit: a cut keeps the first paragraph's format, as it does
+        // outside a table. No cut gets here today, as each of `slice`'s
+        // takes a paragraph end with it (a table always has a paragraph on
+        // either side); this keeps the two paths one rule.
         let from_start = edit
             && self.text[..range.start]
                 .chars()
@@ -2049,10 +2053,10 @@ mod tests {
         }
     }
 
-    /// A slice of a cell is cut out of it, not edited in it: from a
-    /// paragraph's start, each paragraph of the slice keeps its own format,
-    /// not the one a removal from there would leave (review of
-    /// hal-c2/ljos-ui#360).
+    /// A slice of a cell from a paragraph's start: each paragraph of the
+    /// slice keeps its own format, not the one a removal from there would
+    /// leave (review of hal-c2/ljos-ui#360). It does not reach the `edit`
+    /// gate in `cell_paragraphs_spliced`, which no cut gets to today.
     #[test]
     fn a_slice_of_a_cell_from_a_paragraph_start_keeps_its_own_formats() {
         let nowrap = "<p style='white-space:nowrap'>";
