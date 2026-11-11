@@ -230,41 +230,35 @@ fn delay_passed(e: &Engine, tip: ObjectId) {
     check(e, "tool tip", r);
 }
 
-/// Called when a popup is asked to open. True if it is a tool tip that
-/// waits for its delay first: it opens when that has passed.
-pub(crate) fn defer(e: &Engine, popup: ObjectId) -> bool {
-    let Some(st) = state_of(e, popup) else {
-        return false;
+/// Whether a tool tip asked to show now waits for its delay first: it
+/// shows when that has passed.
+pub(crate) fn delays(e: &Engine, tip: ObjectId) -> bool {
+    state_of(e, tip).is_some_and(|st| !st.due.get() && int(e, tip, ToolTip::DELAY) > 0)
+}
+
+/// Starts the wait for a tool tip's delay, if it is not waiting already.
+pub(crate) fn wait(e: &Engine, tip: ObjectId) {
+    let Some(st) = state_of(e, tip) else {
+        return;
     };
-    if st.due.get() {
-        return false;
-    }
-    let ms = int(e, popup, ToolTip::DELAY);
-    if ms <= 0 {
-        return false;
-    }
     if !st.pending.replace(true) {
-        arm(e, popup, &st.delay, ms, delay_passed);
+        arm(e, tip, &st.delay, int(e, tip, ToolTip::DELAY), delay_passed);
     }
-    true
 }
 
-/// Called when a popup is asked to close. True if it is a tool tip that
-/// was waiting for its delay: there is nothing to hide then.
-pub(crate) fn cancel(e: &Engine, popup: ObjectId) -> bool {
-    let Some(st) = state_of(e, popup) else {
-        return false;
-    };
-    if !st.pending.replace(false) {
-        return false;
+/// Stops a tool tip's wait for its delay: it was never shown, so there is
+/// nothing to hide.
+pub(crate) fn cancel(e: &Engine, tip: ObjectId) {
+    if let Some(st) = state_of(e, tip)
+        && st.pending.replace(false)
+    {
+        stop(e, &st.delay);
     }
-    stop(e, &st.delay);
-    true
 }
 
-/// Whether `popup` is a tool tip that waits for its delay.
-pub(crate) fn waiting(e: &Engine, popup: ObjectId) -> bool {
-    state_of(e, popup).is_some_and(|s| s.pending.get())
+/// Whether a tool tip waits for its delay.
+pub(crate) fn waiting(e: &Engine, tip: ObjectId) -> bool {
+    state_of(e, tip).is_some_and(|s| s.pending.get())
 }
 
 // -------------------------------------------------------------- attached

@@ -69,11 +69,6 @@ impl Default for Drawer {
     }
 }
 
-/// Whether `popup` is a drawer.
-pub(super) fn is_drawer(engine: &Engine, popup: ObjectId) -> bool {
-    crate::util::is_a::<Drawer>(engine, popup)
-}
-
 /// Where a drawer is, from the corner of the window: past `edge` by as
 /// much of its size as is not in yet.
 fn corner(edge: i32, position: f64, size: (f64, f64), bound: (f64, f64)) -> (f64, f64) {

@@ -177,7 +177,7 @@ fn has_drawer(engine: &Engine, overlay: ObjectId) -> bool {
         child_items(engine, overlay)
             .into_iter()
             .filter_map(|item| popup_of(engine, item))
-            .any(|popup| super::drawer::is_drawer(engine, popup))
+            .any(|popup| super::kind_of(engine, popup).is_drawer())
     })
 }
 
@@ -230,7 +230,7 @@ fn make_shade(
         engine.bind(shade, size, move |e| e.read(overlay, size))?;
     }
     engine.bind(shade, Item::Z.index, move |e| e.read(popup, Popup::Z.index))?;
-    if super::drawer::is_drawer(engine, popup) {
+    if super::kind_of(engine, popup).is_drawer() {
         // The shade fades in as the drawer comes in.
         engine.bind(shade, Item::OPACITY.index, move |e| {
             super::drawer::shade_opacity(e, popup)

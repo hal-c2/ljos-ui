@@ -27,7 +27,8 @@ use ljos_quick::{Item, MouseButtons, PointerEvent, child_items, scene_transform}
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
-use super::drawer::{Drawer, edge, is_drawer};
+use super::drawer::{Drawer, edge};
+use super::kind::kind_of;
 use super::overlay::{is_modal, point_in, stack};
 use super::{Popup, item_of, popup_of};
 use crate::util::{check, flag, num, set_derived};
@@ -189,7 +190,7 @@ fn drag_of(engine: &Engine, drawer: ObjectId, item: ObjectId, ev: &PointerEvent)
 fn candidate(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) -> Option<Drag> {
     for (item, popup) in stack(engine, overlay).into_iter().rev() {
         if point_in(engine, item, ev.pos) {
-            let draggable = is_drawer(engine, popup)
+            let draggable = kind_of(engine, popup).is_drawer()
                 && flag(engine, popup, Drawer::INTERACTIVE.index)
                 && !super::is_going(engine, popup);
             return draggable.then(|| drag_of(engine, popup, item, ev));
@@ -208,7 +209,7 @@ fn candidate(engine: &Engine, overlay: ObjectId, ev: &PointerEvent) -> Option<Dr
         .rev()
         .find_map(|item| {
             let popup = popup_of(engine, item)?;
-            if !is_drawer(engine, popup)
+            if !kind_of(engine, popup).is_drawer()
                 || flag(engine, popup, Popup::VISIBLE.index)
                 || !flag(engine, popup, Drawer::INTERACTIVE.index)
             {

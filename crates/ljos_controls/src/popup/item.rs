@@ -370,7 +370,7 @@ fn key_press(engine: &Engine, item: ObjectId, ev: &KeyEvent) -> bool {
         return false;
     };
     // A menu's keys go by its items, not by the focus chain.
-    if crate::menu::key_press(engine, popup, ev) {
+    if super::kind_of(engine, popup).key_press(engine, popup, ev) {
         return true;
     }
     match ev.key {

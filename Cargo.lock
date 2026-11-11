@@ -4148,6 +4148,7 @@ dependencies = [
  "qml_front",
  "qt_types",
  "slotmap",
+ "smallvec",
  "thiserror 2.0.21",
 ]
 
