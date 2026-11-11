@@ -1157,8 +1157,11 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             }
             QmlBindingValue::Expression(_) | QmlBindingValue::Statement(_) => {
                 self.body(|checker| {
-                    // The arguments are in scope by their names.
-                    for (name, ty) in &params {
+                    // The arguments are in scope by their names. One the
+                    // table leaves unnamed (`Tap.tapped`'s button) is in
+                    // scope by none: the handler reaches it only by
+                    // declaring it, so a name of its own is free.
+                    for (name, ty) in params.iter().filter(|(name, _)| !name.is_empty()) {
                         let name: &'a str = checker.intern_name(name);
                         checker.bind(name, *ty, Binding::Param);
                     }
@@ -1188,19 +1191,19 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     /// uses it, and a name it does not use need not be in scope.
     fn intern_name(&self, name: &str) -> &'a str {
         let source = self.c.source;
-        let mut from = 0;
-        while let Some(at) = source[from..].find(name) {
-            let start = from + at;
-            let end = start + name.len();
-            let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
-            let before = source[..start].chars().next_back().is_some_and(word);
-            let after = source[end..].chars().next().is_some_and(word);
-            if !before && !after {
-                return &source[start..end];
-            }
-            from = end;
-        }
-        ""
+        let word = |c: char| c.is_alphanumeric() || c == '_' || c == '$';
+        // Each match is visited once, so the search ends on any name: an
+        // empty one, matched at every character, once looped for ever
+        // (#394).
+        source
+            .match_indices(name)
+            .map(|(start, _)| (start, start + name.len()))
+            .find(|&(start, end)| {
+                end > start
+                    && !source[..start].chars().next_back().is_some_and(word)
+                    && !source[end..].chars().next().is_some_and(word)
+            })
+            .map_or("", |(start, end)| &source[start..end])
     }
 
     /// Walks a function's body in its own scope: names it declares and

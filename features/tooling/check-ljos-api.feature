@@ -409,6 +409,63 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 1 errors
         """
 
+    # `Tap`'s `tapped(eventPoint, button)` names only its first argument, as Qt's TapHandler does:
+    # a handler that wants the button declares it. A check of such a handler in a file that starts
+    # with a word, as one that starts with `import` does, once never ended.
+    Scenario: A handler of a signal whose argument has no name is checked
+      Given the file "Pad.qml" without its indentation:
+        """qml
+        import Ljos.Ui
+        Item {
+          property int taps: 0
+          property int last: 0
+          Tap { onTapped: {} }
+          Tap { onSingleTapped: taps = taps + 1 }
+          Tap { onDoubleTapped: { taps = 0 } }
+          Tap { onTapped: (eventPoint, button) => { last = button } }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: An unnamed argument is in scope by no name, so an id may have the name
+      Given the file "Pad.qml" without its indentation:
+        """qml
+        import Ljos.Ui
+        Item {
+          id: button
+          property int taps: 0
+          Tap { onTapped: button.taps = button.taps + 1 }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A handler reaches an unnamed argument only by declaring it, and has its type
+      Given the file "Pad.qml" without its indentation:
+        """qml
+        import Ljos.Ui
+        Item {
+          property string s: ""
+          Tap { onTapped: (eventPoint, button) => { s = button } }
+          Tap { onSingleTapped: s = button }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Pad.qml:4:49: error: `s` is a string; this gives it a number [ts-assign-type]
+        Pad.qml:5:29: error: `button` has no type: it is not in scope [ts-no-any]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
     Scenario: What the test of `?:` reads has a type too
       Given the file "Gauge.qml":
         """qml
