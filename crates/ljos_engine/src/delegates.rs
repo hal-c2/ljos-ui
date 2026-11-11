@@ -543,14 +543,7 @@ impl Shared {
             (Err(_), None) => {}
             (Err(e), Some(_)) => {
                 cannot_create(engine, component);
-                match e {
-                    // The message is whole already, a line for each
-                    // property.
-                    EngineError::RequiredNotSet(m) => {
-                        m.lines().for_each(|l| engine.warn(l.to_owned()))
-                    }
-                    e => engine.warn(e.to_string()),
-                }
+                e.said().into_iter().for_each(|l| engine.warn(l));
             }
         }
     }
@@ -1831,14 +1824,7 @@ impl ViewShared {
             (Err(_), None) => None,
             (Err(e), Some(_)) => {
                 cannot_create(engine, component);
-                match e {
-                    // The message is whole already, a line for each
-                    // property.
-                    EngineError::RequiredNotSet(m) => {
-                        m.lines().for_each(|l| engine.warn(l.to_owned()))
-                    }
-                    e => engine.warn(e.to_string()),
-                }
+                e.said().into_iter().for_each(|l| engine.warn(l));
                 None
             }
         }

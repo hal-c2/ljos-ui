@@ -31,6 +31,7 @@ use crate::cx::Cx;
 use crate::engine::Engine;
 use crate::error::EngineError;
 use crate::ids::ObjectId;
+use crate::incubator::outcome::Asked;
 use crate::incubator::request::{By, Request};
 use crate::incubator::{CreationHandle, Initial, SharedCreation};
 use crate::js::obj_to_u64;
@@ -267,9 +268,7 @@ impl Engine {
 /// `Component.incubateObject` as the method sees it.
 pub(crate) fn incubate_object(cx: &Cx, parent: Value, props: Value, mode: Value) -> Value {
     let e = cx.engine;
-    // A component a createObject left in Error makes nothing until one
-    // succeeds.
-    if e.component_failed(cx.this) {
+    if e.component_refuses(cx.this, Asked::Incubated) {
         e.warn("QQmlComponent: Component is not ready".to_owned());
         return Value::Null;
     }
