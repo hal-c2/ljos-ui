@@ -37,13 +37,11 @@ use std::{
 use bindings::{Bindings, Node};
 use modules::{Ljos, Modules, Qt};
 use oxc_ast::ast::{
-    ArrowFunctionExpression, BindingIdentifier, BlockStatement, CallExpression,
-    ComputedMemberExpression, Expression, FormalParameters, Function, FunctionBody,
-    IdentifierReference, Statement, StaticMemberExpression,
+    BindingIdentifier, CallExpression, ComputedMemberExpression, Expression, IdentifierReference,
+    StaticMemberExpression,
 };
 use oxc_ast_visit::{Visit, walk};
 use oxc_span::{GetSpan, Span};
-use oxc_syntax::scope::ScopeFlags;
 use qml_edit::Change;
 use qml_syntax::{
     Allocator,
@@ -1891,7 +1889,6 @@ impl<'s> Pass<'s> {
             own: Bindings::of(node),
             row: RowEdits::default(),
             called: Vec::new(),
-            bound: Vec::new(),
         };
         node.visit(&mut script);
         script.row_done();
@@ -2140,44 +2137,6 @@ fn declared(object: &QmlObject<'_>) -> Vec<String> {
         .collect()
 }
 
-/// The names a function's parameters bind.
-fn parameters(params: &FormalParameters<'_>) -> Vec<String> {
-    let rest = params.rest.iter().map(|rest| &rest.rest.argument);
-    params
-        .items
-        .iter()
-        .map(|item| &item.pattern)
-        .chain(rest)
-        .flat_map(|pattern| pattern.get_binding_identifiers())
-        .map(|id| id.name.to_string())
-        .collect()
-}
-
-/// The names `statements` declare directly: their `var`s, `let`s,
-/// `const`s, functions and classes.
-fn declarations(statements: &[Statement<'_>]) -> Vec<String> {
-    let mut names = Vec::new();
-    for statement in statements {
-        match statement {
-            Statement::VariableDeclaration(declaration) => names.extend(
-                declaration
-                    .declarations
-                    .iter()
-                    .flat_map(|d| d.id.get_binding_identifiers())
-                    .map(|id| id.name.to_string()),
-            ),
-            Statement::FunctionDeclaration(function) => {
-                names.extend(function.id.as_ref().map(|id| id.name.to_string()));
-            }
-            Statement::ClassDeclaration(class) => {
-                names.extend(class.id.as_ref().map(|id| id.name.to_string()));
-            }
-            _ => {}
-        }
-    }
-    names
-}
-
 /// Whether `on`'s Qt type has a member `name`. A type the pass does not
 /// know, or one derived from a known one, may have it or not: the root is
 /// asked about it then too.
@@ -2408,10 +2367,6 @@ struct Script<'p, 's> {
     /// Where the names that are called start: a called name is a method,
     /// and every member Ljós renames is a property (`model.remove(0)`).
     called: Vec<u32>,
-    /// The names the script binds around where it is read, innermost last:
-    /// a function's parameters, and what a block or a function's body
-    /// declares directly, which is bound throughout it.
-    bound: Vec<Vec<String>>,
 }
 
 impl Script<'_, '_> {
@@ -2427,7 +2382,7 @@ impl Script<'_, '_> {
     /// What the pass knows of what `expression` is.
     fn ty(&self, expression: &Expression<'_>) -> Ty {
         match expression {
-            Expression::Identifier(id) => self.name(&id.name),
+            Expression::Identifier(id) => self.name(&id.name, id.span.start),
             Expression::StaticMemberExpression(member) => {
                 let on = self.ty(&member.object);
                 self.member_ty(on, &member.property.name)
@@ -2440,17 +2395,10 @@ impl Script<'_, '_> {
         }
     }
 
-    /// Whether a parameter or a local of the script is `name` where it is
-    /// read: in JS it is found before an id and before any member.
-    fn is_bound(&self, name: &str) -> bool {
-        self.bound
-            .iter()
-            .any(|names| names.iter().any(|n| n == name))
-    }
-
-    fn name(&self, name: &str) -> Ty {
-        // What a parameter or a local holds is not known here.
-        if self.is_bound(name) {
+    fn name(&self, name: &str, at: u32) -> Ty {
+        // A parameter or a local of the script is found before an id and
+        // before any member, and what it holds is not known here.
+        if self.own.declares(name, at) {
             return Ty::Unknown;
         }
         if let Some(ty) = self.pass.id(name) {
@@ -2938,10 +2886,8 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             return;
         }
         // A parameter or a local is found before an id and the scope's
-        // members. A `var` in an inner block, or a `for`'s or a `catch`'s
-        // name, is not followed: read where it may not be bound, the name is
-        // taken as a member's and may keep the file.
-        if self.is_bound(name) {
+        // members.
+        if self.own.declares(name, it.span.start) {
             return;
         }
         // An id is found before the scope's members, in Qt as once lowered.
@@ -2989,30 +2935,6 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 it.span.start,
             ),
         }
-    }
-
-    fn visit_function(&mut self, it: &Function<'a>, flags: ScopeFlags) {
-        self.bound.push(parameters(&it.params));
-        walk::walk_function(self, it, flags);
-        self.bound.pop();
-    }
-
-    fn visit_arrow_function_expression(&mut self, it: &ArrowFunctionExpression<'a>) {
-        self.bound.push(parameters(&it.params));
-        walk::walk_arrow_function_expression(self, it);
-        self.bound.pop();
-    }
-
-    fn visit_function_body(&mut self, it: &FunctionBody<'a>) {
-        self.bound.push(declarations(&it.statements));
-        walk::walk_function_body(self, it);
-        self.bound.pop();
-    }
-
-    fn visit_block_statement(&mut self, it: &BlockStatement<'a>) {
-        self.bound.push(declarations(&it.body));
-        walk::walk_block_statement(self, it);
-        self.bound.pop();
     }
 
     fn visit_binding_identifier(&mut self, it: &BindingIdentifier<'a>) {
