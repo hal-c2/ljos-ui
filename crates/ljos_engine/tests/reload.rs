@@ -1396,3 +1396,36 @@ Item {
     r.edit("Main", &remade(src)).unwrap();
     assert_eq!(kinds(&r), [3.0, 4.0]);
 }
+
+#[test]
+fn objects_still_being_incubated_come_back_after_a_reload() {
+    let src = r#"import QtQuick
+Item {
+  id: root
+  objectName: "root"
+  function fill() {
+    for (var k = 3; k < 5; k++)
+      tile.incubateObject(area, { kind: k }, Qt.Asynchronous)
+  }
+  Component { id: tile; Item { objectName: "tile"; property int kind } }
+  Item { id: area; objectName: "area" }
+}
+"#;
+    let mut r = rig(&[("Main", src)]);
+    r.call("root", "fill");
+    // Their turn has not come when the file is made again.
+    assert!(r.h.engine.has_half_made() || r.h.engine.has_incubations());
+    r.edit("Main", &remade(src)).unwrap();
+    for mut job in r.h.engine.take_incubations() {
+        while matches!(job.step(&|| false), JobPoll::Yield) {}
+    }
+    assert!(!r.h.engine.has_half_made());
+    let area = r.find("area");
+    let kinds: Vec<f64> =
+        r.h.engine
+            .children(area)
+            .into_iter()
+            .map(|t| r.h.num(t, "kind"))
+            .collect();
+    assert_eq!(kinds, [3.0, 4.0]);
+}

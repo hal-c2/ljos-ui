@@ -99,6 +99,9 @@ impl Incubator {
 #[derive(Default)]
 struct Running {
     handles: RefCell<Vec<CreationHandle>>,
+    /// Those a reload is to make again once they are made
+    /// ([`Engine::finish_scripted_incubations`]).
+    scripted: RefCell<Vec<(CreationHandle, SharedCreation)>>,
 }
 
 impl Engine {
@@ -132,7 +135,8 @@ impl Engine {
         let call = self.reload_script_call(component, parent, &props, &how);
         let (mut job, handle) =
             CreationJob::for_component(self, component, parent, props, Lane::Visible, owner);
-        if call.is_some() {
+        let recorded = call.is_some();
+        if recorded {
             job = job.by_script();
         }
         let (job, shared) = job
@@ -144,10 +148,14 @@ impl Engine {
                 e.incubated(inc, made)
             })
             .shared();
-        self.extension::<Running>()
-            .handles
-            .borrow_mut()
-            .push(handle.clone());
+        let running = self.extension::<Running>();
+        running.handles.borrow_mut().push(handle.clone());
+        if recorded {
+            running
+                .scripted
+                .borrow_mut()
+                .push((handle.clone(), shared.clone()));
+        }
         let face = self.run_js("incubator", |s| {
             Ok(s.keep(s.wrapper(obj_to_u64(inc))?.into_value()))
         });
@@ -159,12 +167,29 @@ impl Engine {
         Ok(inc)
     }
 
+    /// Makes now what is left of each incubation a script asked for that a
+    /// reload would make again. A reload that makes the tree anew reads
+    /// what scripts made from the objects they were given; one still being
+    /// made has none yet, and would be finished under the old tree after it.
+    pub(crate) fn finish_scripted_incubations(&self) {
+        let jobs: Vec<SharedCreation> = self
+            .extension::<Running>()
+            .scripted
+            .borrow()
+            .iter()
+            .filter(|(h, _)| !h.is_done())
+            .map(|(_, job)| job.clone())
+            .collect();
+        for job in jobs {
+            job.force();
+        }
+    }
+
     /// Publishes what an incubation made, or that it could not.
     fn incubated(&self, inc: ObjectId, made: &Result<ObjectId, EngineError>) {
-        self.extension::<Running>()
-            .handles
-            .borrow_mut()
-            .retain(|h| !h.is_done());
+        let running = self.extension::<Running>();
+        running.handles.borrow_mut().retain(|h| !h.is_done());
+        running.scripted.borrow_mut().retain(|(h, _)| !h.is_done());
         // Whoever left the half-made object out looks again.
         if let Ok(obj) = made {
             let listeners = self.inner.incubated_listeners.borrow().clone();
