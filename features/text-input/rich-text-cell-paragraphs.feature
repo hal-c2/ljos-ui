@@ -20,7 +20,9 @@ Feature: Paragraphs in the cells of a rich TextEdit
   plain text has U+2029, as between paragraphs outside a table. Return
   in a cell adds a paragraph to it, Backspace at the start of one joins
   it to the one before and Delete at the end of one joins the next to
-  it; the joined paragraph keeps the format of the first. Deleting a
+  it. A removal from inside a paragraph keeps that paragraph's format;
+  one from the start of a paragraph keeps the format of the paragraph it
+  ends in. Deleting a
   word never takes the cursor out of its table: from one cell into
   another it empties both, and from outside into a table it takes the
   whole table and leaves the paragraphs on either side apart. Every
@@ -220,6 +222,29 @@ Feature: Paragraphs in the cells of a rich TextEdit
       And the user presses "Backspace"
       And the method "wide" of "root" is called
       Then the property "out" of "root" is "wider than the item"
+
+    Scenario Outline: Removing <from> to <to> of <doc> leaves one that is <width>
+      When the property "html" of "root" is set to "<doc>"
+      And the method "remove" of "edit" is called with <from>, <to>
+      And the method "wide" of "root" is called
+      Then the property "out" of "root" is "<width>"
+
+      # From the start of a paragraph the paragraph the removal ends in
+      # keeps its format; from inside one, the paragraph it starts in keeps
+      # its own.
+      Examples:
+        | doc                                                                        | from | to | width               |
+        | [table][tr][td][p style='white-space:nowrap']x[/p][p]LONG[/p][/td][/tr][/table]  | 1    | 3  | within the item     |
+        | [table][tr][td][p]x[/p][p style='white-space:nowrap']LONG[/p][/td][/tr][/table]  | 1    | 3  | wider than the item |
+        | [table][tr][td][p style='white-space:nowrap']xy[/p][p]LONG[/p][/td][/tr][/table] | 2    | 4  | wider than the item |
+        | [table][tr][td][p]a[/p][p style='white-space:nowrap']x[/p][p]LONG[/p][/td][/tr][/table] | 3 | 5 | within the item |
+
+      # The spaces of a paragraph that does not wrap are read as
+      # non-breaking ones, so its text stays on one line in the paragraph
+      # it goes on in, whose format wraps.
+      Examples:
+        | doc                                                                        | from | to | width               |
+        | [table][tr][td][p]xy[/p][p style='white-space:nowrap']LONG[/p][/td][/tr][/table] | 2    | 4  | wider than the item |
 
   Rule: Deleting a word never leaves a cell's table, but empties the cells it reaches
 

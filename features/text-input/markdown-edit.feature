@@ -118,6 +118,36 @@ Feature: Editing Markdown in a TextEdit
       | - a~~  x~~after~     | - a\|\|  x\|\|after\|\|              |
       | 1. a~2. b~~   x~3. c~ | 1.  a\|2.  b\|\|    x\|\|3.  c\|      |
 
+  Scenario Outline: Removing <from> to <to> of "<text>" leaves "<out>"
+    When the method "read" of "root" is called with "<text>"
+    And the method "remove" of "edit" is called with <from>, <to>
+    And the method "markdown" of "root" is called
+    Then the property "out" of "root" is "<out>"
+
+    # From the start of a paragraph the paragraph the removal ends in keeps
+    # its format; from inside one, the paragraph it starts in keeps its own.
+    Examples:
+      | text       | from | to | out          |
+      | a~~# b~~c~ | 2    | 4  | a\|\|c\|\|     |
+      | # a~~b~~c~ | 0    | 2  | b\|\|c\|\|     |
+      | a~~b~~# c~ | 2    | 4  | a\|\|# c\|\|   |
+      | # a~~- b~~c~ | 0  | 4  | c\|\|         |
+      | ab~~# cd~  | 0    | 4  | # d\|\|        |
+      | # ab~~cd~  | 0    | 4  | d\|\|          |
+      | # ab~~cd~  | 1    | 3  | # acd\|\|      |
+      | # ab~~cd~  | 1    | 4  | # ad\|\|       |
+      | # a~~b~    | 1    | 2  | # ab\|\|       |
+      | a~~# b~    | 1    | 2  | a**b**\|\|     |
+      | a~~# b~    | 1    | 3  | a\|\|          |
+
+    # Qt 6.12 writes the code block right after the list item, where it
+    # reads back as a paragraph of the item; Ljós writes it apart from the
+    # list. The code block keeps its format either way.
+    @qt-diverges
+    Examples:
+      | text              | from | to | out                          |
+      | - a~~b~~    x~    | 2    | 4  | - a\|\|<!-- -->\|\|    x\|\| |
+
   Scenario: Typing in an indented code block keeps it indented
     When the method "read" of "root" is called with "a~~    x y~"
     And the property "cursorPosition" of "edit" is set to 3
