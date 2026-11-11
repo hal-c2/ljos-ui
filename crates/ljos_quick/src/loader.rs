@@ -30,8 +30,8 @@ use std::time::Duration;
 
 use ljos_engine::{
     Atom, Boundary, BoundaryConfig, CreationHandle, CreationJob, Cx, Engine, EngineError,
-    FaultReport, Initial, Interception, LogLevel, MetaRef, ObjectId, PropIndex, QmlObject, QmlType,
-    Url, Value, WriteKind, qml_impl,
+    FaultReport, Initial, Interception, LogLevel, MetaRef, Migrate, ObjectId, PropIndex, QmlObject,
+    QmlType, Url, Value, WriteKind, qml_impl,
 };
 use ljos_runtime::{Fault, Intensity, Lane, Restart, Time};
 
@@ -284,10 +284,70 @@ pub(crate) fn shown_children(e: &Engine, obj: ObjectId) -> Vec<ObjectId> {
 /// Makes every Loader a boundary and a focus scope.
 pub(crate) fn register(engine: &Engine) {
     engine.register_boundary::<Loader>(Rc::new(LoaderBoundary));
+    // Only asked while a reload is tracked (`ljos run --watch`).
+    engine.register_migrate::<Loader>();
     // As in Qt, so that each loaded item's `focus` stays inside its own
     // Loader: two loaded items that both ask for focus keep it, and one
     // has active focus only while its Loader has focus.
     crate::focus::register_focus_scope(engine, MetaRef::Static(Loader::static_meta()));
+}
+
+/// What a `setSource` call gave the item, carried across a dev reload:
+/// the Loader made from the new file makes its item as the call did. The
+/// source itself is a value the reload carries on its own.
+#[derive(Debug)]
+pub struct CarriedCall {
+    props: Vec<(String, Value)>,
+    props_for: Atom,
+    how: Initial,
+}
+
+impl Migrate for Loader {
+    const VERSION: u32 = 1;
+    type State = CarriedCall;
+
+    fn snapshot(engine: &Engine, obj: ObjectId) -> Option<CarriedCall> {
+        // Not for an error boundary's restart in a shipped app: what the
+        // call gave may be what failed.
+        if !engine.reload_tracking() {
+            return None;
+        }
+        with_run(engine, obj, |r| {
+            (!r.props.is_empty()).then(|| CarriedCall {
+                props: r.props.clone(),
+                props_for: r.props_for.clone(),
+                how: r.props_how.clone(),
+            })
+        })
+        .flatten()
+    }
+
+    fn migrate(
+        engine: &Engine,
+        obj: ObjectId,
+        _from: u32,
+        state: CarriedCall,
+    ) -> Result<(), String> {
+        // Translated now: the old tree's objects have counterparts only
+        // until the reload is finished.
+        let props = state
+            .props
+            .into_iter()
+            .filter_map(|(name, v)| Some((name, engine.reload_translate(v)?)))
+            .collect();
+        let loaded = with_run(engine, obj, |r| {
+            r.props = props;
+            r.props_for = state.props_for;
+            r.props_how = state.how;
+            r.completed && r.origin == Some(Origin::Url(r.props_for.clone()))
+        })
+        .ok_or("not a Loader")?;
+        // Made and completed already, without them.
+        if loaded {
+            reload(engine, obj, true);
+        }
+        Ok(())
+    }
 }
 
 struct LoaderBoundary;
