@@ -20,7 +20,6 @@
 
 mod bindings;
 mod cause;
-mod gesture;
 mod given;
 mod group;
 mod qt_members;
@@ -53,7 +52,7 @@ use qml_syntax::{
 };
 use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
-use rules::{arrange, font};
+use rules::{arrange, font, gesture};
 
 pub use cause::{Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
@@ -1583,7 +1582,7 @@ impl<'s> Pass<'s> {
             }
             _ => false,
         };
-        if let Some(rule) = rules::rule_of(ty) {
+        for rule in rules::rules_of(ty) {
             let changes = rule.object(object, ty, a_root, self)?;
             self.changes.extend(changes);
         }
@@ -1615,8 +1614,11 @@ impl<'s> Pass<'s> {
         for (index, member) in object.members.iter().enumerate() {
             match member {
                 QmlMember::Object(child) if self.is_table(child) => {}
-                QmlMember::Object(child) if let Some(plan) = self.gestures(object, ty, index) => {
-                    self.make_gestures(child, plan, root)?;
+                QmlMember::Object(child)
+                    if let Some(written) = rules::rules_of(ty)
+                        .find_map(|rule| rule.child(object, ty, index, self)) =>
+                {
+                    self.child(child, written, root)?;
                 }
                 QmlMember::Object(child) => {
                     if prefix.is_some() {
@@ -1749,52 +1751,33 @@ impl<'s> Pass<'s> {
         self.named_type(name, at.start as usize, 0).map(|_| ())
     }
 
-    /// The gestures the `index`th member of `parent` is, where it is a
-    /// `MouseArea` that fills it ([`gesture`]).
-    fn gestures(&self, parent: &QmlObject<'_>, ty: Ty, index: usize) -> Option<gesture::Plan> {
-        let Ty::Exact(parent_ty) = ty else {
-            return None;
-        };
-        let qt_type = |name: &str| rules::File::qt_type(self, name);
-        let is_id = |name: &str| self.id(name).is_some();
-        let file = gesture::File {
-            source: self.source,
-            quick: self.quick,
-            ui: self.ui,
-            qt_type: &qt_type,
-            is_id: &is_id,
-            read: &self.read,
-        };
-        gesture::plan(&file, parent, parent_ty, index)
-    }
-
-    /// Lowers `area` as a `MouseArea` is, then makes it the gestures of
-    /// `plan`.
-    fn make_gestures(&mut self, area: &QmlObject<'_>, plan: gesture::Plan, root: Ty) -> Step {
+    /// Lowers `child` as the pass would, then makes it what a rule
+    /// `written` it as.
+    fn child(&mut self, child: &QmlObject<'_>, written: rules::Child, root: Ty) -> Step {
         let before = self.changes.len();
-        let ty = self.object_type(area)?;
-        self.object(area, ty, root, false)?;
+        let ty = self.object_type(child)?;
+        self.object(child, ty, root, false)?;
         let made = self.changes.split_off(before);
-        let hover: Vec<String> = plan
-            .hover
+        let copies: Vec<String> = written
+            .copies
             .iter()
-            .map(|range| gesture::lowered_text(self.source, range, &made))
+            .map(|range| rules::lowered_text(self.source, range, &made))
             .collect();
         self.changes.extend(made);
-        // Collecting the ids renamed the area's type already.
+        // Collecting the ids renamed the child's type already.
         self.changes.retain(|c| {
-            !plan
+            !written
                 .replace
                 .iter()
-                .any(|(r, _)| gesture::within(&c.range, r))
+                .any(|(r, _)| rules::within(&c.range, r))
         });
-        for (range, text) in plan.replace {
+        for (range, text) in written.replace {
             self.change(range, text);
         }
-        if !hover.is_empty() {
+        if !copies.is_empty() {
             self.change(
-                plan.end..plan.end,
-                format!(" Hover {{ {} }}", hover.join("; ")),
+                written.end..written.end,
+                format!(" {} {{ {} }}", written.copied_into, copies.join("; ")),
             );
         }
         Ok(())
@@ -2133,7 +2116,7 @@ impl<'s> Pass<'s> {
 
     /// What `name`, read off something of type `on`, is called in Ljós.
     fn member(&self, name: &str, on: Ty) -> Rename {
-        if let Some(rename) = rules::rule_of(on).and_then(|rule| rule.member(name)) {
+        if let Some(rename) = rules::rules_of(on).find_map(|rule| rule.member(name)) {
             return rename;
         }
         if !is_renamed_member(name) {
@@ -2330,6 +2313,22 @@ enum Model {
 impl rules::File for Pass<'_> {
     fn source(&self) -> &str {
         self.source
+    }
+
+    fn quick(&self) -> &'static qt_types::Module {
+        self.quick
+    }
+
+    fn ui(&self) -> &'static qt_types::Module {
+        self.ui
+    }
+
+    fn is_id(&self, name: &str) -> bool {
+        self.id(name).is_some()
+    }
+
+    fn is_read(&self, name: &str) -> bool {
+        self.read.contains(name)
     }
 
     fn is_beside(&self, name: &str) -> bool {
