@@ -99,3 +99,11 @@ Feature: Editing Markdown in a TextEdit
     And the user types "z"
     And the method "markdown" of "root" is called
     Then the property "out" of "root" is "a||    xz y||"
+
+  Scenario: An indented code block after a list item stays indented
+    Read back, the lines are a paragraph of the item, in Qt 6.12 as well.
+
+    When the method "read" of "root" is called with "- a~~b~~    x~"
+    And the method "remove" of "edit" is called with 1, 3
+    And the method "markdown" of "root" is called
+    Then the property "out" of "root" is "- a||    x||"
