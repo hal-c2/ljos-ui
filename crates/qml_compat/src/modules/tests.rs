@@ -110,9 +110,7 @@ fn the_shared_line_names_what_has_no_line_of_its_own() {
 
 #[test]
 fn a_module_with_no_line_shares_one() {
-    let Ok(mut modules) = Modules::new() else {
-        return;
-    };
+    let mut modules = Modules::new().expect("Qt's and Ljós's modules are described");
     modules.imported(Ljos::Core, 2);
     modules.imported(Ljos::Controls, 3);
     modules.imported(Ljos::Controls, 5);
@@ -125,9 +123,7 @@ fn a_module_with_no_line_shares_one() {
     // The first of the controls' imports.
     assert_eq!(modules.line(Ljos::Controls), Some(3));
 
-    let Ok(mut modules) = Modules::new() else {
-        return;
-    };
+    let mut modules = Modules::new().expect("Qt's and Ljós's modules are described");
     modules.imported(Ljos::Ui, 0);
     modules.imported(Ljos::Ui, 4);
     modules.share_lines();
@@ -144,6 +140,15 @@ fn no_two_qt_modules_have_a_name_for_two_types() {
     let described: Vec<(&str, &'static Module)> = uris
         .filter_map(|uri| Some((uri, qt_types::module(uri)?)))
         .collect();
+    // What every file is looked up in is described, so the check compares
+    // something.
+    for row in ROWS.iter().filter(|row| row.described == Described::Always) {
+        assert!(
+            described.iter().any(|(uri, _)| *uri == row.uri),
+            "{} is not described",
+            row.uri
+        );
+    }
     for (i, (a, of_a)) in described.iter().enumerate() {
         for (b, of_b) in &described[i + 1..] {
             let names = [a, b].into_iter().flat_map(|uri| {
