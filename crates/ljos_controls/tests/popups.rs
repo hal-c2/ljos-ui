@@ -874,3 +874,57 @@ Item {
     assert!(flag(&e, menu, "opened"), "the edit menu did not open again");
     assert_eq!(warnings(&e), Vec::<String>::new());
 }
+
+/// A native handler of what a popup says may destroy it there and then
+/// (QML's `destroy()` waits for the handler to end, as Qt's does,
+/// `popup-parity.feature`); the popup does nothing more to itself after
+/// that, however it was told to show or hide.
+#[test]
+fn a_popup_destroyed_by_what_it_says_does_nothing_more() {
+    const SOURCE: &str = r#"
+import QtQuick
+import QtQuick.Controls.Basic
+Item {
+    width: 400; height: 400
+    Item { objectName: "before"; focus: true; width: 10; height: 10 }
+    Popup {
+        objectName: "p"; width: 50; height: 50
+        modal: true; focus: true
+        enter: null; exit: null
+    }
+}"#;
+    type Act<'a> = &'a dyn Fn(&Engine, ObjectId);
+    let cases: [(&str, &str, Act); 4] = [
+        ("open()", "aboutToShow", &|e, p| {
+            e.invoke_by_name(p, "open", &[]).unwrap();
+        }),
+        ("visible = true", "aboutToShow", &|e, p| {
+            e.write_by_name(p, "visible", Value::Bool(true)).unwrap();
+        }),
+        ("close()", "aboutToHide", &|e, p| {
+            e.invoke_by_name(p, "close", &[]).unwrap();
+        }),
+        ("visible = false", "aboutToHide", &|e, p| {
+            e.write_by_name(p, "visible", Value::Bool(false)).unwrap();
+        }),
+    ];
+    for (how, signal, act) in cases {
+        let e = engine();
+        let root = load(&e, SOURCE);
+        let mut s = scene(&e, root);
+        settle(&mut s, &e, Time::ZERO);
+        let p = find(&e, root, "p");
+        if signal == "aboutToHide" {
+            e.invoke_by_name(p, "open", &[]).unwrap();
+            settle(&mut s, &e, Time::ZERO);
+        }
+        e.connect_by_name(p, signal, move |e, _| {
+            e.destroy_now(p);
+        })
+        .unwrap();
+        act(&e, p);
+        settle(&mut s, &e, Time::ZERO);
+        assert!(!e.is_alive(p), "{how}");
+        assert_eq!(warnings(&e), Vec::<String>::new(), "{how}");
+    }
+}

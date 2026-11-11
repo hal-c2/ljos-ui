@@ -24,6 +24,8 @@ ljos_quick = { path = "../ljos_quick" }
 ljos_platform = { path = "../ljos_platform" }
 # An item of the system's menu bar is named by its object's number.
 slotmap.workspace = true
+# A popup plans what it does about an event before doing it (src/popup/lifecycle.rs).
+smallvec.workspace = true
 ljos_render = { path = "../ljos_render", default-features = false }
 ljos_runtime = { path = "../ljos_runtime" }
 thiserror.workspace = true
