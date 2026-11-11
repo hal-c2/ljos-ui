@@ -20,6 +20,7 @@ Feature: Editing Markdown in a TextEdit
         property string out
         function markdown() { out = edit.text.split("\n").join("|") }
         function read(t) { edit.text = t.split("~").join("\n"); markdown() }
+        function again() { const t = edit.text; edit.text = ""; edit.text = t; markdown() }
         function plain() { out = edit.getText(0, edit.length).split("\u2029").join("|") }
         function fragment() { out = edit.getFormattedText(0, 6).split("\n").join("|") }
         function bolden() {
@@ -87,19 +88,21 @@ Feature: Editing Markdown in a TextEdit
       | ````~x~````~     | ```\|x\|```\|\|             |
       | a~~    x~b~      | a\|\|    x\|\|b\|\|         |
       | ```~x~```~b~ | ```\|x\|```\|b\|\| |
-      | ```js~x~```~~```py~y~```~ | ```js\|x\|y\|```\|\| |
+      | ```~x~```~~```~y~```~ | ```\|x\|y\|```\|\| |
       | a~~    x~~```~y~```~ | a\|\|    x\|```\|y\|```\|\| |
       | ```~x~```~~    y~ | ```\|x\|```\|    y\|\| |
       | ```js  rest~x~```~ | ```js\|x\|```\|\| |
 
     # Qt 6.12 writes a fence of three marks whatever the lines hold, so a
-    # line of three marks closes it when the text is read again. In Ljós the
-    # fence is longer than any run of its mark in the lines, and the block
-    # reads back as it was.
+    # line of three marks closes it when the text is read again, and it runs
+    # fenced blocks on under the first one's fence, so a second block loses
+    # its info string. In Ljós the fence is longer than any run of its mark
+    # in the lines, and blocks of different fences stay apart.
     @qt-diverges
     Examples:
-      | text                 | out                             |
-      | ````~```~x~```~````~ | ````\|```\|x\|```\|````\|\| |
+      | text                      | out                                  |
+      | ````~```~x~```~````~      | ````\|```\|x\|```\|````\|\|      |
+      | ```js~x~```~~```py~y~```~ | ```js\|x\|```\|```py\|y\|```\|\| |
 
   Scenario: Typing in an indented code block keeps it indented
     When the method "read" of "root" is called with "a~~    x y~"
@@ -121,3 +124,18 @@ Feature: Editing Markdown in a TextEdit
     And the method "remove" of "edit" is called with 1, 3
     And the method "markdown" of "root" is called
     Then the property "out" of "root" is "- a||<!-- -->||    x||"
+
+  # Qt 6.12 writes indented lines right after a list item, so read again
+  # they are a paragraph of the item, and it indents a fence's closing line
+  # there. In Ljós what is written reads back as the same code block.
+  @qt-diverges
+  Scenario Outline: A code block after a list item reads back as a code block
+    When the method "read" of "root" is called with "<text>"
+    And the method "again" of "root" is called
+    Then the property "out" of "root" is "<out>"
+
+    Examples:
+      | text                   | out                            |
+      | - a~~<!-- -->~~    x~  | - a\|\|<!-- -->\|\|    x\|\|   |
+      | 1.  a~~<!-- -->~~    x~ | 1.  a\|\|<!-- -->\|\|    x\|\| |
+      | - a~~```~x~```~        | - a\|\|```\|x\|```\|\|         |
