@@ -1331,12 +1331,7 @@ impl Engine {
     /// start with `url:line:column: ` or `url: `. Public for a host that
     /// makes a root itself and shows why it could not.
     pub fn reload_fault(&self, e: &EngineError) -> ReloadFault {
-        let text = match e {
-            // The variant holds the whole message; its Display wraps it
-            // once more.
-            EngineError::RequiredNotSet(s) => s.clone(),
-            other => other.to_string(),
-        };
+        let text = e.to_string();
         for (i, _) in text.match_indices(": ") {
             let head = &text[..i];
             let message = text[i + 2..].to_owned();
@@ -1448,17 +1443,18 @@ impl Engine {
         drop((info, by_path, assigned, asked, given, defaults));
     }
 
-    /// Destroys the root of a creation that failed. While a reload makes
-    /// the new tree, nothing of it is to be heard.
-    pub(crate) fn reload_discard(&self, root: ObjectId) {
+    /// Runs `f` with nothing that dies in it heard while a reload makes
+    /// the new tree: a creation of it that fails never was
+    /// ([`Engine::discard_creation`]).
+    pub(crate) fn reload_hushed<R>(&self, f: impl FnOnce() -> R) -> R {
         let st = &self.inner.reload;
-        if st.muting.get() && !st.muted_all.get() {
-            st.muted_all.set(true);
-            self.destroy_now(root);
-            st.muted_all.set(false);
-        } else {
-            self.destroy_now(root);
+        if !st.muting.get() || st.muted_all.get() {
+            return f();
         }
+        st.muted_all.set(true);
+        let r = f();
+        st.muted_all.set(false);
+        r
     }
 
     /// Says that `root` is the delegate of `row`, before its paths are

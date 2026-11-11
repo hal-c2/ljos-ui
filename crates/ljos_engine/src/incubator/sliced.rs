@@ -239,7 +239,7 @@ impl Making {
                         .and_then(|()| e.check_required(&self.cr))
                         .and_then(|()| e.check_assignable())
                     {
-                        e.reload_discard(self.root);
+                        e.discard_creation(self.root);
                         return Some(Err(err));
                     }
                     // Dev reload: the objects that go on for old ones

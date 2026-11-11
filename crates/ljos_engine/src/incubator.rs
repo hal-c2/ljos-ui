@@ -52,6 +52,7 @@ pub(crate) mod aot;
 pub(crate) mod direct_methods;
 pub(crate) mod dynamic;
 pub(crate) mod initial;
+pub(crate) mod outcome;
 pub(crate) mod reload;
 pub(crate) mod request;
 pub(crate) mod scripts;
@@ -488,7 +489,7 @@ impl Engine {
             }
         };
         if made.is_err() {
-            self.drop_allocation(cr);
+            self.discard_allocation(cr);
         }
         made
     }
@@ -777,14 +778,6 @@ impl Engine {
         let ctx = self.create_context(Some(ctx_parent));
         Allocation {
             stack: vec![AllocFrame::new(file, comp, root, outer, ctx)],
-        }
-    }
-
-    /// Destroys what an allocation that cannot go on has made: all of it
-    /// is owned by the first object, which nothing refers to yet.
-    fn drop_allocation(&self, cr: &Creation) {
-        if let Some(&first) = cr.all.first() {
-            self.destroy_now(first);
         }
     }
 
@@ -3197,7 +3190,7 @@ impl CreationJob {
     fn unmake(&self, engine: Option<&Engine>) {
         let Some(e) = engine else { return };
         match &self.phase {
-            Phase::Allocating(cr, _) => e.drop_allocation(cr),
+            Phase::Allocating(cr, _) => e.discard_allocation(cr),
             Phase::Making(m) => {
                 e.destroy_now(m.root());
             }
@@ -3286,7 +3279,7 @@ impl CreationJob {
                             return JobPoll::Yield;
                         }
                         Err(err) => {
-                            e.drop_allocation(&cr);
+                            e.discard_allocation(&cr);
                             return self.finish(Some(&e), Err(err));
                         }
                     };
@@ -3311,7 +3304,7 @@ impl CreationJob {
                             ));
                         }
                         Err(err) => {
-                            e.drop_allocation(&cr);
+                            e.discard_allocation(&cr);
                             return self.finish(Some(&e), Err(err));
                         }
                     }
