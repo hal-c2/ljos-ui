@@ -126,6 +126,8 @@ pub(super) enum Effect {
     Present,
     /// The popup takes the keyboard, if it wants it and has not yet.
     TakeKeyboard,
+    /// Its shade, which went clear as it started to go, is shown again.
+    ShowShade,
     /// It is opened when its enter transition has run, at once if it has
     /// none or is on no screen.
     Arrive,
@@ -150,13 +152,15 @@ pub(super) fn plan(s: &Snapshot, event: Event) -> Effects {
         Event::Open if s.phase == Phase::Going => {
             // A popup that is going is still visible, and comes back from
             // where it is: what the exit transition did so far stays. Qt
-            // says it is visible again, though it never stopped being.
+            // says it is visible again, though it never stopped being, and
+            // its shade, which went clear, is back at once.
             out.extend([
                 StopExit,
                 ForgetExit,
                 Say(Signal::AboutToShow),
                 Say(Signal::VisibleChanged),
                 TakeKeyboard,
+                ShowShade,
                 Arrive,
             ]);
         }
@@ -349,6 +353,9 @@ fn apply(
             if let Some(item) = item_of(engine, popup) {
                 engine.untrack(|| take_keyboard(engine, popup, item));
             }
+        }
+        Effect::ShowShade => {
+            engine.untrack(|| super::overlay::show_shade_again(engine, popup, state))?;
         }
         Effect::Arrive => arrive(engine, popup, state)?,
         Effect::Leave => leave(engine, popup, state)?,
@@ -624,6 +631,7 @@ mod tests {
                 Say(Signal::AboutToShow),
                 Say(Signal::VisibleChanged),
                 TakeKeyboard,
+                ShowShade,
                 Arrive
             ]
         );

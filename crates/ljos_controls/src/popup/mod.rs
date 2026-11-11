@@ -118,6 +118,8 @@ pub(crate) struct PopupState {
     pub item: Cell<Option<ObjectId>>,
     /// The shade behind a modal or dimming popup, while it is shown.
     pub dimmer: Cell<Option<ObjectId>>,
+    /// The opacity the shade is shown at.
+    pub shade_opacity: Cell<f64>,
     /// Shown in an overlay: open, and its window is known.
     pub shown: Cell<bool>,
     /// The parent whose destruction clears the popup's logical parent.
