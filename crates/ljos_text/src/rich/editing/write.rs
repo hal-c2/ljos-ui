@@ -320,9 +320,13 @@ impl RichText {
         let mut items: Vec<OpenItem> = Vec::new();
         // The marks of the fence open, which the block closes with.
         let mut fence = String::new();
+        // Whether the block written last was in a list: an item, or a
+        // paragraph or code of one.
+        let mut in_list = false;
         for (index, block) in self.blocks.iter().enumerate() {
             let range = self.block_range(index);
             let next = self.blocks.get(index + 1);
+            let after_list = std::mem::replace(&mut in_list, false);
             // A code block indented as a list is a block of the item it
             // follows.
             let in_item = |b: &BlockFormat| b.kind == BlockKind::Code && b.indent > 0.0;
@@ -338,8 +342,8 @@ impl RichText {
                 BlockKind::Code => {
                     let run = code_run(block);
                     let indented = run == Some(CodeRun::Indented);
-                    let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
-                    let joins_after = next.is_some_and(|n| code_run(n) == run);
+                    let joins_before = index > 0 && same_run(&self.blocks[index - 1], block);
+                    let joins_after = next.is_some_and(|n| same_run(block, n));
                     let text = &self.text[range];
                     let column = if in_item(block) && !items.is_empty() {
                         close_items(&mut items, block.indent, false);
@@ -348,6 +352,7 @@ impl RichText {
                         items.clear();
                         0
                     };
+                    in_list = column > 0;
                     // A block of an item is apart from the item's text.
                     if column > 0 && !joins_before && !out.ends_with("\n\n") {
                         out.push('\n');
@@ -359,11 +364,7 @@ impl RichText {
                         // Qt 6.11: indented lines after a list item are
                         // written right after it, and read back they are a
                         // paragraph of the item (6.12 the same).
-                        if column == 0
-                            && !joins_before
-                            && index > 0
-                            && self.blocks[index - 1].kind == BlockKind::List
-                        {
+                        if column == 0 && !joins_before && after_list {
                             out.push_str("<!-- -->\n\n");
                         }
                         // Measured: an empty line of an indented block keeps
@@ -384,7 +385,7 @@ impl RichText {
                             // the same).
                             let mark = if tildes { '~' } else { '`' };
                             let marks = (index..count)
-                                .take_while(|&j| code_run(&self.blocks[j]) == run)
+                                .take_while(|&j| same_run(block, &self.blocks[j]))
                                 .map(|j| longest_run(&self.text[self.block_range(j)], mark))
                                 .max()
                                 .unwrap_or(0);
@@ -422,6 +423,7 @@ impl RichText {
                     continue;
                 }
                 BlockKind::List => {
+                    in_list = true;
                     // A paragraph of an item after its first has no marker.
                     // It stays in the item: indented to the item's text, an
                     // empty line on each side.
@@ -574,6 +576,12 @@ fn close_items(items: &mut Vec<OpenItem>, indent: f32, same: bool) -> Option<Ope
         }
     }
     None
+}
+
+/// Whether code block `b` runs on under code block `a`: the same run, at
+/// the same indent, so in the same item or in none.
+fn same_run(a: &BlockFormat, b: &BlockFormat) -> bool {
+    code_run(a) == code_run(b) && (a.indent - b.indent).abs() <= 0.5
 }
 
 /// A line of fenced code, indented to `column` unless it is empty.

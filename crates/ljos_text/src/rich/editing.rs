@@ -1772,6 +1772,38 @@ mod tests {
     }
 
     #[test]
+    fn the_code_after_an_item_s_code_is_a_run_of_its_own() {
+        // The same fence, or both indented, but at another column: the
+        // item's code ends where the top-level code starts.
+        for (source, written) in [
+            (
+                "- a\n\n  ```\n  x\n  ```\n\n```\ny\n```\n\nz\n",
+                "- a\n\n  ```\n  x\n  ```\n\n```\ny\n```\nz\n\n",
+            ),
+            (
+                "- a\n\n      x\n\n<!-- -->\n\n    y\n\nz\n",
+                "- a\n\n      x\n\n<!-- -->\n\n    y\n\nz\n\n",
+            ),
+        ] {
+            let t = md(source);
+            let kinds: Vec<_> = t.blocks.iter().map(|b| b.kind).collect();
+            assert_eq!(
+                kinds,
+                [
+                    BlockKind::List,
+                    BlockKind::Code,
+                    BlockKind::Code,
+                    BlockKind::Paragraph
+                ],
+                "{source:?}"
+            );
+            assert!(t.blocks[1].indent > 0.0 && t.blocks[2].indent == 0.0);
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
+    }
+
+    #[test]
     fn the_lines_of_a_pre_are_the_lines_of_one_fence() {
         // hal-c2/ljos-ui#323.
         for (source, written) in [
