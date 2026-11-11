@@ -148,7 +148,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_property_is_read_by_its_own_name_and_signal() {
+    fn a_property_is_read_and_heard_by_its_own_name() {
         for property in [SOURCE, COMPONENT] {
             assert!(
                 property.read_by.contains(&property.name),
@@ -157,6 +157,9 @@ mod tests {
             );
             let signal = format!("{}Changed", property.name);
             assert!(property.read_by.contains(&signal.as_str()), "{signal}");
+            let (first, rest) = property.name.split_at(1);
+            let handler = format!("on{}{rest}Changed", first.to_uppercase());
+            assert_eq!(property.handler, handler);
         }
     }
 }
