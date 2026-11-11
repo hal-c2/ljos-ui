@@ -363,3 +363,37 @@ Feature: The shade of a popup is the style's
       And 700 milliseconds pass
       And the method "look" of "root" is called
       Then the property "count" of "root" is 0
+
+  Rule: The shade is not in what the popup holds
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 400; height: 400
+          Popup {
+            id: popup
+            objectName: "popup"
+            Rectangle { implicitWidth: 200; implicitHeight: 50 }
+          }
+          Dialog {
+            id: dialog
+            objectName: "dialog"
+            Rectangle { implicitWidth: 200; implicitHeight: 50 }
+          }
+        }
+        """
+
+    Scenario Outline: A modal <control> with one item in it takes that item's size
+      When the property "modal" of "<control>" is set to true
+      And the method "open" of "<control>" is called
+      Then the property "contentChildren.length" of "<control>" is 1
+      And the property "contentWidth" of "<control>" is 200
+      And the property "contentHeight" of "<control>" is 50
+
+      Examples:
+        | control |
+        | popup   |
+        | dialog  |
