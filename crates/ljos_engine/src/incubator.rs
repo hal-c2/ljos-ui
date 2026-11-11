@@ -540,70 +540,62 @@ impl Engine {
         how: Initial,
         allocated: impl FnOnce(ObjectId),
     ) -> Result<(ObjectId, Settled), EngineError> {
+        self.make_now(
+            |_| Ok(template),
+            parent,
+            true,
+            props,
+            how,
+            |_, root, _| {
+                allocated(root);
+            },
+        )
+    }
+
+    /// Makes an instance of what `template` gives under `parent` at once:
+    /// the steps of a [`CreationJob`] ([`sliced::Making`]) with nothing to
+    /// stop them, on the stack. `allocated` gets the root and its context
+    /// once every object exists and before any of their bindings has run.
+    /// Without `append` the root is owned by `parent` and is not a value
+    /// of its default property.
+    fn make_now<T: std::ops::Deref<Target = Template>>(
+        &self,
+        template: impl FnOnce(&Engine) -> Result<T, EngineError>,
+        parent: Option<ObjectId>,
+        append: bool,
+        props: Vec<(String, Value)>,
+        how: Initial,
+        allocated: impl FnOnce(&Engine, ObjectId, ContextId),
+    ) -> Result<(ObjectId, Settled), EngineError> {
         self.not_script_time(|| {
             let errors = self.open_creation();
-            let made = self.create_from_template_held(template, parent, props, how, allocated);
+            let made = (|| {
+                let template = template(self)?;
+                let mut cr = Creation::default();
+                let root = self.allocate_template(&mut cr, &template, parent, append)?;
+                if let Some(top) = &cr.top {
+                    allocated(self, root, top.context);
+                }
+                // After `allocated`: a delegate's path has its row in it.
+                self.reload_assign(&cr, root);
+                let mut making = sliced::Making::new(cr, root, props, how);
+                loop {
+                    if let Some(r) = making.step(self, &|| false) {
+                        let withheld = making.withheld();
+                        return r.map(|root| (root, Settled { withheld }));
+                    }
+                }
+            })();
             self.close_creation(errors);
             made
         })
     }
 
-    fn create_from_template_held(
-        &self,
-        template: &Template,
-        parent: Option<ObjectId>,
-        props: Vec<(String, Value)>,
-        how: Initial,
-        allocated: impl FnOnce(ObjectId),
-    ) -> Result<(ObjectId, Settled), EngineError> {
-        let mut cr = Creation::default();
-        let root = self.allocate_template(&mut cr, template, parent)?;
-        allocated(root);
-        self.reload_assign(&cr, root);
-        // Qt 6.11: an initial property's handler runs as the property is
-        // written, before the object's bindings run; a binding the handler
-        // reads runs there, its own handler inside, and one a handler makes
-        // stale before it ran runs once ("eval3 dbl6 w3/6 evtri tri8" in
-        // features/components/creation-order.feature). Ljós settles the
-        // properties and bindings in this batch, and the handlers run after
-        // it in height order (#331).
-        let r = self.batch(|| -> Result<Settled, EngineError> {
-            let (r, held) = self.hold_eager(|| {
-                self.apply_aliases(&cr);
-                for i in 0..cr.units.len() {
-                    self.apply_unit(&cr, i);
-                }
-                self.set_initial(&template.file.url, root, &props, &how)
-            });
-            cr.held = held;
-            self.run_held(&cr);
-            r
-        });
-        let settled = match r {
-            Ok(settled) => {
-                self.release_held(&cr);
-                Ok(settled)
-            }
-            Err(e) => Err(e),
-        };
-        let withheld = settled.as_ref().is_ok_and(|s| s.withheld);
-        self.finalize(cr, root, settled.map(|_| ()))
-            .map(|root| (root, Settled { withheld }))
-    }
-
+    /// Makes every object of an instance of `template` under `parent`.
+    /// Without `append` the root is owned by `parent` but is not a value
+    /// of its default property (a view's delegates are not its children).
+    /// On an error nothing of it is left, as for a [`CreationJob`].
     fn allocate_template(
-        &self,
-        cr: &mut Creation,
-        template: &Template,
-        parent: Option<ObjectId>,
-    ) -> Result<ObjectId, EngineError> {
-        self.allocate_template_as(cr, template, parent, true)
-    }
-
-    /// [`Engine::allocate_template`]; without `append` the root is owned
-    /// by `parent` but is not a value of its default property (a view's
-    /// delegates are not its children).
-    fn allocate_template_as(
         &self,
         cr: &mut Creation,
         template: &Template,
@@ -611,16 +603,17 @@ impl Engine {
         append: bool,
     ) -> Result<ObjectId, EngineError> {
         let mut a = self.template_allocation(template, parent)?;
-        loop {
+        let made = loop {
             match self.allocate_step(cr, &mut a) {
-                Ok(Some(inst)) => return self.allocated_template(cr, inst, parent, append),
+                Ok(Some(inst)) => break self.allocated_template(cr, inst, parent, append),
                 Ok(None) => {}
-                Err(e) => {
-                    self.drop_allocation(cr);
-                    return Err(e);
-                }
+                Err(e) => break Err(e),
             }
+        };
+        if made.is_err() {
+            self.drop_allocation(cr);
         }
+        made
     }
 
     /// Starts the allocation of an instance of `template` under `parent`.
@@ -684,40 +677,15 @@ impl Engine {
         owner: Option<ObjectId>,
         setup: impl FnOnce(&Engine, ObjectId, ContextId),
     ) -> Result<ObjectId, EngineError> {
-        self.not_script_time(|| {
-            let errors = self.open_creation();
-            let made = self.create_delegate_held(component, owner, setup);
-            self.close_creation(errors);
-            made
-        })
-    }
-
-    fn create_delegate_held(
-        &self,
-        component: ObjectId,
-        owner: Option<ObjectId>,
-        setup: impl FnOnce(&Engine, ObjectId, ContextId),
-    ) -> Result<ObjectId, EngineError> {
-        let template = self.component_template(component)?;
-        let mut cr = Creation::default();
-        let root = self.allocate_template_as(&mut cr, &template, owner, false)?;
-        if let Some(top) = &cr.top {
-            setup(self, root, top.context);
-        }
-        // After `setup`: a delegate's path has its row in it.
-        self.reload_assign(&cr, root);
-        self.batch(|| {
-            let ((), held) = self.hold_eager(|| {
-                self.apply_aliases(&cr);
-                for i in 0..cr.units.len() {
-                    self.apply_unit(&cr, i);
-                }
-            });
-            cr.held = held;
-            self.run_held(&cr);
-        });
-        self.release_held(&cr);
-        self.finalize(cr, root, Ok(()))
+        self.make_now(
+            |e| e.component_template(component),
+            owner,
+            false,
+            Vec::new(),
+            Initial::Native,
+            setup,
+        )
+        .map(|(root, _)| root)
     }
 
     /// Every required property left unset, one line each, as Qt tells
@@ -776,74 +744,6 @@ impl Engine {
                 }
             }
         }
-    }
-
-    fn finalize(
-        &self,
-        cr: Creation,
-        root: ObjectId,
-        applied: Result<(), EngineError>,
-    ) -> Result<ObjectId, EngineError> {
-        if let Err(e) = applied
-            .and_then(|()| self.check_required(&cr))
-            .and_then(|()| self.check_assignable())
-        {
-            self.reload_discard(root);
-            return Err(e);
-        }
-        // Dev reload: the objects that go on for old ones take what
-        // those held before anything completes, and are not completed
-        // in the file's sense a second time.
-        let kept = self.reload_adopt(&cr);
-        // Native hooks: the last made first, so children are complete
-        // before the objects that lay them out.
-        for &o in cr.all.iter().rev() {
-            if self.is_alive(o)
-                && let Err(e) = self.complete(o)
-            {
-                self.warn(e.to_string());
-            }
-        }
-        self.note_scope_sizes(&cr);
-        let mut stack = vec![root];
-        while let Some(o) = stack.pop() {
-            let Some(node) = cr.nodes.get(&o) else {
-                continue;
-            };
-            if !kept.contains(&o) {
-                for (inst, expr) in &node.handlers {
-                    if self.is_alive(o) {
-                        self.call_expr(inst, *expr, &[]);
-                    }
-                }
-                // Whatever else listens to the attached object: a
-                // `Connections { target: Component }`, a `connect()`.
-                if let Some(att) = self.existing_attached_object(
-                    o,
-                    &MetaRef::Static(<Component as QmlType>::static_meta()),
-                ) {
-                    let _ = self.emit_by_name(att, "completed", &[]);
-                }
-            }
-            stack.extend(node.children.iter().copied());
-        }
-        if !kept.is_empty() {
-            let mut stack = vec![root];
-            while let Some(o) = stack.pop() {
-                let Some(node) = cr.nodes.get(&o) else {
-                    continue;
-                };
-                if kept.contains(&o) {
-                    for (inst, expr) in &node.reloaded {
-                        if self.is_alive(o) {
-                            self.call_expr(inst, *expr, &[]);
-                        }
-                    }
-                }
-                stack.extend(node.children.iter().copied());
-            }
-        }
-        Ok(root)
     }
 
     pub(crate) fn keep_with(&self, obj: ObjectId, data: Rc<dyn std::any::Any>) {
@@ -963,47 +863,6 @@ impl Engine {
         let held = self.inner.eager_hold.borrow_mut().take();
         drop(guard);
         (r, held.unwrap_or_default())
-    }
-
-    /// Eager mode: runs the bindings a creation installed, in the order
-    /// Qt runs them (found by running qml6 6.11.2 with bindings that log),
-    /// so that the same member of a binding loop is reported and the
-    /// members are left with the same values.
-    ///
-    /// Qt sets an object up in the order of [`setup_order`] and then runs
-    /// the bindings from the last one set up to the first; a binding that
-    /// reads a property whose binding has not run yet runs that one first.
-    /// That is this function. Bindings on Qt's bindable properties are not
-    /// there yet while this happens (the graph holds them), so a read gives
-    /// the old value; [`Engine::release_held`] brings them in afterwards.
-    fn run_held(&self, cr: &Creation) {
-        let g = &self.inner.graph;
-        for i in self.held_order(cr, false) {
-            let n = cr.held[i].node;
-            if g.is_bound(n) && g.set_eager(n, true).is_ok() {
-                g.untrack(|| g.try_get(n));
-            }
-        }
-    }
-
-    /// The second half of [`Engine::run_held`]: Qt installs the bindings
-    /// on its bindable properties one by one in set-up order and runs each
-    /// as it goes in; what read the property before runs again. Called
-    /// outside the creation's batch so that those run before the next
-    /// binding goes in, as in Qt.
-    fn release_held(&self, cr: &Creation) {
-        let g = &self.inner.graph;
-        for i in self.held_order(cr, true) {
-            let n = cr.held[i].node;
-            if !g.is_held(n) {
-                continue;
-            }
-            g.batch(|| {
-                if g.release(n).is_ok() && g.set_eager(n, true).is_ok() {
-                    g.untrack(|| g.try_get(n));
-                }
-            });
-        }
     }
 
     /// Indices into `cr.held`: the held bindable ones in set-up order, or
@@ -3233,9 +3092,8 @@ enum Phase {
     Allocate(Rc<Template>),
     /// Some of the objects exist.
     Allocating(Creation, Allocation),
-    Apply(Creation, ObjectId, usize),
-    /// Every object is applied: bindings, hooks and handlers are left.
-    Finish(sliced::Finish),
+    /// Every object exists: what a creation made at once does is left.
+    Making(sliced::Making),
     Done,
 }
 
@@ -3569,11 +3427,8 @@ impl CreationJob {
         let Some(e) = engine else { return };
         match &self.phase {
             Phase::Allocating(cr, _) => e.drop_allocation(cr),
-            Phase::Apply(_, root, _) => {
-                e.destroy_now(*root);
-            }
-            Phase::Finish(f) => {
-                e.destroy_now(f.root());
+            Phase::Making(m) => {
+                e.destroy_now(m.root());
             }
             Phase::Load | Phase::Allocate(_) | Phase::Done => {}
         }
@@ -3605,7 +3460,9 @@ impl CreationJob {
             }
             None => *self.errors.insert(e.open_creation()),
         };
-        let poll = self.run(&e, check);
+        // As for a creation made at once: its time is not a script's
+        // that forced it.
+        let poll = e.not_script_time(|| self.run(&e, check));
         if matches!(poll, JobPoll::Done) {
             e.close_creation(errors);
         } else {
@@ -3685,8 +3542,12 @@ impl CreationJob {
                                 e.reload_by_script();
                             }
                             e.reload_assign(&cr, root);
-                            e.apply_aliases(&cr);
-                            self.phase = Phase::Apply(cr, root, 0);
+                            self.phase = Phase::Making(sliced::Making::new(
+                                cr,
+                                root,
+                                std::mem::take(&mut self.props),
+                                std::mem::take(&mut self.initial),
+                            ));
                         }
                         Err(err) => {
                             e.drop_allocation(&cr);
@@ -3694,49 +3555,18 @@ impl CreationJob {
                         }
                     }
                 }
-                Phase::Apply(mut cr, root, mut next) => {
-                    if !e.is_alive(root) {
-                        return self.finish(Some(&e), Err(EngineError::DeadObject(root)));
+                Phase::Making(mut m) => {
+                    if !e.is_alive(m.root()) {
+                        return self.finish(Some(&e), Err(EngineError::DeadObject(m.root())));
                     }
-                    let ((), held) = e.hold_eager(|| {
-                        e.batch(|| {
-                            while next < cr.units.len() {
-                                e.apply_unit(&cr, next);
-                                next += 1;
-                                if check() {
-                                    break;
-                                }
-                            }
-                        })
-                    });
-                    cr.held.extend(held);
-                    if next < cr.units.len() {
-                        self.handle
-                            .0
-                            .progress
-                            .set(next as f64 / cr.units.len() as f64);
-                        self.phase = Phase::Apply(cr, root, next);
-                        return JobPoll::Yield;
+                    if let Some(r) = m.step(&e, check) {
+                        return self.finish(Some(&e), r);
                     }
-                    let props = std::mem::take(&mut self.props);
-                    self.phase = Phase::Finish(sliced::Finish::new(
-                        cr,
-                        root,
-                        props,
-                        std::mem::take(&mut self.initial),
-                    ));
-                }
-                Phase::Finish(mut f) => {
-                    if !e.is_alive(f.root()) {
-                        return self.finish(Some(&e), Err(EngineError::DeadObject(f.root())));
+                    if let Some(p) = m.progress() {
+                        self.handle.0.progress.set(p);
                     }
-                    match f.step(&e, check) {
-                        Some(r) => return self.finish(Some(&e), r),
-                        None => {
-                            self.phase = Phase::Finish(f);
-                            return JobPoll::Yield;
-                        }
-                    }
+                    self.phase = Phase::Making(m);
+                    return JobPoll::Yield;
                 }
                 Phase::Done => return JobPoll::Done,
             }
