@@ -9,7 +9,9 @@
 //! picture for an image source for as long as the result lives. Nothing
 //! is drawn while nothing is asked. An item that leaves every shown window
 //! before the frame calls back with an empty result, as in Qt, and wakes
-//! no scene while it waits.
+//! no scene while it waits. A window is there while a scene shows it: a
+//! grab whose scene is dropped gets the same result at the next frame of
+//! the scenes left, which the drop wakes.
 
 use std::cell::{Cell, RefCell};
 
@@ -101,7 +103,7 @@ pub(crate) struct Grab {
 }
 
 #[derive(Default)]
-struct Grabs {
+pub(crate) struct Grabs {
     pending: RefCell<Vec<Grab>>,
     /// Numbers the results' URLs.
     made: Cell<u64>,
@@ -185,9 +187,12 @@ pub(crate) fn grab_to_image(
 /// Whether `item` is in a window that is shown, or why not, as Qt's
 /// warning says it.
 fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), &'static str> {
-    let Some(window) = engine.untrack(|| crate::layer::window_of(engine, item)) else {
+    // A window is there while a scene shows it: one a host dropped, its
+    // root kept, is in no window, and no frame will draw what it held.
+    let window = engine.untrack(|| crate::layer::window_item(engine, item));
+    if !crate::scene::shows_window(engine, window) {
         return Err("item is not attached to a window");
-    };
+    }
     // A Window that is not shown has `visibility` Hidden (0); a scene's
     // plain root item has none.
     if engine.find_property(window, "visibility").is_some()
@@ -241,12 +246,14 @@ pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Gra
 /// scene's next frame: one asked after this frame took its grabs. A grab
 /// no scene shows wakes none.
 pub(crate) fn waiting(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> bool {
-    engine
-        .extension::<Grabs>()
-        .pending
-        .borrow()
-        .iter()
-        .any(|g| shows(g.item))
+    engine.extension::<Grabs>().waits_on(shows)
+}
+
+impl Grabs {
+    /// Whether a grab not yet taken is of an item `shows` holds.
+    pub(crate) fn waits_on(&self, shows: impl Fn(ObjectId) -> bool) -> bool {
+        self.pending.borrow().iter().any(|g| shows(g.item))
+    }
 }
 
 /// A scene drew `grab` as `picture`: the result is made and the callback

@@ -109,3 +109,45 @@ fn a_grab_whose_item_left_its_window_settles_and_wakes_nothing() {
     assert_eq!(get(&r.e, r.root, "got").to_js_string().to_string(), "[]");
     rests(&mut r);
 }
+
+/// A host that closes a window drops its scene and may keep the items:
+/// a grab still waiting for that scene's frame can never be drawn. It
+/// settles at the next frame of the scenes left, which the drop wakes,
+/// and a grab asked after it is refused: the item is in no window.
+#[test]
+fn a_grab_whose_scene_is_dropped_settles_and_wakes_nothing() {
+    let e = engine();
+    let root = load(&e, GRABBED);
+    let other_root = load(&e, OTHER);
+    let mut shows = scene(&e, root, 40.0, 40.0);
+    let mut other = scene(&e, other_root, 40.0, 40.0);
+    // The scene that stays keeps the engine's timers.
+    other.take_timer_wake(&e);
+    frame(&mut shows, &e);
+    frame(&mut other, &e);
+    assert!(!other.needs_frame(), "both rest");
+
+    e.invoke_by_name(root, "grab", &[]).unwrap();
+    assert_eq!(get(&e, root, "asked"), Value::Bool(true));
+    assert!(!other.needs_frame(), "a scene without the item rests");
+    drop(shows);
+    assert!(other.needs_frame(), "the scenes left settle the grab");
+
+    frame(&mut other, &e);
+    let due = e
+        .next_timer_deadline()
+        .expect("the frame leaves the callback due");
+    e.advance_timers(due);
+    frame(&mut other, &e);
+    // An empty result: its url names no picture.
+    assert_eq!(get(&e, root, "got").to_js_string().to_string(), "");
+    for _ in 0..3 {
+        assert!(!other.needs_frame(), "the scene left rests");
+        assert_eq!(e.next_timer_deadline(), None, "nothing is scheduled");
+        frame(&mut other, &e);
+    }
+
+    e.invoke_by_name(root, "grab", &[]).unwrap();
+    assert_eq!(get(&e, root, "asked"), Value::Bool(false), "in no window");
+    assert!(!other.needs_frame(), "a refused grab wakes nothing");
+}
