@@ -446,7 +446,7 @@ pub fn run<M: Send + 'static>(
 pub use ljos_runtime::{CoalesceKey, SendAsync, SendError, UiHandle};
 #[cfg(feature = "shell")]
 #[cfg(not(target_arch = "wasm32"))]
-pub use ljos_shell::{PainterError, Setup, SetupError, ShellConfig, ShellError};
+pub use ljos_shell::{ColorSpace, PainterError, Setup, SetupError, ShellConfig, ShellError};
 
 // On a page `ljos` is `ljos_web`: the same names, with no engine behind them.
 #[cfg(all(target_arch = "wasm32", feature = "web"))]

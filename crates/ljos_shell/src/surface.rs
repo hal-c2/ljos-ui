@@ -12,6 +12,7 @@ use std::num::NonZeroU32;
 use std::sync::{Arc, mpsc};
 
 use crate::PainterError;
+use crate::color_space::ColorSpace;
 use crate::cpu::CpuPainter;
 use crate::present::{Change, Frame, Steps};
 use egui::ViewportId;
@@ -352,8 +353,10 @@ impl Painter {
     }
 
     /// Draws `primitives` (all of `frame`) into `window`, with the
-    /// pictures `pending` hands over, and shows them; says how long the
-    /// steps took where the painter can tell them apart.
+    /// pictures `pending` hands over, and shows them as being in
+    /// `color_space`; says how long the steps took where the painter can
+    /// tell them apart.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn paint(
         &mut self,
         pixels_per_point: f32,
@@ -362,7 +365,11 @@ impl Painter {
         primitives: &[egui::ClippedPrimitive],
         pending: &mut egui::TexturesDelta,
         window: &Arc<Window>,
+        color_space: ColorSpace,
     ) -> Steps {
+        // Only macOS's GPU windows are told (`layer_color_space`).
+        #[cfg(not(target_os = "macos"))]
+        let _ = color_space;
         match self {
             Painter::Wgpu(painter) => {
                 if !wgpu_presents(frame) {
@@ -377,7 +384,7 @@ impl Painter {
                 }
                 let upload = wgpu_upload(painter, pending);
                 #[cfg(target_os = "macos")]
-                crate::srgb_layer::tag(window);
+                crate::layer_color_space::tag(window, color_space);
                 let started = std::time::Instant::now();
                 WGPU_DROPPED.set(false);
                 // egui-wgpu draws and presents in one call, and times only

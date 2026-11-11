@@ -39,6 +39,7 @@ mod appkit_drag_out;
 #[cfg(target_os = "macos")]
 mod appkit_menu;
 mod badge;
+mod color_space;
 mod cpu;
 mod desktop;
 mod desktop_font;
@@ -54,6 +55,8 @@ mod gl_scene3d;
 #[cfg(gl_painter)]
 mod gl_shader;
 mod headless;
+#[cfg(target_os = "macos")]
+mod layer_color_space;
 mod native_drag;
 mod network;
 mod platform;
@@ -66,8 +69,6 @@ mod screen_reader;
 mod settings;
 #[cfg(gl_painter)]
 mod software;
-#[cfg(target_os = "macos")]
-mod srgb_layer;
 mod surface;
 mod system_fonts;
 #[cfg(all(test, target_os = "linux"))]
@@ -84,6 +85,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
+pub use color_space::ColorSpace;
 use ljos_egui::{QmlView, ViewError};
 use ljos_engine::{Color, Engine, ObjectId, TurnCause};
 use ljos_quick::TimerHook;
@@ -142,6 +144,12 @@ pub struct ShellConfig {
     /// goes to GL as soon as a window shows what it leaves out. The
     /// environment's `LJOS_PAINTER` (`cpu`, `gl` or `wgpu`) overrides it.
     pub drawn_on_processor: bool,
+    /// The colour space every window says its pixels are in: sRGB, which
+    /// QML colours are written in, unless the application chooses
+    /// otherwise, such as [`ColorSpace::Untagged`] to look as a Qt Quick
+    /// application does on a wide-gamut display. The environment's
+    /// `LJOS_COLOR_SPACE` (`srgb` or `untagged`) overrides it.
+    pub color_space: ColorSpace,
 }
 
 impl Default for ShellConfig {
@@ -158,6 +166,7 @@ impl Default for ShellConfig {
             system_locale: true,
             prefer_x11: false,
             drawn_on_processor: false,
+            color_space: ColorSpace::Srgb,
         }
     }
 }
@@ -195,6 +204,12 @@ impl ShellConfig {
     /// See [`ShellConfig::drawn_on_processor`].
     pub fn drawn_on_processor(mut self) -> Self {
         self.drawn_on_processor = true;
+        self
+    }
+
+    /// See [`ShellConfig::color_space`].
+    pub fn with_color_space(mut self, space: ColorSpace) -> Self {
+        self.color_space = space;
         self
     }
 }
