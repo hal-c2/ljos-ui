@@ -17,7 +17,7 @@ You can inspect and change rows at runtime with `count`, `get(i)`, `index(row, c
 - `get(i)` returns the row as a live object: writing one of its roles changes the row in the model. Reading a row that is not there gives `undefined`.
 - `append` takes either one object or an array of objects.
 - `set(i, object)` replaces only the roles the object names. Calling `set` at the end of the model appends a row.
-- A `ListModel` emits signals for each change just as Qt's item model does: `setProperty` emits `dataChanged` with the role, `append` and `insert` signal that rows are about to be inserted and then emit `rowsInserted`, `remove` and `clear` emit `rowsRemoved`, `move` emits `rowsMoved`, and row count changes emit `countChanged`.
+- A `ListModel` emits a signal for each change: `setProperty` emits `dataChanged` with the role, `append` and `insert` signal that rows are about to be inserted and then emit `rowsInserted`, `remove` and `clear` emit `rowsRemoved`, `move` emits `rowsMoved`, and row count changes emit `countChanged`.
 
 ```qml
 import QtQuick
@@ -240,7 +240,7 @@ Be aware of how `XmlListModel` handles missing data, bad queries, and document l
 
 ## JsonListModel
 
-`JsonListModel` requires `import Ljos.Models`. Qt has no such type: it is Ljós's own. It is a read-only model of a JSON array of objects, read from the text of `json` or from the file or URL of `source`, relative to the QML file. If both are set, `source` wins. It works wherever a model does: `ListView`, `GridView`, `Repeater` and `TableView`.
+`JsonListModel` requires `import Ljos.Models`. It is Ljós's own type. It is a read-only model of a JSON array of objects, read from the text of `json` or from the file or URL of `source`, relative to the QML file. If both are set, `source` wins. It works wherever a model does: `ListView`, `GridView`, `Repeater` and `TableView`.
 
 `JsonListModel` provides `json`, `source`, `count`, `roles`, `status` (`JsonListModel.Null`, `Ready`, `Loading`, or `Error`), `error`, `get(i)`, and `reload()`.
 
@@ -313,9 +313,9 @@ Keep these details in mind when filtering folders:
 - `nameFilters` apply only to files, so folders are still listed regardless of their names unless you set `showDirs: false`.
 - Setting `folder` to a directory that does not exist empties the model and sets `status` to `FolderListModel.Null`.
 
-## Differences from Qt
+## Limits and edge cases
 
-- On `DelegateModel`, `rootIndex` and `parts` are not built, nor are `DelegateModelGroup`'s `get`, `create`, and `resolve` methods, or the attached properties that Qt names dynamically after each group. Ljós has no `Package` type for `parts`. In addition, a delegate of a filtered `DelegateModel` does not carry the index of its row in the underlying model.
+- On `DelegateModel`, `rootIndex` and `parts` are not built, nor are `DelegateModelGroup`'s `get`, `create`, and `resolve` methods, or the attached properties named after each group. Ljós has no `Package` type for `parts`. In addition, a delegate of a filtered `DelegateModel` does not carry the index of its row in the underlying model.
 - `XmlListModel` enforces fixed resource limits that are specific to Ljós: 16 MiB per document, 128 levels of nesting, 10,000 rows, 100,000 cells, 1 MiB per value, and 8 MiB of copied text.
 - The XML parser stops at an unknown entity and does not expand custom entities.
 

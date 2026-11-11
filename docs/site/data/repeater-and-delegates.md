@@ -128,10 +128,10 @@ Here `inst.count` is `2`, and `inst.object.shown` reads `"x"` from the first cre
 - If you omit `model`, `Instantiator` creates a single object.
 - Setting `active: false` destroys all created objects, and setting `active: true` creates them again. An asynchronous `Instantiator` populates its objects after a moment rather than immediately.
 
-## Differences from Qt
+## Limits and edge cases
 
-- `Repeater` is not virtualised, matching Qt's semantics.
-- A delegate's `index` becomes `-1` when its row is removed, matching Qt.
+- `Repeater` is not virtualised: it creates a delegate for every row.
+- A delegate's `index` becomes `-1` when its row is removed.
 - `DelegateModel` with `parts` and `rootIndex` is not built.
 
 ## See also

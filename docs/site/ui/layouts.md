@@ -160,7 +160,7 @@ At startup the blue panel fills the stack; clicking the second tab switches `cur
 
 You can also nest one layout inside another, or place a `Loader` inside a layout (a `Loader` reports its loaded item's size as its implicit size). An inner layout takes the room the outer layout leaves for it, and its minimum width is the sum of its children's minimum widths. If you tell a nested layout not to fill, it keeps its preferred size and is aligned like any other child; a nested layout that sets an explicit preferred size keeps it whether or not its tallest child is visible.
 
-## Differences from Qt
+## Limits
 
 - Writing directly to a coordinate or size that an anchor or positioner has placed is not yet implemented. <!-- check: scenarios in features/layouts/placed-geometry-writes.feature are marked @backlog -->
 

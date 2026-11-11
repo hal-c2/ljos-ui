@@ -124,12 +124,11 @@ You can tune virtualisation and transitions with these properties and attached s
 - `reuseItems`: off by default. When set to `true`, scrolling recycles delegates through an internal pool instead of destroying and recreating them, emitting `ListView.pooled` (or `GridView.pooled`) when a delegate enters the pool and `reused` when it is reassigned to a new row. A pooled delegate still reports `visible: true`, but it is not drawn and receives no pointer input until it is taken from the pool again.
 - Attached lifecycle signals and transitions: `ListView.onAdd` and `ListView.onRemove` run when the model adds or removes rows inside the view (rows the model already had at startup are not announced as added, and neither are rows outside the viewport). Setting `ListView.delayRemove` on a delegate keeps it alive until it releases the flag or its `remove` transition ends. You can also animate changes with `add`, `remove`, `move`, `displaced`, `addDisplaced`, `removeDisplaced`, and `moveDisplaced`.
 
-## Differences from Qt
+## Limits and edge cases
 
 - `highlightRangeMode`, `preferredHighlightBegin`, `preferredHighlightEnd`, `section.labelPositioning`, and `Ljos.ListView.incubationBudgetMs` are not built.
-- `reuseItems` defaults to `false`, matching Qt.
-- When a script sets `currentIndex`, notifying the change after layout is not yet in `qml6` order.
-- The number of instantiated delegates in a virtualised view falls within a band rather than an exact count, as Qt does not guarantee an exact number.
+- `reuseItems` defaults to `false`.
+- The number of delegates a virtualised view creates is not fixed; rely on a range rather than an exact count.
 
 ## See also
 

@@ -123,19 +123,17 @@ Item {
 `ShaderEffect` runs custom vertex and fragment shaders named by URL (`vertexShader`, `fragmentShader`). Any QML property you declare on the `ShaderEffect` becomes a uniform of the same name, and sampler properties accept an `Image`, a `Canvas`, a `ShaderEffectSource` or an `Item` with `layer.enabled: true`.
 
 Watch how shader files are loaded in Ljós:
-- Ljós never reads Qt's `.qsb` container directly. When you set a shader URL ending in `X.frag.qsb`, Ljós looks for `X.frag.ljsh` or compiles the GLSL 440 source file `X.frag` beside it. If neither exists, or if the shader fails to compile, `status` reports an error and `log` explains why. <!-- check: shader compilation and ShaderEffect pixel output are marked @ljos-only -->
+- Ljós does not read compiled `.qsb` shader containers. When you set a shader URL ending in `X.frag.qsb`, Ljós looks for `X.frag.ljsh` or compiles the GLSL 440 source file `X.frag` beside it. If neither exists, or if the shader fails to compile, `status` reports an error and `log` explains why. <!-- check: shader compilation and ShaderEffect pixel output are marked @ljos-only -->
 
 `ShaderEffectSource` captures `sourceItem` into a texture ( optionally cropped by `sourceRect` and sized by `textureSize`) and draws it stretched across itself. Even an invisible `sourceItem` appears in the captured texture; set `hideSource: true` when you want to hide the original item while showing the capture. By default `live: true` updates the capture whenever `sourceItem` changes; with `live: false`, the first capture is kept until you call `scheduleUpdate()`. <!-- check: GL-style sampling orientation, mirroring and mipmaps on ShaderEffectSource are marked @ljos-only -->
 
 Import `QtQuick.Particles` to use `ParticleSystem` (`running`, `paused`, `empty`, `start()`, `stop()`), `Emitter` and `ImageParticle` (plus directions and affectors `AngleDirection`, `PointDirection`, `TargetDirection`, `Wander`, `Age`, `EllipseShape`, `MaskShape`). A paused system or disabled `Emitter` emits no continuous particles, though calling burst on a disabled emitter still emits particles that age and die. `ImageParticle` draws particles directly without creating per-particle QML items, and Ljós seeds its particle random number generator deterministically so runs are repeatable. <!-- check: particle draw order over the emitter and painter colour multiplication are marked @ljos-only -->
 
-## Differences from Qt
+## Limits and edge cases
 
-- `ShaderEffect` does not read Qt's `.qsb` binary container; for `X.frag.qsb`, provide `X.frag.ljsh` or a GLSL 440 `X.frag` file beside it.
-- Custom `ShaderEffect` pixel output, `ShaderEffectSource` GL-style sampling, `RectangularShadow` and `MultiEffect` pixel output, and particle colour multiplication are verified by Ljós-specific tests rather than the Qt reference renderer.
+- `ShaderEffect` does not read the compiled `.qsb` container; for `X.frag.qsb`, provide `X.frag.ljsh` or a GLSL 440 `X.frag` file beside it.
 - Calling `putImageData` on a `Canvas` 2D context replaces existing pixels instead of compositing with them.
 - `ParticleSystem` uses a fixed random seed so particle runs repeat deterministically.
-- Missing-file handling on `VectorImage`, rounded corners on a bevelled `PathRectangle`, and SVG path arc flags written without separators differ from Qt in edge cases. <!-- check: vector-image.feature:77, path-shapes.feature:395 and path-svg.feature:144 are marked @qt-diverges -->
 
 ## See also
 
