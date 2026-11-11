@@ -757,6 +757,9 @@ impl Engine {
             self.recount_modules();
             return Ok(done);
         }
+        // What a script asked to be made later is made now, so that it is
+        // on record to be made again with the rest.
+        self.finish_scripted_incubations();
         let mut phases = Phases::start();
         let mut pending = self.reload_snapshot(patch);
         pending.old_roots = plan.iter().map(|(root, ..)| *root).collect();
