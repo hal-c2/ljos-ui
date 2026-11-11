@@ -839,6 +839,18 @@ fn give_back_keyboard(engine: &Engine, popup: ObjectId, item: ObjectId) -> Resul
     Ok(())
 }
 
+/// Escape was pressed for `popup`, by its own item or by the control
+/// whose popup it is: it is dismissed if its `closePolicy` says so. False
+/// when the key is not its.
+pub(crate) fn escape(engine: &Engine, popup: ObjectId) -> bool {
+    let policy = engine.untrack(|| engine.read(popup, Popup::CLOSE_POLICY.index));
+    if policy.to_number() as i32 & close_policy::ON_ESCAPE == 0 {
+        return false;
+    }
+    check(engine, "close", dismiss(engine, popup));
+    true
+}
+
 /// Whether `popup` is shown and took the keyboard when it opened, so that
 /// what is in it may move the keyboard about: a menu's current item.
 pub(crate) fn holds_keyboard(engine: &Engine, popup: ObjectId) -> bool {

@@ -45,7 +45,7 @@ use ljos_render::kurbo;
 use crate::button::AbstractButton;
 use crate::control::{Control, focus_policy, hover, is_left, no_key, takes_input};
 use crate::parts::{PartKind, declared_by_style, manage_part};
-use crate::popup::{self, Popup, close_policy};
+use crate::popup::{self, Popup};
 use crate::rows;
 use crate::util::{
     bind_default, check, flag, is_a, is_unset, num, object, on_model_made, set_computed, warn,
@@ -1567,19 +1567,11 @@ fn key_press(engine: &Engine, combo: ObjectId, ev: &KeyEvent) -> bool {
             }
             true
         }
-        key::ESCAPE => {
-            // The popup does not have the keyboard, so its own Escape
-            // never comes.
-            let Some(p) = popup_of(engine, combo).filter(|_| is_open(engine, combo)) else {
-                return false;
-            };
-            let policy = int(engine, p, Popup::CLOSE_POLICY.index);
-            if policy & close_policy::ON_ESCAPE == 0 {
-                return false;
-            }
-            close_popup(engine, combo);
-            true
-        }
+        // The popup does not have the keyboard, so its own Escape never
+        // comes: the combo box hands it the key.
+        key::ESCAPE => popup_of(engine, combo)
+            .filter(|_| is_open(engine, combo))
+            .is_some_and(|p| popup::escape(engine, p)),
         key::DOWN => {
             step(engine, combo, Step::Next);
             true
