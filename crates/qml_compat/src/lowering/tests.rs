@@ -160,3 +160,80 @@ fn forgetting_a_file_lowers_the_files_that_named_it_again() {
     );
     assert_eq!(lowering.forget("app/Swatch"), None);
 }
+
+/// A file lowered to `modules` beside it.
+fn lowered(modules: &[(&str, &str)]) -> Outcome {
+    Outcome::Lowered(crate::Lowered {
+        text: String::new(),
+        changes: Vec::new(),
+        modules: modules
+            .iter()
+            .map(|(name, text)| (name.to_string(), text.to_string()))
+            .collect(),
+    })
+}
+
+// No two files' rows modules go to one path (`rows_module` is named by the
+// file's own name), so these give each file a module of one name.
+#[test]
+fn a_file_settled_after_another_sees_the_module_that_one_writes() {
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    let mut scripts = Vec::new();
+    lowering.settle_modules(
+        &project,
+        "app/a",
+        &lowered(&[("m.rows.ts", "a")]),
+        &mut scripts,
+    );
+    lowering.settle_modules(
+        &project,
+        "app/b",
+        &lowered(&[("m.rows.ts", "b")]),
+        &mut scripts,
+    );
+    assert_eq!(
+        scripts,
+        [ScriptEdit::Put {
+            path: "app/m.rows.ts".to_string(),
+            text: "a".to_string()
+        }]
+    );
+    assert_eq!(
+        lowering.generated,
+        BTreeMap::from([("app/a".to_string(), vec!["app/m.rows.ts".to_string()])])
+    );
+}
+
+#[test]
+fn a_file_settled_after_another_writes_where_that_one_dropped_its_module() {
+    let project = Files {
+        scripts: BTreeMap::from([("app/m.rows.ts".to_string(), "a".to_string())]),
+    };
+    let mut lowering = Lowering::new();
+    lowering
+        .generated
+        .insert("app/a".to_string(), vec!["app/m.rows.ts".to_string()]);
+    let mut scripts = Vec::new();
+    lowering.settle_modules(&project, "app/a", &Outcome::Unchanged, &mut scripts);
+    lowering.settle_modules(
+        &project,
+        "app/b",
+        &lowered(&[("m.rows.ts", "b")]),
+        &mut scripts,
+    );
+    assert_eq!(
+        scripts,
+        [
+            ScriptEdit::Drop("app/m.rows.ts".to_string()),
+            ScriptEdit::Put {
+                path: "app/m.rows.ts".to_string(),
+                text: "b".to_string()
+            }
+        ]
+    );
+    assert_eq!(
+        lowering.generated,
+        BTreeMap::from([("app/b".to_string(), vec!["app/m.rows.ts".to_string()])])
+    );
+}
