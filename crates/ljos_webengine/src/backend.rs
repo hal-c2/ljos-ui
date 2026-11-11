@@ -78,6 +78,33 @@ pub enum Event {
         status: i32,
         code: i32,
     },
+    /// The page asks to be allowed something, a `WebEnginePermission.
+    /// PermissionType`; it waits for [`Browser::answer`] with `id`.
+    Permission {
+        id: u64,
+        origin: String,
+        kind: i32,
+    },
+    /// The question `id` is no longer asked (the page went).
+    PermissionGone {
+        id: u64,
+    },
+    /// The page asks to be shown a screen or a window, and its sound when
+    /// `audio`; it waits for [`Browser::answer`] with `id`.
+    DesktopMedia {
+        id: u64,
+        audio: bool,
+    },
+}
+
+/// Where a page is about to go, as the view is asked about it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Navigation {
+    pub url: String,
+    /// A `WebEngineNavigationRequest.NavigationType`.
+    pub kind: i32,
+    pub main_frame: bool,
+    pub form_data: bool,
 }
 
 /// A press, a move or a release of the pointer, in the view's own
@@ -171,6 +198,12 @@ pub trait Browser {
     fn compose(&self, text: &str, cursor: usize);
     /// What an input method commits.
     fn commit(&self, text: &str);
+    /// Answers the question `id` a page asked ([`Event::Permission`],
+    /// [`Event::DesktopMedia`]): allowed or not.
+    fn answer(&self, id: u64, allow: bool);
+    /// Forgets what the profile keeps of the answer to `origin` asking
+    /// for `kind`, so it is asked again.
+    fn forget_permission(&self, origin: &str, kind: i32);
     /// The browser goes: no event comes from it after this.
     fn close(&self);
 }
@@ -190,6 +223,11 @@ impl std::fmt::Debug for Sink {
 }
 
 impl Sink {
+    /// The view the events are for.
+    pub fn view(&self) -> ObjectId {
+        self.view
+    }
+
     pub(crate) fn new(engine: &Engine, view: ObjectId) -> Sink {
         Sink {
             view,

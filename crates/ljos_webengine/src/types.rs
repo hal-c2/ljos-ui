@@ -583,3 +583,188 @@ impl WebEngineNewWindowRequest {
         Ok(())
     }
 }
+
+fn navigation_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "NavigationType",
+            vec![
+                ("LinkClickedNavigation", 0),
+                ("TypedNavigation", 1),
+                ("FormSubmittedNavigation", 2),
+                ("BackForwardNavigation", 3),
+                ("ReloadNavigation", 4),
+                ("OtherNavigation", 5),
+                ("RedirectNavigation", 6),
+            ],
+        ),
+        (
+            "NavigationRequestAction",
+            vec![("AcceptRequest", 0), ("IgnoreRequest", 255)],
+        ),
+    ]
+}
+
+/// A page about to go somewhere (`WebEngineNavigationRequest`): it goes
+/// unless the handler of `navigationRequested` rejects it there and then.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtWebEngine",
+    name = "WebEngineNavigationRequest",
+    uncreatable,
+    enums = navigation_enums
+)]
+pub struct WebEngineNavigationRequest {
+    #[qml(readonly, constant)]
+    pub url: Url,
+    #[qml(readonly, constant)]
+    pub is_main_frame: bool,
+    #[qml(readonly, constant)]
+    pub has_form_data: bool,
+    #[qml(readonly, constant, enumeration = "NavigationType")]
+    pub navigation_type: i32,
+    #[qml(notify, readonly, enumeration = "NavigationRequestAction")]
+    pub action: i32,
+}
+
+/// What [`WebEngineNavigationRequest::action`] is once rejected.
+pub(crate) const IGNORE_REQUEST: i32 = 255;
+
+#[qml_impl]
+impl WebEngineNavigationRequest {
+    #[qml(invokable)]
+    fn accept(cx: &Cx) -> Result<(), EngineError> {
+        cx.engine.set_internal(cx.this, Self::ACTION, 0)
+    }
+
+    #[qml(invokable)]
+    fn reject(cx: &Cx) -> Result<(), EngineError> {
+        cx.engine
+            .set_internal(cx.this, Self::ACTION, IGNORE_REQUEST)
+    }
+}
+
+fn permission_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
+    vec![
+        (
+            "PermissionType",
+            vec![
+                ("Unsupported", 0),
+                ("MediaAudioCapture", 1),
+                ("MediaVideoCapture", 2),
+                ("MediaAudioVideoCapture", 3),
+                ("DesktopVideoCapture", 4),
+                ("DesktopAudioVideoCapture", 5),
+                ("MouseLock", 6),
+                ("Notifications", 7),
+                ("Geolocation", 8),
+                ("ClipboardReadWrite", 9),
+                ("LocalFontsAccess", 10),
+            ],
+        ),
+        (
+            "State",
+            vec![("Invalid", 0), ("Ask", 1), ("Granted", 2), ("Denied", 3)],
+        ),
+    ]
+}
+
+/// `WebEnginePermission.State`.
+pub(crate) mod permission_state {
+    pub const INVALID: i32 = 0;
+    pub const ASK: i32 = 1;
+    pub const GRANTED: i32 = 2;
+    pub const DENIED: i32 = 3;
+}
+
+/// What a page asks to be allowed (`WebEnginePermission`): answered with
+/// [`grant`](Self::grant) or [`deny`](Self::deny), then or later. The page
+/// waits until it is.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtWebEngine",
+    name = "WebEnginePermission",
+    uncreatable,
+    enums = permission_enums
+)]
+pub struct WebEnginePermission {
+    #[qml(readonly, constant)]
+    pub origin: Url,
+    #[qml(readonly, constant, enumeration = "PermissionType")]
+    pub permission_type: i32,
+    #[qml(notify, readonly, enumeration = "State")]
+    pub state: i32,
+    #[qml(notify, readonly)]
+    pub is_valid: bool,
+    /// The view the page is in, which hands the answer on.
+    #[qml(skip)]
+    pub(crate) view: Option<ObjectId>,
+    /// What the browser knows the question by.
+    #[qml(skip)]
+    pub(crate) id: u64,
+}
+
+#[qml_impl]
+impl WebEnginePermission {
+    #[qml(invokable)]
+    fn grant(cx: &Cx) {
+        crate::view::answer_permission(cx.engine, cx.this, true);
+    }
+
+    #[qml(invokable)]
+    fn deny(cx: &Cx) {
+        crate::view::answer_permission(cx.engine, cx.this, false);
+    }
+
+    /// Forgets the answer kept for the page's origin: it is asked again.
+    #[qml(invokable)]
+    fn reset(cx: &Cx) {
+        crate::view::reset_permission(cx.engine, cx.this);
+    }
+}
+
+/// A page asking to be shown a screen or a window
+/// (`WebEngineDesktopMediaRequest`): [`selectScreen`](Self::select_screen)
+/// or [`selectWindow`](Self::select_window) chooses one of the models'
+/// rows, [`cancel`](Self::cancel) refuses.
+#[derive(Debug, Default, QmlObject)]
+#[qml(
+    module = "QtWebEngine",
+    name = "WebEngineDesktopMediaRequest",
+    uncreatable
+)]
+pub struct WebEngineDesktopMediaRequest {
+    #[qml(readonly, constant, object = "ListModel")]
+    pub screens_model: Option<ObjectId>,
+    #[qml(readonly, constant, object = "ListModel")]
+    pub windows_model: Option<ObjectId>,
+    #[qml(skip)]
+    pub(crate) view: Option<ObjectId>,
+    #[qml(skip)]
+    pub(crate) id: u64,
+    /// Whether the page also asked for the screen's sound.
+    #[qml(skip)]
+    pub(crate) audio: bool,
+    #[qml(skip)]
+    pub(crate) answered: bool,
+}
+
+#[qml_impl]
+impl WebEngineDesktopMediaRequest {
+    #[qml(invokable, name = "selectScreen")]
+    fn select_screen(cx: &Cx, index: Value) {
+        let _ = index;
+        crate::view::choose_desktop_media(cx.engine, cx.this, Some(crate::view::Shown::Screen));
+    }
+
+    #[qml(invokable, name = "selectWindow")]
+    fn select_window(cx: &Cx, index: Value) {
+        let _ = index;
+        crate::view::choose_desktop_media(cx.engine, cx.this, Some(crate::view::Shown::Window));
+    }
+
+    #[qml(invokable)]
+    fn cancel(cx: &Cx) {
+        crate::view::choose_desktop_media(cx.engine, cx.this, None);
+    }
+}

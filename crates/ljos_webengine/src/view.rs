@@ -25,10 +25,11 @@ use ljos_platform::{Platform, Reply};
 use ljos_quick::{Item, ItemPaint, TextEngine};
 use ljos_render::{DisplayListBuilder, DrawOp, ImageHandle, Rgba, kurbo};
 
-use crate::backend::{self, Browser, Event, LoadStatus};
+use crate::backend::{self, Browser, Event, LoadStatus, Navigation};
 use crate::types::{
-    WebEngine, WebEngineLoadingInfo, WebEngineNewWindowRequest, WebEngineProfile,
-    WebEngineScriptCollection, WebEngineSettings,
+    IGNORE_REQUEST, WebEngine, WebEngineDesktopMediaRequest, WebEngineLoadingInfo,
+    WebEngineNavigationRequest, WebEngineNewWindowRequest, WebEnginePermission, WebEngineProfile,
+    WebEngineScriptCollection, WebEngineSettings, permission_state,
 };
 
 fn view_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
@@ -168,6 +169,13 @@ struct Run {
     /// The browser says where it is: the URL written is news, not
     /// somewhere to go.
     reporting: bool,
+    /// Where the browser last said it is: a URL whose request is rejected
+    /// leaves the view there.
+    at: String,
+    /// The permissions and desktop media requests handed out for the page
+    /// shown: those answered go when the next page starts loading, those
+    /// still asked when they are answered or the view goes.
+    asked: Vec<ObjectId>,
 }
 
 impl fmt::Debug for WebEngineView {
@@ -261,6 +269,12 @@ impl WebEngineView {
     fn window_close_requested();
     #[qml(signal, name = "renderProcessTerminated")]
     fn render_process_terminated(termination_status: i32, exit_code: i32);
+    #[qml(signal, name = "navigationRequested")]
+    fn navigation_requested(request: Option<ObjectId>);
+    #[qml(signal, name = "permissionRequested")]
+    fn permission_requested(permission: Option<ObjectId>);
+    #[qml(signal, name = "desktopMediaRequested")]
+    fn desktop_media_requested(request: Option<ObjectId>);
 
     #[qml(invokable, name = "goBack")]
     fn go_back(cx: &Cx) {
@@ -443,9 +457,20 @@ fn from_browser_url(e: &Engine, url: &str) -> String {
     url.to_owned()
 }
 
-/// Goes to `url`, making the browser if there is none yet.
+/// Goes to `url`, making the browser if there is none yet, unless the
+/// view's handler rejects going there.
 fn navigate(e: &Engine, me: ObjectId, url: &str) {
     if !e.is_alive(me) {
+        return;
+    }
+    let typed = Navigation {
+        url: url.to_owned(),
+        kind: TYPED_NAVIGATION,
+        main_frame: true,
+        form_data: false,
+    };
+    if !asked_to_go(e, me, typed) {
+        stay(e, me, url);
         return;
     }
     let target = to_browser_url(e, url);
@@ -460,6 +485,72 @@ fn navigate(e: &Engine, me: ObjectId, url: &str) {
         }
         Err(why) => refuse(e, me, url, &why),
     }
+}
+
+/// `WebEngineNavigationRequest.TypedNavigation`: a URL given to the view.
+const TYPED_NAVIGATION: i32 = 1;
+
+/// Whether the page of `me` may go where `nav` says, as the handler of
+/// `navigationRequested` answers there and then; a request nobody
+/// rejects is accepted. The browser asks with its own URL.
+pub(crate) fn ask_navigation(e: &Engine, me: ObjectId, mut nav: Navigation) -> bool {
+    if !e.is_alive(me) {
+        return true;
+    }
+    nav.url = from_browser_url(e, &nav.url);
+    asked_to_go(e, me, nav)
+}
+
+fn asked_to_go(e: &Engine, me: ObjectId, nav: Navigation) -> bool {
+    let heard = e
+        .signal_index(me, "navigationRequested")
+        .is_ok_and(|s| e.signal_connected(me, s));
+    if !heard {
+        return true;
+    }
+    let request = WebEngineNavigationRequest {
+        url: Url(Atom::from(nav.url.as_str())),
+        is_main_frame: nav.main_frame,
+        has_form_data: nav.form_data,
+        navigation_type: nav.kind,
+        action: 0,
+    };
+    let Ok(request) = e.create_native(request, Some(me)) else {
+        return true;
+    };
+    let _ = e.emit_by_name(me, "navigationRequested", &[Value::Object(request)]);
+    let action = e
+        .get(request, WebEngineNavigationRequest::ACTION)
+        .unwrap_or(0);
+    e.destroy_at_turn_end(request);
+    action != IGNORE_REQUEST
+}
+
+/// A URL given to the view was rejected: the load it would have been
+/// stops before it starts, and the view stays where it was.
+fn stay(e: &Engine, me: ObjectId, url: &str) {
+    apply(
+        e,
+        me,
+        Event::LoadStarted {
+            url: url.to_owned(),
+        },
+    );
+    apply(
+        e,
+        me,
+        Event::LoadEnded {
+            url: url.to_owned(),
+            status: LoadStatus::Stopped,
+            code: -3,
+            error: crate::errors::name(-3),
+            domain: crate::errors::domain(-3),
+        },
+    );
+    let at = e
+        .with::<WebEngineView, _>(me, |v| v.run.at.clone())
+        .unwrap_or_default();
+    apply(e, me, Event::Url(at));
 }
 
 /// A view that cannot show pages fails every load, and says why once.
@@ -581,6 +672,11 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             domain,
         },
         Event::Url(url) => Event::Url(from_browser_url(e, &url)),
+        Event::Permission { id, origin, kind } => Event::Permission {
+            id,
+            origin: from_browser_url(e, &origin),
+            kind,
+        },
         Event::NewWindow {
             url,
             destination,
@@ -597,10 +693,23 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
     match event {
         Event::LoadStarted { url } => {
             let reply = Platform::of(e).expect_for(format!("page {url}"), Some(me));
-            let _ = e.with_mut::<WebEngineView, _>(me, |v| {
-                v.run.load = Some(reply);
-                v.run.awaiting_frame = false;
-            });
+            let done = e
+                .with_mut::<WebEngineView, _>(me, |v| {
+                    v.run.load = Some(reply);
+                    v.run.awaiting_frame = false;
+                    std::mem::take(&mut v.run.asked)
+                })
+                .unwrap_or_default();
+            // What the page before asked and was answered goes with it.
+            let mut kept = Vec::new();
+            for o in done {
+                if still_asked(e, o) {
+                    kept.push(o);
+                } else {
+                    e.destroy(o);
+                }
+            }
+            let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.asked.extend(kept));
             let _ = e.set_internal(me, WebEngineView::LOADING, true);
             let _ = e.set_internal(me, WebEngineView::LOAD_PROGRESS, 0);
             emit_loading(e, me, &url, LoadStatus::Started, 0, String::new(), 0);
@@ -629,7 +738,10 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             emit_loading(e, me, &url, status, code, error, domain);
         }
         Event::Url(url) => {
-            let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.reporting = true);
+            let _ = e.with_mut::<WebEngineView, _>(me, |v| {
+                v.run.reporting = true;
+                v.run.at.clone_from(&url);
+            });
             let _ = e.set_internal(me, WebEngineView::URL, Url(Atom::from(url.as_str())));
             let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.reporting = false);
         }
@@ -705,7 +817,212 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                 &[Value::Int(status), Value::Int(code)],
             );
         }
+        Event::Permission { id, origin, kind } => ask_permission(e, me, id, &origin, kind),
+        Event::PermissionGone { id } => {
+            let asked = e
+                .with::<WebEngineView, _>(me, |v| v.run.asked.clone())
+                .unwrap_or_default();
+            for o in asked {
+                let ours = e
+                    .with::<WebEnginePermission, _>(o, |p| p.id == id && p.is_valid)
+                    .unwrap_or(false);
+                if ours {
+                    let _ =
+                        e.set_internal(o, WebEnginePermission::STATE, permission_state::INVALID);
+                    let _ = e.set_internal(o, WebEnginePermission::IS_VALID, false);
+                }
+            }
+        }
+        Event::DesktopMedia { id, audio } => ask_desktop_media(e, me, id, audio),
     }
+}
+
+/// Whether `o`, a permission or a desktop media request, waits for its
+/// answer still.
+fn still_asked(e: &Engine, o: ObjectId) -> bool {
+    if let Ok((state, valid)) = e.with::<WebEnginePermission, _>(o, |p| (p.state, p.is_valid)) {
+        return valid && state == permission_state::ASK;
+    }
+    e.with::<WebEngineDesktopMediaRequest, _>(o, |r| !r.answered)
+        .unwrap_or(false)
+}
+
+fn ask_permission(e: &Engine, me: ObjectId, id: u64, origin: &str, kind: i32) {
+    let permission = WebEnginePermission {
+        origin: Url(Atom::from(origin)),
+        permission_type: kind,
+        state: permission_state::ASK,
+        is_valid: true,
+        view: Some(me),
+        id,
+    };
+    let Ok(permission) = e.create_native(permission, Some(me)) else {
+        return;
+    };
+    let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.asked.push(permission));
+    // A page nobody answers waits, as it would for a person to.
+    let _ = e.emit_by_name(me, "permissionRequested", &[Value::Object(permission)]);
+}
+
+/// `permission` is granted or denied: the page that asked hears it.
+pub(crate) fn answer_permission(e: &Engine, permission: ObjectId, allow: bool) {
+    let Ok((view, id, state, valid)) =
+        e.with::<WebEnginePermission, _>(permission, |p| (p.view, p.id, p.state, p.is_valid))
+    else {
+        return;
+    };
+    // The page heard the first answer; it is not asked again.
+    if !valid || state != permission_state::ASK {
+        return;
+    }
+    let state = if allow {
+        permission_state::GRANTED
+    } else {
+        permission_state::DENIED
+    };
+    let _ = e.set_internal(permission, WebEnginePermission::STATE, state);
+    if let Some(b) = view.and_then(|v| browser(e, v)) {
+        b.answer(id, allow);
+    }
+}
+
+/// What the profile keeps of `permission`'s answer is forgotten.
+pub(crate) fn reset_permission(e: &Engine, permission: ObjectId) {
+    let Ok((view, origin, kind, valid)) = e.with::<WebEnginePermission, _>(permission, |p| {
+        (p.view, p.origin.clone(), p.permission_type, p.is_valid)
+    }) else {
+        return;
+    };
+    if !valid {
+        return;
+    }
+    if let Some(b) = view.and_then(|v| browser(e, v)) {
+        b.forget_permission(&to_browser_url(e, origin.0.as_str()), kind);
+    }
+    let _ = e.set_internal(
+        permission,
+        WebEnginePermission::STATE,
+        permission_state::ASK,
+    );
+}
+
+/// What a page asking to share the desktop is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Shown {
+    Screen,
+    Window,
+}
+
+/// `WebEnginePermission.DesktopVideoCapture` and, with the sound,
+/// `DesktopAudioVideoCapture`.
+const DESKTOP_VIDEO_CAPTURE: i32 = 4;
+const DESKTOP_AUDIO_VIDEO_CAPTURE: i32 = 5;
+
+fn ask_desktop_media(e: &Engine, me: ObjectId, id: u64, audio: bool) {
+    let heard = e
+        .signal_index(me, "desktopMediaRequested")
+        .is_ok_and(|s| e.signal_connected(me, s));
+    let Some(b) = browser(e, me) else {
+        return;
+    };
+    // Nobody to choose what is shown: the page is refused at once.
+    if !heard {
+        b.answer(id, false);
+        return;
+    }
+    let made = (|| -> Result<ObjectId, EngineError> {
+        let request = e.create_native(
+            WebEngineDesktopMediaRequest {
+                view: Some(me),
+                id,
+                audio,
+                ..WebEngineDesktopMediaRequest::default()
+            },
+            Some(me),
+        )?;
+        // The browser shows the whole desktop: it has one screen to offer
+        // and no window of its own to pick.
+        let screens = e.create_native(ljos_engine::ListModel::default(), Some(request))?;
+        let row = Value::Map(Arc::new(
+            [(
+                Atom::from("display"),
+                Value::String(Atom::from("Entire screen")),
+            )]
+            .into_iter()
+            .collect(),
+        ));
+        e.invoke_by_name(screens, "append", &[row])?;
+        let windows = e.create_native(ljos_engine::ListModel::default(), Some(request))?;
+        e.set_internal(
+            request,
+            WebEngineDesktopMediaRequest::SCREENS_MODEL,
+            Some(screens),
+        )?;
+        e.set_internal(
+            request,
+            WebEngineDesktopMediaRequest::WINDOWS_MODEL,
+            Some(windows),
+        )?;
+        Ok(request)
+    })();
+    let Ok(request) = made else {
+        b.answer(id, false);
+        return;
+    };
+    let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.asked.push(request));
+    let _ = e.emit_by_name(me, "desktopMediaRequested", &[Value::Object(request)]);
+}
+
+/// The desktop media `request` asked for is chosen (`Some`) or refused.
+/// A choice is a permission to capture it, asked for as any other, and
+/// refused while the view's settings keep screen capture off.
+pub(crate) fn choose_desktop_media(e: &Engine, request: ObjectId, shown: Option<Shown>) {
+    let Ok((view, id, audio, answered)) =
+        e.with_mut::<WebEngineDesktopMediaRequest, _>(request, |r| {
+            (
+                r.view,
+                r.id,
+                r.audio,
+                std::mem::replace(&mut r.answered, true),
+            )
+        })
+    else {
+        return;
+    };
+    let Some(view) = view.filter(|_| !answered) else {
+        return;
+    };
+    let Some(b) = browser(e, view) else {
+        return;
+    };
+    let capture = e
+        .with::<WebEngineView, _>(view, |v| v.settings.screen_capture_enabled)
+        .unwrap_or(false);
+    // The browser can show the whole desktop and nothing smaller: a window
+    // chosen is refused rather than the screen shown in its place.
+    if shown != Some(Shown::Screen) || !capture {
+        b.answer(id, false);
+        return;
+    }
+    let origin = e
+        .with::<WebEngineView, _>(view, |v| v.run.at.clone())
+        .map(|at| origin_of(&at))
+        .unwrap_or_default();
+    let kind = if audio {
+        DESKTOP_AUDIO_VIDEO_CAPTURE
+    } else {
+        DESKTOP_VIDEO_CAPTURE
+    };
+    ask_permission(e, view, id, &origin, kind);
+}
+
+/// The origin of the page at `url`: its scheme, host and port.
+fn origin_of(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    format!("{scheme}://{host}/")
 }
 
 fn emit_loading(
