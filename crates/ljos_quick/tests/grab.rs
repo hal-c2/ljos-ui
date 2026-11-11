@@ -112,11 +112,12 @@ fn a_grab_whose_item_left_its_window_settles_and_wakes_nothing() {
 
 /// A host that closes a window drops its scene and may keep the items:
 /// a grab still waiting for that scene's frame can never be drawn. It is
-/// settled as the scene goes, with an empty result, and leaves nothing
-/// scheduled; a grab asked after it is refused, as the item is in no
-/// window.
+/// settled with an empty result, which the drop only queues: the callback
+/// runs when the host wakes for the engine's timers, as a grab's callback
+/// after a frame does, and leaves nothing scheduled. A grab asked after it is
+/// refused, as the item is in no window.
 #[test]
-fn a_grab_whose_scene_is_dropped_settles_as_it_goes() {
+fn a_grab_whose_scene_is_dropped_settles_in_the_next_turn() {
     let e = engine();
     let root = load(&e, GRABBED);
     let other_root = load(&e, OTHER);
@@ -131,6 +132,18 @@ fn a_grab_whose_scene_is_dropped_settles_as_it_goes() {
     e.invoke_by_name(root, "grab", &[]).unwrap();
     assert_eq!(get(&e, root, "asked"), Value::Bool(true));
     drop(shows);
+    assert_eq!(
+        get(&e, root, "got").to_js_string().to_string(),
+        "not yet",
+        "no script runs in the drop"
+    );
+    assert!(
+        other.needs_frame(),
+        "the engine's timers wake the scene left"
+    );
+    // As a host that wakes at the engine's next deadline.
+    let due = e.next_timer_deadline().expect("the callback is due");
+    e.advance_timers(due);
     // An empty result: its url names no picture.
     assert_eq!(get(&e, root, "got").to_js_string().to_string(), "");
     // The frame of the turn the callback ran in, which the engine asks of
@@ -148,10 +161,11 @@ fn a_grab_whose_scene_is_dropped_settles_as_it_goes() {
 }
 
 /// The last scene goes: no frame will come to settle a grab, and the
-/// callback is not kept until the engine goes. It is called as the scene
-/// goes, and nothing is left scheduled.
+/// callback is not kept until the engine goes. It is due at once, and a
+/// host that wakes at the engine's deadline runs it; nothing is left
+/// scheduled after it.
 #[test]
-fn a_grab_whose_last_scene_is_dropped_settles_as_it_goes() {
+fn a_grab_whose_last_scene_is_dropped_settles_when_the_host_wakes() {
     let e = engine();
     let root = load(&e, GRABBED);
     let mut shows = scene(&e, root, 40.0, 40.0);
@@ -160,6 +174,13 @@ fn a_grab_whose_last_scene_is_dropped_settles_as_it_goes() {
     e.invoke_by_name(root, "grab", &[]).unwrap();
     assert_eq!(get(&e, root, "asked"), Value::Bool(true));
     drop(shows);
+    assert_eq!(
+        get(&e, root, "got").to_js_string().to_string(),
+        "not yet",
+        "no script runs in the drop"
+    );
+    let due = e.next_timer_deadline().expect("the callback is due");
+    e.advance_timers(due);
     assert_eq!(get(&e, root, "got").to_js_string().to_string(), "");
     assert_eq!(e.next_timer_deadline(), None, "nothing is scheduled");
 }

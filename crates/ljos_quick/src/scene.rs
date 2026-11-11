@@ -590,8 +590,9 @@ impl Scenes {
     }
 
     /// `shared`'s scene is dropped: it shows no window from now on, and a
-    /// grab of an item it showed that no scene shows now is settled at
-    /// once. No frame may come to settle it: this may be the last scene.
+    /// grab of an item it showed that no scene shows now is settled empty,
+    /// as no frame of it will. Its callback is queued for the engine's
+    /// next turn, which wakes the host; no script runs in the drop.
     fn closed(&self, shared: &SharedRc, showed: impl Fn(ObjectId) -> bool) {
         self.set_root(shared, None);
         let engine = self.engine.borrow().as_ref().and_then(|w| w.upgrade());
