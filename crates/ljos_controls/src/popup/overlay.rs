@@ -24,7 +24,11 @@ use ljos_quick::{
 };
 use ljos_render::kurbo;
 
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
+
 use super::item::is_inside;
+use super::keyboard::{Give, Ledger};
 use super::{Popup, PopupState, close_policy, dismiss, item_of, popup_of, state_of};
 use crate::util::{check, flag, is_a, num, object, set_computed, warn};
 
@@ -69,7 +73,28 @@ pub struct OverlayItem {
     pub item: Item,
     /// Where the pointer was last pressed or released, in the window.
     #[qml(skip)]
-    pointer: std::cell::Cell<Option<(f64, f64)>>,
+    pointer: Cell<Option<(f64, f64)>>,
+    /// Who gets the keyboard when a popup that has it goes.
+    #[qml(skip)]
+    keyboard: RefCell<Ledger<ObjectId>>,
+    /// The shown popups, the lowest first, kept as they are shown and
+    /// hidden: a press, a release and the pointer filter read it, and
+    /// rebuilding it from the children each time made them cost as much
+    /// as the overlay is full.
+    #[qml(skip)]
+    shown: RefCell<Rc<Vec<Shown>>>,
+    /// The order of the next popup shown, which breaks a tie in `z`.
+    #[qml(skip)]
+    next: Cell<u64>,
+}
+
+/// A shown popup in the stack of its overlay.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Shown {
+    pub(super) item: ObjectId,
+    pub(super) popup: ObjectId,
+    /// When it was shown, among the others.
+    order: u64,
 }
 
 fn remember_pointer(engine: &Engine, overlay: ObjectId, at: kurbo::Point) {
@@ -132,25 +157,106 @@ pub(super) fn ensure(engine: &Engine, top: ObjectId) -> Result<ObjectId, EngineE
             let _ = e.read(o, Item::CHILDREN.index);
             e.untrack(|| changed(e, o));
         })?;
+        // What has the keyboard in the content is what a popup gives it
+        // back to. It is followed rather than saved by the popup that
+        // takes it: the keyboard also enters a popup that did not ask
+        // for it, when an item in it is given focus.
+        engine.effect_in(o, move |e| {
+            let now = ljos_quick::focus::watch_active_focus_item(e, top);
+            e.untrack(|| {
+                if let Some(now) = now.filter(|n| !is_inside(e, *n, o)) {
+                    let _ =
+                        e.with::<OverlayItem, _>(o, |ov| ov.keyboard.borrow_mut().content_has(now));
+                }
+            });
+        })?;
         Ok(o)
     })
 }
 
 /// The shown popups of an overlay, the lowest first: by `z`, and in the
-/// order they were opened among equals.
-pub(super) fn stack(engine: &Engine, overlay: ObjectId) -> Vec<(ObjectId, ObjectId)> {
+/// order they were shown among equals. Sorted again only when a `z` has
+/// changed since, and a popup destroyed or moved away while shown is
+/// dropped as it is met; otherwise this is the list the overlay keeps.
+pub(super) fn stack(engine: &Engine, overlay: ObjectId) -> Rc<Vec<Shown>> {
     engine.untrack(|| {
-        let mut shown: Vec<(f64, ObjectId, ObjectId)> = child_items(engine, overlay)
-            .into_iter()
-            .filter_map(|item| {
-                let popup = popup_of(engine, item)?;
-                super::is_shown(engine, popup)
-                    .then(|| (num(engine, item, Item::Z.index), item, popup))
-            })
-            .collect();
-        shown.sort_by(|a, b| a.0.total_cmp(&b.0));
-        shown.into_iter().map(|(_, i, p)| (i, p)).collect()
+        let Ok(cached) = engine.with::<OverlayItem, _>(overlay, |o| o.shown.borrow().clone())
+        else {
+            return Rc::default();
+        };
+        let current = |s: &Shown| {
+            engine.is_alive(s.popup)
+                && engine.visual_parent(s.item) == Some(overlay)
+                && super::is_shown(engine, s.popup)
+        };
+        let z = |s: &Shown| num(engine, s.item, Item::Z.index);
+        let in_order = |a: &Shown, b: &Shown| z(a).total_cmp(&z(b)).then(a.order.cmp(&b.order));
+        if cached.iter().all(current) && cached.windows(2).all(|w| in_order(&w[0], &w[1]).is_le()) {
+            return cached;
+        }
+        let mut fresh: Vec<Shown> = cached.iter().copied().filter(|s| current(s)).collect();
+        fresh.sort_by(in_order);
+        let fresh = Rc::new(fresh);
+        let _ = engine.with::<OverlayItem, _>(overlay, |o| *o.shown.borrow_mut() = fresh.clone());
+        fresh
     })
+}
+
+/// `popup`, drawn by `item`, is shown in `overlay` now, above the others
+/// of its `z`.
+fn add_shown(engine: &Engine, overlay: ObjectId, item: ObjectId, popup: ObjectId) {
+    let _ = engine.with::<OverlayItem, _>(overlay, |o| {
+        let order = o.next.get();
+        o.next.set(order + 1);
+        let mut shown = o.shown.borrow_mut();
+        let list = Rc::make_mut(&mut shown);
+        list.retain(|s| s.popup != popup);
+        list.push(Shown { item, popup, order });
+    });
+}
+
+/// `popup` is no longer shown in `overlay`.
+pub(super) fn remove_shown(engine: &Engine, overlay: ObjectId, popup: ObjectId) {
+    let _ = engine.with::<OverlayItem, _>(overlay, |o| {
+        let mut shown = o.shown.borrow_mut();
+        if shown.iter().any(|s| s.popup == popup) {
+            Rc::make_mut(&mut shown).retain(|s| s.popup != popup);
+        }
+    });
+}
+
+// --------------------------------------------------------------- keyboard
+
+/// `popup` takes the keyboard of `overlay` as it opens. False when it has
+/// already taken it.
+pub(super) fn take_keyboard(engine: &Engine, overlay: ObjectId, popup: ObjectId) -> bool {
+    engine
+        .with::<OverlayItem, _>(overlay, |o| o.keyboard.borrow_mut().take(popup))
+        .unwrap_or(false)
+}
+
+/// Whether `popup` took the keyboard of `overlay` and has not gone since.
+pub(super) fn holds_keyboard(engine: &Engine, overlay: ObjectId, popup: ObjectId) -> bool {
+    engine
+        .with::<OverlayItem, _>(overlay, |o| o.keyboard.borrow().holds(popup))
+        .unwrap_or(false)
+}
+
+/// `popup` goes from `overlay`; `had` says whether it has the keyboard.
+/// Where the keyboard goes: a popup it is given to is one still shown.
+pub(super) fn give_keyboard(
+    engine: &Engine,
+    overlay: ObjectId,
+    popup: ObjectId,
+    had: bool,
+) -> Give<ObjectId> {
+    let alive =
+        |id: ObjectId| engine.is_alive(id) && state_of(engine, id).is_none_or(|s| s.shown.get());
+    engine
+        .with::<OverlayItem, _>(overlay, |o| {
+            o.keyboard.borrow_mut().leave(popup, had, alive)
+        })
+        .unwrap_or(Give::Keep)
 }
 
 /// A popup was shown or hidden: the overlay is there while one is shown,
@@ -270,6 +376,7 @@ pub(super) fn raise(
             set_parent_item(engine, item, Some(overlay))
         })?;
     }
+    add_shown(engine, overlay, item, popup);
     Ok(())
 }
 
@@ -348,22 +455,18 @@ fn outside_parent(engine: &Engine, popup: ObjectId, at: kurbo::Point) -> bool {
 /// What is beneath the topmost modal popup does not get the pointer.
 fn filter(engine: &Engine, overlay: ObjectId, hits: &mut Vec<ObjectId>) {
     let stack = stack(engine, overlay);
-    let Some(first) = stack.iter().rposition(|(_, p)| is_modal(engine, *p)) else {
+    let Some(first) = stack.iter().rposition(|s| is_modal(engine, s.popup)) else {
         return;
     };
     let reachable = &stack[first..];
-    hits.retain(|h| {
-        reachable
-            .iter()
-            .any(|(item, _)| is_inside(engine, *h, *item))
-    });
+    hits.retain(|h| reachable.iter().any(|s| is_inside(engine, *h, s.item)));
 }
 
 /// Walks the shown popups from the top one down to the first the point
 /// is in, or the first modal one: those are the ones a press or release
 /// beside them can close.
 fn beside(engine: &Engine, overlay: ObjectId, at: kurbo::Point, mut f: impl FnMut(ObjectId)) {
-    for (item, popup) in stack(engine, overlay).into_iter().rev() {
+    for &Shown { item, popup, .. } in stack(engine, overlay).iter().rev() {
         if !engine.is_alive(popup) || !super::is_shown(engine, popup) {
             // Closed by a handler of the one above.
             continue;

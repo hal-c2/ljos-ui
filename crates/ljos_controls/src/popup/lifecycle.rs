@@ -347,7 +347,7 @@ fn apply(
         Effect::Present => try_present(engine, popup)?,
         Effect::TakeKeyboard => {
             if let Some(item) = item_of(engine, popup) {
-                engine.untrack(|| take_keyboard(engine, popup, state, item));
+                engine.untrack(|| take_keyboard(engine, popup, item));
             }
         }
         Effect::Arrive => arrive(engine, popup, state)?,
@@ -423,7 +423,7 @@ fn leave(engine: &Engine, popup: ObjectId, state: &Rc<PopupState>) -> Result<(),
     // The keyboard goes back as the popup starts to go: what is typed
     // meanwhile is not for something on its way out.
     if let Some(item) = item_of(engine, popup) {
-        engine.untrack(|| give_back_keyboard(engine, state, item))?;
+        engine.untrack(|| give_back_keyboard(engine, popup, item))?;
     }
     state.phase.set(Phase::Going);
     let (opacity, scale) = engine.untrack(|| {

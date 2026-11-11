@@ -149,8 +149,6 @@ pub(crate) struct MenuState {
     waiting_for: Cell<Option<ObjectId>>,
     /// The menu is making an item from its delegate, which appends it.
     making: Cell<bool>,
-    /// The item the menu gave the keyboard.
-    focused: Cell<Option<ObjectId>>,
     /// The repeaters whose items are items of the menu.
     repeaters: RefCell<Vec<ObjectId>>,
     /// The `ObjectModel` that `contentModel` reads.
@@ -799,9 +797,6 @@ fn leave(e: &Engine, menu: ObjectId, item: ObjectId) -> Result<Option<Entry>, En
     if st.waiting_for.get() == Some(item) {
         stop_timer(e, &st);
     }
-    if st.focused.get() == Some(item) {
-        st.focused.set(None);
-    }
     if !e.is_alive(item) {
         return Ok(Some(entry));
     }
@@ -1058,28 +1053,26 @@ fn apply_current(e: &Engine, menu: ObjectId) {
     if st.waiting_for.get().is_some() && st.waiting_for.get() != current {
         stop_timer(e, &st);
     }
-    let has_keyboard = popup::is_shown(e, menu) && e.untrack(|| flag(e, menu, Popup::FOCUS.index));
-    if !has_keyboard {
+    // Only a menu that took the keyboard as it opened moves it about, and
+    // not once it has begun to go: its overlay has given it on by then.
+    if !popup::holds_keyboard(e, menu) {
         return;
     }
     match current {
-        Some(item) => {
-            st.focused.set(Some(item));
-            force_active_focus(e, item, FocusReason::Other);
-        }
+        Some(item) => force_active_focus(e, item, FocusReason::Other),
         None => {
             // Back to the menu itself, which is what has the keyboard
             // when no item is current.
-            if let Some(old) = st.focused.take().filter(|o| e.is_alive(*o))
-                && e.untrack(|| flag(e, old, Item::FOCUS.index))
-            {
-                let r = e.write(
-                    old,
-                    Item::FOCUS.index,
-                    Value::Bool(false),
-                    WriteKind::Imperative,
-                );
-                check(e, "focus", r);
+            for item in items(e, menu) {
+                if e.is_alive(item) && e.untrack(|| flag(e, item, Item::FOCUS.index)) {
+                    let r = e.write(
+                        item,
+                        Item::FOCUS.index,
+                        Value::Bool(false),
+                        WriteKind::Imperative,
+                    );
+                    check(e, "focus", r);
+                }
             }
         }
     }
@@ -1169,9 +1162,9 @@ fn item_hovered(e: &Engine, menu: ObjectId, item: ObjectId) {
     if !over || !cascades(e, menu) || !takes_input(e, item) {
         return;
     }
-    // The click that closes the menu ends over the item it chose, and
-    // making that current on the way out would take the keyboard from
-    // whoever has it now.
+    // The click that closes the menu ends over the item it chose: on the
+    // way out that item neither lights up nor opens its sub-menu. (The
+    // keyboard is safe either way: a menu that is going holds none.)
     if !popup::is_shown(e, menu) || popup::is_going(e, menu) {
         return;
     }
