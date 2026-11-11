@@ -201,3 +201,88 @@ Feature: A TextArea that is the one item of a ScrollView
       When the method "twelveLines" of "root" is called
       Then the property "height" of "view" is 200
       And the property "height" of "area" is 204
+
+  Rule: The view sizes the area, whatever size the area was given
+
+    The view gives the area its size again each time the view, or the
+    size the area asks for, changes. A size a script assigns or the area
+    declares lasts only until then (checked on qml6).
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          id: root
+          objectName: "root"
+          width: 400; height: 400
+          function addLines() { area.text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve" }
+          function longer() { short.text = "a line of words that is a great deal wider than the two hundred pixels" }
+          ScrollView {
+            id: view
+            objectName: "view"
+            width: 200; height: 150
+            TextArea {
+              id: area
+              objectName: "area"
+              wrapMode: TextEdit.Wrap
+              font.family: "Liberation Sans"; font.pixelSize: 14
+              text: "a line of words that is a great deal wider than the two hundred pixels of the view it is in"
+              Component.onCompleted: width = view.contentItem.width
+            }
+          }
+          ScrollView {
+            objectName: "small"
+            y: 200; width: 180; height: 100
+            TextArea {
+              id: short
+              objectName: "short"
+              width: 120
+              font.family: "Liberation Sans"; font.pixelSize: 14
+              text: "one"
+            }
+          }
+        }
+        """
+
+    Scenario: An area whose width a script assigned follows the view as it narrows and widens
+      Then the property "width" of "area" is 200
+      When the property "width" of "view" is set to 120
+      Then the property "width" of "area" is 120
+      When the property "width" of "view" is set to 300
+      Then the property "width" of "area" is 300
+      And the property "lineCount" of "area" is 2
+
+    Scenario: An area whose height a script assigned follows the view
+      When the property "height" of "area" is set to 50
+      Then the property "height" of "area" is 50
+      When the property "height" of "view" is set to 180
+      Then the property "height" of "area" is 180
+
+    Scenario: A width that wraps the text again gives way to the view at once
+      When the property "width" of "area" is set to 100
+      Then the property "width" of "area" is 200
+
+    Scenario: A height a script assigned gives way when the lines grow
+      When the property "height" of "area" is set to 50
+      And the method "addLines" of "root" is called
+      Then the property "height" of "area" is 204
+
+    Scenario: A width the area declares gives way to the view
+      Then the property "width" of "short" is 180
+      When the property "width" of "small" is set to 240
+      Then the property "width" of "short" is 240
+
+    Scenario: A width that leaves the text as it was lasts until the text is wider
+      When the property "width" of "short" is set to 50
+      Then the property "width" of "short" is 50
+      When the method "longer" of "root" is called
+      Then the property "width" of "short" is at least 430
+
+    Scenario: Turning wrapping on leaves a wide area as wide until the view changes size
+      When the method "longer" of "root" is called
+      And the property "wrapMode" of "short" is set to 4
+      Then the property "width" of "short" is at least 430
+      When the property "width" of "small" is set to 240
+      Then the property "width" of "short" is 240
