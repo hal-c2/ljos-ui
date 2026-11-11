@@ -402,8 +402,8 @@ impl BlockFormat {
     }
 }
 
-/// The format of each paragraph of `cell`: one a line that does not wrap
-/// starts in does not wrap. Trailing default ones are left out.
+/// The format of each paragraph of `cell`, as read: one a line that does
+/// not wrap starts in does not wrap. Trailing default ones are left out.
 fn cell_paragraphs(cell: &super::Cell) -> Vec<Arc<BlockFormat>> {
     let ends = cell
         .paragraphs
@@ -412,13 +412,22 @@ fn cell_paragraphs(cell: &super::Cell) -> Vec<Arc<BlockFormat>> {
         .chain(std::iter::once(cell.range.end));
     let mut start = cell.range.start;
     let mut out: Vec<Arc<BlockFormat>> = ends
-        .map(|end| {
+        .enumerate()
+        .map(|(k, end)| {
             let no_wrap = cell
                 .no_wrap
                 .iter()
                 .any(|line| (start..end).contains(&line.start));
             start = end + 1;
+            let read = cell.format(k);
             Arc::new(BlockFormat {
+                kind: read.kind,
+                margin_top: read.margin_top,
+                margin_bottom: read.margin_bottom,
+                indent: read.indent,
+                indent_right: read.indent_right,
+                marker: read.marker,
+                align: read.align,
                 no_wrap,
                 ..BlockFormat::default()
             })
@@ -1967,11 +1976,13 @@ mod tests {
         let cell = |t: &RichText| {
             let html = body(t);
             let start = html.find("<td>|").unwrap() + 5;
-            html[start..start + html[start..].find("</td>").unwrap()].replace(
-                " margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; \
+            html[start..start + html[start..].find("</td>").unwrap()]
+                .replace(
+                    " margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; \
                      -qt-block-indent:0; text-indent:0px;",
-                "",
-            )
+                    "",
+                )
+                .replace(" style=''", "")
         };
         assert_eq!(t.text(), "\na\u{2029}b\u{1f}z\n");
         assert_eq!(no_wrap(&t), [true, false, false]);

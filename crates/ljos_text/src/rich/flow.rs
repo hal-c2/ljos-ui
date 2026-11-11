@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use super::doc::HAlign;
-use super::{Block, BlockKind, Inline, InlineBuf, Table};
+use super::{Block, BlockKind, Inline, InlineBuf, ParagraphFormat, Table};
 
 /// One open box.
 #[derive(Default)]
@@ -59,10 +59,8 @@ pub(crate) struct Flow {
 }
 
 impl Flow {
-    pub(crate) fn open(&mut self, mut ctx: Ctx) {
-        ctx.top_pending = true;
-        ctx.any = false;
-        self.ctxs.push(ctx);
+    pub(crate) fn open(&mut self, ctx: Ctx) {
+        self.ctxs.push(ctx.opened());
     }
 
     /// Close the innermost box. True when a block was made inside it.
@@ -235,6 +233,9 @@ pub(crate) struct CellBuf {
     pub(crate) paragraphs: Vec<usize>,
     /// What the paragraph that text goes to holds so far.
     pub(crate) paragraph: CellParagraph,
+    /// The format of each paragraph something landed in, with where in
+    /// its text the paragraph starts, in order.
+    pub(crate) formats: Vec<(usize, ParagraphFormat)>,
 }
 
 /// The last paragraph of a cell as read. Measured on Qt 6.11
@@ -263,6 +264,58 @@ impl CellBuf {
     pub(crate) fn break_paragraph(&mut self) {
         self.paragraphs.push(self.buf.text.len());
         self.buf.push("\n", &super::Inline::default());
+    }
+
+    /// Something lands in the paragraph text goes to: the first time, it
+    /// takes its format from the `boxes` it is in, outermost first, as a
+    /// block of the flow takes its own ([`Flow::emit`]). In a cell they are
+    /// boxes of its paragraphs, not of the flow.
+    pub(crate) fn settle<'a>(&mut self, boxes: impl IntoIterator<Item = &'a mut Ctx>) {
+        let start = self.paragraphs.last().map_or(0, |&at| at + 1);
+        if self.formats.last().is_some_and(|(at, _)| *at == start) {
+            return;
+        }
+        let mut format = ParagraphFormat::default();
+        let mut kind = None;
+        let mut item = None;
+        for ctx in boxes {
+            format.indent = (format.indent + ctx.indent).min(MAX_INDENT);
+            format.indent_right = (format.indent_right + ctx.indent_right).min(MAX_INDENT);
+            if ctx.top_pending {
+                format.margin_top = format.margin_top.max(ctx.margin_top);
+                ctx.top_pending = false;
+            }
+            ctx.any = true;
+            format.align = ctx.align.or(format.align);
+            kind = ctx.kind.or(kind);
+            if ctx.item {
+                item = Some(ctx);
+            }
+        }
+        if let Some(item) = item {
+            format.marker = item.marker.take();
+        }
+        format.kind = kind.unwrap_or(BlockKind::Paragraph);
+        self.formats.push((start, format));
+    }
+
+    /// A box of its paragraphs closes: its bottom margin goes to the last
+    /// paragraph made inside it, as [`Flow::close`] gives it to a block.
+    pub(crate) fn close_box(&mut self, ctx: &Ctx) {
+        if ctx.any
+            && let Some((_, last)) = self.formats.last_mut()
+        {
+            last.margin_bottom = last.margin_bottom.max(ctx.margin_bottom);
+        }
+    }
+}
+
+impl Ctx {
+    /// The box as opened: no block inside took its top margin yet.
+    pub(crate) fn opened(mut self) -> Self {
+        self.top_pending = true;
+        self.any = false;
+        self
     }
 }
 
@@ -293,6 +346,19 @@ pub(crate) fn table_block(
                 cell.buf.truncate(at);
             }
             let end = start + cell.buf.text.len();
+            let mut formats = Vec::new();
+            for (at, format) in cell.formats {
+                // The paragraph starts after the ends before it.
+                let k = cell.paragraphs.iter().take_while(|&&end| end < at).count();
+                formats.resize_with(k, ParagraphFormat::default);
+                formats.push(format);
+            }
+            while formats
+                .last()
+                .is_some_and(|f| *f == ParagraphFormat::default())
+            {
+                formats.pop();
+            }
             let paragraphs = cell.paragraphs.iter().map(|&at| start + at).collect();
             let no_wrap = cell
                 .no_wrap
@@ -313,6 +379,7 @@ pub(crate) fn table_block(
                 background: cell.background,
                 no_wrap,
                 paragraphs,
+                formats,
             });
         }
     }

@@ -82,6 +82,10 @@ struct Open {
     always: bool,
     /// A `ul` or `ol`: its bullets and how many items it has so far.
     list: Option<(Marker, u32)>,
+    /// In a table cell, where a block is no box of the flow: the box it
+    /// would be, which the paragraphs of the cell inside it take their
+    /// format from ([`CellBuf::settle`]).
+    cell_box: Option<Ctx>,
 }
 
 /// How white space in the text of an element is read, after its CSS
@@ -412,6 +416,12 @@ impl<'a> Parser<'a> {
                     }
                     return;
                 }
+                let depth = t.depth.min(self.open.len());
+                cell.settle(
+                    self.open[depth..]
+                        .iter_mut()
+                        .filter_map(|o| o.cell_box.as_mut()),
+                );
                 cell.paragraph = CellParagraph::Filled;
                 t.fresh = false;
                 t.no_wrap |= block_no_wrap;
@@ -968,6 +978,101 @@ impl<'a> Parser<'a> {
         });
     }
 
+    /// The box a block `name` with `attrs` is, before its style: in the
+    /// flow, or in a table cell the format of the paragraphs in it. An
+    /// item takes the next marker of the list it is in.
+    fn box_of(&mut self, name: &str, attrs: &Attrs<'_>) -> Ctx {
+        let aligned = || attrs.get("align").as_deref().and_then(align);
+        match name {
+            "p" => Ctx {
+                margin_top: 12.0,
+                margin_bottom: 12.0,
+                align: aligned(),
+                ..Ctx::default()
+            },
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                let level = heading_level(name).unwrap_or(1);
+                let (margin_top, margin_bottom) = match level {
+                    1 => (18.0, 12.0),
+                    2 => (16.0, 12.0),
+                    3 => (14.0, 12.0),
+                    4 => (12.0, 12.0),
+                    5 => (12.0, 4.0),
+                    _ => (0.0, 0.0),
+                };
+                Ctx {
+                    margin_top,
+                    margin_bottom,
+                    align: aligned(),
+                    kind: Some(BlockKind::Heading(level)),
+                    ..Ctx::default()
+                }
+            }
+            "pre" => Ctx {
+                margin_top: 12.0,
+                margin_bottom: 12.0,
+                kind: Some(BlockKind::Code),
+                ..Ctx::default()
+            },
+            "ul" | "ol" => Ctx {
+                margin_top: 12.0,
+                margin_bottom: 12.0,
+                indent: 40.0,
+                kind: Some(BlockKind::List),
+                ..Ctx::default()
+            },
+            "li" => {
+                let marker = self
+                    .open
+                    .iter_mut()
+                    .rev()
+                    .find_map(|o| o.list.as_mut())
+                    .map(|(marker, count)| {
+                        *count = count.saturating_add(1);
+                        Arc::from(marker_text(*marker, *count))
+                    });
+                Ctx {
+                    item: marker.is_some(),
+                    marker,
+                    ..Ctx::default()
+                }
+            }
+            "blockquote" => Ctx {
+                margin_top: 12.0,
+                margin_bottom: 12.0,
+                indent: 40.0,
+                indent_right: 40.0,
+                kind: Some(BlockKind::Quote),
+                ..Ctx::default()
+            },
+            "dl" => Ctx {
+                margin_top: 12.0,
+                margin_bottom: 12.0,
+                ..Ctx::default()
+            },
+            "dd" => Ctx {
+                indent: 30.0,
+                ..Ctx::default()
+            },
+            "div" => Ctx {
+                align: aligned(),
+                ..Ctx::default()
+            },
+            "center" => Ctx {
+                align: Some(HAlign::Center),
+                ..Ctx::default()
+            },
+            _ => Ctx::default(),
+        }
+    }
+
+    /// The bullets of a list `name` with `attrs`, by how deep it is in
+    /// lists.
+    fn list_marker_of(&self, name: &str, attrs: &Attrs<'_>) -> Marker {
+        let depth = self.open.iter().filter(|o| o.list.is_some()).count();
+        list_marker(name == "ol", attrs.get("type").as_deref(), depth)
+    }
+
     /// Make a block of the text collected so far. An empty one only when
     /// `always`.
     fn flush(&mut self, always: bool) {
@@ -998,6 +1103,11 @@ impl<'a> Parser<'a> {
         let Some(open) = self.open.pop() else {
             return;
         };
+        if let Some(ctx) = &open.cell_box
+            && let Some(cell) = self.cell_mut()
+        {
+            cell.close_box(ctx);
+        }
         if !open.boxed {
             return;
         }
@@ -1130,6 +1240,9 @@ impl<'a> Parser<'a> {
             return;
         }
         apply_style(open, css);
+        if let Some(ctx) = &mut open.cell_box {
+            apply_box_style(ctx, css, false);
+        }
         if open.boxed {
             let in_table = self.table.is_some();
             if let Some(ctx) = self.flow.innermost_mut() {
@@ -1213,16 +1326,28 @@ impl<'a> Parser<'a> {
                     }
                     cell.paragraph = CellParagraph::Opened;
                 }
+                // The box it would be holds the format of the paragraphs
+                // in it, and a list counts its items as one out of a table.
+                let list =
+                    matches!(name, "ul" | "ol").then(|| (self.list_marker_of(name, attrs), 0));
+                let cell_box = (name != "hr").then(|| self.box_of(name, attrs).opened());
                 if let Some(level) = heading_level(name) {
-                    self.push(name, |o| heading_style(&mut o.style, level));
+                    self.push(name, |o| {
+                        heading_style(&mut o.style, level);
+                        o.cell_box = cell_box;
+                    });
                 } else if name == "pre" {
                     let verbatim = self.verbatim;
                     self.push(name, |o| {
                         o.style.mono = true;
                         pre_white_space(o, verbatim);
+                        o.cell_box = cell_box;
                     });
                 } else if name != "hr" {
-                    self.push(name, |_| {});
+                    self.push(name, |o| {
+                        o.list = list;
+                        o.cell_box = cell_box;
+                    });
                 }
             }
             "hr" => {
@@ -1237,32 +1362,13 @@ impl<'a> Parser<'a> {
             }
             "p" => {
                 self.imply_end("p", &[]);
-                let ctx = Ctx {
-                    margin_top: 12.0,
-                    margin_bottom: 12.0,
-                    align: attrs.get("align").as_deref().and_then(align),
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |o| o.always = true);
             }
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
                 self.imply_end("p", &[]);
                 let level = heading_level(name).unwrap_or(1);
-                let (margin_top, margin_bottom) = match level {
-                    1 => (18.0, 12.0),
-                    2 => (16.0, 12.0),
-                    3 => (14.0, 12.0),
-                    4 => (12.0, 12.0),
-                    5 => (12.0, 4.0),
-                    _ => (0.0, 0.0),
-                };
-                let ctx = Ctx {
-                    margin_top,
-                    margin_bottom,
-                    align: attrs.get("align").as_deref().and_then(align),
-                    kind: Some(BlockKind::Heading(level)),
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |o| {
                     o.always = true;
                     heading_style(&mut o.style, level);
@@ -1270,12 +1376,7 @@ impl<'a> Parser<'a> {
             }
             "pre" => {
                 self.imply_end("p", &[]);
-                let ctx = Ctx {
-                    margin_top: 12.0,
-                    margin_bottom: 12.0,
-                    kind: Some(BlockKind::Code),
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 let verbatim = self.verbatim;
                 self.open_box(name, ctx, |o| {
                     o.always = true;
@@ -1285,75 +1386,29 @@ impl<'a> Parser<'a> {
             }
             "ul" | "ol" => {
                 self.imply_end("p", &[]);
-                let depth = self.open.iter().filter(|o| o.list.is_some()).count();
-                let marker = list_marker(name == "ol", attrs.get("type").as_deref(), depth);
-                let ctx = Ctx {
-                    margin_top: 12.0,
-                    margin_bottom: 12.0,
-                    indent: 40.0,
-                    kind: Some(BlockKind::List),
-                    ..Ctx::default()
-                };
+                let marker = self.list_marker_of(name, attrs);
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |o| o.list = Some((marker, 0)));
             }
             "li" => {
                 self.imply_end("li", &["p", "div"]);
-                let marker = self
-                    .open
-                    .iter_mut()
-                    .rev()
-                    .find_map(|o| o.list.as_mut())
-                    .map(|(marker, count)| {
-                        *count = count.saturating_add(1);
-                        Arc::from(marker_text(*marker, *count))
-                    });
-                let ctx = Ctx {
-                    item: marker.is_some(),
-                    marker,
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |o| o.always = true);
             }
-            "blockquote" => {
+            "blockquote" | "dl" => {
                 self.imply_end("p", &[]);
-                let ctx = Ctx {
-                    margin_top: 12.0,
-                    margin_bottom: 12.0,
-                    indent: 40.0,
-                    indent_right: 40.0,
-                    kind: Some(BlockKind::Quote),
-                    ..Ctx::default()
-                };
-                self.open_box(name, ctx, |_| {});
-            }
-            "dl" => {
-                self.imply_end("p", &[]);
-                let ctx = Ctx {
-                    margin_top: 12.0,
-                    margin_bottom: 12.0,
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |_| {});
             }
             "dt" | "dd" => {
                 self.imply_end("dt", &["p"]);
                 self.imply_end("dd", &["p"]);
-                let ctx = Ctx {
-                    indent: if name == "dd" { 30.0 } else { 0.0 },
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |o| o.always = true);
             }
             "div" | "center" => {
                 self.imply_end("p", &[]);
-                let ctx = Ctx {
-                    align: if name == "center" {
-                        Some(HAlign::Center)
-                    } else {
-                        attrs.get("align").as_deref().and_then(align)
-                    },
-                    ..Ctx::default()
-                };
+                let ctx = self.box_of(name, attrs);
                 self.open_box(name, ctx, |_| {});
             }
             // Unknown: dropped, but remembered so its end tag closes what
@@ -1366,9 +1421,9 @@ impl<'a> Parser<'a> {
         match name {
             "table" => self.end_table(),
             "td" | "th" => {
+                self.close_cell();
                 if let Some(t) = &mut self.table {
                     t.cell = false;
-                    self.open.truncate(t.depth);
                     self.between = Between::Cells;
                 }
             }
@@ -1471,10 +1526,13 @@ impl<'a> Parser<'a> {
         };
         match name {
             "tr" => {
+                self.close_cell();
+                let Some(t) = &mut self.table else {
+                    return true;
+                };
                 t.cell = false;
                 t.rows.push(Vec::new());
                 self.between = Between::Text;
-                self.open.truncate(t.depth);
                 let inherited = t.white_space;
                 let white_space = self.white_space_for(name, attrs, inherited);
                 if let Some(t) = &mut self.table {
@@ -1483,6 +1541,10 @@ impl<'a> Parser<'a> {
                 true
             }
             "td" | "th" => {
+                self.close_cell();
+                let Some(t) = &mut self.table else {
+                    return true;
+                };
                 if t.rows.is_empty() {
                     t.rows.push(Vec::new());
                 }
@@ -1495,14 +1557,20 @@ impl<'a> Parser<'a> {
                     });
                 }
                 t.cell = true;
-                self.open.truncate(t.depth);
                 self.between = Between::Text;
                 let white_space = t.row_white_space;
+                // Measured on Qt 6.12: the cell's alignment is its
+                // paragraphs', unless one has its own.
+                let cell_box = Ctx {
+                    align: attrs.get("align").as_deref().and_then(align),
+                    ..Ctx::default()
+                };
                 // An element of its own, so that the rules of a style sheet
                 // and its style say what white space in it is.
                 self.push(name, |o| {
                     o.style.bold = header;
                     o.white_space = white_space;
+                    o.cell_box = Some(cell_box.opened());
                 });
                 true
             }
@@ -1514,12 +1582,27 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Close what is open in the table's last cell, innermost first: the
+    /// boxes of its paragraphs give it their bottom margins.
+    fn close_cell(&mut self) {
+        let Some(t) = &mut self.table else {
+            return;
+        };
+        let depth = t.depth.min(self.open.len());
+        let mut cell = t.rows.last_mut().and_then(|row| row.last_mut());
+        for open in self.open.drain(depth..).rev() {
+            if let (Some(ctx), Some(cell)) = (&open.cell_box, cell.as_deref_mut()) {
+                cell.close_box(ctx);
+            }
+        }
+    }
+
     fn end_table(&mut self) {
+        self.close_cell();
         let Some(t) = self.table.take() else {
             return;
         };
         self.between = Between::Blocks;
-        self.open.truncate(t.depth);
         let (buf, mut table) = table_block(t.rows, t.border, t.spacing, t.padding);
         table.background = t.background;
         table.width = t.width;
@@ -1574,6 +1657,7 @@ impl Open {
             empty: false,
             always: false,
             list: None,
+            cell_box: None,
         }
     }
 }
