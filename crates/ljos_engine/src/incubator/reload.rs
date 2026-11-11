@@ -49,6 +49,7 @@ use ljos_js::Bytecode;
 
 pub(super) mod in_place;
 
+use super::initial::Settled;
 use super::{Creation, Initial, Instance, Template};
 use crate::atom::Atom;
 use crate::engine::Engine;
@@ -887,7 +888,7 @@ impl Engine {
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
         how: Initial,
-    ) -> Result<ObjectId, EngineError> {
+    ) -> Result<(ObjectId, Settled), EngineError> {
         self.native_for_script(|| {
             self.create_for_script_now(component, template, parent, props, how)
         })
@@ -900,7 +901,7 @@ impl Engine {
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
         how: Initial,
-    ) -> Result<ObjectId, EngineError> {
+    ) -> Result<(ObjectId, Settled), EngineError> {
         let st = &self.inner.reload;
         let Some(parent) = parent.filter(|_| st.tracking.get()) else {
             return self.create_from_template_for_script(&template, parent, props, how);
@@ -923,7 +924,7 @@ impl Engine {
             how.clone(),
         );
         st.scripting.set(false);
-        if let Ok(obj) = made {
+        if let Ok((obj, _)) = made {
             self.reload_note_scripted(
                 obj,
                 ScriptCall {
@@ -1043,14 +1044,12 @@ impl Engine {
                 .filter_map(|(k, v)| self.reload_translate(v.clone()).map(|v| (k.clone(), v)))
                 .collect();
             *st.forced.borrow_mut() = Some(path);
-            // What its call's properties would keep back now is not made
-            // again either (`Component::create_object`).
-            let (made, withheld) = self.withholding(|| {
-                self.create_for_script(component, template, Some(parent), props, s.how)
-            });
+            let made = self.create_for_script(component, template, Some(parent), props, s.how);
             st.forced.borrow_mut().take();
             match made {
-                Ok(o) if withheld => {
+                // What its call's properties would keep back now is not
+                // made again either (`Component::create_object`).
+                Ok((o, settled)) if settled.withheld => {
                     self.destroy_now(o);
                 }
                 Ok(_) => {}

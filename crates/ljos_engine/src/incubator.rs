@@ -46,10 +46,12 @@ use crate::qtqml::{Component, Connections};
 use crate::types::{TypeTag, Url};
 use crate::value::{Color, Value};
 use crate::{Provenance, WriteKind};
+use initial::Settled;
 
 pub(crate) mod aot;
 pub(crate) mod direct_methods;
 pub(crate) mod dynamic;
+pub(crate) mod initial;
 pub(crate) mod reload;
 pub(crate) mod scripts;
 pub(crate) mod singletons;
@@ -438,8 +440,10 @@ impl Engine {
             (initial_props, None)
         };
         let noted_how = noted.as_ref().map(|_| how.clone());
-        let made = self
-            .as_host_root(|| self.create_from_template_with(&template, parent, props, how, |_| {}));
+        let made = self.as_host_root(|| {
+            self.create_from_template_with(&template, parent, props, how, |_| {})
+                .map(|(root, _)| root)
+        });
         match (&made, ctx) {
             (Ok(root), Some(ctx)) => self.add_context(*root, ctx),
             (Err(_), Some(ctx)) => self.destroy_context(ctx),
@@ -503,14 +507,15 @@ impl Engine {
     /// [`Engine::create_from_template`] for a script (`createObject`,
     /// `incubateObject`): an initial property that cannot be set is a
     /// warning and the object is made all the same, and `Qt.binding(f)` is
-    /// a binding. As Qt 6.11.2 does, by running qml6.
+    /// a binding. As Qt 6.11.2 does, by running qml6. The object comes
+    /// with what became of its initial properties.
     pub(crate) fn create_from_template_for_script(
         &self,
         template: &Template,
         parent: Option<ObjectId>,
         props: Vec<(String, Value)>,
         how: Initial,
-    ) -> Result<ObjectId, EngineError> {
+    ) -> Result<(ObjectId, Settled), EngineError> {
         self.create_from_template_with(template, parent, props, how, |_| {})
     }
 
@@ -524,6 +529,7 @@ impl Engine {
         allocated: impl FnOnce(ObjectId),
     ) -> Result<ObjectId, EngineError> {
         self.create_from_template_with(template, parent, props, Initial::Native, allocated)
+            .map(|(root, _)| root)
     }
 
     fn create_from_template_with(
@@ -533,7 +539,7 @@ impl Engine {
         props: Vec<(String, Value)>,
         how: Initial,
         allocated: impl FnOnce(ObjectId),
-    ) -> Result<ObjectId, EngineError> {
+    ) -> Result<(ObjectId, Settled), EngineError> {
         self.not_script_time(|| {
             let errors = self.open_creation();
             let made = self.create_from_template_held(template, parent, props, how, allocated);
@@ -549,7 +555,7 @@ impl Engine {
         props: Vec<(String, Value)>,
         how: Initial,
         allocated: impl FnOnce(ObjectId),
-    ) -> Result<ObjectId, EngineError> {
+    ) -> Result<(ObjectId, Settled), EngineError> {
         let mut cr = Creation::default();
         let root = self.allocate_template(&mut cr, template, parent)?;
         allocated(root);
@@ -561,7 +567,7 @@ impl Engine {
         // features/components/creation-order.feature). Ljós settles the
         // properties and bindings in this batch, and the handlers run after
         // it in height order (#331).
-        let r = self.batch(|| -> Result<(), EngineError> {
+        let r = self.batch(|| -> Result<Settled, EngineError> {
             let (r, held) = self.hold_eager(|| {
                 self.apply_aliases(&cr);
                 for i in 0..cr.units.len() {
@@ -573,10 +579,16 @@ impl Engine {
             self.run_held(&cr);
             r
         });
-        if r.is_ok() {
-            self.release_held(&cr);
-        }
-        self.finalize(cr, root, r)
+        let settled = match r {
+            Ok(settled) => {
+                self.release_held(&cr);
+                Ok(settled)
+            }
+            Err(e) => Err(e),
+        };
+        let withheld = settled.as_ref().is_ok_and(|s| s.withheld);
+        self.finalize(cr, root, settled.map(|_| ()))
+            .map(|root| (root, Settled { withheld }))
     }
 
     fn allocate_template(
@@ -706,38 +718,6 @@ impl Engine {
         });
         self.release_held(&cr);
         self.finalize(cr, root, Ok(()))
-    }
-
-    /// Initial properties, then the required check.
-    /// The initial properties, as `how` sets them.
-    pub(crate) fn set_initial(
-        &self,
-        url: &Atom,
-        root: ObjectId,
-        props: &[(String, Value)],
-        how: &Initial,
-    ) -> Result<(), EngineError> {
-        self.reload_note_given(root, props);
-        match how {
-            Initial::Native => self.finish_props(root, props),
-            how => {
-                self.initial_props(url, root, props, how);
-                Ok(())
-            }
-        }
-    }
-
-    fn finish_props(&self, root: ObjectId, props: &[(String, Value)]) -> Result<(), EngineError> {
-        for (name, v) in props {
-            let p = self.property_index(root, name)?;
-            // A `Qt.binding` given by a native caller (Loader.setSource) is
-            // a binding, as it is when a script gives it to createObject.
-            match self.initial_binding(root, p, v) {
-                Some(bound) => bound?,
-                None => self.write_internal(root, p, v.clone(), WriteKind::Imperative)?,
-            }
-        }
-        Ok(())
     }
 
     /// Every required property left unset, one line each, as Qt tells

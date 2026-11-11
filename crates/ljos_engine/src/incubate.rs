@@ -126,6 +126,7 @@ impl Engine {
         if synchronous {
             let made = self.component_template(component).and_then(|template| {
                 self.create_for_script(component, template, parent, props, how)
+                    .map(|(obj, _)| obj)
             });
             self.incubated(inc, &made);
             return Ok(inc);
