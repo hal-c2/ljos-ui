@@ -74,6 +74,42 @@ impl Browser {
     }
 }
 
+/// A type with `var` properties and no base, one of them with a setter of
+/// its own (`features/components/loader-initial-property-child-bindings.feature`).
+#[derive(Debug, QmlObject)]
+#[qml(module = "Fixtures", name = "Holder")]
+pub(super) struct Holder {
+    /// Counts its writes in `writes`, a moment after each, as a setter
+    /// that hands its work to the event loop does.
+    #[qml(notify, write = Self::keep_held)]
+    held: Value,
+    #[qml(notify)]
+    writes: i32,
+    #[qml(notify)]
+    view: Value,
+}
+
+impl Default for Holder {
+    fn default() -> Self {
+        Holder {
+            held: Value::Null,
+            writes: 0,
+            view: Value::Null,
+        }
+    }
+}
+
+impl Holder {
+    fn keep_held(cx: &Cx, held: Value) -> Option<Value> {
+        let obj = cx.this;
+        cx.engine.call_at(cx.engine.now(), move |engine| {
+            let writes = engine.with(obj, |h: &Self| h.writes).unwrap_or(0);
+            let _ = engine.set_internal(obj, Self::WRITES, writes + 1);
+        });
+        Some(held)
+    }
+}
+
 /// A geometry an application provides (`features/quick3d/custom-geometry.feature`):
 /// a flat disc of `corners` corners and `radius`, around its origin and
 /// facing +Z, as a triangle fan with no indices and no normals.
@@ -240,7 +276,9 @@ pub(super) fn title(engine: &Engine, obj: ObjectId) -> Result<String, EngineErro
 pub(super) fn register(engine: &Engine) {
     engine.register_singleton::<Document>("Fixtures", Version::new(1, 0));
     engine.register_singleton::<Session>("Fixtures", Version::new(1, 0));
-    engine.register_module(ljos::module!("Fixtures" 1.0 => [Browser, Fan, TwoUvSquare, Strip]));
+    engine.register_module(
+        ljos::module!("Fixtures" 1.0 => [Browser, Holder, Fan, TwoUvSquare, Strip]),
+    );
 }
 
 /// What a scenario reads in the log: when a window's `Document` is made
