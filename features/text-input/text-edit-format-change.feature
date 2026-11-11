@@ -49,7 +49,6 @@ Feature: Changing the format of a TextEdit
 
     Examples:
       | from         | text            | to           | out                                                                                                                                                                                              |
-      | MarkdownText | a~~```~x y~```~ | RichText     | 0 <p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p>~<p><span style=' font-family:'monospace';'>x y</span></p> [a#x y] |
       | MarkdownText | a **b** c       | RichText     | 0 <p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a <span style=' font-weight:700;'>b</span> c</p> [a b c]                |
       | MarkdownText | a~~```~x y~```~ | PlainText    | 0 a~~```~x y~```~~ [a~~```~x y~```~~]                                                                                                                                                            |
       | MarkdownText | a **b** c       | PlainText    | 0 a **b** c~~ [a **b** c~~]                                                                                                                                                                      |
@@ -65,3 +64,11 @@ Feature: Changing the format of a TextEdit
       | AutoText     | [b]a[/b] b      | PlainText    | 0 <p><span style=' font-weight:700;'>a</span> b</p> [html:<p><span style=' font-weight:700;'>a</span> b</p>]                                                                                     |
       | AutoText     | **a** b         | MarkdownText | 0 **a** b~~ [a b]                                                                                                                                                                                |
       | AutoText     | **a** b         | RichText     | 0 <p>**a** b</p> [**a** b]                                                                                                                                                                       |
+
+    # Qt 6.12 writes a fenced code block as a paragraph in a monospace
+    # font, which reads back as a paragraph; Ljós writes it as a pre that
+    # says it does not wrap, so that it reads back as the code block it is.
+    @qt-diverges
+    Examples:
+      | from         | text            | to       | out |
+      | MarkdownText | a~~```~x y~```~ | RichText | 0 <p style=' margin-top:6px; margin-bottom:6px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p>~<pre style=' white-space:pre;'><span style=' font-family:'monospace';'>x y</span></pre> [a#x y] |
