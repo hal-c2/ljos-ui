@@ -134,3 +134,38 @@ Feature: A picture of an item's pixels
       Then the property "asked" of "root" is false
       And the property "called" of "root" is false
       And the log has a warning matching "QML Rectangle: grabToImage: item is not attached to a window"
+
+  Rule: An item that leaves its window before the frame has an empty picture
+
+    Background:
+      Given the QML:
+        """qml
+        import QtQuick
+        Rectangle {
+          id: root; objectName: "root"
+          width: 120; height: 40
+          property var asked: "not yet"
+          property var got: "not yet"
+          Item { id: src; width: 20; height: 10 }
+          function grabLeaving() {
+            asked = src.grabToImage(r => got = "[" + r.url + "] " + r.saveToFile(Qt.resolvedUrl("e.png")))
+            src.parent = null
+          }
+        }
+        """
+
+    @api-QtQuick.Item.grabToImage @api-QtQuick.ItemGrabResult.url
+    Scenario: The callback is given a result with no picture
+      When the method "grabLeaving" of "root" is called
+      And 200 milliseconds pass
+      Then the property "asked" of "root" is true
+      And the property "got" of "root" is "[] false"
+      And the log has no warnings
+
+    # The oracle's event loop cannot be read.
+    @ljos-only @api-QtQuick.Item.grabToImage
+    Scenario: A grab no window can give keeps nothing awake
+      When the method "grabLeaving" of "root" is called
+      And 200 milliseconds pass
+      Then the property "got" of "root" is "[] false"
+      And the application has nothing scheduled
