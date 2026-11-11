@@ -1383,23 +1383,26 @@ impl RichText {
             let next = self.blocks.get(index + 1);
             let next_in_list = next.is_some_and(|b| b.kind == BlockKind::List);
             match block.kind {
-                // Each line of a code block is a paragraph. Measured on Qt
-                // 6.12: indented lines run on with indented ones, and fenced
-                // ones (or a pre's) with fenced ones, under the first one's
-                // fence; a fence closing, or indented lines a fenced block
+                // Each line of a code block is a paragraph, and lines of one
+                // fence run on under it: the editor keeps no edge between two
+                // blocks of one fence. Lines of another fence start a block of
+                // their own. A fence closing, or indented lines a fenced block
                 // follows, has no empty line after it.
+                // Qt 6.11: fenced blocks run on whatever their fences, under
+                // the first one's (6.12 the same).
                 BlockKind::Code => {
                     let run = code_run(block);
+                    let indented = block.fence == Some(Fence::Indented);
                     let joins_before = index > 0 && code_run(&self.blocks[index - 1]) == run;
                     let joins_after = next.is_some_and(|n| code_run(n) == run);
                     let text = &self.text[range];
-                    if run == Some(true) {
+                    if indented {
                         // Indented lines right after a list would be a
                         // paragraph of its last item; an empty comment ends
                         // the list, as CommonMark has it, and reads as nothing.
                         // Qt 6.11: indented lines after a list item are
                         // written right after it, and read back they are a
-                        // paragraph of the item.
+                        // paragraph of the item (6.12 the same).
                         if !joins_before
                             && index > 0
                             && self.blocks[index - 1].kind == BlockKind::List
@@ -1418,7 +1421,8 @@ impl RichText {
                             // Longer than any run of its mark in the lines,
                             // so that none of them closes it.
                             // Qt 6.11: the fence is three marks whatever the
-                            // lines hold, and a line of three closes it.
+                            // lines hold, and a line of three closes it (6.12
+                            // the same).
                             let mark = if tildes { '~' } else { '`' };
                             let marks = (index..count)
                                 .take_while(|&j| code_run(&self.blocks[j]) == run)
@@ -1440,7 +1444,7 @@ impl RichText {
                     }
                     let blank = match next {
                         None => true,
-                        Some(n) => !joins_after && run == Some(true) && n.kind != BlockKind::Code,
+                        Some(n) => !joins_after && indented && n.kind != BlockKind::Code,
                     };
                     if blank {
                         out.push('\n');
@@ -1674,10 +1678,10 @@ fn longest_run(line: &str, mark: char) -> usize {
         .unwrap_or(0)
 }
 
-/// Which code blocks a code paragraph's Markdown runs on with: `Some(true)`
-/// the indented, `Some(false)` the fenced ones; `None` for any other.
-fn code_run(block: &BlockFormat) -> Option<bool> {
-    (block.kind == BlockKind::Code).then(|| block.fence == Some(Fence::Indented))
+/// Which code blocks a code paragraph's Markdown runs on with: those of
+/// the same fence; `None` for any other block.
+fn code_run(block: &BlockFormat) -> Option<&Option<Fence>> {
+    (block.kind == BlockKind::Code).then_some(&block.fence)
 }
 
 fn same(a: &Arc<CharFormat>, b: &Arc<CharFormat>) -> bool {
@@ -2095,10 +2099,34 @@ mod tests {
     }
 
     #[test]
-    fn a_fence_of_tildes_is_written_as_three_and_runs_on_with_backticks() {
-        // Measured on Qt 6.12.
-        let t = md("~~~~\nx\n~~~~\n\n```\ny\n```\n");
-        assert_eq!(t.markdown(), "~~~\nx\ny\n~~~\n\n");
+    fn code_blocks_of_one_fence_run_on() {
+        // Qt 6.12 the same. The editor keeps no edge between them: read
+        // back, the lines and their fence are as they were, and only the
+        // line feed between them is code now.
+        let t = md("```\nx\n```\n\n```\ny\n```\n");
+        let written = t.markdown();
+        assert_eq!(written, "```\nx\ny\n```\n\n");
+        let back = md(&written);
+        assert_eq!((back.text(), &back.blocks), (t.text(), &t.blocks));
+        assert_eq!(back.markdown(), written);
+    }
+
+    #[test]
+    fn code_blocks_of_two_fences_stay_apart() {
+        for (source, written) in [
+            (
+                "~~~~\nx\n~~~~\n\n```\ny\n```\n",
+                "~~~\nx\n~~~\n```\ny\n```\n\n",
+            ),
+            (
+                "```js\nx\n```\n\n```py\ny\n```\n",
+                "```js\nx\n```\n```py\ny\n```\n\n",
+            ),
+        ] {
+            let t = md(source);
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
     }
 
     #[test]
@@ -2109,6 +2137,22 @@ mod tests {
         let written = t.markdown();
         assert_eq!(written, "- a\n\n<!-- -->\n\n    x\n    y\n\n");
         assert_eq!(md(&written), t);
+    }
+
+    #[test]
+    fn code_after_a_list_item_reads_back_as_code() {
+        for (source, written) in [
+            (
+                "1.  a\n\n<!-- -->\n\n    x\n",
+                "1.  a\n\n<!-- -->\n\n    x\n\n",
+            ),
+            ("- a\n\n```\nx\n```\n", "- a\n\n```\nx\n```\n\n"),
+        ] {
+            let t = md(source);
+            assert_eq!(t.blocks.last().map(|b| b.kind), Some(BlockKind::Code));
+            assert_eq!(t.markdown(), written, "{source:?}");
+            assert_eq!(md(written), t, "{source:?}");
+        }
     }
 
     #[test]

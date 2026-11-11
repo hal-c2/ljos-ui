@@ -293,8 +293,8 @@ impl Reader {
                     no_wrap: matches!(code, CodeBlockKind::Fenced(_)),
                     ..Ctx::default()
                 });
-                // Measured on Qt 6.12: the info string's first word is kept,
-                // and a fence is written back as three of its marks.
+                // Qt 6.11: only the info string's first word is kept (6.12
+                // the same).
                 self.fence = Some(match &code {
                     CodeBlockKind::Indented => Fence::Indented,
                     CodeBlockKind::Fenced(info) => Fence::Fenced {
