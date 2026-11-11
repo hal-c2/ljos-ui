@@ -543,6 +543,12 @@ type SharedRc = Rc<RefCell<Shared>>;
 struct Scenes {
     all: RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>,
     pending: RefCell<Option<SharedRc>>,
+    /// The root each scene shows: the windows there are. Read without
+    /// borrowing a scene, which may be at work.
+    roots: RefCell<Vec<(std::rc::Weak<RefCell<Shared>>, ObjectId)>>,
+    /// The grabs asked for ([`crate::grab`]), once one was: a scene that
+    /// is dropped hands the ones it would have taken to the scenes left.
+    grabs: RefCell<Option<Rc<crate::grab::Grabs>>>,
 }
 
 impl Scenes {
@@ -570,6 +576,49 @@ impl Scenes {
 
     fn pending(&self) -> Option<SharedRc> {
         self.pending.borrow().clone()
+    }
+
+    /// `shared`'s scene shows `root` now, or nothing.
+    fn set_root(&self, shared: &SharedRc, root: Option<ObjectId>) {
+        let mut roots = self.roots.borrow_mut();
+        roots
+            .retain(|(w, _)| w.strong_count() > 0 && !std::ptr::eq(w.as_ptr(), Rc::as_ptr(shared)));
+        if let Some(root) = root {
+            roots.push((Rc::downgrade(shared), root));
+        }
+    }
+
+    /// `shared`'s scene is dropped: it shows no window from now on, and a
+    /// grab of an item it showed, which it can no longer take, is settled
+    /// at the next frame of each scene left.
+    fn closed(&self, shared: &SharedRc, showed: impl Fn(ObjectId) -> bool) {
+        self.set_root(shared, None);
+        let waits = self
+            .grabs
+            .borrow()
+            .as_ref()
+            .is_some_and(|g| g.waits_on(showed));
+        if !waits {
+            return;
+        }
+        for s in self.live() {
+            if Rc::ptr_eq(&s, shared) {
+                continue;
+            }
+            let waker = {
+                let Ok(mut s) = s.try_borrow_mut() else {
+                    continue;
+                };
+                if std::mem::replace(&mut s.dirty, true) {
+                    None
+                } else {
+                    s.waker.clone()
+                }
+            };
+            if let Some(w) = waker {
+                w();
+            }
+        }
     }
 
     fn pending_for_creation(&self) -> SharedRc {
@@ -629,12 +678,27 @@ pub(crate) fn pictures_wanted(e: &Engine) {
 /// the grab as its frame ends; one that shows the item only once its
 /// frame syncs it is dirty already.
 pub(crate) fn grab_wanted(e: &Engine, item: ObjectId) {
-    for s in e.extension::<Scenes>().live() {
+    let scenes = e.extension::<Scenes>();
+    scenes
+        .grabs
+        .borrow_mut()
+        .get_or_insert_with(|| e.extension::<crate::grab::Grabs>());
+    for s in scenes.live() {
         let shows = s.try_borrow().is_ok_and(|s| s.marks.contains(item));
         if shows {
             mark(&s, |_| {});
         }
     }
+}
+
+/// Whether a scene shows `top` as its root: the window an item under it
+/// is in ([`crate::layer::window_item`]) is there.
+pub(crate) fn shows_window(e: &Engine, top: ObjectId) -> bool {
+    e.extension::<Scenes>()
+        .roots
+        .borrow()
+        .iter()
+        .any(|(w, r)| *r == top && w.strong_count() > 0)
 }
 
 /// Marks `obj` with `f` in each scene that shows it.
@@ -1296,6 +1360,9 @@ pub struct QuickScene {
     /// shown and not hit, whatever `visible` says. Read with `culled`.
     pooled: FxHashSet<ObjectId>,
     root: Option<ObjectId>,
+    /// The engine's scenes, once this one showed a root: told when it is
+    /// dropped, which has no engine to tell.
+    scenes: Option<Rc<Scenes>>,
     /// The layer above the root item (`crate::layer`), once one was made.
     layer: Option<ObjectId>,
     viewport: kurbo::Rect,
@@ -1374,6 +1441,9 @@ impl Drop for QuickScene {
         if let Some(images) = &self.images {
             images.forget_scene(self.id);
         }
+        if let Some(scenes) = self.scenes.take() {
+            scenes.closed(&self.shared, |item| self.items.contains(item));
+        }
     }
 }
 
@@ -1413,6 +1483,7 @@ impl QuickScene {
             culled: (FxHashSet::default(), 0),
             pooled: FxHashSet::default(),
             root: None,
+            scenes: None,
             layer: None,
             viewport: kurbo::Rect::from_origin_size((0.0, 0.0), viewport),
             scale_factor: 1.0,
@@ -1491,6 +1562,7 @@ impl QuickScene {
                 }
                 self.going = going;
             }
+            self.rooted(engine);
             return Err(err);
         }
         if let Some(old) = self.root.take() {
@@ -1507,6 +1579,7 @@ impl QuickScene {
             });
         }
         self.root = Some(root);
+        self.rooted(engine);
         // The scene is the window: its focus item gets active focus.
         crate::focus::tree::add_window(engine, root);
         // canPaste hears of other applications' copies when the window
@@ -1521,6 +1594,14 @@ impl QuickScene {
             }
         });
         Ok(())
+    }
+
+    /// Tells the engine's scenes the root it shows now.
+    fn rooted(&mut self, engine: &Engine) {
+        let scenes = self
+            .scenes
+            .get_or_insert_with(|| engine.extension::<Scenes>());
+        scenes.set_root(&self.shared, self.root);
     }
 
     fn forget_root(&mut self, engine: &Engine, old: ObjectId) {
@@ -2011,6 +2092,7 @@ impl QuickScene {
         for o in dead {
             if self.root == Some(o) {
                 self.root = None;
+                self.rooted(engine);
             }
             self.unadopt(engine, o, true);
         }
