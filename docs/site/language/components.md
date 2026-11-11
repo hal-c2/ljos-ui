@@ -13,7 +13,7 @@ After reading this page, you will be able to define file components and inline c
 
 Every `.qml` file whose name starts with an upper-case letter defines a QML component type named after the file. Other QML files in the same directory—or in a directory that imports it—can instantiate that type by name. When an instance of a file component logs a warning about itself, the message names the file's component type (`QML MyCol: ...`).
 
-Qt Design Studio form files ending in `.ui.qml`, such as `PanelForm.ui.qml`, define a component named by the part before `.ui.qml` (`PanelForm`). A companion `Panel.qml` file can use `PanelForm` as its root element and attach bindings and signal handlers to the objects exposed through aliases on the form:
+Form files ending in `.ui.qml`, as visual design tools write them, such as `PanelForm.ui.qml`, define a component named by the part before `.ui.qml` (`PanelForm`). A companion `Panel.qml` file can use `PanelForm` as its root element and attach bindings and signal handlers to the objects exposed through aliases on the form:
 
 ```qml
 // PanelForm.ui.qml
@@ -185,4 +185,4 @@ To remove a dynamically created object, call `object.destroy()` (or `object.dest
 - [QML in Ljós](overview.md)
 - [Properties and bindings](properties-and-bindings.md)
 - [Modules and imports](modules-and-imports.md)
-- [JavaScript in QML](javascript.md)
+- [TypeScript and JavaScript](javascript.md)

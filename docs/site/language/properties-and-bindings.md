@@ -200,5 +200,5 @@ When a `Synchronizer` is created, the source gives its initial value to the targ
 
 - [QML in Ljós](overview.md)
 - [Signals and handlers](signals-and-handlers.md)
-- [JavaScript in QML](javascript.md)
+- [TypeScript and JavaScript](javascript.md)
 - [States and transitions](states-and-transitions.md)

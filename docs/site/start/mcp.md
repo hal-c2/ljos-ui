@@ -46,7 +46,7 @@ ljos mcp --project . --caps fs,run
 | `qml_apply_fix` | Apply a diagnostic's suggested fix (dry-run by default) | `fs` |
 | `type_lookup` | Inspect a QML type's properties, signals with each argument's name and type, methods, enums, base chain, default property and attached types, including types in the project's `ljostypes.json` | — |
 | `api_status` | Check the support status of `Module.Type[.member]` (`supported`, `partial`, `dropped` or `unsupported`), with the reason and proving `@api-` scenario | — |
-| `docs_search` | Search Ljós documentation and ledger notes (links out go only to Qt documentation, never source code) | — |
+| `docs_search` | Search Ljós documentation and ledger notes (links out go only to published documentation, never source code) | — |
 | `binding_tier_explain` | Show which tier a binding expression runs in (`0` for property paths, `1` for the binding VM, or `JS` for JavaScript), why, and how to rewrite it for a cheaper tier | — |
 | `design_palette`, `design_contrast`, `design_motion`, `design_rules` | Generate a colour palette from a seed, measure contrast ratios, get motion durations/curves and read design rule limits | — |
 | `qt_compare` | Render and compare against a local Qt installation | `run` |

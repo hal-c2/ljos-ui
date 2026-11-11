@@ -7,11 +7,11 @@ order: 6
 
 # Testing
 
-This page shows you how to run Qt Quick Test (`tst_*.qml`) suites with `ljos test`, capture deterministic headless screenshots with `ljos render`, and write Gherkin behaviour scenarios for your application.
+This page shows you how to run `tst_*.qml` test suites with `ljos test`, capture deterministic headless screenshots with `ljos render`, and write Gherkin behaviour scenarios for your application.
 
 ## QML unit tests with `ljos test`
 
-Files named `tst_*.qml` that use `import QtTest` and `TestCase` run unchanged on Ljós. `ljos test` executes them headlessly on a virtual clock and prints the output in the same format as Qt's `qmltestrunner`.
+Files named `tst_*.qml` that use `import QtTest` and `TestCase` run unchanged on Ljós. `ljos test` executes them headlessly on a virtual clock and prints the output in `qmltestrunner`'s text format.
 
 ### Writing a `TestCase`
 

@@ -9,6 +9,44 @@ order: 1
 
 After reading this page, you will understand how a `.qml` file forms a tree of objects in Ljós, how `id` and `parent` names are resolved, where semicolons belong, and what the compiler does with your files before your application runs.
 
+## Declarative files, typed scripts
+
+A Ljós interface is a tree of objects you declare, with TypeScript for what it does. The declarations are what tools can read and change safely: `ljos fmt` lays them out, the MCP authoring server lets an agent check and lint them, and hot reload patches a saved change into the running app. The scripts are a strict subset of TypeScript, checked in Rust before anything runs, so a mistake is a check error rather than a surprise at run time.
+
+A file of Ljós's own API imports its modules by concern: `Ljos.Ui` for items, text, images, gestures and states, `Ljos.Layout` for `Row`, `Column`, `Box`, `Grid` and `Flow`, `Ljos.Controls` for controls, `Ljos.Models` for models, `Ljos.Core` for `Timer`, `Connections` and other non-visual objects, and `Ljos.Design` for design tokens.
+
+```qml
+import Ljos.Ui
+import Ljos.Layout
+
+Rectangle {
+    id: root
+    width: 240
+    height: 120
+    fill: "#336699"
+    property int count: 0
+
+    Column {
+        anchors.centerIn: parent
+        spacing: 8
+
+        Text {
+            text: `Pressed ${root.count} times`
+            color: "white"
+        }
+    }
+
+    PointerArea {
+        anchors.fill: parent
+        onClicked: root.count += 1
+    }
+}
+```
+
+The handler is TypeScript. Writing `if (root.count == 3)` in it stops `ljos check` with ``error: `==` converts what it compares; write `===` [ts-loose-equality]``. Every program the checker accepts is valid TypeScript with the same meaning, so `tsc`, editors and coding agents work on it as they do on any TypeScript.
+
+Files that import `QtQuick` and the other modules existing QML uses run too, with their scripts in JavaScript. Most examples in these pages are written that way, because Ljós's own modules do not yet cover every type. [Bringing existing QML](porting-from-qt.md) explains how such a file runs and how `ljos migrate` moves it to Ljós's API.
+
 ## Objects and the tree
 
 A QML file defines a single root object and the tree of child objects nested inside it. Every file begins with its `import` statements, followed by the root object declaration. Inside an object's braces, you write property assignments, property declarations, signals, JavaScript functions, and child objects.
@@ -136,5 +174,5 @@ All three tiers read properties through the same reactive graph, so dependency t
 - [Signals and handlers](signals-and-handlers.md)
 - [Components](components.md)
 - [Modules and imports](modules-and-imports.md)
-- [JavaScript in QML](javascript.md)
+- [TypeScript and JavaScript](javascript.md)
 - [First app](../start/first-app.md)

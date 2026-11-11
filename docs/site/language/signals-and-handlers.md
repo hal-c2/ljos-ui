@@ -169,4 +169,4 @@ A `Timer` emits `triggered` once after `interval` milliseconds when `repeat` is 
 - [QML in Ljós](overview.md)
 - [Properties and bindings](properties-and-bindings.md)
 - [Components](components.md)
-- [JavaScript in QML](javascript.md)
+- [TypeScript and JavaScript](javascript.md)

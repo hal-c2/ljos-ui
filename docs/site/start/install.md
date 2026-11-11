@@ -13,7 +13,7 @@ This page shows you how to set up the Ljós development environment, verify that
 
 Ljós is written in Rust (2024 edition) and uses [`mise`](https://mise.jdx.dev/) to manage tools and repository tasks.
 
-You do not need Qt installed to run QML applications, check files with `ljos check`, format QML with `ljos fmt`, or run `tst_*.qml` tests with `ljos test`. Ljós reads QML against its own type descriptions when a local Qt type table is not present. A local `qml6` installation (Qt 6.11 or newer) is only needed if you run the `@qt-parity` comparison tasks or `ljos bench` against Qt.
+Nothing else needs to be installed to run QML applications, check files with `ljos check`, format QML with `ljos fmt`, or run `tst_*.qml` tests with `ljos test`: Ljós reads QML against its own type descriptions. Measuring an app against Qt needs a local `qml6` (Qt 6.11 or newer); see [Bringing existing QML](../language/porting-from-qt.md).
 
 <!-- check: verify whether pre-built binaries or `cargo install` instructions should be added once a release channel is published; the source bundle only covers `mise install` and workspace path dependencies -->
 
