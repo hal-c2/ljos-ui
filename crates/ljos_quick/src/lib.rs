@@ -142,8 +142,9 @@ pub use item::{
 };
 pub use item_picture::{ItemPicture, PictureArea, item_picture};
 pub use layer::{
-    LayerFocus, LayerHooks, LayerTake, layer_host, layer_of, set_layer, set_layer_focus,
-    set_layer_hooks, set_layer_take, tab_scope, window_item, window_of,
+    LayerFocus, LayerHooks, LayerInherit, LayerTake, layer_host, layer_of, set_layer,
+    set_layer_focus, set_layer_hooks, set_layer_inherit, set_layer_take, tab_scope, window_item,
+    window_of,
 };
 pub use layouts::{
     Arrangement, BoxColumn, BoxRow, ColumnLayout, GridLayout, Layout, LayoutAttached,

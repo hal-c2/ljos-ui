@@ -616,6 +616,37 @@ fn window_top(engine: &Engine, item: ObjectId) -> Option<ObjectId> {
     None
 }
 
+/// What a popup's item inherits from (`LayoutMirroring`): the `Window` the
+/// popup's parent is in. In Qt the overlay is a child of that window's
+/// content item, so the window passes its mirroring on to every popup in
+/// it, and nothing between the window and the popup's parent does. A
+/// popup of an item tree with no `Window` inherits nothing: there the
+/// overlay is the root item's sibling. A window put in another tree keeps
+/// its popups in that tree's overlay, but they are still the window's.
+fn inherit(engine: &Engine, _overlay: ObjectId, item: ObjectId) -> Option<ObjectId> {
+    let popup = popup_of(engine, item)?;
+    let mut cur = popup_parent(engine, popup)?;
+    for _ in 0..1024 {
+        if is_a::<crate::Window>(engine, cur) {
+            return Some(cur);
+        }
+        if let Some(inner) = popup_of(engine, cur) {
+            cur = popup_parent(engine, inner)?;
+            continue;
+        }
+        cur = engine.visual_parent(cur)?;
+    }
+    None
+}
+
+/// The item a popup is placed from: its parent, or, for one that hangs
+/// from the overlay (a drawer), where it was declared.
+fn popup_parent(engine: &Engine, popup: ObjectId) -> Option<ObjectId> {
+    object(engine, popup, Popup::PARENT.index)
+        .filter(|p| !is_a::<OverlayItem>(engine, *p))
+        .or_else(|| super::default_parent(engine, popup))
+}
+
 pub(super) fn register(engine: &Engine) {
     ljos_quick::set_layer_hooks(
         engine,
@@ -626,6 +657,7 @@ pub(super) fn register(engine: &Engine) {
         },
     );
     ljos_quick::set_layer_take(engine, super::drawer_drag::take);
+    ljos_quick::set_layer_inherit(engine, inherit);
     ljos_quick::set_layer_focus(engine, |e, overlay, item| {
         let _ = e.with::<OverlayItem, _>(overlay, |o| o.keyboard.borrow_mut().content_wants(item));
     });
