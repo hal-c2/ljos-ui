@@ -21,8 +21,9 @@ use std::fmt;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Component, Cx, Engine, EngineError, MetaRef, Migrate, NodeId, ObjectId, OverrideContent,
-    OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind, qml_impl,
+    Component, Cx, Engine, EngineError, Initial, MetaRef, Migrate, NodeId, ObjectId,
+    OverrideContent, OverrideId, PropIndex, QmlObject, QmlType, RestoreMode, Value, WriteKind,
+    qml_impl,
 };
 use ljos_quick::{Item, Passage, Transition, follows_implicit_size, is_item, set_parent_item};
 
@@ -84,6 +85,9 @@ enum Source {
 struct Entry {
     source: Source,
     props: Vec<(String, Value)>,
+    /// How `props` are set: as `incubateObject` sets them, at the place of
+    /// the push that gave them.
+    how: Initial,
     item: Option<ObjectId>,
     /// Made by the view, so destroyed when it leaves.
     owned: bool,
@@ -96,10 +100,11 @@ struct Entry {
 }
 
 impl Entry {
-    fn new(source: Source, props: Vec<(String, Value)>) -> Self {
+    fn new(source: Source, props: Vec<(String, Value)>, how: Initial) -> Self {
         Self {
             source,
             props,
+            how,
             item: None,
             owned: false,
             home: None,
@@ -276,19 +281,27 @@ fn request(e: &Engine, me: ObjectId, args: &[Value]) -> Request {
     for v in flat {
         match &v {
             Value::Object(o) if e.is_alive(*o) && is_a::<Component>(e, *o) => {
-                out.pages
-                    .push(Entry::new(Source::Component(*o), Vec::new()));
+                out.pages.push(Entry::new(
+                    Source::Component(*o),
+                    Vec::new(),
+                    Initial::Native,
+                ));
             }
             Value::Object(o) if e.is_alive(*o) && is_item(e, *o) => {
-                out.pages.push(Entry::new(Source::Given(*o), Vec::new()));
+                out.pages
+                    .push(Entry::new(Source::Given(*o), Vec::new(), Initial::Native));
             }
             Value::String(s) | Value::Url(s) => {
                 let url = e.resolve_url(me, s);
-                out.pages.push(Entry::new(Source::Url(url), Vec::new()));
+                out.pages
+                    .push(Entry::new(Source::Url(url), Vec::new(), Initial::Native));
             }
             Value::Js(_) => {
                 if let Some(last) = out.pages.last_mut().filter(|p| p.props.is_empty()) {
                     last.props = e.js_object_entries(&v);
+                    // Taken now: the page may be made later, when no
+                    // script runs.
+                    last.how = Initial::incubated_here(e, &last.props);
                 }
             }
             v if is_number(v) => out.operation = Some(v.to_number() as i32),
@@ -539,7 +552,7 @@ impl Migrate for StackView {
         }
         let pages = entries[kept..]
             .iter()
-            .map(|en| Entry::new(en.source.clone(), en.props.clone()))
+            .map(|en| Entry::new(en.source.clone(), en.props.clone(), en.how.clone()))
             .collect();
         Some(CarriedPages { kept, pages })
     }
@@ -571,7 +584,7 @@ impl Migrate for StackView {
                     .into_iter()
                     .filter_map(|(name, v)| Some((name, engine.reload_translate(v)?)))
                     .collect();
-                Some(Entry::new(source, props))
+                Some(Entry::new(source, props, en.how))
             })
             .collect();
         let carried = CarriedPages {
@@ -625,7 +638,7 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
     let Some(st) = state_of(e, me) else {
         return Ok(None);
     };
-    let (source, props) = {
+    let (source, props, how) = {
         let entries = st.entries.borrow();
         let Some(entry) = entries.get(index) else {
             return Ok(None);
@@ -633,7 +646,7 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
         if let Some(item) = entry.item.filter(|i| e.is_alive(*i)) {
             return Ok(Some(item));
         }
-        (entry.source.clone(), entry.props.clone())
+        (entry.source.clone(), entry.props.clone(), entry.how.clone())
     };
     let (item, owned, home) = match source {
         Source::Given(item) => {
@@ -641,13 +654,11 @@ fn load(e: &Engine, me: ObjectId, index: usize) -> Result<Option<ObjectId>, Engi
                 return Ok(None);
             }
             let home = e.untrack(|| e.visual_parent(item));
-            for (name, v) in props {
-                check(e, "StackView", e.write_by_name(item, &name, v));
-            }
+            check(e, "StackView", e.set_properties_as(item, &props, &how));
             (item, false, home)
         }
-        Source::Component(c) => (e.component_create(c, Some(me), props)?, true, None),
-        Source::Url(url) => (from_url(e, me, &url, props)?, true, None),
+        Source::Component(c) => (e.component_create_as(c, Some(me), props, how)?, true, None),
+        Source::Url(url) => (from_url(e, me, &url, props, how)?, true, None),
     };
     if !is_item(e, item) {
         if owned {
@@ -702,14 +713,15 @@ fn from_url(
     me: ObjectId,
     url: &str,
     props: Vec<(String, Value)>,
+    how: Initial,
 ) -> Result<ObjectId, EngineError> {
     let Some(ctx) = e.context_of(me) else {
-        return e.create_from_url(url, Some(me), props);
+        return e.create_from_url_in(url, Some(me), props, None, how);
     };
     let c = e.create_component(url, Some(me))?;
     let made = e
         .set_component_context(c, ctx)
-        .and_then(|()| e.component_create(c, Some(me), props));
+        .and_then(|()| e.component_create_as(c, Some(me), props, how));
     e.destroy(c);
     made
 }
