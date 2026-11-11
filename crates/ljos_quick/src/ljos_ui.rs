@@ -468,7 +468,18 @@ mod tests {
             .filter(|(new, old)| new.name != old.name)
             .map(|(new, old)| (old.name.to_string(), new.name.to_string()))
             .collect();
-        assert!(!renamed.is_empty());
+        // What a Text calls its alignment, wrapping and format, as the
+        // files lowered for it are written.
+        for (old, new) in [
+            ("horizontalAlignment", "align"),
+            ("wrapMode", "wrap"),
+            ("textFormat", "format"),
+        ] {
+            assert!(
+                renamed.contains(&(old.to_string(), new.to_string())),
+                "{old} is not {new}: {renamed:?}"
+            );
+        }
         for (old, new) in &renamed {
             assert_eq!(face.property_index(new), native.property_index(old));
             assert_eq!(face.property_index(old), None, "{old}");
