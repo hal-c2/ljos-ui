@@ -48,7 +48,16 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             "// {}.qml:{}:{} {target}\n",
             self.key, source_span.line, source_span.column
         );
-        let (params, refs, body_args, code) = match js::analyze(text, form, &known) {
+        // A handler that is a function declares its own parameters: a name
+        // of the signal's it does not declare is the document's, as Qt has it.
+        let analysis = js::analyze(text, form, &known).and_then(|analysis| {
+            if kind == BindingKind::Handler && analysis.is_function_value && !known.is_empty() {
+                js::analyze(text, form, &[])
+            } else {
+                Ok(analysis)
+            }
+        });
+        let (params, refs, body_args, code) = match analysis {
             Ok(analysis) => self.function(
                 &export,
                 text,
