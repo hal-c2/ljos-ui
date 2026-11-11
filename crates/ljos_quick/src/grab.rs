@@ -7,6 +7,8 @@
 //! to the callback after the frame, between turns, as an `ItemGrabResult`
 //! that scripts own: its `url` names the picture for an image source for
 //! as long as the result lives. Nothing is drawn while nothing is asked.
+//! An item that leaves every shown window before the frame calls back with
+//! an empty result, as in Qt, and wakes no scene while it waits.
 
 use std::cell::{Cell, RefCell};
 
@@ -129,15 +131,8 @@ pub(crate) fn grab_to_image(
     if !engine.is_callable(&callback) {
         return refuse("'callback' is not a function");
     }
-    let Some(window) = engine.untrack(|| crate::layer::window_of(engine, item)) else {
-        return refuse("item is not attached to a window");
-    };
-    // A Window that is not shown has `visibility` Hidden (0); a scene's
-    // plain root item has none.
-    if engine.find_property(window, "visibility").is_some()
-        && engine.untrack(|| engine.read_by_name(window, "visibility").to_number()) == 0.0
-    {
-        return refuse("item's window is not visible");
+    if let Err(why) = in_shown_window(engine, item) {
+        return refuse(why);
     }
     let target = match &target_size {
         Value::Undefined | Value::Null => None,
@@ -186,6 +181,22 @@ pub(crate) fn grab_to_image(
     Ok(true)
 }
 
+/// Whether `item` is in a window that is shown, or why not, as Qt's
+/// warning says it.
+fn in_shown_window(engine: &Engine, item: ObjectId) -> Result<(), &'static str> {
+    let Some(window) = engine.untrack(|| crate::layer::window_of(engine, item)) else {
+        return Err("item is not attached to a window");
+    };
+    // A Window that is not shown has `visibility` Hidden (0); a scene's
+    // plain root item has none.
+    if engine.find_property(window, "visibility").is_some()
+        && engine.untrack(|| engine.read_by_name(window, "visibility").to_number()) == 0.0
+    {
+        return Err("item's window is not visible");
+    }
+    Ok(())
+}
+
 /// The type of `item` its warnings name when it was declared in no file:
 /// its first native type.
 fn native_name(engine: &Engine, item: ObjectId) -> String {
@@ -200,46 +211,86 @@ fn native_name(engine: &Engine, item: ObjectId) -> String {
 }
 
 /// Hands a scene the grabs of the items `shows` says it shows. A grab of
-/// an item that is gone is dropped.
+/// an item that is gone is dropped. One whose item left every shown
+/// window after it was asked can never be drawn: its callback gets an
+/// empty result, as Qt's does.
 pub(crate) fn take(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> Vec<Grab> {
     let grabs = engine.extension::<Grabs>();
     let mut pending = grabs.pending.borrow_mut();
     if pending.is_empty() {
         return Vec::new();
     }
-    pending.retain(|g| engine.is_alive(g.item));
-    let (taken, left) = std::mem::take(&mut *pending)
-        .into_iter()
-        .partition(|g| shows(g.item));
-    *pending = left;
+    let mut taken = Vec::new();
+    for grab in std::mem::take(&mut *pending) {
+        if !engine.is_alive(grab.item) {
+            continue;
+        }
+        if in_shown_window(engine, grab.item).is_err() {
+            not_drawn(engine, grab);
+        } else if shows(grab.item) {
+            taken.push(grab);
+        } else {
+            pending.push(grab);
+        }
+    }
     taken
 }
 
-/// Whether a grab waits for a scene to take it.
-pub(crate) fn waiting(engine: &Engine) -> bool {
-    !engine.extension::<Grabs>().pending.borrow().is_empty()
+/// Whether a grab of an item `shows` says the scene shows waits for the
+/// scene's next frame: one asked after this frame took its grabs. A grab
+/// no scene shows wakes none.
+pub(crate) fn waiting(engine: &Engine, shows: impl Fn(ObjectId) -> bool) -> bool {
+    engine
+        .extension::<Grabs>()
+        .pending
+        .borrow()
+        .iter()
+        .any(|g| shows(g.item))
 }
 
 /// A scene drew `grab` as `picture`: the result is made and the callback
 /// called once the frame is over.
 pub(crate) fn taken(engine: &Engine, grab: Grab, picture: ImageHandle) {
-    engine.call_at(engine.now(), move |e| deliver(e, grab, picture));
+    engine.call_at(engine.now(), move |e| deliver(e, grab, Some(picture)));
 }
 
-fn deliver(engine: &Engine, grab: Grab, picture: ImageHandle) {
+/// `grab` has no picture: its callback gets an empty result once the
+/// frame is over, as Qt calls back for an item that left its window.
+pub(crate) fn not_drawn(engine: &Engine, grab: Grab) {
+    engine.call_at(engine.now(), move |e| deliver(e, grab, None));
+}
+
+/// A grab of an item the scene shows could not be drawn: says so, as the
+/// script waits for a picture that its callback is not given.
+pub(crate) fn failed(engine: &Engine, grab: Grab) {
+    let at = engine.declared_at(grab.item).unwrap_or_default();
+    let ty = engine.warning_type_name(grab.item, &native_name(engine, grab.item));
+    engine.log(
+        LogLevel::Warning,
+        CATEGORY,
+        format!("{at}QML {ty}: grabToImage: the item could not be drawn"),
+    );
+    not_drawn(engine, grab);
+}
+
+fn deliver(engine: &Engine, grab: Grab, picture: Option<ImageHandle>) {
     let grabs = engine.extension::<Grabs>();
-    let n = grabs.made.get() + 1;
-    grabs.made.set(n);
-    let url = format!("itemgrabber:#{n}");
-    match straight(&picture).to_png() {
-        Ok(bytes) => ImageStore::of(engine).register_resource(url.clone(), bytes),
-        Err(err) => {
-            engine.log(
-                LogLevel::Warning,
-                CATEGORY,
-                format!("grabToImage: cannot encode the picture: {err}"),
-            );
-            return;
+    // An empty result names no picture.
+    let mut url = String::new();
+    if let Some(picture) = &picture {
+        let n = grabs.made.get() + 1;
+        grabs.made.set(n);
+        url = format!("itemgrabber:#{n}");
+        match straight(picture).to_png() {
+            Ok(bytes) => ImageStore::of(engine).register_resource(url.clone(), bytes),
+            Err(err) => {
+                engine.log(
+                    LogLevel::Warning,
+                    CATEGORY,
+                    format!("grabToImage: cannot encode the picture: {err}"),
+                );
+                return deliver(engine, grab, None);
+            }
         }
     }
     let atom = Atom::new(&url);
@@ -247,16 +298,20 @@ fn deliver(engine: &Engine, grab: Grab, picture: ImageHandle) {
         object: QtObject::default(),
         image: Value::Url(atom.clone()),
         url: Url(atom),
-        picture: Some(picture),
+        picture,
     };
     let Ok(result) = engine.create_native_incomplete(native, None) else {
-        ImageStore::of(engine).remove_resource(&url);
+        if !url.is_empty() {
+            ImageStore::of(engine).remove_resource(&url);
+        }
         return;
     };
     // Before the result first crosses to a script: the scripts holding it
     // decide how long it lives, as they do in Qt.
     engine.give_to_script(result);
-    grabs.urls.borrow_mut().insert(result, url);
+    if !url.is_empty() {
+        grabs.urls.borrow_mut().insert(result, url);
+    }
     if engine.complete(result).is_err() {
         return;
     }
