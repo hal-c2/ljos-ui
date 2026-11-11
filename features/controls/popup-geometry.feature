@@ -142,6 +142,41 @@ Feature: Popup sizing and positioning
     Then the property "width" of "p" is 104
     And the property "height" of "p" is 64
 
+  Scenario Outline: A popup that was never opened places its parts as an open one does
+    What draws a popup lays its parts out before it is first shown.
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick.Controls.Basic
+      Item {
+        width: 400; height: 400
+        Popup {
+          objectName: "p"
+          width: 200; height: 100
+          padding: 10; topPadding: 20
+          leftInset: 3; topInset: 4; rightInset: 5; bottomInset: 6
+          contentItem: Item { }
+          background: Rectangle { }
+        }
+      }
+      """
+    Then the property "visible" of "p" is false
+    And the property "<property>" of "p" is <value>
+
+    Examples:
+      | property            | value |
+      | contentItem.x       | 10    |
+      | contentItem.y       | 20    |
+      | contentItem.width   | 180   |
+      | contentItem.height  | 70    |
+      | availableWidth      | 180   |
+      | availableHeight     | 70    |
+      | background.x        | 3     |
+      | background.y        | 4     |
+      | background.width    | 192   |
+      | background.height   | 90    |
+      | contentItem.visible | false |
+
   @api-QtQuick.Controls.Popup.contentItem
   Scenario: A content item of the author's is sized by the popup
     Given the QML:
