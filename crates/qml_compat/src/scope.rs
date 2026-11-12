@@ -82,7 +82,9 @@ impl<'s> Scope<'s> {
             locals,
             imports: Vec::new(),
             imported: RefCell::default(),
-            natives: locals.natives(),
+            // Where the program's types are not described, Ljós's own
+            // modules still are: they are in the table the pass reads.
+            natives: Some(locals.natives().unwrap_or(&crate::own::Own)),
             native_modules: Vec::new(),
             ids: Vec::new(),
             inline: Vec::new(),

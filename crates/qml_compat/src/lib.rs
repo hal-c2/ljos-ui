@@ -25,6 +25,7 @@ mod group;
 mod lowering;
 mod migrated;
 mod modules;
+mod own;
 mod qt_members;
 mod rows;
 mod rules;
@@ -185,7 +186,8 @@ pub trait Locals {
 
     /// The program's own types, as the checker is told them
     /// (`ljostypes.json`); none when they are not described, and a file
-    /// that imports a module of them is kept.
+    /// that imports a module of them is kept. Ljós's own modules
+    /// (`Ljos.Blocks`) are known without them, from Ljós's table.
     fn natives(&self) -> Option<&dyn Natives> {
         None
     }
