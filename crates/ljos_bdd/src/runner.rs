@@ -10,7 +10,7 @@ use futures::FutureExt as _;
 
 use crate::{
     backend::BackendMode,
-    filter::{BacklogFilter, Selection},
+    filter::{BacklogFilter, Selection, for_oracle},
     watchdog::{Watchdog, watched_steps},
     world::LjosWorld,
 };
@@ -146,13 +146,14 @@ pub fn run() -> bool {
             .fail_on_skipped()
             .before(move |feature, rule, scenario, world| {
                 hook.scenario(feature, rule, scenario);
-                let tagged = |tag: &str| {
-                    let is = |t: &String| t == tag;
-                    feature.tags.iter().any(is)
-                        || rule.is_some_and(|r| r.tags.iter().any(is))
-                        || scenario.tags.iter().any(is)
-                };
-                world.prepare(tagged("qt-parity"), tagged("desktop"));
+                let tags: Vec<String> = feature
+                    .tags
+                    .iter()
+                    .chain(rule.iter().flat_map(|r| &r.tags))
+                    .chain(&scenario.tags)
+                    .cloned()
+                    .collect();
+                world.prepare(for_oracle(&tags), tags.iter().any(|t| t == "desktop"));
                 if changes_files(feature, rule, scenario) {
                     world.watch_files();
                 }
