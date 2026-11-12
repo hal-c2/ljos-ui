@@ -26,8 +26,13 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
         let was = as_written.next().unwrap_or("");
         let content = line.trim_end_matches(['\n', '\r']);
         let end = &line[content.len()..];
-        if let Some(imports) = content.strip_prefix(JAVASCRIPT) {
+        // A file indented as a whole is QML too; each line it is laid out
+        // to keeps the indent of the line it came from.
+        let rest = content.trim_start();
+        let indent = &content[..content.len() - rest.len()];
+        if let Some(imports) = rest.strip_prefix(JAVASCRIPT) {
             if !typed {
+                out.push_str(indent);
                 out.push_str(JAVASCRIPT);
                 out.push_str(end_or_newline(end));
             }
@@ -43,6 +48,7 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
                 .filter(|s| !s.is_empty())
                 .collect();
             for (at, statement) in statements.iter().enumerate() {
+                out.push_str(indent);
                 out.push_str(statement);
                 if let Some(comment) = comment.filter(|_| at + 1 == statements.len()) {
                     out.push(' ');
@@ -125,6 +131,22 @@ mod tests {
         assert_eq!(
             migrated(written, lowered, true),
             "// A dial.\nimport Ljos.Ui\nimport Ljos.Layout // items; all\nItem {}"
+        );
+    }
+
+    /// A file indented as a whole, as one pasted from a document is: the
+    /// pragma is still found, and every line keeps the indent.
+    #[test]
+    fn an_indented_file_keeps_its_indent() {
+        let written = "  import QtQuick\n  import QtQuick.Layouts\n  Row {}\n";
+        let lowered = "  pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\n\n  Row {}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "  import Ljos.Ui\n  import Ljos.Layout\n  Row {}\n"
+        );
+        assert_eq!(
+            migrated(written, lowered, false),
+            "  pragma Scripts: JavaScript\n  import Ljos.Ui\n  import Ljos.Layout\n  Row {}\n"
         );
     }
 
