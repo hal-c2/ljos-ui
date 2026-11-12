@@ -58,6 +58,12 @@ fn host_put(
     };
     put(host.content_data)?;
     if !is_item(e, child) {
+        let complete = e
+            .flags(cx.this)
+            .is_some_and(|f| f.contains(ObjectFlags::COMPLETED));
+        if complete && let Some(ci) = e.untrack(|| object(e, cx.this, host.content_item)) {
+            ljos_quick::controller::adopt(e, child, holder(e, cx.this, ci))?;
+        }
         return Ok(());
     }
     put(host.content_children)?;
@@ -97,6 +103,30 @@ fn holder(engine: &Engine, host: ObjectId, content_item: ObjectId) -> ObjectId {
         return content_item;
     }
     ljos_quick::flickable::content_item(engine, content_item).unwrap_or(content_item)
+}
+
+/// Gives the Controllers declared in a host that is not an item (a
+/// popup) the item its content goes into as their host, as a gesture
+/// declared in an item acts on that item. One declared in an item has
+/// that item already, and is left as it is.
+fn adopt_controllers(
+    engine: &Engine,
+    obj: ObjectId,
+    host: Host,
+    into: ObjectId,
+) -> Result<(), EngineError> {
+    let declared: Vec<ObjectId> = match engine.untrack(|| engine.read(obj, host.content_data)) {
+        Value::List(l) => l
+            .iter()
+            .filter_map(Value::as_object)
+            .filter(|o| engine.is_alive(*o) && !is_item(engine, *o))
+            .collect(),
+        _ => Vec::new(),
+    };
+    for child in declared {
+        ljos_quick::controller::adopt(engine, child, into)?;
+    }
+    Ok(())
 }
 
 fn content_children(engine: &Engine, obj: ObjectId, host: Host) -> Vec<ObjectId> {
@@ -140,8 +170,9 @@ pub(crate) fn host_complete(engine: &Engine, obj: ObjectId, host: Host) -> Resul
                     set_parent_item(e, child, Some(into))?;
                 }
             }
-            Ok(())
-        })
+            Ok::<(), EngineError>(())
+        })?;
+        adopt_controllers(e, obj, host, into)
     };
     adopt(
         engine,

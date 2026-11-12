@@ -89,6 +89,33 @@ Feature: Controllers: behaviour an item is given by declaring it
       When the property "width" of "root" is set to 800
       Then the property "narrow" of "root" is false
 
+    Scenario: A Controller made into a host that is complete is attached at once
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          width: 200; height: 100
+          property string seen: ""
+          property int updates: 0
+          function make() { made.createObject(root) }
+          Component {
+            id: made
+            Controller {
+              onAttached: (host) => { root.seen = host.objectName }
+              onUpdated: root.updates = root.updates + 1
+            }
+          }
+        }
+        """
+      When the method "make" of "root" is called
+      Then the property "seen" of "root" is "root"
+      And the property "updates" of "root" is 1
+      When the property "width" of "root" is set to 300
+      Then the property "updates" of "root" is 2
+      And the application has nothing scheduled
+
   Rule: A Controller is detached once, as it or its host goes
 
     Scenario: A Controller is detached when its host is unloaded
@@ -194,6 +221,38 @@ Feature: Controllers: behaviour an item is given by declaring it
       When the user presses the pointer at 50, 50
       And the user releases the pointer at 50, 50
       Then the property "taps" of "root" is 1
+
+    Scenario: A Controller and a gesture in a popup act on the popup's content
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"
+          width: 400; height: 300
+          property int taps: 0
+          property int nested: 0
+          Popup {
+            id: popup
+            x: 0; y: 0; width: 200; height: 200
+            padding: 0
+            Component.onCompleted: open()
+            TapHandler { onTapped: root.taps = root.taps + 1 }
+            Controller {
+              objectName: "c"
+              property bool onContent: false
+              onAttached: (host) => { onContent = host === popup.contentItem }
+              TapHandler { onTapped: root.nested = root.nested + 1 }
+            }
+          }
+        }
+        """
+      Then the property "onContent" of "c" is true
+      When the user presses the pointer at 50, 50
+      And the user releases the pointer at 50, 50
+      Then the property "taps" of "root" is 1
+      And the property "nested" of "root" is 1
 
   Rule: A TypeScript module exports a Controller with controller({ … })
 
