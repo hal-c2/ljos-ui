@@ -466,6 +466,47 @@ Feature: Choosing a value with match, and testing one with is
         1 files, 0 errors, 0 warnings
         """
 
+    Scenario: A match that awaits is what its arms give once awaited, in an async function and an async generator
+      Given the file "pick.lts":
+        """ts
+        export async function pick(p: Promise<number>, q: Promise<string>): Promise<string> {
+          const right: string = match (await p) {
+            when 1: "one";
+            default: await q;
+          };
+          const wrong: number = match (await p) {
+            when 1: "one";
+            default: await q;
+          };
+          return right + wrong
+        }
+        export async function* steps(p: Promise<number>, q: Promise<string>) {
+          const right: string = match (yield await p) {
+            when 1: "one";
+            default: await q;
+          };
+          const wrong: number = match (yield await p) {
+            when 1: "one";
+            default: await q;
+          };
+          return right + wrong
+        }
+        """
+      And the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        import "pick.lts" as Pick
+        Item {}
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        pick.lts:6:33: error: `wrong` is a number; this gives it a string [ts-assign-type]
+        pick.lts:17:33: error: `wrong` is a number; this gives it a string [ts-assign-type]
+        2 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
     Scenario: The text the desugar writes is not held to the rules about how a person writes
       Given the file "Gauge.qml":
         """qml
