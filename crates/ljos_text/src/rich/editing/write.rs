@@ -621,10 +621,6 @@ fn code_run(block: &BlockFormat) -> Option<CodeRun<'_>> {
     })
 }
 
-/// The `white-space` a block's style says: `pre` where it does not wrap.
-/// A `pre` says it either way, as one that does not say wraps where the
-/// editor's mark is (see [`super::html`]); a paragraph that wraps need not,
-/// as the head says `pre-wrap` for it.
 /// Close the list open, `Some(ordered)` when one is, unless the item
 /// `next` (`Some(ordered)` when it is one) is of it.
 fn end_list(out: &mut String, list: &mut Option<bool>, next: Option<bool>) {
@@ -652,6 +648,10 @@ fn start_list(out: &mut String, list: &mut Option<bool>, ordered: bool) {
     *list = Some(ordered);
 }
 
+/// The `white-space` a block's style says: `pre` where it does not wrap.
+/// A `pre` says it either way, as one that does not say wraps where the
+/// editor's mark is (see [`super::html`]); a paragraph that wraps need not,
+/// as the head says `pre-wrap` for it.
 fn white_space(no_wrap: bool, pre: bool) -> &'static str {
     match (no_wrap, pre) {
         (true, _) => " white-space:pre;",
