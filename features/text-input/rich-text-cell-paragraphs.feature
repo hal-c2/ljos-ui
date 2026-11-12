@@ -34,7 +34,8 @@ Feature: Paragraphs in the cells of a rich TextEdit
   with it in its column: its margins between paragraphs, where the larger
   one counts but none at the cell's top or bottom, and its indents in the
   column's width. Return gives the new paragraph the format of the one it
-  splits, and a join keeps the first one's. Each paragraph wraps as it
+  splits, and a join keeps the first one's; the items of a numbered list
+  in a cell are numbered one after another. Each paragraph wraps as it
   says. What is copied has a line feed between the paragraphs of a cell
   and at a line break.
 
@@ -42,8 +43,8 @@ Feature: Paragraphs in the cells of a rich TextEdit
     Given the QML:
       """qml
       import QtQuick
-      Item {
-        id: root; objectName: "root"; width: 300; height: 200
+      Rectangle {
+        id: root; objectName: "root"; width: 300; height: 200; color: "white"
         property string html; property string out
         onHtmlChanged: edit.text = html.split("[").join("<").split("]").join(">").split("~").join("\n").split("LONG").join("aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll")
         function simple(h) {
@@ -392,8 +393,23 @@ Feature: Paragraphs in the cells of a rich TextEdit
         | [table][tr][td][h1]ab[/h1][/td][/tr][/table]                                             | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:xx-large; font-weight:700;'>a</span></h1>~<h1 style=' margin-top:18px; margin-bottom:12px; margin-left:0px; margin-right:0px;'><span style=' font-size:xx-large; font-weight:700;'>b</span></h1></td></tr></table> |
         | [table][tr][td][p align='right']ab[/p][/td][/tr][/table]                                 | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</p>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</p></td></tr></table>                                                                                               |
         | [table][tr][td][ul][li]ab[/li][/ul][/td][/tr][/table]                                    | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<ul style='margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;'>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</li>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</li></ul></td></tr></table>       |
+        | [table][tr][td][ol][li]ab[/li][/ol][/td][/tr][/table]                                    | 2  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<ol style='margin-top: 0px; margin-bottom: 0px; margin-left: 0px; margin-right: 0px; -qt-list-indent: 1;'>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>a</li>~<li style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>b</li></ol></td></tr></table>       |
         | [table][tr][td][p align='right' style='margin-left:15px']a[/p][p]b[/p][/td][/tr][/table] | 3  | Backspace | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p align='right' style=' margin-top:12px; margin-bottom:12px; margin-left:15px; margin-right:0px;'>ab</p></td></tr></table>                                                                                                                                                                                                     |
         | [table][tr][td][p]a[/p][p align='right']b[/p][/td][/tr][/table]                          | 2  | Delete    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px;'>ab</p></td></tr></table>                                                                                                                                                                                                                    |
+
+    # The second item's "2" is dark where a "1" is not, and light where a
+    # "1" is dark.
+    Scenario Outline: Return at <at> in a numbered item of a cell numbers the item after it 2
+      When the property "html" of "root" is set to "[table][tr][td][ol][li]ab[/li][/ol][/td][/tr][/table]"
+      And the method "typing" of "root" is called with <at>
+      And the user presses "Return"
+      Then the pixel at 28, 45 of the window is within 60 of "#000000"
+      And the pixel at 25, 45 of the window is within 8 of "#ffffff"
+
+      Examples:
+        | at |
+        | 1  |
+        | 2  |
 
     Scenario: The paragraph Return splits from a heading is below its margin
       When the property "html" of "root" is set to "[table][tr][td][h1]ab[/h1][/td][/tr][/table]"
