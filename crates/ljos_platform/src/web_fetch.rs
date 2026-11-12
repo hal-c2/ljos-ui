@@ -341,7 +341,7 @@ const INSTALL: &str = r#"(function (helper) {
       if (!making) throw new TypeError("Illegal constructor");
       signals.set(this, {
         aborted: false, reason: undefined, listeners: [], onabort: null,
-        steps: new Set(), followers: new Set(),
+        steps: new Set(), followers: new Set(), sources: null,
       });
     }
     get aborted() { return signalOf(this).aborted; }
@@ -396,7 +396,16 @@ const INSTALL: &str = r#"(function (helper) {
         signals.get(signal).reason = first.reason;
         return signal;
       }
-      for (const source of all) signals.get(source).followers.add(signal);
+      // A signal made by `any` follows the signals its own were made of,
+      // as WHATWG has it: an abort reaches the followers of what aborts,
+      // not theirs.
+      const sources = new Set();
+      for (const source of all) {
+        const s = signals.get(source);
+        for (const root of s.sources || [source]) sources.add(root);
+      }
+      signals.get(signal).sources = [...sources];
+      for (const source of sources) signals.get(source).followers.add(signal);
       return signal;
     }
   }
@@ -568,17 +577,24 @@ const INSTALL: &str = r#"(function (helper) {
       const headers = guarded(init.headers !== undefined ? init.headers
         : from ? from.headers : undefined, "request");
       if (type !== null && !headers.has("content-type")) headers.append("content-type", type);
-      let signal = from ? from.signal : null;
+      let signal = from ? from.given : null;
       if (init.signal !== undefined) {
         if (init.signal !== null) signalOf(init.signal);
         signal = init.signal;
       }
-      requests.set(this, { url, method, headers, body, signal: AbortSignal.any(signal ? [signal] : []), given: signal });
+      // The request's own signal, which follows the given one, is made when
+      // it is first read: a follower is held by what it follows until that
+      // aborts, and one signal of a component's is given to all its fetches.
+      requests.set(this, { url, method, headers, body, signal: null, given: signal });
     }
     get url() { return requestOf(this).url; }
     get method() { return requestOf(this).method; }
     get headers() { return requestOf(this).headers; }
-    get signal() { return requestOf(this).signal; }
+    get signal() {
+      const r = requestOf(this);
+      if (r.signal === null) r.signal = AbortSignal.any(r.given ? [r.given] : []);
+      return r.signal;
+    }
   }
 
   // Response.
@@ -683,7 +699,7 @@ const INSTALL: &str = r#"(function (helper) {
         return [line.slice(0, at), line.slice(at + 2)];
       }), "immutable");
       resolve(made({ type: "basic", status: reply.status, statusText: reply.statusText,
-        headers, url: reply.url || r.url, redirected: reply.url !== "" && reply.url !== r.url,
+        headers, url: reply.url || r.url, redirected: reply.url !== "",
         body: reply.bytes || null, used: false }));
     });
   });
