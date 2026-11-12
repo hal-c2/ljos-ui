@@ -1,20 +1,23 @@
 ---
 source: crates/ljos_compiler/tests/golden.rs
-expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property var steps: function* () { return parent?.parent.Keys.forwardTo[yield 0] }\n    property var before: function* () { return (yield 0)?.Keys }\n}\n\"##,)])"
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property var steps: function* () { return parent?.parent.Keys.forwardTo[yield 0] }\n    property var before: function* () { return (yield 0)?.Keys }\n    property var inCallee: function* () { return parent[yield \"childAt\"]?.(1, 1).Keys }\n}\n\"##,)])"
 ---
 file Main
 import QtQuick
 
-component c0 Main (file) id=Main signature=f53ff841
+component c0 Main (file) id=Main signature=242242b4
   o0 QtQuick/Item key=/
     property var steps
     property var before
+    property var inCallee
     steps := e0
     before := e1
+    inCallee := e2
 
 exprs
   e0 property f0 scope=c0o0 at 5:25 params[$scope=c0o0] args[] refs[parent:scope]
   e1 property f1 scope=c0o0 at 6:26 params[] args[] refs[]
+  e2 property f2 scope=c0o0 at 7:28 params[$scope=c0o0] args[] refs[parent:scope]
 
 module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
@@ -29,5 +32,11 @@ export function f1() {
   return (function* () { return __ljos_opt((yield 0), (__ljos_o1) => __ljos_att(__ljos_o1, "QtQuick", "Keys")) });
 }
 
+// Main.qml:7:28 Item.inCallee
+export function f2($scope) {
+  return (function* () { return __ljos_att($scope.parent[yield "childAt"]?.(1, 1), "QtQuick", "Keys") });
+}
+
 diagnostics
-  5:77: error: a `?.` chain that reads an attached object cannot `yield` after its first `?.`: yield before the chain
+  5:77: error: a `?.` chain that reads an attached object cannot `yield` after its first `?.`, nor where it reads the function a `?.()` calls: yield before the chain
+  7:57: error: a `?.` chain that reads an attached object cannot `yield` after its first `?.`, nor where it reads the function a `?.()` calls: yield before the chain

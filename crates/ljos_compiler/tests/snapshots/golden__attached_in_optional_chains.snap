@@ -1,12 +1,12 @@
 ---
 source: crates/ljos_compiler/tests/golden.rs
-expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\nimport QtQuick as Q\n\nItem {\n    Item { id: other }\n    property var whole: parent?.Keys.enabled\n    property var alone: parent?.Keys\n    property var later: other.children?.[0].Keys.enabled\n    property var nested: other?.Keys.forwardTo[0]?.Keys.priority\n    property var argument: parent?.contains(other.Keys.enabled)\n    property var plainKey: parent?.Keys.forwardTo.Foo.x\n    property var unconditional: other.Keys.enabled\n    property var hollow: parent?.parent.Keys.enabled\n    property var twice: parent?.parent?.Keys.enabled\n    property var afterLast: parent?.parent.Keys?.forwardTo\n    property var through: parent?.parent.Q.Keys.enabled\n    property var called: other.childAt?.(1, 1).Keys.enabled\n    property var calledOff: parent?.childAt?.(1, 1).Keys\n    property var calledElement: other.children?.[0]?.childAt?.(1, 1).Keys\n    property var inParens: (parent?.parent)?.Keys.enabled\n    property var calleeInParens: (other.childAt)?.(1, 1).Keys\n    property var waits: async () => parent?.parent.Keys.forwardTo[await 0]\n}\n\"##,)])"
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\nimport QtQuick as Q\n\nItem {\n    Item { id: other }\n    property var whole: parent?.Keys.enabled\n    property var alone: parent?.Keys\n    property var later: other.children?.[0].Keys.enabled\n    property var nested: other?.Keys.forwardTo[0]?.Keys.priority\n    property var argument: parent?.contains(other.Keys.enabled)\n    property var plainKey: parent?.Keys.forwardTo.Foo.x\n    property var unconditional: other.Keys.enabled\n    property var hollow: parent?.parent.Keys.enabled\n    property var twice: parent?.parent?.Keys.enabled\n    property var afterLast: parent?.parent.Keys?.forwardTo\n    property var through: parent?.parent.Q.Keys.enabled\n    property var called: other.childAt?.(1, 1).Keys.enabled\n    property var calledOff: parent?.childAt?.(1, 1).Keys\n    property var calledElement: other.children?.[0]?.childAt?.(1, 1).Keys\n    property var inParens: (parent?.parent)?.Keys.enabled\n    property var calleeInParens: (other.childAt)?.(1, 1).Keys\n    property var waits: async () => parent?.parent.Keys.forwardTo[await 0]\n    property var waitsInCallee: async () => other[await \"childAt\"]?.(1, 1).Keys\n    property var waitsBeforeCallee: async () => (await other).childAt?.(1, 1).Keys\n}\n\"##,)])"
 ---
 file Main
 import QtQuick
 import QtQuick as Q
 
-component c0 Main (file) id=Main signature=a5f816fa
+component c0 Main (file) id=Main signature=7d264fd8
   o0 QtQuick/Item key=/
     property var whole
     property var alone
@@ -25,6 +25,8 @@ component c0 Main (file) id=Main signature=a5f816fa
     property var inParens
     property var calleeInParens
     property var waits
+    property var waitsInCallee
+    property var waitsBeforeCallee
     whole := e0
     alone := e1
     later := e2
@@ -42,6 +44,8 @@ component c0 Main (file) id=Main signature=a5f816fa
     inParens := e14
     calleeInParens := e15
     waits := e16
+    waitsInCallee := e17
+    waitsBeforeCallee := e18
     child o1
   o1 QtQuick/Item key=/other parent=o0
 
@@ -63,6 +67,8 @@ exprs
   e14 property f14 scope=c0o0 at 21:28 params[$scope=c0o0] args[] refs[parent:scope]
   e15 property f15 scope=c0o0 at 22:34 params[other=c0o1] args[] refs[other:id c0o1]
   e16 property f16 scope=c0o0 at 23:25 params[$scope=c0o0] args[] refs[parent:scope]
+  e17 property f17 scope=c0o0 at 24:33 params[other=c0o1] args[] refs[other:id c0o1]
+  e18 property f18 scope=c0o0 at 25:37 params[other=c0o1] args[] refs[other:id c0o1]
 
 module
 // Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
@@ -150,4 +156,14 @@ export function f15(other) {
 // Main.qml:23:25 Item.waits
 export function f16($scope) {
   return (async () => (await __ljos_opt($scope.parent, async (__ljos_o1) => __ljos_att(__ljos_o1.parent, "QtQuick", "Keys").forwardTo[await 0])));
+}
+
+// Main.qml:24:33 Item.waitsInCallee
+export function f17(other) {
+  return (async () => (await __ljos_optca(other, async (__ljos_t1) => __ljos_t1[await "childAt"], async (__ljos_o1) => __ljos_att(__ljos_o1(1, 1), "QtQuick", "Keys"))));
+}
+
+// Main.qml:25:37 Item.waitsBeforeCallee
+export function f18(other) {
+  return (async () => __ljos_optc((await other), (__ljos_t1) => __ljos_t1.childAt, (__ljos_o1) => __ljos_att(__ljos_o1(1, 1), "QtQuick", "Keys")));
 }

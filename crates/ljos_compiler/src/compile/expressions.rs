@@ -416,12 +416,22 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 edits.extend(reads.iter().flat_map(|read| attach(read)));
                 continue;
             };
-            // What waits after the first `?.` of the chain, in the function
-            // the chain is in, ends up in a function of the chain's own.
+            // A callee that is itself an attached read is the attached
+            // object's member: it is called as it is read.
+            let called_attached = |end: u32| attached.iter().any(|(m, _, _)| m.end == end);
+            // What waits from here on, in the function the chain is in,
+            // ends up in a function of the chain's own: from the first
+            // `?.`, or before it where that is an optional call whose
+            // callee is read by a function too (`o[await k]?.()`).
+            let from = match kept_this(first, &called_attached) {
+                Some(js::This::Value { object, .. }) => object.end,
+                Some(js::This::Super) => chain.span.start,
+                None => first.token.start,
+            };
             let suspends: Vec<&js::Suspend> = analysis
                 .suspends
                 .iter()
-                .filter(|s| s.at >= first.token.start && s.at < chain.span.end)
+                .filter(|s| s.at >= from && s.at < chain.span.end)
                 .filter(|s| s.function.is_none_or(|start| start < chain.span.start))
                 .collect();
             if let Some(at) = suspends.iter().find(|s| s.yields) {
@@ -429,16 +439,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 self.diagnostics.push(Diagnostic::error(
                     Code::Semantic,
                     "a `?.` chain that reads an attached object cannot `yield` after its \
-                     first `?.`: yield before the chain"
+                     first `?.`, nor where it reads the function a `?.()` calls: yield \
+                     before the chain"
                         .to_owned(),
                     self.span(Span::new(at, at + 5)),
                 ));
                 edits.extend(reads.iter().flat_map(|read| attach(read)));
                 continue;
             }
-            // A callee that is itself an attached read is the attached
-            // object's member: it is called as it is read.
-            let called_attached = |end: u32| attached.iter().any(|(m, _, _)| m.end == end);
             edits.extend(chain_edits(
                 chain,
                 &links,
@@ -927,16 +935,7 @@ fn chain_edits(
     } else {
         OPTIONAL_CALL
     };
-    // The `this` an optional call keeps, where it is kept.
-    let this = |link: &js::Link| match &link.kind {
-        js::LinkKind::Call(Some(js::This::Value { name_end, .. }))
-            if name_end.is_some_and(called_attached) =>
-        {
-            None
-        }
-        js::LinkKind::Call(Some(this)) => Some(this.clone()),
-        _ => None,
-    };
+    let this = |link: &js::Link| kept_this(link, called_attached);
     // After how many of the `?.`s a read is made.
     let segment = |end: u32| links.iter().filter(|link| link.token.start < end).count();
     let openers = |n: usize| {
@@ -1028,4 +1027,18 @@ fn chain_edits(
         text: ")".repeat(links.len() + usize::from(waits)),
     });
     edits
+}
+
+/// The `this` an optional call keeps, where it is kept: its callee is
+/// then read by a function of it.
+fn kept_this(link: &js::Link, called_attached: &dyn Fn(u32) -> bool) -> Option<js::This> {
+    match &link.kind {
+        js::LinkKind::Call(Some(js::This::Value { name_end, .. }))
+            if name_end.is_some_and(called_attached) =>
+        {
+            None
+        }
+        js::LinkKind::Call(Some(this)) => Some(this.clone()),
+        _ => None,
+    }
 }
