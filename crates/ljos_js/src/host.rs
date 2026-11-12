@@ -1620,7 +1620,6 @@ impl ModuleHandle {
     }
 }
 
-/// A snapshot of QuickJS allocator statistics.
 /// What a [`JsHost::pump_jobs`] did.
 #[derive(Debug, Default)]
 #[must_use = "a promise job's fault is reported only by the host that reads it"]
@@ -1631,6 +1630,7 @@ pub struct Pumped {
     pub faults: Vec<JsFault>,
 }
 
+/// A snapshot of QuickJS allocator statistics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryStats {
     pub malloc_size: usize,
