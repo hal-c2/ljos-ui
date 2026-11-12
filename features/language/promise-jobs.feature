@@ -52,6 +52,22 @@ Feature: Promise continuations
     When 10 milliseconds pass
     Then the property "seen" of "root" is "no"
 
+  Scenario: A callback that throws does not stop the next one
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property string after: "-"
+        Component.onCompleted: {
+          Promise.resolve().then(() => { throw new Error("boom") })
+          Promise.resolve().then(() => after = "ran")
+        }
+      }
+      """
+    When 10 milliseconds pass
+    Then the property "after" of "root" is "ran"
+
   Scenario: A promise settled by a Timer continues when the Timer fires
     Given the QML:
       """qml

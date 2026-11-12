@@ -128,10 +128,12 @@ Feature: What is written in a popup sees where it is from the start
         Window {
           id: win
           objectName: "win"
-          Item { id: host }
+          Item { id: host; width: 10; height: 10; Item { width: 5; height: 5 } }
           property var look: async key => host[await key]?.(1, 1).Window.window === win
-          property string kind: typeof look
+          property string seen: "-"
+          Component.onCompleted: look("childAt").then(found => seen = String(found))
         }
         """
-      Then the property "kind" of "win" is "function"
+      When 10 milliseconds pass
+      Then the property "seen" of "win" is "true"
       And the log has no warnings
