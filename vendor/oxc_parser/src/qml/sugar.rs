@@ -1,4 +1,5 @@
-//! `match` and `is`, TC39's pattern matching, read and written away.
+//! `match` and `is`, TC39's pattern matching, and the pipe `|>`, read and
+//! written away. The pipe's lowering is in [`pipe`]'s own doc.
 //!
 //! The parser does not build nodes for them: oxc's tree has none, and a
 //! fork of `oxc_ast` would be a second fork to keep. It records *text
@@ -40,6 +41,10 @@ use oxc_span::{GetSpan, Span};
 
 use crate::{ParserConfig, ParserImpl, context::Context, diagnostics, lexer::Kind};
 
+mod pipe;
+
+const YIELDS: &str = "a `match` or `is` that yields is lowered to a generator, which has no `super` or `new.target` of the function around it: read it into a name before, as in `const base = super.size;`";
+
 /// One piece of an edit's replacement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Piece {
@@ -64,7 +69,7 @@ impl Piece {
 pub struct Edit {
     pub span: Span,
     pub pieces: Vec<Piece>,
-    /// The keyword of the `match` or `is` the edit writes away; None for
+    /// The keyword of the `match`, `is` or `|>` the edit writes away; None for
     /// what an `is` declares at the start of its statement.
     pub keyword: Option<Span>,
 }
@@ -104,6 +109,14 @@ pub(crate) struct Sugar {
     /// dead zone in the others: it goes before the `switch`, at the item
     /// that holds it, its label too.
     pub switch: Option<(Option<u32>, usize)>,
+    /// The topic of the pipe body being read, numbered by how many bodies
+    /// deep it is (see `pipe.rs`).
+    pub topic: Option<u32>,
+    /// Each `%` read, with the topic it is and where it is.
+    pub topics: Vec<(u32, u32)>,
+    /// The span of the pipe just read and its parts, head first: a pipe
+    /// whose body it is merges them into its own.
+    pub chain: Option<(Span, Vec<Span>)>,
 }
 
 /// A pattern as it was read.
@@ -289,7 +302,11 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// what is sent back, and is what it returns, the arm's value. `this`
     /// and `arguments` are handed to it; `super` and `new.target` cannot
     /// be, so one of them in it is an error, and it is `None`.
-    fn sugar_function(&mut self, span: Span) -> Option<(&'static str, &'static str)> {
+    fn sugar_function(
+        &mut self,
+        span: Span,
+        yields: &'static str,
+    ) -> Option<(&'static str, &'static str)> {
         let within = |at: &u32| span.start <= *at && *at < span.end;
         if !self.sugar.yields.iter().any(within) {
             return Some(if self.sugar.awaits.iter().any(within) {
@@ -299,10 +316,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             });
         }
         if let Some(at) = self.sugar.supers.iter().copied().find(|at| within(&at.start)) {
-            self.sugar_error(
-                "a `match` or `is` that yields is lowered to a generator, which has no `super` or `new.target` of the function around it: read it into a name before, as in `const base = super.size;`",
-                at,
-            );
+            self.sugar_error(yields, at);
             return None;
         }
         Some(if self.ctx.has_await() {
@@ -390,7 +404,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         self.expect(Kind::RCurly);
         let span = self.end_span(start);
 
-        let Some((open_text, close_text)) = self.sugar_function(span) else {
+        let Some((open_text, close_text)) = self.sugar_function(span, YIELDS) else {
             self.sugar_unlowered(span, keyword);
             return Expression::new_parenthesized_expression(span, subject, self);
         };
@@ -483,7 +497,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         } else {
             // As a `match`'s subject: the left side is read in the
             // function's body, where it may await or yield.
-            let Some((open_text, close_text)) = self.sugar_function(span) else {
+            let Some((open_text, close_text)) = self.sugar_function(span, YIELDS) else {
                 self.sugar_unlowered(span, keyword);
                 return Expression::new_parenthesized_expression(span, lhs, self);
             };

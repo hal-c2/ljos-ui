@@ -18,13 +18,14 @@ pub struct ParserCheckpoint<'a> {
     prev_span_end: u32,
     errors_pos: usize,
     fatal_error: Option<FatalError<'a>>,
-    /// Ljós: the `match`/`is` edits, and the `await`s, `yield`s, names and
-    /// `super`s, a rewind drops (see `qml/sugar.rs`).
+    /// Ljós: the `match`/`is`/`|>` edits, and the `await`s, `yield`s, names,
+    /// `super`s and topics, a rewind drops (see `qml/sugar.rs`).
     sugar_edits: usize,
     sugar_awaits: usize,
     sugar_yields: usize,
     sugar_declared: usize,
     sugar_supers: usize,
+    sugar_topics: usize,
 }
 
 impl<'a, C: Config> ParserImpl<'a, C> {
@@ -323,6 +324,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             sugar_yields: self.sugar.yields.len(),
             sugar_declared: self.sugar.declared.len(),
             sugar_supers: self.sugar.supers.len(),
+            sugar_topics: self.sugar.topics.len(),
         }
     }
 
@@ -338,6 +340,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             sugar_yields: self.sugar.yields.len(),
             sugar_declared: self.sugar.declared.len(),
             sugar_supers: self.sugar.supers.len(),
+            sugar_topics: self.sugar.topics.len(),
         }
     }
 
@@ -353,6 +356,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             sugar_yields,
             sugar_declared,
             sugar_supers,
+            sugar_topics,
         } = checkpoint;
 
         self.lexer.rewind(lexer);
@@ -365,6 +369,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.sugar.yields.truncate(sugar_yields);
         self.sugar.declared.truncate(sugar_declared);
         self.sugar.supers.truncate(sugar_supers);
+        self.sugar.topics.truncate(sugar_topics);
     }
 
     pub(crate) fn lookahead<U>(&mut self, predicate: impl Fn(&mut ParserImpl<'a, C>) -> U) -> U {
