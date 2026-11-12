@@ -10,7 +10,7 @@ use std::collections::HashSet;
 
 use crate::{
     oracle::{Property, TypeOracle},
-    project::{ControlsStyle, Key, Project, Shape, Source, directory, is_script, join},
+    project::{ControlsStyle, Key, Project, Shape, Source, directory, join},
 };
 
 /// The module whose types are the chosen style's.
@@ -192,7 +192,9 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                         });
                     }
                 }
-                Source::Path(path) if !is_script(path) => {
+                // A script's types are the Controllers a module exports,
+                // filed under it (`breakpoint.ts/Breakpoint`).
+                Source::Path(path) => {
                     if let Some(file) =
                         self.file_named(&self.project.import_dir(self.file, path), name)
                     {
@@ -206,7 +208,6 @@ impl<'p, O: TypeOracle> Types<'p, O> {
                         });
                     }
                 }
-                Source::Path(_) => {}
             }
         }
         if qualifier.is_some() {

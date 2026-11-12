@@ -620,12 +620,21 @@ fn compile(
 ) -> Result<MapSource> {
     let project = project_of(files, style, lowered);
     let mut out = MapSource::new();
-    for name in files.keys().filter(|name| {
-        qmldir_of(name).is_none() && !is_script(name) && !ljos_compiler::is_declarations(name)
-    }) {
+    let keys = files
+        .keys()
+        .filter(|name| {
+            qmldir_of(name).is_none() && !is_script(name) && !ljos_compiler::is_declarations(name)
+        })
+        .map(|name| key_of(name))
+        // The files of the Controllers the modules export.
+        .chain(
+            project
+                .files()
+                .filter(|key| ljos_compiler::is_generated(key)),
+        );
+    for key in keys {
         // A file that does not compile stops nothing until an object of
         // it is made, which is then told why.
-        let key = key_of(name);
         match compile_file(&project, key) {
             Ok(c) if !c.has_errors() => out.insert(key, c.file),
             Ok(c) => out.insert_failure(key, c.failure_reason()),

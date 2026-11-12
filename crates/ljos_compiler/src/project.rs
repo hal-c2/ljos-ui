@@ -397,8 +397,30 @@ impl<O: TypeOracle> Project<O> {
     }
 
     fn put_script(&mut self, path: &str, source: String) {
+        let made = crate::controller::files(path, &source);
         self.scripts.insert(path.to_string(), source);
         self.callable.get_mut().clear();
+        self.put_controllers(path, made);
+    }
+
+    /// Puts in the files of the Controllers the module at `path` exports
+    /// ([`crate::controller`]), in the place of those it exported before.
+    fn put_controllers(&mut self, path: &str, made: Vec<(String, String)>) {
+        let stale: Vec<String> = self
+            .sources
+            .keys()
+            .filter(|key| key.rsplit_once('/').is_some_and(|(dir, _)| dir == path))
+            .filter(|key| !made.iter().any(|(made, _)| made == *key))
+            .cloned()
+            .collect();
+        for key in stale {
+            self.forget(&key);
+        }
+        for (key, text) in made {
+            if self.sources.get(&key) != Some(&text) {
+                self.put_text(&key, text);
+            }
+        }
     }
 
     /// Adds the declarations at `path` (`calc.d.ts`) of the JavaScript
@@ -472,6 +494,7 @@ impl<O: TypeOracle> Project<O> {
     fn drop_script(&mut self, path: &str) {
         if self.scripts.remove(path).is_some() {
             self.callable.get_mut().clear();
+            self.put_controllers(path, Vec::new());
         }
     }
 
