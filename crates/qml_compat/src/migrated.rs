@@ -46,7 +46,7 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
             }
             // A comment the import of Qt's had stays at the end of the
             // last.
-            let (statements, comment) = statements(imports);
+            let (statements, comment, open) = statements(imports);
             for (at, statement) in statements.iter().enumerate() {
                 out.push_str(indent);
                 out.push_str(statement);
@@ -62,6 +62,7 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
                     end_or_newline(end)
                 });
             }
+            in_comment = open;
             continue;
         }
         let trimmed = content.trim();
@@ -87,11 +88,12 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
     out
 }
 
-/// The statements of the pragma's line, split at each `;`, and the `//`
-/// comment that ends it. A `;` or `//` in a quoted import (`import
-/// "http://…"`) or in a `/* */` comment is neither: such a comment stays
-/// with the statement it is in.
-fn statements<'a>(line: &'a str) -> (Vec<&'a str>, Option<&'a str>) {
+/// The statements of the pragma's line, split at each `;`, the `//`
+/// comment that ends it, and whether a `/* */` comment it opens goes on to
+/// a later line. A `;` or `//` in a quoted import (`import "http://…"`) or
+/// in a `/* */` comment is neither: such a comment stays with the statement
+/// it is in.
+fn statements<'a>(line: &'a str) -> (Vec<&'a str>, Option<&'a str>, bool) {
     let bytes = line.as_bytes();
     let mut statements = Vec::new();
     let mut push = |text: &'a str| {
@@ -116,11 +118,13 @@ fn statements<'a>(line: &'a str) -> (Vec<&'a str>, Option<&'a str>) {
             quote = Some(byte);
         } else if bytes[at..].starts_with(b"//") {
             push(&line[start..at]);
-            return (statements, Some(line[at..].trim_end()));
+            return (statements, Some(line[at..].trim_end()), false);
         } else if bytes[at..].starts_with(b"/*") {
-            at = line[at + 2..]
-                .find("*/")
-                .map_or(bytes.len(), |e| at + 2 + e + 2);
+            let Some(close) = line[at + 2..].find("*/") else {
+                push(&line[start..]);
+                return (statements, None, true);
+            };
+            at += 2 + close + 2;
             continue;
         } else if byte == b';' {
             push(&line[start..at]);
@@ -129,7 +133,7 @@ fn statements<'a>(line: &'a str) -> (Vec<&'a str>, Option<&'a str>) {
         at += 1;
     }
     push(&line[start..]);
-    (statements, None)
+    (statements, None, false)
 }
 
 fn is_import(line: &str) -> bool {
@@ -221,6 +225,19 @@ mod tests {
         assert_eq!(
             migrated(written, lowered, true),
             "import Ljos.Ui\nimport \"http://example.com/parts\" /* a; b */ // end\nItem {}\n"
+        );
+    }
+
+    /// A `/* */` comment the first import opened and a later line closes
+    /// stays with the last import, and the import lines under it the pass
+    /// emptied still go.
+    #[test]
+    fn a_block_comment_the_first_import_opens_is_read_past() {
+        let written = "import QtQuick /* items,\n   all */\nimport QtQuick.Layouts\nRow {}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout /* items,\n   all */\n\nRow {}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nimport Ljos.Layout /* items,\n   all */\nRow {}\n"
         );
     }
 
