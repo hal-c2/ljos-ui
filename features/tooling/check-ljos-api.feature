@@ -390,6 +390,28 @@ Feature: Checking the scripts of a file written in Ljós's API
         1 files, 0 errors, 0 warnings
         """
 
+    # A singleton's name is the one object, and QML reads the keys of its enums through that name
+    # too. Beside Qt's table `Easing` is such a singleton; without it `StandardPaths` is one.
+    Scenario: A key of an enum a singleton declares is read through the singleton's name
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        import QtCore
+        Item {
+          property int place: StandardPaths.DesktopLocation
+          property int curve: Easing.OutCubic
+          function show() { place = StandardPaths.HomeLocation; curve = Easing.InOutQuad }
+          function wrong() { place = StandardPaths.Nowhere }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:7:52: error: `Nowhere` has no type: a StandardPaths has no member of that name [ts-no-any]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: A handler's parameters, and a callback's, take their types from where they go
       Given the file "Gauge.qml":
         """qml
