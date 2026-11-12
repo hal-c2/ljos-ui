@@ -445,6 +445,18 @@ mod tests {
             lowered("x = match (a.b) { when 1: $s; default: $$t }\n"),
             "x = (() => { const $$$s = a.b; if ($$$s === 1) return $s; return $$t;})()\n"
         );
+        // A name spelled with escapes is the name it spells.
+        for written in [r"\u00240", r"\u{24}0", r"$\u0030", r"\u{0024}\u{30}"] {
+            assert_eq!(
+                lowered(&format!("x = a |> % + {written}\n")),
+                format!("x = (() => {{ const $$0 = a; return $$0 + {written};}})()\n"),
+                "{written}"
+            );
+        }
+        assert_eq!(
+            lowered("x = match (a.b) { when 1: \\u0024s; default: 0 }\n"),
+            "x = (() => { const $$s = a.b; if ($$s === 1) return \\u0024s; return 0;})()\n"
+        );
     }
 
     #[test]

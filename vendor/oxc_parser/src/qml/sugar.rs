@@ -139,21 +139,45 @@ impl Sugar {
 
 /// One more than the most `$`s any name in `source` starts with, counted
 /// over the whole text, strings and comments too: a name the lowering
-/// writes with that many is one the source cannot have.
+/// writes with that many is one the source cannot have. A `\u0024` or
+/// `\u{24}` is the character it spells, as it is in a name, so `\u00240`
+/// and `$\u0030` are `$0`.
 fn dollars(source: &str) -> usize {
     let mut most = 0;
     let mut run = 0;
-    for byte in source.bytes() {
-        if byte == b'$' {
+    let mut rest = source;
+    while let Some(c) = rest.chars().next() {
+        let (c, len) = unescaped(rest).unwrap_or((c, c.len_utf8()));
+        rest = &rest[len..];
+        if c == '$' {
             run += 1;
             continue;
         }
-        if run > 0 && (byte.is_ascii_alphanumeric() || byte == b'_') {
+        if run > 0 && (c.is_ascii_alphanumeric() || c == '_') {
             most = most.max(run);
         }
         run = 0;
     }
     most + 1
+}
+
+/// The character a `\uXXXX` or `\u{X…}` at the start of `text` spells,
+/// and how long the escape is.
+fn unescaped(text: &str) -> Option<(char, usize)> {
+    let after = text.strip_prefix("\\u")?;
+    let (hex, len) = match after.strip_prefix('{') {
+        Some(braced) => {
+            // A code point has at most six hex digits; past that it is no
+            // escape, and the scan stays linear.
+            let end = braced.get(..braced.len().min(8))?.find('}')?;
+            (&braced[..end], 2 + 1 + end + 1)
+        }
+        None => (after.get(..4)?, 2 + 4),
+    };
+    if hex.is_empty() || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    char::from_u32(u32::from_str_radix(hex, 16).ok()?).map(|c| (c, len))
 }
 
 /// A pattern as it was read.
