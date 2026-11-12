@@ -57,6 +57,7 @@ mod particles;
 #[cfg(feature = "pdf")]
 pub mod pdf;
 mod pinch_area;
+pub mod task;
 #[doc(hidden)]
 pub use particles::{emitters_looked_at, particle_reads, particles_painted};
 mod frame_times;

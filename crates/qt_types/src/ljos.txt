@@ -387,6 +387,7 @@ module Ljos.Core
 	Controller Ljos.Core.Controller
 	Locale QtQml.Locale
 	Object Ljos.Core.Object
+	Task Ljos.Core.Task
 	Timer QtQml.Timer
 	type Ljos.Core.Controller Controller
 		prototype QtQml.QtObject named
@@ -400,6 +401,27 @@ module Ljos.Core
 	type Ljos.Core.Object Object
 		prop objectName QtQml.string named
 		signal objectNameChanged
+	type Ljos.Core.Task Task
+		prototype Ljos.Core.Controller named
+		default data
+		prop args QtQml.var named
+		prop run QtQml.var named
+		prop autoRun QtQml.bool named
+		prop state QtQml.var named readonly
+		prop status QtQml.string named readonly
+		prop value QtQml.var named readonly
+		prop error QtQml.var named readonly
+		signal argsChanged
+		signal runChanged
+		signal autoRunChanged
+		signal stateChanged
+		signal statusChanged
+		signal valueChanged
+		signal errorChanged
+		signal done value:var
+		signal failed error:var
+		method start
+		method abort
 
 module Ljos.Design
 	Colors Ljos/Design/Colors.qml
