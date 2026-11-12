@@ -726,6 +726,15 @@ declare const console: {
 };
 declare function qsTr(text: string, comment?: string, n?: number): string;
 declare function qsTrId(id: string, n?: number): string;
+/** A Controller a module exports (docs/DIALECT.md §4.20): `self` is the
+ * Controller, its properties and what its bindings give. */
+declare function controller<P extends object = {}, B extends object = {}>(spec: {
+    readonly properties?: P;
+    readonly bindings?: { readonly [K in keyof B]: (host: Item, self: P & Readonly<B>) => B[K] };
+    attached?(host: Item, self: P & Readonly<B>): void | (() => void);
+    detached?(host: Item, self: P & Readonly<B>): void;
+    updated?(host: Item, self: P & Readonly<B>): void;
+}): unknown;
 
 interface String {
     /** QML's: the lowest `%n` of the text replaced by `value`. */

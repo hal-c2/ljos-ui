@@ -18,6 +18,7 @@ pub mod alias;
 pub mod aot;
 pub mod baseline;
 mod compile;
+mod controller;
 mod dump;
 pub mod i18n;
 mod js;
@@ -34,6 +35,7 @@ pub mod ts;
 
 pub use alias::{Alias, AliasError, Aliases, Mount};
 pub use compile::{compile_file, is_ljos_ui, name_templates_in};
+pub use controller::is_generated;
 pub use dump::dump;
 pub use natives::OracleNatives;
 pub use project::{Project, declared_beside, described_in, resource_dirs, resources, skipped_dir};
@@ -198,6 +200,9 @@ pub enum Code {
     /// An anchor on a child of `Ljos.Layout`'s `Row`, `Column`, `Box`,
     /// `Grid` or `Flow`, which places the child itself.
     LayoutAnchored,
+    /// A `Controller` declared in an object that is not an item, which
+    /// it would act on.
+    ControllerHost,
 }
 
 impl Code {
@@ -236,6 +241,7 @@ impl Code {
             Code::TsForbidden => "ts-forbidden",
             Code::TsBoundary => "ts-boundary",
             Code::LayoutAnchored => "layout-anchored",
+            Code::ControllerHost => "controller-host",
         }
     }
 }

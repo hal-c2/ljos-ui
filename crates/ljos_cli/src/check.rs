@@ -250,6 +250,11 @@ impl Checked {
         let mut modules: std::collections::BTreeMap<String, Vec<ljos_compiler::Diagnostic>> =
             std::collections::BTreeMap::new();
         for file in compile_project(dir)? {
+            // A module's Controller is the module's, which is checked as
+            // one of the project's files.
+            if ljos_compiler::is_generated(&file.key) {
+                continue;
+            }
             if let Ok(compiled) = &file.result {
                 for module in &compiled.modules {
                     modules

@@ -81,10 +81,17 @@ fn lower_module(path: &str, key: &str, source: &str) -> Script {
     } else {
         ""
     };
+    // Every module has `controller` (docs/DIALECT.md §4.20): its spec is
+    // the Controller's, which the file made of it reads.
+    let maker = if crate::controller::uses_maker(key, source) {
+        "const controller = (spec) => spec;"
+    } else {
+        ""
+    };
     // A module's code is strict, as an ECMAScript module's is. On the
     // first line with the rest, so the module's lines do not move.
     let source = format!(
-        "(function (__ljos_url, __ljos_imports) {{\"use strict\";{qt}{}\n;return {{ {} }};\n}})",
+        "(function (__ljos_url, __ljos_imports) {{\"use strict\";{qt}{maker}{}\n;return {{ {} }};\n}})",
         erased.text,
         members.join(", ")
     );
