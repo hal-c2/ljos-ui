@@ -801,6 +801,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let start = self.cur_start();
         self.bump_any(); // bump `super`
         let span = self.end_span(start);
+        // Ljós: a generator a `match` is lowered to has no `super` of its
+        // own to give it (`qml/sugar.rs`).
+        self.sugar.supers.push(span);
 
         // The `super` keyword can appear at below:
         // SuperProperty:
@@ -997,6 +1000,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             return if self.at(Kind::Target) {
                 self.bump_any(); // bump `target`
                 let span = self.end_span(start);
+                // Ljós: nor a `new.target` (`qml/sugar.rs`).
+                self.sugar.supers.push(span);
                 if !self.ctx.has_new_target() {
                     self.error(diagnostics::new_target_outside_function(span));
                 }
@@ -1719,6 +1724,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         if self.ctx.has_await() {
             let start = self.cur_start();
             self.bump_any(); // consume `await`
+            // Ljós: a `match` or `is` around it is awaited (`qml/sugar.rs`).
+            self.sugar.awaits.push(start);
             let argument = self.parse_unary_expression_or_higher(self.cur_start());
             return Expression::new_await_expression(self.end_span(start), argument, self);
         }

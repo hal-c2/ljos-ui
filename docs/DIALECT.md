@@ -2117,19 +2117,31 @@ match (permission.status) {
     when Permission.Status.Undetermined: permission.request();
 }
 // what runs
-(($s = permission.status) => {
+(() => { const $s = permission.status;
     if ($is($s, Permission.Status.Granted)) return mapView.recenter();
     if ($is($s, Permission.Status.Denied)) return permissionMessageDialog.open();
     if ($is($s, Permission.Status.Undetermined)) return permission.request();
     return $nomatch($s as never); })()
 ```
 
-DECISION: the subject is the arrow's parameter's default, not its
-argument, so it stays where it is written: the lowering keeps the
-source's order, and a finding in the subject is reported on its own
-line. The checker types `$s` as the subject, unwidened, and a `match`
-as the union of its arms, as `?:` is: `match (thick) { when true: 3;
-when false: 1; }` is `3 | 1`, so it goes where a `1 | 3` does.
+DECISION: the subject is the first statement of the arrow's body, so it
+stays where it is written: the lowering keeps the source's order, a
+finding in the subject is reported on its own line, and an `await` in
+it is the arrow's own. A `match` or `is` that awaits, in its subject or
+an arm, is an `async` arrow, awaited: `(await (async () => { … })())`.
+The checker types `$s` as the subject, unwidened, and a `match` as the
+union of its arms, as `?:` is: `match (thick) { when true: 3; when
+false: 1; }` is `3 | 1`, so it goes where a `1 | 3` does.
+
+DECISION: no arrow can `yield`, so a `match` or `is` that yields, in a
+QML script of Qt's API, is a generator delegated to and handed `this`
+and `arguments`: `(yield* (function* () { … }).apply(this, arguments))`,
+an `async function*` in an `async` generator. `yield*` passes on each
+value it yields and each sent back, and is what the generator returns:
+the arm's value. A generator has its own `super` and `new.target`, so
+one of them in a `match` or `is` that yields is an error that says to
+read it into a name first. One that does not yield stays an arrow, which
+shares them.
 
 - A literal lowers to `===`, which is the proposal's test for every
   literal but `NaN`, `+0` and `-0`; those lower to `Object.is`.
@@ -2150,7 +2162,11 @@ when false: 1; }` is `3 | 1`, so it goes where a `1 | 3` does.
 - Where the subject is a local name, the desugar tests the name itself,
   not a copy, so `tsc` narrows what the arm reads as the checker does.
 - `x is pattern` lowers to the same test, with its bindings declared at
-  the start of the statement that holds it.
+  the start of the statement that holds it: a `let` of the block around
+  it (a `var` pattern's, a `var`), declared once however many of the
+  block's `is`es bind the name. A name the block declares itself, or a
+  parameter at a function's top, is `ts-is-binding` at the name the
+  pattern binds, as the two would be one name.
 
 `$is` is declared to `tsc` as a type guard of its subject (`$is<T>(s:
 unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:

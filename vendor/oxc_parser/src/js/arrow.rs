@@ -316,9 +316,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             ArrowFunctionBody::FunctionBody(self.parse_function_body())
         } else {
             // Remove TopLevel context for arrow function expression body
+            // Ljós: what the arrow awaits is its own (`qml/sugar.rs`).
+            let outer = (self.sugar.awaits.len(), self.sugar.yields.len());
             let expr = self.context_remove(Context::TopLevel, |p| {
                 p.parse_assignment_expression_or_higher_impl(allow_return_type_in_arrow_function)
             });
+            self.sugar.awaits.truncate(outer.0);
+            self.sugar.yields.truncate(outer.1);
             ArrowFunctionBody::from(expr)
         };
 

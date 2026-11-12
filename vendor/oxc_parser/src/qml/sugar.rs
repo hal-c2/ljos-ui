@@ -14,16 +14,22 @@
 //! The lowering, for `match (subject) { when p: e; default: d; }`:
 //!
 //! ```text
-//! (($s = subject) => { if (TEST(p, $s)) return e; return d; })()
+//! (() => { const $s = subject; if (TEST(p, $s)) return e; return d; })()
 //! ```
 //!
-//! A subject that is a name is tested by name, with no `$s`, so a checker
-//! narrows the name itself. An arm whose pattern binds names nests an `if`
-//! for each test and a `const` for each name, so a guard after a binding
-//! sees it. With no `default`, the arrow ends `return $nomatch(s as never)`.
-//! `x is p` is `(TEST(p, x))`, and its bindings are `var`s declared at the
-//! start of the statement that holds it, assigned where the test reaches
-//! them. `$is` and `$nomatch` are the runtime's (see DIALECT.md §4.18).
+//! The subject is the body's first statement, not a parameter's default,
+//! which may hold no `await` or `yield`; a `match` that awaits, in its
+//! subject or an arm, is an `async` arrow, awaited. No arrow can `yield`,
+//! so a `match` that yields is a generator, delegated to and handed `this`
+//! and `arguments`: `(yield* (function* () { … }).apply(this, arguments))`,
+//! an `async function*` in an `async` generator. A subject that is a name is tested by
+//! name, with no `$s`, so a checker narrows the name itself. An arm whose
+//! pattern binds names nests an `if` for each test and a `const` for each
+//! name, so a guard after a binding sees it. With no `default`, the arrow
+//! ends `return $nomatch(s as never)`. `x is p` is `(TEST(p, x))`, and its
+//! bindings are `let`s (a `var` pattern's, `var`s) declared at the start of
+//! the statement that holds it, assigned where the test reaches them. `$is`
+//! and `$nomatch` are the runtime's (see DIALECT.md §4.18).
 
 use std::fmt::Write as _;
 
@@ -74,6 +80,22 @@ pub(crate) struct Sugar {
     /// The start of a statement that is a QML binding's value, which takes
     /// one statement and so no declaration before it.
     pub binding: Option<u32>,
+    /// Where the `await`s and `yield`s the function being read has read so
+    /// far are, its own and not those of a function inside it: a `match` or
+    /// `is` that holds one is lowered to an awaited `async` arrow, or, for
+    /// a `yield`, which no arrow can hold, to a generator delegated to.
+    pub awaits: Vec<u32>,
+    pub yields: Vec<u32>,
+    /// The `super`s and `new.target`s of the function being read, an
+    /// arrow's being its function's: a generator has its own, so a `match`
+    /// that yields cannot hold one.
+    pub supers: Vec<Span>,
+    /// Each name an `is` has declared, with how many blocks deep: a block
+    /// declares a name once, however many of its statements bind it.
+    pub declared: Vec<(usize, String)>,
+    /// For each block being read, outermost first, where its names start
+    /// in `declared`.
+    pub blocks: Vec<usize>,
 }
 
 /// A pattern as it was read.
@@ -222,6 +244,53 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         self.error(diagnostics::qml(message, span));
     }
 
+    /// Reads a block, whose names an `is` declares once.
+    pub(crate) fn sugar_list<T>(&mut self, read: impl FnOnce(&mut Self) -> T) -> T {
+        self.sugar.blocks.push(self.sugar.declared.len());
+        let out = read(self);
+        self.sugar.blocks.pop();
+        out
+    }
+
+    /// The text that opens and the text that closes the function the
+    /// `match` or `is` at `span` is lowered to, called at once. It is an
+    /// arrow, which shares `this`, `arguments`, `super` and `new.target`
+    /// with the function around it; one that awaits is `async`, awaited.
+    /// No arrow can `yield`, so one that yields is a generator, `async` in
+    /// an `async` one, delegated to: `yield*` passes on what it yields and
+    /// what is sent back, and is what it returns, the arm's value. `this`
+    /// and `arguments` are handed to it; `super` and `new.target` cannot
+    /// be, so one of them in it is an error, and it is `None`.
+    fn sugar_function(&mut self, span: Span) -> Option<(&'static str, &'static str)> {
+        let within = |at: &u32| span.start <= *at && *at < span.end;
+        if !self.sugar.yields.iter().any(within) {
+            return Some(if self.sugar.awaits.iter().any(within) {
+                ("(await (async () => {", "})())")
+            } else {
+                ("(() => {", "})()")
+            });
+        }
+        if let Some(at) = self.sugar.supers.iter().copied().find(|at| within(&at.start)) {
+            self.sugar_error(
+                "a `match` or `is` that yields is lowered to a generator, which has no `super` or `new.target` of the function around it: read it into a name before, as in `const base = super.size;`",
+                at,
+            );
+            return None;
+        }
+        Some(if self.ctx.has_await() {
+            ("(yield* (async function* () {", "}).apply(this, arguments))")
+        } else {
+            ("(yield* (function* () {", "}).apply(this, arguments))")
+        })
+    }
+
+    /// What stands for a `match` or `is` that cannot be lowered, whose
+    /// error is said: `undefined`, which reads on with no second one.
+    fn sugar_unlowered(&mut self, span: Span, keyword: Span) {
+        let pieces = vec![text("(undefined)", keyword)];
+        self.sugar.edits.push(Edit { span, pieces, keyword: Some(keyword) });
+    }
+
     /// The end of a clause: `;`, which may be left out before `}`.
     fn sugar_clause_end(&mut self) -> Span {
         if self.at(Kind::Semicolon) {
@@ -242,7 +311,6 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     pub(crate) fn parse_sugar_match(&mut self) -> Expression<'a> {
         let start = self.cur_start();
         let keyword = self.cur_token().span();
-        let awaits = self.ctx.has_await();
         self.bump_any(); // `match`
         self.expect(Kind::LParen);
         let subject = self.context_add(Context::In, Self::parse_expr);
@@ -294,26 +362,24 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         self.expect(Kind::RCurly);
         let span = self.end_span(start);
 
-        // An `await` in an arm needs an `async` arrow, awaited. Reading the
-        // text for it also finds one in a nested function or a string; then
-        // the arrow is awaited for nothing, which gives the same value.
-        let r#async = awaits && self.source_text[span.start as usize..span.end as usize].contains("await");
+        let Some((open_text, close_text)) = self.sugar_function(span) else {
+            self.sugar_unlowered(span, keyword);
+            return Expression::new_parenthesized_expression(span, subject, self);
+        };
         let mut pieces = Vec::new();
         if self.sugar.item == Some(start) {
             // A statement that starts with `(` would call the line before it.
             pieces.push(text(";", Span::empty(start)));
         }
-        let (open_text, close_text) = if r#async {
-            ("(await (async (", "})())")
-        } else {
-            ("((", "})()")
-        };
-        if bare {
-            pieces.push(text(format!("{open_text}) => {{"), keyword));
-        } else {
-            pieces.push(text(format!("{open_text}$s = "), keyword));
+        pieces.push(text(open_text, keyword));
+        if !bare {
+            // The subject is the first statement of the function's body,
+            // where an `await` or `yield` in it is the function's own and
+            // it is read where it is written; a parameter's default may
+            // hold neither.
+            pieces.push(text(" const $s = ", keyword));
             pieces.push(Piece::Copy(subject_span));
-            pieces.push(text(") => {", open));
+            pieces.push(text(";", open));
         }
         pieces.extend(body);
         if !has_default {
@@ -364,8 +430,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             }
             match step {
                 Step::Test(pieces) => test.extend(pieces),
-                Step::Bind { name, value, .. } => {
-                    names.push(name);
+                Step::Bind { keyword: written, var, name, value } => {
+                    names.push((name, var, written));
                     test.push(text("((", name));
                     test.push(Piece::Copy(name));
                     test.push(text(" = ", name));
@@ -387,27 +453,75 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             pieces.extend(test);
             pieces.push(text(")", keyword));
         } else {
-            pieces.push(text("(($s = ", keyword));
+            // As a `match`'s subject: the left side is read in the
+            // function's body, where it may await or yield.
+            let Some((open_text, close_text)) = self.sugar_function(span) else {
+                self.sugar_unlowered(span, keyword);
+                return Expression::new_parenthesized_expression(span, lhs, self);
+            };
+            pieces.push(text(open_text, keyword));
+            pieces.push(text(" const $s = ", keyword));
             pieces.push(Piece::Copy(lhs.span()));
-            pieces.push(text(") => ", keyword));
+            pieces.push(text("; return ", keyword));
             pieces.extend(test);
-            pieces.push(text(")()", keyword));
+            pieces.push(text(close_text, keyword));
         }
         if !names.is_empty()
             && bare
             && let Some(item) = self.sugar.item
             && self.sugar.item != self.sugar.binding
         {
-            let mut declared = String::from("var ");
-            for (i, name) in names.iter().enumerate() {
-                if i > 0 {
-                    declared.push_str(", ");
+            // A `let` or `const` of the pattern is a `let` of the block
+            // around the statement, assigned where the test reaches it, and
+            // declared once however many `is`es of the block bind it; one
+            // the block declares itself is the checker's to say. A `var`
+            // stays the function's.
+            let depth = self.sugar.blocks.len();
+            let from = self.sugar.blocks.last().copied().unwrap_or(0).min(self.sugar.declared.len());
+            let mut pieces = Vec::new();
+            for var in [false, true] {
+                let mut list: Vec<(&str, Span)> = Vec::new();
+                let mut at = Span::empty(item);
+                for (span, _, keyword) in names.iter().filter(|(_, v, _)| *v == var) {
+                    let name = &self.source_text[span.start as usize..span.end as usize];
+                    let seen = |(d, n): &(usize, String)| *d == depth && n == name;
+                    if self.sugar.declared[from..].iter().any(seen)
+                        || list.iter().any(|(n, _)| *n == name)
+                    {
+                        continue;
+                    }
+                    if list.is_empty() && var {
+                        at = *keyword;
+                    }
+                    list.push((name, *span));
                 }
-                declared.push_str(&self.source_text[name.start as usize..name.end as usize]);
+                if list.is_empty() {
+                    continue;
+                }
+                // Each name is written at the name in the pattern, where a
+                // finding about it belongs; a `var` is the pattern's own, so
+                // the rule against it is said as for one written.
+                if var {
+                    pieces.push(Piece::Copy(at));
+                    pieces.push(text(" ", at));
+                } else {
+                    pieces.push(text("let ", at));
+                }
+                for (i, (name, span)) in list.iter().enumerate() {
+                    if i > 0 {
+                        pieces.push(text(", ", at));
+                    }
+                    pieces.push(text(*name, *span));
+                }
+                pieces.push(text("; ", at));
+                let declared: Vec<_> =
+                    list.iter().map(|(name, _)| (depth, (*name).to_string())).collect();
+                self.sugar.declared.extend(declared);
             }
-            declared.push_str("; ");
-            let at = Span::empty(item);
-            self.sugar.edits.push(Edit { span: at, pieces: vec![text(declared, at)], keyword: None });
+            if !pieces.is_empty() {
+                let at = Span::empty(item);
+                self.sugar.edits.push(Edit { span: at, pieces, keyword: None });
+            }
         }
         self.sugar.edits.push(Edit { span, pieces, keyword: Some(keyword) });
         Expression::new_parenthesized_expression(span, lhs, self)
@@ -1144,6 +1258,11 @@ impl Lowering<'_> {
     }
 
     fn breaks(&mut self, from: u32, to: u32) {
+        // A piece may stand for text outside its edit, as what an `is`
+        // declares is written at its names: no line of the edit is past it.
+        if from >= to {
+            return;
+        }
         let skipped = &self.source[from as usize..to as usize];
         for (i, _) in skipped.match_indices('\n') {
             let at = from + i as u32;

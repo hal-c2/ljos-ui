@@ -91,7 +91,7 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
     When the files are migrated and checked
     Then the check reports:
       """
-      renamed size.ts to size.lts, and the imports that name it in Pad.qml, line.ts, qmldir
+      renamed size.ts to size.lts, and the imports that name it in Pad.qml, line.ts, qmldir; files outside . were not looked in
       wrote tsconfig.json
       1 files, 0 lowered, 0 kept
       3 files, 0 errors, 0 warnings

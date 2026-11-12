@@ -34,9 +34,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         self.expect(Kind::LCurly);
 
         // Add Return context, remove TopLevel context
+        // Ljós: what a function awaits and yields is its own, not that of a
+        // `match` around it (`qml/sugar.rs`).
+        let outer = (self.sugar.awaits.len(), self.sugar.yields.len());
         let (directives, statements) = self.context(Context::Return, Context::TopLevel, |p| {
             p.parse_directives_and_statements(/* in_ts_namespace_body */ false)
         });
+        self.sugar.awaits.truncate(outer.0);
+        self.sugar.yields.truncate(outer.1);
 
         self.expect_closing(Kind::RCurly, opening_span);
         FunctionBody::boxed(self.end_span(start), directives, statements, self)
@@ -275,6 +280,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         modifiers: &Modifiers,
     ) -> ArenaBox<'a, Function<'a>> {
         let ctx = self.ctx;
+        // Ljós: a function's `super` and `new.target` are its own, in its
+        // parameters too, not those of a `match` around it (`qml/sugar.rs`).
+        let supers = self.sugar.supers.len();
         // `new.target` is allowed in a function's parameters and body (but not arrow
         // functions, which are parsed via `parse_function_body` directly).
         self.ctx = self
@@ -291,6 +299,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         } else {
             None
         };
+        self.sugar.supers.truncate(supers);
         self.ctx = self
             .ctx
             .and_in(ctx.has_in())
@@ -500,6 +509,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     pub(crate) fn parse_yield_expression(&mut self) -> Expression<'a> {
         let start = self.cur_start();
         self.bump_any(); // advance `yield`
+        // Ljós: a `match` or `is` around it is a generator (`qml/sugar.rs`).
+        self.sugar.yields.push(start);
 
         let has_yield = self.ctx.has_yield();
         if !has_yield {

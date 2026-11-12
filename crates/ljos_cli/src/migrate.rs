@@ -10,7 +10,7 @@
 //!
 //! | To | What |
 //! |---|---|
-//! | stdout | `renamed <module> to <name>.lts, and the imports that name it in <files>` (or `would rename`) first, for each `.ts` module that uses Ljós's `match` or `is` (`ts-lts-syntax`), or `kept <module>: it would be renamed to <name>.lts, but <name>.lts is in the way`; then `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, and `scripts of <file> stay JavaScript: typed, ljos check finds N` where its scripts break the checker's rules, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
+//! | stdout | `renamed <module> to <name>.lts, and the imports that name it in <files>; files outside <directory> were not looked in` (or `would rename`) first, for each `.ts` module that uses Ljós's `match` or `is` (`ts-lts-syntax`), or `kept <module>: it would be renamed to <name>.lts, but <name>.lts is in the way`; then `lowered <file> (N edits)` (or `would lower`) for each file the pass lowers, then `wrote <module>` (or `would write`) for each module beside it the lowered file imports, and `scripts of <file> stay JavaScript: typed, ljos check finds N` where its scripts break the checker's rules, `kept <file>:<line>:<column>: <why>` for each it cannot lower whole, then `N files, M lowered, K kept` |
 //! | stderr | `<file>: <error>` for a file that could not be read or written, or a module that would overwrite another file, or a description of the program's types that could not be read (one found beside the files is named with its directory) |
 //!
 //! A file's constant `ListModel`s are written as typed lists, with their
@@ -123,8 +123,9 @@ impl Migrate {
                 files.push((path.clone(), at_of(root_of(&dir), &mut roots)));
             }
         }
+        let here = std::env::current_dir().ok().map(|dir| absolute(&dir));
         for (module, at) in &modules {
-            failed |= !rename_lts(&roots[*at], module, self.write);
+            failed |= !rename_lts(&roots[*at], here.as_deref(), module, self.write);
         }
         // Where the files a group may hold that were not named are looked
         // for: below each root of a file named, each read with that root's
@@ -147,7 +148,7 @@ impl Migrate {
         // import a directory by its path are, unless a root already holds
         // it. Only a file whose imports name a named file's directory is
         // read, all with the one project of that directory.
-        if let Some(here) = std::env::current_dir().ok().map(|dir| absolute(&dir))
+        if let Some(here) = here
             && !roots.iter().any(|root| here.starts_with(root))
         {
             let mut below = Vec::new();
@@ -579,15 +580,20 @@ fn key_below(root: &Path, file: &Path) -> Option<String> {
 }
 
 /// Renames `module`, a `.ts` module of the project at `root`, to `.lts`
-/// when it uses Ljós's syntax (`ts-lts-syntax`), and has each file below
-/// `root` that imports it import the new name. Each importer is written
-/// before the module is moved, so a failure leaves no import of a file
-/// that is not there. Whether nothing failed.
+/// when it uses Ljós's syntax (`ts-lts-syntax`), and has each file that
+/// imports it import the new name. Importers are looked for below the
+/// directory the command runs in, `here`, when `root` is in it, as a file
+/// beside the directory named may import the module; else below `root`.
+/// The output says which, as a file outside it is not changed. The module
+/// is renamed first, then its importers are written in the order of their
+/// paths; when one cannot be written, those written get their text back and
+/// the module its name, so a failure leaves the files as they were. Whether
+/// nothing failed.
 ///
 /// DECISION: a module whose `.lts` name is taken is not renamed and is
 /// said as kept, as `module-clash` and `ts-lts-syntax` say it in the
 /// check; it is not counted with the QML files kept.
-fn rename_lts(root: &Path, module: &Path, write: bool) -> bool {
+fn rename_lts(root: &Path, here: Option<&Path>, module: &Path, write: bool) -> bool {
     let Ok(text) = std::fs::read_to_string(module) else {
         eprintln!("{}: cannot be read", module.display());
         return false;
@@ -595,7 +601,8 @@ fn rename_lts(root: &Path, module: &Path, write: bool) -> bool {
     if ljos_compiler::rename::lts_syntax(&text).is_none() {
         return true;
     }
-    let Some(from) = key_below(root, module) else {
+    let base = here.filter(|here| root.starts_with(here)).unwrap_or(root);
+    let Some(from) = key_below(base, module) else {
         return true;
     };
     let to = ljos_compiler::rename::lts_key(&from);
@@ -609,56 +616,71 @@ fn rename_lts(root: &Path, module: &Path, write: bool) -> bool {
         return true;
     }
     let mut below = Vec::new();
-    if let Err(e) = files_below(root, imports_modules, &mut below) {
-        eprintln!("{}: {e}", root.display());
+    if let Err(e) = files_below(base, imports_modules, &mut below) {
+        eprintln!("{}: {e}", base.display());
         return false;
     }
-    let mut importers: Vec<(String, PathBuf, String)> = Vec::new();
+    // Each importer's key, path, text and text with the new name.
+    let mut importers: Vec<(String, PathBuf, String, String)> = Vec::new();
     for file in below {
-        let Some(key) = key_below(root, &file) else {
+        let Some(key) = key_below(base, &file) else {
             continue;
         };
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
         };
         if let Some(renamed) = ljos_compiler::rename::imports(&key, &text, &from, &to) {
-            importers.push((key, file, renamed));
+            importers.push((key, file, text, renamed));
         }
     }
     importers.sort_by(|a, b| a.0.cmp(&b.0));
     if write {
-        for (_, file, text) in &importers {
-            if let Err(e) = std::fs::write(file, text) {
-                eprintln!("{}: {e}", file.display());
-                return false;
-            }
-        }
         if let Err(e) = std::fs::rename(module, &target) {
             eprintln!("{}: {e}", module.display());
             return false;
         }
+        for (at, (_, file, _, renamed)) in importers.iter().enumerate() {
+            if let Err(e) = std::fs::write(file, renamed) {
+                eprintln!("{}: {e}", file.display());
+                for (_, file, text, _) in &importers[..at] {
+                    if let Err(e) = std::fs::write(file, text) {
+                        eprintln!("{}: {e}", file.display());
+                    }
+                }
+                if let Err(e) = std::fs::rename(&target, module) {
+                    eprintln!("{}: {e}", target.display());
+                }
+                return false;
+            }
+        }
     }
     let verb = if write { "renamed" } else { "would rename" };
-    // Each importer is shown as the module is, from the directory the
-    // command was given, whatever `root` was made absolute as.
+    // Each importer, and where they were looked for, is shown as the
+    // module is, from the directory the command was given, whatever
+    // `base` was made absolute as.
     let written = module.display().to_string();
     let given = written.strip_suffix(from.as_str());
     let shown: Vec<String> = importers
         .iter()
-        .map(|(key, file, _)| match given {
+        .map(|(key, file, _, _)| match given {
             Some(given) => format!("{given}{key}"),
             None => file.display().to_string(),
         })
         .collect();
-    if shown.is_empty() {
-        outln!("{verb} {} to {to_name}", module.display());
+    let looked = match given.map(|given| given.trim_end_matches('/')) {
+        Some("") => ".".to_string(),
+        Some(given) => given.to_string(),
+        None => base.display().to_string(),
+    };
+    let importers = if shown.is_empty() {
+        String::new()
     } else {
-        outln!(
-            "{verb} {} to {to_name}, and the imports that name it in {}",
-            module.display(),
-            shown.join(", ")
-        );
-    }
+        format!(", and the imports that name it in {}", shown.join(", "))
+    };
+    outln!(
+        "{verb} {} to {to_name}{importers}; files outside {looked} were not looked in",
+        module.display()
+    );
     true
 }
 
