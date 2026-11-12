@@ -429,11 +429,17 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if let Some(p) = parent.filter(|p| self.place[*p].component == at.component)
             && let Some(holder) = self.hostless(index, p)
         {
+            // `Object` is what a file of Ljós's API calls the plainest holder.
+            let article = if holder.starts_with(['A', 'E', 'I', 'O', 'U']) {
+                "an"
+            } else {
+                "a"
+            };
             self.diagnostics.push(Diagnostic::error(
                 Code::ControllerHost,
                 format!(
-                    "a `Controller` acts on the item it is declared in, and a `{holder}` is not \
-                     an item: declare it in one"
+                    "a `Controller` acts on the item it is declared in, and {article} `{holder}` \
+                     is not an item: declare it in one"
                 ),
                 self.span(object.type_name.span),
             ));

@@ -2578,7 +2578,7 @@ Controller declared inside another shares that one's host. One declared
 in a popup is hosted by the popup's content item, and moves to the one
 that replaces it, `detached` from the old and `attached` to the new, so
 that its gestures act on what is shown. A Controller
-outside an item (held by a `QtObject`) has no host and `attached` does
+outside an item (held by an `Object`) has no host and `attached` does
 not run; the checker says so in a file of Ljós's API
 (`controller-host`).
 
