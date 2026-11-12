@@ -3264,9 +3264,30 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 self.bind_ahead(declaration);
             }
         }
+        self.is_declared_twice(statements, locals, params);
+        let mut live = true;
+        for statement in statements {
+            live &= self.statement(statement);
+        }
+        self.locals.truncate(locals);
+        live
+    }
+
+    /// What an `is` in `statements` declares, and a name the block
+    /// declares itself (bound from `locals`), or a parameter where the
+    /// block is a function's or a `catch`'s (bound from `params`), or a
+    /// scope between declares: the file would not load, or the `is`'s
+    /// assignment would reach the other name.
+    pub(super) fn is_declared_twice(
+        &mut self,
+        statements: &[Statement<'a>],
+        locals: usize,
+        params: Option<usize>,
+    ) {
         // A `let` an `is` declares is the block's, as one written is: a
         // name the block declares itself, or a parameter where the block is
-        // a function's, would be declared twice, which does not load.
+        // a function's or a `catch`'s, would be declared twice, which does
+        // not load.
         for statement in statements {
             let Statement::VariableDeclaration(declaration) = statement else {
                 continue;
@@ -3305,18 +3326,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
         }
         self.shadowed_is(statements);
-        let mut live = true;
-        for statement in statements {
-            live &= self.statement(statement);
-        }
-        self.locals.truncate(locals);
-        live
     }
 
-    /// An `is` in a `switch`'s clauses, or in a `for`, whose name the
-    /// clauses or the `for` head declare too: what it binds is declared
-    /// before the `switch` or the `for`, so the assignment would reach the
-    /// inner name instead, in its dead zone where that has not run.
+    /// An `is` whose name a scope between it and where what it binds is
+    /// declared declares too (a `switch`'s clauses, a `for` head, a
+    /// `catch` parameter, a function's parameters, a `match` arm): the
+    /// assignment would reach that name instead, in its dead zone where
+    /// its declaration has not run, or a parameter or a `const`.
     fn shadowed_is(&mut self, statements: &[Statement<'a>]) {
         let mut declared: Vec<(&'a str, VariableDeclarationKind)> = Vec::new();
         for statement in statements {
@@ -3333,11 +3349,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if declared.is_empty() {
             return;
         }
-        let mut shadows = Shadows::default();
-        for statement in statements {
-            shadows.visit_statement(statement);
-        }
-        for shadow in shadows.found {
+        let found = {
+            let written = |at| self.desugared(at);
+            let mut shadows = Shadows::new(&written);
+            for statement in statements {
+                shadows.visit_statement(statement);
+            }
+            shadows.found
+        };
+        for shadow in found {
             let Some(&(_, kind)) = declared.iter().find(|(name, _)| *name == shadow.name) else {
                 continue;
             };
@@ -3357,6 +3377,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 ),
                 Between::For => format!(
                     "`{name}` is a name this `for` declares already, and an `is` in it declares what it binds before the `for`: bind another name"
+                ),
+                Between::Catch => format!(
+                    "`{name}` is a name this `catch` declares already, and an `is` in its parameter declares what it binds before the `try`: bind another name"
+                ),
+                Between::Params => format!(
+                    "`{name}` is a name this function's head declares already, and an `is` outside its block declares what it binds before the function: bind another name"
+                ),
+                Between::Arm => format!(
+                    "`{name}` is a name this `match` arm binds already, and an `is` in the arm declares what it binds before the `match`: bind another name"
                 ),
             };
             self.report(Code::TsIsBinding, message, shadow.span);
@@ -3454,7 +3483,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     /// Whether `declaration` is the `let x;` (or, for a `var` pattern,
     /// `var x;`) the desugar writes before a statement whose `is` binds
     /// `x`.
-    fn declared_by_is(&self, declaration: &VariableDeclaration<'a>) -> bool {
+    pub(super) fn declared_by_is(&self, declaration: &VariableDeclaration<'a>) -> bool {
         // Its names are the desugar's, written where the pattern names
         // them; a `var` keeps the pattern's own keyword.
         matches!(
@@ -3750,10 +3779,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let caught = match &statement.handler {
                     Some(handler) => {
                         let locals = self.locals.len();
+                        // The parameter is the block's, as a function's
+                        // are its body's: a `let` in it of the same name
+                        // does not load.
                         if let Some(param) = &handler.param {
-                            self.bind_pattern(&param.pattern, Ty::UNKNOWN, Binding::Let);
+                            self.bind_pattern(&param.pattern, Ty::UNKNOWN, Binding::Param);
                         }
+                        let params = self.params.replace(locals);
                         let live = self.stmts(&handler.body.body);
+                        self.params = params;
                         self.locals.truncate(locals);
                         live
                     }

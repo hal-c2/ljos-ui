@@ -594,6 +594,194 @@ Feature: Choosing a value with match, and testing one with is
         ljos: 2 errors
         """
 
+    Scenario: An is in a for head or a case test is in the scope between too
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function count(a: number): number {
+            for (let x = (a is let x) ? 1 : 0; x < 3; x++) { return x; }
+            return 0;
+          }
+          function first(xs: number[], ys: number[]): number {
+            for (const y of (xs is let y) ? xs : ys) { return y; }
+            return 0;
+          }
+          function pick(v: number, a: number): number {
+            switch (v) {
+              case (a is let x) ? 1 : 2: let x = 1; return x;
+            }
+            return 0;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:36: error: `x` is a name this `for` declares already, and an `is` in it declares what it binds before the `for`: bind another name [ts-is-binding]
+        Gauge.qml:8:40: error: `y` is a name this `for` declares already, and an `is` in it declares what it binds before the `for`: bind another name [ts-is-binding]
+        Gauge.qml:13:30: error: `x` is a name of this `switch`'s clauses already, and an `is` in them declares what it binds before the `switch`: bind another name [ts-is-binding]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: A catch's parameter is not what an is in its block may bind, as the two would be one name
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function caught(a: number): number {
+            try { throw 1; } catch (e) { if (a is let e) { return e; } }
+            return 0;
+          }
+          function message(a: number): number {
+            try { throw 1; } catch ({ message }) { if (a is let message) { return message; } }
+            return 0;
+          }
+          function given(a: number): number {
+            try { throw 1; } catch ({ m = a is let m }) { return 0; }
+            return 0;
+          }
+          function deeper(a: number): number {
+            try { throw 1; } catch (e) { { if (a is let e) { return e; } } }
+            return 0;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:55: error: `e` is a parameter already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        Gauge.qml:8:65: error: `message` is a parameter already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        Gauge.qml:12:52: error: `m` is a name this `catch` declares already, and an `is` in its parameter declares what it binds before the `try`: bind another name [ts-is-binding]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: Nested switches that both declare the name say the is once, at the inner one
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function inner(v: number, w: number, a: number): number {
+            switch (v) {
+              case 1: let x = 1;
+                switch (w) {
+                  case 2: let x = 2; if (a is let x) { return x; }
+                }
+            }
+            return 0;
+          }
+          function outer(v: number, w: number, a: number): number {
+            switch (v) {
+              case 1: let x = 1;
+                switch (w) {
+                  case 2: if (a is let x) { return x; }
+                }
+            }
+            return 0;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:7:51: error: `x` is a name of this `switch`'s clauses already, and an `is` in them declares what it binds before the `switch`: bind another name [ts-is-binding]
+        Gauge.qml:16:40: error: `x` is a name of this `switch`'s clauses already, and an `is` in them declares what it binds before the `switch`: bind another name [ts-is-binding]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A name a match arm binds is not what an is in its guard or its value may bind
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function guarded(v: number, a: number): number {
+            return match (v) { when let n and if (a is let n): n; default: 0; };
+          }
+          function valued(v: number, a: number): number {
+            return match (v) { when let n: (a is let n) ? n : 0; default: 0; };
+          }
+          function other(v: number, a: number): number {
+            return match (v) { when let n: (a is let m) ? m + n : 0; default: 0; };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:60: error: `n` is a name this `match` arm binds already, and an `is` in the arm declares what it binds before the `match`: bind another name [ts-is-binding]
+        Gauge.qml:7:54: error: `n` is a name this `match` arm binds already, and an `is` in the arm declares what it binds before the `match`: bind another name [ts-is-binding]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
+    Scenario: A function's parameter is not what an is in its parameters, or in an arrow's body that is not a block, may bind
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function defaulted(a: number): number {
+            function pick(x: number, b: boolean = a is let x): number { return b ? x : 0; }
+            return pick(1);
+          }
+          function arrow(a: number): boolean {
+            const test = (x: number): boolean => a is let x;
+            return test(1);
+          }
+          function named(a: number): number {
+            const f = function x(b: boolean = a is let x): number { return 1; };
+            return f();
+          }
+          function apart(a: number): boolean {
+            const test = (y: number): boolean => a is let x;
+            return test(1);
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:60: error: `x` is a name this function's head declares already, and an `is` outside its block declares what it binds before the function: bind another name [ts-is-binding]
+        Gauge.qml:8:59: error: `x` is a name this function's head declares already, and an `is` outside its block declares what it binds before the function: bind another name [ts-is-binding]
+        Gauge.qml:12:56: error: `x` is a name this function's head declares already, and an `is` outside its block declares what it binds before the function: bind another name [ts-is-binding]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
+        """
+
+    Scenario: A name a module imports or declares is not what an is at its top may bind
+      Given the file "other.lts":
+        """ts
+        export const other: number = 1
+        """
+      And the file "pick.lts":
+        """ts
+        import { other } from "./other.lts"
+        export const own: number = 3
+        const a: number = 7
+        if (a is let other) { }
+        if (a is let own) { }
+        if (a is let fresh) { }
+        export function run(): number { return 0 }
+        """
+      And the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        import "pick.lts" as Pick
+        Item {
+          property real picked: Pick.run()
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        pick.lts:4:22: error: `other` is a name of this block already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        pick.lts:5:22: error: `own` is a name of this block already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        3 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
   Rule: What the proposal leaves out is an error that says so
 
     Scenario: A name that is not in scope, an extractor and a relational pattern are errors

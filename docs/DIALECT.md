@@ -2168,12 +2168,17 @@ shares them.
   a jump enters at any clause, where a `let` written in one would be in
   its dead zone in the next; an `is` in a clause declares its names
   before the `switch`, its label too, in the block around it. A name the
-  block declares itself, or a parameter at a function's top, is
-  `ts-is-binding` at the name the pattern binds, as the two would be one
-  name. So is a name the `switch`'s clauses declare, or a `for` head
-  around the `is`: it would take the assignment, in its dead zone where
-  its declaration has not run. A `var` there clashes with what a `let`
-  binds, as one beside does, and is one variable with what a `var` binds.
+  block declares itself (a module's imports too), or a parameter at a
+  function's or a `catch`'s top, is `ts-is-binding` at the name the
+  pattern binds, as the two would be one name. So is a name a scope
+  between declares, which would take the assignment: the `switch`'s
+  clauses, a `for` head around the `is`, a `catch` parameter whose
+  default holds it, a function's parameters where it is in them or in an
+  arrow's body that is not a block, and the names a `match` arm binds,
+  where it is in the arm's guard or value. A `var` there clashes with
+  what a `let` binds, as one beside does, and is one variable with what a
+  `var` binds. Where scopes between nest, the innermost that declares the
+  name is the one said.
 
 `$is` is declared to `tsc` as a type guard of its subject (`$is<T>(s:
 unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:
