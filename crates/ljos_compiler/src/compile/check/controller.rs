@@ -5,7 +5,7 @@
 use qml_front::TypeOracle;
 use qml_syntax::{
     GetSpan,
-    js::{CallExpression, Expression, ObjectExpression, ObjectPropertyKind},
+    js::{CallExpression, Expression, ObjectExpression, ObjectPropertyKind, PropertyKind},
 };
 
 use super::ty::{Field, Kind, Param, Sig, Ty};
@@ -46,9 +46,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let mut properties = Vec::new();
         let mut bindings = None;
         let mut lifecycle = Vec::new();
+        self.spec_members(spec, "the spec");
         for (name, value, at) in members(spec) {
             match name {
                 "properties" => {
+                    self.spec_in_place(name, value);
                     let given = self.expr(value, None);
                     if let Kind::Record(fields) = self.arena.kind(given) {
                         properties = fields.to_vec();
@@ -73,6 +75,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let own = self
             .arena
             .intern(Kind::Record(properties.clone().into_boxed_slice()));
+        if let Some(value) = bindings {
+            self.spec_in_place("bindings", value);
+        }
         let bindings = match bindings.map(Expression::without_parentheses) {
             Some(Expression::ObjectExpression(object)) => Some(&**object),
             Some(other) => {
@@ -113,6 +118,50 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             self.expr(value, Some(want));
         }
         Ty::ERROR
+    }
+
+    /// Reports `properties` or `bindings` not written in place as an
+    /// object: the Controller's file is made from the members written in
+    /// the spec, and it would have none of those of an object made
+    /// elsewhere.
+    fn spec_in_place(&mut self, key: &str, value: &Expression<'a>) {
+        match value.without_parentheses() {
+            Expression::ObjectExpression(object) => self.spec_members(object, &format!("`{key}`")),
+            other => self.report(
+                Code::TsForbidden,
+                format!(
+                    "a controller's `{key}` is an object written in it, as `{key}: {{ … }}`: \
+                     the Controller is made from the members written there"
+                ),
+                other.span(),
+            ),
+        }
+    }
+
+    /// Reports each member of `object` that is not written `name: value`
+    /// (a spread, a computed name, a getter or a setter): the Controller
+    /// is made from the names written in the spec, and it would not have
+    /// that member.
+    fn spec_members(&mut self, object: &ObjectExpression<'a>, what: &str) {
+        for property in &object.properties {
+            let at = match property {
+                ObjectPropertyKind::SpreadProperty(spread) => spread.span,
+                ObjectPropertyKind::ObjectProperty(p)
+                    if p.computed || p.kind != PropertyKind::Init =>
+                {
+                    p.span
+                }
+                ObjectPropertyKind::ObjectProperty(_) => continue,
+            };
+            self.report(
+                Code::TsForbidden,
+                format!(
+                    "each member of a controller's {what} is written `name: value`: \
+                     the Controller is made from the names written there"
+                ),
+                at,
+            );
+        }
     }
 
     /// A function of the host and the Controller, returning anything.
