@@ -2360,8 +2360,9 @@ read it:
   checker, `ljos check --tsc`, the MCP tools, `ljos lsp` and ljos-web
   desugar first. The checker types the desugared script and reports at
   the input's spans; rules about how a person writes (`ts-no-null`,
-  `ts-forbidden`, `ts-no-var`) do not apply to the text the desugar
-  writes, rules about types do.
+  `ts-forbidden`, `ts-no-var`, and `ts-no-cast`, since the one cast the
+  desugar writes is `$nomatch`'s `as never`, §4.18) do not apply to the
+  text the desugar writes, rules about types do.
 - **The source keeps the syntax.** The formatter, `qml_edit` and Studio
   read and write the text as written, and must round-trip it (S5, S6).
 - **The parser.** `vendor/oxc_parser` reads `|>`, `%`, `match`, `when` and
