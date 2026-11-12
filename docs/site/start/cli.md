@@ -66,6 +66,8 @@ ljos check [OPTIONS] <DIRS>...
 - `--deny-missing`: Exit with status `1` if `--port` finds any unsupported or dropped APIs.
 - `--ledger <FILE>`: Path to `ledger/qtquick.toml` (auto-detected from the working directory by default).
 - `--limit <N>`: Stop after `<N>` QML files.
+- `--tsc`: Give the scripts to TypeScript as well, with Ljós's syntax compiled away, and report its findings at their place in your files. Runs `deno check`, or the `tsc` that `LJOS_TSC` names. See [Editor setup](./editors.md#checking-with-typescript-itself).
+- `--project <DIR>`: The project root, under which `.ljos/` holds the declarations of its `.lts` modules (default: the nearest directory upward with a `tsconfig.json`).
 
 ### Example
 
@@ -214,6 +216,14 @@ ljos mcp [OPTIONS]
 ljos mcp --project . --caps fs,run
 ```
 
+## `ljos lsp`
+
+Serves the language server protocol over standard input and output, for an editor: what the compiler finds in an open QML file, `.ts` or `.lts` module, at its place in the text, and the rename of a `.ts` module that uses Ljós's syntax to `.lts`. See [Editor setup](./editors.md).
+
+```sh
+ljos lsp
+```
+
 ## `ljos observe`
 
 Opens a graphical observer window attached to a running Ljós application that was started with `ljos run --mcp`. Displays processes, mailboxes, objects, logs, traces, the supervision tree, frames, memory, models, wakes, components, bindings, growth and design audits.
@@ -287,3 +297,4 @@ ljos bench Main.qml --runtime ljos --profile pi-zero --out target/bench
 - [Testing](./testing.md)
 - [MCP servers for agents](./mcp.md)
 - [Observer](./observe.md)
+- [Editor setup](./editors.md)

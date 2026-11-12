@@ -139,6 +139,7 @@ pub fn register(engine: &Engine) {
 - [Testing](./testing.md) for `tst_*.qml` suites, deterministic PNG renders and Gherkin scenarios.
 - [MCP servers for agents](./mcp.md) for the authoring server and live inspector tools.
 - [Observer](./observe.md) for inspecting processes, mailboxes, objects, memory and wakes with `ljos observe`.
+- [Editor setup](./editors.md) to connect your editor to `ljos lsp` and check scripts with TypeScript itself.
 
 ## See also
 

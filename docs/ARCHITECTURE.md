@@ -1549,10 +1549,11 @@ ljos_test, ljos_bdd  host the inspector in-process over transport-worker.
 
 | Tool | Does | Needs |
 |---|---|---|
-| `qml_check` | Parse and resolve files; structured diagnostics with optional fixes, paginated | — |
+| `qml_check` | Parse and resolve QML files and `.ts`/`.lts` modules, read desugared, with findings at their places in the files as written; structured diagnostics with optional fixes, paginated | — |
 | `qml_lint` | Lints, including the accessibility audit (section 14) and i18n lints | — |
 | `qml_format` | Format; returns a diff unless writing is allowed | `fs` to write |
 | `qml_edit_apply` | One structured edit (binding or object) through `qml_edit`; answers the splices unless writing is allowed | `fs` to write |
+| `module_rename_lts` | Rename a `.ts` module that uses Ljós's syntax to `.lts`, with the imports that name it (`ts-lts-syntax`'s fix); answers the rename unless writing is allowed | `fs` to write |
 | `blocks_list` | The project's functional blocks (ADR 0003) and their contracts, from qmldir `# block` comments and type dumps, paginated | — |
 | `qml_apply_fix` | Apply a diagnostic's fix (dry-run by default) | `fs` |
 | `type_lookup` | Type, property, signal, method and enum info, with the base chain, default property and attached types | — |
