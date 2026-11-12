@@ -62,7 +62,8 @@ fn main() {
 Once `holder` is exposed to QML (for example, through `App::context_property` or as an `ObjectId` property on a native controller), you can bind it to the `model` property of a `ListView`, `GridView`, `Repeater` or `Instantiator`:
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Item {
     width: 240
@@ -107,7 +108,8 @@ Under the hood, views read through the lower-level `ItemModel` trait (and `Engin
 In Ljós, a long list costs what is visible in the viewport, not what the model holds:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root

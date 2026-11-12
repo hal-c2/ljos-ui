@@ -16,7 +16,7 @@ Every `Item` has a `states` list and a `state` string property. When an item is 
 You enter a state either by assigning its name to `state` or by giving the `State` a boolean `when` binding. Leaving a state for `""` (or another state) restores the values and bindings the item had in the base state.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     id: root
@@ -28,7 +28,7 @@ Item {
         id: box
         width: 40
         height: 40
-        color: "#ff0000"
+        fill: "#ff0000"
     }
 
     states: [
@@ -36,17 +36,15 @@ Item {
             name: "wide"
             when: root.expanded
             PropertyChanges {
-                target: box
-                width: 160
-                color: "#0000ff"
+                box.width: 160
+                box.fill: "#0000ff"
             }
         },
         State {
             name: "tall"
             extend: "wide"
             PropertyChanges {
-                target: box
-                height: 90
+                box.height: 90
             }
         }
     ]
@@ -62,10 +60,11 @@ Key rules for states:
 
 ## `PropertyChanges`
 
-Inside a `State`, `PropertyChanges` specifies which properties or signal handlers change while the state is active. You can either set `target: id` or write `id.property: value` directly without a `target`:
+Inside a `State`, `PropertyChanges` specifies which properties or signal handlers change while the state is active. Each change names its object, as `id.property: value`:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -84,7 +83,7 @@ Item {
     Text {
         id: label
         text: "Caption"
-        font.pixelSize: 12
+        font.size: 12
         font.italic: true
     }
 
@@ -101,17 +100,16 @@ Item {
                 box.width: 80
                 box.height: root.dynamicHeight
                 box.border.width: 3
-                label.font.pixelSize: 20
+                label.font.size: 20
                 action.onClicked: root.log += "active "
             }
         },
         State {
             name: "snapshot"
             PropertyChanges {
-                target: box
                 explicit: true
                 restoreEntryValues: false
-                width: root.dynamicHeight
+                box.width: root.dynamicHeight
             }
         }
     ]
@@ -123,7 +121,7 @@ How `PropertyChanges` behaves:
 - **Underlying bindings stay alive**: While a state overrides a property, the property's base binding remains alive underneath. When the state is exited, the property immediately reflects the current value of its base binding.
 - **Bindings vs values**: A state applies plain values first and bindings after them, so if a state (or a state it extends) gives a property both a plain value and a binding, the binding wins.
 - **Options**: Setting `explicit: true` evaluates expressions in `PropertyChanges` once when the state is entered rather than installing a live binding. Setting `restoreEntryValues: false` leaves the changed values in place when the state is exited.
-- **Members, grouped objects, and handlers**: `PropertyChanges` can change individual fields of a value type (`label.font.pixelSize: 20`), properties reached through an alias or object property (`bar.back.opacity: 0.5`), or signal handlers (`action.onClicked: ...`, which replaces the object's own handler while the state is active and restores it on exit).
+- **Members, grouped objects, and handlers**: `PropertyChanges` can change individual fields of a value type (`label.font.size: 20`), properties reached through an alias or object property (`bar.back.opacity: 0.5`), or signal handlers (`action.onClicked: ...`, which replaces the object's own handler while the state is active and restores it on exit).
 - **Compiler tiers**: Expressions inside `PropertyChanges` are compiled through the same binding tiers (Tier 0 direct reads, Tier 1 register VM, and Tier 2 QuickJS) as regular property bindings.
 
 ## `AnchorChanges`, `ParentChange`, and `StateChangeScript`
@@ -188,10 +186,11 @@ Item {
 
 ## Conditional bindings with `Binding`
 
-The `Binding` element applies a value or expression to another object's property for as long as its `when` condition is `true` (or from creation if `when` is omitted), and restores the previous value or binding when `when` becomes `false` (including for `var` properties holding arrays or objects):
+The `Binding` element applies a value or expression to another object's property for as long as its `when` condition is `true` (or from creation if `when` is omitted), and restores the previous value or binding when `when` becomes `false` (including for `unknown` properties holding arrays or objects):
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -218,7 +217,7 @@ You can specify the target property either with `target: panel; property: "width
 An item's `transitions` list defines animations and actions that run when `state` changes from `from` to `to`:
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     id: root
@@ -229,15 +228,14 @@ Item {
         id: box
         width: 20
         height: 20
-        color: "#336699"
+        fill: "#336699"
     }
 
     states: [
         State {
             name: "expanded"
             PropertyChanges {
-                target: box
-                width: 140
+                box.width: 140
             }
         }
     ]

@@ -17,7 +17,8 @@ Rows can have different heights, and the total length of the list is estimated f
 A `ListView` can also display a `header` above the first row, a `footer` after the last row (accessible as `headerItem` and `footerItem`; removing the header destroys its item), a `highlight` that follows the current row, and section headers grouped by `section.property` and `section.criteria` (`ViewSection.FullString` or `ViewSection.FirstCharacter`). Each delegate can read its `index`, `model`, role names, and `required property` bindings, as well as the attached properties `ListView.view`, `ListView.isCurrentItem`, `ListView.section`, `ListView.previousSection`, and `ListView.nextSection`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Models
 
 ListView {
     width: 200
@@ -35,7 +36,7 @@ ListView {
         text: section
         height: 15
     }
-    highlight: Rectangle { color: "#ffcc00" }
+    highlight: Rectangle { fill: "#ffcc00" }
     delegate: Text {
         required property string name
         text: name
@@ -92,7 +93,8 @@ You can also position or query the view from script using `positionViewAtIndex`,
 `ListView` and `GridView` instantiate delegates only for the items near the visible area. Even with 100,000 rows in a `ListView` or 30,000 cells in a `GridView`, only a handful of delegates exist at any time, and scrolling far down destroys old delegates rather than letting them pile up.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root

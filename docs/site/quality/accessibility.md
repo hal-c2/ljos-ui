@@ -64,17 +64,19 @@ ApplicationWindow {
 - **`a11y-duplicate-name` (Warning, runtime):** Never give two actionable sibling controls the same name (such as two adjacent `Retry` buttons). Name each after what it retries (`Retry upload` and `Retry download`).
 - **`a11y-ambiguous-name` (Warning, runtime):** When a button appears on every row of a list or table, include the row's subject in its accessible name so screen reader users browsing a list of controls can tell them apart:
 
-```qml
-import QtQuick
-import QtQuick.Controls
+```qml group=invoices
+import Ljos.Ui
+import "Main.rows.ts" as Rows
+import Ljos.Controls.Basic
 
 ListView {
     width: 320
     height: 240
-    model: ListModel {
-        ListElement { title: "Invoice_Q1.pdf" }
-        ListElement { title: "Invoice_Q2.pdf" }
-    }
+    readonly property list<Rows.Row> rows: [
+        { title: "Invoice_Q1.pdf" },
+        { title: "Invoice_Q2.pdf" }
+    ]
+    model: rows
 
     delegate: ItemDelegate {
         required property string title
@@ -91,6 +93,15 @@ ListView {
             ToolTip.visible: hovered || visualFocus
         }
     }
+}
+```
+
+The type of a row is `Main.rows.ts`, beside `Main.qml`:
+
+```ts file=Main.rows.ts group=invoices
+// The rows of the constant ListModels of Main.qml (docs/DIALECT.md §4.8).
+export interface Row {
+  readonly title: string;
 }
 ```
 

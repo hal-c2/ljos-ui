@@ -6,7 +6,7 @@ order: 6
 ---
 # Windows
 
-Use `Window` (`QtQuick.Window`) for a plain top-level window surface, or `ApplicationWindow` (`QtQuick.Controls`) when you want a top-level window that provides a `header`, a `footer`, and automatic `font` and `palette` inheritance for controls inside it.
+Use `Window` (`Ljos.Ui`) for a plain top-level window surface, or `ApplicationWindow` (`Ljos.Controls`) when you want a top-level window that provides a `header`, a `footer`, and automatic `font` and `palette` inheritance for controls inside it.
 
 ## `Window`, visibility, and size limits
 
@@ -26,8 +26,7 @@ You can change visibility by setting `visible` or `visibility`, or by calling `s
 Write this as `Main.qml` and run `ljos check` on its directory:
 
 ```qml
-import QtQuick
-import QtQuick.Window
+import Ljos.Ui
 
 Window {
     width: 320
@@ -52,8 +51,8 @@ Window {
 Every control inside an `ApplicationWindow` inherits the window's `font` and `palette`, and the window background is filled with `palette.window`.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 320
@@ -86,8 +85,7 @@ ApplicationWindow {
 Calling `close()` or clicking the window's close button emits `closing(close)` with a `CloseEvent` before hiding the window. If your handler sets `close.accepted = false`, the window stays open; a subsequent close request emits `closing` again. Closing a window that was never shown does not emit `closing`, and a closed window can be shown again later with `show()`.
 
 ```qml
-import QtQuick
-import QtQuick.Window
+import Ljos.Ui
 
 Window {
     width: 320
@@ -105,7 +103,7 @@ Window {
 }
 ```
 
-Keep in mind that closing a window only hides it—it does not exit the application. Call `Qt.quit()` when you want the application to terminate.
+Keep in mind that closing a window only hides it—it does not exit the application. Call `App.quit()` when you want the application to terminate.
 
 When an application has multiple windows, only the active window (`Qt.application.active`, `Qt.application.state`) gives `activeFocus` to its focused item. Declaring a `Window` inside another `Window` makes the inner window transient for the outer one (`transientParent`): it is a separate top-level window and is not shown automatically when the outer window is shown, but while the transient window holds keyboard focus, the parent window remains active. A `Dialog` has no position of its own: centre it by setting `anchors.centerIn: parent` (inside an `ApplicationWindow`, the window's content item) or by giving it `x` and `y`. Open popups stay in the window where they were opened and move with their parent item.
 

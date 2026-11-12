@@ -6,7 +6,7 @@ order: 4
 ---
 # PathView, TableView, TreeView, and Flickable
 
-Beyond linear lists and uniform grids, `QtQuick` provides specialised views and scrolling containers: `PathView` distributes delegates along a geometric path, `TableView` lays out two-dimensional rows and columns, `TreeView` displays expandable hierarchical rows, and `Flickable` scrolls any child content larger than its viewport.
+Beyond linear lists and uniform grids, Ljós provides specialised views and scrolling containers: `PathView` distributes delegates along a geometric path, `TableView` lays out two-dimensional rows and columns, `TreeView` displays expandable hierarchical rows, and `Flickable` scrolls any child content larger than its viewport.
 
 ## PathView
 
@@ -42,7 +42,7 @@ Three of the four rows sit on the straight line at once, and the current row tak
 
 ## TableView and TableModel
 
-A `TableView` (`QtQuick`) displays a grid of cells from a `TableModel` (`import Qt.labs.qmlmodels`, with one `TableModelColumn` per column and data in `rows`) or from a single-column model such as an array, a number, or a `ListModel`. In a `TableModel`, each delegate reads its cell value via `display` or through `required property` bindings; if the model is an array of objects, each delegate receives its object. Appending rows to the model updates the table, and a delegate can write back to its role in the model.
+A `TableView` displays a grid of cells from a `TableModel` (`import Qt.labs.qmlmodels`, with one `TableModelColumn` per column and data in `rows`) or from a single-column model such as an array, a number, or a `ListModel`. In a `TableModel`, each delegate reads its cell value via `display` or through `required property` bindings; if the model is an array of objects, each delegate receives its object. Appending rows to the model updates the table, and a delegate can write back to its role in the model.
 
 ```qml
 import QtQuick
@@ -72,7 +72,7 @@ Watch out for sizing defaults: if a cell delegate has no `implicitWidth` or `imp
 
 ## TreeView and TreeModel
 
-A `TreeView` (`QtQuick`) displays hierarchical data, such as a `TreeModel` (`import Qt.labs.qmlmodels`) whose `rows` contain nested `rows`. At first, `TreeView` shows only its top-level rows. Every cell in the table has a delegate, and the first column acts as the tree node.
+A `TreeView` displays hierarchical data, such as a `TreeModel` (`import Qt.labs.qmlmodels`) whose `rows` contain nested `rows`. At first, `TreeView` shows only its top-level rows. Every cell in the table has a delegate, and the first column acts as the tree node.
 
 Each delegate can declare `required property` bindings for `depth`, `expanded`, `hasChildren`, `isTreeNode`, `treeView`, and the column role (such as `display`). You can expand and collapse branches from script with `toggleExpanded()`, `expandRecursively()`, `collapseRecursively()`, and `expandToIndex()`, and navigate cells with the arrow keys.
 
@@ -110,14 +110,14 @@ TreeView {
 A `Flickable` scrolls child items across a viewport. Any visual item you declare inside a `Flickable` is parented to `contentItem`, which has size `contentWidth` by `contentHeight` (defaulting to the `Flickable`'s own width and height if unset).
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Flickable {
     width: 200
     height: 200
     contentWidth: 200
     contentHeight: 600
-    Rectangle { width: 200; height: 600; color: "#cde" }
+    Rectangle { width: 200; height: 600; fill: "#cde" }
 }
 ```
 

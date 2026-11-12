@@ -17,7 +17,7 @@ Form files ending in `.ui.qml`, as visual design tools write them, such as `Pane
 
 ```qml file=PanelForm.ui.qml group=panel
 // PanelForm.ui.qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     property alias actionButton: button
@@ -27,14 +27,14 @@ Item {
         id: button
         width: 80
         height: 32
-        color: "#336699"
+        fill: "#336699"
     }
 }
 ```
 
 ```qml group=panel
 // Panel.qml
-import QtQuick
+import Ljos.Ui
 
 PanelForm {
     level: 2
@@ -47,7 +47,8 @@ PanelForm {
 You can declare reusable components inside a `.qml` file using the `component <Name>: <BaseType> { ... }` syntax. Inline components can extend built-in types or file components, declare their own properties and default aliases, and be instantiated anywhere in the file or tested with `instanceof`:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Item {
     id: root
@@ -57,13 +58,13 @@ Item {
     component Tile: Rectangle {
         width: 40
         height: 40
-        color: "#336699"
+        fill: "#336699"
     }
 
     Row {
         spacing: 8
         Tile {}
-        Tile { color: "#4c99e5" }
+        Tile { fill: "#4c99e5" }
     }
 }
 ```
@@ -73,7 +74,8 @@ Item {
 A component can mark any property as `required`:
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Rectangle {
     required property string title
@@ -93,10 +95,11 @@ When a component has required properties, every caller that instantiates it must
 
 ## `Component` and `Loader`
 
-An inline `Component { ... }` block wraps a QML object tree as a factory without instantiating it immediately. A `Loader` instantiates a single item from either a `sourceComponent` or a `source` URL, and destroys the item when `active` becomes `false` or `sourceComponent` is reset to `undefined`:
+An inline `Component { ... }` block wraps a QML object tree as a factory without instantiating it immediately. A `Loader` instantiates a single item from either a `component` or a `source` URL, and destroys the item when `active` becomes `false` or `component` is reset to `undefined`:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -109,7 +112,7 @@ Item {
         Rectangle {
             width: 60
             height: 24
-            color: "#336699"
+            fill: "#336699"
             Component.onCompleted: root.events += "made "
             Component.onDestruction: root.events += "gone "
         }
@@ -117,7 +120,7 @@ Item {
 
     Loader {
         id: loader
-        sourceComponent: badge
+        component: badge
         onLoaded: root.events += "loaded "
     }
 

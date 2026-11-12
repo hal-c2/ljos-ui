@@ -22,14 +22,14 @@ A `PropertyAnimation` defaults to `duration: 250`, `loops: 1`, `running: false`,
 When you declare an animation directly on a property using `on <property>` (a value source), it starts automatically as soon as the object exists unless you set `running: false`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Rectangle {
-    width: 200; height: 60; color: "#eeeeee"
+    width: 200; height: 60; fill: "#eeeeee"
 
     Rectangle {
         id: knob
-        width: 40; height: 40; y: 10; color: "#2060a0"
+        width: 40; height: 40; y: 10; fill: "#2060a0"
     }
 
     NumberAnimation on x {
@@ -51,21 +51,21 @@ Attach a `Behavior on <property>` to animate every subsequent change to that pro
 - Setting `enabled: false` on the `Behavior`, or leaving it without a child animation, applies new values immediately.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Rectangle {
-    width: 200; height: 100; color: "#eeeeee"
+    width: 200; height: 100; fill: "#eeeeee"
 
     Rectangle {
         id: knob
         x: 10; y: 30
-        width: 40; height: 40; color: "#2060a0"
+        width: 40; height: 40; fill: "#2060a0"
         Behavior on x {
             NumberAnimation { duration: 300; easing.type: Easing.OutCubic }
         }
     }
 
-    MouseArea {
+    PointerArea {
         anchors.fill: parent
         Accessible.role: Accessible.Button
         Accessible.name: "Move the square"
@@ -87,20 +87,20 @@ For physics-driven or velocity-capped movement:
 - **`SmoothedAnimation`**: moves towards `to` at most at `velocity` (default `200`, `duration: -1`), accelerating at the start and easing over `maximumEasingTime` (`reversingMode` can be `SmoothedAnimation.Eased`, `Immediate` or `Sync`). A `velocity` of `0` leaves the property where it is.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Rectangle {
-    width: 200; height: 60; color: "#eeeeee"
+    width: 200; height: 60; fill: "#eeeeee"
 
     Rectangle {
         id: ball
-        y: 20; width: 20; height: 20; radius: 10; color: "#308030"
+        y: 20; width: 20; height: 20; radius: 10; fill: "#308030"
         Behavior on x {
             SpringAnimation { spring: 3; damping: 0.2 }
         }
     }
 
-    MouseArea {
+    PointerArea {
         anchors.fill: parent
         Accessible.role: Accessible.Button
         Accessible.name: "Send the ball here"
@@ -116,10 +116,10 @@ To combine animations or drive them manually:
 - **`FrameAnimation`, `AnimationController` and `SpriteSequence`**: `FrameAnimation` (`frame`, `elapsedTime`, `reset()`) triggers once per frame while running; `AnimationController` drives a child `animation` to an explicit `progress` clamped between `0` and `1`; `SpriteSequence` steps through `Sprite` items towards `goal`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Rectangle {
-    width: 20; height: 20; radius: 10; color: "#c03030"
+    width: 20; height: 20; radius: 10; fill: "#c03030"
 
     SequentialAnimation on opacity {
         loops: Animation.Infinite

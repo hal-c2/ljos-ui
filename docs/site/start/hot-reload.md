@@ -68,10 +68,10 @@ When an object matches its counterpart from before the save, Ljós carries its l
 - **Pictures:** When you save an image file (such as a `.png` or `.jpg`) under the project, the image cache drops the old entry after the quiet window and every `Image`, `BorderImage` and `AnimatedImage` using that file or resource URL reloads the picture without reloading the QML tree.
 - **Rust state:** Native Rust types that implement `Migrate { VERSION, snapshot, migrate }` or register properties with `register_reload_state` carry their state across reloads. If `migrate` fails, the object remounts with its default values and reports the failure.
 
-For example, if you run this file, click the area to set `label.text = "clicked"`, and then save a change to `label`'s default `text` and `font.pixelSize`:
+For example, if you run this file, click the area to set `label.text = "clicked"`, and then save a change to `label`'s default `text` and `font.size`:
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200
@@ -80,10 +80,10 @@ Item {
     Text {
         id: label
         text: "initial"
-        font.pixelSize: 14
+        font.size: 14
     }
 
-    MouseArea {
+    PointerArea {
         Accessible.role: Accessible.Button
         Accessible.name: "Change label"
         anchors.fill: parent
@@ -92,7 +92,7 @@ Item {
 }
 ```
 
-After saving `text: "updated"` and `font.pixelSize: 24` on `label`, `label.text` remains `"clicked"` (because script-assigned values win over literal defaults), while `label.font.pixelSize` updates to `24`.
+After saving `text: "updated"` and `font.size: 24` on `label`, `label.text` remains `"clicked"` (because script-assigned values win over literal defaults), while `label.font.size` updates to `24`.
 
 ## Lifecycle signals and resetting state
 
@@ -100,7 +100,8 @@ After saving `text: "updated"` and `font.pixelSize: 24` on `label`, `label.text`
 - `Component.onReloaded` is a development-only signal handler that runs on preserved objects after each reload when you need custom refresh logic:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -113,7 +114,7 @@ Item {
 
 ```qml
 pragma LjosReload: reset
-import QtQuick
+import Ljos.Ui
 
 Item {
     id: root

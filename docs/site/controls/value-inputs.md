@@ -67,8 +67,9 @@ Pressing on a `ComboBox` does not open the popup until you release the pointer o
 When `editable` is true, `ComboBox` holds a text field whose `editText` starts as the current row's text and follows it. Typing a prefix of an existing row completes it (and you can search rows with `find()`), while pressing Return emits `accepted` (choosing an item emits `activated`). Typing text that matches no row leaves no row current.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -95,8 +96,9 @@ Holding an up or down button on a `SpinBox` steps repeatedly. By default, number
 `TextField` wraps a single-line `TextInput` with a `background` and `placeholderText`. In the Basic style, an empty `TextField` is `200 × 40` with `padding: 6` and `leftPadding: 10`; with `background: null`, it sizes itself to the wider of its `text` or `placeholderText` and the height of one line plus padding. `placeholderText` remains visible while `text` is empty (even when the field has keyboard focus) and hides as soon as text is entered. Clicking (press and release) or pressing and dragging gives the field keyboard focus—a press alone without movement or release does not. Double-clicking selects a word, dragging selects a range (`selectedText`, `selectByMouse`), and text wider than the field scrolls horizontally while clipping to the field's content area (leaving the `background` under the padding intact). A `readOnly` field still accepts keyboard focus (`activeFocusOnTab`) but hides the cursor.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -120,8 +122,9 @@ Column {
 `TextArea` wraps a multi-line `TextEdit` with a `background` and `placeholderText`. Its implicit size grows with its text, placeholder, and line count. When `wrapMode` is set (such as `TextEdit.Wrap`), long lines wrap, and when placed as the single child of a `ScrollView`, the `TextArea` matches the view's width and scrolls vertically. Keep in mind that pressing the Tab key inside a focused `TextArea` inserts a tab character rather than moving focus to the next control.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     width: 240

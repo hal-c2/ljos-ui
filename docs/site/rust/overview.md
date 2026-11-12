@@ -130,7 +130,8 @@ A runaway script, a failed binding or a Rust panic in a handler should not freez
 You can wrap any part of your QML tree in an `ErrorBoundary` to catch faults in its children and show a fallback component:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 import Ljos
 
 Item {
@@ -152,7 +153,7 @@ Item {
             Text {
                 text: "Line " + boundary.fault.line
             }
-            MouseArea {
+            PointerArea {
                 Accessible.role: Accessible.Button
                 Accessible.name: "Retry"
                 width: 80
@@ -163,7 +164,7 @@ Item {
 
         Rectangle {
             anchors.fill: parent
-            color: "steelblue"
+            fill: "steelblue"
         }
     }
 }

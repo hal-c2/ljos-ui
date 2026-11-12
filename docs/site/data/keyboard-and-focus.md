@@ -6,7 +6,7 @@ order: 6
 ---
 # Keyboard Input, Shortcuts, and Focus
 
-Keyboard input in `QtQuick` flows to the item with `activeFocus`. You control which item receives key events using `focus`, `FocusScope`, `activeFocusOnTab`, and `KeyNavigation`, handle raw key presses and releases with the attached `Keys` object, and bind chord sequences across the window with `Shortcut`.
+Keyboard input flows to the item with `activeFocus`. You control which item receives key events using `focus`, `FocusScope`, `activeFocusOnTab`, and `KeyNavigation`, handle raw key presses and releases with the attached `Keys` object, and bind chord sequences across the window with `Shortcut`.
 
 ## Focus, FocusScope, and the Tab order
 
@@ -83,7 +83,8 @@ A key press or release starts at the item with `activeFocus` and bubbles up thro
 The attached `Keys` object provides specific key signals (which run before the general `Keys.onPressed` handler), `Keys.onPressed`, `Keys.onReleased`, `Keys.onShortcutOverride`, `Keys.enabled`, `Keys.priority` (`Keys.BeforeItem` by default, or `Keys.AfterItem`), and `Keys.forwardTo`.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Item {
     id: root

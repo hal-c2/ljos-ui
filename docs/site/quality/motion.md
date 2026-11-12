@@ -44,8 +44,8 @@ Never use a visible duration below `limits::motion::MIN_VISIBLE_MS` (`50 ms`), w
 - **Use interruptible animations:** `Behavior` and `SpringAnimation` retarget smoothly when the user acts mid-animation. Keep springs well damped (damping ratio at least `limits::motion::SPRING_MIN_DAMPING_RATIO`, no bounce on controls or panels), and do not use springs for colour or opacity.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 360
@@ -122,8 +122,9 @@ On Ljós, the runtime enforces reduced motion across every animation even if a c
 A component can also gate its own motion. Its file then says what it does under reduced motion, to a reader and to any runtime that leaves the transition logic to the application. Include an explicit opacity fade and gate spatial motion and decorative loops on `motionPreference`:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 360
@@ -159,7 +160,7 @@ ApplicationWindow {
 
         contentItem: Label {
             text: qsTr("Fades in without moving when reduced motion is enabled.")
-            wrapMode: Text.Wrap
+            wrap: Text.Wrap
         }
     }
 }
@@ -191,8 +192,8 @@ ApplicationWindow {
 Animating `height` triggers `motion-layout-property` and relayouts the window on every frame. Instead, clip the container and animate `y` on the inner item:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 360
@@ -224,7 +225,7 @@ ApplicationWindow {
             Label {
                 width: parent.width
                 text: qsTr("Slides smoothly without recalculating layout every frame.")
-                wrapMode: Text.Wrap
+                wrap: Text.Wrap
             }
         }
     }

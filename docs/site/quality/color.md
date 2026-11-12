@@ -71,7 +71,7 @@ Dark mode is not an inverted light mode:
 With `import Ljos.Design`, the `Colors` singleton adapts automatically to the system colour scheme and contrast setting:
 
 ```qml
-import QtQuick
+import Ljos.Ui
 import Ljos.Design
 
 Item {
@@ -99,8 +99,8 @@ Text must stand out against its background across every colour scheme and contra
 
 ```qml
 // Good: palette.base and palette.text are paired to pass contrast in every scheme
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 320
@@ -110,7 +110,7 @@ ApplicationWindow {
 
     Rectangle {
         anchors.fill: parent
-        color: palette.base
+        fill: palette.base
 
         Label {
             anchors.centerIn: parent
@@ -126,8 +126,8 @@ ApplicationWindow {
 Interactive boundaries, text field frames, checkbox and switch indicators, slider grooves and handles, focus rings, and icon-only button icons that your application draws must have at least **3:1** contrast (`limits::NONTEXT_CONTRAST`, APCA `limits::APCA_NONTEXT_LC`) against adjacent pixels.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 320
@@ -140,7 +140,7 @@ ApplicationWindow {
         width: 240
         Accessible.name: qsTr("Search query")
         background: Rectangle {
-            color: palette.base
+            fill: palette.base
             border.color: palette.mid
             border.width: 1
             radius: 4
@@ -197,8 +197,8 @@ ApplicationWindow {
 - **`color-surface-merge`:** An open popup must stand apart from the surface behind it through a colour step (at least `limits::SURFACE_MIN_DELTA_E` in OKLab), a border, or a shadow.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 320
@@ -214,7 +214,7 @@ ApplicationWindow {
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
 
         background: Rectangle {
-            color: palette.base
+            fill: palette.base
             border.color: palette.mid
             border.width: 1
             radius: 6
@@ -222,7 +222,7 @@ ApplicationWindow {
 
         contentItem: Label {
             text: qsTr("Popup surface separated by a step and border.")
-            wrapMode: Text.Wrap
+            wrap: Text.Wrap
         }
     }
 }

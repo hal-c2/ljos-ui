@@ -23,8 +23,7 @@ Each `ShapePath` has defaults `fillColor: "#ffffff"`, `strokeColor: "#ffffff"` w
 Inside a `ShapePath` (or standalone `Path`), build geometry from `PathMove`, `PathLine`, `PathQuad`, `PathCubic`, `PathArc`, `PathAngleArc`, `PathCurve`, `PathPolyline`, `PathMultiline`, `PathRectangle` (with a corner radius clamped to half the shorter side, optionally bevelled) and `PathSvg` (which parses SVG `path` data up to the first syntax error and logs the position of any mistake).
 
 ```qml
-import QtQuick
-import QtQuick.Shapes
+import Ljos.Ui
 
 Item {
     width: 200; height: 120

@@ -45,14 +45,14 @@ Rectangle {
 
 The handler is TypeScript. Writing `if (root.count == 3)` in it stops `ljos check` with ``error: `==` converts what it compares; write `===` [ts-loose-equality]``. Every program the checker accepts is valid TypeScript with the same meaning, so `tsc`, editors and coding agents work on it as they do on any TypeScript.
 
-Files that import `QtQuick` and the other modules existing QML uses run too, with their scripts in JavaScript. Most examples in these pages are written that way, because Ljós's own modules do not yet cover every type. [Bringing existing QML](porting-from-qt.md) explains how such a file runs and how `ljos migrate` moves it to Ljós's API.
+Files that import `QtQuick` and the other modules existing QML uses run too, with their scripts in JavaScript. A few examples in these pages are still written that way, where Ljós's own modules do not yet have a type they use. [Bringing existing QML](porting-from-qt.md) explains how such a file runs and how `ljos migrate` moves it to Ljós's API.
 
 ## Objects and the tree
 
 A QML file defines a single root object and the tree of child objects nested inside it. Every file begins with its `import` statements, followed by the root object declaration. Inside an object's braces, you write property assignments, property declarations, signals, JavaScript functions, and child objects.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     id: root
@@ -63,15 +63,15 @@ Item {
         id: box
         width: 50
         height: 50
-        color: "#336699"
+        fill: "#336699"
     }
 
     Text {
         id: label
         x: box.width + 10
         text: "Ready"
-        font.bold: true
-        font.pixelSize: 16
+        font.weight: Font.Bold
+        font.size: 16
     }
 }
 ```
@@ -96,7 +96,8 @@ When an expression reads an unqualified name, Ljós resolves it in a fixed order
 A component written inside another, such as an inline delegate inside a `Repeater`, can read and assign to names belonging to the component around it. If the file starts with `pragma ComponentBehavior: Bound`, outer-context lookup is restricted so the component only sees names it declares or receives through required properties.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -118,7 +119,9 @@ Item {
 The name `parent` depends on the type of object it is read from. An `Item` has a visual `parent` property, and a `Timer` has a `parent` property that points to the object it is declared in. A plain `QtObject` has no `parent` property of its own, so reading `parent` inside a `QtObject` looks further out and resolves to `parent` on the root object of the file.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -142,7 +145,7 @@ In a script expression, a QML type name is also a value that can appear on the r
 Values written directly in QML source are checked against their property's type when the file is read. Assigning `"tall"` to `height`, `1` to a `bool` property, `2.5` to an `int` property, or a primitive to a `list` property stops the file from loading and reports the line and column of the mistake.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 120

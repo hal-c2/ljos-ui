@@ -66,7 +66,9 @@ A QML singleton is a `.qml` file that begins with `pragma Singleton` and is regi
 ```qml
 // Theme.qml
 pragma Singleton
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
 
 QtObject {
     enum Mode { Light, Dark }
@@ -79,7 +81,8 @@ QtObject {
 
 ```qml
 // Main.qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Item {
     width: 200
@@ -90,7 +93,7 @@ Item {
     Rectangle {
         anchors.fill: parent
         anchors.margins: parent.marginSize
-        color: Theme.accent
+        fill: Theme.accent
     }
 }
 ```

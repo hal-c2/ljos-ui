@@ -17,8 +17,9 @@ Use container controls to group items, add headers or scroll bars, and switch be
 Write this as `Main.qml` and run `ljos check` on its directory:
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -65,8 +66,8 @@ By default (`closePolicy`), a non-modal popup closes when the user presses outsi
 `Dialog` adds a bold `title` header and a `standardButtons` footer (such as `Dialog.Ok` and `Dialog.Cancel`), starting with `title: ""`, `standardButtons: 0`, and `result: 0`. If a dialog has neither a title nor buttons, neither bar is shown; when closed, neither bar contributes to its size. Calling `accept()` sets `result` to `1`, emits `accepted`, closes the dialog, and emits `closed`; `reject()` does the same with `rejected`, and `done(result)` closes the dialog with any integer `result` you pass.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 Item {
     width: 300
@@ -107,8 +108,9 @@ Item {
 `SwipeView` lays out its pages side by side (horizontal and `interactive: true` by default, with configurable `orientation`), sizing each page to the view. Setting `currentIndex` or swiping past the threshold moves to the target page, whereas a short swipe springs back. Binding `currentIndex` between a `TabBar` and a `SwipeView` keeps them in step:
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     width: 300
@@ -158,7 +160,7 @@ Column {
 On macOS a `MenuBar` is the system's menu bar: it takes no room in its window, and the active window's bar is the one shown. Items titled "About…", "Settings…" or "Preferences…", and "Quit" or "Exit", move to the application menu. macOS lists the application's windows in the menu titled "Window". When that title is translated, say which menu it is with `SystemMenu.role` from `import Ljos`; such a menu is shown even when it has no items of its own:
 
 ```qml
-import QtQuick.Controls
+import Ljos.Controls.Basic
 import Ljos
 
 Menu {
@@ -172,8 +174,8 @@ Menu {
 `Qt.labs.platform` has a `MenuBar` of the system's own, with `Menu`, `MenuItem` and `MenuSeparator`, for any window, a plain `Window` too. On macOS it is the system's menu bar, showing the active window's bar. A `MenuItem` takes `text`, `shortcut` (`Ctrl` is Command, `Meta` is Control), `enabled`, `visible`, `checkable`, `checked` and `role`, and emits `triggered` when chosen there. `MenuItem.AboutRole`, `PreferencesRole` and `QuitRole` move an item to the application menu whatever its text, and `NoRole` keeps it in its menu. Its `Menu` takes `SystemMenu.role` as well, to say which menu lists the windows. Where the system has no menu bar of its own, as on Linux and Windows, the bar shows nothing.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 Item {
     width: 300

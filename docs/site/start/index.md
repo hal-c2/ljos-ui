@@ -83,10 +83,10 @@ Interactive controls expose their role and accessible name through AccessKit, an
 
 ### Bring existing QML
 
-QML you already have runs on Ljós, so an app you already have is a place to start. Files that import `QtQuick`, `QtQuick.Controls`, `QtQuick.Layouts`, `QtQml.Models` and the other common modules compile and run as they are written:
+An app you already have in QML is a place to start: it runs on Ljós as it is written, and `ljos migrate` rewrites it in Ljós's own API. A label in a frame comes out as:
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Rectangle {
     width: 200
@@ -96,13 +96,13 @@ Rectangle {
     Text {
         anchors.centerIn: parent
         text: "Halló"
-        font.bold: true
-        horizontalAlignment: Text.AlignHCenter
+        font.weight: Font.Bold
+        align: Text.AlignHCenter
     }
 }
 ```
 
-`ljos migrate` then rewrites such files in Ljós's own API. [Bringing existing QML](../language/porting-from-qt.md) covers the whole path.
+[Bringing existing QML](../language/porting-from-qt.md) covers the whole path: how such a file runs, and what `ljos migrate` changes in it.
 
 ### Rust native types
 

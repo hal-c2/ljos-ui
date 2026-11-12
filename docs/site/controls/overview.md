@@ -6,7 +6,7 @@ order: 1
 ---
 # Controls Overview
 
-Controls are the ready-made parts of an interface: buttons, text fields, sliders, menus, panes and windows. A file of Ljós's own API imports them from `Ljos.Controls`. A file that imports `QtQuick.Controls` or one of its style modules gets those styles' controls instead, and you can build your own controls on the `Control` base type in either.
+Controls are the ready-made parts of an interface: buttons, text fields, sliders, menus, panes and windows. A file imports them from `Ljos.Controls`, which draws them in Ljós's own style, or from `Ljos.Controls.Basic`, which draws them in the Basic style, as most examples on these pages do. You can build your own controls on the `Control` base type in either.
 
 ## Ljós's own controls
 
@@ -92,8 +92,8 @@ A `Control` with no parts starts with an implicit size of `0 × 0`, `padding: 0`
 You can build your own control by placing a `Badge.qml` file beside `Main.qml`:
 
 ```qml file=Badge.qml group=badge
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 Control {
     id: root
@@ -105,20 +105,21 @@ Control {
 
     background: Rectangle {
         radius: 4
-        color: root.palette.button
+        fill: root.palette.button
     }
 
     contentItem: Text {
         id: label
         color: root.palette.buttonText
-        font.pixelSize: 14
+        font.size: 14
     }
 }
 ```
 
 ```qml group=badge
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -151,22 +152,23 @@ Watch out for these details when working with `Control` parts:
 
 ## Palettes and fonts
 
-A control draws with its `palette` (`QtQuick.Palette`), which provides roles such as `window`, `windowText`, `base`, `alternateBase`, `text`, `button`, `buttonText`, `brightText`, `light`, `midlight`, `mid`, `dark`, `shadow`, `highlight`, `highlightedText`, `link`, `linkVisited`, `toolTipBase`, `toolTipText`, `placeholderText`, and `accent`.
+A control draws with its `palette`, which provides roles such as `window`, `windowText`, `base`, `alternateBase`, `text`, `button`, `buttonText`, `brightText`, `light`, `midlight`, `mid`, `dark`, `shadow`, `highlight`, `highlightedText`, `link`, `linkVisited`, `toolTipBase`, `toolTipText`, `placeholderText`, and `accent`.
 
 In the light Basic palette, `window` is `#ffffff`, `windowText` is `#26282a`, `button` is `#e0e0e0`, `buttonText` is `#26282a`, `highlight` is `#0066ff`, `highlightedText` is `#090909`, and `placeholderText` is `#88353637`. When `Qt.styleHints.colorScheme` is dark (from the system or the application), the Basic style switches to its dark palette (for example, `window` `#000000`), while keeping any colours your application explicitly set.
 
 Palettes also have three colour groups (`palette.active`, `palette.inactive`, and `palette.disabled`). Setting a colour directly on `palette` sets it in every group, while reading `palette.button` on a disabled control reads the disabled group, where colours are paler (such as `buttonText` `#4d26282a` and `base` `#d6d6d6`).
 
-Controls inherit both `palette` colours and `font` attributes (`pixelSize`, `bold`, `italic`, `underline`, `strikeout`, `family`, `weight`) one by one from the item, `Pane`, `Popup`, or window that holds them—including plain `Item` or `Row` parents and controls created later by a `Loader`. Any colour or font attribute a control sets on itself is kept, and bound colours update children whenever the binding changes. Increasing a control's font size also grows its implicit height to fit the text.
+Controls inherit both `palette` colours and `font` attributes (`size`, `weight`, `italic`, `underline`, `strikeout`, `family`) one by one from the item, `Pane`, `Popup`, or window that holds them—including plain `Item` or `Row` parents and controls created later by a `Loader`. Any colour or font attribute a control sets on itself is kept, and bound colours update children whenever the binding changes. Increasing a control's font size also grows its implicit height to fit the text.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Pane {
     width: 240
     height: 120
-    font.pixelSize: 20
+    font.size: 20
     font.italic: true
 
     Column {
@@ -178,7 +180,7 @@ Pane {
 
         Button {
             text: "Also 20 px, and bold"
-            font.bold: true
+            font.weight: Font.Bold
         }
 
         Text {
@@ -188,7 +190,7 @@ Pane {
 }
 ```
 
-Here the `Label` and the `Button` inherit `20` px and italic from the `Pane`, and the `Button` adds `font.bold: true`.
+Here the `Label` and the `Button` inherit `20` px and italic from the `Pane`, and the `Button` adds `font.weight: Font.Bold`.
 
 Keep a common pitfall in mind: a plain `Text` item does not inherit the `font` of the `Pane` or control it sits inside. Use `Label` when you want text to follow control font and palette inheritance.
 

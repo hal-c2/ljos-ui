@@ -30,7 +30,8 @@ Every binding in QML is a JavaScript expression. Operators follow JavaScript's e
 You can declare JavaScript methods on any QML object with `function <name>(...) { ... }`. Method names must start with a lower-case letter and cannot use reserved global names such as `print`, `console`, `undefined`, `qsTr`, or `parseInt`. Calling a method on another QML object passes JavaScript values directly: `-0` keeps its sign, objects and arrays are passed by reference without copying, and exceptions thrown inside the callee can be caught by the caller with `try ... catch`.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Item {
     id: root
@@ -63,7 +64,8 @@ function clamp(v, low, high) {
 
 ```qml group=lib
 // Main.qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 import "lib.js" as Lib
 
 Item {
@@ -82,11 +84,12 @@ A script file that begins with `.pragma library` is shared across all QML compon
 When a JavaScript function reads a structured value type (`point`, `size`, `rect`, `color`, `font`) from a QML property into a local variable (`let`, `const`, or `var`) and mutates one of its fields, Ljós writes the modified value back to the source property:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
-    property point spot: Qt.point(1, 2)
+    property point spot: point(1, 2)
 
     Text {
         id: label

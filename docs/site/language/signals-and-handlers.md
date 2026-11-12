@@ -14,7 +14,8 @@ After reading this page, you will be able to declare and emit signals, write sig
 You declare a signal on an object with the `signal` keyword, a name starting with a lower-case letter, and an optional parameter list in parentheses. Signal names cannot start with an upper-case letter or use reserved global names such as `print`, `gc`, or `Qt`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -38,7 +39,7 @@ To emit a signal, call it like a method (`ping(3, "start")` or `first.ping(3)`).
 Every signal `<name>` has a corresponding handler attribute named `on<Name>`, with the first letter of the signal's name capitalised. You can write a handler as an arrow function or function expression that declares the parameters it uses:
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     id: root
@@ -65,7 +66,7 @@ When a component exposes a child object through a property or an `alias`, you ca
 Every property `<name>` automatically has a change signal `<name>Changed` and a corresponding handler `on<Name>Changed`. Attached properties also have change handlers, such as `LayoutMirroring.onEnabledChanged`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     id: root
@@ -88,7 +89,7 @@ A property change handler runs only when the stored value actually changes:
 - Assigning the value the property already holds breaks any binding on the property, but does not run `on<Name>Changed`.
 - On a clamped property such as `Item.opacity` (which clamps to `0..1`), assigning `2` when `opacity` is already `1` does not fire `onOpacityChanged`.
 - For `real` properties, `NaN` is not equal to itself (`NaN !== NaN`), so assigning `NaN` to a property that already holds `NaN` counts as a change and runs its change handler every time.
-- On a `var` property holding an array or object, mutating a member in place (`box.n = 2` or `xs.push(1)`) does not fire the change handler, whereas mutating a `list<T>` property (`numbers.push(1)`) does.
+- On an `unknown` property holding an array or object, mutating a member in place (`box.n = 2` or `xs.push(1)`) does not fire the change handler, whereas mutating a `list<T>` property (`numbers.push(1)`) does.
 
 When a property changes, the object's own `on<Name>Changed` handler runs before the bindings that depend on that property are re-evaluated, so inside the handler those downstream bindings still read their previous values. However, if a binding is read inside a signal that is emitted before the property change signal—such as reading a binding on `MouseArea.pressed` inside `onReleased`, which fires before `onPressedChanged`—Ljós evaluates the binding on read against the current state of `pressed` (`false`).
 
@@ -99,7 +100,9 @@ If a change handler writes a new value back to its own property (`onNChanged: if
 To handle signals emitted by another object without writing the handler on that object itself, use a `Connections` item with `function on<Signal>(...)` methods:
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -131,12 +134,13 @@ Changing `target` switches which object the `Connections` item listens to, and s
 
 In JavaScript, reading a signal on an object returns a function object that emits the signal when called and provides `.connect(fn)` and `.disconnect(fn)` methods (inherited from `Function.prototype`) to attach or remove listener functions at run time.
 
-## Timer and `Qt.callLater`
+## Timer and `later`
 
-For time-based and deferred callbacks, QML provides `Timer` and `Qt.callLater`:
+For time-based and deferred callbacks, QML provides `Timer` and `later`:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -152,8 +156,8 @@ Item {
     }
 
     function queueWork() {
-        Qt.callLater(finishBatch)
-        Qt.callLater(finishBatch)
+        later(finishBatch)
+        later(finishBatch)
     }
 
     function finishBatch() {
@@ -162,7 +166,7 @@ Item {
 }
 ```
 
-A `Timer` emits `triggered` once after `interval` milliseconds when `repeat` is `false`, or every `interval` milliseconds while `running` is `true` and `repeat` is `true`, and can be controlled with `start()` and `stop()`. `Qt.callLater(fn)` schedules `fn` to run after the current pass finishes; queuing the same function twice in a single pass runs it only once.
+A `Timer` emits `triggered` once after `interval` milliseconds when `repeat` is `false`, or every `interval` milliseconds while `running` is `true` and `repeat` is `true`, and can be controlled with `start()` and `stop()`. `later(fn)` schedules `fn` to run after the current pass finishes; queuing the same function twice in a single pass runs it only once.
 
 ## See also
 

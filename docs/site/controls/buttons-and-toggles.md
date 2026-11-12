@@ -40,8 +40,9 @@ Watch out for these subtleties:
 You can replace `background` or `contentItem` on a `Button` (or a component derived from `Button`); the style's default part is then not created, your replacement becomes a child of the button and can read states such as `down`, and a larger `contentItem` determines the button's implicit size (or the padded content alone when `background: null`).
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     spacing: 12
@@ -92,8 +93,10 @@ Pressing **Save** sets the status text to `"Saved"`, while the other controls to
 When you want to group buttons across different parents, or inspect the group as a whole, attach them to a `ButtonGroup` using `ButtonGroup.group` (or `addButton(button)` and `removeButton(button)`):
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -134,8 +137,9 @@ Use `DelayButton` for destructive or irreversible actions that require the user 
 While held down, `progress` rises from `0` to `1` over `delay` ms; reaching `1` emits `activated`, and releasing afterwards leaves the button `checked` and emits `clicked`. If you release the button before `delay` elapses, `progress` runs back down to `0` and neither `activated` nor `checked` occurs. A click on a checked `DelayButton` unchecks it without waiting for `delay`, and `progress` is `0` after the release. Setting `checked` from script sets `progress` to `1` (or `0` when unchecked).
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
