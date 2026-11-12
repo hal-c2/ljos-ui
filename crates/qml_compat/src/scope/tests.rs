@@ -63,6 +63,13 @@ fn meaning(imports: &str, name: &str) -> String {
 #[test]
 fn the_last_import_with_a_name_is_what_it_means() {
     let parts = "import \"parts\"";
+    // Qt's table has `Qt` among the builtins every file has, which it calls
+    // `QML`; Ljós's own table, without them, files it under `QtQml`.
+    let qt_global = if qt_types::has_qt_table() {
+        "QML's"
+    } else {
+        "QtQml's"
+    };
     for (imports, name, means) in [
         ("import QtQuick".to_owned(), "Rectangle", "QtQuick's"),
         (format!("import QtQuick\n{parts}"), "Rectangle", "on Item"),
@@ -94,7 +101,7 @@ fn the_last_import_with_a_name_is_what_it_means() {
         ("import QtQuick".to_owned(), "Swatch", "on Item"),
         ("import QtQuick".to_owned(), "Nothing", "Unknown"),
         // `Qt` is every file's.
-        ("import QtQuick".to_owned(), "Qt", "QtQml's"),
+        ("import QtQuick".to_owned(), "Qt", qt_global),
     ] {
         assert_eq!(meaning(&imports, name), means, "{name} in {imports:?}");
     }
