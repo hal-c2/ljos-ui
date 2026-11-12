@@ -562,12 +562,17 @@ impl Platform {
     ) {
         let started = Instant::now();
         let mut quiet = Duration::ZERO;
+        // Busy work this finish waited on: if it is still under way when
+        // waiting ends, the step goes on before it is done, and says so.
+        let mut busy = Vec::new();
         loop {
             let seen = self.signal.count();
             self.deliver_now(engine);
             let now = Instant::now();
+            self.busy_awaited(now, &mut busy);
             let (awaited, busy_until) = self.awaiting(now);
             if awaited == 0 {
+                self.left_busy(engine, &busy, started);
                 return;
             }
             between();
@@ -593,10 +598,79 @@ impl Platform {
                 engine.log(
                     LogLevel::Warning,
                     CATEGORY,
-                    format!("gave up waiting for {} platform answer(s)", self.awaited()),
+                    format!(
+                        "gave up waiting for {} platform answer(s): {}",
+                        self.awaited(),
+                        self.awaited_names(Instant::now()),
+                    ),
                 );
+                self.left_busy(engine, &busy, started);
                 return;
             }
+        }
+    }
+
+    /// What is still waited on at `now`, by what it is and whom it is
+    /// for, oldest first: the cause of a step that went on without it.
+    fn awaited_names(&self, now: Instant) -> String {
+        let promises = self.promises.borrow();
+        let mut awaited: Vec<_> = promises
+            .values()
+            .filter(|p| !p.busy || p.since + BUSY_WAIT > now)
+            .collect();
+        awaited.sort_by_key(|p| p.since);
+        awaited
+            .iter()
+            .map(|p| match p.owner {
+                Some(o) => format!("\"{}\" for {o:?}", p.what),
+                None => format!("\"{}\"", p.what),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    /// Adds to `ids` the busy promises waited on at `now`.
+    fn busy_awaited(&self, now: Instant, ids: &mut Vec<u64>) {
+        for (id, p) in self.promises.borrow().iter() {
+            if p.busy && p.since + BUSY_WAIT > now && !ids.contains(id) {
+                ids.push(*id);
+            }
+        }
+    }
+
+    /// Names each of `ids` still promised and no longer waited on: busy
+    /// work [`Platform::finish`] stopped waiting for at [`BUSY_WAIT`],
+    /// though it had not settled. What follows may come before that work
+    /// was done (a page that had not answered yet on a slow machine), and
+    /// the log says why.
+    fn left_busy(&self, engine: &Engine, ids: &[u64], started: Instant) {
+        let now = Instant::now();
+        let left: Vec<String> = {
+            let promises = self.promises.borrow();
+            let mut left: Vec<_> = ids
+                .iter()
+                .filter_map(|id| promises.get(id))
+                .filter(|p| p.since + BUSY_WAIT <= now)
+                .collect();
+            left.sort_by_key(|p| p.since);
+            left.iter()
+                .map(|p| {
+                    let owner = p.owner.map(|o| format!(" for {o:?}")).unwrap_or_default();
+                    format!(
+                        "stopped waiting for busy work \"{}\"{owner} after {:.1} s: \
+                         still under way {:.1} s after it was promised or last asked \
+                         for more (the bound is {} s), so what follows may come \
+                         before it is done",
+                        p.what,
+                        now.duration_since(started).as_secs_f64(),
+                        now.duration_since(p.since).as_secs_f64(),
+                        BUSY_WAIT.as_secs_f64(),
+                    )
+                })
+                .collect()
+        };
+        for message in left {
+            engine.log(LogLevel::Warning, CATEGORY, message);
         }
     }
 
@@ -1108,12 +1182,10 @@ mod tests {
             signal.sent_one();
         });
         assert_eq!(platform.pending(), 1);
-        assert!(
-            engine
-                .take_log()
-                .iter()
-                .any(|e| e.message.contains("gave up waiting for 1 platform answer"))
-        );
+        assert!(engine.take_log().iter().any(|e| {
+            e.message
+                .contains("gave up waiting for 1 platform answer(s): \"never answered\"")
+        }));
     }
 
     /// Echoes what it was asked, as a 201, without a network.
@@ -1172,16 +1244,21 @@ mod tests {
         assert!(took < BUSY_WAIT + Duration::from_secs(5), "waited {took:?}");
         assert_eq!(platform.pending(), 1);
         assert_eq!(platform.awaited(), 0);
+        // Still under way when waiting ended: the log says so, by name.
+        let left = left_busy_warnings(&engine);
+        assert_eq!(left.len(), 1, "{left:?}");
+        assert!(left[0].contains("\"a browser's work\""), "{}", left[0]);
+        // Nor is it waited on again, at the next finish, which says
+        // nothing: it did not wait on it.
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert!(started.elapsed() < Duration::from_secs(1));
         assert!(
             engine
                 .take_log()
                 .iter()
                 .all(|e| e.level != LogLevel::Warning)
         );
-        // Nor is it waited on again, at the next finish.
-        let started = Instant::now();
-        platform.finish(&engine);
-        assert!(started.elapsed() < Duration::from_secs(1));
         // Asked for more, it is waited on again.
         platform.renew(&busy);
         assert_eq!(platform.awaited(), 1);
@@ -1197,6 +1274,51 @@ mod tests {
         );
     }
 
+    /// The warnings that name busy work still under way when waiting ended.
+    fn left_busy_warnings(engine: &Engine) -> Vec<String> {
+        engine
+            .take_log()
+            .into_iter()
+            .filter(|e| e.level == LogLevel::Warning)
+            .map(|e| e.message.to_string())
+            .filter(|m| m.starts_with("stopped waiting for busy work"))
+            .collect()
+    }
+
+    #[test]
+    fn busy_work_still_under_way_when_waiting_ends_is_named_with_how_long() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let _settled = platform.expect_busy("work that settles");
+        drop(_settled);
+        let _busy = platform.expect_busy("a page that has not answered");
+        platform.finish(&engine);
+        let left = left_busy_warnings(&engine);
+        assert_eq!(left.len(), 1, "only what is still under way: {left:?}");
+        let message = &left[0];
+        assert!(
+            message.contains("\"a page that has not answered\""),
+            "{message}"
+        );
+        // How long this finish waited, and how long since it was asked for.
+        let seconds = |after: &str| -> f64 {
+            let (_, rest) = message
+                .split_once(after)
+                .unwrap_or_else(|| panic!("{message}"));
+            rest.split(' ')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or_else(|| panic!("{message}"))
+        };
+        let bound = BUSY_WAIT.as_secs_f64();
+        assert!(seconds("\" after ") >= bound, "{message}");
+        assert!(seconds("under way ") >= bound, "{message}");
+        assert!(
+            message.contains(&format!("the bound is {bound} s")),
+            "{message}"
+        );
+    }
+
     #[test]
     fn busy_work_gone_quiet_is_not_waited_on_past_the_bound() {
         let engine = Engine::new();
@@ -1207,12 +1329,8 @@ mod tests {
         let took = started.elapsed();
         assert!(took >= BUSY_WAIT, "waited only {took:?}");
         assert!(took < BUSY_WAIT + Duration::from_secs(5), "waited {took:?}");
-        assert!(
-            engine
-                .take_log()
-                .iter()
-                .all(|e| e.level != LogLevel::Warning)
-        );
+        let left = left_busy_warnings(&engine);
+        assert_eq!(left.len(), 1, "{left:?}");
     }
 
     #[test]
