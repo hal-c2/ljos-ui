@@ -327,6 +327,44 @@ Feature: A ListModel of constants is a typed list
         }
         """
 
+    # A table written on one line is a list on one line. The view's `model:` that follows the
+    # list is the view's own, so it goes on a line of its own, indented as the list is.
+    @ljos-only @headless
+    Scenario: A table written on one line is a list on one line, the view's model below it
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          width: 200; height: 60
+          ListView {
+            width: 200; height: 60
+            delegate: Rectangle { required property real shift; width: 20 + shift * 10; height: 20 }
+            model: ListModel { ListElement { shift: 0 } ListElement { shift: 9 } }
+          }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (6 edits)
+        wrote ./Main.rows.ts
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import "Main.rows.ts" as Rows
+        Item {
+          width: 200; height: 60
+          ListView {
+            width: 200; height: 60
+            delegate: Rectangle { required property real shift; width: 20 + shift * 10; height: 20 }
+            readonly property list<Rows.Row> rows: [ { shift: 0 }, { shift: 9 } ]
+            model: rows
+          }
+        }
+        """
+
     # Each of these ListModels stays one, and the file is still lowered: a script appends to the
     # first, the second's value is a translation made as the file runs, a delegate reads the
     # third's role by its bare name (which a list does not give), and one writes the fourth's.

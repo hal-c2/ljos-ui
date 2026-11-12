@@ -168,9 +168,9 @@ impl Unit {
 
 /// The indent of the line among `before` and `head`, the last read first,
 /// that opens the `]` or `}` `head` ends with: the member whose list or
-/// object it closes. Brackets in strings and comments are not counted.
-/// `None` where no line above opens it.
-fn opener<'a>(before: &[&'a str], head: &str) -> Option<&'a str> {
+/// object it closes, `head`'s own where it opens there too. Brackets in
+/// strings and comments are not counted. `None` where no line opens it.
+fn opener<'a>(before: &[&'a str], head: &'a str) -> Option<&'a str> {
     let mut depth = 0usize;
     let mut close = |brackets: Vec<u8>| {
         brackets.into_iter().rev().any(|bracket| {
@@ -184,7 +184,7 @@ fn opener<'a>(before: &[&'a str], head: &str) -> Option<&'a str> {
         })
     };
     if close(brackets(head)) {
-        return None;
+        return Some(&head[..head.len() - head.trim_start().len()]);
     }
     before.iter().rev().find_map(|line| {
         close(brackets(line)).then(|| &line[..line.len() - line.trim_start().len()])
@@ -262,7 +262,14 @@ fn header(mut text: &str, in_comment: bool) -> Option<bool> {
 /// One line below the imports, `line` as the pass made it of `was`, with
 /// `before` and `after` the lines the pass made above and below it, and
 /// `unit` the step the file is indented by.
-fn laid_out(out: &mut String, line: &str, was: &str, before: &[&str], after: &[&str], unit: Unit) {
+fn laid_out<'a>(
+    out: &mut String,
+    line: &'a str,
+    was: &str,
+    before: &[&'a str],
+    after: &[&str],
+    unit: Unit,
+) {
     let content = line.trim_end_matches(['\n', '\r']);
     let end = &line[content.len()..];
     let was = was.trim_end_matches(['\n', '\r']);
@@ -601,6 +608,30 @@ mod tests {
         assert_eq!(
             migrated(written, lowered, true),
             "import Ljos.Ui\nListView {\n\treadonly property list<Rows.Row> rows: [\n\t\t{ a: \"[\" },\n\t\t{ a: 1 } ]\n\tmodel: rows\n}\n"
+        );
+    }
+
+    /// A list the pass opens and closes on one line: the binding after it
+    /// is the member's, on a line of its own at that line's indent.
+    #[test]
+    fn a_binding_after_a_list_on_one_line_goes_on_a_line_of_its_own() {
+        let written =
+            "import QtQuick\nListView {\n    model: ListModel { ListElement { a: 1 } }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nListView {\n    readonly property list<Rows.Row> rows: [ { a: 1 } ]; model: rows\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nListView {\n    readonly property list<Rows.Row> rows: [ { a: 1 } ]\n    model: rows\n}\n"
+        );
+    }
+
+    /// The same for an object opened and closed on one line.
+    #[test]
+    fn a_binding_after_an_object_on_one_line_goes_on_a_line_of_its_own() {
+        let written = "import QtQuick\nItem {\n\tx: Foo { }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\n\tx: Foo { }; y: 1\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nItem {\n\tx: Foo { }\n\ty: 1\n}\n"
         );
     }
 
