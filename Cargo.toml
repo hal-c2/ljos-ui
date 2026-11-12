@@ -20,8 +20,12 @@ publish = false
 oxc_allocator = "0.144"
 oxc_ast = "0.144"
 oxc_ast_visit = "0.144"
+# The declaration of an `.lts` module (docs/DIALECT.md §4.21): TypeScript's
+# isolated-declarations emit of the desugared text, printed as TS prints it.
+oxc_codegen = "0.144"
 oxc_diagnostics = "0.144"
 oxc_parser = { package = "ljos_oxc_parser", version = "0.144.0", path = "vendor/oxc_parser" }
+oxc_isolated_declarations = "0.144"
 oxc_semantic = "0.144"
 oxc_span = "0.144"
 oxc_str = "0.144"

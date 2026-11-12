@@ -210,6 +210,13 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
             parsed = oxc_parser::Parser::new(allocator, text, source_type).parse();
             broken = !parsed.diagnostics.is_empty();
         }
+        // Stock TypeScript reads an `.lts` module through its declaration,
+        // which needs each export's type written (docs/DIALECT.md §4.21).
+        if erase::is_lts(&key) && !broken {
+            for (span, message) in crate::lts::untyped_exports(source) {
+                said.push((Code::LtsExportType, message, span));
+            }
+        }
         // Declarations run nothing, so there is nothing to erase. The
         // faults of what was read are where it has them, as the
         // checker's own findings are.

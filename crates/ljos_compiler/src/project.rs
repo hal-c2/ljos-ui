@@ -1352,6 +1352,35 @@ pub fn skipped_dir(name: &str) -> bool {
         || name.starts_with("cmake-build")
 }
 
+/// Every file below `dir` that `wanted` takes, in the order of their
+/// names, outside the directories a walk skips ([`skipped_dir`]). Links to
+/// directories are not entered: they can loop. The one walk of a tree of
+/// files that every command and tool takes, so `ljos fmt .`, `ljos check
+/// .`, the authoring tools and the language server see one set of files.
+///
+/// # Errors
+/// A directory below `dir`, or `dir`, cannot be read.
+pub fn files_below(
+    dir: &Path,
+    wanted: fn(&Path) -> bool,
+    out: &mut Vec<PathBuf>,
+) -> std::io::Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let kind = entry.file_type()?;
+        if kind.is_dir() {
+            if !skipped_dir(&entry.file_name().to_string_lossy()) {
+                files_below(&path, wanted, out)?;
+            }
+        } else if wanted(&path) && path.is_file() {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
 /// Every directory under the root worth reading, with its file names, in
 /// order.
 fn scan(root: &Path) -> std::io::Result<Vec<(PathBuf, Vec<String>)>> {
