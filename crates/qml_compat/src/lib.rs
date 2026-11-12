@@ -232,6 +232,12 @@ pub trait Natives {
     /// The module and name of the toolkit type it is built on, whose
     /// members it has under Qt's names.
     fn toolkit_base(&self, ty: Native) -> Option<(String, String)>;
+
+    /// Whether the type is one of Ljós's own, built on Ljós's face of its
+    /// toolkit type: what it has of that type it has under Ljós's names.
+    fn has_ljos_names(&self, _ty: Native) -> bool {
+        false
+    }
 }
 
 /// The project's files, in a program that starts with the controls style
@@ -1447,6 +1453,9 @@ impl<'s> Pass<'s> {
             return Rename::Keep;
         };
         if let Some(new) = renames_of(base).and_then(|renames| lookup_rename(renames, name)) {
+            if natives.has_ljos_names(ty) {
+                return Rename::To(new);
+            }
             // The program's type is built on the native type, not on the
             // face Ljós's API has of it: it answers to Qt's name only.
             return Rename::No(Cause::NativeRenamed {

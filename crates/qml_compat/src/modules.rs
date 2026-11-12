@@ -146,12 +146,12 @@ pub(crate) struct Row {
     pub names_types: bool,
 }
 
-/// Every Qt module the pass lowers.
 /// Whether `uri` is a Ljós module the pass writes for one of Qt's.
 pub(crate) fn written(uri: &str) -> bool {
     ROWS.iter().any(|row| row.lowers_to.uri() == uri)
 }
 
+/// Every Qt module the pass lowers.
 pub(crate) const ROWS: &[Row] = &[
     Row {
         uri: "QtQuick",

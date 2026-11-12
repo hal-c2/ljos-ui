@@ -118,4 +118,10 @@ impl<O: TypeOracle> qml_compat::Natives for OracleNatives<'_, O> {
         })?;
         Some((self.oracle.module(base)?, self.oracle.name(base).to_owned()))
     }
+
+    fn has_ljos_names(&self, ty: Native) -> bool {
+        self.oracle
+            .module(self.ty(ty))
+            .is_some_and(|module| is_ljos_api(&module))
+    }
 }
