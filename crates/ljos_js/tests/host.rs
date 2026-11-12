@@ -554,7 +554,9 @@ fn promise_jobs_are_pumped_under_a_deadline() {
         .unwrap();
     host.call(m.function("go").unwrap(), &[]).unwrap();
     assert!(host.has_pending_jobs());
-    let ran = host.pump_jobs(Instant::now() + Duration::from_millis(50));
+    let ran = host
+        .pump_jobs(Instant::now() + Duration::from_millis(50))
+        .ran;
     assert_eq!(ran, 2);
     assert!(!host.has_pending_jobs());
     assert_eq!(
@@ -571,7 +573,8 @@ fn pump_jobs_respects_the_deadline_and_survives_throwing_jobs() {
     })
     .unwrap();
     assert_eq!(
-        host.pump_jobs(Instant::now() + Duration::from_millis(50)),
+        host.pump_jobs(Instant::now() + Duration::from_millis(50))
+            .ran,
         2
     );
     // A deadline in the past runs nothing.
@@ -579,7 +582,7 @@ fn pump_jobs_respects_the_deadline_and_survives_throwing_jobs() {
         s.eval::<(), _>("Promise.resolve().then(() => {})")
     })
     .unwrap();
-    assert_eq!(host.pump_jobs(Instant::now()), 0);
+    assert_eq!(host.pump_jobs(Instant::now()).ran, 0);
     assert!(host.has_pending_jobs());
 }
 
@@ -675,7 +678,10 @@ fn memory_stats_unavailable_inside_a_run() {
     host.enter("x", host.config().slice, |_| {
         assert!(host.memory_stats().is_none());
         assert!(!host.collect_now());
-        assert_eq!(host.pump_jobs(Instant::now() + Duration::from_secs(1)), 0);
+        assert_eq!(
+            host.pump_jobs(Instant::now() + Duration::from_secs(1)).ran,
+            0
+        );
         Ok(())
     })
     .unwrap();
@@ -1117,6 +1123,51 @@ fn panic_inside_a_host_callback_is_a_fault() {
         .unwrap_err();
     assert!(matches!(err, JsFault::Panic { .. }), "{err:?}");
     assert_eq!(eval_num(&host, "1 + 2").unwrap(), 3.0);
+}
+
+#[test]
+fn a_panic_in_a_promise_job_is_a_fault_of_the_pump() {
+    let (host, store) = host_with_store();
+    store.insert(1, 1.0, 1.0);
+    let m = host
+        .load_module(
+            "pj.js",
+            "export function go(o) { Promise.resolve().then(() => o.echo('panic')); Promise.resolve().then(() => { globalThis.later = 1; }); }",
+        )
+        .unwrap();
+    host.call(m.function("go").unwrap(), &[JsValue::Object(1)])
+        .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(1));
+    assert_eq!(pumped.ran, 1);
+    assert!(
+        matches!(&pumped.faults[..], [JsFault::Panic { label, .. }] if label == "promise job"),
+        "{:?}",
+        pumped.faults
+    );
+    // The panic is not kept for the next dispatch, and the job after it
+    // still runs on the next pump.
+    assert_eq!(eval_num(&host, "1 + 2").unwrap(), 3.0);
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(1));
+    assert_eq!(pumped.ran, 1);
+    assert!(pumped.faults.is_empty(), "{:?}", pumped.faults);
+    assert_eq!(eval_num(&host, "globalThis.later").unwrap(), 1.0);
+}
+
+#[test]
+fn a_promise_job_that_never_ends_is_interrupted_at_the_deadline() {
+    let host = plain();
+    host.enter("setup", host.config().slice, |s| {
+        s.eval::<(), _>("Promise.resolve().then(() => { for (;;) {} })")
+    })
+    .unwrap();
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_millis(20));
+    assert_eq!(pumped.ran, 1);
+    assert!(
+        matches!(&pumped.faults[..], [JsFault::JsInterrupted { label, .. }] if label == "promise job"),
+        "{:?}",
+        pumped.faults
+    );
+    assert!(!host.has_pending_jobs());
 }
 
 #[test]

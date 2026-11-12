@@ -43,8 +43,8 @@ pub use bytecode::{Bytecode, BytecodeOptions};
 pub use config::{FALLBACK_MAX_STACK, JsConfig, Slice};
 pub use fault::{JsFault, SourceMapper, SourceText};
 pub use host::{
-    DirectCall, DirectParam, FnId, HostFn, JsClock, JsHost, MemoryStats, ModuleHandle, Scope,
-    Timing,
+    DirectCall, DirectParam, FnId, HostFn, JsClock, JsHost, MemoryStats, ModuleHandle, Pumped,
+    Scope, Timing,
 };
 pub use objects::{
     HostError, HostObjects, HostTypeId, MethodDef, MethodFace, PlainValue, PropDef, SignalDef,

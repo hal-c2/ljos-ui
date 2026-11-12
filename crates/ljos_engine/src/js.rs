@@ -1444,7 +1444,8 @@ impl Engine {
 
     /// Runs the promise jobs that wait, and those they queue, for at most a
     /// dispatch's slice: a chain that never ends is cut off as a dispatch
-    /// that never ends is, and what is left runs on the next pass.
+    /// that never ends is, reported as one is (a warning and a fault), and
+    /// what is left runs on the next pass.
     pub(crate) fn pump_js_jobs(&self) {
         let js = self.inner.js.borrow().clone();
         let Some(js) = js else { return };
@@ -1452,7 +1453,10 @@ impl Engine {
             return;
         }
         let until = std::time::Instant::now() + js.slice().hard;
-        js.host.pump_jobs(until);
+        let pumped = js.host.pump_jobs(until);
+        for fault in &pumped.faults {
+            self.report_js_fault(fault);
+        }
     }
 
     /// Whether the dispatch running now was interrupted inside a nested run.

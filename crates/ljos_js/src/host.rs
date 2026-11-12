@@ -1621,6 +1621,16 @@ impl ModuleHandle {
 }
 
 /// A snapshot of QuickJS allocator statistics.
+/// What a [`JsHost::pump_jobs`] did.
+#[derive(Debug, Default)]
+#[must_use = "a promise job's fault is reported only by the host that reads it"]
+pub struct Pumped {
+    /// Jobs run, those that failed included.
+    pub ran: usize,
+    /// The faults of the jobs that failed, in the order they ran.
+    pub faults: Vec<JsFault>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryStats {
     pub malloc_size: usize,
@@ -2384,11 +2394,16 @@ impl JsHost {
     }
 
     /// Drains the promise job queue until it is empty or `until` passes.
-    /// Returns the number of jobs executed. A job that throws is logged and
-    /// does not stop the others.
-    pub fn pump_jobs(&self, until: Instant) -> usize {
+    /// A job that fails (interrupted at `until`, out of memory, a throw no
+    /// promise caught) does not stop the others; its fault is handed back,
+    /// labelled `promise job`, for the host to report as it would a
+    /// dispatch's. A native function that panicked in a job stops the
+    /// pump, and the panic comes back as [`JsFault::Panic`], as it does
+    /// from [`JsHost::enter`]: kept, it would surface in whatever dispatch
+    /// came next.
+    pub fn pump_jobs(&self, until: Instant) -> Pumped {
         if self.state.entered.replace(true) {
-            return 0;
+            return Pumped::default();
         }
         let guard = EnterGuard(&self.state.entered);
         self.interrupt.fired.set(false);
@@ -2401,29 +2416,50 @@ impl JsHost {
         self.interrupt.ceiling.set(Some(until));
         self.interrupt.began.set(Some(now));
         self.interrupt.settle();
-        let mut n = 0;
+        let mut pumped = Pumped::default();
         while self.interrupt.now(Timing::Poll) < until {
             match self.rt.execute_pending_job() {
-                Ok(true) => n += 1,
+                Ok(true) => pumped.ran += 1,
                 Ok(false) => break,
+                Err(_) if self.state.panicked.borrow().is_some() => {
+                    pumped.ran += 1;
+                    break;
+                }
                 Err(e) => {
-                    n += 1;
-                    let text = e.0.with(|ctx| {
-                        let v = ctx.catch();
-                        v.get::<rquickjs::convert::Coerced<String>>()
-                            .map(|c| c.0)
-                            .unwrap_or_else(|_| "<unprintable>".into())
+                    pumped.ran += 1;
+                    let after = self.interrupt.now(Timing::Leave) - now;
+                    let mapper = self.state.mapper.borrow().clone();
+                    let text = self.state.text.borrow().clone();
+                    let fault = e.0.with(|ctx| {
+                        classify_error(
+                            &ctx,
+                            None,
+                            rquickjs::Error::Exception,
+                            "promise job",
+                            self.interrupt.fired.get(),
+                            after,
+                            Sources {
+                                mapper: mapper.as_deref(),
+                                text: text.as_deref(),
+                            },
+                        )
                     });
-                    tracing::warn!(error = %text, "promise job threw");
+                    pumped.faults.push(fault);
                 }
             }
         }
         self.interrupt.arm(now, None);
         self.state.stopped.set(false);
         drop(guard);
+        if let Some(panic) = self.state.panicked.borrow_mut().take() {
+            pumped.faults.push(JsFault::Panic {
+                label: "promise job".to_owned(),
+                message: panic_message(panic.as_ref()),
+            });
+        }
         self.flush_released();
         self.tell_queued_jobs();
-        n
+        pumped
     }
 
     /// Tells the host ([`HostObjects::jobs_queued`]) when jobs are queued
