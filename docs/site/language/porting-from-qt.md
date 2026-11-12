@@ -93,6 +93,25 @@ Rectangle {
 - **Native types.** `--types FILE` names the description of the program's own types, as `ljos run --types` does. Without it, `migrate` reads the `ljostypes.json` of the first path given.
 - **Exit status.** `0` means every file was read; `2` means a file or the types description could not be read or written, and nothing was migrated.
 
+### Where `Qt`'s members go
+
+A file of Ljós's API has no `Qt` global: `ljos check` stops on one with a `qt-global` error that names the member's home, and `migrate` writes each member there. A file that uses a member with no home yet (`Qt.createComponent`, `Qt.createQmlObject`), or whose own names hide a home, is kept, and `migrate` says which member kept it. [Colours, the app and enums](values-and-the-app.md) describes the homes.
+
+| In Qt's QML | In Ljós's API |
+|---|---|
+| `Qt.point`, `size`, `rect`, `vector3d`, `matrix4x4`, … | `point(…)`, `size(…)` and the others (`Ljos.Core`) |
+| `Qt.rgba`, `hsla`, `hsva` | `rgba(…)`, `hsla(…)`, `hsva(…)` (`Ljos.Core`) |
+| `Qt.color(s)`, `Qt.darker(c, f)`, `lighter`, `tint`, `alpha` | `Color.of(s)`, `Color.of(c).darker(f)` and the others (`Ljos.Core`) |
+| `Qt.colorEqual(a, b)` | `Color.of(a).equals(b)` (`Ljos.Core`) |
+| `Qt.red` and the other colours of `Qt` | the colour's name, `"red"` |
+| `Qt.font({…})`, `Qt.fontFamilies()` | `Font.of({…})`, `Font.families()` (`Ljos.Ui`) |
+| `Qt.binding(f)`, `Qt.callLater(f)`, `Qt.resolvedUrl(u)` | `bind(f)`, `later(f)`, `url(u)` (`Ljos.Core`) |
+| `Qt.application.*`, `Qt.platform`, `Qt.uiLanguage`, `Qt.styleHints`, `Qt.inputMethod` | `App.*`, `App.platform`, `App.language`, `App.hints`, `App.inputMethod` (`Ljos.Core`) |
+| `Qt.quit()`, `Qt.exit(code)`, `Qt.openUrlExternally(u)` | `App.quit()`, `App.exit(code)`, `App.openUrlExternally(u)` (`Ljos.Core`) |
+| `Qt.locale(name)`, `Qt.formatDate(d, f)` | `Locale.named(name)`, `Locale.current.formatDate(d, f)` (`Ljos.Core`) |
+| `Qt.AlignLeft`, `Qt.Key_Return`, `Qt.LeftButton`, `Qt.ControlModifier` | `Align.Left`, `Key.Return`, `MouseButton.Left`, `Modifier.Control` (`Ljos.Ui`), with the same numbers |
+| `QtObject` | `Object` (`Ljos.Core`) |
+
 ## Inventory what it uses with `ljos check --port`
 
 Point `ljos check --port` at a directory of `.qml` files (or a single `.qml` file) to compare every type, property, signal, and method your QML uses against Ljós's built-in type table and Qt 6's `qmltypes` table:

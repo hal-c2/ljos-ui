@@ -430,7 +430,7 @@ part they share with it:
 |---|---|
 | `Qt.AlignLeft`, `Qt.AlignHCenter`, `Qt.AlignTop \| Qt.AlignRight` | `Align.Left`, `Align.HCenter`, `Align.Top \| Align.Right` |
 | `Qt.Key_Return`, `Qt.Key_A`, `Qt.Key_0` | `Key.Return`, `Key.A`, `Key.Digit0` (§4.7) |
-| `Qt.LeftButton`, `Qt.AllButtons` | `Button.Left`, `Button.All` |
+| `Qt.LeftButton`, `Qt.AllButtons` | `MouseButton.Left`, `MouseButton.All` |
 | `Qt.ControlModifier`, `Qt.NoModifier` | `Modifier.Control`, `Modifier.None` (as §4.7 writes them) |
 | `Qt.Horizontal` | `Orientation.Horizontal` |
 | `Qt.ElideRight` | `Elide.Right` |
@@ -446,7 +446,7 @@ rule. A key the rule would leave starting with a digit (`Key_0` would be
 and the generator refuses a table that has one. A key keeps Qt's number,
 so a value passes between a Ljós file and a kept Qt file unchanged. The
 table records which enums are sets of flags, combined with `|` (`Align`,
-`Modifier`, `Button`), and which are plain (`Permission.Status`,
+`Modifier`, `MouseButton`), and which are plain (`Permission.Status`,
 `Orientation`, `CheckState`): a plain enum is a union of its keys to the
 checker, and a `switch` or a `match` on it is held to exhaustiveness
 (§5.1). `Qt.Align*` was M3's (§13); S1 takes it.
@@ -476,7 +476,9 @@ DECISION: `Qt.darker`, `lighter`, `tint`, `alpha` and `color` lower to
 type to lower; this replaces the decision above that kept them Qt's.
 
 DECISION: the enums of `Qt` are types of `Ljos.Ui` named for what they
-are (`Align`, `Key`, `Button`, `Modifier`), with Qt's numbers.
+are (`Align`, `Key`, `MouseButton`, `Modifier`), with Qt's numbers.
+`MouseButton`, not `Button`: the controls have a `Button`, and a file that
+imports both would find the control when it reads `Button.Left`.
 
 DECISION: the colour constructors stay bare `rgba(…)` (§4.3), not
 `Color.rgba(…)`: they are built, shorter, and read as CSS does. `Color`
@@ -2478,7 +2480,7 @@ Controller {
 
     Drag {
         modifiers: Modifier.None
-        buttons: Button.Right
+        buttons: MouseButton.Right
         onCentroidChanged: orbit.rotate(vector2d(centroid.position.x, centroid.position.y))
     }
     // …another Drag, a Pinch, a Wheel

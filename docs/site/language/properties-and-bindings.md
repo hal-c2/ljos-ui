@@ -74,7 +74,7 @@ Item {
 }
 ```
 
-You make a colour from its channels with `rgba`, `hsla` and `hsva`, and the helpers `Qt.color`, `Qt.lighter`, `Qt.darker`, `Qt.tint`, `Qt.alpha`, and `Qt.colorEqual` work on colours. A font's `size` must be a positive integer (fractions are rounded, zero or negative values are ignored, and `NaN` throws an error from script), and its `weight` is held between `1` and `1000`.
+You make a colour from its channels with `rgba`, `hsla` and `hsva`, and `Color.of(c)` reads a colour and shades it with `.lighter(f)`, `.darker(f)`, `.tint(c)`, `.alpha(a)` and `.equals(c)` (see [Colours, the app and enums](values-and-the-app.md)). A font's `size` must be a positive integer (fractions are rounded, zero or negative values are ignored, and `NaN` throws an error from script), and its `weight` is held between `1` and `1000`.
 
 Enumeration properties such as `Text.align` or `ScrollBar.policy` accept enum keys (`Text.AlignHCenter`, `ScrollBar.AlwaysOn`, `ScrollBar.Policy.AlwaysOff`) or key names as strings (`"AlignHCenter"`). Plain numbers written directly in QML source for an enum property are rejected when the file loads, whereas numbers assigned from JavaScript are rounded (or throw an `Error` if `NaN`). Flag properties combine keys with bitwise OR, such as `Qt.LeftButton | Qt.RightButton` or `Popup.CloseOnEscape | Popup.CloseOnPressOutside`.
 
@@ -89,7 +89,7 @@ Any JavaScript expression on the right-hand side of `:` in QML sets up a reactiv
 
 You can also write a block binding in braces `{ ... }`. In QML, a block binding evaluates to its last expression statement without needing an explicit `return` keyword (unless the braces start with a string or number followed by a colon, such as `{ "k": 1 }`, which is parsed as an object literal).
 
-An imperative assignment (`b = 10`) in a function or handler breaks an existing binding on `b`, even if the assigned value equals the value `b` already held. To install a new reactive binding from JavaScript, assign `Qt.binding(fn)`:
+An imperative assignment (`b = 10`) in a function or handler breaks an existing binding on `b`, even if the assigned value equals the value `b` already held. To install a new reactive binding from JavaScript, assign `Qt.binding(fn)`, which a file of Ljós's API writes `bind(fn)`:
 
 ```qml
 pragma Scripts: JavaScript
