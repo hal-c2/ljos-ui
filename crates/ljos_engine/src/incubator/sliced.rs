@@ -23,6 +23,12 @@
 //! What a stop changes: the batch the first stage runs in ends with the
 //! slice, so change handlers of what has run so far are called before the
 //! rest of it runs, not after all of it.
+//!
+//! Made inside a batch, as a view makes its delegates, the first two
+//! stages run with that batch lifted over a queue of their own
+//! ([`ljos_reactive::Graph::lift_batches`]): what they reach runs as it
+//! would with no batch open, before anything is completed, and what the
+//! batch held back before still waits for it to end.
 
 use rustc_hash::FxHashSet as HashSet;
 
@@ -145,6 +151,9 @@ impl Making {
         e: &Engine,
         check: &dyn Fn() -> bool,
     ) -> Option<Result<ObjectId, EngineError>> {
+        let settling = matches!(self.stage, Stage::Settle { .. } | Stage::Release { .. });
+        let mut own = (settling && e.graph().batching()).then(|| e.own_queue(e.changes_so_far()));
+        let mut lift = own.as_ref().map(|own| e.lift_batches(own));
         loop {
             match std::mem::replace(&mut self.stage, Stage::Gone) {
                 Stage::Settle {
@@ -234,6 +243,8 @@ impl Making {
                     self.stage = Stage::Check(None);
                 }
                 Stage::Check(failed) => {
+                    drop(lift.take());
+                    drop(own.take());
                     if let Err(err) = failed
                         .map_or(Ok(()), |err| Err(*err))
                         .and_then(|()| e.check_required(&self.cr))
