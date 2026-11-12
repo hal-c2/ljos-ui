@@ -2473,8 +2473,20 @@ The module form has no `class` and no `this`, which the subset forbids
 (§5.1): `self` is the Controller's typed properties, and `host` its host.
 The QML form and the module form make the same native object, and a
 module's Controller is named in QML qualified by its import, as a
-module's types are (§14, Q5). Where `controller` and `Item` come from in
-a module is S3's to fix, with the generated declarations (§4.4).
+module's types are (§14, Q5). `controller` is a global of every `.ts`
+module, declared with the generated declarations (§4.4), as `later` is a
+name of every Ljós file: a module imports nothing to write a Controller.
+`host` is typed `Item` by `controller`'s signature, so the module names
+no type it does not use. The front end reads the call and makes the
+module's export a Controller type (`breakpoint.ts/Breakpoint`), with a
+property for each of `properties` and a readonly one for each of
+`bindings`, typed from their values and return types; the keys it takes
+are the five above, and any other is an error. That type is a QML file
+the compiler makes beside the module, whose root is a `Controller`: each
+property, a readonly property per binding that calls the binding with the
+host and the Controller, and handlers that call the lifecycle's
+functions. So the front end, the checker and the runtime read it as any
+file, and the module's code runs as the module's.
 
 **What becomes a Controller.** The gestures (`Tap`, `Drag`, `Pinch`,
 `Hover`, `Wheel`, `Pointer`) are child objects that find their item when
@@ -2488,12 +2500,31 @@ engine calls `attached` from its completion, and `detached` from the
 host's destruction or the controller's removal from the host's
 `resources`, through the hooks that gestures and `Component.onDestruction`
 use (`ljos_engine/src/hooks.rs`, `Engine::on_destroyed`). A Controller's
-bookkeeping per engine is an `Engine::extension`.
+bookkeeping per engine is an `Engine::extension`. `updated` is a step of
+the scene's frame, before polish, so what its handlers write is laid out
+in the same frame; the change that arms it asks the scene for a frame, as
+any change does, so nothing polls for it.
+
+ljos-web has no engine of Ljós's: its runtime owns objects as a reactive
+graph, with an owner per object whose cleanups run when it is disposed. A
+Controller there is the same IR object with the same three signals.
+`attached` runs once the host's owner has mounted it, `detached` from the
+cleanup of the Controller's own owner, which the host's disposal runs
+first, and `updated` is queued on the runtime's batch end (a microtask)
+for Controllers that handle it, once per batch that wrote a property of
+the host, so the browser's frame is never asked for one. What
+`attached` returns is that owner's cleanup. A gesture is a Controller
+there as here, its listeners added to the host's element when it is
+attached and removed when it is detached. The module form is the same
+erased script, with `controller` the same function, so ljos-web reads a
+module's Controller as the front end describes it and needs no code of
+its own for it.
 
 DECISION: a Controller's host is the item it is declared in, and a
 Controller declared inside another shares that one's host. A Controller
-outside an item (in a `QtObject` or at a file's root) has no host and
-`attached` does not run; the checker says so.
+outside an item (held by a `QtObject`) has no host and `attached` does
+not run; the checker says so in a file of Ljós's API
+(`controller-host`).
 
 DECISION: the lifecycle is three signals (`attached`, `detached`,
 `updated`), handled with `on…` in QML and given as functions in a module.
@@ -2506,6 +2537,15 @@ to `never`, so `tsc` accepts what the checker accepts (§4.18).
 
 DECISION: Controllers are written in QML or in a TypeScript module, and
 both make the same object; the module form has no class.
+
+DECISION: `controller` is a global of every `.ts` module, as `fetch` is of
+every file and `later` of every Ljós file, not an export of a module to
+import: a Controller module imports nothing. `host` is typed `Item` by its
+signature; a module that wants more of the host narrows it.
+
+DECISION: the gestures' base, `PointerHandler`, is a Controller, so Qt's
+handlers have `host` and the lifecycle as well as `parent`; it is a
+member more, and Qt's names keep meaning what they did.
 
 ### 4.21 Compiled away: how the tools see the new syntax
 
