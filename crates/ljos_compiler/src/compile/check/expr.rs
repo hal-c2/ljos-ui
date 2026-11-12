@@ -159,13 +159,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             body,
             want,
             function.r#async,
+            true,
         )
     }
 
     /// Walks a function: its parameters typed by their annotations, else by
     /// the function `want` is; its returns checked against its return
-    /// type, written or wanted. Gives its type. An `asynchronous` one
-    /// returns a promise of what its body returns.
+    /// type, written or wanted. Gives its type, whose return a literal
+    /// widens in unless `widen` is false. An `asynchronous` one returns a
+    /// promise of what its body returns.
     fn callable(
         &mut self,
         params: &FormalParameters<'a>,
@@ -173,6 +175,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         body: Body<'_, 'a>,
         want: Option<Ty>,
         asynchronous: bool,
+        widen: bool,
     ) -> Ty {
         let want = want.filter(|want| matches!(self.arena.kind(*want), Kind::Function(_)));
         let mut list = Vec::with_capacity(params.items.len());
@@ -267,7 +270,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let inner = match &p.initializer {
                     Some(initializer) => {
                         let given = checker.expr(initializer, Some(param.ty));
-                        if param.ty == Ty::ERROR {
+                        // The desugar holds a `match`'s subject in a
+                        // parameter's default; it is the subject's own
+                        // type, which a match on `"dot" | "dash"` covers.
+                        if param.ty == Ty::ERROR && !widen {
+                            given
+                        } else if param.ty == Ty::ERROR {
                             checker.arena.widen(given)
                         } else {
                             param.ty
@@ -294,7 +302,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     if let Some(declared) = declared {
                         checker.check_return(declared, given, expression.span());
                     }
-                    inferred = checker.arena.widen(given);
+                    inferred = if widen {
+                        checker.arena.widen(given)
+                    } else {
+                        given
+                    };
                 }
                 Body::Statements(statements) => {
                     let falls = checker.stmts(statements);
@@ -305,7 +317,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             returns.push(Ty::UNDEFINED);
                         }
                         let all = checker.arena.union(returns);
-                        inferred = checker.arena.widen(all);
+                        inferred = if widen { checker.arena.widen(all) } else { all };
                     }
                 }
                 Body::None => {}
@@ -366,6 +378,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if let Some(local) = self.local(name) {
             return match local.binding {
                 Binding::Dead | Binding::Type => Ty::ERROR,
+                Binding::IsBound => match self.fact(name, Some(local.id)) {
+                    Some(ty) => ty,
+                    None => {
+                        self.report(
+                            Code::TsIsBinding,
+                            format!("`{name}` is bound only where the `is` that binds it was true"),
+                            id.span,
+                        );
+                        local.ty
+                    }
+                },
                 _ => self.fact(name, Some(local.id)).unwrap_or(local.ty),
             };
         }
@@ -394,7 +417,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let web = super::web::global(name);
         let web_or_untyped = |checker: &mut Self| match web {
             Some(global) => checker.arena.intern(Kind::Global(global)),
-            None => checker.untyped(name, "it is not in scope", id.span),
+            None => checker.not_in_scope(name, id.span),
         };
         // A module has no QML scope: what it does not declare or import is
         // not there.
@@ -1061,8 +1084,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 if self.script_index(object, &m.expression) {
                     return Ty::ERROR;
                 }
+                let ty = self.index(object, index);
+                // The desugar reads an item of an array pattern after it
+                // tested the array's length.
+                if self.desugared(m.expression.span().start) {
+                    return self.arena.without_undefined(ty);
+                }
                 self.indexed = Some(m.span);
-                self.index(object, index)
+                ty
             }
             Expression::CallExpression(call) => self.call(call, short),
             Expression::TSNonNullExpression(n) => {
@@ -1141,6 +1170,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     fn call(&mut self, call: &CallExpression<'a>, short: &mut bool) -> Ty {
         if self.is_controller(call) {
             return self.controller(call);
+        }
+        if self.is_sugar(call, "$is") {
+            return self.is_test(call);
+        }
+        if self.is_sugar(call, "$nomatch") {
+            return self.no_match(call);
         }
         let callee = self.link(&call.callee, short);
         let callee = self.optional(callee, call.optional, short);
@@ -1548,6 +1583,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 self.arena.array(all, false)
             }
             Expression::ObjectExpression(object) => {
+                let want = want.map(|want| self.discriminated(want, object));
                 let mut fields: Vec<Field> = Vec::with_capacity(object.properties.len());
                 for property in &object.properties {
                     let property = match property {
@@ -1720,6 +1756,16 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let no = self.expr(&conditional.alternate, want);
                 self.facts.truncate(mark);
                 self.arena.or(yes, no)
+            }
+            // `(x = s.k, true)` of `s is { let k: x }`: what the `is` binds.
+            Expression::AssignmentExpression(assignment)
+                if let AssignmentTarget::AssignmentTargetIdentifier(id) = &assignment.left
+                    && let Some(local) = self.local(id.name.as_str())
+                    && local.binding == Binding::IsBound =>
+            {
+                let given = self.expr(&assignment.right, None);
+                self.bound(local.id, given);
+                given
             }
             Expression::AssignmentExpression(assignment) => {
                 let place = match &assignment.left {
@@ -1919,12 +1965,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     ArrowFunctionBody::FunctionBody(body) => Body::Statements(&body.statements),
                     expression => Body::Expression(expression.to_expression()),
                 };
+                // A `match` is an expression, the arrow the desugar calls at
+                // once: its arms keep their literal types, as the arms of
+                // `?:` do, so `match (thick) { when true: 3; … }` is `3 | 1`.
+                let widen = !self.desugared(arrow.span.start);
                 self.callable(
                     &arrow.params,
                     arrow.return_type.as_deref(),
                     body,
                     want,
                     arrow.r#async,
+                    widen,
                 )
             }
             Expression::FunctionExpression(function) => {
@@ -2066,6 +2117,46 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// The type of the member `name` of a record, and whether it is
     /// optional.
+    /// The member of `want`, a union of records, that `object` is by the
+    /// literals it writes: TypeScript's discriminated union, so that
+    /// `{ status: "done", titles: [] }` goes where `{ status: "pending" } |
+    /// { status: "done"; titles: readonly string[] }` does. `want` itself
+    /// where no one member is.
+    fn discriminated(&mut self, want: Ty, object: &oxc_ast::ast::ObjectExpression<'a>) -> Ty {
+        let Kind::Union(parts) = self.arena.kind(want).clone() else {
+            return want;
+        };
+        let mut fits: Vec<Ty> = parts
+            .iter()
+            .copied()
+            .filter(|part| matches!(self.arena.kind(*part), Kind::Record(_)))
+            .collect();
+        for property in &object.properties {
+            let ObjectPropertyKind::ObjectProperty(property) = property else {
+                continue;
+            };
+            let name = match &property.key {
+                PropertyKey::StaticIdentifier(id) => id.name.as_str(),
+                PropertyKey::StringLiteral(s) => s.value.as_str(),
+                _ => continue,
+            };
+            let literal = match &property.value {
+                Expression::StringLiteral(s) => self.arena.str(s.value.as_str()),
+                Expression::NumericLiteral(n) => self.arena.num(n.value),
+                Expression::BooleanLiteral(b) => self.arena.boolean(b.value),
+                _ => continue,
+            };
+            fits.retain(|part| {
+                self.record_field(*part, name)
+                    .is_some_and(|(field, _)| self.takes(field, literal))
+            });
+        }
+        match fits.as_slice() {
+            [one] => *one,
+            _ => want,
+        }
+    }
+
     fn record_field(&self, record: Ty, name: &str) -> Option<(Ty, bool)> {
         match self.arena.kind(record) {
             Kind::Record(fields) => fields
@@ -2639,8 +2730,51 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     self.facts(&logical.left, sense);
                     self.facts(&logical.right, sense);
                 }
+                (LogicalOperator::And, false) | (LogicalOperator::Or, true) => {
+                    self.either_facts(&logical.left, &logical.right, sense);
+                }
                 _ => {}
             },
+            // `(x = s.k, true)`: where it is true, `x` holds what it was
+            // given.
+            Expression::SequenceExpression(sequence) if sense => {
+                if let Some(Expression::AssignmentExpression(assignment)) = sequence
+                    .expressions
+                    .first()
+                    .map(Expression::without_parentheses)
+                    && let AssignmentTarget::AssignmentTargetIdentifier(id) = &assignment.left
+                    && let Some(local) = self.local(id.name.as_str())
+                    && local.binding == Binding::IsBound
+                {
+                    self.push_fact(id.name.as_str(), Some(local.id), local.ty, local.ty);
+                }
+            }
+            // `$is(s, p)` of a pattern that is a name: a predicate's
+            // guard, or the value's.
+            Expression::CallExpression(call) if self.is_sugar(call, "$is") => {
+                if let [Argument::SpreadElement(_), ..] | [_, Argument::SpreadElement(_)] =
+                    call.arguments.as_slice()
+                {
+                    return;
+                }
+                let [subject, pattern] = call.arguments.as_slice() else {
+                    return;
+                };
+                let (subject, pattern) = (subject.to_expression(), pattern.to_expression());
+                if let Some((guard, _)) = self.guard_of_callee(pattern) {
+                    // An arm whose predicate failed may still have been the
+                    // case: a predicate removes nothing.
+                    if !guard.asserts
+                        && sense
+                        && let Some((key, local, now, base)) = self.path(subject)
+                    {
+                        let ty = self.narrow_guard(now, guard.ty, sense);
+                        self.push_fact(key, local, ty, base);
+                    }
+                    return;
+                }
+                self.compare_fact(subject, pattern, sense);
+            }
             Expression::BinaryExpression(binary)
                 if matches!(
                     binary.operator,
@@ -2683,6 +2817,136 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Whether `call` is the desugar's call of `name`: `$is` or `$nomatch`.
+    fn is_sugar(&self, call: &CallExpression<'a>, name: &str) -> bool {
+        matches!(&call.callee, Expression::Identifier(id)
+            if id.name == name && self.desugared(id.span.start))
+    }
+
+    /// A type guard `pattern` is: `when isRow:`.
+    fn guard_of_callee(&mut self, pattern: &Expression<'a>) -> Option<(Guard, ())> {
+        self.quiet += 1;
+        let ty = self.expr(pattern, None);
+        self.quiet -= 1;
+        let Kind::Function(sig) = self.arena.kind(ty) else {
+            return None;
+        };
+        sig.guard
+            .filter(|guard| guard.param == 0)
+            .map(|guard| (guard, ()))
+    }
+
+    /// `$is(s, p)`, which the desugar writes for a pattern that is a name
+    /// or a path: `when Gauge.Access.Granted:`, `when isRow:`.
+    fn is_test(&mut self, call: &CallExpression<'a>) -> Ty {
+        for (n, argument) in call.arguments.iter().enumerate() {
+            let Argument::SpreadElement(_) = argument else {
+                let e = argument.to_expression();
+                if n == 1
+                    && let Expression::Identifier(id) = e.without_parentheses()
+                {
+                    self.pattern_name = Some(id.span);
+                }
+                self.expr(e, None);
+                self.pattern_name = None;
+                continue;
+            };
+        }
+        Ty::BOOLEAN
+    }
+
+    /// `` `name` `` is not in scope. A pattern that is a name tests the
+    /// value against it, which the name was likely meant to bind.
+    fn not_in_scope(&mut self, name: &str, span: Span) -> Ty {
+        if self.pattern_name == Some(span) {
+            self.report(
+                Code::TsNoAny,
+                format!("`{name}` is not defined; to bind the value, write `let {name}`"),
+                span,
+            );
+            return Ty::ERROR;
+        }
+        self.untyped(name, "it is not in scope", span)
+    }
+
+    /// `$nomatch(s as never)`, where no arm of a `match` matched: what is
+    /// left of the subject there is what the arms leave out.
+    fn no_match(&mut self, call: &CallExpression<'a>) -> Ty {
+        let Some(Argument::TSAsExpression(cast)) = call.arguments.first() else {
+            self.loose_args(&call.arguments);
+            return Ty::NEVER;
+        };
+        let subject = &cast.expression;
+        let left = self.expr(subject, None);
+        let left = self.cases(left);
+        if left == Ty::NEVER || left == Ty::ERROR {
+            return Ty::NEVER;
+        }
+        let at = call.callee.span();
+        let parts = self.arena.members(left);
+        let wide = parts.iter().any(|part| match self.arena.kind(*part) {
+            Kind::Str(_) | Kind::Num(_) | Kind::Bool(_) | Kind::Undefined | Kind::Null => false,
+            Kind::Key { .. } => false,
+            Kind::Record(fields) => !fields.iter().any(|f| self.arena.is_literal(f.ty)),
+            _ => true,
+        });
+        if wide {
+            let shown = self.arena.display(left, &|o| self.obj_name(o));
+            self.report(
+                Code::TsMatchExhaustive,
+                format!("`match` on `{shown}` needs a `default:`"),
+                at,
+            );
+            return Ty::NEVER;
+        }
+        let declared = self.path(subject).map_or(Ty::ERROR, |(_, _, _, base)| base);
+        let case = self.case_text(parts[0], declared);
+        let written = self.as_written(subject.span());
+        self.report(
+            Code::TsMatchExhaustive,
+            format!(
+                "`match` does not cover every case of `{written}`; for example, this case is not handled: `when {case}:`"
+            ),
+            at,
+        );
+        Ty::NEVER
+    }
+
+    /// How a `match` arm writes the case `part` is: a key of an enum named
+    /// by the type the subject is declared as, a record by its literal
+    /// fields.
+    fn case_text(&self, part: Ty, declared: Ty) -> String {
+        match self.arena.kind(part) {
+            Kind::Key { object, key } => {
+                let name = self.arena.members(declared).into_iter().find_map(|d| {
+                    match self.arena.kind(d) {
+                        Kind::Enum { object: o, name } if o == object => Some(name.clone()),
+                        _ => None,
+                    }
+                });
+                match name {
+                    Some(name) => format!("{}.{name}.{key}", self.obj_name(*object)),
+                    None => format!("{}.{key}", self.obj_name(*object)),
+                }
+            }
+            Kind::Record(fields) => {
+                let fields: Vec<String> = fields
+                    .iter()
+                    .filter(|f| self.arena.is_literal(f.ty))
+                    .map(|f| {
+                        format!(
+                            "{}: {}",
+                            f.name,
+                            self.arena.display(f.ty, &|_| String::new())
+                        )
+                    })
+                    .collect();
+                format!("{{ {} }}", fields.join(", "))
+            }
+            _ => self.arena.display(part, &|o| self.obj_name(o)),
         }
     }
 
@@ -2748,7 +3012,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             self.push_fact(key, local, ty, base);
             return;
         }
-        // `p.kind === "a"`, of a union of records.
+        // `p.kind === "a"`, of a union of records, or of the one record
+        // earlier tests left of it.
         if let Expression::StaticMemberExpression(m) = subject.without_parentheses()
             && !m.optional
             && let Some(literal) = self.literal(other)
@@ -2758,7 +3023,6 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 .members(now)
                 .iter()
                 .all(|part| matches!(self.arena.kind(*part), Kind::Record(_)))
-            && matches!(self.arena.kind(now), Kind::Union(_))
         {
             let field = m.property.name.as_str();
             let parts = self.arena.members(now);
@@ -2812,19 +3076,117 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             } else {
                 self.arena.without_undefined(now)
             }
-        } else if let Some(literal) = self.literal(other) {
+        } else if let Some(literal) = self.literal(other).or_else(|| self.enum_key(other)) {
             if equal {
                 if !self.takes(now, literal) {
                     return;
                 }
                 literal
             } else {
-                self.arena.filter(now, |_, part| part != literal)
+                let parts = self.cases(now);
+                self.arena.filter(parts, |_, part| part != literal)
             }
         } else {
             return;
         };
         self.push_fact(key, local, ty, base);
+    }
+
+    /// A key of an enum, written as a path: `Gauge.Access.Granted`.
+    fn enum_key(&mut self, e: &Expression<'a>) -> Option<Ty> {
+        if !matches!(e, Expression::StaticMemberExpression(_)) {
+            return None;
+        }
+        self.quiet += 1;
+        let ty = self.expr(e, None);
+        self.quiet -= 1;
+        matches!(self.arena.kind(ty), Kind::Key { .. }).then_some(ty)
+    }
+
+    /// `ty` as the cases it is made of: `boolean` as `true | false`, and
+    /// an enum a QML file declares as its keys.
+    ///
+    /// DECISION: an enum of a native type is one value, as in `exhaustive`:
+    /// Qt combines its keys as flags.
+    fn cases(&mut self, ty: Ty) -> Ty {
+        let mut parts = Vec::new();
+        for part in self.arena.members(ty) {
+            match self.arena.kind(part).clone() {
+                Kind::Boolean => {
+                    parts.push(self.arena.boolean(true));
+                    parts.push(self.arena.boolean(false));
+                }
+                Kind::Enum { object, name } => match self.declared_keys(object, &name) {
+                    Some(keys) => parts.extend(keys.into_iter().map(|key| {
+                        self.arena.intern(Kind::Key {
+                            object,
+                            key: key.into(),
+                        })
+                    })),
+                    None => parts.push(part),
+                },
+                _ => parts.push(part),
+            }
+        }
+        // Not through `union`, which makes `true | false` `boolean` again.
+        match parts.as_slice() {
+            [] => Ty::NEVER,
+            [one] => *one,
+            _ => self.arena.intern(Kind::Union(parts.into_boxed_slice())),
+        }
+    }
+
+    /// The keys of the enum `name` of the object `o`, where a QML file
+    /// declares it.
+    fn declared_keys(&self, o: u32, name: &str) -> Option<Vec<String>> {
+        let kind = self.kind_of(o)?;
+        self.c.types.enum_keys(&kind, name)
+    }
+
+    /// Facts of `left && right` being false (or of `||` being true, when
+    /// `sense` is true): either `left` was, or `left` was not and `right`
+    /// was. A path both say something of is what either says.
+    fn either_facts(&mut self, left: &Expression<'a>, right: &Expression<'a>, sense: bool) {
+        // `… && (x = s.k, true)`: the right is never what would make the
+        // whole `sense`, so only the left can.
+        if constant(right) == Some(!sense) {
+            self.facts(left, sense);
+            return;
+        }
+        let mark = self.facts.len();
+        self.facts(left, sense);
+        let first: Vec<Fact<'a>> = self.facts.drain(mark..).collect();
+        if first.is_empty() {
+            return;
+        }
+        self.facts(left, !sense);
+        self.facts(right, sense);
+        let second: Vec<Fact<'a>> = self.facts.drain(mark..).collect();
+        let last = |facts: &[Fact<'a>], key: &str, local: Option<u32>| {
+            facts
+                .iter()
+                .rev()
+                .find(|fact| fact.key == key && fact.local == local)
+                .copied()
+        };
+        let mut joined: Vec<Fact<'a>> = Vec::new();
+        for fact in &first {
+            if joined
+                .iter()
+                .any(|seen| seen.key == fact.key && seen.local == fact.local)
+            {
+                continue;
+            }
+            let (Some(one), Some(other)) = (
+                last(&first, fact.key, fact.local),
+                last(&second, fact.key, fact.local),
+            ) else {
+                continue;
+            };
+            let ty = self.arena.or(one.ty, other.ty);
+            joined.push(Fact { ty, ..one });
+        }
+        self.facts.extend(joined);
     }
 
     fn literal(&mut self, e: &Expression<'a>) -> Option<Ty> {
@@ -2957,6 +3319,18 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     pub(super) fn declaration(&mut self, declaration: &VariableDeclaration<'a>) {
+        // `var x;`, which the desugar writes before a statement whose `is`
+        // binds `x`.
+        if declaration.kind == VariableDeclarationKind::Var
+            && self.desugared(declaration.span.start)
+        {
+            for declarator in &declaration.declarations {
+                if let BindingPattern::BindingIdentifier(id) = &declarator.id {
+                    self.bind(id.name.as_str(), Ty::NEVER, Binding::IsBound);
+                }
+            }
+            return;
+        }
         let binding = match declaration.kind {
             VariableDeclarationKind::Var => {
                 let start = declaration.span.start;
@@ -3583,6 +3957,15 @@ fn signed_literal(operator: UnaryOperator, argument: &Expression<'_>) -> Option<
     match operator {
         UnaryOperator::UnaryNegation => Some(-n.value),
         UnaryOperator::UnaryPlus => Some(n.value),
+        _ => None,
+    }
+}
+
+/// The truth `e` always has, where its text says: `true`, `(x = v, true)`.
+fn constant(e: &Expression<'_>) -> Option<bool> {
+    match e.without_parentheses() {
+        Expression::BooleanLiteral(b) => Some(b.value),
+        Expression::SequenceExpression(sequence) => sequence.expressions.last().and_then(constant),
         _ => None,
     }
 }
