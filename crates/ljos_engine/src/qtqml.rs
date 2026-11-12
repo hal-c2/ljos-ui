@@ -956,6 +956,12 @@ impl Engine {
         self.advance_timers_with(now, Some((made, by)));
     }
 
+    /// When the next of the timers in `made` comes due, as
+    /// [`Engine::advance_timers_made`] fires it; `None` once none is left.
+    pub fn next_timer_made(&self, made: Range<TimerId>) -> Option<Time> {
+        self.inner.timers.borrow().sched.next_deadline_of(made)
+    }
+
     fn advance_timers_with(&self, now: Time, made: Option<(Range<TimerId>, Time)>) {
         let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {

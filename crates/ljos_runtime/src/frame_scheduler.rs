@@ -285,6 +285,15 @@ impl FrameScheduler {
         }
     }
 
+    /// The earliest deadline among the active timers in `made`: when what
+    /// some work asked for next comes due.
+    pub fn next_deadline_of(&self, made: Range<TimerId>) -> Option<Time> {
+        self.by_deadline
+            .iter()
+            .find(|(_, id)| made.contains(id) && self.is_active(&self.timers[id]))
+            .map(|&(t, _)| t)
+    }
+
     /// When the app must next wake, or `None` to sleep until external input.
     /// `Some(t)` with `t <= now` means "run a frame immediately"; pending marks
     /// report `Time::ZERO`.
@@ -380,7 +389,10 @@ mod tests {
         let after = s.add_timer(ms(14), TimerKind::Timer);
         let due: Vec<_> = s.due_or_made(ms(10), ids, ms(20)).map(|d| d.id).collect();
         assert_eq!(due, vec![made]);
+        let ids = mark..s.next_timer_id();
+        assert_eq!(s.next_deadline_of(ids), Some(ms(40)));
         assert_eq!(due_ids(&mut s, ms(40)), vec![before, after, made_later]);
+        assert_eq!(s.next_deadline_of(mark..s.next_timer_id()), None);
     }
 
     #[test]
