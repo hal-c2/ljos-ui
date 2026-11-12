@@ -520,6 +520,11 @@ fn imports_qt(files: &[(String, String)]) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Whether `ljos check` says a file names a member its type lacks.
+fn unknown_member(out: &str) -> bool {
+    out.contains("[unknown-property]") || out.contains("[unknown-signal]")
+}
+
 /// What is wrong with one example, if anything.
 fn verify(
     root: &Path,
@@ -554,6 +559,14 @@ fn verify(
         )),
         Some((false, out)) if !shows_findings => problems.push(format!(
             "{} ({}): `ljos check` fails:\n{out}",
+            project.at, project.key
+        )),
+        // Without Qt's table the checker only warns of a member a type of
+        // Ljós's own lacks; with it, the same member is an error, and the
+        // runtime refuses it under both. A warning here is that error seen
+        // early, by the CI that builds without Qt's table.
+        Some((true, out)) if !shows_findings && unknown_member(&out) => problems.push(format!(
+            "{} ({}): `ljos check` finds a member the type does not have:\n{out}",
             project.at, project.key
         )),
         Some(_) => {}
