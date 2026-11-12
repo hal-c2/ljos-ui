@@ -370,6 +370,36 @@ Feature: Controllers: behaviour an item is given by declaring it
         ljos: 2 errors
         """
 
+    Scenario: The checker reports a controller's members not written in it
+      Given the file "made.ts":
+        """ts
+        const defaults = { width: 600 }
+        const extra = { height: 400 }
+        export const Elsewhere = controller({
+          properties: defaults,
+        })
+        export const Spread = controller({
+          properties: { ...extra, width: 600 },
+        })
+        """
+      And the file "Pick.qml":
+        """qml
+        import Ljos.Ui
+        import "made.ts" as Made
+        Item {
+          Made.Elsewhere {}
+          Made.Spread {}
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        made.ts:4:23: error: a controller's `properties` is an object written in it, as `properties: { … }`: the Controller is made from the members written there [ts-forbidden]
+        made.ts:7:25: error: each member of a controller's `properties` is written `name: value`: the Controller is made from the names written there [ts-forbidden]
+        2 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
   Rule: A Controller needs an item to act on
 
     Scenario: The checker reports a Controller declared outside an item
@@ -390,4 +420,23 @@ Feature: Controllers: behaviour an item is given by declaring it
         Pick.qml:5:40: error: a `Controller` acts on the item it is declared in, and a `QtObject` is not an item: declare it in one [controller-host]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
+        """
+
+    Scenario: The checker takes a Controller and a gesture in a popup, which hosts them in its content
+      Given the file "Pick.qml":
+        """qml
+        import Ljos.Core
+        import Ljos.Ui
+        import Ljos.Controls
+        Item {
+          Popup {
+            Tap {}
+            Controller {}
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
         """

@@ -1403,7 +1403,8 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     /// The name of the type of `parent`, where the object `index` is a
-    /// Controller it holds and it is neither an item nor a Controller: the
+    /// Controller it holds and it is neither an item, nor a Controller, nor
+    /// a popup that keeps what is declared in it in an item: the
     /// Controller has no host (docs/DIALECT.md §4.20). In a file of Ljós's
     /// API, as Qt's handlers, which are Controllers, are told only when
     /// they run.
@@ -1431,6 +1432,13 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         }
         let holder = base(parent)?;
         if derives(holder, item) || derives(holder, controller) {
+            return None;
+        }
+        // A popup is not an item, but what is declared in it goes into its
+        // content item, which the Controller acts on.
+        if oracle.default_property(holder) == Some("contentData")
+            && oracle.property(holder, "contentItem").is_some()
+        {
             return None;
         }
         Some(oracle.name(holder).to_string())

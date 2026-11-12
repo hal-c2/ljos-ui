@@ -13,7 +13,7 @@ After reading this page, you will be able to write a `Controller` as a QML file 
 
 Some behaviour belongs to an item without being drawn: it follows the pointer, orbits a camera, keeps a flag in step with the window's size. A `Controller`, from `Ljos.Core`, is a non-visual object that holds that behaviour. Declare one inside an item and that item is its `host`:
 
-- `host` is the item it is declared in, and it does not change. A Controller declared inside another Controller shares that one's host.
+- `host` is the item it is declared in, and it does not change. A Controller declared inside another Controller shares that one's host. One declared in a popup acts on the popup's content item, where what is declared in a popup goes.
 - `attached(host)` runs once the host is complete, or when the Controller is put into a host that already is.
 - `detached()` runs once, when the host goes (a `Loader` unloading it, a delegate removed) or when the Controller itself is destroyed.
 - `updated()` runs once after `attached`, then once after each turn in which a property of the host changed, after the bindings have settled and before the frame is drawn.
@@ -131,7 +131,7 @@ Rectangle {
 }
 ```
 
-The module form has no `class` and no `this`: `self` is the Controller with its typed properties and bindings, and `host` is its host, an `Item`. A Controller from a module is named in QML through its import, `Size.Breakpoint`, and it is the same native object the QML form makes, so it is read and bound the same way. The checker types both: `width: "wide"` on a `Size.Breakpoint` is ``error: Invalid property assignment: number expected [invalid-assignment]``, and a key that is not one of the five is an error too.
+The module form has no `class` and no `this`: `self` is the Controller with its typed properties and bindings, and `host` is its host, an `Item`. A Controller from a module is named in QML through its import, `Size.Breakpoint`, and it is the same native object the QML form makes, so it is read and bound the same way. The checker types both: `width: "wide"` on a `Size.Breakpoint` is ``error: Invalid property assignment: number expected [invalid-assignment]``, and a key that is not one of the five is an error too. `properties` and `bindings` are written in the call, each member as `name: value`, since the Controller is made from the names written there: an object made elsewhere or a spread is an error.
 
 ## Where a Controller goes
 

@@ -2390,7 +2390,9 @@ it with hooks, and lit with reactive controllers.
 **The design.** A `Controller` is a non-visual object declared inside an
 item. That item is its **host**. It has:
 
-- `host`, the item it is declared in (an `Item`, readonly);
+- `host`, the item it is declared in (an `Item`, readonly). A popup is
+  not an item, but what is declared in it goes into its content item, so
+  that item is the host of a Controller or a gesture declared in a popup;
 - a lifecycle, as signals: `attached(host)` once its host is complete,
   or when it is put into a host; `detached()` when the host goes, or the
   controller is taken out (a `Loader` unloading, a delegate removed);
@@ -2523,7 +2525,11 @@ no type it does not use. The front end reads the call and makes the
 module's export a Controller type (`breakpoint.ts/Breakpoint`), with a
 property for each of `properties` and a readonly one for each of
 `bindings`, typed from their values and return types; the keys it takes
-are the five above, and any other is an error. That type is a QML file
+are the five above, and any other is an error. `properties` and
+`bindings` are objects written in the call, each member `name: value`:
+the type is made from the names written there, so an object made
+elsewhere, a spread, a computed name or an accessor is an error rather
+than a member the type would not have. That type is a QML file
 the compiler makes beside the module, whose root is a `Controller`: each
 property, a readonly property per binding that calls the binding with the
 host and the Controller, and handlers that call the lifecycle's
