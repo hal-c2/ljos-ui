@@ -87,11 +87,12 @@ pub struct CompiledFile {
 }
 
 /// Whether an import's path names a file of script: JavaScript (`.js`,
-/// `.mjs`) or a TypeScript module (`.ts`; a `.d.ts` is types alone, and
+/// `.mjs`) or a TypeScript module (`.ts`, `.lts`; a `.d.ts` is types alone, and
 /// runs nothing). Anything else imported by path is a directory of types.
 pub fn is_script_path(path: &str) -> bool {
     path.ends_with(".js")
         || path.ends_with(".mjs")
+        || path.ends_with(".lts")
         || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
 }
 

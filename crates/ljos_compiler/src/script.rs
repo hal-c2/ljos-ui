@@ -193,6 +193,12 @@ fn script_path(module: &str) -> Option<&str> {
 /// how it is read: an ECMAScript module (`.mjs`), a TypeScript one (`.ts`),
 /// or a script.
 pub(crate) fn syntax_error(source: &str, key: &str) -> Option<(u32, u32, String)> {
+    if module::is_lts(key) {
+        let desugared = qml_syntax::desugar(source);
+        let error = desugared.diagnostics.first()?;
+        let (line, column) = error.position(source);
+        return Some((line as u32, column as u32, error.message.clone()));
+    }
     let (text, _) = without_directives(source);
     let allocator = Allocator::default();
     let kind = if is_module(key) {

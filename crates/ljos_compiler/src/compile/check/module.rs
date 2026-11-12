@@ -33,7 +33,13 @@ use crate::{
 /// A module a file reaches, parsed.
 pub(in crate::compile) struct Module<'a> {
     pub(super) key: String,
+    /// The text the checker reads: an `.lts` module's with `match` and
+    /// `is` lowered.
     pub(super) source: &'a str,
+    /// `source`'s offsets to the module's own.
+    pub(super) map: qml_syntax::SpanMap,
+    /// The module as written.
+    pub(super) original: &'a str,
     program: Program<'a>,
     /// What its erasure refuses: what is not only types and does not
     /// erase. A module that does not parse has its syntax error here, alone.
@@ -42,6 +48,9 @@ pub(in crate::compile) struct Module<'a> {
     /// The declarations of a JavaScript file (`calc.d.ts`): types alone,
     /// with nothing that runs.
     declarations: bool,
+    /// What is found in it before it is read, at `original`'s offsets: a
+    /// `.ts` module's `match`, which is the syntax of an `.lts` one.
+    pub(super) said: Vec<(Code, String, Span)>,
 }
 
 /// What a module gives its importers: the names it exports, as values and
@@ -165,11 +174,49 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
         } else {
             erase::source_type()
         };
-        let parsed = oxc_parser::Parser::new(allocator, source, source_type).parse();
-        let broken = !parsed.diagnostics.is_empty();
-        // Declarations run nothing, so there is nothing to erase.
+        let mut parsed = oxc_parser::Parser::new(allocator, source, source_type).parse();
+        let mut broken = !parsed.diagnostics.is_empty();
+        let mut text = source;
+        let mut map = qml_syntax::SpanMap::identity(source.len() as u32);
+        let mut said = Vec::new();
+        // An `.lts` module is read as the TypeScript its `match` and `is`
+        // stand for, and so is a `.ts` module that has them, which is
+        // the one finding said of it, so the rest of what it says is
+        // found too.
+        let desugared = if erase::is_lts(&key) || (broken && !declarations) {
+            Some(qml_syntax::desugar(source))
+        } else {
+            None
+        };
+        if let Some(desugared) = desugared
+            && desugared.diagnostics.is_empty()
+            && (erase::is_lts(&key) || !desugared.uses.is_empty())
+        {
+            if let Some(&keyword) = desugared.uses.first()
+                && !erase::is_lts(&key)
+            {
+                said.push((
+                    Code::TsLtsSyntax,
+                    lts_syntax(
+                        project,
+                        &key,
+                        &source[keyword.start as usize..keyword.end as usize],
+                    ),
+                    keyword,
+                ));
+            }
+            text = allocator.alloc_str(&desugared.text);
+            map = desugared.map;
+            parsed = oxc_parser::Parser::new(allocator, text, source_type).parse();
+            broken = !parsed.diagnostics.is_empty();
+        }
+        // Declarations run nothing, so there is nothing to erase. The
+        // faults of what was read are where it has them, as the
+        // checker's own findings are.
         let faults = if declarations {
             Vec::new()
+        } else if text != source {
+            erase::erase_text(&key, text).faults
         } else {
             erase::erase(&key, source).faults
         };
@@ -189,14 +236,33 @@ pub(in crate::compile) fn modules<'a, O: TypeOracle>(
         }
         modules.push(Module {
             key,
-            source,
+            map,
+            original: source,
+            source: text,
             program: parsed.program,
             faults,
             broken,
             declarations,
+            said,
         });
     }
     modules
+}
+
+/// What is said of the `.ts` module at `key` that has `keyword`, the
+/// syntax of an `.lts` one: why it is an error, and the rename that ends
+/// it, unless a file is where the rename would put it (`module-clash`).
+fn lts_syntax<O: TypeOracle>(project: &Project<O>, key: &str, keyword: &str) -> String {
+    let name = key.rsplit('/').next().unwrap_or(key);
+    let renamed = erase::lts_name(name);
+    let why = format!(
+        "`{keyword}` is Ljós syntax, which stock TypeScript tools cannot read in a `.ts` file"
+    );
+    if project.script(&erase::lts_name(key)).is_some() {
+        format!("{why}; it would be renamed to `{renamed}`, but `{renamed}` is in the way")
+    } else {
+        format!("{why}; rename `{name}` to `{renamed}`")
+    }
 }
 
 /// The words for a list: "`a`", "`a` and `b`", "`a`, `b` and `c`".
@@ -379,6 +445,8 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         // The module is walked as a script of its own: nothing of the place
         // it was reached from holds in it.
         let source = std::mem::replace(&mut self.source, module.source);
+        let map = std::mem::replace(&mut self.map, &module.map);
+        let original = std::mem::replace(&mut self.original, module.original);
         let this = self.this.take();
         let reading = self.module.replace(index);
         let quiet = std::mem::take(&mut self.quiet);
@@ -404,6 +472,8 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             self.module_body(module)
         };
         self.source = source;
+        self.map = map;
+        self.original = original;
         self.this = this;
         self.module = reading;
         self.quiet = quiet;

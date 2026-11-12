@@ -310,5 +310,6 @@ impl Sets {
 pub(crate) fn is_script(path: &str) -> bool {
     path.ends_with(".js")
         || path.ends_with(".mjs")
+        || path.ends_with(".lts")
         || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
 }

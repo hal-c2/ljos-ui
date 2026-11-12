@@ -72,13 +72,21 @@ fn compile_alone<O: TypeOracle>(
             SourceSpan::default(),
         )]);
     };
-    let lines = Lines::new(source);
     let allocator = Allocator::default();
-    let mut parsed = qml_syntax::parse(&allocator, source);
+    // `match` and `is` are compiled as the scripts they stand for, and
+    // every finding is put back where the file has it.
+    let qml_syntax::Lowered {
+        text,
+        mut parsed,
+        map,
+        ..
+    } = qml_syntax::parse_lowered(&allocator, source);
+    let lines = Lines::lowered(source, map);
+    // The parser's own findings are at the file's offsets already.
     let mut diagnostics: Vec<Diagnostic> = parsed
         .diagnostics
         .iter()
-        .map(|d| Diagnostic::error(Code::Syntax, d.message.clone(), lines.span(source, d.span)))
+        .map(|d| Diagnostic::error(Code::Syntax, d.message.clone(), lines.at(source, d.span)))
         .collect();
     if parsed.panicked {
         if diagnostics.is_empty() {
@@ -108,7 +116,7 @@ fn compile_alone<O: TypeOracle>(
             .into_iter()
             .map(|e| Diagnostic::error(e.code.into(), e.message, lines.span(source, e.span))),
     );
-    let mut compiler = Compiler::new(project, key, source, lines, types, &tree);
+    let mut compiler = Compiler::new(project, key, source, text, lines, types, &tree);
     compiler.diagnostics = diagnostics;
     // A file the compat pass lowered says its scripts are JavaScript, and
     // so does one `ljos migrate` wrote: the same text compiles the same.
@@ -128,6 +136,42 @@ fn compile_alone<O: TypeOracle>(
         check::modules_only(&mut compiler, &modules);
     }
     Ok(compiler.finish(&parsed.document))
+}
+
+/// The modules of `project` at `keys`, each checked as the file that
+/// imports it checks it, whether or not one does.
+pub fn check_modules<O: TypeOracle>(
+    project: &Project<O>,
+    keys: &[String],
+) -> Vec<crate::CheckedModule> {
+    // The checker reads a module through a file that reaches it: here, one
+    // at the project's root with nothing in it but their imports.
+    let key = "";
+    let source: String = keys
+        .iter()
+        .enumerate()
+        .map(|(i, module)| format!("import \"{module}\" as M{i}\n"))
+        .chain(std::iter::once("QtObject {}\n".to_string()))
+        .collect();
+    let allocator = Allocator::default();
+    let source = allocator.alloc_str(&source);
+    let qml_syntax::Lowered {
+        text, parsed, map, ..
+    } = qml_syntax::parse_lowered(&allocator, source);
+    if parsed.panicked {
+        return Vec::new();
+    }
+    let types = Types::new(&project.front, &project.oracle, key);
+    let tree = Tree::analyze(&parsed.document, types, &mut Vec::new());
+    let lines = Lines::lowered(source, map);
+    let mut compiler = Compiler::new(project, key, source, text, lines, types, &tree);
+    let modules = check::modules(&allocator, project, key, &parsed.document, false);
+    check::modules_only(&mut compiler, &modules);
+    compiler
+        .modules
+        .into_iter()
+        .filter(|module| keys.contains(&module.key))
+        .collect()
 }
 
 /// Whether `document` is written in Ljós's API: it imports `Ljos.Ui`.
@@ -214,10 +258,17 @@ fn dotted<'a>(expression: &Expression<'a>) -> Option<Vec<&'a str>> {
 /// Byte offsets to lines and columns.
 struct Lines {
     starts: Vec<u32>,
+    /// The lowered text's offsets to the source's.
+    map: qml_syntax::SpanMap,
 }
 
 impl Lines {
     fn new(source: &str) -> Self {
+        Self::lowered(source, qml_syntax::SpanMap::identity(source.len() as u32))
+    }
+
+    /// The lines of `source`, read through the text `map` lowered it to.
+    fn lowered(source: &str, map: qml_syntax::SpanMap) -> Self {
         let starts = std::iter::once(0)
             .chain(
                 source
@@ -227,10 +278,16 @@ impl Lines {
                     .map(|(i, _)| i as u32 + 1),
             )
             .collect();
-        Self { starts }
+        Self { starts, map }
     }
 
+    /// Where `span` of the lowered text is in `source`.
     fn span(&self, source: &str, span: Span) -> SourceSpan {
+        self.at(source, self.map.span(span))
+    }
+
+    /// Where `span` of `source` itself is.
+    fn at(&self, source: &str, span: Span) -> SourceSpan {
         let start = (span.start as usize).min(source.len()) as u32;
         let line = self.starts.partition_point(|s| *s <= start);
         let line_start = self.starts[line - 1] as usize;
@@ -278,6 +335,10 @@ struct Plan {
 struct Compiler<'t, 'a, 'p, O: TypeOracle> {
     project: &'p Project<O>,
     key: &'p str,
+    /// The file as written, for where a finding is.
+    original: &'a str,
+    /// The file with `match` and `is` lowered, which is what is compiled
+    /// and what every span of the tree is an offset of.
     source: &'a str,
     lines: Lines,
     types: Types<'p, O>,
@@ -322,6 +383,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     fn new(
         project: &'p Project<O>,
         key: &'p str,
+        original: &'a str,
         source: &'a str,
         lines: Lines,
         types: Types<'p, O>,
@@ -359,6 +421,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         Self {
             project,
             key,
+            original,
             source,
             lines,
             types,
@@ -386,7 +449,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
     }
 
     fn span(&self, span: Span) -> SourceSpan {
-        self.lines.span(self.source, span)
+        self.lines.span(self.original, span)
     }
 
     fn def_mut(&mut self, at: ObjRef) -> &mut ObjectDef {
@@ -1071,7 +1134,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                     self.diagnostics.push(Diagnostic::error(
                         Code::UnknownType,
                         qml_front::unknown_type(self.types.oracle, &path[..n].join(".")),
-                        self.lines.span(self.source, span),
+                        self.span(span),
                     ));
                 }
                 (Slot::Attached(owned(&path[..n])), path[n..].join("."))
@@ -2246,7 +2309,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         let mut file = CompiledFile {
             version: IR_VERSION,
             file: self.key.to_string(),
-            source_hash: *blake3::hash(self.source.as_bytes()).as_bytes(),
+            source_hash: *blake3::hash(self.original.as_bytes()).as_bytes(),
             imports: document
                 .imports
                 .iter()
