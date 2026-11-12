@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="ljos_mcp_core's protocol half builds for the web, without rmcp or tokio"
+#MISE description="ljos_mcp_core's protocol half, and the desugar, build for the web"
 set -euo pipefail
 # The protocol half of ljos_mcp_core stays free of rmcp and tokio, and so builds
 # for the web without tokio's unstable cfg. Neither builds there otherwise.
@@ -10,3 +10,6 @@ if cargo tree -p ljos_mcp_core --no-default-features --features inspect -e norma
 fi
 cargo check -p ljos_mcp_core --no-default-features --target wasm32-unknown-unknown
 cargo check -p ljos_mcp_core --no-default-features --features inspect --target wasm32-unknown-unknown
+# The desugar of `match` and `is` (qml_syntax::desugar) is the one ljos-web
+# runs on what a person writes in the browser, so it stays pure Rust.
+cargo check -p qml_syntax --target wasm32-unknown-unknown

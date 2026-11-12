@@ -41,6 +41,17 @@
 //! best partial tree (hot reload, an editor) reads `document` and shows the
 //! diagnostics.
 //!
+//! # `match` and `is`
+//!
+//! A QML file's scripts, and an `.lts` module, may use TC39's `match` and
+//! `is` (docs/DIALECT.md §4.18). The fork reads them as text edits, and
+//! [`desugar`] applies them: plain TypeScript, line for line, with a
+//! [`SpanMap`] back to the text as written. [`parse`] gives the tree of the
+//! desugared document with every span mapped back, so a tool that slices
+//! the source by span reads and writes the syntax as written, and a tool
+//! that walks the tree sees only TypeScript. [`parse_lowered`] keeps the
+//! desugared text and its spans, for the compiler, which reads that text.
+//!
 //! # Trees and arenas
 //!
 //! Every binding value, handler and function in the tree is an ordinary Oxc
@@ -62,6 +73,10 @@ pub use oxc_parser::qml::ast;
 
 use oxc_diagnostics::OxcDiagnostic;
 use oxc_parser::Parser;
+
+mod sugar;
+
+pub use sugar::{Desugared, Lowered, SpanMap, desugar, parse_lowered};
 
 /// What [`parse`] gives back.
 #[derive(Debug)]
@@ -88,18 +103,39 @@ impl Parsed<'_> {
 ///
 /// Embedded JavaScript is parsed as TypeScript so that QML's type annotations
 /// on function parameters and return types are accepted.
+///
+/// Where the document uses `match` or `is`, the tree is of the desugared
+/// text, with every span mapped back to `source` (see the crate docs).
 pub fn parse<'a>(allocator: &'a Allocator, source: &'a str) -> Parsed<'a> {
-    let parsed = Parser::new(allocator, source, SourceType::ts()).parse_qml();
-    Parsed {
-        document: parsed.document,
-        comments: parsed.comments,
-        diagnostics: parsed
-            .diagnostics
-            .into_iter()
-            .map(Diagnostic::from)
-            .collect(),
-        panicked: parsed.panicked,
+    let Lowered {
+        mut parsed, map, ..
+    } = parse_lowered(allocator, source);
+    if !map.is_identity() {
+        sugar::remap(&mut parsed, &map);
     }
+    parsed
+}
+
+/// The fork's first reading of `source`: its tree, with `match` and `is`
+/// in it as their subjects alone, and the edits that write them away.
+fn parse_first<'a>(
+    allocator: &'a Allocator,
+    source: &'a str,
+) -> (Parsed<'a>, Vec<oxc_parser::qml::sugar::Edit>) {
+    let parsed = Parser::new(allocator, source, SourceType::ts()).parse_qml();
+    (
+        Parsed {
+            document: parsed.document,
+            comments: parsed.comments,
+            diagnostics: parsed
+                .diagnostics
+                .into_iter()
+                .map(Diagnostic::from)
+                .collect(),
+            panicked: parsed.panicked,
+        },
+        parsed.sugar,
+    )
 }
 
 /// A syntax error, detached from oxc's diagnostic type so that callers need

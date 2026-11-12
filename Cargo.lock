@@ -6680,8 +6680,10 @@ dependencies = [
  "ljos_oxc_parser",
  "oxc_allocator",
  "oxc_ast",
+ "oxc_ast_visit",
  "oxc_diagnostics",
  "oxc_span",
+ "oxc_syntax",
  "proptest",
 ]
 
