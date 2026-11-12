@@ -545,7 +545,9 @@ impl Platform {
     /// the news it delivers or by the timers it runs, each once it is due:
     /// what they do may be what answers. Timers armed before it began that
     /// only come due as time passes while it waits are left for the next
-    /// frame.
+    /// frame. A repeating `Timer` is one timer on every tick: started
+    /// while it waits, it keeps ticking; started before, it ticks only if
+    /// due when it began.
     pub fn finish(&self, engine: &Engine) {
         self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
@@ -574,9 +576,11 @@ impl Platform {
         // rounds a deadline: what comes due later, on a clock that runs
         // on while this waits, is the next frame's, not this wait's.
         let due = engine.now().round_up_to(TIMER_GRANULARITY);
-        // Timers armed from here on are this wait's, at their own
+        // Timers first armed from here on are this wait's, at their own
         // deadline: the news it delivers asks for them, or the timers it
-        // runs do, and a clock that runs on puts them after `due`.
+        // runs do, and a clock that runs on puts them after `due`. A
+        // repeat keeps when its timer was first armed, so one from before
+        // stays before.
         let first = engine.next_timer_id();
         loop {
             let seen = self.signal.count();
@@ -1189,6 +1193,7 @@ pub fn mounted(dirs: &[(String, PathBuf)], url: &str) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
     use super::*;
     use crate::fetch::Method;
@@ -1335,9 +1340,98 @@ mod tests {
         assert!(engine.take_log().is_empty());
     }
 
+    /// A repeating `Timer` every `interval` ms, running from now, and the
+    /// count of its ticks.
+    fn ticking(engine: &Engine, interval: i32) -> (ObjectId, Arc<AtomicU32>) {
+        let timer = engine
+            .create_native(
+                ljos_engine::Timer {
+                    interval,
+                    repeat: true,
+                    running: true,
+                    ..Default::default()
+                },
+                None,
+            )
+            .unwrap();
+        let ticks = Arc::new(AtomicU32::new(0));
+        let count = Arc::clone(&ticks);
+        engine
+            .connect_by_name(timer, "triggered", move |_, _| {
+                count.fetch_add(1, Ordering::SeqCst);
+            })
+            .unwrap();
+        (timer, ticks)
+    }
+
+    #[test]
+    fn a_repeating_timer_started_before_finish_is_not_pulled_forward() {
+        let engine = Engine::new();
+        let clock = ljos_runtime::VirtualClock::starting_at(ljos_runtime::Time::from_millis(40));
+        engine.set_clock(Rc::new(clock.clone()));
+        let platform = Platform::of(&engine);
+        // Due as finish begins, so it ticks once; its next tick, armed
+        // in that tick, is still the same timer: armed before finish.
+        let (_timer, ticks) = ticking(&engine, 5);
+        clock.advance(Duration::from_millis(5));
+        let reply = platform.expect_for("the page left", None);
+        // The news lets the next tick come due before the answer comes.
+        let post = platform.poster();
+        platform.poster().send(move |_| {
+            clock.advance(Duration::from_millis(5));
+            post.send(move |_| drop(reply));
+        });
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert_eq!(
+            ticks.load(Ordering::SeqCst),
+            1,
+            "a tick that came due as time passed ran"
+        );
+        assert!(engine.take_log().is_empty());
+    }
+
+    #[test]
+    fn a_repeating_timer_news_starts_keeps_ticking_once_due() {
+        let engine = Engine::new();
+        let clock = ljos_runtime::VirtualClock::starting_at(ljos_runtime::Time::from_millis(40));
+        engine.set_clock(Rc::new(clock.clone()));
+        let platform = Platform::of(&engine);
+        let reply = platform.expect_for("the third tick", None);
+        let ticked = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&ticked);
+        // The news starts a timer every 5 ms, and time passes for each
+        // tick: the third answers.
+        platform.poster().send(move |e| {
+            let (timer, ticks) = ticking(e, 5);
+            let reply = RefCell::new(Some(reply));
+            let on = clock.clone();
+            e.connect_by_name(timer, "triggered", move |e, _| {
+                let n = ticks.load(Ordering::SeqCst);
+                seen.store(n, Ordering::SeqCst);
+                if n == 3 {
+                    drop(reply.borrow_mut().take());
+                } else {
+                    pass(e, &on, Duration::from_millis(5));
+                }
+            })
+            .unwrap();
+            pass(e, &clock, Duration::from_millis(5));
+        });
+        let began = Instant::now();
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert!(
+            began.elapsed() < FINISH_TIMEOUT,
+            "finish waited {:?} for the ticks of a timer its news started",
+            began.elapsed()
+        );
+        assert_eq!(ticked.load(Ordering::SeqCst), 3);
+        assert!(engine.take_log().is_empty());
+    }
+
     #[test]
     fn work_news_asks_for_at_once_is_done_on_a_clock_that_runs_on() {
-        use std::sync::atomic::{AtomicBool, Ordering};
         // The system clock: the going is asked for after finish began,
         // at a later time than any due then.
         let engine = Engine::new();
