@@ -511,10 +511,18 @@ fn waker_rows(engine: &Engine, activity: &ProcessActivity, text: &mut String) ->
         let _ = writeln!(
             text,
             "{} {}: {}, for {}, waited {:.1} ms",
-            if p.standing { "listens" } else { "answer" },
+            if p.standing {
+                "listens"
+            } else if p.busy {
+                "works"
+            } else {
+                "answer"
+            },
             p.what,
             if p.standing {
                 "may never come"
+            } else if p.busy {
+                "may never end"
             } else {
                 "under way"
             },

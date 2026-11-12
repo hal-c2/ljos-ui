@@ -50,6 +50,12 @@ const FINISH_TIMEOUT: Duration = Duration::from_secs(10);
 const FINISH_LIMIT: Duration = Duration::from_secs(60);
 /// How long [`Platform::finish_with`] waits between calls of its hook.
 const SERVE_SLICE: Duration = Duration::from_millis(2);
+/// How long [`Platform::finish`] waits on work that may never end (a
+/// browser running a page whose scripts never stop) from when it was
+/// promised or last [renewed](Platform::renew): long enough for what was
+/// just asked of it to show, short enough that a test's time passing is
+/// not held by it.
+pub const BUSY_WAIT: Duration = Duration::from_secs(5);
 
 type Waker = Arc<dyn Fn() + Send + Sync>;
 
@@ -116,6 +122,10 @@ pub struct Promise {
     /// ask), not for an answer under way: the application waits on it
     /// without anything being scheduled.
     pub standing: bool,
+    /// Work that may never end (a browser running a page that never
+    /// stops), not an answer: [`Platform::finish`] waits on it for
+    /// [`BUSY_WAIT`] from [`Promise::since`], and no longer.
+    pub busy: bool,
 }
 
 /// The way into the inbox, from any thread, as often as there is news.
@@ -336,22 +346,43 @@ impl Platform {
     /// Engine thread at the next frame. [`Platform::expect_for`] says what
     /// it is and for whom.
     pub fn expect(&self) -> Reply {
-        self.promise(Cow::Borrowed("an answer"), None, false)
+        self.promise(Cow::Borrowed("an answer"), None, false, false)
     }
 
     /// [`Platform::expect`], saying what is awaited and the object it is
     /// for, as [`Platform::promises`] lists it.
     pub fn expect_for(&self, what: impl Into<Cow<'static, str>>, owner: Option<ObjectId>) -> Reply {
-        self.promise(what.into(), owner, false)
+        self.promise(what.into(), owner, false, false)
     }
 
     /// A promise kept open for news that may never come, as a screen
     /// reader that may ask: [`Promise::standing`].
     pub fn expect_standing(&self, what: impl Into<Cow<'static, str>>) -> Reply {
-        self.promise(what.into(), None, true)
+        self.promise(what.into(), None, true, false)
     }
 
-    fn promise(&self, what: Cow<'static, str>, owner: Option<ObjectId>, standing: bool) -> Reply {
+    /// A promise for work that may never end, as a browser's while a page
+    /// runs: [`Promise::busy`]. Whoever holds it [renews](Platform::renew)
+    /// it when it is asked for more.
+    pub fn expect_busy(&self, what: impl Into<Cow<'static, str>>) -> Reply {
+        self.promise(what.into(), None, false, true)
+    }
+
+    /// Waits on `reply` afresh, as a busy one is when its work was asked
+    /// for again: [`Promise::since`] is now.
+    pub fn renew(&self, reply: &Reply) {
+        if let Some(p) = self.promises.borrow_mut().get_mut(&reply.id) {
+            p.since = Instant::now();
+        }
+    }
+
+    fn promise(
+        &self,
+        what: Cow<'static, str>,
+        owner: Option<ObjectId>,
+        standing: bool,
+        busy: bool,
+    ) -> Reply {
         let id = self.next_promise.get();
         self.next_promise.set(id + 1);
         self.promises.borrow_mut().insert(
@@ -361,6 +392,7 @@ impl Platform {
                 owner,
                 since: Instant::now(),
                 standing,
+                busy,
             },
         );
         Reply {
@@ -399,6 +431,31 @@ impl Platform {
     /// Answers promised that have not been delivered.
     pub fn pending(&self) -> usize {
         self.promises.borrow().len()
+    }
+
+    /// The promises [`Platform::finish`] still waits on: every pending one
+    /// but busy work promised or renewed [`BUSY_WAIT`] ago or longer.
+    pub fn awaited(&self) -> usize {
+        self.awaiting(Instant::now()).0
+    }
+
+    /// [`Platform::awaited`] at `now`, and when the first busy promise it
+    /// counts stops being waited on.
+    fn awaiting(&self, now: Instant) -> (usize, Option<Instant>) {
+        let mut count = 0;
+        let mut until: Option<Instant> = None;
+        for p in self.promises.borrow().values() {
+            if !p.busy {
+                count += 1;
+                continue;
+            }
+            let end = p.since + BUSY_WAIT;
+            if end > now {
+                count += 1;
+                until = Some(until.map_or(end, |u| u.min(end)));
+            }
+        }
+        (count, until)
     }
 
     /// Whether answers wait for a frame to deliver them.
@@ -481,7 +538,9 @@ impl Platform {
     /// Waits until every promised answer has come back and runs them,
     /// held or not. For tests and harnesses: a UI thread that must stay
     /// responsive never calls it. Gives up, with a warning, after 10 s
-    /// without an answer or 60 s in all.
+    /// without an answer or 60 s in all. Busy work is waited on only for
+    /// [`BUSY_WAIT`] ([`Platform::awaited`]), and its news delivered
+    /// meanwhile.
     pub fn finish(&self, engine: &Engine) {
         self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
@@ -506,10 +565,15 @@ impl Platform {
         loop {
             let seen = self.signal.count();
             self.deliver_now(engine);
-            if self.pending() == 0 {
+            let now = Instant::now();
+            let (awaited, busy_until) = self.awaiting(now);
+            if awaited == 0 {
                 return;
             }
             between();
+            // Not past the moment busy work stops being waited on: what is
+            // left after it may already be answered.
+            let wait = busy_until.map_or(slice, |u| slice.min(u.saturating_duration_since(now)));
             let sent = self
                 .signal
                 .sent
@@ -518,10 +582,10 @@ impl Platform {
             let (_sent, timeout) = self
                 .signal
                 .arrived
-                .wait_timeout_while(sent, slice, |n| *n == seen)
+                .wait_timeout_while(sent, wait, |n| *n == seen)
                 .unwrap_or_else(PoisonError::into_inner);
             quiet = if timeout.timed_out() {
-                quiet + slice
+                quiet + wait
             } else {
                 Duration::ZERO
             };
@@ -529,7 +593,7 @@ impl Platform {
                 engine.log(
                     LogLevel::Warning,
                     CATEGORY,
-                    format!("gave up waiting for {} platform answer(s)", self.pending()),
+                    format!("gave up waiting for {} platform answer(s)", self.awaited()),
                 );
                 return;
             }
@@ -1033,7 +1097,7 @@ mod tests {
     fn a_steady_stream_of_signals_does_not_hold_finish_up() {
         let engine = Engine::new();
         let platform = Platform::of(&engine);
-        let _never = platform.promise("never answered".into(), None, false);
+        let _never = platform.promise("never answered".into(), None, false, false);
         let started = Instant::now();
         let signal = Arc::clone(&platform.signal);
         platform.finish_waiting(&engine, SERVE_SLICE, Duration::from_millis(50), &mut || {
@@ -1088,6 +1152,67 @@ mod tests {
         assert_eq!(response.header("X-Method"), Some("POST"));
         assert_eq!(response.text(), "{}");
         assert_eq!(platform.pending(), 0);
+    }
+
+    #[test]
+    fn busy_work_is_waited_on_for_a_while_and_not_given_up_on() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        // Before the promise: finish waits from when it was made.
+        let started = Instant::now();
+        let busy = platform.expect_busy("a browser's work");
+        let signal = Arc::clone(&platform.signal);
+        // News keeps coming, as a page that never stops paints: it does
+        // not keep finish waiting past the bound.
+        platform.finish_waiting(&engine, SERVE_SLICE, FINISH_LIMIT, &mut || {
+            signal.sent_one()
+        });
+        let took = started.elapsed();
+        assert!(took >= BUSY_WAIT, "waited only {took:?}");
+        assert!(took < BUSY_WAIT + Duration::from_secs(5), "waited {took:?}");
+        assert_eq!(platform.pending(), 1);
+        assert_eq!(platform.awaited(), 0);
+        assert!(
+            engine
+                .take_log()
+                .iter()
+                .all(|e| e.level != LogLevel::Warning)
+        );
+        // Nor is it waited on again, at the next finish.
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Asked for more, it is waited on again.
+        platform.renew(&busy);
+        assert_eq!(platform.awaited(), 1);
+        assert!(platform.promises()[0].busy);
+        drop(busy);
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert!(
+            engine
+                .take_log()
+                .iter()
+                .all(|e| e.level != LogLevel::Warning)
+        );
+    }
+
+    #[test]
+    fn busy_work_gone_quiet_is_not_waited_on_past_the_bound() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let started = Instant::now();
+        let _busy = platform.expect_busy("a browser's work");
+        platform.finish(&engine);
+        let took = started.elapsed();
+        assert!(took >= BUSY_WAIT, "waited only {took:?}");
+        assert!(took < BUSY_WAIT + Duration::from_secs(5), "waited {took:?}");
+        assert!(
+            engine
+                .take_log()
+                .iter()
+                .all(|e| e.level != LogLevel::Warning)
+        );
     }
 
     #[test]
