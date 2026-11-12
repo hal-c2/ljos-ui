@@ -68,7 +68,7 @@ Rectangle {
 `ljos migrate --write` leaves every line where it was and changes the names:
 
 ```qml
-pragma Scripts: JavaScript; import Ljos.Ui
+import Ljos.Ui
 
 Rectangle {
     id: root
@@ -86,7 +86,7 @@ Rectangle {
 }
 ```
 
-- **Renaming and typing are two steps.** A migrated file says `pragma Scripts: JavaScript`, so its scripts keep compiling as they did, with `==`, `null`, `var` and `if (count)`. Taking the pragma out is the step that types the file: `ljos check` then holds its handlers and bindings to the TypeScript rules (see [TypeScript and JavaScript](javascript.md)) and says what to change.
+- **Renaming and typing are two steps.** Where a file's scripts break the TypeScript rules, the migrated file says `pragma Scripts: JavaScript`, so they keep compiling as they did, with `==`, `null`, `var` and `if (count)`; where they keep the rules, as above, it is left out. Taking the pragma out is the step that types the file: `ljos check` then holds its handlers and bindings to the TypeScript rules (see [TypeScript and JavaScript](javascript.md)) and says what to change.
 - **Constant models become typed lists.** A `ListModel` of constants becomes a typed list, with its row type written to `<File>.rows.ts` beside the file. A hand-written module at that path is never overwritten: the file is kept and `migrate` says why.
 - **Directories are projects.** Each directory named is read as a project, as `ljos run` reads it, and a file named alone belongs to the project of its directory. When a group of files that name one another holds a file you did not name, none of the group is written, and `migrate` says which file to name too. Give it one application's directory, not a tree of several.
 - **Controls keep their look.** `import QtQuick.Controls` means the style the program starts with; `--style NAME` says which that is. A file is lowered only where that style is Basic, and its controls come from `Ljos.Controls.Basic`, so it keeps the look it had. Moving it to Ljós's own style is one edit, its import (see [Controls overview](../controls/overview.md)).
