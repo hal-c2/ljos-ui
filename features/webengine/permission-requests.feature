@@ -141,6 +141,8 @@ Feature: A view answers what a page asks permission for
 
   # A view that goes leaves its question unanswered, not refused: the
   # next view of the same page is asked again, however many went before.
+  # Each view goes once it is asked (a moment later, not while it says
+  # so), so how long a page takes to ask is not what is counted.
   @api-QtWebEngine.WebEngineView.permissionRequested
   Scenario: A page whose views went without answering is asked by the next one
     Given the web server serves the text file "where.html":
@@ -166,13 +168,13 @@ Feature: A view answers what a page asks permission for
           WebEngineView {
             url: "$SERVER/where.html"
             property var kept: null
-            onPermissionRequested: permission => { root.asked++; kept = permission }
+            onPermissionRequested: permission => { root.asked++; kept = permission; if (root.views < 5) next.start() }
             onTitleChanged: root.last = title
           }
         }
         Loader { id: loader; anchors.fill: parent; sourceComponent: page }
         Timer {
-          interval: 1500; repeat: true; running: root.views < 5
+          id: next; interval: 1
           onTriggered: { loader.active = false; loader.active = true; root.views++ }
         }
       }
