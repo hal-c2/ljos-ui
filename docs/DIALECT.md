@@ -75,7 +75,8 @@ exactly one place: the compat pass and its type table.
   proposals define them, and nothing of its own. Note 11 rejected its H2
   because extensions break `tsc`, editors and coding models. Both are
   compiled away before any of those read a script, in one desugar that
-  every consumer calls, and `.ts` modules stay plain TypeScript (§4.21).
+  every consumer calls. The syntax is in QML files' scripts and in `.lts`
+  modules, and a `.ts` module stays plain TypeScript (§4.21).
   There is still no `option` and no extension to QML's own syntax.
 - **No second script language.** There is no ReScript-like front end (note
   11's B). JavaScript stays, but only as compat.
@@ -546,6 +547,15 @@ What is built (`features/language/ts-modules.feature`):
   reach TypeScript through the module itself.
 - A type predicate (`v is T`) and an assertion function (`asserts v is T`)
   are typed, not read as a boolean; what they narrow is below.
+
+A module ending in `.lts` ("Ljós TypeScript") is the same in every way
+but one: it may use `match`, `is` and `|>` (§4.17 to §4.18), which the
+desugar compiles away before anything else reads it (§4.21). It is
+imported as a `.ts` module is, from a QML file, a script, a `qmldir` or
+another module, and it imports `.ts`, `.lts` and `.d.ts` files as they
+do. Types cross both ways: a `.ts` module takes a type an `.lts` module
+exports, and the other way round. A `.ts` module that uses the new syntax
+is `ts-lts-syntax`, whose fix renames it to `.lts` (§4.21).
 
 The compat pass reads the same description (§6.1). A native type's own
 members keep their names in a lowered file, since the program registers
@@ -2519,17 +2529,39 @@ read it:
 - **The source keeps the syntax.** The formatter, `qml_edit` and Studio
   read and write the text as written, and must round-trip it (S5, S6).
 - **The parser.** `vendor/oxc_parser` reads `|>`, `%`, `match`, `when` and
-  `is` when it reads a QML file or a QML script (`parse_qml`,
-  `parse_qml_script`), and nowhere else. How it records them without a
-  fork of `oxc_ast` is S5's to decide, in `vendor/FORK.md`.
-- **`.ts` modules keep to TypeScript.** The new syntax is in QML files'
-  scripts only, which no stock TypeScript tool reads anyway. A `.ts`
-  module stays a file that `tsc`, `tsserver` and editors read as they
-  are (§18 asks whether to change that).
+  `is` when it reads a QML file, a QML script (`parse_qml`,
+  `parse_qml_script`) or an `.lts` module, and nowhere else. How it
+  records them without a fork of `oxc_ast` is S5's to decide, in
+  `vendor/FORK.md`.
+- **`.lts` modules take the syntax; `.ts` modules keep to TypeScript.**
+  A module that uses `match`, `is` or `|>` ends in `.lts`. A `.ts` module
+  stays a file that `tsc`, `tsserver` and editors read as they are, so
+  the extension says which tools can read a file without Ljós. The new
+  syntax in a `.ts` module is `ts-lts-syntax`: the message says why, and
+  the fix renames the file to `.lts` and rewrites every import that
+  names it (in QML files, scripts, `qmldir` files and modules). `ljos
+  check` prints the fix, the MCP tools apply it, `ljos lsp` offers it as
+  a code action, and `ljos migrate` makes the same rename. Script text
+  copied out of a QML file into a module so keeps working, and never
+  silently breaks `tsc`.
+- **`.lts` is a module like any other.** Module resolution, `qmldir`,
+  the importers, `ljos check`, `ljos check --tsc`, the MCP tools, `ljos
+  lsp`, `ljos types` and ljos-web read `.lts` wherever they read `.ts`,
+  and desugar it first. `--tsc` gives TypeScript a desugared `.lts`
+  module as a `.ts` file of the same name, so `.ts` modules that import
+  it type against it (S5 builds `.lts` and `ts-lts-syntax` with `match`;
+  S6 adds the pipe; S7 brings `--tsc`, MCP and `ljos lsp` to it).
 - **`ljos lsp`.** Ljós has no language server today, and the new syntax
-  needs one, since no editor reads QML scripts as TypeScript. S7 builds it
-  over stdio, with `ljos check`'s diagnostics on open and change, on the
-  input's spans.
+  needs one, since no editor reads QML scripts or `.lts` modules as
+  TypeScript. S7 builds it over stdio, with `ljos check`'s diagnostics on
+  open and change, on the input's spans, and `ts-lts-syntax`'s rename as
+  a code action.
+
+DECISION: the new syntax is in QML files' scripts and `.lts` modules, and
+a `.ts` module with it is an error whose fix renames the file. The
+extension tells every tool, and every person, whether a file is plain
+TypeScript; a `.ts` file that stock `tsc` cannot read would break that
+promise silently.
 
 H1 holds in this form: **every program the checker accepts is, after the
 desugar, valid TypeScript with the same meaning.**
@@ -2569,6 +2601,7 @@ print. Those the checker builds are marked ✓.
 | `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
 | `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
+| `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
@@ -3225,7 +3258,7 @@ PR: a lane puts its corpus counts in its PR body.
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
 | **M6** Controls | `Ljos.Controls` and styles | Controls corpus lowered; qml6 parity on its features |
-| **M7** Ergonomics | S1 no `Qt` (§4.3.1); S2 `fetch` (§4.19); S3 `Controller` (§4.20); S4 `Task` (§4.19); S5 `match`, `is` (§4.18); S6 `\|>` (§4.17.1); S7 the desugar in `ljos check --tsc`, MCP and `ljos lsp` (§4.21). One PR each, merged in that order | no lowered or Ljós file reaches `Qt`; a pending `fetch` leaves the engine idle; the gestures and `Task` are Controllers; `tsc` accepts every desugared Ljós file the checker accepts; the desugar builds to wasm; every new API has a site page that passes `ljos check` |
+| **M7** Ergonomics | S1 no `Qt` (§4.3.1); S2 `fetch` (§4.19); S3 `Controller` (§4.20); S4 `Task` (§4.19); S5 `match`, `is` (§4.18) and `.lts` modules (§4.21); S6 `\|>` (§4.17.1); S7 the desugar in `ljos check --tsc`, MCP and `ljos lsp` (§4.21). One PR each, merged in that order | no lowered or Ljós file reaches `Qt`; a pending `fetch` leaves the engine idle; the gestures and `Task` are Controllers; `tsc` accepts every desugared Ljós file the checker accepts; the desugar builds to wasm; every new API has a site page that passes `ljos check` |
 
 ## 14. Answers to note 11's open questions
 
@@ -3337,9 +3370,14 @@ bindings and states without a rule.
 - DECISION (§4.14): every construct the table marks "kept" keeps its file,
   for the reason given there.
 - DECISION (§1, §4.21): the non-goal "no new syntax" is reversed. `match`
-  and the Hack pipe `|>` are syntax of a QML file's scripts, as TC39's
-  proposals define them, compiled away by one desugar before the
-  compiler, the checker, `tsc` or an editor reads them.
+  and the Hack pipe `|>` are syntax of a QML file's scripts and of `.lts`
+  modules, as TC39's proposals define them, compiled away by one desugar
+  before the compiler, the checker, `tsc` or an editor reads them.
+- DECISION (§4.21): a module that uses the new syntax ends in `.lts`,
+  and is imported, typed and checked as a `.ts` module is. A `.ts` module
+  stays plain TypeScript: the syntax in one is `ts-lts-syntax`, whose fix
+  (and `ljos migrate`) renames it to `.lts`. The project lead chose this
+  over both QML-scripts-only and the syntax in `.ts` modules.
 - DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic.
 - DECISION (§4.18): `match` and `is` follow TC39's README as of
   2025-10-03: guards are the pattern `and if (…)`, a bare name compares
@@ -3405,6 +3443,11 @@ bindings and states without a rule.
 - **R16: one thread per request.** `Platform::request` starts an OS thread
   for each, which a burst of requests multiplies. A pool is the fix when a
   measurement asks for it.
+- **R17: `.lts` is Ljós's.** Stock editors and `tsc` do not read an
+  `.lts` module; without `ljos lsp` an editor shows it as plain text or
+  with errors at the new syntax. `ljos check --tsc` and `ljos lsp` are
+  the way in, and the site's editor page says how to set them up. A
+  `.ts` module never needs them.
 - **R11: a Ljós file using a kept Qt sibling.** It sees Qt's names on it.
   The checker types it by Qt's table. That works, but the file mixes two
   APIs until the sibling migrates.
@@ -3440,7 +3483,6 @@ choice is the project lead's.
 | Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
 | States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
 | `QtObject`'s name (§4.1, §4.3.1) | (a) keep `QtObject`; (b) `Object`; (c) another word | (b): no Qt name survives S1. `Object` is named only where a type goes, so `Object.keys(…)` in a script stays JavaScript's |
-| The new syntax in `.ts` modules (§4.21) | (a) QML files' scripts only; (b) `.ts` modules too, which `tsc` and editors then cannot read as they are | (a): a `.ts` module stays a file every TypeScript tool reads; revisit when TypeScript ships either proposal |
 | `Task`'s names (§4.19) | (a) `run:` the function and `start()` the call; (b) lit's: `task:` the function and `run()` the call | (a): `run` reads as what the Task does, and `start` cannot be mistaken for it |
 | `Qt.binding`'s home (§4.3.1) | (a) `bind(f)` in `Ljos.Core`, assignable to a property of `f`'s type; (b) none: a file with `Qt.binding` is kept | (a): it is the one member with no declarative edit, and only (a) lets every `Qt` member migrate (4 corpus files use it) |
 | Controller lifecycle names (§4.20) | (a) `attached`/`detached`/`updated`; (b) lit's `hostConnected`/`hostDisconnected`/`hostUpdated` | (a): shorter, and QML's handlers read `onAttached` |
