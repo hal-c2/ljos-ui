@@ -30,7 +30,8 @@ const CATEGORY: &str = "qml";
 /// `ItemGrabResult` (QtQuick): what `Item.grabToImage` calls back with.
 ///
 /// `image` holds the same URL as `url`: Ljós has no image value for a
-/// script to hold. Rust reads the pixels with [`grabbed_image`].
+/// script to hold. Rust reads the pixels with [`grabbed_image`], from the
+/// result or from the URL a script hands on.
 #[derive(Debug, Default, QmlObject)]
 #[qml(
     module = "QtQuick",
@@ -82,15 +83,32 @@ impl ItemGrabResult {
 }
 
 /// The pixels of an `ItemGrabResult`, as many to a logical pixel as the
-/// scene that drew them has.
+/// scene that drew them has. `result` is the result, or its `image` or
+/// `url` as a script hands it on (a url or a string): Rust gets from a
+/// script what C++ gets from Qt's `result.image`. The url names the
+/// picture while the result lives; `None` once the scripts let it go,
+/// for an empty result, and for any other value.
 pub fn grabbed_image(engine: &Engine, result: &Value) -> Option<ImageHandle> {
-    let Value::Object(obj) = result else {
-        return None;
+    let obj = match result {
+        Value::Object(obj) => *obj,
+        Value::Url(url) | Value::String(url) => result_named(engine, url)?,
+        _ => return None,
     };
     engine
-        .with_mut(*obj, |r: &mut ItemGrabResult| r.picture.clone())
+        .with_mut(obj, |r: &mut ItemGrabResult| r.picture.clone())
         .ok()
         .flatten()
+}
+
+/// The live result whose picture `url` names. Results are few and short
+/// lived, so they are searched rather than indexed a second time.
+fn result_named(engine: &Engine, url: &str) -> Option<ObjectId> {
+    if url.is_empty() {
+        return None;
+    }
+    let grabs = engine.extension::<Grabs>();
+    let urls = grabs.urls.borrow();
+    urls.iter().find(|(_, u)| *u == url).map(|(obj, _)| *obj)
 }
 
 /// A grab asked for and not yet taken.
