@@ -2547,10 +2547,42 @@ read it:
 - **`.lts` is a module like any other.** Module resolution, `qmldir`,
   the importers, `ljos check`, `ljos check --tsc`, the MCP tools, `ljos
   lsp`, `ljos types` and ljos-web read `.lts` wherever they read `.ts`,
-  and desugar it first. `--tsc` gives TypeScript a desugared `.lts`
-  module as a `.ts` file of the same name, so `.ts` modules that import
-  it type against it (S5 builds `.lts` and `ts-lts-syntax` with `match`;
-  S6 adds the pipe; S7 brings `--tsc`, MCP and `ljos lsp` to it).
+  and desugar it first. S5 builds `.lts` and `ts-lts-syntax` with
+  `match`; S6 adds the pipe; S7 brings `--tsc`, MCP and `ljos lsp` to it.
+- **One module name, one file.** `width.ts` and `width.lts` in the same
+  directory are `module-clash`, an error of `ljos check` on both files:
+  a `qmldir` entry, a reader and TypeScript would each have to pick one.
+  So `ts-lts-syntax`'s rename never lands on an existing file; where a
+  `width.lts` is already beside `width.ts`, the fix is not offered and the
+  message names the file in the way.
+- **Stock TypeScript reads a `.ts` module that imports an `.lts` one.**
+  `ljos check` emits a declaration for every `.lts` module, which has
+  only types and so no `match` or `|>`. It goes in the project's
+  generated directory, `.ljos/types/`, at the module's path relative to
+  the project root and under the name TypeScript's
+  `allowArbitraryExtensions` looks for: `src/width.lts` is declared in
+  `.ljos/types/src/width.d.lts.ts`. The importer's specifier stays
+  `./width.lts`, unrewritten: `ljos check` also writes
+  `.ljos/tsconfig.base.json`, with `allowArbitraryExtensions` and
+  `rootDirs: [".", ".ljos/types"]` (relative to the project root), which
+  the project's `tsconfig.json` extends, so stock `tsc` and editors
+  resolve `./width.lts` to its declaration. `.ljos/` holds only
+  generated files and a `.gitignore` of `*`, which `ljos check` writes.
+  - **Fresh.** Every `ljos check` writes each declaration from the
+    module as it is, and only when the text changes, so a watcher is not
+    woken for nothing. `ljos lsp` rewrites a module's declaration when
+    the module is saved, so an editor of the importer sees the change at
+    once. A declaration whose module is gone is deleted by the next
+    `ljos check`. `ljos types` writes the same files.
+  - **`--tsc`** uses the same declarations, built in memory from the text
+    it checks and never read from disk, so it is never stale. It checks
+    each `.lts` module's own desugared text as a root file of its own,
+    `.ljos/check/src/width.lts.ts` in its virtual tree, with
+    `.ljos/check` in its `rootDirs`. The module's own relative imports
+    resolve as they would from its source directory, and no importer's
+    specifier is rewritten. If TypeScript resolves `./width.lts` to that
+    text rather than to the declaration, it sees the same exports,
+    since the declaration is emitted from that text.
 - **`ljos lsp`.** Ljós has no language server today, and the new syntax
   needs one, since no editor reads QML scripts or `.lts` modules as
   TypeScript. S7 builds it over stdio, with `ljos check`'s diagnostics on
@@ -2602,6 +2634,7 @@ print. Those the checker builds are marked ✓.
 | `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
 | `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
+| `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
@@ -3376,8 +3409,10 @@ bindings and states without a rule.
 - DECISION (§4.21): a module that uses the new syntax ends in `.lts`,
   and is imported, typed and checked as a `.ts` module is. A `.ts` module
   stays plain TypeScript: the syntax in one is `ts-lts-syntax`, whose fix
-  (and `ljos migrate`) renames it to `.lts`. The project lead chose this
-  over both QML-scripts-only and the syntax in `.ts` modules.
+  (and `ljos migrate`) renames it to `.lts`. `ljos check` emits each
+  `.lts` module's declaration under `.ljos/types/`, so a `.ts` module
+  that imports one still reads in stock `tsc`. The project lead chose
+  this over both QML-scripts-only and the syntax in `.ts` modules.
 - DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic.
 - DECISION (§4.18): `match` and `is` follow TC39's README as of
   2025-10-03: guards are the pattern `and if (…)`, a bare name compares
@@ -3447,7 +3482,12 @@ bindings and states without a rule.
   `.lts` module; without `ljos lsp` an editor shows it as plain text or
   with errors at the new syntax. `ljos check --tsc` and `ljos lsp` are
   the way in, and the site's editor page says how to set them up. A
-  `.ts` module never needs them.
+  `.ts` module never needs them, including one that imports an `.lts`
+  module: it reads in stock `tsc` and editors through the declarations
+  `ljos check` emits under `.ljos/types/` (§4.21). Until the first `ljos
+  check` there are none, and the import is not found; between a save
+  and the next check (or `ljos lsp`'s rewrite on save), an editor sees the
+  module's types as they were.
 - **R11: a Ljós file using a kept Qt sibling.** It sees Qt's names on it.
   The checker types it by Qt's table. That works, but the file mixes two
   APIs until the sibling migrates.
