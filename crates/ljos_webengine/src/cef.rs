@@ -956,6 +956,35 @@ impl Shared {
         Self::lock(&self.browser).as_ref().and_then(|b| b.host())
     }
 
+    /// A view's side of a browser not made yet: on its blank first page.
+    fn new(sink: Sink, geometry: Geometry, zoom: f64) -> Self {
+        Self {
+            sink,
+            geometry: Mutex::new(geometry),
+            zoom: Mutex::new(zoom),
+            frame: Mutex::default(),
+            popup: Mutex::new(Popup {
+                rect: None,
+                shown: false,
+                pixels: Vec::new(),
+                width: 0,
+                height: 0,
+            }),
+            load: Mutex::default(),
+            dev: Mutex::default(),
+            closing: AtomicBool::new(false),
+            browser: Mutex::default(),
+            observer: Mutex::default(),
+            typed: Mutex::default(),
+            rejected: Mutex::default(),
+            asked: Mutex::default(),
+            boot: Mutex::new(Boot {
+                behind: true,
+                ..Boot::default()
+            }),
+        }
+    }
+
     fn send_dev(&self, messages: Vec<Vec<u8>>) {
         if messages.is_empty() {
             return;
@@ -2249,35 +2278,15 @@ fn mouse_event(m: &PageMouse) -> MouseEvent {
 pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<dyn Page>, String> {
     pump_into(e);
     let context = with_global(e, |g| context_for(g, &start.profile))?;
-    let shared = Arc::new(Shared {
+    let shared = Arc::new(Shared::new(
         sink,
-        geometry: Mutex::new(Geometry {
+        Geometry {
             width: start.width,
             height: start.height,
             scale: if start.scale > 0.0 { start.scale } else { 1.0 },
-        }),
-        zoom: Mutex::new(start.zoom),
-        frame: Mutex::default(),
-        popup: Mutex::new(Popup {
-            rect: None,
-            shown: false,
-            pixels: Vec::new(),
-            width: 0,
-            height: 0,
-        }),
-        load: Mutex::default(),
-        dev: Mutex::default(),
-        closing: AtomicBool::new(false),
-        browser: Mutex::default(),
-        observer: Mutex::default(),
-        typed: Mutex::default(),
-        rejected: Mutex::default(),
-        asked: Mutex::default(),
-        boot: Mutex::new(Boot {
-            behind: true,
-            ..Boot::default()
-        }),
-    });
+        },
+        start.zoom,
+    ));
     ENGINES.with(|engines| {
         let mut engines = engines.borrow_mut();
         engines.retain(|(s, _)| s.strong_count() > 0);
@@ -2807,6 +2816,7 @@ pub(crate) fn clear_http_cache(e: &Engine, _spec: &ProfileSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ljos_engine::ObjectId;
 
     #[test]
     fn the_notifications_script_calls_the_names_the_view_uses() {
@@ -2878,5 +2888,41 @@ mod tests {
         assert!(script_source(&s).contains("'load'"));
         s.sub_frames = false;
         assert!(script_source(&s).starts_with("if (window === window.top)"));
+    }
+
+    /// What `finish` waits for the browser from: when the view last told
+    /// it something.
+    fn busy_since(platform: &Platform) -> Option<Instant> {
+        platform.promises().iter().find(|p| p.busy).map(|p| p.since)
+    }
+
+    #[test]
+    fn a_page_question_passed_on_does_not_extend_finish_and_the_view_telling_does() {
+        let engine = Engine::new();
+        pump_into(&engine);
+        let platform = Platform::of(&engine);
+        let geometry = Geometry {
+            width: 200.0,
+            height: 100.0,
+            scale: 1.0,
+        };
+        let sink = Sink::new(&engine, ObjectId::default());
+        let page = CefPage {
+            shared: Arc::new(Shared::new(sink, geometry, 1.0)),
+        };
+        // The view tells the browser something: its work is waited on.
+        page.send_dev(Vec::new());
+        let told = busy_since(&platform).expect("the view's word promises busy work");
+        // Later, so that a renewal would show.
+        std::thread::sleep(Duration::from_millis(20));
+        let later = told + Duration::from_millis(20);
+        // A page that keeps asking: what Chromium is told of it, on the
+        // browser's own account, keeps no step waiting longer.
+        pass_to_chromium(&page.shared, 1, 7);
+        pass_to_chromium(&page.shared, 1, 8);
+        assert_eq!(busy_since(&platform), Some(told));
+        // The view telling it more is waited on afresh.
+        page.send_dev(Vec::new());
+        assert!(busy_since(&platform).is_some_and(|since| since >= later));
     }
 }
