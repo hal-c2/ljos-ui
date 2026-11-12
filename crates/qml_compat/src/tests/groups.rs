@@ -189,16 +189,19 @@ fn a_directory_imported_by_path_has_its_types_by_their_roots() {
 }
 
 /// A module of the project may bring an `App` of its own: `Qt.platform`
-/// stays Qt's, and a member Ljos.Core gives a lowercase name still lowers.
+/// has nowhere to go, and keeps the file.
 #[test]
-fn a_member_of_qt_stays_qt_s_where_a_module_of_the_project_may_name_it() {
-    assert_eq!(
-        lowered_in_project(
-            "import QtQuick\nimport Gauges\nItem { x: Qt.platform.os.length; y: Qt.point(1, 2).y }\n"
+fn a_member_of_qt_whose_home_a_module_of_the_project_may_name_keeps_the_file() {
+    match lower(
+        "import QtQuick\nimport Gauges\nItem { x: Qt.platform.os.length; y: Qt.point(1, 2).y }\n",
+        &Project,
+    ) {
+        Outcome::Kept(kept) => assert_eq!(
+            kept.to_string(),
+            "`Qt.platform` needs `App`, which a type of a directory the file imports could be"
         ),
-        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
-         import Gauges\nItem { x: Qt.platform.os.length; y: point(1, 2).y }\n"
-    );
+        other => panic!("lowered: {other:?}"),
+    }
 }
 
 #[test]

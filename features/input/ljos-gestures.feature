@@ -47,7 +47,7 @@ Feature: Ljós's gestures: Tap and Hover
           id: root; objectName: "root"
           width: 200; height: 100
           property int taps: 0
-          Tap { buttons: Qt.RightButton; onTapped: root.taps += 1 }
+          Tap { buttons: MouseButton.Right; onTapped: root.taps += 1 }
         }
         """
       When the user presses the pointer at 50, 50
@@ -166,7 +166,7 @@ Feature: Ljós's gestures: Tap and Hover
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Main.qml (7 edits)
+        lowered ./Main.qml (8 edits)
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
@@ -176,7 +176,7 @@ Feature: Ljós's gestures: Tap and Hover
           width: 100; height: 60
           fill: hover.hovered ? "#c03020" : "#2060c0"
           Hover { id: hover; devices: PointerDevice.Mouse | PointerDevice.TouchPad }
-          Tap { buttons: Qt.RightButton; gesturePolicy: Tap.WithinBounds }
+          Tap { buttons: MouseButton.Right; gesturePolicy: Tap.WithinBounds }
         }
         """
 

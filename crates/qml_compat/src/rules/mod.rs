@@ -255,6 +255,11 @@ struct Area {
 }
 
 /// Every area, joined here and nowhere else.
+/// Ljós's names for Qt's types that a script reads as a global of
+/// JavaScript's: such a type is renamed where a type goes and keeps its file
+/// where a script names it.
+pub(crate) const JAVASCRIPT_NAMED: &[&str] = &["Object"];
+
 const AREAS: &[&Area] = &[
     &ui::AREA,
     &window::AREA,

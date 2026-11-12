@@ -178,7 +178,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
             }
           }
           Repeater { model: 3; Item { objectName: "dot" + index; x: index * 10 } }
-          Instantiator { model: 2; QtObject { Component.onCompleted: root.made += 1 } }
+          Instantiator { model: 2; Object { Component.onCompleted: root.made += 1 } }
         }
         """
       Then the property "shown" of "r1" is "Tokyo/9"
@@ -259,7 +259,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Main.qml (3 edits)
+        lowered ./Main.qml (4 edits)
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
@@ -268,7 +268,7 @@ Feature: The views of Ljós's API and the models of Ljos.Models
         import Ljos.Core
         import Ljos.Models
         Item {
-          Instantiator { model: ['a', 'b']; QtObject { objectName: modelData } }
+          Instantiator { model: ['a', 'b']; Object { objectName: modelData } }
         }
         """
 

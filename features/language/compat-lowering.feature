@@ -177,7 +177,7 @@ Feature: Qt's QML lowered to Ljós's API
       Then the command prints:
         """
         would lower app/Gauges/Dial.qml (3 edits)
-        would lower app/Gauges/Tones.qml (1 edits)
+        would lower app/Gauges/Tones.qml (2 edits)
         would lower app/Main.qml (4 edits)
         3 files, 3 lowered, 0 kept
         """
@@ -316,8 +316,8 @@ Feature: Qt's QML lowered to Ljós's API
           width: 80; height: 40; fill: "#202020"
           Row {
             spacing: 5
-            Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 20; fill: "#c03030" }
-            Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 20; fill: "#30a050" }
+            Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 20; implicitHeight: 20; fill: "#c03030" }
+            Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 20; implicitHeight: 20; fill: "#30a050" }
           }
         }
         """

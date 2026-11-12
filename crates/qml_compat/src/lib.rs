@@ -56,10 +56,11 @@ use rules::states::animation::Animating;
 use rules::{arrange, font, gesture};
 
 pub use cause::Xhr;
-pub use cause::{Animated, Cause, Differs, Font, Layout, Loader, Owner, Row};
+pub use cause::{Animated, Cause, Differs, Font, Hider, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
 pub use migrated::migrated;
+pub use qt_members::{Where, where_is};
 pub use rules::{FONT_RENAMES, LAYOUT_RENAMES, member_renames, type_renames};
 
 /// The module a lowered file imports.
@@ -371,6 +372,7 @@ fn lower_parsed(
         tables: Vec::new(),
         declared: Vec::new(),
         members: qt_members::Members::default(),
+        copies: Vec::new(),
         root_at: parsed.document.root.span.start,
         inline_roots: Vec::new(),
         unqualified: Vec::new(),
@@ -546,6 +548,9 @@ struct Pass<'s> {
     declared: Vec<String>,
     /// The members of `Qt` that `Ljos.Core` has under its own names.
     members: qt_members::Members,
+    /// What rules copy into an object they make, written once the members
+    /// of `Qt` are settled: a copy holds them lowered too.
+    copies: Vec<Copied>,
     /// Where the file's root object starts.
     root_at: u32,
     /// The root object of each inline component, which is the scope of
@@ -616,8 +621,46 @@ impl<'s> Pass<'s> {
         self.root_owns = self.owns(&document.root, root);
         self.object(&document.root, root, root, true)?;
         let members = std::mem::take(&mut self.members);
-        for (range, name) in members.settle(self.source, |name| self.scope.may_be_beside(name)) {
-            self.change(range, name);
+        let settled = members.settle(self.source, |name| self.scope.may_be_beside(name))?;
+        let lowered: Vec<Change> = settled
+            .changes
+            .iter()
+            .map(|(range, text)| Change {
+                range: range.clone(),
+                replacement: text.clone(),
+            })
+            .collect();
+        // What a rule replaced is gone from where it was: a member of `Qt`
+        // in it is lowered in the copy alone.
+        let replaced: Vec<Range<usize>> = self
+            .copies
+            .iter()
+            .flat_map(|c| c.replaced.iter().cloned())
+            .collect();
+        for copied in std::mem::take(&mut self.copies) {
+            let mut made = copied.made;
+            made.extend(
+                lowered
+                    .iter()
+                    .filter(|c| copied.ranges.iter().any(|r| rules::within(&c.range, r)))
+                    .cloned(),
+            );
+            let texts: Vec<String> = copied
+                .ranges
+                .iter()
+                .map(|range| rules::lowered_text(self.source, range, &made))
+                .collect();
+            self.change(
+                copied.end..copied.end,
+                format!(" {} {{ {} }}", copied.into, texts.join("; ")),
+            );
+        }
+        for change in lowered {
+            if !replaced.iter().any(|r| rules::within(&change.range, r)) {
+                self.changes.push(change);
+            }
+        }
+        if settled.core {
             self.scope.modules.names(Ljos::Core);
         }
         // On the import's line, so every line stays where it was. Each Qt
@@ -1048,6 +1091,14 @@ impl<'s> Pass<'s> {
                     let name = property.name.name.as_str();
                     self.members
                         .typed(property.span.start as usize..property.name.span.start as usize);
+                    self.members.declared(name);
+                    if let (Some(type_name), Some(QmlBindingValue::Expression(value))) =
+                        (&property.type_name, &property.value)
+                        && type_name.name.as_simple() == Some("color")
+                    {
+                        let span = value.span();
+                        self.members.colour(span.start as usize..span.end as usize);
+                    }
                     if self
                         .scope
                         .renames_on(scope)
@@ -1075,6 +1126,9 @@ impl<'s> Pass<'s> {
                 }
                 QmlMember::Function(function) => {
                     let name = function.id.as_ref().map(|id| id.name.as_str());
+                    if let Some(name) = name {
+                        self.members.declared(name);
+                    }
                     if let Some(aim) = &aim
                         && matches!(aim.aimed, rules::Aimed::Handlers)
                         && let (Some(name), Some(span)) =
@@ -1135,12 +1189,7 @@ impl<'s> Pass<'s> {
         let ty = self.object_type(child)?;
         self.object(child, ty, root, false)?;
         let made = self.changes.split_off(before);
-        let copies: Vec<String> = written
-            .copies
-            .iter()
-            .map(|range| rules::lowered_text(self.source, range, &made))
-            .collect();
-        self.changes.extend(made);
+        self.changes.extend(made.iter().cloned());
         // Collecting the ids renamed the child's type already.
         self.changes.retain(|c| {
             !written
@@ -1148,14 +1197,18 @@ impl<'s> Pass<'s> {
                 .iter()
                 .any(|(r, _)| rules::within(&c.range, r))
         });
+        let replaced: Vec<Range<usize>> = written.replace.iter().map(|(r, _)| r.clone()).collect();
         for (range, text) in written.replace {
             self.change(range, text);
         }
-        if !copies.is_empty() {
-            self.change(
-                written.end..written.end,
-                format!(" {} {{ {} }}", written.copied_into, copies.join("; ")),
-            );
+        if !written.copies.is_empty() {
+            self.copies.push(Copied {
+                ranges: written.copies,
+                made,
+                replaced,
+                end: written.end,
+                into: written.copied_into,
+            });
         }
         Ok(())
     }
@@ -1267,6 +1320,23 @@ impl<'s> Pass<'s> {
             && self.is_table(object)
         {
             return Ok(());
+        }
+        // `color: Qt.red`, `border.color: Qt.red`: a colour of Qt's there
+        // is the colour.
+        let on = match aim {
+            Some(aim) if aims_all => aim.at,
+            _ => ty,
+        };
+        let goes_to = name.parts[..name.parts.len() - 1]
+            .iter()
+            .fold(on, |on, part| member_ty(on, part));
+        if let (Ty::Exact(t) | Ty::Derived(t), QmlBindingValue::Expression(value)) =
+            (goes_to, &binding.value)
+            && t.property(name.parts[name.parts.len() - 1])
+                .is_some_and(|p| p.type_name == "QColor")
+        {
+            let span = value.span();
+            self.members.colour(span.start as usize..span.end as usize);
         }
         self.value(&binding.value, scope, root)
     }
@@ -1791,6 +1861,19 @@ fn animating(ty: Ty, around: Animating) -> Animating {
     } else {
         Animating::None
     }
+}
+
+/// What a rule copies into an object it makes ([`rules::Child`]).
+struct Copied {
+    /// The text copied, in the order written.
+    ranges: Vec<Range<usize>>,
+    /// What the pass changed in the object the rule rewrote.
+    made: Vec<Change>,
+    /// What the rule replaced.
+    replaced: Vec<Range<usize>>,
+    /// Where the object made goes.
+    end: usize,
+    into: &'static str,
 }
 
 enum Rename {
@@ -2397,23 +2480,39 @@ impl Script<'_, '_> {
 
 impl<'a> Visit<'a> for Script<'_, '_> {
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
-        // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of ctx's
-        // component, and `url` takes one argument. So `Qt.resolvedUrl` is
-        // `url` only as the callee of a call given one plain argument; a
-        // spread, `.call`, `.apply` or the bare function may carry a context,
-        // so every other use stays Qt's.
+        // A member of `Qt` called is told of with its arguments: some are
+        // lowered by them (`Qt.darker(c, 2)`, `Qt.locale()`).
         if let Expression::StaticMemberExpression(callee) = &it.callee
             && let Expression::Identifier(qt) = &callee.object
             && qt.name == "Qt"
             && !self.own.binds("Qt", qt.span.start)
-            && callee.property.name == "resolvedUrl"
-            && let [argument] = it.arguments.as_slice()
-            && !argument.is_spread()
         {
             let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
-            self.pass
-                .members
-                .qt(span(qt.span), "resolvedUrl", span(callee.property.span));
+            let call = qt_members::Call {
+                arguments: it
+                    .arguments
+                    .iter()
+                    .map(|a| (!a.is_spread()).then(|| span(a.span())))
+                    .collect(),
+                texts: it
+                    .arguments
+                    .iter()
+                    .map(|a| {
+                        matches!(
+                            a.as_expression(),
+                            Some(Expression::StringLiteral(_) | Expression::TemplateLiteral(_))
+                        )
+                    })
+                    .collect(),
+                span: span(it.span),
+            };
+            self.pass.members.qt(
+                span(callee.span),
+                span(qt.span),
+                &callee.property.name,
+                span(callee.property.span),
+                Some(call),
+            );
         }
         match it.callee.without_parentheses() {
             Expression::StaticMemberExpression(m) => self.called.push(m.property.span.start),
@@ -2447,13 +2546,15 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         if let Expression::Identifier(qt) = &it.object
             && qt.name == "Qt"
             && !self.own.binds("Qt", qt.span.start)
-            // Lowered only where it is called; see visit_call_expression.
-            && name != "resolvedUrl"
         {
             let span = |s: qml_syntax::Span| s.start as usize..s.end as usize;
-            self.pass
-                .members
-                .qt(span(qt.span), name, span(it.property.span));
+            self.pass.members.qt(
+                span(it.span),
+                span(qt.span),
+                name,
+                span(it.property.span),
+                None,
+            );
         }
         if name == "createQmlObject" {
             // The text is compiled when the script runs, as written.
@@ -2562,6 +2663,12 @@ impl<'a> Visit<'a> for Script<'_, '_> {
 
     fn visit_identifier_reference(&mut self, it: &IdentifierReference<'a>) {
         let name = it.name.as_str();
+        // `Qt` read alone: a member of it is told of before.
+        if name == "Qt" && !self.own.binds("Qt", it.span.start) {
+            self.pass
+                .members
+                .bare(it.span.start as usize..it.span.end as usize);
+        }
         if name == "model" {
             match self.model() {
                 Model::Own => {}
@@ -2581,7 +2688,19 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         }
         let meaning = self.meaning(name, it.span.start);
         if matches!(meaning, Meaning::Type) {
-            if let Some(new) = self.pass.scope.renamed_type(name) {
+            if let Some(new) = self.pass.scope.renamed_type(name)
+                && rules::JAVASCRIPT_NAMED.contains(&new)
+            {
+                // `QtObject` is `Object`, which a script reads as
+                // JavaScript's: the type has no name a script can write.
+                self.keep(
+                    Cause::RenamedToGlobal {
+                        name: name.to_owned(),
+                        new,
+                    },
+                    it.span.start,
+                );
+            } else if let Some(new) = self.pass.scope.renamed_type(name) {
                 self.pass
                     .change(it.span.start as usize..it.span.end as usize, new);
             // QtQuick.Layouts' names are looked at below: a `GridLayout`'s

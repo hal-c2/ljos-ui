@@ -5,6 +5,6 @@ pub(crate) mod connections;
 use super::Area;
 
 pub(super) const AREA: Area = Area {
-    types: &[],
+    types: &[("QtObject", "Object")],
     members: &[],
 };
