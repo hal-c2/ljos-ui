@@ -2570,23 +2570,36 @@ read it:
     the module's path relative to the project root and under the name
     `allowArbitraryExtensions` looks for: `src/width.lts` is declared in
     `.ljos/types/src/width.d.lts.ts`. The project root is `ljos check
-    --project <dir>`, or else the nearest directory, from the current
-    one upward, with a `tsconfig.json`, or else the current directory.
-    `.ljos/` holds only generated files and a `.gitignore` of `*`, which
-    `ljos check` writes.
+    --project <dir>`, or else the nearest directory with a
+    `tsconfig.json`, from the files checked upward, or else the deepest
+    directory that holds all of them. The search starts at the files,
+    not the current directory, so where `ljos check` runs does not move
+    the root. `.ljos/` holds only generated files and a `.gitignore` of
+    `*`, which `ljos check` writes.
   - **The tsconfig.** `ljos check` writes `.ljos/tsconfig.base.json` with
     exactly `{ "compilerOptions": { "allowArbitraryExtensions": true,
     "rootDirs": ["..", "./types"] } }`, whose relative paths TypeScript
     reads from `.ljos/`. The importer's specifier stays `./width.lts`,
     unrewritten, and `rootDirs` resolves it to the declaration.
-    `ljos check` never edits the project's own `tsconfig.json`; where
-    there is none and the project has an `.lts` module, it writes one
-    that holds only `"extends": "./.ljos/tsconfig.base.json"`. Where
-    there is one that does not extend the base, or sets `rootDirs`
-    itself (`extends` does not merge arrays), `ljos check` warns
-    `tsconfig-lts`, and the fix adds the `extends` line or, for a
-    project's own `rootDirs`, adds `"."` and `".ljos/types"` to it. The
-    warning appears only in a project with an `.lts` module.
+    `ljos check` writes nothing outside `.ljos/`, so it never creates
+    or edits a project's `tsconfig.json`, and a check from a
+    subdirectory leaves no file behind to become a root. In a project
+    with an `.lts` module, `ljos check` warns `tsconfig-lts` when the
+    root has no `tsconfig.json`, when the project's does not extend the
+    base, or when it sets `rootDirs` itself (`extends` does not merge
+    arrays). The fix, which `ljos migrate` applies as the MCP tools and
+    the LSP's code action do, is the least edit that reaches the base:
+    - no `tsconfig.json`: write one at the root that holds only
+      `"extends": "./.ljos/tsconfig.base.json"`;
+    - no `extends`: add that line as the first key;
+    - an `extends` already (one path, or an array, TS 5.0 and later):
+      make it an array that keeps the project's entries and ends with
+      `"./.ljos/tsconfig.base.json"`, so the base's `rootDirs` is the
+      one that holds;
+    - its own `rootDirs`: append `"."` and `".ljos/types"` to it, after
+      the project's own entries.
+    The fix keeps the file's other keys, order and comments. A project
+    with no `.lts` module is never warned.
   - **Fresh.** Every `ljos check` writes each declaration from the
     module as it is, and only when the text changes, so a watcher is not
     woken for nothing. `ljos lsp` rewrites a module's declaration when
@@ -2656,7 +2669,7 @@ print. Those the checker builds are marked ✓.
 | `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
 | `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
 | `lts-export-type` | An `.lts` module's exports carry the types `isolatedDeclarations` asks for, so its declaration is TypeScript's own emit (§4.21). |
-| `tsconfig-lts` | Warning: a project with an `.lts` module has a `tsconfig.json` that does not extend `.ljos/tsconfig.base.json`, or sets `rootDirs` without its two entries (§4.21). |
+| `tsconfig-lts` | Warning: a project with an `.lts` module has no `tsconfig.json`, or one that does not extend `.ljos/tsconfig.base.json`, or one that sets `rootDirs` without its two entries; `ljos migrate` applies the fix (§4.21). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
@@ -3511,10 +3524,11 @@ bindings and states without a rule.
   module: it reads in stock `tsc` and editors through the declarations
   `ljos check` emits under `.ljos/types/` and the base tsconfig its
   `tsconfig.json` extends (§4.21). Until the first `ljos check` there
-  are none, and the import is not found; a project `tsconfig.json` that
-  drops the base is `tsconfig-lts`; between a save and the next check
-  (or `ljos lsp`'s rewrite on save), an editor sees the module's types
-  as they were.
+  are none, and the import is not found. A project without a
+  `tsconfig.json`, or with one that drops the base, is `tsconfig-lts`,
+  which `ljos migrate` fixes. Between a save and the next check (or
+  `ljos lsp`'s rewrite on save), an editor sees the module's types as
+  they were.
 - **R11: a Ljós file using a kept Qt sibling.** It sees Qt's names on it.
   The checker types it by Qt's table. That works, but the file mixes two
   APIs until the sibling migrates.
