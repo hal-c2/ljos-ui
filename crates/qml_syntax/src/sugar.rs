@@ -453,6 +453,12 @@ mod tests {
                 "{written}"
             );
         }
+        // The escape's `}` is found among bytes, so a character of more than
+        // one byte after it does not hide it.
+        assert_eq!(
+            lowered("x = a |> % + \\u{24}0/*€*/\n"),
+            "x = (() => { const $$0 = a; return $$0 + \\u{24}0;})()/*€*/\n"
+        );
         assert_eq!(
             lowered("x = match (a.b) { when 1: \\u0024s; default: 0 }\n"),
             "x = (() => { const $$s = a.b; if ($$s === 1) return \\u0024s; return 0;})()\n"
