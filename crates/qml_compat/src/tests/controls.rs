@@ -123,6 +123,7 @@ fn ljos_controls_has_what_qt_controls_have() {
         "TextArea",
         "TextField",
         "ToolTip",
+        "ApplicationWindow",
         "Control",
         "Pane",
         "Frame",
@@ -156,6 +157,19 @@ fn lowered_unchanged(source: &str) {
             "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\n{}",
             body.expect("a controls import")
         )
+    );
+}
+
+/// A window's `color` is what is behind its items, whatever Ljós builds a
+/// window from, so an application window keeps it as a window does.
+#[test]
+fn an_application_window_is_lowered_with_its_bars() {
+    lowered_unchanged(
+        "import QtQuick\nimport QtQuick.Controls\nApplicationWindow {\n    \
+         visible: true; width: 320; height: 200; title: \"Notes\"; color: \"#202020\"\n    \
+         header: ToolBar { ToolButton { text: \"Open\" } }\n    \
+         footer: Label { text: \"Ready\" }\n    \
+         Label { text: \"Content between the bars\" }\n}\n",
     );
 }
 
