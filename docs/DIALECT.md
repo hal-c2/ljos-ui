@@ -2392,10 +2392,13 @@ item. That item is its **host**. It has:
 
 - `host`, the item it is declared in (an `Item`, readonly). A popup is
   not an item, but what is declared in it goes into its content item, so
-  that item is the host of a Controller or a gesture declared in a popup;
+  that item is the host of a Controller or a gesture declared in a popup,
+  and when the popup's content item is replaced the new one is;
 - a lifecycle, as signals: `attached(host)` once its host is complete,
   or when it is put into a host; `detached()` when the host goes, or the
-  controller is taken out (a `Loader` unloading, a delegate removed);
+  controller is taken out (a `Loader` unloading, a delegate removed), or
+  it leaves its host for a popup's new content item, where it is
+  attached again;
   `updated()` once after `attached`, and then once after each turn in
   which a property of the host changed, after bindings settle and before
   drawing;
@@ -2569,7 +2572,10 @@ module's Controller as the front end describes it and needs no code of
 its own for it.
 
 DECISION: a Controller's host is the item it is declared in, and a
-Controller declared inside another shares that one's host. A Controller
+Controller declared inside another shares that one's host. One declared
+in a popup is hosted by the popup's content item, and moves to the one
+that replaces it, `detached` from the old and `attached` to the new, so
+that its gestures act on what is shown. A Controller
 outside an item (held by a `QtObject`) has no host and `attached` does
 not run; the checker says so in a file of Ljós's API
 (`controller-host`).

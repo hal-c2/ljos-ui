@@ -13,9 +13,9 @@ After reading this page, you will be able to write a `Controller` as a QML file 
 
 Some behaviour belongs to an item without being drawn: it follows the pointer, orbits a camera, keeps a flag in step with the window's size. A `Controller`, from `Ljos.Core`, is a non-visual object that holds that behaviour. Declare one inside an item and that item is its `host`:
 
-- `host` is the item it is declared in, and it does not change. A Controller declared inside another Controller shares that one's host. One declared in a popup acts on the popup's content item, where what is declared in a popup goes.
+- `host` is the item it is declared in. A Controller declared inside another Controller shares that one's host. One declared in a popup acts on the popup's content item, where what is declared in a popup goes; if the popup's `contentItem` is replaced, it moves to the new one, with `detached()` and then `attached(host)`.
 - `attached(host)` runs once the host is complete, or when the Controller is put into a host that already is.
-- `detached()` runs once, when the host goes (a `Loader` unloading it, a delegate removed) or when the Controller itself is destroyed.
+- `detached()` runs when the host goes (a `Loader` unloading it, a delegate removed), when the Controller itself is destroyed, or when it leaves a popup's content item for the one that replaces it.
 - `updated()` runs once after `attached`, then once after each turn in which a property of the host changed, after the bindings have settled and before the frame is drawn.
 
 Everything else is what any object has: properties, functions, signals and children. A Controller's state is its properties, read and bound through its id, so there are no rules about the order of calls as React's hooks have.

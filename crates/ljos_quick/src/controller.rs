@@ -4,8 +4,10 @@
 //! Its lifecycle is three signals. `attached(host)` runs once the host is
 //! complete: after the host's own `Component.onCompleted`, so what the
 //! host sets up there is set up, or at once for a Controller put into a
-//! host that is complete already. `detached()` runs once, as the
-//! Controller is destroyed, which its host's destruction does too.
+//! host that is complete already. `detached()` runs as the Controller is
+//! destroyed, which its host's destruction does too, or as it leaves its
+//! host for another: one declared in a popup moves to the popup's new
+//! content item, and is attached to it.
 //! `updated()` runs once after `attached` and then once a frame in which
 //! a property of the host changed, before the frame is laid out.
 //!
@@ -32,7 +34,8 @@ pub struct Controller {
     pub object: QtObject,
     /// The item it is declared in, or the host of the Controller it is
     /// declared in, or the item a popup it is declared in keeps its
-    /// content in ([`adopt`]). Unset outside all of them.
+    /// content in, which changes as the popup's content item is replaced
+    /// ([`adopt`]). Unset outside all of them.
     #[qml(notify, readonly, holds = "Item")]
     pub host: Option<ObjectId>,
     /// What is declared in it: other Controllers, gestures, objects of
@@ -59,7 +62,7 @@ impl Controller {
         let (e, me) = (cx.engine, cx.this);
         // Adopted before it was complete: put into a popup that is.
         if let Some(host) = host(e, me) {
-            return take(e, me, host);
+            return take(e, me, e.owner(me), host);
         }
         let Some(host) = host_of(e, me) else {
             return Ok(());
@@ -102,16 +105,21 @@ pub fn host(e: &Engine, controller: ObjectId) -> Option<ObjectId> {
     e.get(controller, Controller::HOST).ok().flatten()
 }
 
-/// Gives `obj`, if it is a Controller with no host, the item `host` as
-/// its host. For an object that is not an item but keeps what is
-/// declared in it in an item (a popup and its content item), which calls
-/// this for each object declared in it once that item is known. What
-/// is declared in the Controller is adopted with it.
+/// Gives `obj`, if it is a Controller not declared in an item, the item
+/// `host` as its host. For an object that is not an item but keeps what
+/// is declared in it in an item (a popup and its content item), which
+/// calls this for each object declared in it once that item is known,
+/// and again when it is replaced: the Controller then leaves the item it
+/// had, and is detached from it, and is attached to the new one. What is
+/// declared in the Controller goes with it.
 pub fn adopt(e: &Engine, obj: ObjectId, host: ObjectId) -> Result<(), EngineError> {
-    if !e.inherits(obj, Controller::static_meta())
-        || self::host(e, obj).is_some()
-        || !is_item(e, host)
+    // One declared in an item acts on that item, whatever holds it.
+    if !e.inherits(obj, Controller::static_meta()) || !is_item(e, host) || host_of(e, obj).is_some()
     {
+        return Ok(());
+    }
+    let had = self::host(e, obj);
+    if had == Some(host) {
         return Ok(());
     }
     e.set_internal(obj, Controller::HOST, Some(host))?;
@@ -119,15 +127,30 @@ pub fn adopt(e: &Engine, obj: ObjectId, host: ObjectId) -> Result<(), EngineErro
         .flags(obj)
         .is_some_and(|f| f.contains(ljos_engine::ObjectFlags::COMPLETED));
     // One not complete yet takes its host when it completes.
-    if complete { take(e, obj, host) } else { Ok(()) }
+    if !complete {
+        return Ok(());
+    }
+    match had {
+        Some(had) => {
+            Controllers::of(e).detach(e, obj)?;
+            leave(e, obj, had)?;
+            take(e, obj, Some(had), host)
+        }
+        None => take(e, obj, e.owner(obj), host),
+    }
 }
 
 /// A Controller adopted by `host`, which is not what it is declared in:
 /// it and what is declared in it go among the host's resources, and a
-/// gesture that took what it is declared in for its `parent` and its
-/// `target`, as a gesture does when nobody gives it one, takes the host.
-fn take(e: &Engine, me: ObjectId, host: ObjectId) -> Result<(), EngineError> {
-    let was = e.owner(me);
+/// gesture that took `was` for its `parent` and its `target` (what it is
+/// declared in, as a gesture does when nobody gives it one, or the host
+/// it had) takes the host.
+fn take(
+    e: &Engine,
+    me: ObjectId,
+    was: Option<ObjectId>,
+    host: ObjectId,
+) -> Result<(), EngineError> {
     share_resource(e, host, me)?;
     for child in crate::tree::list(e, me, Controller::DATA.index) {
         if e.inherits(child, Controller::static_meta()) {
@@ -152,6 +175,23 @@ fn take(e: &Engine, me: ObjectId, host: ObjectId) -> Result<(), EngineError> {
     }
     if listens(e, me) {
         after_host_completes(e, me, host)?;
+    }
+    Ok(())
+}
+
+/// Takes an adopted Controller, and what is declared in it but not
+/// adopted with it, out of the resources of the host it had, so that a
+/// gesture no longer acts on that item. The Controllers declared in it
+/// leave it as they are adopted.
+fn leave(e: &Engine, me: ObjectId, had: ObjectId) -> Result<(), EngineError> {
+    if !e.is_alive(had) {
+        return Ok(());
+    }
+    e.list_remove(had, Item::RESOURCES.index, me)?;
+    for child in crate::tree::list(e, me, Controller::DATA.index) {
+        if !e.inherits(child, Controller::static_meta()) && !is_item(e, child) {
+            e.list_remove(had, Item::RESOURCES.index, child)?;
+        }
     }
     Ok(())
 }
@@ -202,7 +242,13 @@ fn after_host_completes(e: &Engine, me: ObjectId, host: ObjectId) -> Result<(), 
         e.signal_index(component, "completed")?,
         me,
         move |e, _| {
-            if !once.replace(true) && e.is_alive(me) && e.is_alive(host) {
+            // Moved to another host before this one completed: that one
+            // attaches it.
+            if !once.replace(true)
+                && e.is_alive(me)
+                && e.is_alive(host)
+                && self::host(e, me) == Some(host)
+            {
                 warn(e, attach(e, me, host));
             }
         },
@@ -212,15 +258,20 @@ fn after_host_completes(e: &Engine, me: ObjectId, host: ObjectId) -> Result<(), 
 
 fn attach(e: &Engine, me: ObjectId, host: ObjectId) -> Result<(), EngineError> {
     let follows = e.signal_connected(me, signal(UPDATED));
-    e.connect(me, SignalIndex::DESTROYED, move |e, _| {
-        if follows {
-            Controllers::of(e).unfollow(e, me);
-        }
-        let _ = Controller::emit_detached(&Cx::new(e, me));
-    })?;
+    let controllers = Controllers::of(e);
+    let first = controllers.watched.borrow_mut().insert(me);
+    if first {
+        e.connect(me, SignalIndex::DESTROYED, move |e, _| {
+            let controllers = Controllers::of(e);
+            controllers.watched.borrow_mut().remove(&me);
+            // Going: there is nobody left to tell that the handler failed.
+            let _ = controllers.detach(e, me);
+        })?;
+    }
+    controllers.attached.borrow_mut().insert(me, follows);
     Controller::emit_attached(&Cx::new(e, me), Some(host))?;
     if follows && e.is_alive(me) && e.is_alive(host) {
-        Controllers::of(e).follow(e, me, host)?;
+        controllers.follow(e, me, host)?;
     }
     Ok(())
 }
@@ -241,6 +292,12 @@ pub(crate) struct Controllers {
     /// The host whose Controllers are being told: what they write does
     /// not make it due again.
     telling: Cell<Option<ObjectId>>,
+    /// The Controllers attached to a host, each with whether it follows
+    /// the host for `updated`.
+    attached: RefCell<FxHashMap<ObjectId, bool>>,
+    /// The Controllers whose destruction detaches them: connected once,
+    /// however many hosts they are attached to in turn.
+    watched: RefCell<rustc_hash::FxHashSet<ObjectId>>,
 }
 
 #[derive(Default)]
@@ -278,6 +335,18 @@ impl Controllers {
         // Once after `attached`.
         self.make_due(e, host);
         Ok(())
+    }
+
+    /// Detaches `me` from its host if it is attached: as it is destroyed,
+    /// or as it leaves the host for another.
+    fn detach(&self, e: &Engine, me: ObjectId) -> Result<(), EngineError> {
+        let Some(follows) = self.attached.borrow_mut().remove(&me) else {
+            return Ok(());
+        };
+        if follows {
+            self.unfollow(e, me);
+        }
+        Controller::emit_detached(&Cx::new(e, me))
     }
 
     fn unfollow(&self, e: &Engine, me: ObjectId) {
