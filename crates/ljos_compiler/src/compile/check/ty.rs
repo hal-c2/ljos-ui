@@ -52,6 +52,56 @@ pub(crate) enum Global {
     Array,
     /// `JSON`: what `parse` gives is unknown, for a decoder to narrow.
     Json,
+    /// `fetch` (docs/DIALECT.md §4.19).
+    Fetch,
+    /// A class of the web's a script names, to make one with `new` or for
+    /// what it has of its own: `Headers`, `AbortSignal.timeout`.
+    Class(Web),
+}
+
+/// A class of the web's that every script has, with the names and
+/// meanings WHATWG gives it: what `fetch` takes and gives
+/// (docs/DIALECT.md §4.19).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) enum Web {
+    Response,
+    Request,
+    Headers,
+    AbortController,
+    AbortSignal,
+    DOMException,
+    ArrayBuffer,
+    Uint8Array,
+}
+
+impl Web {
+    pub(crate) const ALL: [Web; 8] = [
+        Web::Response,
+        Web::Request,
+        Web::Headers,
+        Web::AbortController,
+        Web::AbortSignal,
+        Web::DOMException,
+        Web::ArrayBuffer,
+        Web::Uint8Array,
+    ];
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Response => "Response",
+            Self::Request => "Request",
+            Self::Headers => "Headers",
+            Self::AbortController => "AbortController",
+            Self::AbortSignal => "AbortSignal",
+            Self::DOMException => "DOMException",
+            Self::ArrayBuffer => "ArrayBuffer",
+            Self::Uint8Array => "Uint8Array",
+        }
+    }
+
+    pub(crate) fn named(name: &str) -> Option<Web> {
+        Web::ALL.into_iter().find(|web| web.name() == name)
+    }
 }
 
 impl Global {
@@ -68,6 +118,8 @@ impl Global {
             Self::Map => "Map",
             Self::Array => "Array",
             Self::Json => "JSON",
+            Self::Fetch => "fetch",
+            Self::Class(web) => web.name(),
         }
     }
 }
@@ -81,6 +133,10 @@ pub(crate) enum Method {
     Map(&'static str),
     /// `Math.max`, `Number.isFinite`, `console.log`, …
     Static(Global, &'static str),
+    /// `then`, `catch` and `finally` of a promise.
+    Promise(&'static str),
+    /// A method of an object of a class of the web's: `reply.json`.
+    Web(Web, &'static str),
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug)]
@@ -173,6 +229,10 @@ pub(crate) enum Kind {
         value: Ty,
     },
     Function(Box<Sig>),
+    /// `Promise<T>`: what an async function gives, and `fetch`.
+    Promise(Ty),
+    /// An object of a class of the web's: a `Response`, a `Headers`.
+    Web(Web),
     Global(Global),
     Method(Ty, Method),
     /// A value of an enum of a QML type: `Text.VAlignment`.
@@ -463,6 +523,8 @@ impl Arena {
             | Kind::Record(_)
             | Kind::Array { .. }
             | Kind::Map { .. }
+            | Kind::Promise(_)
+            | Kind::Web(_)
             | Kind::NonPrimitive
             | Kind::Null => "object",
             _ => return None,
@@ -558,6 +620,9 @@ impl Arena {
                 };
                 format!("({}) => {ret}", params.join(", "))
             }
+            Kind::Promise(value) => format!("Promise<{}>", self.display(*value, object)),
+            Kind::Web(web) => web.name().into(),
+            Kind::Global(Global::Class(web)) => format!("typeof {}", web.name()),
             Kind::Global(global) => global.name().into(),
             Kind::Enum { object: o, name } | Kind::EnumNs { object: o, name } => {
                 format!("{}.{name}", object(*o))
@@ -567,7 +632,9 @@ impl Arena {
                 Method::Primitive(name)
                 | Method::Array(name)
                 | Method::Map(name)
-                | Method::Static(_, name) => format!("{name}()"),
+                | Method::Static(_, name)
+                | Method::Promise(name)
+                | Method::Web(_, name) => format!("{name}()"),
             },
         }
     }
@@ -599,10 +666,14 @@ impl Arena {
                 Kind::Record(_) => "an object".into(),
                 Kind::Array { .. } => article(&self.display(*part, object)),
                 Kind::Map { .. } => "a Map".into(),
+                Kind::Promise(_) => article(&self.display(*part, object)),
+                Kind::Web(web) => article(web.name()),
                 Kind::Function(_)
                 | Kind::Method(..)
                 | Kind::Global(Global::QsTr)
-                | Kind::Global(Global::QsTrId) => "a function".into(),
+                | Kind::Global(Global::QsTrId)
+                | Kind::Global(Global::Fetch) => "a function".into(),
+                Kind::Global(Global::Class(web)) => format!("the class {}", web.name()),
                 Kind::Global(global) => global.name().into(),
                 Kind::Union(_) => unreachable!("a union's parts are not unions"),
             };

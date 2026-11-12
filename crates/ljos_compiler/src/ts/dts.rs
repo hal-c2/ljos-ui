@@ -439,6 +439,7 @@ impl Api {
         let mut out = String::new();
         out.push_str(HEADER);
         out.push_str(PRELUDE);
+        out.push_str(WEB);
         if self.core {
             out.push_str(CORE_PRELUDE);
         }
@@ -730,6 +731,83 @@ declare function qsTrId(id: string, n?: number): string;
 interface String {
     /** QML's: the lowest `%n` of the text replaced by `value`. */
     arg(value: string | number | boolean): string;
+}
+";
+
+/// `fetch` and the classes around it (docs/DIALECT.md §4.19), under
+/// lib.dom's names and in the subset the checker types (`check/web.rs`):
+/// a member lib.dom has and the subset does not, `mode` say, is unknown to
+/// TypeScript too. The language's own library has `ArrayBuffer` and
+/// `Uint8Array`.
+const WEB: &str = "
+type HeadersInit = Headers | readonly (readonly string[])[] | Record<string, string>;
+type BodyInit = string | ArrayBuffer | Uint8Array;
+interface RequestInit {
+    method?: string;
+    headers?: HeadersInit;
+    body?: BodyInit;
+    signal?: AbortSignal;
+}
+declare function fetch(input: string | Request, init?: RequestInit): Promise<Response>;
+interface Headers {
+    get(name: string): string | null;
+    has(name: string): boolean;
+    set(name: string, value: string): void;
+    append(name: string, value: string): void;
+    delete(name: string): void;
+    forEach(callback: (value: string, name: string) => void): void;
+    entries(): readonly (readonly string[])[];
+}
+declare const Headers: {
+    new (init?: HeadersInit): Headers;
+};
+interface Request {
+    readonly url: string;
+    readonly method: string;
+    readonly headers: Headers;
+    readonly signal: AbortSignal;
+}
+declare const Request: {
+    new (input: string, init?: RequestInit): Request;
+};
+interface Response {
+    readonly ok: boolean;
+    readonly status: number;
+    readonly statusText: string;
+    readonly url: string;
+    readonly redirected: boolean;
+    readonly headers: Headers;
+    readonly bodyUsed: boolean;
+    json(): Promise<unknown>;
+    text(): Promise<string>;
+    arrayBuffer(): Promise<ArrayBuffer>;
+}
+declare const Response: {
+    /** A reply of no request: `status` 0, an empty body. */
+    error(): Response;
+};
+interface AbortSignal {
+    readonly aborted: boolean;
+    readonly reason: unknown;
+    onabort: (() => void) | undefined;
+    throwIfAborted(): void;
+}
+declare const AbortSignal: {
+    timeout(milliseconds: number): AbortSignal;
+    any(signals: readonly AbortSignal[]): AbortSignal;
+    abort(reason?: unknown): AbortSignal;
+};
+interface AbortController {
+    readonly signal: AbortSignal;
+    abort(reason?: unknown): void;
+}
+declare const AbortController: {
+    new (): AbortController;
+};
+interface DOMException {
+    readonly name: string;
+    readonly message: string;
+    readonly code: number;
 }
 ";
 

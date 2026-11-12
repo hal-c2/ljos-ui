@@ -23,6 +23,7 @@ mod builtins;
 mod expr;
 mod module;
 mod ty;
+mod web;
 
 pub(super) use module::{Module, modules};
 
@@ -216,6 +217,8 @@ struct FnCtx {
     /// The words of a return of the wrong type: a binding's block says it
     /// of its property.
     target: Option<(String, String)>,
+    /// Whether it is `async`: what it returns is awaited.
+    asynchronous: bool,
 }
 
 /// A member a QML object declares, with its type and, for a property, the
@@ -1138,6 +1141,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                         ret: target.as_ref().map(|(ty, _)| *ty),
                         returns: Vec::new(),
                         target: target.map(|(_, words)| words),
+                        asynchronous: false,
                     });
                     checker.statement(statement);
                     checker.fns.pop();
@@ -1181,6 +1185,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                         ret: None,
                         returns: Vec::new(),
                         target: None,
+                        asynchronous: false,
                     });
                     match value {
                         QmlBindingValue::Expression(expression) => {
@@ -1368,8 +1373,11 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 | Kind::Array { .. }
                 | Kind::Map { .. }
                 | Kind::Function(_)
-                | Kind::Method(..),
+                | Kind::Method(..)
+                | Kind::Promise(_)
+                | Kind::Web(_),
             ) => true,
+            (Kind::Promise(t), Kind::Promise(s)) => self.takes_as(*t, *s, strict),
             (Kind::Undefined | Kind::Void, Kind::Undefined | Kind::Void) => true,
             (Kind::NonNullish, source) => !matches!(
                 source,

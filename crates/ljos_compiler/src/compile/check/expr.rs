@@ -15,8 +15,8 @@ use qml_syntax::{
 };
 
 use super::module::{Space, listed};
-use super::ty::{Field, Global, Guard, Kind, Method, Param, Sig, Ty};
-use super::{Binding, Checker, Fact, FnCtx, Obj, builtins, primitive};
+use super::ty::{Field, Global, Guard, Kind, Method, Param, Sig, Ty, Web};
+use super::{Binding, Checker, Fact, FnCtx, Obj, builtins, primitive, web};
 use crate::Code;
 
 /// What a function's body is: statements, or an arrow's expression.
@@ -158,18 +158,21 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             function.return_type.as_deref(),
             body,
             want,
+            function.r#async,
         )
     }
 
     /// Walks a function: its parameters typed by their annotations, else by
     /// the function `want` is; its returns checked against its return
-    /// type, written or wanted. Gives its type.
+    /// type, written or wanted. Gives its type. An `asynchronous` one
+    /// returns a promise of what its body returns.
     fn callable(
         &mut self,
         params: &FormalParameters<'a>,
         ret: Option<&TSTypeAnnotation<'a>>,
         body: Body<'_, 'a>,
         want: Option<Ty>,
+        asynchronous: bool,
     ) -> Ty {
         let want = want.filter(|want| matches!(self.arena.kind(*want), Kind::Function(_)));
         let mut list = Vec::with_capacity(params.items.len());
@@ -234,8 +237,30 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 span,
             );
         }
+        if asynchronous
+            && let (Some(written), Some(annotation)) = (written, ret)
+            && !matches!(self.arena.kind(written), Kind::Promise(_) | Kind::Error)
+        {
+            let text = self.text(annotation.type_annotation.span()).to_string();
+            self.report(
+                Code::TsAssignType,
+                format!("an async function returns a promise: write `Promise<{text}>`"),
+                annotation.type_annotation.span(),
+            );
+        }
+        // The body of an async function returns what its promise gives.
+        let unwrap = |checker: &mut Self, ty: Ty| {
+            if asynchronous {
+                web::awaited(&mut checker.arena, ty)
+            } else {
+                ty
+            }
+        };
         let wanted = want.map(|want| self.sig_ret(want));
-        let declared = written.or(wanted.filter(|ret| *ret != Ty::VOID && *ret != Ty::ERROR));
+        let wanted = wanted.map(|ret| unwrap(self, ret));
+        let declared_written = written.map(|ty| unwrap(self, ty));
+        let declared =
+            declared_written.or(wanted.filter(|ret| *ret != Ty::VOID && *ret != Ty::ERROR));
         let mut inferred = Ty::VOID;
         self.body(|checker| {
             for (p, param) in params.items.iter().zip(&list) {
@@ -260,10 +285,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 ret: declared,
                 returns: Vec::new(),
                 target: None,
+                asynchronous,
             });
             match body {
                 Body::Expression(expression) => {
                     let given = checker.expr(expression, declared);
+                    let given = unwrap(checker, given);
                     if let Some(declared) = declared {
                         checker.check_return(declared, given, expression.span());
                     }
@@ -285,10 +312,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             checker.fns.pop();
         });
+        let ret = match written {
+            Some(written) => written,
+            None if asynchronous => self.arena.intern(Kind::Promise(inferred)),
+            None => inferred,
+        };
         self.arena.function(Sig {
             params: list.into_boxed_slice(),
             rest,
-            ret: written.unwrap_or(inferred),
+            ret,
             guard,
         })
     }
@@ -341,6 +373,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             "undefined" => return Ty::UNDEFINED,
             "NaN" | "Infinity" => return Ty::NUMBER,
             "eval" => return self.forbidden(name, "write the code it would run", id.span),
+            "XMLHttpRequest" => return self.forbidden(name, "use `fetch`", id.span),
             "arguments" => {
                 return self.forbidden(
                     name,
@@ -355,14 +388,27 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if let Some(global) = builtins::global(name) {
             return self.arena.intern(Kind::Global(global));
         }
+        // DECISION: `fetch` and its classes are the page's, so a name of
+        // the file's own, a function `fetch` or a type `Headers`, is that
+        // one, as qml_front resolves it for the program (§4.19).
+        let web = super::web::global(name);
+        let web_or_untyped = |checker: &mut Self| match web {
+            Some(global) => checker.arena.intern(Kind::Global(global)),
+            None => checker.untyped(name, "it is not in scope", id.span),
+        };
         // A module has no QML scope: what it does not declare or import is
         // not there.
         if self.module.is_some() {
-            return self.untyped(name, "it is not in scope", id.span);
+            return web_or_untyped(self);
         }
         let Some(resolution) = self.c.lookup(name, id.span.start) else {
-            return self.untyped(name, "it is not in scope", id.span);
+            return web_or_untyped(self);
         };
+        if let Some(Target::Global(qml_front::names::Global::Js)) = resolution.target
+            && web.is_some()
+        {
+            return web_or_untyped(self);
+        }
         // A role of a model, or a target's member only the running program
         // knows.
         if resolution.aimed.is_some() || !resolution.roles.is_empty() {
@@ -733,6 +779,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             Kind::Array { .. } => builtins::array_member(&mut self.arena, part, name),
             Kind::Map { .. } => builtins::map_member(&mut self.arena, part, name),
+            Kind::Promise(_) => web::promise_member(&mut self.arena, part, name),
+            Kind::Web(class) => web::member(&mut self.arena, part, class, name),
             Kind::Color => self
                 .color_member(name)
                 .or_else(|| builtins::primitive_member(&mut self.arena, part, P::String, name)),
@@ -875,6 +923,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Kind::Method(receiver, Method::Array("map")) => self.map(receiver, call),
             Kind::Method(receiver, Method::Array("reduce")) => self.reduce(receiver, call),
             Kind::Method(receiver, Method::Array("filter")) => self.filter(receiver, call),
+            Kind::Method(receiver, Method::Promise(name)) => {
+                self.promise_call(receiver, name, call)
+            }
             Kind::Method(receiver, method) => {
                 match builtins::method_sig(&mut self.arena, receiver, method) {
                     Some(sig) => {
@@ -1127,6 +1178,60 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
         }
         acc
+    }
+
+    /// `promise.then(f)`, `.catch(f)`, `.finally(f)`: a promise of what
+    /// the callback gives, awaited, as TypeScript's lib types them.
+    fn promise_call(&mut self, receiver: Ty, name: &str, call: &CallExpression<'a>) -> Ty {
+        let Kind::Promise(value) = *self.arena.kind(receiver) else {
+            return self.loose_args(&call.arguments);
+        };
+        let fulfilled = self.callback(vec![("value", value, false)], Ty::ERROR);
+        let rejected = self.callback(vec![("reason", Ty::UNKNOWN, false)], Ty::ERROR);
+        let settled = self.callback(vec![], Ty::ERROR);
+        let wants: &[Ty] = match name {
+            "then" => &[fulfilled, rejected],
+            "catch" => &[rejected],
+            _ => &[settled],
+        };
+        let wants = wants.to_vec();
+        let count = wants.len();
+        if call.arguments.len() > count {
+            self.report(
+                Code::TsAssignType,
+                format!(
+                    "this call takes {count} arguments, and is given {}",
+                    call.arguments.len()
+                ),
+                call.span,
+            );
+        }
+        let mut gives = Vec::with_capacity(count);
+        for (at, argument) in call.arguments.iter().enumerate() {
+            let given = self.argument(argument, wants.get(at).copied());
+            let given = match self.arena.kind(given) {
+                Kind::Function(sig) => sig.ret,
+                _ => Ty::ERROR,
+            };
+            gives.push(web::awaited(&mut self.arena, given));
+        }
+        let result = match name {
+            // What the promise gives where no callback is given for it.
+            "then" => {
+                let done = gives.first().copied().unwrap_or(value);
+                match gives.get(1) {
+                    Some(failed) => self.arena.or(done, *failed),
+                    None => done,
+                }
+            }
+            "catch" => match gives.first() {
+                Some(failed) => self.arena.or(value, *failed),
+                None => value,
+            },
+            _ => value,
+        };
+        let result = self.arena.widen(result);
+        self.arena.intern(Kind::Promise(result))
     }
 
     fn callback(&mut self, params: Vec<(&str, Ty, bool)>, ret: Ty) -> Ty {
@@ -1557,11 +1662,28 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     });
                     return self.apply(f, &new.arguments, new.span);
                 }
+                if let Expression::Identifier(id) = &new.callee
+                    && self.local(id.name.as_str()).is_none()
+                    && let Some(class) = Web::named(id.name.as_str())
+                    && let Some(sig) = web::construct(&mut self.arena, class)
+                {
+                    let f = self.arena.function(sig);
+                    return self.apply(f, &new.arguments, new.span);
+                }
+                // The class is a name like any other, which `name` bans;
+                // `new` reads its callee itself, so it says so here too.
+                if let Expression::Identifier(id) = &new.callee
+                    && id.name.as_str() == "XMLHttpRequest"
+                    && self.local("XMLHttpRequest").is_none()
+                {
+                    self.loose_args(&new.arguments);
+                    return self.forbidden("XMLHttpRequest", "use `fetch`", id.span);
+                }
                 self.loose_args(&new.arguments);
                 let callee = self.text(new.callee.span());
                 self.untyped(
                     callee,
-                    "`new` makes only a `Map<K, V>()` or an `Error(message)` in Ljós's API",
+                    "`new` makes only a `Map<K, V>()`, an `Error(message)`, a `Request`, `Headers`, an `AbortController` or a `Uint8Array` in Ljós's API",
                     new.span,
                 )
             }
@@ -1570,7 +1692,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     ArrowFunctionBody::FunctionBody(body) => Body::Statements(&body.statements),
                     expression => Body::Expression(expression.to_expression()),
                 };
-                self.callable(&arrow.params, arrow.return_type.as_deref(), body, want)
+                self.callable(
+                    &arrow.params,
+                    arrow.return_type.as_deref(),
+                    body,
+                    want,
+                    arrow.r#async,
+                )
             }
             Expression::FunctionExpression(function) => {
                 self.nested += 1;
@@ -1658,8 +1786,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 Ty::NUMBER
             }
             Expression::AwaitExpression(inner) => {
-                self.expr(&inner.argument, None);
-                Ty::ERROR
+                let ty = self.expr(&inner.argument, None);
+                web::awaited(&mut self.arena, ty)
             }
             _ => Ty::ERROR,
         }
@@ -2026,6 +2154,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     | Kind::Record(_)
                     | Kind::Array { .. }
                     | Kind::Map { .. }
+                    | Kind::Promise(_)
+                    | Kind::Web(_)
             )
         });
         if objects {
@@ -2154,6 +2284,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 | Kind::NonPrimitive
                 | Kind::Array { .. }
                 | Kind::Map { .. }
+                | Kind::Promise(_)
+                | Kind::Web(_)
                 | Kind::Function(_)
                 | Kind::Method(..) => Ty::NEVER,
                 Kind::Num(bits) if f64::from_bits(*bits) != 0.0 => Ty::NEVER,
@@ -2836,6 +2968,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     Some(argument) => self.expr(argument, declared),
                     None => Ty::UNDEFINED,
                 };
+                let given = if self.fns.last().is_some_and(|ctx| ctx.asynchronous) {
+                    web::awaited(&mut self.arena, given)
+                } else {
+                    given
+                };
                 if let Some(declared) = declared {
                     let span = statement
                         .argument
@@ -3135,17 +3272,24 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let (key, value) = (self.annot(key), self.annot(value));
                 return self.arena.intern(Kind::Map { key, value });
             }
+            ("Promise", [value]) => {
+                let value = self.annot(value);
+                return self.arena.intern(Kind::Promise(value));
+            }
             _ => {}
         }
         if let Some(ty) = primitive(name) {
             return ty;
         }
-        // A module names no QML type.
-        if self.module.is_some() {
-            return Ty::ERROR;
+        // A module names no QML type; a file's own types come before the
+        // web's.
+        if self.module.is_none()
+            && let Some(found) = self.c.types.find(&[name])
+        {
+            return self.object_ty(&found.kind);
         }
-        match self.c.types.find(&[name]) {
-            Some(found) => self.object_ty(&found.kind),
+        match Web::named(name) {
+            Some(class) => self.arena.intern(Kind::Web(class)),
             None => Ty::ERROR,
         }
     }
