@@ -1470,9 +1470,10 @@ The style has `Button` (`primary`, `destructive`, `subtle`, `chevron`,
 `destructive`, `iconName`), `MenuSeparator`, `Label`, `ToolTip` and `Icon`
 (Lucide's marks, under Lucide's ISC licence). It has every control
 `Ljos.Controls.Basic` has, so a file moves from one to the other by its
-import alone: `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`
-and `ScrollView` are Basic's until the style draws its own, and
-`FileDialog` and `FolderDialog` are the same types in both.
+import alone: `TextArea`, `Dialog`, `ItemDelegate`, `Popup`, `ScrollBar`,
+`ScrollView` and the K6 controls below are Basic's until the style draws
+its own, and `FileDialog`, `FolderDialog`, `AbstractButton` and
+`ButtonGroup` are the same types in both.
 
 The theme's roles are `canvas`, `surface`, `surfaceRaised`,
 `surfaceOverlay`, `input`, `border`, `text`, `textMuted`, `placeholder`,
@@ -1524,6 +1525,7 @@ compat pass lowers a file only when every control it names is there.
 | K3 | `Menu`, `MenuItem`, `MenuSeparator`, `Dialog`, `ItemDelegate` | built |
 | K4 | `CheckBox`, `Switch`, `ComboBox`, `SpinBox`, `Slider` | built |
 | K5 | `FileDialog`, `FolderDialog` (`QtQuick.Dialogs`') | built |
+| K6 | `ApplicationWindow`, `Control`, `Pane`, `Frame`, `GroupBox`, `Page`, `ToolBar`, `ToolButton`, `RoundButton`, `DelayButton`, `ProgressBar`, `BusyIndicator`, `TabBar`, `TabButton`, `SwipeView`, `RadioButton`, `ButtonGroup` | built |
 
 Lowering (§6.1): `import QtQuick.Controls.Basic` becomes
 `import Ljos.Controls.Basic` on its line, and a second import of the controls
@@ -1559,6 +1561,14 @@ dialogs) keeps the file (§6.3).
 
 DECISION: the dialogs come into the controls as they are, not into a
 module of their own; Qt's names stay, since §4.14 renames none of them.
+
+DECISION: `ApplicationWindow` is in `Ljos.Controls.Basic` and
+`Ljos.Controls`, as Basic's file, not in `Ljos.Ui` beside `Window`: what
+it adds to a window (the header, footer and menu bar laid out around its
+content, and the font and palette its controls take) is the controls',
+and its background is the style's. A window without controls is
+`Ljos.Ui`'s `Window`. Its `color` is a window's, not a fill, as
+`Window`'s is (`rules/window.rs`).
 
 DECISION: a file chooses its style by its import, and nothing else:
 `import Ljos.Controls` is Ljós's style, `import Ljos.Controls.Basic` is
