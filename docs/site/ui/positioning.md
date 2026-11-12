@@ -19,7 +19,7 @@ Anchoring opposite edges resizes the item: an anchored `right` or `bottom` edge 
 `anchors.centerIn` places an item's centre on its target's centre and snaps the position to whole pixels by default. Set `anchors.alignWhenCentered: false` when you want to keep a fractional coordinate.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200; height: 100
@@ -28,14 +28,14 @@ Item {
         anchors.fill: parent
         anchors.margins: 10
         anchors.leftMargin: 3
-        color: "#eeeeee"
+        fill: "#eeeeee"
     }
 
     Rectangle {
         width: 51; height: 31
         anchors.centerIn: parent
         anchors.alignWhenCentered: false
-        color: "#c03030"
+        fill: "#c03030"
     }
 
     Rectangle {
@@ -43,7 +43,7 @@ Item {
         anchors.right: parent.right
         anchors.bottom: parent.bottom
         anchors.margins: 4
-        color: "#308030"
+        fill: "#308030"
     }
 }
 ```
@@ -61,24 +61,25 @@ Avoid these anchor pitfalls:
 Both `Row` and `Column` accept `spacing` between children and `padding` (`leftPadding`, `rightPadding`, `topPadding`, `bottomPadding`) around them, and size themselves to their positioned children, spacing and padding. When a child grows, the positioner lays out again.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Item {
     width: 200; height: 120
 
     Row {
         spacing: 5; padding: 2
-        Rectangle { width: 30; height: 20; color: "#2060a0" }
-        Rectangle { width: 20; height: 30; color: "#c03030" }
-        Rectangle { width: 40; height: 10; color: "#308030"; visible: false }
-        Rectangle { width: 10; height: 10; color: "#c0a030" }
+        Rectangle { width: 30; height: 20; fill: "#2060a0" }
+        Rectangle { width: 20; height: 30; fill: "#c03030" }
+        Rectangle { width: 40; height: 10; fill: "#308030"; visible: false }
+        Rectangle { width: 10; height: 10; fill: "#c0a030" }
     }
 
     Column {
         y: 50
         spacing: 3; topPadding: 1
-        Rectangle { width: 40; height: 10; color: "#2060a0" }
-        Rectangle { width: 60; height: 20; color: "#c03030" }
+        Rectangle { width: 40; height: 10; fill: "#2060a0" }
+        Rectangle { width: 60; height: 20; fill: "#c03030" }
     }
 }
 ```
@@ -95,14 +96,15 @@ Watch how the cross-axis coordinate and attached properties work:
 `Flow` places its children side by side (`flow: Flow.LeftToRight` by default) and starts a new line when the next child does not fit the width. With `flow: Flow.TopToBottom`, it wraps at `height` instead and fills each column before starting the next.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Flow {
     width: 100; spacing: 5
-    Rectangle { width: 40; height: 10; color: "#2060a0" }
-    Rectangle { width: 40; height: 20; color: "#2060a0" }
-    Rectangle { width: 40; height: 15; color: "#2060a0" }
-    Rectangle { width: 55; height: 5; color: "#2060a0" }
+    Rectangle { width: 40; height: 10; fill: "#2060a0" }
+    Rectangle { width: 40; height: 20; fill: "#2060a0" }
+    Rectangle { width: 40; height: 15; fill: "#2060a0" }
+    Rectangle { width: 55; height: 5; fill: "#2060a0" }
 }
 ```
 

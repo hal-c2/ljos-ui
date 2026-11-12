@@ -24,7 +24,8 @@ By default `reuseItems` is `false`. Setting `reuseItems: true` recycles delegate
 - Turning `reuseItems` back to `false` destroys the pooled delegates.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 ListView {
     width: 200; height: 300
@@ -36,7 +37,7 @@ ListView {
         required property int index
         width: ListView.view.width
         height: 30
-        color: index % 2 ? "#eeeeee" : "#ffffff"
+        fill: index % 2 ? "#eeeeee" : "#ffffff"
 
         Text {
             anchors.centerIn: parent
@@ -55,12 +56,13 @@ A window with no active `Timer`, running animation or input stays completely asl
 However, setting `visible: false` on an item only stops it from being painted: a hidden item keeps its bindings re-evaluating, its `Behavior` animations running and its `Timer`s firing. To avoid waking the process while a page or indicator is hidden, bind `running` on every repeating `Timer` and every `Animation.Infinite` animation to the item's visibility or activity state.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Rectangle {
     id: page
     width: 200; height: 100
-    color: "#ffffff"
+    fill: "#ffffff"
     property int ticks: 0
 
     Timer {
@@ -80,12 +82,12 @@ Rectangle {
 When `page.visible` becomes `false`, `running` becomes `false` and the timer stops firing.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Rectangle {
     id: spinner
     width: 20; height: 20; radius: 10
-    color: "#2060a0"
+    fill: "#2060a0"
     property bool busy: false
 
     NumberAnimation on opacity {

@@ -22,13 +22,14 @@ Every control in Ljós exposes an accessibility node for itself with a default `
 
 A control's accessible name follows its `text` or `title` dynamically: changing `text` updates the name immediately. On buttons (including check boxes and delegates), a single ampersand (`&`) that marks a mnemonic is stripped from the accessible name, while a doubled ampersand (`&&`) becomes a single `&`; a lone trailing `&` stays. Controls that are not buttons, such as `Label` and `GroupBox`, keep ampersands in their accessible name. The mnemonic letter is drawn underlined, and Alt with that letter clicks the button. Screen readers and accessibility tools can locate a control by its role and name and trigger clicks or toggle check boxes directly.
 
-You can override the defaults on any item using `Accessible` attached properties (`QtQuick.AccessibleAttached`), including `role`, `name`, `description`, `focusable`, `focused`, `ignored`, `modal`, `checkable`, `checked`, `checkStateMixed`, `defaultButton`, `editable`, `multiLine`, `passwordEdit`, `pressed`, `readOnly`, `searchEdit`, `selectable`, `selectableText`, `selected`, and `expandable` (plus `Accessible.AnnouncementPoliteness` values `Polite` and `Assertive`, and `Accessible.Role` values such as `NoRole`, `TitleBar`, `MenuBar`, `ScrollBar`, `Grip`, `Sound`, `Cursor`, `Caret`, and `AlertMessage`).
+You can override the defaults on any item using `Accessible` attached properties, including `role`, `name`, `description`, `focusable`, `focused`, `ignored`, `modal`, `checkable`, `checked`, `checkStateMixed`, `defaultButton`, `editable`, `multiLine`, `passwordEdit`, `pressed`, `readOnly`, `searchEdit`, `selectable`, `selectableText`, `selected`, and `expandable` (plus `Accessible.AnnouncementPoliteness` values `Polite` and `Assertive`, and `Accessible.Role` values such as `NoRole`, `TitleBar`, `MenuBar`, `ScrollBar`, `Grip`, `Sound`, `Cursor`, `Caret`, and `AlertMessage`).
 
 Write this as `Main.qml` and run `ljos check` on its directory:
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -54,8 +55,9 @@ Here the slider reports its name as `"Volume"`, its value as `4` in the range `0
 Watch out for icon-only buttons: a control with no `text` has no accessible name at all, regardless of the icon it displays. Always set `Accessible.name` on icon-only buttons:
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Row {
     padding: 12
@@ -81,8 +83,8 @@ Value and state controls keep the accessibility tree updated as the user interac
 - **Dialogs, popups, menus, and tool tips**: While a `Dialog`, `Popup`, `Menu`, or `ToolTip` is closed, it is absent from the accessibility tree. When a `Dialog` opens, it enters the tree as a `dialog` node named after its `title`, holds its child controls inside its node, and moves keyboard focus inside the dialog until it closes (a plain `Popup` enters as an unnamed `dialog` node). Activating a dialog button or `MenuItem` from a screen reader triggers the item and closes the dialog with its result. An open `Menu` is named by its `title`, and a visible `ToolTip` is named by its `text`.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 Item {
     width: 300

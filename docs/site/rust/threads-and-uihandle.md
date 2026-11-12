@@ -34,7 +34,9 @@ Network requests are a host service provided by `Platform`:
 From QML, scripts can also make asynchronous HTTP requests using the built-in `XMLHttpRequest` global, which shares the same native helper:
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root

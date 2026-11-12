@@ -19,7 +19,7 @@ A new item is `visible` by default, and you can set `visible` to `false` and bac
 Setting `clip: true` cuts an item's drawing to its bounds. An item with `visible: false`, or one outside its clip or viewport, is not painted.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 240
@@ -29,7 +29,7 @@ Item {
         x: 10; y: 10
         width: parent.width / 2
         height: 60
-        color: "#2060a0"
+        fill: "#2060a0"
         radius: 4
         z: 1
     }
@@ -43,7 +43,7 @@ Item {
         Rectangle {
             x: 60; y: 60
             width: 80; height: 80
-            color: "#c03030"
+            fill: "#c03030"
         }
     }
 
@@ -51,7 +51,7 @@ Item {
         x: 150; y: 10
         width: 60; height: 40
         visible: false
-        color: "#00ff00"
+        fill: "#00ff00"
     }
 }
 ```
@@ -64,7 +64,9 @@ Watch out for a few pitfalls with visibility and stacking:
 - `childAt(x, y)` returns the visible child under a point (in the item's own coordinates, through the child's transform) or `null`, but it goes by declaration order rather than `z`: the last child declared under the point wins. A visible child with `opacity: 0` still counts, whereas a hidden child does not.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -75,8 +77,8 @@ Item {
         return c === null ? "none" : c.objectName
     }
 
-    Rectangle { objectName: "raised"; width: 100; height: 100; color: "#333333"; z: 1 }
-    Rectangle { objectName: "under"; width: 100; height: 100; color: "#666666" }
+    Rectangle { objectName: "raised"; width: 100; height: 100; fill: "#333333"; z: 1 }
+    Rectangle { objectName: "under"; width: 100; height: 100; fill: "#666666" }
 
     Component.onCompleted: console.log("hit: " + nameAt(10, 10))
 }
@@ -139,7 +141,7 @@ For background and network loading:
 - A large local picture (over 512 by 512 pixels) reports `Ready` at once after reading only its header; its pixels are decoded on another thread at the drawn size and painted a moment later. <!-- check: large local picture background pixel decode after Ready is marked @ljos-only -->
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 300

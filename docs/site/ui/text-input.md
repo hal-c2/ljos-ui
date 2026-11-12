@@ -22,7 +22,7 @@ Watch out for the differences between `TextInput`, `TextEdit` and `readOnly`:
 - Setting `readOnly: true` hides the cursor and blocks typed characters, Backspace, Cut and Paste, but the user can still move the cursor, select text and Copy (`Ctrl+C`), and your code can still call `insert` without recording an undo step.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200; height: 80
@@ -39,7 +39,7 @@ Item {
 The `TextEdit` wraps its text at word boundaries inside 180 pixels, and double-clicking selects the word under the pointer.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200; height: 40
@@ -81,7 +81,7 @@ Assigning an `IntValidator`, `DoubleValidator` or `RegularExpressionValidator` t
 - **`RegularExpressionValidator`**: accepts strings that match the whole `regularExpression` (an empty pattern accepts everything).
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200; height: 60
@@ -90,13 +90,13 @@ Item {
         id: field
         width: 180
         focus: true
-        font.pixelSize: 14
+        font.size: 14
         validator: IntValidator { bottom: 10; top: 99 }
     }
 
     Rectangle {
         y: 30; width: 180; height: 4
-        color: field.acceptableInput ? "#308030" : "#c03030"
+        fill: field.acceptableInput ? "#308030" : "#c03030"
     }
 }
 ```
@@ -116,7 +116,7 @@ Use `echoMode` to mask sensitive input while keeping the underlying `text`:
 - **`TextInput.PasswordEchoOnEdit`**: displays characters while the user is editing, and masks the field when focus leaves or when the application assigns `text`. Editing a masked field clears it and starts over.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200; height: 40

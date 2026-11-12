@@ -99,8 +99,8 @@ Architectural additions are gated on concrete measurements rather than built spe
 Tests locate interactive elements by accessible role and name. An item that a test cannot find is also invisible to a screen reader, so a failing test points directly to an accessibility bug:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 
 ApplicationWindow {
     width: 320

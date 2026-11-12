@@ -21,8 +21,9 @@ For plural strings, pass the count as the third argument to `qsTr`:
 Write this as `Main.qml` and run `ljos check` on its directory:
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12
@@ -83,8 +84,10 @@ To format numbers according to the locale's digit grouping and numeral system:
 - Controls and delegates created early (before the translation catalogue finishes loading) still resolve the active locale properly.
 
 ```qml
-import QtQuick
-import QtQuick.Controls.Basic
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Column {
     padding: 12

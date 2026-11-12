@@ -6,11 +6,7 @@
 # Reasons:
 #   gap:<slug>      `ljos migrate --write` cannot write it in Ljós's API yet.
 #                   The slugs are the gaps the migrate work tracks:
-#                   pragma        it lowers, but every lowered file is marked
-#                                 `pragma Scripts: JavaScript`, even when its
-#                                 scripts are typed
 #                   imports       an import migrate does not lower
-#                   ljos-imports  a Ljós module imported beside Qt's
 #                   controls      a control Ljos.Controls.Basic does not have
 #                   ui-types      a type Ljos.Ui does not have
 #                   layout        a layout or delegate migrate does not follow
@@ -20,159 +16,51 @@
 #                   `[unknown-type]` errors
 #   shows-findings  it shows what the checks find, so `ljos check` fails on it
 
-controls/accessibility.md 1 gap:pragma
-controls/accessibility.md 2 gap:controls
-controls/accessibility.md 3 gap:pragma
-controls/buttons-and-toggles.md 1 gap:controls
-controls/buttons-and-toggles.md 2 gap:controls
-controls/buttons-and-toggles.md 3 gap:controls
-controls/containers-and-popups.md 1 gap:controls
-controls/containers-and-popups.md 2 gap:pragma
-controls/containers-and-popups.md 3 gap:controls
-controls/containers-and-popups.md 4 gap:ljos-imports
-controls/containers-and-popups.md 5 gap:pragma
-controls/localisation.md 1 gap:pragma
 controls/localisation.md 2 gap:ui-types
-controls/localisation.md 3 gap:pragma
-controls/overview.md 3 gap:controls
-controls/overview.md 4 gap:controls
 controls/styles.md 1 gap:imports
 controls/styles.md 2 gap:imports
 controls/styles.md 3 gap:imports
 controls/value-inputs.md 1 gap:controls
-controls/value-inputs.md 2 gap:pragma
-controls/value-inputs.md 3 gap:pragma
-controls/value-inputs.md 4 gap:pragma
-controls/windows.md 1 gap:pragma
-controls/windows.md 2 gap:controls
-controls/windows.md 3 gap:pragma
 data/keyboard-and-focus.md 1 gap:ui-types
 data/keyboard-and-focus.md 2 gap:ui-types
-data/keyboard-and-focus.md 3 gap:pragma
 data/keyboard-and-focus.md 4 gap:ui-types
-data/list-and-grid-views.md 1 gap:pragma
 data/list-and-grid-views.md 2 gap:ui-types
-data/list-and-grid-views.md 3 gap:pragma
-data/models.md 1 gap:pragma
-data/models.md 2 gap:pragma
-data/models.md 3 gap:pragma
-data/models.md 4 gap:pragma
-data/models.md 5 gap:pragma
 data/models.md 6 gap:imports
-data/models.md 7 gap:ljos-imports
 data/models.md 8 gap:imports
 data/other-views.md 1 gap:ui-types
 data/other-views.md 2 gap:imports
 data/other-views.md 3 gap:imports
-data/other-views.md 4 gap:pragma
-data/pointer-input.md 1 gap:pragma
-data/pointer-input.md 2 gap:pragma
-data/pointer-input.md 3 gap:pragma
-data/pointer-input.md 4 gap:pragma
 data/pointer-input.md 5 gap:ui-types
-data/repeater-and-delegates.md 1 gap:pragma
 data/repeater-and-delegates.md 2 gap:layout
-data/repeater-and-delegates.md 3 gap:pragma
-language/components.md 2 gap:pragma
-language/components.md 3 gap:pragma
-language/components.md 4 gap:pragma
-language/components.md 5 gap:pragma
 language/components.md 6 gap:layout
-language/javascript.md 1 gap:pragma
-language/javascript.md 2 gap:pragma
-language/javascript.md 3 gap:pragma
 language/modules-and-imports.md 1 gap:imports
-language/modules-and-imports.md 2 gap:pragma
-language/modules-and-imports.md 3 gap:pragma
-language/overview.md 2 gap:pragma
-language/overview.md 3 gap:pragma
-language/overview.md 4 gap:pragma
-language/overview.md 5 gap:pragma
 language/properties-and-bindings.md 1 gap:imports
-language/properties-and-bindings.md 2 gap:pragma
-language/properties-and-bindings.md 3 gap:pragma
-language/properties-and-bindings.md 4 gap:pragma
-language/properties-and-bindings.md 5 gap:pragma
 language/properties-and-bindings.md 6 gap:imports
-language/signals-and-handlers.md 1 gap:pragma
-language/signals-and-handlers.md 2 gap:pragma
-language/signals-and-handlers.md 3 gap:pragma
-language/signals-and-handlers.md 4 gap:pragma
-language/signals-and-handlers.md 5 gap:pragma
-language/states-and-transitions.md 1 gap:pragma
-language/states-and-transitions.md 2 gap:pragma
 language/states-and-transitions.md 3 gap:ui-types
-language/states-and-transitions.md 4 gap:pragma
-language/states-and-transitions.md 5 gap:ui-types
-quality/accessibility.md 1 gap:controls
-quality/accessibility.md 2 gap:controls
-quality/accessibility.md 3 gap:controls
-quality/accessibility.md 4 gap:controls
-quality/accessibility.md 5 gap:controls
-quality/color.md 1 gap:ljos-imports
-quality/color.md 2 gap:controls
-quality/color.md 3 gap:controls
-quality/color.md 4 gap:controls
-quality/color.md 5 gap:controls
-quality/color.md 6 gap:controls
-quality/design-guardrails.md 1 gap:ljos-imports
-quality/design-guardrails.md 2 gap:ui-types
-quality/design-guardrails.md 3 gap:controls shows-findings
-quality/design-guardrails.md 4 gap:controls
-quality/layout-and-typography.md 1 gap:controls
-quality/layout-and-typography.md 2 gap:controls
-quality/layout-and-typography.md 3 gap:controls
-quality/motion.md 1 gap:controls
-quality/motion.md 2 gap:controls
-quality/motion.md 3 gap:controls
-quality/performance.md 1 gap:controls
-quality/principles.md 1 gap:controls
-rust/models.md 1 gap:pragma
-rust/models.md 2 gap:pragma
+quality/accessibility.md 1 gap:layout
+quality/accessibility.md 3 gap:layout
+quality/accessibility.md 4 gap:layout
+quality/accessibility.md 5 gap:ui-types
+quality/color.md 4 gap:layout
+quality/color.md 6 gap:layout
+quality/design-guardrails.md 3 gap:layout shows-findings
+quality/design-guardrails.md 4 gap:layout
+quality/layout-and-typography.md 1 gap:layout
+quality/layout-and-typography.md 2 gap:layout
+quality/layout-and-typography.md 3 gap:layout
+quality/performance.md 1 gap:layout
 rust/multimedia.md 1 gap:imports
 rust/multimedia.md 2 gap:imports
 rust/multimedia.md 3 gap:imports
 rust/native-types.md 1 gap:host-module host-types
-rust/overview.md 1 gap:ljos-imports
 rust/platforms.md 1 gap:imports
 rust/singletons-and-windows.md 1 gap:host-module
 rust/testing-rust.md 1 gap:imports
-rust/threads-and-uihandle.md 1 gap:pragma
-start/first-app.md 1 gap:pragma
-start/first-app.md 2 gap:pragma
-start/hot-reload.md 1 gap:pragma
-start/hot-reload.md 2 gap:pragma
-start/hot-reload.md 3 gap:pragma
-start/index.md 3 gap:pragma
 start/testing.md 1 gap:imports
-ui/animation.md 1 gap:ui-types
-ui/animation.md 2 gap:ui-types
-ui/animation.md 3 gap:ui-types
-ui/animation.md 4 gap:ui-types
-ui/items.md 1 gap:pragma
-ui/items.md 2 gap:pragma
 ui/items.md 3 gap:ui-types
-ui/items.md 4 gap:pragma
-ui/layouts.md 1 gap:pragma
-ui/layouts.md 2 gap:pragma
 ui/layouts.md 3 gap:layout
-ui/layouts.md 4 gap:pragma
-ui/offscreen-and-cost.md 1 gap:pragma
-ui/offscreen-and-cost.md 2 gap:pragma
-ui/offscreen-and-cost.md 3 gap:ui-types
-ui/positioning.md 1 gap:pragma
-ui/positioning.md 2 gap:pragma
-ui/positioning.md 3 gap:pragma
 ui/positioning.md 4 gap:ui-types
-ui/shapes-and-effects.md 1 gap:pragma
 ui/shapes-and-effects.md 2 gap:imports
 ui/shapes-and-effects.md 3 gap:ui-types
 ui/shapes-and-effects.md 4 gap:imports
-ui/text-input.md 1 gap:pragma
-ui/text-input.md 2 gap:pragma
-ui/text-input.md 3 gap:pragma
-ui/text-input.md 4 gap:pragma
-ui/text.md 1 gap:pragma
-ui/text.md 2 gap:pragma
 ui/text.md 3 gap:ui-types
-ui/text.md 4 gap:pragma

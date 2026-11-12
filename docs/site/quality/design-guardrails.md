@@ -23,8 +23,8 @@ Prose guidelines are easy to overlook, so Ljós turns its design rules into exec
 On Ljós, `import Ljos.Design` is built in and requires no extra files in your project. Its colours follow the system colour scheme and contrast preference automatically:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Controls.Basic
 import Ljos.Design
 
 ApplicationWindow {
@@ -100,7 +100,7 @@ Severity reflects how certain the check is that a user is hurt:
 If you intentionally keep code that triggers a Warning, add a `// ljos-allow(<code>): <reason>` comment on the same line, the line above, or the first line of the enclosing QML object:
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200

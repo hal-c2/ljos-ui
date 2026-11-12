@@ -125,7 +125,7 @@ ljos attach .
 | Tool | What an agent can do | Capability |
 |---|---|---|
 | `app_status` | Read windows, size, scale, appearance, focus, clock kind (`real` or `virtual`), active animations, painter backend, startup timings, reload state and granted capabilities | `inspect` |
-| `app_snapshot` | Get an indented accessibility-tree outline with short refs (`[e3]`), `id=` and `obj=` labels, virtual list windows and optional `pointer: true` lines for items with a `MouseArea` or `TapHandler` that have no accessible role | `inspect` |
+| `app_snapshot` | Get an indented accessibility-tree outline with short refs (`[e3]`), `id=` and `obj=` labels, virtual list windows and optional `pointer: true` lines for items with a `PointerArea` or `Tap` that have no accessible role | `inspect` |
 | `app_find` | Search for nodes by `role`, `name` (exact, substring or regex), `objectName`, `text` or state | `inspect` |
 | `app_inspect` | Inspect one object in depth: type chain, source location, properties with provenance (`assigned`, `bound` at tier `0`/`1`/`JS`, `animated`, `host`, `default`), geometry, window singletons, and binding `dependencies` or `bindings` | `inspect` |
 | `app_binding_graph` | Read the sources and dependents of a property and why it last evaluated | `inspect` |

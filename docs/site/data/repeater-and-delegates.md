@@ -10,12 +10,15 @@ When you have a small collection of rows and want every item created upfront ins
 
 ## Repeater and delegate lifecycle
 
-A `Repeater` (`QtQuick`) creates one delegate item for every row of its `model`. Its delegates are inserted as siblings right before the `Repeater` in its parent, and the `Repeater` itself takes up no space.
+A `Repeater` (`Ljos.Ui`) creates one delegate item for every row of its `model`. Its delegates are inserted as siblings right before the `Repeater` in its parent, and the `Repeater` itself takes up no space.
 
 `Repeater` exposes `model`, `delegate`, `count`, `itemAt(row)` (which returns the delegate for `row`, or nothing if `row` is outside the model), and the signals `itemAdded(index, item)` and `itemRemoved(index, item)`.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Layout
 
 Row {
     id: root
@@ -47,7 +50,7 @@ When the underlying model changes, `Repeater` updates only what is needed:
 - Moving a row moves its existing delegate without creating a new one, and changing a role value updates bindings in place without recreating the delegate.
 - Increasing a numeric model recreates the delegates; setting a model of `0` rows or calling `clear()` destroys every delegate; assigning a new model replaces every delegate.
 
-Inside each delegate, you can access `index`, `model`, `modelData` (for models of plain values), and each role by name, or declare `required property` bindings such as `required property string name`, `required property int index`, or `required property var modelData`.
+Inside each delegate, you can access `index`, `model`, `modelData` (for models of plain values), and each role by name, or declare `required property` bindings such as `required property string name`, `required property int index`, or `required property unknown modelData`.
 
 Keep these pitfalls in mind:
 
@@ -98,10 +101,13 @@ Watch out for two behaviours with `DelegateChooser`:
 
 ## Creating non-visual objects with Instantiator
 
-An `Instantiator` (`QtQml`, also reachable through `import QtQml.Models`) creates one `QtObject` (or any non-visual or visual object) per row of its `model`. It provides `model`, `delegate`, `count`, `active`, `object` (the first object created), `objectAt(row)`, and the `objectAdded` signal.
+An `Instantiator` (`Ljos.Models`) creates one `QtObject` (or any non-visual or visual object) per row of its `model`. It provides `model`, `delegate`, `count`, `active`, `object` (the first object created), `objectAt(row)`, and the `objectAdded` signal.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Models
 
 Item {
     ListModel {

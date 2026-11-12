@@ -42,7 +42,8 @@ QML includes structured value types (`point`, `size`, `rect`, `vector2d`, `vecto
 You can bind or assign individual fields of a value-type property, grouped property, or attached property using either dotted notation or a group block:
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Item {
     id: root
@@ -59,8 +60,8 @@ Item {
         id: heading
         text: "Title"
         font {
-            bold: true
-            pixelSize: 19
+            weight: Font.Bold
+            size: 19
         }
     }
 
@@ -73,13 +74,13 @@ Item {
 }
 ```
 
-Colour helpers on `Qt` include `Qt.rgba`, `Qt.hsla`, `Qt.hsva`, `Qt.color`, `Qt.lighter`, `Qt.darker`, `Qt.tint`, `Qt.alpha`, and `Qt.colorEqual`. A font's `pixelSize` must be a positive integer (fractions are rounded, zero or negative values are ignored, and `NaN` throws an error from script), and its `weight` is held between `1` and `1000`.
+You make a colour from its channels with `rgba`, `hsla` and `hsva`, and the helpers `Qt.color`, `Qt.lighter`, `Qt.darker`, `Qt.tint`, `Qt.alpha`, and `Qt.colorEqual` work on colours. A font's `size` must be a positive integer (fractions are rounded, zero or negative values are ignored, and `NaN` throws an error from script), and its `weight` is held between `1` and `1000`.
 
-Enumeration properties such as `Text.horizontalAlignment` or `ScrollBar.policy` accept enum keys (`Text.AlignHCenter`, `ScrollBar.AlwaysOn`, `ScrollBar.Policy.AlwaysOff`) or key names as strings (`"AlignHCenter"`). Plain numbers written directly in QML source for an enum property are rejected when the file loads, whereas numbers assigned from JavaScript are rounded (or throw an `Error` if `NaN`). Flag properties combine keys with bitwise OR, such as `Qt.LeftButton | Qt.RightButton` or `Popup.CloseOnEscape | Popup.CloseOnPressOutside`.
+Enumeration properties such as `Text.align` or `ScrollBar.policy` accept enum keys (`Text.AlignHCenter`, `ScrollBar.AlwaysOn`, `ScrollBar.Policy.AlwaysOff`) or key names as strings (`"AlignHCenter"`). Plain numbers written directly in QML source for an enum property are rejected when the file loads, whereas numbers assigned from JavaScript are rounded (or throw an `Error` if `NaN`). Flag properties combine keys with bitwise OR, such as `Qt.LeftButton | Qt.RightButton` or `Popup.CloseOnEscape | Popup.CloseOnPressOutside`.
 
-For sequences, `var` and `list<T>` behave differently:
+For sequences, `unknown` and `list<T>` behave differently:
 
-- A `var` property holding a JavaScript array or object stores the script's own reference. Calling `xs.push(4)` or mutating `box.n = 2` mutates it in place without emitting a property change signal.
+- An `unknown` property holding a JavaScript array or object stores the script's own reference. Calling `xs.push(4)` or mutating `box.n = 2` mutates it in place without emitting a property change signal.
 - A `list<T>` property (`list<int>`, `list<string>`, `list<var>`, `list<QtObject>`) owns its sequence. Assigning or binding an array to a `list<T>` copies the array and any nested arrays or objects inside it. Calling `numbers.push(3)` or assigning `numbers[0] = 9` mutates the property itself, emits its change signal, and leaves any binding on the list property in place. On a `readonly property list<string>`, calling `push` throws a `TypeError`.
 
 ## Reactive bindings and `Qt.binding`
@@ -91,7 +92,8 @@ You can also write a block binding in braces `{ ... }`. In QML, a block binding 
 An imperative assignment (`b = 10`) in a function or handler breaks an existing binding on `b`, even if the assigned value equals the value `b` already held. To install a new reactive binding from JavaScript, assign `Qt.binding(fn)`:
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Item {
     id: root
@@ -117,14 +119,15 @@ If two bindings read each other and do not settle to the same value, Ljós stops
 An `alias` property forwards reads, writes, and bindings to another object, a property of an object, a grouped property, or a single member of a value-type property:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
-    property color tint: Qt.rgba(0, 0.75, 0, 0)
+    property color tint: rgba(0, 0.75, 0, 0)
     property alias green: root.tint.g
     property alias frame: box.border
-    property alias px: label.font.pixelSize
+    property alias px: label.font.size
     default property alias content: body.data
 
     Rectangle {
@@ -143,7 +146,7 @@ Item {
     Text {
         id: label
         text: "Sample"
-        font.pixelSize: 12
+        font.size: 12
         font.italic: true
     }
 }
@@ -155,10 +158,11 @@ Wait: if a `url` property is set through an alias from a file in another directo
 
 ## Resetting properties and bidirectional synchronisation
 
-Some built-in properties—such as `Item.width`, `Item.height`, `anchors.*`, `Text.baseUrl`, `Control.baselineOffset`, `Control.padding` (and side/axis paddings), `Pane.contentWidth`, `Pane.contentHeight`, `Loader.sourceComponent`, and `LayoutMirroring.enabled`—have a default state they return to when assigned `undefined`. Properties without a reset state (and native Rust properties without `#[qml(reset)]`) refuse `undefined` and keep their current value.
+Some built-in properties—such as `Item.width`, `Item.height`, `anchors.*`, `Text.baseUrl`, `Control.baselineOffset`, `Control.padding` (and side/axis paddings), `Pane.contentWidth`, `Pane.contentHeight`, `Loader.component`, and `LayoutMirroring.enabled`—have a default state they return to when assigned `undefined`. Properties without a reset state (and native Rust properties without `#[qml(reset)]`) refuse `undefined` and keep their current value.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Rectangle {
     implicitWidth: 40

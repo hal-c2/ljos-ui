@@ -14,14 +14,15 @@ In this guide you will write a small QML application, check and format it from t
 Create a new directory for your project and save the following file as `Main.qml`:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Rectangle {
     id: root
     width: 300
     height: 200
-    color: "#ffffff"
+    fill: "#ffffff"
 
     property int count: 0
 
@@ -32,8 +33,8 @@ Rectangle {
         Text {
             id: label
             text: "Count: " + root.count
-            font.pixelSize: 20
-            horizontalAlignment: Text.AlignHCenter
+            font.size: 20
+            align: Text.AlignHCenter
         }
 
         Button {
@@ -92,14 +93,15 @@ ljos run --watch Main.qml
 Click **Increment** until the counter reads `Count: 3`. Leave the window open, then edit `Main.qml` in your editor to change the background colour, the heading text and add a second button:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Controls.Basic
 
 Rectangle {
     id: root
     width: 300
     height: 200
-    color: "#f0f4f8"
+    fill: "#f0f4f8"
 
     property int count: 0
 
@@ -110,9 +112,9 @@ Rectangle {
         Text {
             id: label
             text: "Total clicks: " + root.count
-            font.pixelSize: 20
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
+            font.size: 20
+            font.weight: Font.Bold
+            align: Text.AlignHCenter
         }
 
         Button {

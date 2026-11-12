@@ -10,7 +10,7 @@ Models supply rows of data to views and repeaters. You use `ListModel` when you 
 
 ## ListModel and ListElement
 
-`ListModel` and `ListElement` need only `import QtQuick`. A `ListModel` holds rows; each `ListElement` is a row, and its properties are the row's roles. In a delegate, you read a role by its name, through `model.<role>`, or as a `required property` of the same name.
+`ListModel` and `ListElement` come from `import Ljos.Models`. A `ListModel` holds rows; each `ListElement` is a row, and its properties are the row's roles. In a delegate, you read a role by its name, through `model.<role>`, or as a `required property` of the same name.
 
 You can inspect and change rows at runtime with `count`, `get(i)`, `index(row, column)`, `append`, `insert(i, object)`, `remove(i, count)` (where `count` defaults to one), `move(from, to, n)`, `set(i, object)`, `setProperty(i, role, value)`, and `clear()`.
 
@@ -20,7 +20,10 @@ You can inspect and change rows at runtime with `count`, `get(i)`, `index(row, c
 - A `ListModel` emits a signal for each change: `setProperty` emits `dataChanged` with the role, `append` and `insert` signal that rows are about to be inserted and then emit `rowsInserted`, `remove` and `clear` emit `rowsRemoved`, `move` emits `rowsMoved`, and row count changes emit `countChanged`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Models
+import Ljos.Layout
 
 Item {
     width: 200
@@ -70,7 +73,8 @@ You do not always need a `ListModel`. You can pass simpler values directly as a 
 - An array of plain JavaScript objects gives each delegate `modelData` (so `modelData.n` reads a member, whilst `model.n` is `undefined`), or you can declare `required property` members matching the object keys.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Column {
     Repeater {
@@ -95,10 +99,11 @@ Column {
 When a delegate of an array of objects uses `required property` declarations, the role names come from the first row:
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Column {
-    property var days: [{ day: 5, on: true }, { day: 6 }, 7]
+    property unknown days: [{ day: 5, on: true }, { day: 6 }, 7]
     Repeater {
         model: days
         Text {
@@ -119,13 +124,14 @@ Watch out for these edge cases with value and array models:
 
 ## ObjectModel and DelegateModel
 
-Both `ObjectModel` and `DelegateModel` come from `import QtQml.Models`.
+Both `ObjectModel` and `DelegateModel` come from `import Ljos.Models`.
 
 An `ObjectModel` holds visual items that already exist. A view places each item at its row position and creates no delegate for it. You can read and change its rows with `count`, `children`, `get`, `append`, `insert`, `move`, `remove`, `clear`, and `countChanged`.
 
 ```qml
-import QtQuick
-import QtQml.Models
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Models
 
 Item {
     width: 200
@@ -133,9 +139,9 @@ Item {
 
     ObjectModel {
         id: rows
-        Rectangle { width: 200; height: 20; color: "red" }
-        Rectangle { width: 200; height: 40; color: "green" }
-        Rectangle { width: 200; height: 60; color: "blue" }
+        Rectangle { width: 200; height: 20; fill: "red" }
+        Rectangle { width: 200; height: 40; fill: "green" }
+        Rectangle { width: 200; height: 60; fill: "blue" }
     }
 
     ListView {
@@ -152,8 +158,10 @@ A `DelegateModel` packages a `model` together with the `delegate` for its rows. 
 Each `DelegateModelGroup` has `name`, `includeByDefault`, `count`, `addGroups`, `removeGroups`, `setGroups`, `remove`, `move`, and `insert`. Inside a delegate, you can read the attached properties `DelegateModel.model`, `DelegateModel.groups`, `DelegateModel.isUnresolved`, `DelegateModel.inItems`, `DelegateModel.inPersistedItems`, `DelegateModel.itemsIndex`, and `DelegateModel.persistedItemsIndex`.
 
 ```qml
-import QtQuick
-import QtQml.Models
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Core
+import Ljos.Models
 
 Item {
     width: 200
@@ -251,7 +259,7 @@ With a `rows.json` file beside `Main.qml`:
 ```
 
 ```qml
-import QtQuick
+import Ljos.Ui
 import Ljos.Models
 
 ListView {
