@@ -2791,17 +2791,58 @@ read it:
     same files.
   - **`--tsc`** gives TypeScript the same declarations, built in memory
     from the text it checks, so it is never stale, and the same
-    `rootDirs`. It checks each `.lts` module's desugared text as a root
-    file named `.ljos/check/src/width.lts.body.ts`, with `.ljos/check`
-    added to its `rootDirs`, so the module's own relative imports
-    resolve as from its source directory. No specifier names a
-    `.body.ts` file, so `./width.lts` has one target, the declaration,
-    under stock `tsc` and under `--tsc` alike.
-- **`ljos lsp`.** Ljós has no language server today, and the new syntax
-  needs one, since no editor reads QML scripts or `.lts` modules as
-  TypeScript. S7 builds it over stdio, with `ljos check`'s diagnostics on
-  open and change, on the input's spans, and `ts-lts-syntax`'s rename as
-  a code action.
+    `rootDirs`. It works in a directory of its own, never the project's:
+    `m/` holds the desugared `.ts` modules, `types/` the declarations,
+    and each `.lts` module's desugared text is a root file named
+    `check/src/width.lts.body.ts`, with `m`, `types` and `check` as its
+    `rootDirs`, so the module's own relative imports resolve as from its
+    source directory. No specifier names a `.body.ts` file, so
+    `./width.lts` has one target, the declaration, under stock `tsc` and
+    under `--tsc` alike. Under `deno check`, which has no `rootDirs`, an
+    import map in its `deno.json` sends each of those specifiers where
+    `rootDirs` would. The desugar's two helpers, `$is` and `$nomatch`,
+    are declared after the last line of each desugared file, as §4.18
+    types them, so no line moves. TypeScript's findings are reported at
+    the input's spans, through the span map; one in a declaration is
+    reported at its module unless the module has findings of its own.
+    `crates/ljos_cli/tests/tsc_accepts.rs` holds M7's exit to this: the
+    files of every scenario under `features/` with the new syntax in
+    them that `ljos check` accepts pass `--tsc` with nothing said, and
+    `tests/docs_site.rs` holds docs/site's examples to the same, where a
+    TypeScript is installed.
+- **The MCP tools.** `qml_check` and `qml_lint` take `.ts` and `.lts`
+  modules as well as QML files, and a directory gives its `.qml` and
+  `.lts` files; each finding is at its place in the file the agent
+  wrote. `module_rename_lts` makes `ts-lts-syntax`'s rename, with the
+  imports that name the module, as `ljos migrate` does; without `write`
+  it only says what it would rename.
+- **`ljos lsp`.** No editor reads QML scripts or `.lts` modules as
+  TypeScript, so Ljós has its own language server: `ljos lsp`, over
+  stdio. It answers `initialize`, `shutdown` and `exit`, keeps the text
+  of each file the editor has open (`didOpen`, `didChange` with whole
+  texts, `didClose`), and publishes the compiler's findings for a file
+  on open and on each change, at the editor's line and UTF-16 column. It
+  reads the editor's text, not the disk's. On `didSave` of an `.lts`
+  module it writes the project's declarations as `ljos check` does. For
+  a `.ts` module with the new syntax, `codeAction` offers the rename to
+  `.lts` as one workspace edit: the file's rename and the new text of
+  each importer. It does nothing between messages. Lints, members and
+  `--tsc` stay `ljos check`'s, so a keystroke never waits on TypeScript.
+- **What ljos-web calls.** ljos-web reads QML with `qml_syntax::parse`,
+  which keeps the syntax as written, so it reads `match`, `is` and `|>`
+  as the editor wrote them. To run them it calls what the compiler
+  calls, from `qml_syntax`, which builds to wasm:
+  - `qml_syntax::parse_lowered(allocator, source)` for a QML file: the
+    tree of the desugared text, which is `source` itself when nothing
+    in it needs the desugar, and the `SpanMap` back to `source`;
+  - `qml_syntax::desugar(text)` for an `.lts` module, or a `.ts` one,
+    before it is run or given to TypeScript: plain TypeScript, line for
+    line, with its `SpanMap` and the syntax errors at the input's spans;
+  - `SpanMap::start(offset)` to show a finding or a stack frame of the
+    desugared text where it is in the source.
+  It resolves `./width.lts` as it resolves `./width.ts`, and an `.lts`
+  module needs nothing of `ljos_compiler`. The `.d.lts.ts` declarations
+  are for stock TypeScript; ljos-web does not need them.
 
 DECISION: the new syntax is in QML files' scripts and `.lts` modules, and
 a `.ts` module with it is an error whose fix renames the file. The
