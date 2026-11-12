@@ -7,13 +7,13 @@
 use qml_front::TypeOracle;
 use qml_front::scope::is_group;
 use qml_syntax::{
-    GetSpan,
+    GetSpan, Span,
     ast::{QmlBindingValue, QmlMember, QmlObject},
-    js::{ArrayExpressionElement, Expression},
+    js::{Argument, ArrayExpressionElement, CallExpression, Expression},
 };
 
 use super::ty::{Field, Kind, Param, Sig, Ty, Web};
-use super::{Checker, Own, param};
+use super::{Checker, Obj, Own, param};
 use crate::Code;
 
 /// What a Task's `run` says of it.
@@ -195,6 +195,50 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         ] {
             self.own.insert((index, name), Own { ty, written: None });
         }
+    }
+
+    /// A call of `object.name`: when it is a typed Task's `start`, it is
+    /// given none of the run's arguments, so it runs with `args`, or all
+    /// it needs. Its type has each parameter optional, for `start()`; what
+    /// is given is held to them there.
+    ///
+    /// DECISION: told apart by what is called, not by `start`'s type: a
+    /// function type is interned, so a function of the same shape is the
+    /// same type.
+    pub(super) fn task_call(&mut self, object: Ty, name: &str, call: &CallExpression<'a>) {
+        if name != "start" {
+            return;
+        }
+        let Kind::Object(o) = *self.arena.kind(object) else {
+            return;
+        };
+        let Obj::Instance(index) = self.objs[o as usize] else {
+            return;
+        };
+        let Some(task) = self.tasks_typed.get(&index) else {
+            return;
+        };
+        let needs = task.params.iter().filter(|p| !p.optional).count();
+        let given = call.arguments.len();
+        let spread = call
+            .arguments
+            .iter()
+            .any(|argument| matches!(argument, Argument::SpreadElement(_)));
+        if spread || given == 0 || given >= needs {
+            return;
+        }
+        // Where TypeScript says it: at what is given.
+        let span = match (call.arguments.first(), call.arguments.last()) {
+            (Some(first), Some(last)) => Span::new(first.span().start, last.span().end),
+            _ => call.span,
+        };
+        self.report(
+            Code::TsAssignType,
+            format!(
+                "`start` is given none of `run`'s arguments or all it needs, {needs}, and is given {given}"
+            ),
+            span,
+        );
     }
 
     /// `args` written on a Task whose run is typed: each element goes

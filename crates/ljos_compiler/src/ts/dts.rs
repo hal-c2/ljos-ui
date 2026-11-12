@@ -876,7 +876,7 @@ interface __TaskOf<A extends unknown[], T>
     readonly status: __TaskState<T>[\"status\"];
     readonly value: T | undefined;
     done(value: T): void;
-    start(...args: Partial<A>): void;
+    start(...args: [] | A): void;
     abort(): void;
 }
 

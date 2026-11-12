@@ -453,6 +453,58 @@ Feature: Task: async work run from its arguments, and where it got to
         """
 
     @headless
+    Scenario: start is given none of run's arguments, or all it needs
+      Given the file "Weather.qml":
+        """qml
+        import Ljos.Core
+        import Ljos.Ui
+        Item {
+          Task {
+            id: weather
+            autoRun: false
+            run: async (city: string, unit: string, signal: AbortSignal): Promise<string> => city + unit
+          }
+          function own() { weather.start() }
+          function all() { weather.start("Oslo", "C") }
+          function part() { weather.start("Oslo") }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Weather.qml:11:43: error: `start` is given none of `run`'s arguments or all it needs, 2, and is given 1 [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    @headless
+    Scenario: TypeScript gives start none of run's arguments, or all of them
+      Given the file "Weather.qml":
+        """qml
+        import Ljos.Core
+        import Ljos.Ui
+        Item {
+          Task {
+            id: weather
+            autoRun: false
+            run: async (city: string, unit: string, signal: AbortSignal): Promise<string> => city + unit
+          }
+          function own() { weather.start() }
+          function all() { weather.start("Oslo", "C") }
+          function part() { weather.start("Oslo") }
+        }
+        """
+      When the files are checked with TypeScript
+      Then the check reports the lines:
+        """
+        Weather.qml:11:43: error: `start` is given none of `run`'s arguments or all it needs, 2, and is given 1 [ts-assign-type]
+        """
+      And TypeScript reports the lines:
+        """
+        Weather.qml:11:43: error: Argument of type '["Oslo"]' is not assignable to parameter of type '[] | [city: string, unit: string]'. [TS2345]
+        """
+
+    @headless
     Scenario: TypeScript reads a Task as the checker does
       Given the file "Weather.qml":
         """qml
