@@ -117,6 +117,43 @@ pub(crate) struct Sugar {
     /// The span of the pipe just read and its parts, head first: a pipe
     /// whose body it is merges them into its own.
     pub chain: Option<(Span, Vec<Span>)>,
+    /// How many `$`s start each name the lowering declares: one more than
+    /// any name the file writes starts with, so it never declares a name
+    /// the code in it reads (see [`dollars`]).
+    pub dollars: usize,
+}
+
+impl Sugar {
+    /// Reads `match`, `is` and `|>` in `source`.
+    pub fn start(&mut self, source: &str) {
+        self.on = true;
+        self.dollars = dollars(source);
+    }
+
+    /// A name the lowering declares, `$s` or `$0` unless the file writes
+    /// one that starts as they do.
+    pub fn name(&self, suffix: impl std::fmt::Display) -> String {
+        format!("{}{suffix}", "$".repeat(self.dollars.max(1)))
+    }
+}
+
+/// One more than the most `$`s any name in `source` starts with, counted
+/// over the whole text, strings and comments too: a name the lowering
+/// writes with that many is one the source cannot have.
+fn dollars(source: &str) -> usize {
+    let mut most = 0;
+    let mut run = 0;
+    for byte in source.bytes() {
+        if byte == b'$' {
+            run += 1;
+            continue;
+        }
+        if run > 0 && (byte.is_ascii_alphanumeric() || byte == b'_') {
+            most = most.max(run);
+        }
+        run = 0;
+    }
+    most + 1
 }
 
 /// A pattern as it was read.
@@ -365,7 +402,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let path = if bare {
             vec![Piece::Copy(subject_span)]
         } else {
-            vec![text("$s", keyword)]
+            vec![text(self.sugar.name("s"), keyword)]
         };
 
         let mut body = Vec::new();
@@ -419,7 +456,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             // where an `await` or `yield` in it is the function's own and
             // it is read where it is written; a parameter's default may
             // hold neither.
-            pieces.push(text(" const $s = ", keyword));
+            pieces.push(text(format!(" const {} = ", self.sugar.name("s")), keyword));
             pieces.push(Piece::Copy(subject_span));
             pieces.push(text(";", open));
         }
@@ -430,7 +467,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             if bare {
                 pieces.push(Piece::Copy(subject_span));
             } else {
-                pieces.push(text("$s", subject_span));
+                pieces.push(text(self.sugar.name("s"), subject_span));
             }
             pieces.push(text(" as never);", keyword));
         }
@@ -447,7 +484,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let pat = self.parse_sugar_pattern();
         let span = self.end_span(lhs_start);
         let bare = matches!(lhs, Expression::Identifier(_));
-        let path = if bare { vec![Piece::Copy(lhs.span())] } else { vec![text("$s", keyword)] };
+        let path = if bare { vec![Piece::Copy(lhs.span())] } else { vec![text(self.sugar.name("s"), keyword)] };
 
         let mut names = Vec::new();
         if pat.binds() {
@@ -502,7 +539,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 return Expression::new_parenthesized_expression(span, lhs, self);
             };
             pieces.push(text(open_text, keyword));
-            pieces.push(text(" const $s = ", keyword));
+            pieces.push(text(format!(" const {} = ", self.sugar.name("s")), keyword));
             pieces.push(Piece::Copy(lhs.span()));
             pieces.push(text("; return ", keyword));
             pieces.extend(test);

@@ -443,7 +443,7 @@ mod parser_parse {
                 self.config,
                 UniquePromise::new(),
             );
-            parser.sugar.on = true;
+            parser.sugar.start(parser.source_text);
             parser.parse_keeping_sugar()
         }
 

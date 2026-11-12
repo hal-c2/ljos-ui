@@ -433,6 +433,20 @@ mod tests {
         );
     }
 
+    // A file that writes `$0`, `$s` or `$$x` keeps reading its own names:
+    // the lowering's start with one `$` more.
+    #[test]
+    fn the_lowering_declares_no_name_the_file_writes() {
+        assert_eq!(
+            lowered("x = a |> % + $0\n"),
+            "x = (() => { const $$0 = a; return $$0 + $0;})()\n"
+        );
+        assert_eq!(
+            lowered("x = match (a.b) { when 1: $s; default: $$t }\n"),
+            "x = (() => { const $$$s = a.b; if ($$$s === 1) return $s; return $$t;})()\n"
+        );
+    }
+
     #[test]
     fn a_pipe_in_a_body_has_its_own_topic_and_its_head_reads_the_outer_one() {
         assert_eq!(
