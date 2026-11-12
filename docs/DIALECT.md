@@ -2193,9 +2193,11 @@ browsers, Deno and Node have them, with the same names and meanings:
 |---|---|
 | `fetch(input, init?)` | `input` a URL string or a `Request`; `init` with `method`, `headers`, `body` (a string, an `ArrayBuffer` or a `Uint8Array`) and `signal`. Gives a `Promise<Response>` |
 | `Request` | `new Request(url, init?)`; `url`, `method`, `headers` |
-| `Response` | `ok`, `status`, `statusText`, `url`, `headers`; `json()` (a `Promise<unknown>`), `text()`, `arrayBuffer()`; the body is read once, as WHATWG says |
+| `Response` | `ok`, `status`, `statusText`, `url`, `redirected`, `headers`, `bodyUsed`; `json()` (a `Promise<unknown>`), `text()`, `arrayBuffer()`; the body is read once, as WHATWG says. `Response.error()`, a reply of no request: `status` 0, an empty body |
 | `Headers` | `get`, `has`, `set`, `append`, `delete`, `forEach`, `entries`; names compared without case |
 | `AbortController`, `AbortSignal` | `abort(reason?)`; `aborted`, `reason`, `throwIfAborted()`, `onabort`, `AbortSignal.timeout(ms)`, `AbortSignal.any(signals)` |
+| `DOMException` | what an abort or a deadline rejects with: `name`, `message`, `code` |
+| `ArrayBuffer`, `Uint8Array` | the language's own: a body of bytes, and what `arrayBuffer()` gives |
 
 `json()` gives `unknown`, as `JSON.parse` does (§4.3), for a decoder to
 narrow. A network failure rejects with a `TypeError`, an abort with the
@@ -2336,6 +2338,41 @@ DECISION: a Task's progress is one discriminated `state` as well as
 never `undefined` where the run is done.
 
 DECISION: `Response.json()` gives `unknown`; a decoder narrows it.
+
+DECISION: `Response.url` is the address the reply came from, after any
+redirect the platform followed, and `redirected` says whether it differs
+from the request's.
+
+DECISION: a method is one of those the platform sends (`GET`, `HEAD`,
+`POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `PROPFIND`); another rejects
+with a `TypeError` before anything is sent, as a forbidden one does.
+
+DECISION: a request that cannot be made rejects with a `TypeError` whose
+message is `fetch failed: ` and what the platform says, as Node and Deno
+word theirs.
+
+DECISION: in the checker, `Headers.entries()` is a readonly array of
+readonly pairs and `Headers.get` gives `string | null`, as lib.dom says;
+an init's `headers` object is not checked to have string values, which a
+value that is not one becomes, as WHATWG has it. `tsc` reads the same
+names from Ljós's declarations, not lib.dom, so what the subset leaves out
+(`mode`, say) is unknown to both.
+
+DECISION: an `async` function's written return type is a `Promise<T>`, and
+what it returns is checked against `T` once awaited, as TypeScript does.
+
+DECISION: `ljos migrate` keeps every line of a request it writes as
+`fetch`, as it does every edit: the statements the call gathers leave
+blank lines, and a request whose address, header or body is written
+over lines keeps the file, as the call it gathers them into is one line.
+Its `fetch(…).catch(() => Response.error()).then(async (http: Response) =>
+{…})` gives the handler a reply even where the request could not be made,
+whose `status` is 0 and whose body is empty, as the request's were.
+DECISION: `fetch` and its classes are found after the file's own names: a
+function `fetch` of the component, or a type `Headers` or `Request` of the
+project, is that one, in the checker and in the program alike, as those
+names were there before `fetch` was. The globals of TYPES.md (`Math`,
+`JSON` and the rest) keep their place before them.
 
 ### 4.20 Controllers
 

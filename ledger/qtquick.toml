@@ -47,3 +47,32 @@ type = "Timer"
 kind = "type"
 status = "unsupported"
 reason = "M0 in progress"
+
+# XMLHttpRequest runs where a file is written against Qt's API, and is not in
+# Ljós's: there a script fetches (docs/DIALECT.md §4.19).
+
+[[row]]
+module = "QtQml"
+type = "XMLHttpRequest"
+kind = "type"
+status = "partial"
+reason = "compat only: a file of Ljós's API calls `fetch`, and `ljos migrate` writes the usual shape as one"
+scenarios = ["@api-QtQml.XMLHttpRequest.send", "@api-QtQml.XMLHttpRequest.readyState"]
+
+[[row]]
+module = "QtQml"
+type = "XMLHttpRequest"
+member = "send"
+kind = "method"
+status = "partial"
+reason = "compat only: `fetch` sends in Ljós's API"
+scenarios = ["@api-QtQml.XMLHttpRequest.send"]
+
+[[row]]
+module = "QtQml"
+type = "XMLHttpRequest"
+member = "readyState"
+kind = "property"
+status = "partial"
+reason = "compat only: a `fetch` is awaited, and has no state to read"
+scenarios = ["@api-QtQml.XMLHttpRequest.readyState"]
