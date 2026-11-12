@@ -423,13 +423,16 @@ impl TypeOracle for QtTypeOracle {
     }
 
     fn enum_home(&self, ty: QtType, name: &str) -> Option<QtType> {
-        let mut ty = Some(ty.0);
-        while let Some(found) = ty {
-            if found
-                .enums
+        let declares = |ty: &'static qt_types::Type| {
+            ty.enums
                 .iter()
                 .any(|enumeration| enumeration.name == name || enumeration.alias == Some(name))
-            {
+        };
+        let mut ty = Some(ty.0);
+        while let Some(found) = ty {
+            // An enum of the class the type is extended with is the type's
+            // own (`Accessible.Role`, of the `QAccessible` namespace).
+            if declares(found) || found.enum_extension().is_some_and(declares) {
                 return Some(QtType(found));
             }
             ty = found.prototype();
