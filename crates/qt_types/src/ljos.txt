@@ -121,6 +121,7 @@ module Ljos.Blocks
 
 module Ljos.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
+	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
 	Button Ljos/Controls/Button.qml
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
@@ -320,6 +321,7 @@ module Ljos.Controls
 
 module Ljos.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
+	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
