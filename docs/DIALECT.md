@@ -10,6 +10,9 @@
     `tsc` given the modules, and the checker's rules but `ts-boundary`
     (§4.4, §5).
   - **M2, M3, M5, M6:** not started.
+- **Ergonomics amendment (2026-11-12):** `match`, the pipe `|>`, `fetch`
+  and `Task`, Controllers, and no `Qt` in a file of Ljós's API (§4.3.1,
+  §4.17 to §4.21; M7's slices S1 to S7 in §13). Designed, not built.
 - **Decision record:** [ADR 0004](adr/0004-compat-lowering-before-the-ir.md)
   (compat is a lowering pass in front of a Qt-agnostic IR).
 - **Inputs:** [ARCHITECTURE.md](ARCHITECTURE.md) (which wins over this
@@ -44,9 +47,11 @@ exactly one place: the compat pass and its type table.
    be lowered runs as written, on the same runtime. It must cost nothing at
    run time (§11).
 3. **Typed scripts.** Handlers, functions and bindings in a Ljós file are
-   strict TypeScript (note 11's H1). Every program the checker accepts is
-   valid TypeScript with the same meaning, so `tsc`, editors and coding
-   models keep working on it.
+   strict TypeScript (note 11's H1), with two additions that compile away,
+   `match` and the pipe (§4.17.1, §4.18). Every program the checker
+   accepts is, once they are compiled away, valid TypeScript with the same
+   meaning, so `tsc`, editors and coding models keep working on it
+   (§4.21).
 4. **Typed declarations.** In a Ljós file a property has a type the
    checker knows: a QML basic type, a component, a native type, or a type
    declared in TypeScript (`property Logic.Filter working`, not
@@ -58,12 +63,20 @@ exactly one place: the compat pass and its type table.
 6. **The tools carry over.** The parser, formatter, lossless edits (Studio),
    the MCP tools and ljos-web see the same syntax and need no fork.
 7. **General purpose.** Nothing in the API is shaped for one application.
+8. **A pleasure to write.** What an app says often has a short form:
+   "which of these is it" is `match`, "then do this to it" is a pipe,
+   "load this and show where it got to" is a `Task`, "this item also does
+   that" is a Controller (§4.17 to §4.20).
 
 ### Non-goals
 
-- **No new syntax.** There is no `match`, no `option` and no extension to
-  QML or TypeScript (note 11's H2 is rejected). A Ljós file parses with
-  today's parser.
+- **No syntax beyond TC39's.** The non-goal "no new syntax" is reversed
+  (2026-11-12): a Ljós script has `match` and the pipe `|>`, as TC39's
+  proposals define them, and nothing of its own. Note 11 rejected its H2
+  because extensions break `tsc`, editors and coding models. Both are
+  compiled away before any of those read a script, in one desugar that
+  every consumer calls, and `.ts` modules stay plain TypeScript (§4.21).
+  There is still no `option` and no extension to QML's own syntax.
 - **No second script language.** There is no ReScript-like front end (note
   11's B). JavaScript stays, but only as compat.
 - **No formal soundness.** H1 closes TypeScript's known holes by rule and
@@ -212,8 +225,8 @@ the same objects. A file of Ljós's API imports it beside `Ljos.Ui`, and
 `Ljos.Ui` no longer imports `QtQml`: a file that names `Timer` without
 importing `Ljos.Core` is told `` `Timer` is not a type of anything the
 file imports ``. The models are `Ljos.Models`' (§4.8), which a lowered
-file imports for them; `Ljos.Core` still brings `QtQml.Models`. `Qt` stays a global of every file, as in Qt's QML, until
-its members are lowered by member (§4.3).
+file imports for them; `Ljos.Core` still brings `QtQml.Models`. `Qt` is a global of Qt's QML
+only: a file that imports `Ljos.Ui` has none (§4.3.1, S1).
 
 DECISION: the types keep their names. `Object` for `QtObject` would hide
 JavaScript's `Object` in a script; the rename stays open (§18). The
@@ -360,11 +373,11 @@ file that imports a directory by path without a name, since that directory
 may have an `App.qml`. A project lowers a file again when an `App.qml`
 comes beside it or goes. `Qt.resolvedUrl(u, ctx)` stays Qt's: Qt 6
 resolves it against `ctx`'s component, and `url` takes one argument.
-Otherwise the member stays Qt's: `Qt` stays a global of every file, so that
-runs as before.
+Until S1, the member otherwise stays Qt's and `Qt` stays a global of every
+file; after it, the file is kept instead (§4.3.1).
 
-DECISION: `Qt.darker`, `lighter`, `alpha` and `tint` stay Qt's in a lowered
-file. Their first argument may be a colour's name, a string, which has no
+DECISION (until S1; §4.3.1 replaces it): `Qt.darker`, `lighter`, `alpha`
+and `tint` stay Qt's in a lowered file. Their first argument may be a colour's name, a string, which has no
 methods, and a lowered file's scripts are not typed, so `c.darker(f)`
 cannot be written for it. `Qt.binding` stays too: what it becomes, a
 `Binding` or a state, is not one edit.
@@ -373,6 +386,93 @@ DECISION: there is no `date` type in a Ljós file. An `Instant` is a number
 of UTC milliseconds with methods, and a calendar date is formatted through
 `Locale`. Qt's `date` lowers to `Instant` where it is only stored or
 compared, and keeps its file where it uses `Date`'s local-time getters.
+
+#### 4.3.1 No `Qt` in a file of Ljós's API
+
+Built in S1 (§4.17). A file that imports `Ljos.Ui` has no `Qt`: not in
+its scripts, not in its bindings, and not when it says `pragma Scripts:
+JavaScript`. `Qt` is a global of Qt's QML only, that is of a file that
+imports `QtQuick` or `QtQml`, and so of compat. Every member of `Qt` has
+a home in Ljós's API, and `ljos migrate` writes it:
+
+| `Qt` | Ljós | Where |
+|---|---|---|
+| `Qt.point`, `size`, `rect`, `vector2d/3d/4d`, `quaternion` | `point(…)` and the others (built) | `Ljos.Core` |
+| `Qt.matrix4x4(…)` | `matrix4x4(…)` | `Ljos.Core` |
+| `Qt.rgba`, `hsla`, `hsva` | `rgba(…)`, `hsla(…)`, `hsva(…)` (built) | `Ljos.Core` |
+| `Qt.color(s)` | `Color.of(s)`: a colour from a colour or its name | `Ljos.Core` |
+| `Qt.darker(c, f)`, `lighter`, `tint(c, t)`, `alpha(c, a)` | `Color.of(c).darker(f)` and the others; on a value already typed `color`, `c.darker(f)` | `Ljos.Core` |
+| `Qt.colorEqual(a, b)` | `Color.of(a).equals(b)` | `Ljos.Core` |
+| `Qt.red`, `Qt.transparent`, … (`GlobalColor`) | the colour's name, `"red"`, where it goes to a `color`; elsewhere the file is kept | — |
+| `Qt.font({…})`, `Qt.fontFamilies()` | `Font.of({…})`, `Font.families()` | `Ljos.Ui` |
+| `Qt.binding(f)` | `bind(f)` (§18) | `Ljos.Core` |
+| `Qt.callLater(f, …)` | `later(f, …)` (built) | `Ljos.Core` |
+| `Qt.resolvedUrl(u)` | `url(u)` (built; the two-argument form keeps its file) | `Ljos.Core` |
+| `Qt.quit()`, `Qt.exit(code)` | `App.quit()` (built), `App.exit(code)` | `Ljos.Core` |
+| `Qt.openUrlExternally(u)`, `Qt.platform` | `App.openUrlExternally(u)`, `App.platform` (built) | `Ljos.Core` |
+| `Qt.application.name`, `version`, `organization`, `domain`, `displayName`, `arguments`, `state`, `layoutDirection`, `screens`, `onAboutToQuit` | `App.name` and the others; `App.onQuitting` | `Ljos.Core` |
+| `Qt.uiLanguage` | `App.language`, reactive and writable | `Ljos.Core` |
+| `Qt.locale(name?)` | `Locale.current`, `Locale.named(name)` | `Ljos.Core` |
+| `Qt.formatDate/Time/DateTime(d, f)` | `Locale.current.formatDate(d, f)` and the others | `Ljos.Core` |
+| `Qt.styleHints.*` | `App.hints.*`, the same members | `Ljos.Core` |
+| `Qt.inputMethod.*` | `App.inputMethod.*` | `Ljos.Core` |
+| `Qt.createComponent(u)` | a component type is a value (§4.11); until that is built, the file is kept | — |
+| `Qt.createQmlObject`, `Qt.isQtObject`, `Qt.include` | compat only: the file is kept | — |
+| `Qt.<Key>` of an enum of `Qt` | `<Enum>.<Key>` (below) | `Ljos.Ui` |
+
+**Enums.** Qt's `Qt` namespace holds 70 enums whose keys are reached as
+`Qt.<key>`, so a key never says what it belongs to. In Ljós's API each is
+a type of its own, named for what it is, with its keys named without the
+part they share with it:
+
+| Qt | Ljós |
+|---|---|
+| `Qt.AlignLeft`, `Qt.AlignHCenter`, `Qt.AlignTop \| Qt.AlignRight` | `Align.Left`, `Align.HCenter`, `Align.Top \| Align.Right` |
+| `Qt.Key_Return`, `Qt.Key_A` | `Key.Return`, `Key.A` |
+| `Qt.LeftButton`, `Qt.AllButtons` | `Button.Left`, `Button.All` |
+| `Qt.ControlModifier`, `Qt.NoModifier` | `Modifier.Control`, `Modifier.None` (as §4.7 writes them) |
+| `Qt.Horizontal` | `Orientation.Horizontal` |
+| `Qt.ElideRight` | `Elide.Right` |
+| `Qt.PointingHandCursor` | `Cursor.PointingHand` |
+| `Qt.Checked` | `CheckState.Checked` |
+| `Qt.RightToLeft` | `Direction.RightToLeft` |
+| `Qt.Granted`, `Qt.PermissionStatus.Granted` | `Permission.Status.Granted` |
+
+The full table is generated beside `ljos.txt` from `QtQml.Qt`'s enums,
+with the short names above written by hand and the rest following the
+rule. A key keeps Qt's number, so a value passes between a Ljós file and a
+kept Qt file unchanged. `Qt.Align*` was M3's (§13); S1 takes it.
+
+**What a file is told.** `Qt` in a file of Ljós's API is a check error
+(`qt-global`) whose fix names the home: `` `Qt.callLater` is not in a
+Ljós file: use `later` (Ljos.Core) ``. The compiled file is not handed
+`Qt`, so a script that reaches it at run time finds nothing there.
+
+**Lowering.** The pass lowers a file only when it can give every `Qt`
+member of it a home, and the free-name rules of §4.3 still decide whether
+a home's name can be written there. Where it cannot, the whole file stays
+Qt's and says which member kept it (`` kept Main.qml:12:9: `Qt.binding`
+needs `bind`, which a property of the file hides ``). So no lowered file
+reaches `Qt`, which was M2's exit criterion (§13).
+
+`QtObject` is renamed with the rest (§18 asks for the name). `Ljos.Ui` and
+`Ljos.Core` say nothing named for Qt after S1, beside the types the API
+has not taken yet, which keep their names until M5.
+
+DECISION: no file that imports `Ljos.Ui` sees `Qt`, a lowered one
+included, and the pass lowers a file only where every `Qt` member has a
+home. This replaces §4.1's "`Qt` stays a global of every file".
+
+DECISION: `Qt.darker`, `lighter`, `tint`, `alpha` and `color` lower to
+`Color.of(…)`, which takes a colour or a colour's name, so they need no
+type to lower; this replaces the decision above that kept them Qt's.
+
+DECISION: the enums of `Qt` are types of `Ljos.Ui` named for what they
+are (`Align`, `Key`, `Button`, `Modifier`), with Qt's numbers.
+
+DECISION: the colour constructors stay bare `rgba(…)` (§4.3), not
+`Color.rgba(…)`: they are built, shorter, and read as CSS does. `Color`
+holds what takes a colour in (`Color.of`).
 
 ### 4.4 Typed properties and the shared type namespace
 
@@ -1610,6 +1710,652 @@ Qt. Qt's is its line of text (18) plus 24 of padding; Ljós's line is
 shorter, so the background's 40 is the larger. It is the same in a lowered
 file and in the file as written, so lowering does not change it.
 
+### 4.17 Ergonomics: what this part adds
+
+Sections 4.17 to 4.21 are the ergonomics amendment (2026-11-12). They
+take ideas from functional programming (pattern matching, pipes), from
+React's hooks and from lit.dev's reactive controllers and `@lit/task`,
+and fit them to Ljós's one reactive system: properties and bindings.
+
+| Slice | Builds | Section |
+|---|---|---|
+| **S1** | no `Qt` in a file of Ljós's API; every `Qt` member and Qt-named enum given a Ljós home; `ljos migrate` rewrites each | §4.3.1 |
+| **S2** | `fetch`, `Request`, `Response`, `Headers`, `AbortController`, `AbortSignal`, on `Platform::request`, with a reply that wakes the engine and nothing that polls | §4.19 |
+| **S3** | `Controller`: a non-visual object with a host and a lifecycle | §4.20 |
+| **S4** | `Task`, a Controller that runs async work from its arguments | §4.19 |
+| **S5** | `match` and `is` | §4.18 |
+| **S6** | the pipe, `\|>` | §4.17.1 |
+| **S7** | the desugar for `ljos check --tsc`, the MCP tools and `ljos lsp` | §4.21 |
+
+They merge in that order. Each is its own PR, with its features, a
+`docs/site/` page in the new dialect, its `ljos migrate` coverage and its
+`api_status` rows (§4.21).
+
+Five handlers from the corpus are rewritten here, before the API is
+locked, to test it against real code: `todolist`'s request (§4.19),
+`lightningviewer`'s button look and its permission switch (§4.18),
+`rssnews`'s "how long ago" (§4.17.1) and `osmbuildings`' camera
+controller (§4.20).
+
+#### 4.17.1 The pipe: `|>`
+
+**What apps say.** "Take this, then do that to it, then that." The corpus
+writes it inside out, so the first step is read last:
+
+```qml
+// Qt (toycustomizer/qml/OrderItem.qml)
+property real __discountPercent: Math.round(Math.max(oldPrice - newPrice, 0) / oldPrice * 100)
+
+// Ljós
+readonly property real discountPercent:
+    oldPrice - newPrice |> Math.max(%, 0) / oldPrice * 100 |> Math.round(%)
+```
+
+**The design.** The pipe is the Hack-style pipe of TC39's proposal, as
+the proposal specifies it, with `%` as the topic:
+
+- `head |> body` evaluates `head`, then `body` with `%` bound to its value.
+  The body is any expression, so a step can call a function (`f(%, a)`),
+  a method (`%.trim()`), an operator (`% * 2`), `await %`, or build a
+  value (`[%, %]`, `` `${%} items` ``).
+- The body must use `%`; one that does not is a syntax error
+  (`` the pipe's body does not use its topic `%` ``).
+- `%` outside a pipe body is a syntax error.
+- The pipe has the precedence of `=>` and assignment, and chains left to
+  right: `a |> f(%) |> g(%)` is `g(f(a))`.
+- A body that is an unparenthesised arrow function, conditional
+  (`?:`), assignment or `yield` is a syntax error; parenthesised, it is
+  allowed: `x |> (% > 0 ? % : 0)`.
+- A function or arrow inside a body may read `%`, which is the topic of
+  the pipe around it. A pipe inside a body has its own topic for its own
+  body; its head reads the outer one.
+- `%` in operand position is the topic; in operator position it is the
+  remainder, as in `% % 2`.
+
+The proposal's later ideas (`+>`, `|?>`, `|>>`) are not in it, so Ljós
+has none of them.
+
+`rssnews`' delegate shows how long ago an article came out. Qt's version
+rebuilds the date string by hand and threads `result` through nested
+`if`s (the `match` is §4.18; `Instant` and `Clock` are §4.3's):
+
+```qml
+// Qt (rssnews/content/NewsDelegate.qml, abridged)
+function timeSinceEvent(pubDate) {
+    var result = pubDate;
+    var d = pubDate.replace(',','').split(' ');
+    if (d.length != 6)
+        return result;
+    var date = new Date([d[0], d[2], d[1], d[3], d[4], 'GMT' + d[5]].join(' '));
+    if (!isNaN(date.getDate())) {
+        let age = new Date() - date;
+        let minutes = Math.floor(Number(age) / 60000);
+        if (minutes < 1440) {
+            if (minutes < 2)
+                result = qsTr("Just now");
+            else if (minutes < 60)
+                result = '' + minutes + ' ' + qsTr("minutes ago")
+            else if (minutes < 120)
+                result = qsTr("1 hour ago");
+            else
+                result = '' + Math.floor(minutes/60) + ' ' + qsTr("hours ago");
+        }
+        else {
+            result = date.toDateString();
+        }
+    }
+    return result;
+}
+
+// Ljós
+function timeSinceEvent(pubDate: string): string {
+    const published = Instant.parseRfc2822(pubDate)
+    if (published === undefined) return pubDate
+    return Clock.now(Clock.Resolution.Minute).since(published).minutes |> match (%) {
+        when < 2:    qsTr("Just now");
+        when < 60:   qsTr("%1 minutes ago").arg(%);
+        when < 120:  qsTr("1 hour ago");
+        when < 1440: Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
+        default:     Locale.current.formatDate(published, Locale.Format.Long);
+    }
+}
+```
+
+The Ljós version is also reactive: it reads `Clock.now` once a minute
+(`Clock.Resolution.Minute` joins §4.3's `Second`), so the delegate's text
+keeps itself current where Qt's is computed once.
+And the translated strings now carry their number (`%1`), which Qt's
+concatenation could not give a translator.
+
+**Lowering.** The pipe is compiled away (§4.21): the program that runs
+has no pipe in it. The body becomes a function of the topic, called with
+the head:
+
+```js
+// written
+oldPrice - newPrice |> Math.max(%, 0) / oldPrice * 100 |> Math.round(%)
+// what runs (tier 2, tsc and ljos-web read this)
+(($1) => Math.round($1))((($0) => Math.max($0, 0) / oldPrice * 100)(oldPrice - newPrice))
+```
+
+A body that uses `await` outside a nested function is an `async` arrow
+whose call is awaited. Ljós has no `this`, `arguments` or `yield` in a
+script, so the arrow means exactly what the pipe means. Tier 1 gives the
+topic a register instead of a closure.
+
+**Types.** The checker types `%` as the head's type and each step as its
+body's, so `"3" |> Math.max(%, 0)` is `ts-assign-type` at the `%`.
+
+DECISION: the pipe follows TC39's Hack proposal exactly: `%` as the
+topic, the proposal's early errors, and none of its deferred operators. Where the proposal changes, Ljós follows it.
+
+DECISION: a pipe compiles to an arrow called with the head, line for line,
+not to temporaries hoisted into the function: the arrow gives each
+evaluation its own `%`, so a closure that reads the topic keeps the value
+it saw. The budget gate (§11) measures the cost, and tier 1 removes it.
+
+### 4.18 `match` and `is`
+
+**What apps say.** "Which of these is it?" The corpus says it with
+`switch` on a status, chains of `if`/`else if` on a number, and
+`[a && "x", b && "y"].filter(Boolean).join("_")` for combinations.
+
+**The design.** `match` is the expression of TC39's pattern-matching
+proposal:
+
+```js
+match (subject) {
+    when pattern: expression;
+    when pattern if (guard): expression;
+    default: expression;
+}
+```
+
+The clauses are tried in order, and the first whose pattern matches the
+subject (and whose guard is `true`) gives the value. With no match and no
+`default`, it throws a `TypeError`, as the proposal says; on a union the
+checker makes that unreachable (below). Patterns:
+
+| Pattern | Matches | Example |
+|---|---|---|
+| literal | the same value (`SameValue`, but `0` matches `-0`) | `when "checked":`, `when 0:`, `when true:`, `when undefined:` |
+| relational | a comparison with the subject | `when < 60:`, `when >= 1440:`, `when !== "":` |
+| a constant | the same value as a constant in scope: an enum's key, a `const` of a literal type | `when Permission.Status.Granted:` |
+| binding | anything, and names it | `when let n:` |
+| array | an array of exactly this length; `...` or `...let rest` for "at least" | `when [let x, let y]:`, `when [0, ...let rest]:` |
+| object | an object with these keys, each matching its pattern; `key` alone tests that the key is there | `when { status: 200, let body }:` |
+| `and`, `or`, `not` | both, either, neither (mixing two needs parentheses) | `when 301 or 304:`, `when not undefined:` |
+
+`x is pattern` is the same test as a boolean, and narrows `x` where it is
+`true`: `if (reply is { status: 200 })`.
+
+What Ljós leaves out of the proposal, and why:
+
+- **Custom matchers** (`Symbol.customMatcher`, extractor patterns such as
+  `when Option.Some(let x)`). They need classes and symbols, which the
+  subset forbids (§5.1). A decoder (§4.4) does their job: `when let x if
+  (isPoint(x))`.
+- **Bindings in `is`.** `if (x is { let body })` would bind `body` in the
+  `if`'s block; the proposal has not settled that scoping, so Ljós waits
+  for it. `is` without `let` is in.
+- **`var` and `const` bindings.** `var` is forbidden (§5.1) and a binding
+  is never written, so `let` is the one form; `const x` is accepted as a
+  synonym, as the proposal allows.
+
+**Exhaustiveness.** A `match` with no `default` over a union must cover
+every member of it, as a `switch` must (`ts-match-exhaustive`, §5.1): the
+literals of a union of literals (`boolean` is `true | false`), and the
+tags of a union of records discriminated by one literal key (`{ kind:
+"a", … } | { kind: "b", … }`). Each clause narrows the subject for its
+expression and its guard, and removes what it matched from the subject's
+type for the clauses after it, as TypeScript's narrowing does. A clause
+with a guard removes nothing. The message names what is missing:
+`` `match` does not cover "pressed" ``.
+
+`lightningviewer`'s button picks an image for its look from four flags,
+by joining the names of those that hold:
+
+```qml
+// Qt (lightningviewer/LightningViewerStyle/Button.qml)
+readonly property string __currentState: [
+    control.checked && "checked",
+    !control.enabled && "disabled",
+    control.enabled && !control.down && control.hovered && "hovered",
+    control.down && "pressed"
+].filter(Boolean).join("_") || "normal"
+
+// Ljós
+readonly property string look: match (control) {
+    when { enabled: false }: "disabled";
+    when { down: true }:     "pressed";
+    when { hovered: true }:  "hovered";
+    default:                 "normal";
+} |> (control.checked ? (% === "normal" ? "checked" : `checked_${%}`) : %)
+```
+
+The `match` says that the four looks exclude one another and in which
+order they win, which the Qt version leaves to the reader. (Qt's version
+can also give `disabled_pressed`, for which the style has no image; the
+match cannot.)
+
+`lightningviewer`'s view asks for the location permission when it has
+none:
+
+```qml
+// Qt (lightningviewer/LightningViewerModule/LightningView.qml)
+onRecenterRequested: {
+    switch (permission.status) {
+    case Qt.Granted:
+        mapView.recenter();
+        break;
+    case Qt.Denied:
+        permissionMessageDialog.open();
+        break;
+    default:
+        permission.request();
+        break;
+    }
+}
+
+// Ljós
+onRecenterRequested: match (permission.status) {
+    when Permission.Status.Granted:     mapView.recenter();
+    when Permission.Status.Denied:      permissionMessageDialog.open();
+    when Permission.Status.Undetermined: permission.request();
+}
+```
+
+`Qt.Granted` is the `Qt` global's (§4.3.1), and the Ljós file names the
+enum it belongs to. With no `default`, the checker holds the `match` to
+all three statuses, so a fourth added to `Permission.Status` is an error
+here, where Qt's `default:` would quietly ask again. A `match` whose
+clauses are calls is a statement as well as an expression.
+
+**Lowering.** `match` is compiled away (§4.21), line for line, to an
+arrow of the subject made of `if`s, called at once:
+
+```js
+// written
+match (permission.status) {
+    when Permission.Status.Granted:     mapView.recenter();
+    when Permission.Status.Denied:      permissionMessageDialog.open();
+    when Permission.Status.Undetermined: permission.request();
+}
+// what runs
+(($s) => {
+    if ($s === Permission.Status.Granted) return mapView.recenter();
+    if ($s === Permission.Status.Denied) return permissionMessageDialog.open();
+    if ($s === Permission.Status.Undetermined) return permission.request();
+    return $nomatch($s); })(permission.status)
+```
+
+`$nomatch` throws the proposal's `TypeError`. For `tsc` it is declared
+`(x: never) => never`, so TypeScript finds the same missing case the
+checker does.
+
+DECISION: `match` follows the proposal's README form, `when pattern:`
+clauses ended by `;`, and the proposal wherever it changes; custom
+matchers and bindings in `is` wait (above).
+
+DECISION: `match` is an expression and may stand as a statement, so it
+replaces `switch` in a handler too. `switch` stays, with its own
+exhaustiveness rule.
+
+### 4.19 Fetching: `fetch` and `Task`
+
+**What apps say.** "Get this from the network and show it, or say that
+it failed." The corpus has one way: `XMLHttpRequest` with an
+`onreadystatechange` that checks `readyState == 4` and the status by hand.
+
+**`fetch`.** A file has the WHATWG `fetch` and the objects around it, as
+browsers, Deno and Node have them, with the same names and meanings:
+
+| | Ljós has |
+|---|---|
+| `fetch(input, init?)` | `input` a URL string or a `Request`; `init` with `method`, `headers`, `body` (a string, an `ArrayBuffer` or a `Uint8Array`) and `signal`. Gives a `Promise<Response>` |
+| `Request` | `new Request(url, init?)`; `url`, `method`, `headers` |
+| `Response` | `ok`, `status`, `statusText`, `url`, `headers`; `json()` (a `Promise<unknown>`), `text()`, `arrayBuffer()`; the body is read once, as WHATWG says |
+| `Headers` | `get`, `has`, `set`, `append`, `delete`, `forEach`, `entries`; names compared without case |
+| `AbortController`, `AbortSignal` | `abort(reason?)`; `aborted`, `reason`, `throwIfAborted()`, `onabort`, `AbortSignal.timeout(ms)`, `AbortSignal.any(signals)` |
+
+`json()` gives `unknown`, as `JSON.parse` does (§4.3), for a decoder to
+narrow. A network failure rejects with a `TypeError`, an abort with the
+signal's reason (a `DOMException` named `"AbortError"` when none is given),
+as WHATWG says. What is not there, such as streams on `body`, `FormData`,
+`Blob`, `credentials` and `mode`, is not in the declarations, so the
+checker and `tsc` reject it rather than a run.
+
+Under it is `Platform::request`, which `XMLHttpRequest` uses today: the
+request runs on a thread of the platform, and its reply comes back as a
+platform job through the bounded inbox (rule 7). The inbox wakes the
+engine when its first job arrives, the frame delivers it before timers and
+promise jobs, and the job settles the promise, whose reactions run in the
+same turn. Nothing waits on a timer or polls. While a request is out, the
+engine is idle: no frame and no timer deadline. A feature holds that
+(S2). `Platform::request` gains a cancel token: an abort settles the
+promise at once, and the request's thread stops at its next read instead
+of finishing a reply nobody wants.
+
+**`XMLHttpRequest`** stays for compat only. A file of Ljós's API does not
+see it (the checker says `` use `fetch` ``). `ljos migrate` rewrites the
+corpus's shape of it (an async `open`, `setRequestHeader`, an
+`onreadystatechange` that tests `readyState` against 4 and then
+`status`, reading `responseText` or `response`, and `send(body)`) into
+`fetch` with `then`. Anything else (a synchronous `open`, `onprogress`,
+`responseXML`, another `readyState`, the object stored or passed on) keeps
+the file, with the reason and line.
+
+**`Task`.** The usual job is "run this when these change, and show where
+it got to". `Task`, after `@lit/task`, is that, declared:
+
+```qml
+Task {
+    id: weather
+    args: [city.text]
+    run: async (name: string, signal: AbortSignal): Promise<Forecast> =>
+        Forecast.decode(await (await fetch(`https://example.org/w/${name}`, { signal })).json())
+}
+Text {
+    text: match (weather.status) {
+        when "initial": "";
+        when "pending": qsTr("Loading…");
+        when "done":    weather.value.summary;
+        when "failed":  qsTr("No forecast");
+    }
+}
+```
+
+- `run` is an async function of `args`' elements and then an
+  `AbortSignal`. Its type gives the Task's: `args` is the tuple of its
+  parameters before the signal, and `value` is what its promise gives.
+- When `args` changes, by element with `!==`, the Task aborts the run in
+  progress through its signal and starts another. The value of a run that
+  was superseded is dropped, even when it comes back.
+- `status` is `"initial"`, `"pending"`, `"done"` or `"failed"`; `value` is
+  the last run's result (`T | undefined`), kept while the next one is
+  pending; `error` is why the last run failed (`unknown`). All three are
+  properties, so bindings read them.
+- The signals `done(value)` and `failed(error)` are for effects a binding
+  cannot say.
+- `autoRun` (`true`) runs on a change of `args`; with it `false`, the Task
+  runs only when told: `start()`, which takes the arguments to use, or
+  takes `args`' own. `abort()` aborts the run in progress.
+- A Task is a Controller (§4.20) of the item it is declared in. When that
+  item goes, the run in progress is aborted. So a delegate scrolled out of
+  a list cancels its request.
+
+`todolist` adds a random task from a web API when a button is pressed:
+
+```qml
+// Qt (todolist/content/HomePage.qml, abridged)
+function sendHttpRequest() : void {
+    var http = new XMLHttpRequest()
+    var url = "https://www.boredapi.com/api/activity";
+    http.open("GET", url, true);
+    http.setRequestHeader("Content-type", "application/json");
+    http.setRequestHeader("Connection", "close");
+    http.onreadystatechange = function() {
+        if (http.readyState == 4) {
+            if (http.status == 200) {
+                let object = JSON.parse(http.responseText.toString());
+                let currentDate = new Date()
+                let format = Qt.locale().dateFormat(Locale.LongFormat)
+                addTask(todayTasksModel, object.activity,
+                        currentDate.toLocaleDateString(Qt.locale(), format), "","")
+            } else {
+                console.log("Failed to fetch a random TODO item; the API provider might be down")
+            }
+        }
+    }
+    http.send();
+}
+
+// Ljós
+Task {
+    id: randomActivity
+    autoRun: false
+    run: async (signal: AbortSignal): Promise<string> => {
+        const reply = await fetch("https://www.boredapi.com/api/activity", { signal })
+        if (!reply.ok) throw new Error(`status ${reply.status}`)
+        return Activity.decode(await reply.json()).activity
+    }
+    onDone: (activity: string) => root.addTask(todayTasksModel, activity,
+        Locale.current.formatDate(Clock.now(Clock.Resolution.Second), Locale.Format.Long), "", "")
+    onFailed: console.log("Failed to fetch a random TODO item; the API provider might be down")
+}
+// the button: onTapped: randomActivity.start()
+```
+
+`Activity` is a small TypeScript module with the decoder (§4.4). The Qt
+version treats a network error and a 404 alike only by luck (`readyState`
+reaches 4 for both), and goes on running if the page is closed; the Task
+says both, and its run is aborted with the page.
+
+**On the web.** ljos-web's targets have `fetch` of their own. Ljós's
+declarations are a subset of WHATWG's, so a script that checks runs the
+same against the browser's `fetch`, which ljos-web uses as it is. Two
+differences are the browser's and are documented on the site's page: CORS
+applies there and not on the desktop, and a browser fetch cannot set some
+headers (`Connection`, `Host`). `Task` and `Controller` are engine types,
+built on properties and the object tree, which ljos-web has in its own
+runtime; it provides them with the same features.
+
+DECISION: `fetch` and its objects are globals of every file, as on every
+JavaScript platform, and not names of `Ljos.Core`: they mean what they mean
+everywhere, and coding models write them unprompted. `XMLHttpRequest` is
+compat only.
+
+DECISION: `Task` is in `Ljos.Core`, and is a Controller.
+
+DECISION: `Response.json()` gives `unknown`; a decoder narrows it.
+
+### 4.20 Controllers
+
+**What apps say.** "This item also does that": follows the pointer,
+orbits a camera, loads its data, keeps its size in step with something
+else. Qt's QML says it with an invisible `Item` that fills its parent, a
+`Connections`, or a block of handlers copied into each file. React says
+it with hooks, and lit with reactive controllers.
+
+**The design.** A `Controller` is a non-visual object declared inside an
+item. That item is its **host**. It has:
+
+- `host`, the item it is declared in (an `Item`, readonly);
+- a lifecycle, as signals: `attached(host)` once its host is complete,
+  or when it is put into a host; `detached()` when the host goes, or the
+  controller is taken out (a `Loader` unloading, a delegate removed);
+  `updated()` once after a turn in which a property of the host changed,
+  after bindings settle and before drawing;
+- properties, functions, signals and children of its own, as any object
+  has. Its children are its host's too: a gesture (§4.7) or a `Task`
+  declared in a Controller acts on the Controller's host.
+
+A Controller is a file whose root is `Controller`, or a TypeScript module
+(below). What it adds is properties, so it is read and bound as any object
+is, through its id. There is one reactive system, the engine's, and there
+are no rules about the order of calls, as React's hooks have: a
+Controller's state is its properties, and its effects are bindings and the
+three signals.
+
+`updated()` costs nothing unless a Controller handles it; the engine
+calls it only for Controllers that do.
+
+`osmbuildings` drives its camera with an `Item` that fills the view, to
+hold two `DragHandler`s, a pinch, a wheel and the clip planes:
+
+```qml
+// Qt (osmbuildings/OSMCameraController.qml, abridged)
+Item {
+    id: root
+    required property Node origin
+    required property Camera camera
+    property bool panEnabled: true
+    implicitWidth: parent.width
+    implicitHeight: parent.height
+
+    Connections {
+        target: root.camera
+        Component.onCompleted: { onZChanged() }
+        function onZChanged() {
+            let distance = root.camera.z
+            if (distance < 1) {
+                root.camera.clipNear = 0.01
+                root.camera.clipFar = 100
+            } else if (distance < 100) {
+                root.camera.clipNear = 0.1
+                root.camera.clipFar = 1000
+            } else {
+                root.camera.clipNear = 1
+                root.camera.clipFar = 10000
+            }
+        }
+    }
+    DragHandler {
+        target: null
+        acceptedModifiers: Qt.NoModifier
+        acceptedButtons: Qt.RightButton
+        onCentroidChanged: root.mouseMoved(Qt.vector2d(centroid.position.x, centroid.position.y), false)
+    }
+    // …another DragHandler, a PinchHandler, a WheelHandler, a Timer
+}
+// Main.qml: OSMCameraController { origin: originNode; camera: cameraNode }
+
+// Ljós (OrbitCamera.qml, abridged)
+Controller {
+    id: orbit
+    required property Node origin
+    required property Camera camera
+    property bool panEnabled: true
+
+    readonly property real clipNear: match (camera.z) {
+        when < 1: 0.01; when < 100: 0.1; default: 1;
+    }
+    readonly property real clipFar: clipNear * 10000
+
+    Drag {
+        modifiers: Modifier.None
+        buttons: Button.Right
+        onCentroidChanged: orbit.rotate(vector2d(centroid.position.x, centroid.position.y))
+    }
+    // …another Drag, a Pinch, a Wheel
+}
+// Main.qml: View3D { PerspectiveCamera { id: cameraNode; clipNear: orbit.clipNear
+//                                        clipFar: orbit.clipFar }
+//                    OrbitCamera { id: orbit; origin: originNode; camera: cameraNode } }
+```
+
+The controller has no geometry to keep equal to its parent's, its
+gestures act on the view it is declared in, and the clip planes are
+bindings the camera reads, not writes made from a handler that has to be
+called once by hand at the start.
+
+**In TypeScript.** A module exports a Controller made by `controller`,
+with typed properties and its lifecycle as functions. `attached` may
+return a function, which runs on `detached`, as React's effects return
+their cleanup:
+
+```ts
+// breakpoint.ts
+export const Breakpoint = controller({
+    properties: { width: 600, compact: false },
+    updated(host, self) {
+        self.compact = host.width < self.width
+    },
+})
+```
+
+```qml
+import "breakpoint.ts" as Size
+
+Item {
+    Size.Breakpoint { id: breakpoint; width: 720 }
+    Column { visible: breakpoint.compact }
+}
+```
+
+The module form has no `class` and no `this`, which the subset forbids
+(§5.1): `self` is the Controller's typed properties, and `host` its host.
+The QML form and the module form make the same native object, and a
+module's Controller is named in QML qualified by its import, as a
+module's types are (§14, Q5). Where `controller` and `Item` come from in
+a module is S3's to fix, with the generated declarations (§4.4).
+
+**What becomes a Controller.** The gestures (`Tap`, `Drag`, `Pinch`,
+`Hover`, `Wheel`, `Pointer`) are child objects that find their item when
+they complete (§4.7), which is what a Controller is: they become
+Controllers in S3, with `host` for what they act on. `Task` is one from
+the start (S4). Both are the proof that the seam carries real types.
+
+**Under it.** A Controller is a native `QtObject` derivative in
+`Ljos.Core`, placed in its host's `resources` as gestures are today. The
+engine calls `attached` from its completion, and `detached` from the
+host's destruction or the controller's removal from the host's
+`resources`, through the hooks that gestures and `Component.onDestruction`
+use (`ljos_engine/src/hooks.rs`, `Engine::on_destroyed`). A Controller's
+bookkeeping per engine is an `Engine::extension`.
+
+DECISION: a Controller's host is the item it is declared in, and a
+Controller declared inside another shares that one's host. A Controller
+outside an item (in a `QtObject` or at a file's root) has no host and
+`attached` does not run; the checker says so.
+
+DECISION: the lifecycle is three signals (`attached`, `detached`,
+`updated`), handled with `on…` in QML and given as functions in a module.
+
+DECISION: Controllers are written in QML or in a TypeScript module, and
+both make the same object; the module form has no class.
+
+### 4.21 Compiled away: how the tools see the new syntax
+
+Note 11's H2 was rejected because new syntax would break `tsc`, editors
+and coding models, which read only TypeScript. The amendment keeps what
+that objection protects, by compiling the syntax away before any of them
+read it:
+
+- **One desugar, in the front end.** `qml_syntax::desugar(text)` takes a
+  script's text and gives plain TypeScript text, line for line (a line of
+  the input is the same line of the output), with a span map back to the
+  input. It is pure Rust with no engine, so it builds to wasm, and CI's
+  `check:wasm` builds it (S5).
+- **Every consumer reads its output.** The compiler (tiers 1 and 2), the
+  checker, `ljos check --tsc`, the MCP tools, `ljos lsp` and ljos-web
+  desugar first. The checker types the desugared script and reports at
+  the input's spans; rules about how a person writes (`ts-no-null`,
+  `ts-forbidden`, `ts-no-var`) do not apply to the text the desugar
+  writes, rules about types do.
+- **The source keeps the syntax.** The formatter, `qml_edit` and Studio
+  read and write the text as written, and must round-trip it (S5, S6).
+- **The parser.** `vendor/oxc_parser` reads `|>`, `%`, `match`, `when` and
+  `is` when it reads a QML file or a QML script (`parse_qml`,
+  `parse_qml_script`), and nowhere else. How it records them without a
+  fork of `oxc_ast` is S5's to decide, in `vendor/FORK.md`.
+- **`.ts` modules keep to TypeScript.** The new syntax is in QML files'
+  scripts only, which no stock TypeScript tool reads anyway. A `.ts`
+  module stays a file that `tsc`, `tsserver` and editors read as they
+  are (§18 asks whether to change that).
+- **`ljos lsp`.** Ljós has no language server today, and the new syntax
+  needs one, since no editor reads QML scripts as TypeScript. S7 builds it
+  over stdio, with `ljos check`'s diagnostics on open and change, on the
+  input's spans.
+
+H1 holds in this form: **every program the checker accepts is, after the
+desugar, valid TypeScript with the same meaning.**
+
+**Every new API ships with:**
+
+- features in `features/` (the scenario first, red, then the code);
+- a page on `docs/site/` in the new dialect, whose `qml` blocks that
+  import `Ljos.Ui` pass `ljos check`; S1 adds the test that holds every
+  page to that (`cargo test -p ljos_cli --test site_docs`, run with the
+  workspace's tests);
+- `ljos migrate` coverage where there is something of Qt's to rewrite:
+  every `Qt` member and Qt-named enum (S1) and `XMLHttpRequest`'s shape
+  (S2). `match`, `|>`, `Task` and `Controller` have no Qt counterpart to
+  rewrite from; migrate does not write them;
+- `api_status` rows: the Ljós types reach `ljos.txt`, which `api_status`
+  reads, and each Qt member given a home has a row in `ledger/` naming the
+  home.
+
 ## 5. The checker
 
 ### 5.1 Rules
@@ -1627,6 +2373,8 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
 | ✓ `ts-no-cast` | No `as`: a decoder narrows; nothing casts (§4.4). No `!`. |
 | ✓ `ts-switch-exhaustive` | A `switch` on a union covers every case. |
+| `ts-match-exhaustive` | A `match` with no `default` on a union covers every case (§4.18). |
+| `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
@@ -1974,7 +2722,9 @@ changed.
   with the same pass, checks Ljós files with the same checker, and erases
   types to JS for the DOM. It needs no change to its renderer. It needs the
   pass as a library, `qml_compat` (pure Rust, no engine), so it builds to
-  wasm.
+  wasm, and the desugar of `match` and `|>` (`qml_syntax`, §4.21) on the
+  same terms. Its `fetch` is the browser's, of which Ljós's declarations
+  are a subset; `Task` and `Controller` are its runtime's (§4.19).
 
 ## 8. `ljos migrate`
 
@@ -2021,6 +2771,11 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   more, the pragma stays on a line of its own and migrate says how many
   findings typing the file has to settle
   (`scripts of Main.qml stay JavaScript: typed, ljos check finds 2`).
+- From S1, it gives every `Qt` member and every key of a `Qt` enum its
+  home (§4.3.1), or keeps the file and says which member kept it. From S2,
+  it rewrites `XMLHttpRequest`'s usual shape into `fetch`, or keeps the
+  file and says why (§4.19). It never writes `match`, `|>`, `Task` or a
+  Controller: those are a person's step, as typing is.
 - Without `--write` it says what it would do. With `--write` it writes in
   place.
 - A file whose constant ListModels became typed lists gets their row types
@@ -2275,6 +3030,7 @@ PR: a lane puts its corpus counts in its PR body.
 | **M4** Types | TS modules imported by QML; `property T` of TS types; generated `.d.ts`; decoders; every rule of §5.1; tier-1 typed opcodes | a Ljós file passes `tsc --noEmit` with the generated `.d.ts` iff the checker accepts its scripts' types; tier-1 coverage of the features' Ljós files 100 % |
 | **M5** Natives renamed | natives take the API's names; faces removed; `QtQuick` becomes a table only the pass reads; `createQmlObject` text lowered at the call | no Qt name in `ljos_engine`/`ljos_quick` outside the table; budget test equal or better |
 | **M6** Controls | `Ljos.Controls` and styles | Controls corpus lowered; qml6 parity on its features |
+| **M7** Ergonomics | S1 no `Qt` (§4.3.1); S2 `fetch` (§4.19); S3 `Controller` (§4.20); S4 `Task` (§4.19); S5 `match`, `is` (§4.18); S6 `\|>` (§4.17.1); S7 the desugar in `ljos check --tsc`, MCP and `ljos lsp` (§4.21). One PR each, merged in that order | no lowered or Ljós file reaches `Qt`; a pending `fetch` leaves the engine idle; the gestures and `Task` are Controllers; `tsc` accepts every desugared Ljós file the checker accepts; the desugar builds to wasm; every new API has a site page that passes `ljos check` |
 
 ## 14. Answers to note 11's open questions
 
@@ -2385,6 +3141,20 @@ bindings and states without a rule.
   string, and `destroy()` is not in a Ljós file.
 - DECISION (§4.14): every construct the table marks "kept" keeps its file,
   for the reason given there.
+- DECISION (§1, §4.21): the non-goal "no new syntax" is reversed. `match`
+  and the Hack pipe `|>` are syntax of a QML file's scripts, as TC39's
+  proposals define them, compiled away by one desugar before the
+  compiler, the checker, `tsc` or an editor reads them.
+- DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic.
+- DECISION (§4.18): `match` has the TC39 README's form; custom matchers
+  and bindings in `is` wait for the proposal.
+- DECISION (§4.19): async work is WHATWG's `fetch` with `async`/`await`,
+  over `Platform::request`, with nothing that polls; `Task` declares it.
+  `XMLHttpRequest` is compat only.
+- DECISION (§4.20): hooks are Controllers, attached to their host, on the
+  one property and binding system, in QML or a TypeScript module.
+- DECISION (§4.3.1): no `Qt` in a file that imports `Ljos.Ui`; every
+  member has a home in Ljós's API and `ljos migrate` writes it.
 
 ## 16. Risks
 
@@ -2416,6 +3186,22 @@ bindings and states without a rule.
   by pixels. Compare their JSON and logs.
 - **R10: low coverage until `Ljos.Layout` and `Ljos.Controls`.** The
   pass's real complexity shows only when Controls lowers.
+- **R12: TC39 moves.** Both proposals can change, and pattern matching
+  is at stage 1. Ljós follows them: a change is a desugar change and a
+  `ljos migrate` rewrite of the old form, so files never fork from the
+  proposal.
+- **R13: the cost of an arrow per step.** A pipe or a `match` compiled to
+  an arrow called at once allocates a closure in tier 2. The budget gate
+  (§11) measures it; tier 1 gives the topic a register.
+- **R14: columns after the desugar.** The desugar keeps lines, not
+  columns. Findings go through its span map; a tool that reads the
+  desugared text without the map is off by columns, as in R3.
+- **R15: a fetch that is never answered.** A request with no timeout holds
+  a platform thread until the OS gives up. `AbortSignal.timeout(ms)` is
+  the remedy, and the site's page uses it.
+- **R16: one thread per request.** `Platform::request` starts an OS thread
+  for each, which a burst of requests multiplies. A pool is the fix when a
+  measurement asks for it.
 - **R11: a Ljós file using a kept Qt sibling.** It sees Qt's names on it.
   The checker types it by Qt's table. That works, but the file mixes two
   APIs until the sibling migrates.
@@ -2450,5 +3236,9 @@ choice is the project lead's.
 | Translated text (§4.13) | (a) `qsTr` with `.arg` counts checked; (b) also a tagged template ``tr`…` ``; (c) only the template | (a) now, (b) later: (a) lowers with no edit, and (b) is sugar over the same catalogue |
 | Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
 | States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
-| `QtObject`'s name (§4.1) | (a) keep `QtObject`; (b) `Object`, which hides JavaScript's `Object` in a script; (c) another word | (a) until a name is chosen: the lowering is one type rename either way |
+| `QtObject`'s name (§4.1, §4.3.1) | (a) keep `QtObject`; (b) `Object`; (c) another word | (b): no Qt name survives S1. `Object` is named only where a type goes, so `Object.keys(…)` in a script stays JavaScript's |
+| The new syntax in `.ts` modules (§4.21) | (a) QML files' scripts only; (b) `.ts` modules too, which `tsc` and editors then cannot read as they are | (a): a `.ts` module stays a file every TypeScript tool reads; revisit when TypeScript ships either proposal |
+| `Task`'s names (§4.19) | (a) `run:` the function and `start()` the call; (b) lit's: `task:` the function and `run()` the call | (a): `run` reads as what the Task does, and `start` cannot be mistaken for it |
+| `Qt.binding`'s home (§4.3.1) | (a) `bind(f)` in `Ljos.Core`, assignable to a property of `f`'s type; (b) none: a file with `Qt.binding` is kept | (a): it is the one member with no declarative edit, and only (a) lets every `Qt` member migrate (4 corpus files use it) |
+| Controller lifecycle names (§4.20) | (a) `attached`/`detached`/`updated`; (b) lit's `hostConnected`/`hostDisconnected`/`hostUpdated` | (a): shorter, and QML's handlers read `onAttached` |
 | Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |
