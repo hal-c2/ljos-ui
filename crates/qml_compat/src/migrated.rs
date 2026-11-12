@@ -22,6 +22,9 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
     let mut out = String::with_capacity(lowered.len());
     let mut as_written = written.split_inclusive('\n');
     let mut lines = lowered.split_inclusive('\n');
+    // Inside a `/* */` comment that began on a line above: its lines are
+    // the header's too, whatever they start with.
+    let mut in_comment = false;
     for line in lines.by_ref() {
         let was = as_written.next().unwrap_or("");
         let content = line.trim_end_matches(['\n', '\r']);
@@ -30,6 +33,11 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
         // to keeps the indent of the line it came from.
         let rest = content.trim_start();
         let indent = &content[..content.len() - rest.len()];
+        if in_comment {
+            out.push_str(line);
+            in_comment = !rest.contains("*/");
+            continue;
+        }
         if let Some(imports) = rest.strip_prefix(JAVASCRIPT) {
             if !typed {
                 out.push_str(indent);
@@ -37,16 +45,8 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
                 out.push_str(end_or_newline(end));
             }
             // A comment the import of Qt's had stays at the end of the
-            // last, and a `;` in it is not between imports.
-            let (imports, comment) = match imports.find("//") {
-                Some(at) => (&imports[..at], Some(imports[at..].trim_end())),
-                None => (imports, None),
-            };
-            let statements: Vec<&str> = imports
-                .split(';')
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .collect();
+            // last.
+            let (statements, comment) = statements(imports);
             for (at, statement) in statements.iter().enumerate() {
                 out.push_str(indent);
                 out.push_str(statement);
@@ -69,11 +69,14 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
             continue;
         }
         out.push_str(line);
+        if let Some(comment) = trimmed.strip_prefix("/*") {
+            in_comment = !comment.contains("*/");
+            continue;
+        }
         if !(trimmed.is_empty()
             || is_import(trimmed)
             || trimmed.starts_with("pragma ")
-            || trimmed.starts_with("//")
-            || trimmed.starts_with("/*"))
+            || trimmed.starts_with("//"))
         {
             break;
         }
@@ -82,6 +85,51 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
         out.push_str(line);
     }
     out
+}
+
+/// The statements of the pragma's line, split at each `;`, and the `//`
+/// comment that ends it. A `;` or `//` in a quoted import (`import
+/// "http://…"`) or in a `/* */` comment is neither: such a comment stays
+/// with the statement it is in.
+fn statements<'a>(line: &'a str) -> (Vec<&'a str>, Option<&'a str>) {
+    let bytes = line.as_bytes();
+    let mut statements = Vec::new();
+    let mut push = |text: &'a str| {
+        let text = text.trim();
+        if !text.is_empty() {
+            statements.push(text);
+        }
+    };
+    let (mut start, mut at) = (0, 0);
+    let mut quote = None;
+    // Every byte compared is ASCII, so each index sliced at is a character's
+    // start, whatever the strings between hold.
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if let Some(open) = quote {
+            if byte == b'\\' {
+                at += 1;
+            } else if byte == open {
+                quote = None;
+            }
+        } else if byte == b'"' || byte == b'\'' {
+            quote = Some(byte);
+        } else if bytes[at..].starts_with(b"//") {
+            push(&line[start..at]);
+            return (statements, Some(line[at..].trim_end()));
+        } else if bytes[at..].starts_with(b"/*") {
+            at = line[at + 2..]
+                .find("*/")
+                .map_or(bytes.len(), |e| at + 2 + e + 2);
+            continue;
+        } else if byte == b';' {
+            push(&line[start..at]);
+            start = at + 1;
+        }
+        at += 1;
+    }
+    push(&line[start..]);
+    (statements, None)
 }
 
 fn is_import(line: &str) -> bool {
@@ -149,6 +197,30 @@ mod tests {
         assert_eq!(
             migrated(written, lowered, false),
             "  pragma Scripts: JavaScript\n  import Ljos.Ui\n  import Ljos.Layout\n  Row {}\n"
+        );
+    }
+
+    /// A licence header of several lines, as older Qt examples have, is
+    /// read past to the imports under it.
+    #[test]
+    fn a_block_comment_of_several_lines_is_read_past() {
+        let written = "/*\n * A dial.\n */\nimport QtQuick\nimport QtQuick.Layouts\nRow {}\n";
+        let lowered = "/*\n * A dial.\n */\npragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\n\nRow {}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "/*\n * A dial.\n */\nimport Ljos.Ui\nimport Ljos.Layout\nRow {}\n"
+        );
+    }
+
+    /// A `//` or a `;` inside a quoted import or a `/* */` comment is not
+    /// where a comment starts or an import ends.
+    #[test]
+    fn a_quoted_url_and_an_inline_comment_are_whole() {
+        let written = "import QtQuick\nimport \"http://example.com/parts\"\nItem {}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui; import \"http://example.com/parts\" /* a; b */ // end\n\nItem {}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nimport \"http://example.com/parts\" /* a; b */ // end\nItem {}\n"
         );
     }
 

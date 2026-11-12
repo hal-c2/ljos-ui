@@ -288,10 +288,12 @@ impl Migrate {
                         .collect();
                     lowered += 1;
                     let edits = done.changes.len();
-                    let findings = typed.get(&key).copied().unwrap_or(0);
-                    let migrated = qml_compat::migrated(text, &done.text, findings == 0);
+                    // A file nothing compiled typed is not known to keep
+                    // the checker's rules: it stays JavaScript.
+                    let findings = typed.get(&key).copied();
+                    let migrated = qml_compat::migrated(text, &done.text, findings == Some(0));
                     let javascript = || {
-                        if findings > 0 {
+                        if let Some(findings @ 1..) = findings {
                             outln!(
                                 "scripts of {} stay JavaScript: typed, ljos check finds {findings}",
                                 file.display()
