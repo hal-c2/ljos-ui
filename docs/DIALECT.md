@@ -2556,33 +2556,53 @@ read it:
   `width.lts` is already beside `width.ts`, the fix is not offered and the
   message names the file in the way.
 - **Stock TypeScript reads a `.ts` module that imports an `.lts` one.**
-  `ljos check` emits a declaration for every `.lts` module, which has
-  only types and so no `match` or `|>`. It goes in the project's
-  generated directory, `.ljos/types/`, at the module's path relative to
-  the project root and under the name TypeScript's
-  `allowArbitraryExtensions` looks for: `src/width.lts` is declared in
-  `.ljos/types/src/width.d.lts.ts`. The importer's specifier stays
-  `./width.lts`, unrewritten: `ljos check` also writes
-  `.ljos/tsconfig.base.json`, with `allowArbitraryExtensions` and
-  `rootDirs: [".", ".ljos/types"]` (relative to the project root), which
-  the project's `tsconfig.json` extends, so stock `tsc` and editors
-  resolve `./width.lts` to its declaration. `.ljos/` holds only
-  generated files and a `.gitignore` of `*`, which `ljos check` writes.
+  `ljos check` emits a declaration for every `.lts` module. A
+  declaration has only types, so it has no `match` or `|>`.
+  - **Explicit export types.** An `.lts` module's exports carry the
+    types TypeScript's `isolatedDeclarations` asks for: a function's
+    parameters and result, and a `const` whose type is not plain from
+    its literal. One without is `lts-export-type`. The declaration is
+    then TypeScript's own declaration emit of the desugared text (the
+    isolated-declarations transform, which needs no checker), never the
+    checker's inferred types. `tsc` and `--tsc` therefore read the same
+    types, even where the checker's rules (`ts-readonly`) see more.
+  - **Where.** In the project's generated directory, `.ljos/types/`, at
+    the module's path relative to the project root and under the name
+    `allowArbitraryExtensions` looks for: `src/width.lts` is declared in
+    `.ljos/types/src/width.d.lts.ts`. The project root is `ljos check
+    --project <dir>`, or else the nearest directory, from the current
+    one upward, with a `tsconfig.json`, or else the current directory.
+    `.ljos/` holds only generated files and a `.gitignore` of `*`, which
+    `ljos check` writes.
+  - **The tsconfig.** `ljos check` writes `.ljos/tsconfig.base.json` with
+    exactly `{ "compilerOptions": { "allowArbitraryExtensions": true,
+    "rootDirs": ["..", "./types"] } }`, whose relative paths TypeScript
+    reads from `.ljos/`. The importer's specifier stays `./width.lts`,
+    unrewritten, and `rootDirs` resolves it to the declaration.
+    `ljos check` never edits the project's own `tsconfig.json`; where
+    there is none and the project has an `.lts` module, it writes one
+    that holds only `"extends": "./.ljos/tsconfig.base.json"`. Where
+    there is one that does not extend the base, or sets `rootDirs`
+    itself (`extends` does not merge arrays), `ljos check` warns
+    `tsconfig-lts`, and the fix adds the `extends` line or, for a
+    project's own `rootDirs`, adds `"."` and `".ljos/types"` to it. The
+    warning appears only in a project with an `.lts` module.
   - **Fresh.** Every `ljos check` writes each declaration from the
     module as it is, and only when the text changes, so a watcher is not
     woken for nothing. `ljos lsp` rewrites a module's declaration when
     the module is saved, so an editor of the importer sees the change at
-    once. A declaration whose module is gone is deleted by the next
-    `ljos check`. `ljos types` writes the same files.
-  - **`--tsc`** uses the same declarations, built in memory from the text
-    it checks and never read from disk, so it is never stale. It checks
-    each `.lts` module's own desugared text as a root file of its own,
-    `.ljos/check/src/width.lts.ts` in its virtual tree, with
-    `.ljos/check` in its `rootDirs`. The module's own relative imports
-    resolve as they would from its source directory, and no importer's
-    specifier is rewritten. If TypeScript resolves `./width.lts` to that
-    text rather than to the declaration, it sees the same exports,
-    since the declaration is emitted from that text.
+    once. A declaration is deleted only when its module's file is no
+    longer on disk, never because a check left the module out, so a
+    check of some files never deletes another's. `ljos types` writes the
+    same files.
+  - **`--tsc`** gives TypeScript the same declarations, built in memory
+    from the text it checks, so it is never stale, and the same
+    `rootDirs`. It checks each `.lts` module's desugared text as a root
+    file named `.ljos/check/src/width.lts.body.ts`, with `.ljos/check`
+    added to its `rootDirs`, so the module's own relative imports
+    resolve as from its source directory. No specifier names a
+    `.body.ts` file, so `./width.lts` has one target, the declaration,
+    under stock `tsc` and under `--tsc` alike.
 - **`ljos lsp`.** Ljós has no language server today, and the new syntax
   needs one, since no editor reads QML scripts or `.lts` modules as
   TypeScript. S7 builds it over stdio, with `ljos check`'s diagnostics on
@@ -2635,6 +2655,8 @@ print. Those the checker builds are marked ✓.
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
 | `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
 | `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
+| `lts-export-type` | An `.lts` module's exports carry the types `isolatedDeclarations` asks for, so its declaration is TypeScript's own emit (§4.21). |
+| `tsconfig-lts` | Warning: a project with an `.lts` module has a `tsconfig.json` that does not extend `.ljos/tsconfig.base.json`, or sets `rootDirs` without its two entries (§4.21). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |
@@ -3410,8 +3432,11 @@ bindings and states without a rule.
   and is imported, typed and checked as a `.ts` module is. A `.ts` module
   stays plain TypeScript: the syntax in one is `ts-lts-syntax`, whose fix
   (and `ljos migrate`) renames it to `.lts`. `ljos check` emits each
-  `.lts` module's declaration under `.ljos/types/`, so a `.ts` module
-  that imports one still reads in stock `tsc`. The project lead chose
+  `.lts` module's declaration under `.ljos/types/`, TypeScript's own
+  isolated-declarations emit (so exports carry their types,
+  `lts-export-type`), so a `.ts` module that imports one still reads in
+  stock `tsc` through a tsconfig that extends `.ljos/tsconfig.base.json`
+  (`tsconfig-lts`). The project lead chose
   this over both QML-scripts-only and the syntax in `.ts` modules.
 - DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic.
 - DECISION (§4.18): `match` and `is` follow TC39's README as of
@@ -3484,10 +3509,12 @@ bindings and states without a rule.
   the way in, and the site's editor page says how to set them up. A
   `.ts` module never needs them, including one that imports an `.lts`
   module: it reads in stock `tsc` and editors through the declarations
-  `ljos check` emits under `.ljos/types/` (§4.21). Until the first `ljos
-  check` there are none, and the import is not found; between a save
-  and the next check (or `ljos lsp`'s rewrite on save), an editor sees the
-  module's types as they were.
+  `ljos check` emits under `.ljos/types/` and the base tsconfig its
+  `tsconfig.json` extends (§4.21). Until the first `ljos check` there
+  are none, and the import is not found; a project `tsconfig.json` that
+  drops the base is `tsconfig-lts`; between a save and the next check
+  (or `ljos lsp`'s rewrite on save), an editor sees the module's types
+  as they were.
 - **R11: a Ljós file using a kept Qt sibling.** It sees Qt's names on it.
   The checker types it by Qt's table. That works, but the file mixes two
   APIs until the sibling migrates.
