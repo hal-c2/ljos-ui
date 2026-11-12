@@ -268,6 +268,7 @@ fn file_reply(body: Vec<u8>) -> Response {
         status: 200,
         headers: vec![("content-length".to_owned(), body.len().to_string())],
         body,
+        url: None,
     }
 }
 
