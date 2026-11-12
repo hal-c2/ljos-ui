@@ -62,6 +62,15 @@ fn bare(tag: &str) -> &str {
     tag.trim_start_matches('@')
 }
 
+/// Whether the Qt oracle runs a scenario with these merged Feature + Rule +
+/// Scenario tags: one of a `@qt-parity` feature that differs from Qt, or
+/// that Qt cannot observe, is Ljós's alone.
+#[must_use]
+pub fn for_oracle(tags: &[String]) -> bool {
+    let has = |t: &str| tags.iter().any(|x| bare(x) == t);
+    has(QT_PARITY) && !NOT_PARITY.iter().any(|t| has(t))
+}
+
 impl Selection {
     /// `tags` are the merged Feature + Rule + Scenario tags.
     #[must_use]
@@ -74,7 +83,7 @@ impl Selection {
         }
         // A scenario that differs from Qt in a feature that otherwise agrees
         // inherits the feature's `@qt-parity`, and is still not the oracle's.
-        if self.require_tag.as_deref() == Some(QT_PARITY) && NOT_PARITY.iter().any(|t| has(t)) {
+        if self.require_tag.as_deref() == Some(QT_PARITY) && !for_oracle(tags) {
             return false;
         }
         if self.qt_table && has(NO_QT_TABLE) || !self.qt_table && has(QT_TABLE) {
@@ -216,6 +225,14 @@ mod tests {
         assert!(!sel.keeps(&tags(&["qt-parity"])));
         assert!(!sel.keeps(&tags(&["backlog", "blocked"])));
         assert!(!sel.keeps(&tags(&["backlog", "dropped"])));
+    }
+
+    #[test]
+    fn a_scenario_qt_cannot_check_is_not_the_oracles_in_a_parity_feature() {
+        assert!(for_oracle(&tags(&["qt-parity", "chromium"])));
+        assert!(!for_oracle(&tags(&["qt-parity", "ljos-only"])));
+        assert!(!for_oracle(&tags(&["@qt-parity", "@qt-diverges"])));
+        assert!(!for_oracle(&tags(&["chromium"])));
     }
 
     #[test]
