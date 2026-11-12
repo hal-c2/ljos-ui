@@ -932,6 +932,7 @@ Feature: Checking the scripts of a file written in Ljós's API
       Then the check reports:
         """
         lowered Gauge.qml (2 edits)
+        scripts of Gauge.qml stay JavaScript: typed, ljos check finds 5
         1 files, 1 lowered, 0 kept
         1 files, 0 errors, 0 warnings
         """
