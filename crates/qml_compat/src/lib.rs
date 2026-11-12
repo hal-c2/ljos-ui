@@ -1980,37 +1980,14 @@ fn object_id<'a>(object: &QmlObject<'a>) -> Option<&'a str> {
     })
 }
 
-/// The renames of `ty` or the type it derives from that has some.
+/// The renames of `ty` itself. A type built on one that renames (a
+/// control's `Label` on `Text`) is built on the toolkit's type, not on
+/// Ljós's face of it, and the runtime renames on the face alone: such a
+/// type answers to Qt's names, whichever module exports it.
 fn renames_of(ty: &'static Type) -> Option<&'static [(&'static str, &'static str)]> {
-    let mut at = Some(ty);
-    while let Some(ty) = at {
-        if let Some((_, renames)) = member_renames().find(|(name, _)| *name == ty.name) {
-            return Some(renames);
-        }
-        if kept_by_ljos(ty) {
-            return None;
-        }
-        at = ty.prototype();
-    }
-    None
-}
-
-/// Whether a module of Ljós's API exports the toolkit's `ty` itself, not a
-/// face of it: then it has Qt's names in Ljós's API too, and so does what
-/// it is built on. `Ljos.Controls.Basic`'s `Label` is Qt's, built on the
-/// native `Text`: it has `wrapMode`, though `Ljos.Ui`'s `Text` calls that
-/// `wrap`.
-fn kept_by_ljos(ty: &'static Type) -> bool {
-    static LJOS: std::sync::OnceLock<Vec<&'static qt_types::Module>> = std::sync::OnceLock::new();
-    LJOS.get_or_init(|| {
-        qt_types::modules()
-            .into_iter()
-            .filter(|uri| is_ljos_api(uri))
-            .filter_map(qt_types::module)
-            .collect()
-    })
-    .iter()
-    .any(|module| module.has(ty))
+    member_renames()
+        .find(|(name, _)| *name == ty.name)
+        .map(|(_, renames)| renames)
 }
 
 fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
