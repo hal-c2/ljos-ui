@@ -2,7 +2,7 @@
 //! (docs/DIALECT.md §4.1): a timer, a handler for another object's
 //! signals, a binding set from outside, a component, a plain object of
 //! properties, the locale's enums, and the `Controller` an item is given
-//! behaviour with (§4.20).
+//! behaviour with (§4.20), and the `Task` that runs async work (§4.19).
 //!
 //! They are `QtQml`'s types, exported from this module too, so a file of
 //! Ljós's API and the Qt file it was lowered from make the same objects.
@@ -19,13 +19,14 @@ use ljos_engine::{
 
 use crate::Binding;
 use crate::controller::Controller;
+use crate::task::Task;
 
 /// The module's name, as a file imports it.
 pub const MODULE: &str = "Ljos.Core";
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("Ljos.Core" 1.0 => [
-        Component, Connections, Timer, Binding, LocaleEnums, Controller,
+        Component, Connections, Timer, Binding, LocaleEnums, Controller, Task,
     ]));
     engine.register_type(MODULE, Version::new(1, 0), MetaRef::Static(object()));
     engine.register_import(MODULE, "QtQml.Models");
@@ -67,6 +68,7 @@ mod tests {
             "Binding",
             "Locale",
             "Controller",
+            "Task",
         ] {
             assert!(engine.lookup_type(MODULE, name).is_some(), "{name}");
             assert!(
