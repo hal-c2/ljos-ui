@@ -28,6 +28,7 @@
 //! up to the next tick, since no frame can run between ticks anyway.
 
 use std::collections::{BTreeSet, HashMap};
+use std::ops::Range;
 use std::time::Duration;
 
 use bitflags::bitflags;
@@ -260,7 +261,28 @@ impl FrameScheduler {
     /// iterator is dropped early. Timers added by the loop body for a time
     /// `<= now` are picked up too, so a handler can cascade within one frame.
     pub fn due(&mut self, now: Time) -> Due<'_> {
-        Due { sched: self, now }
+        Due {
+            sched: self,
+            now,
+            made: None,
+        }
+    }
+
+    /// The id the next timer added gets. Two of them, one taken before
+    /// some work runs and one after, name the timers that work added.
+    pub fn next_timer_id(&self) -> TimerId {
+        TimerId(self.next_id)
+    }
+
+    /// [`Self::due`], and also the timers in `made` whose deadline is
+    /// `<= by`: what some work asked for, run when its own time has come
+    /// though `now` is earlier, while the others wait for `now`.
+    pub fn due_or_made(&mut self, now: Time, made: Range<TimerId>, by: Time) -> Due<'_> {
+        Due {
+            sched: self,
+            now,
+            made: Some((made, by)),
+        }
     }
 
     /// When the app must next wake, or `None` to sleep until external input.
@@ -305,6 +327,7 @@ impl FrameScheduler {
 pub struct Due<'a> {
     sched: &'a mut FrameScheduler,
     now: Time,
+    made: Option<(Range<TimerId>, Time)>,
 }
 
 impl Iterator for Due<'_> {
@@ -312,10 +335,17 @@ impl Iterator for Due<'_> {
 
     fn next(&mut self) -> Option<DueTimer> {
         let s = &mut *self.sched;
-        let &(_, id) = s
-            .by_deadline
-            .range(..=(self.now, TimerId(u64::MAX)))
-            .find(|(_, id)| s.is_active(&s.timers[id]))?;
+        let now = self.now;
+        let made = self.made.as_ref();
+        let last = made.map_or(now, |(_, by)| now.max(*by));
+        let &(_, id) =
+            s.by_deadline
+                .range(..=(last, TimerId(u64::MAX)))
+                .find(|(deadline, id)| {
+                    s.is_active(&s.timers[id])
+                        && (*deadline <= now
+                            || made.is_some_and(|(ids, by)| ids.contains(id) && deadline <= by))
+                })?;
         let e = s.timers.remove(&id)?;
         s.by_deadline.remove(&(e.deadline, id));
         s.by_latest.remove(&(e.latest, id));
@@ -337,6 +367,20 @@ mod tests {
 
     fn due_ids(s: &mut FrameScheduler, now: Time) -> Vec<TimerId> {
         s.due(now).map(|d| d.id).collect()
+    }
+
+    #[test]
+    fn work_made_runs_at_its_own_deadline_and_the_rest_waits_for_now() {
+        let mut s = FrameScheduler::new();
+        let before = s.add_timer(ms(12), TimerKind::Timer);
+        let mark = s.next_timer_id();
+        let made = s.add_timer(ms(15), TimerKind::Timer);
+        let made_later = s.add_timer(ms(40), TimerKind::Timer);
+        let ids = mark..s.next_timer_id();
+        let after = s.add_timer(ms(14), TimerKind::Timer);
+        let due: Vec<_> = s.due_or_made(ms(10), ids, ms(20)).map(|d| d.id).collect();
+        assert_eq!(due, vec![made]);
+        assert_eq!(due_ids(&mut s, ms(40)), vec![before, after, made_later]);
     }
 
     #[test]
