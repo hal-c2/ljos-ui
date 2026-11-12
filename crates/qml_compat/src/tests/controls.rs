@@ -129,10 +129,34 @@ fn ljos_controls_has_what_qt_controls_have() {
         "GroupBox",
         "Page",
         "ToolBar",
+        "ToolButton",
+        "RoundButton",
+        "DelayButton",
     ] {
         assert!(ljos.type_named(name).is_some(), "{name}");
         assert!(qt.type_named(name).is_some(), "{name}");
     }
+}
+
+/// What a lowered file of the controls is: the Basic imports become
+/// Ljós's, and every line under them stays as written.
+fn lowered_unchanged(source: &str) {
+    let Outcome::Lowered(done) = in_style(source, "Basic") else {
+        panic!("not lowered: {:?}", in_style(source, "Basic"));
+    };
+    let body = source
+        .split_once("import QtQuick.Controls")
+        .map(|(_, rest)| rest);
+    let body = body
+        .and_then(|rest| rest.split_once('\n'))
+        .map(|(_, rest)| rest);
+    assert_eq!(
+        done.text,
+        format!(
+            "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\n{}",
+            body.expect("a controls import")
+        )
+    );
 }
 
 #[test]
@@ -149,5 +173,15 @@ fn panes_frames_pages_and_bare_controls_are_lowered() {
          header: Label { text: title }\n  \
          Pane { padding: 12; Frame { GroupBox { title: \"Size\" } } }\n  \
          Control { contentItem: Rectangle { fill: \"red\" } }\n}\n"
+    );
+}
+
+#[test]
+fn tool_round_and_delay_buttons_are_lowered() {
+    lowered_unchanged(
+        "import QtQuick\nimport QtQuick.Controls.Basic\nItem {\n  \
+         ToolButton { text: \"Close\"; display: AbstractButton.IconOnly; icon.name: \"window-close\" }\n  \
+         RoundButton { text: \"+\"; radius: 8 }\n  \
+         DelayButton { text: \"Hold\"; delay: 800; onActivated: text = \"Done\" }\n}\n",
     );
 }

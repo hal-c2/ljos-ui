@@ -125,6 +125,7 @@ module Ljos.Controls
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
 	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
@@ -139,6 +140,7 @@ module Ljos.Controls
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup Ljos/Controls/Popup.qml
+	RoundButton QtQuick/Controls/Basic/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	Slider Ljos/Controls/Slider.qml
@@ -148,6 +150,7 @@ module Ljos.Controls
 	TextField Ljos/Controls/TextField.qml
 	Theme Ljos/Controls/Theme.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolTip Ljos/Controls/ToolTip.qml
 	type Ljos/Controls/Button.qml Button
 		prototype QtQuick.Templates.Button named
@@ -321,6 +324,7 @@ module Ljos.Controls.Basic
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
 	Control QtQuick/Controls/Basic/Control.qml
+	DelayButton QtQuick/Controls/Basic/DelayButton.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
@@ -334,6 +338,7 @@ module Ljos.Controls.Basic
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup QtQuick/Controls/Basic/Popup.qml
+	RoundButton QtQuick/Controls/Basic/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	Slider QtQuick/Controls/Basic/Slider.qml
@@ -342,6 +347,7 @@ module Ljos.Controls.Basic
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
+	ToolButton QtQuick/Controls/Basic/ToolButton.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 
 module Ljos.Controls.impl
