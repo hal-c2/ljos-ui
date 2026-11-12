@@ -379,6 +379,7 @@ mod tests {
             status,
             headers: Vec::new(),
             body: body.as_bytes().to_vec(),
+            url: None,
         }
     }
 

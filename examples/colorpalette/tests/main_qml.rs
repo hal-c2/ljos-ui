@@ -286,6 +286,7 @@ fn canned(status: u16, body: &str) -> Response {
         status,
         headers: Vec::new(),
         body: body.as_bytes().to_vec(),
+        url: None,
     }
 }
 
