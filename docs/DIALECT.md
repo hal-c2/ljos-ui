@@ -2164,9 +2164,13 @@ shares them.
 - `x is pattern` lowers to the same test, with its bindings declared at
   the start of the statement that holds it: a `let` of the block around
   it (a `var` pattern's, a `var`), declared once however many of the
-  block's `is`es bind the name. A name the block declares itself, or a
-  parameter at a function's top, is `ts-is-binding` at the name the
-  pattern binds, as the two would be one name.
+  block's `is`es bind the name. A `switch`'s clauses are one scope that
+  a jump enters at any clause, where a `let` written in one would be in
+  its dead zone in the next; an `is` in a clause declares its names
+  before the `switch`, its label too, in the block around it. A name the
+  block declares itself, or a parameter at a function's top, is
+  `ts-is-binding` at the name the pattern binds, as the two would be one
+  name.
 
 `$is` is declared to `tsc` as a type guard of its subject (`$is<T>(s:
 unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:

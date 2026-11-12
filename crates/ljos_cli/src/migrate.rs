@@ -642,7 +642,9 @@ fn rename_lts(root: &Path, here: Option<&Path>, module: &Path, write: bool) -> b
         for (at, (_, file, _, renamed)) in importers.iter().enumerate() {
             if let Err(e) = std::fs::write(file, renamed) {
                 eprintln!("{}: {e}", file.display());
-                for (_, file, text, _) in &importers[..at] {
+                // The one that failed too: a write empties the file before
+                // it writes, so one cut off part way holds neither text.
+                for (_, file, text, _) in &importers[..=at] {
                     if let Err(e) = std::fs::write(file, text) {
                         eprintln!("{}: {e}", file.display());
                     }

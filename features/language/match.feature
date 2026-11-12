@@ -298,6 +298,25 @@ Feature: Choosing a value with match, and testing one with is
         """
       Then the property "said" of "root" is "ab outer"
 
+    Scenario: What an is in a switch's clause binds is declared before the switch, so every clause may be entered
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          function pick(v: number, a: number, b: number): number {
+            switch (v) {
+              case 1: if (a is let x) return x; break
+              case 2: if (b is let x) return x
+            }
+            return 0
+          }
+          Component.onCompleted: said = pick(2, 0, 7) + " " + pick(1, 5, 0)
+        }
+        """
+      Then the property "said" of "root" is "7 5"
+
     Scenario: A match whose arms are calls is a statement, after a line with no semicolon
       Given the QML:
         """qml
@@ -517,6 +536,28 @@ Feature: Choosing a value with match, and testing one with is
         Gauge.qml:11:32: error: `body` is a parameter already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
+        """
+
+    Scenario: What an is in a switch's clause binds is the block's around the switch, so a let beside the switch clashes
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function pick(v: number, a: number): number {
+            let x = 0;
+            switch (v) {
+              case 1: if (a is let x) { return x; } break;
+            }
+            return 0;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:6:36: error: `x` is a name of this block already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
         """
 
   Rule: What the proposal leaves out is an error that says so

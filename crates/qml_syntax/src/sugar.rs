@@ -306,6 +306,33 @@ mod tests {
     }
 
     #[test]
+    fn a_switch_s_clauses_declare_what_an_is_binds_before_the_switch() {
+        // A jump enters the clauses at any of them, so a `let` in one is in
+        // its dead zone in the next.
+        assert_eq!(
+            lowered(
+                "switch (v) { case 1: if (a is let x) f(x); break; case 2: if (b is let x) f(x) }\n"
+            ),
+            "let x; switch (v) { case 1: if ((((x = a), true))) f(x); break; case 2: if ((((x = b), true))) f(x) }\n"
+        );
+        // Before its label, a `switch` nested in a clause, and an `if`
+        // whose body the `switch` is.
+        assert_eq!(
+            lowered("l: switch (v) { case 1: switch (w) { default: if (a is let x) break l; } }\n"),
+            "let x; l: switch (v) { case 1: switch (w) { default: if ((((x = a), true))) break l; } }\n"
+        );
+        assert_eq!(
+            lowered("if (c) switch (v) { default: if (a is let x) f(x) }\n"),
+            "let x; if (c) switch (v) { default: if ((((x = a), true))) f(x) }\n"
+        );
+        // A block in a clause is a scope with one way in, and keeps its own.
+        assert_eq!(
+            lowered("switch (v) { case 1: { if (a is let x) f(x) } }\n"),
+            "switch (v) { case 1: { let x; if ((((x = a), true))) f(x) } }\n"
+        );
+    }
+
+    #[test]
     fn a_var_pattern_is_declared_with_var() {
         assert_eq!(
             lowered("if (v is [let a, var b]) use(a, b)\n"),
