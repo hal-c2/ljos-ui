@@ -1,0 +1,66 @@
+---
+source: crates/ljos_mcp_author/tests/golden_tools.rs
+expression: value
+---
+{
+  "annotations": {
+    "destructive": false,
+    "idempotent": false,
+    "open_world": false,
+    "read_only": false
+  },
+  "description": "Rename a `.ts` module that uses Ljós's syntax (`match`, `is`, `|>`) to `.lts`, with the imports that name it in the project's QML files, scripts, modules and `qmldir`s: the fix `ts-lts-syntax` names. Answers the rename; `write: true` makes it and needs `fs`.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "path": {
+        "description": "The `.ts` module, relative to the project root.",
+        "type": "string"
+      },
+      "write": {
+        "default": false,
+        "description": "Rename the files instead of only answering the rename. Needs the\n`fs` capability.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "path"
+    ],
+    "title": "RenameArgs",
+    "type": "object"
+  },
+  "max_result_bytes": 40960,
+  "name": "module_rename_lts",
+  "outputSchema": {
+    "properties": {
+      "from": {
+        "description": "The module's path from the project root.",
+        "type": "string"
+      },
+      "importers": {
+        "description": "The files whose imports name the module, from the project root.",
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "to": {
+        "description": "Its path once renamed, from the project root.",
+        "type": "string"
+      },
+      "written": {
+        "description": "Whether the files were renamed and rewritten, or the rename only\nanswered.",
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "from",
+      "to",
+      "importers",
+      "written"
+    ],
+    "title": "RenameOut",
+    "type": "object"
+  },
+  "required_cap": null
+}

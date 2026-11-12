@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Diagnostic, FrontEnd, Ledger, LedgerRow, Project, TypeInfo, api, blocks, design, docs, edit,
-    features, format, runs, tiers,
+    features, format, rename_lts, runs, tiers,
 };
 
 const PAGE: usize = 100;
@@ -19,7 +19,8 @@ pub(crate) const BUDGET: usize = 16 * 1024;
 #[derive(Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct FilesArgs {
-    /// `.qml` files or directories, relative to the project root.
+    /// `.qml` files, `.ts` and `.lts` modules or directories, relative to the
+    /// project root.
     paths: Vec<String>,
     /// Resume token from a previous truncated result.
     cursor: Option<String>,
@@ -113,6 +114,38 @@ pub(crate) fn expand_qml(
     Ok(out)
 }
 
+/// The files `qml_check` and `qml_lint` read for `paths`: QML files and
+/// `.ts` and `.lts` modules, each named, and the QML files and `.lts`
+/// modules below a directory. A `.ts` module below one is checked with the
+/// QML file that imports it, as `ljos check` checks it; an `.lts` module
+/// is checked whether imported or not, as its declaration needs.
+pub(crate) fn expand_checked(
+    project: &Project,
+    paths: &[String],
+) -> Result<Vec<std::path::PathBuf>, SurfaceError> {
+    let mut out = Vec::new();
+    for p in paths {
+        let path = project.confine(p)?;
+        if path.is_dir() {
+            collect(&path, "qml", &mut out);
+            collect(&path, "lts", &mut out);
+        } else if path
+            .extension()
+            .is_some_and(|e| e == "qml" || e == "ts" || e == "lts")
+            && !path.to_string_lossy().ends_with(".d.ts")
+        {
+            out.push(path);
+        } else {
+            return Err(SurfaceError::invalid_argument(format!(
+                "`{p}` is not a `.qml` file, a `.ts` or `.lts` module or a directory"
+            )));
+        }
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// The files with `extension` below `dir`.
 pub(crate) fn collect(dir: &std::path::Path, extension: &str, out: &mut Vec<std::path::PathBuf>) {
     let Ok(read) = std::fs::read_dir(dir) else {
@@ -185,7 +218,7 @@ fn diagnostics_tool(
 ) -> ljos_mcp_core::ToolHandler {
     let (project, front) = (project.clone(), front.clone());
     typed(move |_ctx: &CallCtx, args: FilesArgs| {
-        let files = expand_qml(&project, &args.paths)?;
+        let files = expand_checked(&project, &args.paths)?;
         let mut diagnostics = run(front.as_ref(), &files)?;
         for d in &mut diagnostics {
             // Front ends report canonical paths; agents think project-relative.
@@ -209,7 +242,7 @@ pub(crate) fn registry(
         .with(
             ToolDef::new::<FilesArgs>(
                 "qml_check",
-                "Parse and resolve QML files or directories; returns diagnostics (file, line, column, severity, code, message), paginated.",
+                "Parse and resolve QML files, `.ts` and `.lts` modules or directories, with Ljós's syntax compiled away; returns diagnostics at their places in the files as written (file, line, column, severity, code, message), paginated.",
             )
             .output::<DiagnosticsOut>(),
             diagnostics_tool(&project, &front, |f, files| f.check(files)),
@@ -217,7 +250,7 @@ pub(crate) fn registry(
         .with(
             ToolDef::new::<FilesArgs>(
                 "qml_lint",
-                "Lint QML files or directories: what `qml_check` reports and the accessibility and translation lints of `ljos check`, under the same codes (`ljos://lints` says what each wants); returns diagnostics, paginated.",
+                "Lint QML files, `.ts` and `.lts` modules or directories: what `qml_check` reports and the accessibility and translation lints of `ljos check`, under the same codes (`ljos://lints` says what each wants); returns diagnostics, paginated.",
             )
             .output::<DiagnosticsOut>(),
             diagnostics_tool(&project, &front, |f, files| f.lint(files)),
@@ -395,5 +428,16 @@ pub(crate) fn registry(
                     ..ToolAnnotations::WRITE
                 }),
             edit::handler(&project),
+        )
+        .with(
+            ToolDef::new::<rename_lts::RenameArgs>("module_rename_lts", rename_lts::DESCRIPTION)
+                .output::<rename_lts::RenameOut>()
+                // Renaming twice finds nothing to rename the second time.
+                .annotated(ToolAnnotations {
+                    destructive: false,
+                    idempotent: false,
+                    ..ToolAnnotations::WRITE
+                }),
+            rename_lts::handler(&project),
         )
 }

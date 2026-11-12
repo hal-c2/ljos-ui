@@ -9,7 +9,7 @@ expression: value
     "open_world": false,
     "read_only": true
   },
-  "description": "Parse and resolve QML files or directories; returns diagnostics (file, line, column, severity, code, message), paginated.",
+  "description": "Parse and resolve QML files, `.ts` and `.lts` modules or directories, with Ljós's syntax compiled away; returns diagnostics at their places in the files as written (file, line, column, severity, code, message), paginated.",
   "inputSchema": {
     "additionalProperties": false,
     "properties": {
@@ -21,7 +21,7 @@ expression: value
         ]
       },
       "paths": {
-        "description": "`.qml` files or directories, relative to the project root.",
+        "description": "`.qml` files, `.ts` and `.lts` modules or directories, relative to the\nproject root.",
         "items": {
           "type": "string"
         },

@@ -19,6 +19,7 @@ mod ledger;
 mod lints;
 mod project;
 mod prompts;
+mod rename_lts;
 mod resources;
 mod rewrite;
 mod runs;
