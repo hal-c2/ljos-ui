@@ -258,6 +258,25 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "32 true 1 true"
     And the property "title" of "view" is "Fixture Page"
 
+  # As in Qt, the view asks even with no page: the request is the
+  # application's to turn down.
+  @api-QtWebEngine.WebEngineView.triggerWebAction @api-QtWebEngine.WebEngineNewWindowRequest.requestedUrl
+  Scenario: Viewing the source of a view showing no page asks for an empty source
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: "nothing"
+        Timer { interval: 500; running: true; onTriggered: view.triggerWebAction(WebEngineView.ViewSource) }
+        onNewWindowRequested: request => seen = request.requestedUrl.toString()
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is "view-source:"
+
   # A failed load is reported once and stays failed: the view does not
   # try the page again by itself, and a test waits for nothing more (a
   # wait given up on says so in the log). With error pages off, the view
