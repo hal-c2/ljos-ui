@@ -376,7 +376,10 @@ fn findings_typed<O: TypeOracle>(
             };
             project.add_script(&path, text.clone());
         }
-        project.add(&in_project, qml_compat::migrated(written, &done.text, false));
+        project.add(
+            &in_project,
+            qml_compat::migrated(written, &done.text, false),
+        );
     }
     let findings = |compiled: Result<ljos_compiler::Compiled, Vec<ljos_compiler::Diagnostic>>| {
         let mut found: BTreeMap<String, usize> = BTreeMap::new();

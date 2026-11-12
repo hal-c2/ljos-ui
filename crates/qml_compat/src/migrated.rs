@@ -99,7 +99,8 @@ mod tests {
 
     #[test]
     fn imports_go_on_lines_of_their_own_and_emptied_lines_go() {
-        let written = "import QtQuick\nimport QtQuick.Layouts\nimport QtQuick.Controls.Basic\n\nRow {}\n";
+        let written =
+            "import QtQuick\nimport QtQuick.Layouts\nimport QtQuick.Controls.Basic\n\nRow {}\n";
         let lowered = "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\n\nimport Ljos.Controls.Basic\n\nRow {}\n";
         assert_eq!(
             migrated(written, lowered, true),
@@ -116,7 +117,8 @@ mod tests {
     #[test]
     fn only_the_imports_are_laid_out() {
         let written = "import QtQuick\nItem {\nproperty string s: \"\n\"\n}\n";
-        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\nproperty string s: \"\n\"\n}\n";
+        let lowered =
+            "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\nproperty string s: \"\n\"\n}\n";
         assert_eq!(
             migrated(written, lowered, true),
             "import Ljos.Ui\nItem {\nproperty string s: \"\n\"\n}\n"
@@ -126,8 +128,7 @@ mod tests {
     #[test]
     fn a_comment_after_the_imports_stays_with_the_last() {
         let written = "// A dial.\nimport QtQuick // items; all\nimport QtQuick.Layouts\nItem {}";
-        let lowered =
-            "// A dial.\npragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout // items; all\n\nItem {}";
+        let lowered = "// A dial.\npragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout // items; all\n\nItem {}";
         assert_eq!(
             migrated(written, lowered, true),
             "// A dial.\nimport Ljos.Ui\nimport Ljos.Layout // items; all\nItem {}"
@@ -139,7 +140,8 @@ mod tests {
     #[test]
     fn an_indented_file_keeps_its_indent() {
         let written = "  import QtQuick\n  import QtQuick.Layouts\n  Row {}\n";
-        let lowered = "  pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\n\n  Row {}\n";
+        let lowered =
+            "  pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\n\n  Row {}\n";
         assert_eq!(
             migrated(written, lowered, true),
             "  import Ljos.Ui\n  import Ljos.Layout\n  Row {}\n"
@@ -153,7 +155,8 @@ mod tests {
     #[test]
     fn carriage_returns_are_kept() {
         let written = "import QtQuick\r\nimport QtQuick.Layouts\r\nRow {}\r\n";
-        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\r\n\r\nRow {}\r\n";
+        let lowered =
+            "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\r\n\r\nRow {}\r\n";
         assert_eq!(
             migrated(written, lowered, false),
             "pragma Scripts: JavaScript\r\nimport Ljos.Ui\r\nimport Ljos.Layout\r\nRow {}\r\n"

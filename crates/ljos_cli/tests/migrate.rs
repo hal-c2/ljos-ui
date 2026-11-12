@@ -98,12 +98,10 @@ fn a_migrated_file_compiles_as_the_file_did() {
 #[test]
 fn a_file_whose_scripts_keep_the_rules_is_written_typed() {
     let dir = tempfile::tempdir().unwrap();
-    let typed = SWATCH
-        .replace("level == 0", "level === 0")
-        .replace(
-            "var was = level; if (level) { level = null }",
-            "if (level !== 0) { level = 0 }",
-        );
+    let typed = SWATCH.replace("level == 0", "level === 0").replace(
+        "var was = level; if (level) { level = null }",
+        "if (level !== 0) { level = 0 }",
+    );
     write(dir.path(), "app/Swatch.qml", &typed);
     let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
     assert_eq!(status, 0, "{err}");
@@ -112,7 +110,10 @@ fn a_file_whose_scripts_keep_the_rules_is_written_typed() {
         "lowered app/Swatch.qml (2 edits)\n1 files, 1 lowered, 0 kept\n"
     );
     let written = read(dir.path(), "app/Swatch.qml");
-    assert!(written.starts_with("import Ljos.Ui\nRectangle {\n"), "{written}");
+    assert!(
+        written.starts_with("import Ljos.Ui\nRectangle {\n"),
+        "{written}"
+    );
     let (status, out, err) = ljos(dir.path(), &["check", "app"]);
     assert_eq!(status, 0, "{out}{err}");
 }
