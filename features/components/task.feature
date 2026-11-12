@@ -94,6 +94,36 @@ Feature: Task: async work run from its arguments, and where it got to
       Then the property "shown" of "root" is "{\"status\":\"initial\"} none none"
       And the property "runs" of "root" is 0
 
+    Scenario: A run that changes its own args as it starts is aborted, and the run it began is the Task's
+      Given the QML:
+        """qml
+        import Ljos.Core
+        import Ljos.Ui
+        Item {
+          id: root; objectName: "root"
+          property string city: "Oslo"
+          property int aborts: 0
+          property string ran: ""
+          Task {
+            id: task; objectName: "task"
+            args: [root.city]
+            run: async (city: string, signal: AbortSignal): Promise<string> => {
+              signal.onabort = () => { root.aborts = root.aborts + 1 }
+              root.ran = root.ran + city + ";"
+              if (city === "Oslo") { root.city = "Bergen" }
+              return city
+            }
+          }
+        }
+        """
+      Then the property "ran" of "root" is "Oslo;Bergen;"
+      And the property "aborts" of "root" is 1
+      And the property "value" of "task" is "Bergen"
+      And the log has no warnings
+      When the property "city" of "root" is set to "Oslo"
+      Then the property "ran" of "root" is "Oslo;Bergen;Oslo;Bergen;"
+      And the property "aborts" of "root" is 2
+
   Rule: A change of args aborts the run in progress and starts another
 
     Background:
