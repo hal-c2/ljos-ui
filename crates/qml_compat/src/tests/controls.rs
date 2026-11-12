@@ -55,6 +55,23 @@ fn both_imports_of_qt_controls_are_one_of_ljos_controls() {
 }
 
 #[test]
+fn a_file_of_the_controls_alone_has_the_line_on_their_import() {
+    for uri in QT_CONTROLS {
+        let source = format!("import {uri}\nLabel {{ text: \"Ready\" }}\n");
+        let done = match in_style(&source, "Basic") {
+            Outcome::Lowered(done) => done,
+            Outcome::Kept(kept) => panic!("{uri} alone is kept: {kept}"),
+            _ => panic!("{uri} alone is left as it is"),
+        };
+        assert_eq!(
+            done.text,
+            "pragma Scripts: JavaScript; import Ljos.Controls.Basic\nLabel { text: \"Ready\" }\n",
+            "{uri}"
+        );
+    }
+}
+
+#[test]
 fn a_control_ljos_controls_has_not_taken_keeps_the_file() {
     assert_eq!(
         kept_for("import QtQuick\nimport QtQuick.Controls.Basic\nItem { Dial { } }\n"),

@@ -447,7 +447,8 @@ pub(crate) fn lines(imports: &[&Row]) -> Vec<Line> {
 }
 
 /// The text of the line that has `pragma Scripts: JavaScript` and the Ljós
-/// modules with no line of their own: `QtQuick`'s, else `QtQml`'s. `own`
+/// modules with no line of their own: `QtQuick`'s, else `QtQml`'s, else
+/// that of the first import that takes a line (`carrier`'s). `own`
 /// says which Ljós modules a Qt import's line is, `named` which the file
 /// names a type of.
 pub(crate) fn shared_line(
