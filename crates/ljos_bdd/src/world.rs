@@ -166,10 +166,42 @@ impl LjosWorld {
         ran
     }
 
+    /// An editor's session with `ljos lsp` on the staged files; what it
+    /// was told is kept as a report, with the files as the session left
+    /// them.
+    ///
+    /// # Errors
+    /// The server could not be run, or broke the protocol.
+    pub fn language_server(
+        &mut self,
+        session: &crate::backend::lsp::Session,
+    ) -> Result<(), String> {
+        let files = self.staged()?;
+        let report = crate::backend::lsp::run(&files, session).map_err(|e| e.to_string())?;
+        self.test_reports = vec![("ljos", report)];
+        Ok(())
+    }
+
     /// Keeps what a program of Ljós's own said, as the report the
     /// `Then the check …` steps read: nothing of Qt's says the same.
     pub fn ljos_report(&mut self, report: TestReport) {
         self.test_reports = vec![("ljos", report)];
+    }
+
+    /// The text of a project file as the last check left it, when a check
+    /// ran: `None` when none did, so the author's project is read instead.
+    #[must_use]
+    pub fn checked_file(&self, name: &str) -> Option<Result<&str, String>> {
+        let (_, report) = self
+            .test_reports
+            .iter()
+            .find(|(_, report)| !report.files.is_empty())?;
+        Some(report.files.get(name).map(String::as_str).ok_or_else(|| {
+            format!(
+                "the check left no file {name:?}; it left {}",
+                report.files.keys().cloned().collect::<Vec<_>>().join(", ")
+            )
+        }))
     }
 
     /// Check what each runner said; the failures are labelled with the

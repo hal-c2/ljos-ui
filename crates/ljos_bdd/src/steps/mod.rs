@@ -49,6 +49,7 @@ mod environment;
 mod files;
 mod input;
 mod inspector;
+mod lsp;
 mod pixels;
 mod platform;
 mod probes;
@@ -58,7 +59,7 @@ mod scene;
 
 /// The text of every file of steps, in the order they are read: what the
 /// catalogue and `features:lint` read the step patterns from.
-pub const SOURCES: [&str; 14] = [
+pub const SOURCES: [&str; 15] = [
     include_str!("files.rs"),
     include_str!("scene.rs"),
     include_str!("input.rs"),
@@ -73,6 +74,7 @@ pub const SOURCES: [&str; 14] = [
     include_str!("inspector.rs"),
     include_str!("authoring.rs"),
     include_str!("design_audit.rs"),
+    include_str!("lsp.rs"),
 ];
 
 /// Every file of steps, one after the other.
@@ -83,7 +85,18 @@ pub fn source() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::strip_label;
+    use super::{SOURCES, strip_label};
+
+    /// A file of steps left out of `SOURCES` runs, but `features:lint`
+    /// says every step of it has no definition.
+    #[test]
+    fn every_file_of_steps_is_read_for_its_patterns() {
+        let mods = include_str!("mod.rs")
+            .lines()
+            .filter(|line| line.starts_with("mod ") && line.ends_with(';'))
+            .count();
+        assert_eq!(SOURCES.len(), mods);
+    }
 
     #[test]
     fn language_label_is_removed() {
