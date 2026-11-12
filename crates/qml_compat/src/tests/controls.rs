@@ -135,6 +135,9 @@ fn ljos_controls_has_what_qt_controls_have() {
         "DelayButton",
         "ProgressBar",
         "BusyIndicator",
+        "TabBar",
+        "TabButton",
+        "SwipeView",
     ] {
         assert!(ljos.type_named(name).is_some(), "{name}");
         assert!(qt.type_named(name).is_some(), "{name}");
@@ -209,5 +212,16 @@ fn progress_bars_and_busy_indicators_are_lowered() {
          ProgressBar { from: 0; to: 100; value: 40 }\n  \
          ProgressBar { indeterminate: true }\n  \
          BusyIndicator { running: true }\n}\n",
+    );
+}
+
+#[test]
+fn tab_bars_and_swipe_views_are_lowered() {
+    lowered_unchanged(
+        "import QtQuick\nimport QtQuick.Controls.Basic\nItem {\n  \
+         TabBar { id: bar; currentIndex: swipe.currentIndex\n    \
+         TabButton { text: \"Inbox\" }\n    TabButton { text: \"Sent\" }\n  }\n  \
+         SwipeView { id: swipe; currentIndex: bar.currentIndex\n    \
+         Pane { Label { text: \"Inbox page\" } }\n  }\n}\n",
     );
 }

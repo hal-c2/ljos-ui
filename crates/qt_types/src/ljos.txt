@@ -148,7 +148,10 @@ module Ljos.Controls
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	Slider Ljos/Controls/Slider.qml
 	SpinBox Ljos/Controls/SpinBox.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch Ljos/Controls/Switch.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField Ljos/Controls/TextField.qml
 	Theme Ljos/Controls/Theme.qml
@@ -349,7 +352,10 @@ module Ljos.Controls.Basic
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
 	Slider QtQuick/Controls/Basic/Slider.qml
 	SpinBox QtQuick/Controls/Basic/SpinBox.qml
+	SwipeView QtQuick/Controls/Basic/SwipeView.qml
 	Switch QtQuick/Controls/Basic/Switch.qml
+	TabBar QtQuick/Controls/Basic/TabBar.qml
+	TabButton QtQuick/Controls/Basic/TabButton.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
 	ToolBar QtQuick/Controls/Basic/ToolBar.qml
