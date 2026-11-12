@@ -195,6 +195,40 @@ fn join_list(
     })
 }
 
+/// Numbers the items of each numbered list of `blocks` one after another:
+/// the paragraphs of a text, or of one cell of a table.
+fn renumber(blocks: &mut [Arc<BlockFormat>]) {
+    let mut counts: Vec<(&ListFormat, u32)> = Vec::new();
+    let mut markers = Vec::new();
+    for (i, block) in blocks.iter().enumerate() {
+        let Some(list) = block
+            .list
+            .as_deref()
+            .filter(|_| block.kind == BlockKind::List)
+        else {
+            continue;
+        };
+        let n = match counts.iter_mut().find(|(l, _)| std::ptr::eq(*l, list)) {
+            Some((_, n)) => {
+                *n += 1;
+                *n
+            }
+            None => {
+                counts.push((list, 0));
+                0
+            }
+        };
+        if let Some(m) = list.marker(n)
+            && block.marker.as_deref() != Some(m.as_str())
+        {
+            markers.push((i, m));
+        }
+    }
+    for (i, m) in markers {
+        Arc::make_mut(&mut blocks[i]).marker = Some(Arc::from(m));
+    }
+}
+
 /// A row of a table. The rows of one table share its [`TableFormat`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct TableRow {
@@ -271,6 +305,8 @@ impl CellFormat {
         paragraphs.drain(index + 1..=index + removed);
         let format = Arc::clone(&paragraphs[index]);
         paragraphs.splice(index + 1..index + 1, std::iter::repeat_n(format, added));
+        // An item copied or joined is of its list, which numbers it anew.
+        renumber(&mut paragraphs);
         trim_default(&mut paragraphs);
         Self {
             paragraphs,
@@ -411,6 +447,8 @@ fn cell_paragraphs(cell: &super::Cell) -> Vec<Arc<BlockFormat>> {
         .copied()
         .chain(std::iter::once(cell.range.end));
     let mut start = cell.range.start;
+    // A cell's items are in lists of their own, as the writer writes them.
+    let mut lists = Vec::new();
     let mut out: Vec<Arc<BlockFormat>> = ends
         .enumerate()
         .map(|(k, end)| {
@@ -420,7 +458,7 @@ fn cell_paragraphs(cell: &super::Cell) -> Vec<Arc<BlockFormat>> {
                 .any(|line| (start..end).contains(&line.start));
             start = end + 1;
             let read = cell.format(k);
-            Arc::new(BlockFormat {
+            let bf = Arc::new(BlockFormat {
                 kind: read.kind,
                 margin_top: read.margin_top,
                 margin_bottom: read.margin_bottom,
@@ -430,7 +468,8 @@ fn cell_paragraphs(cell: &super::Cell) -> Vec<Arc<BlockFormat>> {
                 align: read.align,
                 no_wrap,
                 ..BlockFormat::default()
-            })
+            });
+            join_list(&mut lists, bf)
         })
         .collect();
     trim_default(&mut out);
@@ -909,7 +948,7 @@ impl RichText {
         for block in &mut self.blocks[a..=b] {
             *block = Arc::new(f(block));
         }
-        self.renumber();
+        renumber(&mut self.blocks);
     }
 
     /// The part of the text in `range`, with its formats.
@@ -1004,41 +1043,8 @@ impl RichText {
         self.runs.len()
     }
 
-    /// Numbers the items of each numbered list one after another.
-    fn renumber(&mut self) {
-        let mut counts: Vec<(&ListFormat, u32)> = Vec::new();
-        let mut markers = Vec::new();
-        for (i, block) in self.blocks.iter().enumerate() {
-            let Some(list) = block
-                .list
-                .as_deref()
-                .filter(|_| block.kind == BlockKind::List)
-            else {
-                continue;
-            };
-            let n = match counts.iter_mut().find(|(l, _)| std::ptr::eq(*l, list)) {
-                Some((_, n)) => {
-                    *n += 1;
-                    *n
-                }
-                None => {
-                    counts.push((list, 0));
-                    0
-                }
-            };
-            if let Some(m) = list.marker(n)
-                && block.marker.as_deref() != Some(m.as_str())
-            {
-                markers.push((i, m));
-            }
-        }
-        for (i, m) in markers {
-            Arc::make_mut(&mut self.blocks[i]).marker = Some(Arc::from(m));
-        }
-    }
-
     fn normalize(&mut self) {
-        self.renumber();
+        renumber(&mut self.blocks);
         let mut out: Vec<Run> = Vec::with_capacity(self.runs.len());
         for run in self.runs.drain(..) {
             if run.len == 0 {
@@ -1443,6 +1449,37 @@ mod tests {
                 (again.text(), no_wrap(&again)),
                 (left.text(), no_wrap(left))
             );
+        }
+    }
+
+    /// Measured on Qt 6.12 (review of hal-c2/ljos-ui#393): an item Return
+    /// makes in a cell's numbered list is numbered after the one it splits,
+    /// and the items after it a number more; each cell's list is its own.
+    #[test]
+    fn the_items_of_a_cell_are_numbered_through_edits() {
+        let markers = |t: &RichText, cell: usize| {
+            let row = t.blocks().iter().find_map(|b| b.table.clone()).unwrap();
+            row.cells[cell]
+                .paragraphs
+                .iter()
+                .map(|p| p.marker.as_deref().unwrap_or("").to_owned())
+                .collect::<Vec<_>>()
+        };
+        let t = rich(
+            "<table><tr><td><ol><li>ab</li><li>c</li></ol></td>\
+             <td><ol><li>z</li></ol></td></tr></table>",
+        );
+        assert_eq!(t.text(), "\nab\u{2029}c\u{1f}z\n");
+        assert_eq!(markers(&t, 0), ["1.", "2."]);
+        for at in [1, 2] {
+            let mut split = t.clone();
+            split.splice(at..at, "\u{2029}", None);
+            assert_eq!(markers(&split, 0), ["1.", "2.", "3."], "Return at {at}");
+            assert_eq!(markers(&split, 1), ["1."], "Return at {at}");
+            // Joined again, the items are numbered as they were.
+            let mut joined = split.clone();
+            joined.splice(at..at + '\u{2029}'.len_utf8(), "", None);
+            assert_eq!(markers(&joined, 0), ["1.", "2."], "joined at {at}");
         }
     }
 
