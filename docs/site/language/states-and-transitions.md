@@ -87,7 +87,7 @@ Item {
         font.italic: true
     }
 
-    QtObject {
+    Object {
         id: action
         signal clicked()
         onClicked: root.log += "base "

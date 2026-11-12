@@ -44,6 +44,7 @@ You can bind or assign individual fields of a value-type property, grouped prope
 ```qml
 pragma Scripts: JavaScript
 import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -69,31 +70,32 @@ Item {
         width: 80
         height: 40
         border.width: 3
-        border.color: Qt.lighter("#336699", 1.2)
+        border.color: Color.of("#336699").lighter(1.2)
     }
 }
 ```
 
 You make a colour from its channels with `rgba`, `hsla` and `hsva`, and `Color.of(c)` reads a colour and shades it with `.lighter(f)`, `.darker(f)`, `.tint(c)`, `.alpha(a)` and `.equals(c)` (see [Colours, the app and enums](values-and-the-app.md)). A font's `size` must be a positive integer (fractions are rounded, zero or negative values are ignored, and `NaN` throws an error from script), and its `weight` is held between `1` and `1000`.
 
-Enumeration properties such as `Text.align` or `ScrollBar.policy` accept enum keys (`Text.AlignHCenter`, `ScrollBar.AlwaysOn`, `ScrollBar.Policy.AlwaysOff`) or key names as strings (`"AlignHCenter"`). Plain numbers written directly in QML source for an enum property are rejected when the file loads, whereas numbers assigned from JavaScript are rounded (or throw an `Error` if `NaN`). Flag properties combine keys with bitwise OR, such as `Qt.LeftButton | Qt.RightButton` or `Popup.CloseOnEscape | Popup.CloseOnPressOutside`.
+Enumeration properties such as `Text.align` or `ScrollBar.policy` accept enum keys (`Text.AlignHCenter`, `ScrollBar.AlwaysOn`, `ScrollBar.Policy.AlwaysOff`) or key names as strings (`"AlignHCenter"`). Plain numbers written directly in QML source for an enum property are rejected when the file loads, whereas numbers assigned from JavaScript are rounded (or throw an `Error` if `NaN`). Flag properties combine keys with bitwise OR, such as `MouseButton.Left | MouseButton.Right` or `Popup.CloseOnEscape | Popup.CloseOnPressOutside`.
 
 For sequences, `unknown` and `list<T>` behave differently:
 
 - An `unknown` property holding a JavaScript array or object stores the script's own reference. Calling `xs.push(4)` or mutating `box.n = 2` mutates it in place without emitting a property change signal.
 - A `list<T>` property (`list<int>`, `list<string>`, `list<var>`, `list<QtObject>`) owns its sequence. Assigning or binding an array to a `list<T>` copies the array and any nested arrays or objects inside it. Calling `numbers.push(3)` or assigning `numbers[0] = 9` mutates the property itself, emits its change signal, and leaves any binding on the list property in place. On a `readonly property list<string>`, calling `push` throws a `TypeError`.
 
-## Reactive bindings and `Qt.binding`
+## Reactive bindings and `bind`
 
 Any JavaScript expression on the right-hand side of `:` in QML sets up a reactive binding. Whenever a property read by the binding changes, the bound property updates automatically.
 
 You can also write a block binding in braces `{ ... }`. In QML, a block binding evaluates to its last expression statement without needing an explicit `return` keyword (unless the braces start with a string or number followed by a colon, such as `{ "k": 1 }`, which is parsed as an object literal).
 
-An imperative assignment (`b = 10`) in a function or handler breaks an existing binding on `b`, even if the assigned value equals the value `b` already held. To install a new reactive binding from JavaScript, assign `Qt.binding(fn)`, which a file of Ljós's API writes `bind(fn)`:
+An imperative assignment (`b = 10`) in a function or handler breaks an existing binding on `b`, even if the assigned value equals the value `b` already held. To install a new reactive binding from JavaScript, assign `bind(fn)` from `Ljos.Core` (Qt writes `Qt.binding(fn)`):
 
 ```qml
 pragma Scripts: JavaScript
 import Ljos.Ui
+import Ljos.Core
 
 Item {
     id: root
@@ -105,7 +107,7 @@ Item {
     }
 
     function follow() {
-        b = Qt.binding(function() { return a * 3 })
+        b = bind(function() { return a * 3 })
     }
 }
 ```

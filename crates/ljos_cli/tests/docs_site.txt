@@ -48,6 +48,7 @@ quality/design-guardrails.md 4 gap:layout
 quality/layout-and-typography.md 1 gap:layout
 quality/layout-and-typography.md 2 gap:layout
 quality/layout-and-typography.md 3 gap:layout
+quality/motion.md 2 gap:ui-types
 quality/performance.md 1 gap:layout
 rust/multimedia.md 1 gap:imports
 rust/multimedia.md 2 gap:imports

@@ -118,7 +118,7 @@ Item {
     Instantiator {
         id: inst
         model: names
-        QtObject {
+        Object {
             property string shown: label
         }
     }
@@ -128,7 +128,7 @@ Item {
 }
 ```
 
-Here `inst.count` is `2`, and `inst.object.shown` reads `"x"` from the first created `QtObject`.
+Here `inst.count` is `2`, and `inst.object.shown` reads `"x"` from the first created `Object`.
 
 - When you add a row to the model, `Instantiator` creates one object and emits `objectAdded`; when you remove a row, it destroys that row's object and shifts the remaining objects up.
 - If you omit `model`, `Instantiator` creates a single object.

@@ -27,20 +27,20 @@ Row {
     spacing: 4
 
     Rectangle {
-        Layout.alignment: Qt.AlignVCenter
+        Layout.alignment: Align.VCenter
         implicitWidth: 100; implicitHeight: 20
         fill: "#2060a0"
         Layout.fillWidth: true
     }
     Rectangle {
-        Layout.alignment: Qt.AlignVCenter
+        Layout.alignment: Align.VCenter
         implicitWidth: 50; implicitHeight: 20
         fill: "#c03030"
         Layout.fillWidth: true
         Layout.maximumWidth: 120
     }
     Rectangle {
-        Layout.alignment: Qt.AlignVCenter
+        Layout.alignment: Align.VCenter
         Layout.preferredWidth: 30; Layout.minimumWidth: 20
         height: 20
         fill: "#308030"
@@ -52,7 +52,7 @@ The blue and red boxes share the width left by the 30-pixel green box, with 4 pi
 
 ## Alignment, margins and layout direction
 
-A child that is smaller than its cell is positioned inside the cell by `Layout.alignment` (`Qt.AlignLeft`, `Qt.AlignRight`, `Qt.AlignHCenter`, `Qt.AlignTop`, `Qt.AlignBottom`, `Qt.AlignVCenter`). By default a child sits at the start of its cell, at the left and the top; the first example centres its children with `Layout.alignment: Qt.AlignVCenter`. Across a `Row`, a child with `Layout.fillHeight: true` stretches up to its `Layout.maximumHeight`, while a child that does not fill keeps its preferred height.
+A child that is smaller than its cell is positioned inside the cell by `Layout.alignment` (`Align.Left`, `Align.Right`, `Align.HCenter`, `Align.Top`, `Align.Bottom`, `Align.VCenter`). By default a child sits at the start of its cell, at the left and the top; the first example centres its children with `Layout.alignment: Align.VCenter`. Across a `Row`, a child with `Layout.fillHeight: true` stretches up to its `Layout.maximumHeight`, while a child that does not fill keeps its preferred height.
 
 `Column` without an explicit size is as wide as its widest child and as tall as all its visible children plus `spacing`. Both `Row` and `Column` also take `padding` (and `leftPadding`, `rightPadding`, `topPadding`, `bottomPadding`) between their edges and their children, and `layoutDirection`.
 
@@ -76,14 +76,14 @@ Column {
     }
     Rectangle {
         width: 30; height: 20; fill: "#c0a030"
-        Layout.alignment: Qt.AlignRight
+        Layout.alignment: Align.Right
     }
 }
 ```
 
 Here the red and green boxes share the remaining height of the 300-pixel column, the green box also fills the 100-pixel width, and the yellow box is aligned to the right edge of the column.
 
-Margins (`Layout.margins`, `Layout.leftMargin`, `Layout.topMargin`, `Layout.rightMargin`, `Layout.bottomMargin`) sit inside the child's cell between the child and the cell's edge. Watch out when using `layoutDirection: Qt.RightToLeft`: the cells and `Layout.alignment` are mirrored, but `Layout.leftMargin` and `Layout.rightMargin` are not mirrored.
+Margins (`Layout.margins`, `Layout.leftMargin`, `Layout.topMargin`, `Layout.rightMargin`, `Layout.bottomMargin`) sit inside the child's cell between the child and the cell's edge. Watch out when using `layoutDirection: Direction.RightToLeft`: the cells and `Layout.alignment` are mirrored, but `Layout.leftMargin` and `Layout.rightMargin` are not mirrored.
 
 ## Grid
 

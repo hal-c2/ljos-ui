@@ -80,12 +80,13 @@ You can insert values into translated strings with `String.arg()`, which replace
 To format numbers according to the locale's digit grouping and numeral system:
 
 - Use `"%L1".arg(number)` for locale-grouped numbers in placeholder strings.
-- Call `Qt.locale().toString(number)` (or pass a partial or complete locale name to `Qt.locale(name)`) to format a number using that locale's digits and separators—for example, Arabic locales use Arabic-Indic digits, English groups `1234567` as `"1,234,567"`, and German groups it as `"1.234.567"`.
+- Call `Locale.current.toString(number)` (or pass a partial or complete locale name to `Locale.named(name)`; Qt writes `Qt.locale()`) to format a number using that locale's digits and separators—for example, Arabic locales use Arabic-Indic digits, English groups `1234567` as `"1,234,567"`, and German groups it as `"1.234.567"`.
 - Controls and delegates created early (before the translation catalogue finishes loading) still resolve the active locale properly.
 
 ```qml
 pragma Scripts: JavaScript
 import Ljos.Ui
+import Ljos.Core
 import Ljos.Layout
 import Ljos.Controls.Basic
 
@@ -98,7 +99,7 @@ Column {
     }
 
     Label {
-        text: qsTr("Total: %1").arg(Qt.locale().toString(1234567))
+        text: qsTr("Total: %1").arg(Locale.current.toString(1234567))
     }
 }
 ```
