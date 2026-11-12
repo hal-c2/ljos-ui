@@ -2170,7 +2170,10 @@ shares them.
   before the `switch`, its label too, in the block around it. A name the
   block declares itself, or a parameter at a function's top, is
   `ts-is-binding` at the name the pattern binds, as the two would be one
-  name.
+  name. So is a name the `switch`'s clauses declare, or a `for` head
+  around the `is`: it would take the assignment, in its dead zone where
+  its declaration has not run. A `var` there clashes with what a `let`
+  binds, as one beside does, and is one variable with what a `var` binds.
 
 `$is` is declared to `tsc` as a type guard of its subject (`$is<T>(s:
 unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:
