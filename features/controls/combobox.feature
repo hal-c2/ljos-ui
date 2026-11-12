@@ -598,6 +598,35 @@ Feature: ComboBox
       Then the property "popup.height" of "c" is 120
       And the property "popup.visible" of "c" is true
 
+  Rule: A delegate that requires model reads the row's object
+
+    @api-QtQuick.Controls.ComboBox.textRole
+    Scenario: The rows of an array of objects show the text role through model
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          width: 400; height: 400
+          ComboBox {
+            id: c; objectName: "c"; width: 160; height: 30
+            model: [{ value: "locale", label: "System default" }, { value: "24-hour", label: "24-hour" }]
+            textRole: "label"
+            delegate: ItemDelegate {
+              required property var model
+              required property int index
+              objectName: "d" + index; width: 160; height: 30
+              text: model[c.textRole]
+              property string seen: model.label + " " + model.modelData.value
+            }
+          }
+        }
+        """
+      When the property "popup.visible" of "c" is set to true
+      Then the property "text" of "d0" is "System default"
+      And the property "text" of "d1" is "24-hour"
+      And the property "seen" of "d0" is "System default locale"
+
   Rule: The keys pick a row
 
     Background:

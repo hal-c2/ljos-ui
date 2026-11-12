@@ -171,3 +171,59 @@ Feature: What a delegate sees of its row
         """
       Then the object "d0" does not exist
       And the log has a warning matching "Required property missing was not initialized"
+
+  Rule: A required model reaches the members of a row that is a JavaScript object
+    # Without required properties a row of an array of objects is read through modelData only
+    # (models/model-kinds.feature); a delegate that requires model reads the members through it.
+
+    Scenario Outline: A <view> delegate reads a member by name, by key and through modelData
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          width: 100; height: 100
+          <view> {
+            width: 100; height: 100
+            model: [{label: "x", n: 4}, {label: "y", n: 5}]
+            delegate: Item {
+              required property var model
+              required property int index
+              objectName: "d" + index
+              width: 100; height: 20
+              property string byName: model.label
+              property string byKey: model["label"]
+              property int number: model.n
+              property string data: model.modelData.label + model.index
+            }
+          }
+        }
+        """
+      Then the property "byName" of "d1" is "y"
+      And the property "byKey" of "d1" is "y"
+      And the property "number" of "d0" is 4
+      And the property "data" of "d1" is "y1"
+
+      Examples:
+        | view     |
+        | Repeater |
+        | ListView |
+
+    Scenario: A member only some rows have is undefined in the others
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          Repeater {
+            model: [{n: 4}, {n: 5, extra: "e"}, 7]
+            Item {
+              required property var model
+              required property int index
+              objectName: "d" + index
+              property string seen: typeof model.n + " " + model.extra + " " + typeof model.modelData
+            }
+          }
+        }
+        """
+      Then the property "seen" of "d0" is "number undefined object"
+      And the property "seen" of "d1" is "number e object"
+      And the property "seen" of "d2" is "undefined undefined number"
