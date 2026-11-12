@@ -1,6 +1,7 @@
 //! The checker's half that reads scripts: the type of each expression,
 //! what statements bind and narrow, functions, arrows and annotations.
 
+use oxc_ast_visit::Visit;
 use qml_front::{TypeOracle, names::Target, types::Kind as QKind};
 use qml_syntax::{
     GetSpan, Span,
@@ -15,6 +16,7 @@ use qml_syntax::{
 };
 
 use super::module::{Space, listed};
+use super::shadow::{Between, Shadows};
 use super::ty::{Field, Global, Guard, Kind, Method, Param, Sig, Ty, Web};
 use super::{Binding, Checker, Fact, FnCtx, Obj, builtins, primitive, web};
 use crate::Code;
@@ -3285,12 +3287,63 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }
             }
         }
+        self.shadowed_is(statements);
         let mut live = true;
         for statement in statements {
             live &= self.statement(statement);
         }
         self.locals.truncate(locals);
         live
+    }
+
+    /// An `is` in a `switch`'s clauses, or in a `for`, whose name the
+    /// clauses or the `for` head declare too: what it binds is declared
+    /// before the `switch` or the `for`, so the assignment would reach the
+    /// inner name instead, in its dead zone where that has not run.
+    fn shadowed_is(&mut self, statements: &[Statement<'a>]) {
+        let mut declared: Vec<(&'a str, VariableDeclarationKind)> = Vec::new();
+        for statement in statements {
+            if let Statement::VariableDeclaration(declaration) = statement
+                && self.declared_by_is(declaration)
+            {
+                for declarator in &declaration.declarations {
+                    if let BindingPattern::BindingIdentifier(id) = &declarator.id {
+                        declared.push((id.name.as_str(), declaration.kind));
+                    }
+                }
+            }
+        }
+        if declared.is_empty() {
+            return;
+        }
+        let mut shadows = Shadows::default();
+        for statement in statements {
+            shadows.visit_statement(statement);
+        }
+        for shadow in shadows.found {
+            let Some(&(_, kind)) = declared.iter().find(|(name, _)| *name == shadow.name) else {
+                continue;
+            };
+            // DECISION: a `var` in the clauses or the head is the
+            // function's, so it reaches past the `let` before them and the
+            // file would not load, as with a `var` beside; with what an
+            // `is … var` binds it is one variable.
+            if (shadow.var && kind == VariableDeclarationKind::Var)
+                || !shadow.written.iter().all(|&at| self.desugared(at))
+            {
+                continue;
+            }
+            let name = shadow.name;
+            let message = match shadow.between {
+                Between::Switch => format!(
+                    "`{name}` is a name of this `switch`'s clauses already, and an `is` in them declares what it binds before the `switch`: bind another name"
+                ),
+                Between::For => format!(
+                    "`{name}` is a name this `for` declares already, and an `is` in it declares what it binds before the `for`: bind another name"
+                ),
+            };
+            self.report(Code::TsIsBinding, message, shadow.span);
+        }
     }
 
     pub(super) fn bind_dead(&mut self, pattern: &BindingPattern<'a>) {

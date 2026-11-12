@@ -23,6 +23,7 @@ mod builtins;
 mod controller;
 mod expr;
 mod module;
+mod shadow;
 mod ty;
 mod web;
 

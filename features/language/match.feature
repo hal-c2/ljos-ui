@@ -560,6 +560,40 @@ Feature: Choosing a value with match, and testing one with is
         ljos: 1 errors
         """
 
+    Scenario: A name a switch's clauses or a for head declare is not what an is in them may bind, as that would take the is's assignment
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function pick(v: number, a: number): number {
+            switch (v) {
+              case 1: let x = 1; return x;
+              case 2: if (a is let x) { return x; } break;
+            }
+            return 0;
+          }
+          function first(xs: number[], a: number): number {
+            for (const y of xs) if (a is let y) return y;
+            return 0;
+          }
+          function keep(v: number, a: number): number {
+            if (a is let z) { return z; }
+            switch (v) {
+              case 1: let z = 1; return z;
+            }
+            return 0;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:6:36: error: `x` is a name of this `switch`'s clauses already, and an `is` in them declares what it binds before the `switch`: bind another name [ts-is-binding]
+        Gauge.qml:11:46: error: `y` is a name this `for` declares already, and an `is` in it declares what it binds before the `for`: bind another name [ts-is-binding]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
   Rule: What the proposal leaves out is an error that says so
 
     Scenario: A name that is not in scope, an extractor and a relational pattern are errors
