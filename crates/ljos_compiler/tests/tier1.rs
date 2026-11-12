@@ -136,6 +136,42 @@ fn a_function_of_the_file_is_inlined_behind_a_guard() {
 }
 
 #[test]
+fn a_pipe_is_compiled_in_place_and_its_topics_are_registers() {
+    let file = compile(
+        "property var o: a - b |> Math.max(%, 0) / a * 100 |> Math.round(%)\n\
+         property var p: a |> (% + 1 |> % * 10) + %\n\
+         onAChanged: a |> (b = % + 1)\n\
+         property var q: a |> this.b + %",
+    );
+    let chain = program(&file, BindingKind::Property, 0);
+    // The arrow the chain is lowered to is never made or called: its
+    // `const`s are registers of the program.
+    assert!(!chain.has_inlined_calls());
+    assert_eq!(
+        count(&chain, |op| matches!(
+            op,
+            Op::Guard { .. } | Op::Pass { .. }
+        )),
+        0
+    );
+    // `Math.max` and `Math.round`, the builtins.
+    assert_eq!(count(&chain, |op| matches!(op, Op::Call { .. })), 2);
+    assert_eq!(count(&chain, |op| matches!(op, Op::Binary { .. })), 3);
+    let nested = program(&file, BindingKind::Property, 1);
+    assert_eq!(count(&nested, |op| matches!(op, Op::Binary { .. })), 3);
+    // The arrow is the handler's own code: its write is the handler's.
+    let handler = program(&file, BindingKind::Handler, 0);
+    assert!(handler.writes());
+    // And its `this` is the expression's.
+    assert!(
+        count(&program(&file, BindingKind::Property, 2), |op| matches!(
+            op,
+            Op::This { .. }
+        )) > 0
+    );
+}
+
+#[test]
 fn a_function_calling_one_that_is_tier_2_is_tier_2_whole() {
     let file = compile(
         "function loop() { for (let i = 0; i < 3; i++) {} }\n\

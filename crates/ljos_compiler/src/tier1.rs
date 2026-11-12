@@ -9,8 +9,9 @@
 //! globals the VM knows; nothing is looked up by name when the program runs.
 //!
 //! An expression is compiled whole or not at all. What is outside the subset
-//! (a loop, a closure, a call of anything but a builtin or a function of the
-//! file that can be inlined) leaves the expression to tier 2, with the
+//! (a loop, a closure, a call of anything but a builtin, a function of the
+//! file that can be inlined or an arrow called where it is written, which is
+//! what a pipe is lowered to) leaves the expression to tier 2, with the
 //! [`Reason`] for the coverage report.
 //!
 //! Two rules keep a program safe to abandon half way, which the VM does when
@@ -32,10 +33,11 @@ use ljos_ir::{
 };
 use oxc_allocator::Allocator;
 use oxc_ast::ast::{
-    Argument, ArrayExpressionElement, ArrowFunctionBody, AssignmentTarget, BindingPattern,
-    CallExpression, ChainElement, ComputedMemberExpression, Declaration, Expression,
-    FormalParameter, Function, IdentifierReference, Program, SimpleAssignmentTarget, Statement,
-    StaticMemberExpression, TemplateLiteral, VariableDeclaration, VariableDeclarationKind,
+    Argument, ArrayExpressionElement, ArrowFunctionBody, ArrowFunctionExpression, AssignmentTarget,
+    BindingPattern, CallExpression, ChainElement, ComputedMemberExpression, Declaration,
+    Expression, FormalParameter, Function, IdentifierReference, Program, SimpleAssignmentTarget,
+    Statement, StaticMemberExpression, TemplateLiteral, VariableDeclaration,
+    VariableDeclarationKind,
 };
 use oxc_ast_visit::Visit;
 use oxc_parser::Parser;
@@ -366,6 +368,10 @@ struct Frame {
     scopes: Vec<HashMap<String, Var>>,
     /// None for the expression itself: it returns from the program.
     ret: Option<Ret>,
+    /// An arrow called where it is written, as the desugar writes a pipe or
+    /// a `match`: its names, `this` and writes are those of the code around
+    /// it, so it is part of that function and not another one.
+    in_place: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -573,7 +579,13 @@ impl<'p, 'a> Gen<'p, 'a> {
     }
 
     fn inlined(&self) -> bool {
-        self.frames.len() > 1
+        self.functions() > 1
+    }
+
+    /// The functions being compiled, inlined ones included: an arrow called
+    /// in place is part of the one around it.
+    fn functions(&self) -> usize {
+        self.frames.iter().filter(|frame| !frame.in_place).count()
     }
 
     fn lookup(&self, name: &str) -> Result<Name, Reason> {
@@ -631,6 +643,7 @@ impl<'p, 'a> Gen<'p, 'a> {
             params: HashMap::new(),
             scopes: vec![HashMap::new()],
             ret,
+            in_place: false,
         };
         for (index, param) in binding.params.iter().enumerate() {
             let number = match &inline {
@@ -1686,8 +1699,65 @@ impl<'p, 'a> Gen<'p, 'a> {
                     _ => Err(Reason::with("method call", format!(".{method}()"))),
                 }
             }
+            Expression::ParenthesizedExpression(callee) => match &callee.expression {
+                Expression::ArrowFunctionExpression(arrow) => self.in_place(arrow, it, dst),
+                _ => Err(Reason::with("function call", "of a value")),
+            },
             _ => Err(Reason::with("function call", "of a value")),
         }
+    }
+
+    /// `(() => { ... })()`, an arrow called where it is written: what the
+    /// desugar makes of a pipe, whose topics are its `const`s. Its body is
+    /// compiled in place, so the topics are registers and nothing is made
+    /// or called.
+    fn in_place(
+        &mut self,
+        arrow: &'p ArrowFunctionExpression<'a>,
+        call: &'p CallExpression<'a>,
+        dst: Reg,
+    ) -> Result<(), Reason> {
+        if arrow.r#async {
+            return Err(Reason::with("function", "async or a generator"));
+        }
+        if !arrow.params.items.is_empty()
+            || arrow.params.rest.is_some()
+            || !call.arguments.is_empty()
+        {
+            return Err(Reason::with("function call", "of an arrow with arguments"));
+        }
+        let Some(outer) = self.frames.last() else {
+            return Err(odd_shape("an arrow outside a function"));
+        };
+        let mut scopes = outer.scopes.clone();
+        scopes.push(HashMap::new());
+        let frame = Frame {
+            params: outer.params.clone(),
+            scopes,
+            ret: Some(Ret {
+                dst,
+                jumps: Vec::new(),
+            }),
+            in_place: true,
+        };
+        self.frames.push(frame);
+        let flow = match &arrow.body {
+            ArrowFunctionBody::FunctionBody(body) => self.statements(&body.statements, true),
+            other => match other.as_expression() {
+                Some(expression) => self.give_back(Some(expression)).map(|()| Flow::Returns),
+                None => Err(odd_shape("arrow body")),
+            },
+        };
+        let frame = self.frames.pop();
+        if flow? == Flow::Continues {
+            self.constant(dst, Const::Undefined)?;
+        }
+        if let Some(ret) = frame.and_then(|frame| frame.ret) {
+            for jump in ret.jumps {
+                self.land(jump);
+            }
+        }
+        Ok(())
     }
 
     /// `__ljos_single($s_Theme)`, what the compiler makes of the name of a
@@ -1853,7 +1923,7 @@ impl<'p, 'a> Gen<'p, 'a> {
         if self.inlining.contains(&callee) {
             return Err(Reason::with(KIND, "it calls itself"));
         }
-        if self.frames.len() > MAX_INLINE_DEPTH {
+        if self.functions() > MAX_INLINE_DEPTH {
             return Err(Reason::with(KIND, "calls too deep"));
         }
         let (binding, function) = self.function_of(callee)?;

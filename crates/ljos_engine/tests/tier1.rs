@@ -944,6 +944,23 @@ fn a_binding_block_runs_its_statements() {
 }
 
 #[test]
+fn a_pipe_runs_in_place() {
+    // The desugar makes an arrow called where it is written: tier 1 runs
+    // its body as part of the expression.
+    exact(&[
+        "i |> % + 1",
+        "i - j |> Math.max(%, 0) / r * 100 |> Math.round(%)",
+        "r |> (% + 1 |> % * 10) + %",
+        "s |> `${%}!` |> % + %",
+        "i |> twice(%) |> pick(yes, %, s)",
+        "{ const t = i |> % * 2; return t |> % + 1 }",
+        "{ if (yes) return i |> % + 1; return 0 }",
+        "i |> (yes ? % : -%)",
+    ]);
+    assert_eq!(value_and_deps("no |> (% ? i : r)").1, ["no", "r"]);
+}
+
+#[test]
 fn a_branch_not_taken_is_not_a_dependency() {
     let deps = |e: &str| value_and_deps(e).1;
     assert_eq!(deps("yes ? i : r"), ["i", "yes"]);
