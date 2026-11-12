@@ -49,6 +49,12 @@
 //! and kept in the cache `Image` uses; the item keeps the handle it gets
 //! and asks to be painted again ([`repaint`]).
 //!
+//! A picture a script took with `Item.grabToImage` is read with
+//! [`grabbed_image`], from the [`ItemGrabResult`] or from the `image` or
+//! `url` the script hands on, while the scripts keep the result. Its
+//! pixels are premultiplied, as every [`ImageHandle`]'s are
+//! ([`ImageHandle::pixel`]).
+//!
 //! A `TextEdit` that colours its text takes a [`Highlighter`] instead:
 //! [`set_highlighter`]. What an editor then paints is read back with
 //! [`highlights`], and how a stretch of a rich text is set (weight,
@@ -133,6 +139,9 @@ pub use ljos_quick::{
     Item, ItemPaint, KeyEvent, KeyKind, Modifiers, PaintedItem, ReadPaint, ScrollPhase, WheelEvent,
     flickable::WheelItem,
 };
+/// The picture `Item.grabToImage` took, read from the result, or from
+/// its `image` or `url` a script hands on, while the result lives.
+pub use ljos_quick::{ItemGrabResult, grabbed_image};
 /// An item drawn off the screen for another (a 3D texture of it): see
 /// [`item_picture`].
 pub use ljos_quick::{ItemPicture, PictureArea, item_picture};
