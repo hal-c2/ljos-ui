@@ -47,6 +47,8 @@ value:load-handlers:empty-qt            a string bound to a point is the point's
 # An initial property createObject cannot set leaves no object on Qt 6.12.0 and Ljós, which
 # follows it; the oracle, Qt 6.11.2, makes the object with the property's own value there
 # (@qt-diverges in features/components/create-object-converted.feature). Triaged from seed 101.
+# These buckets are named by the shape of a result, not its cause, so they hide any other
+# divergence of that shape: drop the block once the oracle is Qt 6.12 or newer.
 value:step:null-ljos                    an object given a point from a number, or a real or int from "", is null, not made (features/components/create-object-converted.feature)
 value:step:undefined-qt                 an object given a point from a number is null, so a property read of it is "none", not undefined (features/components/create-object-converted.feature)
 value:step:empty-qt                     an object given an int from "" is null, so a property read of it is "none", not empty (features/components/create-object-converted.feature)
