@@ -430,6 +430,23 @@ mod parser_parse {
             parser.parse()
         }
 
+        /// Ljós: parse a script or module in which `match` and `is` are read
+        /// (DIALECT.md §4.18), and give the edits that write them away. The
+        /// tree has each one as its subject in parentheses; to read what it
+        /// means, apply the edits with [`qml::sugar::lower`] and parse that.
+        pub fn parse_with_sugar(self) -> (ParserReturn<'a>, Vec<qml::sugar::Edit>) {
+            let mut parser = ParserImpl::<C>::new(
+                self.allocator,
+                self.source_text,
+                self.source_type,
+                self.options,
+                self.config,
+                UniquePromise::new(),
+            );
+            parser.sugar.on = true;
+            parser.parse_keeping_sugar()
+        }
+
         /// Parse a single [`Expression`].
         ///
         /// # Example
@@ -678,6 +695,9 @@ struct ParserImpl<'a, C: ParserConfig> {
 
     /// Precomputed typescript detection
     is_ts: bool,
+
+    /// Ljós: `match` and `is`, read as text edits (see `qml/sugar.rs`).
+    sugar: qml::sugar::Sugar,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -710,6 +730,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             ast: AstBuilder::new(allocator),
             module_record_builder: ModuleRecordBuilder::new(allocator, source_type),
             is_ts: source_type.is_typescript(),
+            sugar: qml::sugar::Sugar::default(),
         }
     }
 
@@ -718,7 +739,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     /// Returns an empty `Program` on unrecoverable error,
     /// Recoverable errors are stored inside `errors`.
     #[inline]
-    pub fn parse(mut self) -> ParserReturn<'a> {
+    pub fn parse(self) -> ParserReturn<'a> {
+        self.parse_keeping_sugar().0
+    }
+
+    /// [`parse`](Self::parse), and the `match`/`is` edits it recorded.
+    pub(crate) fn parse_keeping_sugar(mut self) -> (ParserReturn<'a>, Vec<qml::sugar::Edit>) {
         let mut program = self.parse_program();
         let mut panicked = false;
 
@@ -792,7 +818,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
         program.comments = self.lexer.trivia_builder.comments;
 
-        ParserReturn {
+        let ret = ParserReturn {
             program,
             module_record,
             diagnostics: errors,
@@ -800,7 +826,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             tokens,
             panicked,
             is_flow_language,
-        }
+        };
+        (ret, self.sugar.edits)
     }
 
     pub fn parse_expression(mut self) -> Result<Expression<'a>, Diagnostics> {

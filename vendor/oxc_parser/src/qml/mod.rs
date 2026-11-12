@@ -8,6 +8,7 @@
 
 pub mod ast;
 mod recovery;
+pub mod sugar;
 
 use oxc_allocator::ArenaVec;
 use oxc_ast::ast::{Comment, Expression, IdentifierName, ObjectExpression, ObjectPropertyKind};
@@ -38,6 +39,9 @@ pub struct QmlParserReturn<'a> {
     /// The parser hit a syntax error it could not recover from (the root
     /// object has no usable type name) and stopped early.
     pub panicked: bool,
+    /// The edits that write `match` and `is` away (see [`sugar::lower`]);
+    /// empty when the document has neither.
+    pub sugar: Vec<sugar::Edit>,
 }
 
 impl<'a, C: ParserConfig> ParserImpl<'a, C> {
@@ -66,11 +70,14 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let diagnostics = diagnostics.into_iter().collect::<Diagnostics>();
         let comments = self.lexer.trivia_builder.comments;
 
-        QmlParserReturn { document, comments, diagnostics, panicked }
+        let sugar = std::mem::take(&mut self.sugar.edits);
+
+        QmlParserReturn { document, comments, diagnostics, panicked, sugar }
     }
 
     fn parse_qml_document(&mut self) -> QmlDocument<'a> {
         self.lexer.qml = true;
+        self.sugar.on = true;
         self.token = self.lexer.first_token();
         let start = self.cur_start();
 
@@ -426,9 +433,12 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         match self.cur_kind() {
             Kind::LCurly => self.parse_qml_braced_value(),
             Kind::If | Kind::Switch | Kind::Try | Kind::With => {
-                QmlBindingValue::Statement(self.context_add(Context::Return, |p| {
+                let outer = self.sugar.binding.replace(self.cur_start());
+                let statement = self.context_add(Context::Return, |p| {
                     p.parse_statement_list_item(StatementContext::StatementList)
-                }))
+                });
+                self.sugar.binding = outer;
+                QmlBindingValue::Statement(statement)
             }
             Kind::LBrack if objects && self.qml_at_object_list() => {
                 self.bump_any();

@@ -236,6 +236,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
 
         let kind = self.cur_kind();
         match kind {
+            // Ljós: `match (subject) {`, see `qml/sugar.rs`.
+            Kind::Ident if self.at_sugar_match() => self.parse_sugar_match(),
             Kind::Ident => self.parse_identifier_expression(), // fast path, keywords are checked at the end
             // ArrayLiteral
             Kind::LBrack => self.parse_array_expression(),
@@ -1330,6 +1332,13 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             // re-lex for `>=` `>>` `>>>`
             // This is needed for jsx `<div>=</div>` case
             let kind = self.re_lex_right_angle();
+
+            // Ljós: `x is pattern`, at the precedence of `<` (see `qml/sugar.rs`).
+            if self.at_sugar_is() && Precedence::Compare > min_precedence {
+                lhs = self.parse_sugar_is(lhs_start, lhs);
+                last_operand_precedence = Some(Precedence::Compare);
+                continue;
+            }
 
             let Some(left_precedence) = kind_to_precedence(kind) else { break };
 
