@@ -1636,9 +1636,12 @@ wrap_permission_handler! {
             requested_permissions: u32,
             callback: Option<&mut MediaAccessCallback>,
         ) -> c_int {
-            let (Some(callback), Some(frame)) = (callback, frame) else {
+            let Some(callback) = callback else {
                 return 0;
             };
+            // A question with no frame is still the view's; only the page
+            // going refuses it.
+            let frame = frame.map(|f| frame_id(f)).unwrap_or_default();
             let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
             let r = requested_permissions;
             let event = if r & (DESKTOP_AUDIO | DESKTOP_VIDEO) != 0 {
@@ -1664,7 +1667,7 @@ wrap_permission_handler! {
                 Asked::Media {
                     callback: callback.clone(),
                     flags: r,
-                    frame: frame_id(frame),
+                    frame,
                 },
             );
             self.shared.sink.send(event);
