@@ -693,27 +693,39 @@ fn a_module_of_another_directory_says_where_its_importers_were_looked_for() {
     assert_eq!(read(dir.path(), "app/Main.qml"), MAIN_PAD);
 }
 
-/// An importer that cannot be written: the importers written before it
-/// get their text back and the module its name, so nothing names a file
-/// that is not there.
+/// An importer whose write fails part way, as on a full disk: it and the
+/// importers written before it get their text back, and the module its
+/// name, so nothing names a file that is not there.
+#[cfg(unix)]
 #[test]
 fn an_importer_it_cannot_write_leaves_every_file_as_it_was() {
-    use std::os::unix::fs::PermissionsExt;
     let dir = tempfile::tempdir().unwrap();
     project(dir.path());
-    // `Main.qml` is written first, in the order of the paths.
-    std::fs::set_permissions(
-        dir.path().join("lib/line.ts"),
-        std::fs::Permissions::from_mode(0o444),
-    )
-    .unwrap();
-    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "lib"]);
-    assert_eq!(status, 2, "{out}{err}");
+    // `lib/line.ts` is written last, in the order of the paths. It holds
+    // 1024 bytes, the most the limit below lets a file hold, so its new
+    // text, a byte longer, is cut off after its first 1024.
+    let line = format!("{LINE}{}\n", "/".repeat(1024 - LINE.len() - 1));
+    assert_eq!(line.len(), 1024);
+    write(dir.path(), "lib/line.ts", &line);
+    // bash's `ulimit -f` counts 1024-byte blocks. With SIGXFSZ ignored, a
+    // write past the limit fails with EFBIG rather than ending the process.
+    let run = Command::new("bash")
+        .arg("-c")
+        .arg("trap '' XFSZ; ulimit -f 1; exec \"$0\" migrate --write lib")
+        .arg(env!("CARGO_BIN_EXE_ljos"))
+        .current_dir(dir.path())
+        .output()
+        .expect("bash runs");
+    let (out, err) = (
+        String::from_utf8_lossy(&run.stdout),
+        String::from_utf8_lossy(&run.stderr),
+    );
+    assert_eq!(run.status.code(), Some(2), "{out}{err}");
     assert!(err.contains("lib/line.ts: "), "{err}");
     assert!(!out.contains("renamed"), "{out}");
     assert_eq!(read(dir.path(), "lib/size.ts"), SIZE);
     assert!(!dir.path().join("lib/size.lts").exists());
     assert_eq!(read(dir.path(), "Main.qml"), MAIN_PAD);
     assert_eq!(read(dir.path(), "lib/Pad.qml"), PAD);
-    assert_eq!(read(dir.path(), "lib/line.ts"), LINE);
+    assert_eq!(read(dir.path(), "lib/line.ts"), line);
 }

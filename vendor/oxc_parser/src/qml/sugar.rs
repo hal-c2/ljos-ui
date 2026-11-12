@@ -28,7 +28,9 @@
 //! name, so a guard after a binding sees it. With no `default`, the arrow
 //! ends `return $nomatch(s as never)`. `x is p` is `(TEST(p, x))`, and its
 //! bindings are `let`s (a `var` pattern's, `var`s) declared at the start of
-//! the statement that holds it, assigned where the test reaches them. `$is`
+//! the statement that holds it, assigned where the test reaches them; in a
+//! `switch`'s clauses, which a jump enters at any of them, at the start of
+//! the statement that holds the `switch`. `$is`
 //! and `$nomatch` are the runtime's (see DIALECT.md §4.18).
 
 use std::fmt::Write as _;
@@ -96,6 +98,12 @@ pub(crate) struct Sugar {
     /// For each block being read, outermost first, where its names start
     /// in `declared`.
     pub blocks: Vec<usize>,
+    /// Where the clauses of the `switch` being read declare what an `is`
+    /// binds, and how many blocks deep they are. The clauses are one scope
+    /// that a jump enters at any of them, so a `let` in one would be in its
+    /// dead zone in the others: it goes before the `switch`, at the item
+    /// that holds it, its label too.
+    pub switch: Option<(Option<u32>, usize)>,
 }
 
 /// A pattern as it was read.
@@ -242,6 +250,26 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
     fn sugar_error(&mut self, message: &'static str, span: Span) {
         self.error(diagnostics::qml(message, span));
+    }
+
+    /// Where an `is` read now declares what it binds: the start of the item
+    /// that holds it, or, in a `switch`'s clauses, of the one that holds
+    /// the `switch`.
+    pub(crate) fn sugar_declare_at(&self) -> Option<u32> {
+        match self.sugar.switch {
+            Some((at, depth)) if depth == self.sugar.blocks.len() => at,
+            _ => self.sugar.item,
+        }
+    }
+
+    /// Reads a `switch`'s clauses, whose `is` bindings are declared before
+    /// it, in the block around it.
+    pub(crate) fn sugar_switch<T>(&mut self, read: impl FnOnce(&mut Self) -> T) -> T {
+        let at = (self.sugar_declare_at(), self.sugar.blocks.len());
+        let outer = self.sugar.switch.replace(at);
+        let out = read(self);
+        self.sugar.switch = outer;
+        out
     }
 
     /// Reads a block, whose names an `is` declares once.
@@ -414,7 +442,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                     "an `is` that binds a name tests a name: give the value one first, as in `const r = …; if (r is { let x })`",
                     pat.span(),
                 );
-            } else if self.sugar.item.is_none() || self.sugar.item == self.sugar.binding {
+            } else if self.sugar_declare_at().is_none_or(|at| Some(at) == self.sugar.binding) {
                 self.sugar_error(
                     "an `is` that binds a name is part of a statement, where what it binds is declared: test with `match` here",
                     pat.span(),
@@ -468,8 +496,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
         if !names.is_empty()
             && bare
-            && let Some(item) = self.sugar.item
-            && self.sugar.item != self.sugar.binding
+            && let Some(item) = self.sugar_declare_at()
+            && Some(item) != self.sugar.binding
         {
             // A `let` or `const` of the pattern is a `let` of the block
             // around the statement, assigned where the test reaches it, and

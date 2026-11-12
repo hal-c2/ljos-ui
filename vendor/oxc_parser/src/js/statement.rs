@@ -762,8 +762,9 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // and report only the first duplicate, all in the single parsing pass.
         let mut first_default: Option<Span> = None;
         let mut reported_duplicate = false;
-        // Ljós: a `switch`'s clauses are one block (see `qml/sugar.rs`).
-        let cases = self.sugar_list(|p| p.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
+        // Ljós: what an `is` in a clause binds is declared before the
+        // `switch` (see `qml/sugar.rs`).
+        let cases = self.sugar_switch(|p| p.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
             let case = p.parse_switch_case();
             if case.test.is_none() {
                 match first_default {
