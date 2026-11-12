@@ -84,6 +84,27 @@ fn files_migrated_checked(w: &mut LjosWorld) -> StepResult {
     })
 }
 
+// A file as `ljos migrate --write` left it, which the check then read. A
+// file given with `Given the file` keeps the spaces it is indented by in
+// the scenario, so both are read without them.
+#[then(regex = r#"^the migrated file "([^"]+)" is:$"#)]
+fn migrated_file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
+    use crate::author::{same_text, text_of};
+    let want = text_of(&docstring(step)?);
+    w.each_test_report(
+        |report| match report.files.iter().find(|(n, _)| *n == name) {
+            Some((_, text)) if same_text(&text_of(text), &want) => Ok(()),
+            Some((_, text)) => Err(format!("the file {name:?} is:\n{text}")),
+            None => {
+                let names: Vec<&str> = report.files.iter().map(|(n, _)| n.as_str()).collect();
+                Err(format!(
+                    "no file {name:?} after the migration; there are {names:?}"
+                ))
+            }
+        },
+    )
+}
+
 // `ljos check --stats`: the coverage tables after what it finds.
 #[when("the files are checked with statistics")]
 fn files_checked_stats(w: &mut LjosWorld) -> StepResult {
