@@ -416,6 +416,38 @@ Feature: A web page in a WebEngineView
       """
     When 2 seconds pass
     Then the property "seen" of "view" is "1 -3 net::ERR_ABORTED 1"
+    And the log has no warning matching "gave up waiting"
+
+  # A load that stops shows what it got that far; time passing waits for
+  # that picture, as it does for a page that loaded, and for no more.
+  # How long time passing waits is Ljós's own: Qt's offscreen view is not
+  # drawn the same way.
+  @ljos-only @api-QtWebEngine.WebEngineView.stop
+  Scenario: A page stopped while it loads is drawn as far as it got
+    Given the web server serves the text file "stopping.html":
+      """
+      <!doctype html>
+      <html><head><title>Stopping</title></head>
+      <body style="margin:0; background:#00ff00">
+      <script>window.stop()</script>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        url: "$SERVER/stopping.html"
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status
+      }
+      """
+    When 1 millisecond passes
+    Then the property "seen" of "view" is "0 1"
+    And the pixel at 50, 50 of the window is "#00ff00"
+    And the log has no warning matching "gave up waiting"
 
   @api-QtWebEngine.WebEngineView.goBack @api-QtWebEngine.WebEngineView.goForward @api-QtWebEngine.WebEngineView.canGoBack @api-QtWebEngine.WebEngineView.canGoForward
   Scenario: The view goes back and forward through the pages it showed
