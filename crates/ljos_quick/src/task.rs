@@ -472,8 +472,13 @@ const DRIVER: &str = r#"(function (helper) {
     const controller = typeof AbortController === "function" ? new AbortController() : plainController();
     // Called in a microtask, after `begin` has kept this run's abort: a
     // run that starts the Task again, or changes its args, as it starts
-    // aborts this one rather than a run with nothing to abort it by.
-    Promise.resolve().then(() => run(...given, controller.signal)).then(
+    // aborts this one rather than a run with nothing to abort it by. A
+    // run aborted before its microtask (args changed twice in one turn,
+    // or its item gone) is never called.
+    Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return run(...given, controller.signal);
+    }).then(
       (value) => helper.settle(number, true, value),
       (error) => helper.settle(number, false, error),
     );

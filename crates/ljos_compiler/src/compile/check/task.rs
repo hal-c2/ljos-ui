@@ -115,10 +115,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             return;
         };
         let mut params = sig.params.to_vec();
-        if params
-            .last()
-            .is_some_and(|last| matches!(self.arena.kind(last.ty), Kind::Web(Web::AbortSignal)))
-        {
+        // The signal is the last parameter, optional or not: the run is
+        // given it after the arguments.
+        if params.last().is_some_and(|last| {
+            let ty = self.arena.without_undefined(last.ty);
+            matches!(self.arena.kind(ty), Kind::Web(Web::AbortSignal))
+        }) {
             params.pop();
         }
         let value = match self.arena.kind(sig.ret) {
@@ -199,7 +201,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// A call of `object.name`: when it is a typed Task's `start`, it is
     /// given none of the run's arguments, so it runs with `args`, or all
-    /// it needs. Its type has each parameter optional, for `start()`; what
+    /// of them, optional ones too. Its type has each parameter optional, for `start()`; what
     /// is given is held to them there.
     ///
     /// DECISION: told apart by what is called, not by `start`'s type: a
@@ -218,7 +220,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let Some(task) = self.tasks_typed.get(&index) else {
             return;
         };
-        let needs = task.params.iter().filter(|p| !p.optional).count();
+        // Every parameter, optional ones too, as for `args`: the signal
+        // comes after what is given, so a parameter left out takes it.
+        let needs = task.params.len();
         let given = call.arguments.len();
         let spread = call
             .arguments
@@ -235,7 +239,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.report(
             Code::TsAssignType,
             format!(
-                "`start` is given none of `run`'s arguments or all it needs, {needs}, and is given {given}"
+                "`start` is given none of `run`'s {needs} arguments before its signal, or all of them, and is given {given}"
             ),
             span,
         );
