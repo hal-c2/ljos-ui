@@ -857,6 +857,29 @@ declare const App: {
     quit(): void;
 };
 
+/** A Task's (docs/DIALECT.md §4.19), typed from its run: what the run
+ * takes before its signal is what `args` holds, and what its promise gives
+ * is what the Task gives. `ljos check --tsc` makes each Task of a file one. */
+type __TaskArgs<F> = F extends (...args: infer A) => unknown
+    ? (A extends [...infer B, AbortSignal] ? B : A)
+    : unknown[];
+type __TaskValue<F> = F extends (...args: never) => infer R ? Awaited<R> : unknown;
+type __TaskState<T> =
+    | { readonly status: \"initial\" }
+    | { readonly status: \"pending\"; readonly value: T | undefined }
+    | { readonly status: \"done\"; readonly value: T }
+    | { readonly status: \"failed\"; readonly error: unknown; readonly value: T | undefined };
+interface __TaskOf<A extends unknown[], T>
+    extends Omit<Task, \"args\" | \"state\" | \"status\" | \"value\" | \"done\" | \"start\" | \"abort\"> {
+    args: A;
+    readonly state: __TaskState<T>;
+    readonly status: __TaskState<T>[\"status\"];
+    readonly value: T | undefined;
+    done(value: T): void;
+    start(...args: Partial<A>): void;
+    abort(): void;
+}
+
 interface String {
     /** A colour's: its channels, from 0 to 1. */
     readonly r: number;

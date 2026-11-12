@@ -133,6 +133,7 @@ pub fn extract(
         objects: Vec::new(),
         signals: HashMap::new(),
         namespaces: Vec::new(),
+        tasks: HashMap::new(),
     };
     // A module the file imports is imported as it is named, so that its
     // values and its types are TypeScript's to check. The names are known
@@ -225,6 +226,9 @@ struct Writer<'w, 'a, 'p> {
     signals: HashMap<(usize, String), String>,
     /// The names the file imports TypeScript modules as.
     namespaces: Vec<String>,
+    /// The constant each Task's `run` is, by object (docs/DIALECT.md
+    /// §4.19): the Task is typed from it.
+    tasks: HashMap<usize, String>,
 }
 
 impl<'a> Writer<'_, 'a, '_> {
@@ -261,6 +265,13 @@ impl<'a> Writer<'_, 'a, '_> {
             Kind::Builtin(ty) => self.api.name_of(ty.0).map(str::to_string),
             Kind::Component(_) => None,
         }
+    }
+
+    /// Whether the object `index` is made of Ljos.Core's `Task`.
+    fn is_task(&self, index: usize) -> bool {
+        self.native_type(index).is_some_and(|ty| {
+            ty.name == "Task" && qt_types::module("Ljos.Core").is_some_and(|core| core.has(ty))
+        })
     }
 
     fn native_type(&self, index: usize) -> Option<&'static qt_types::Type> {
@@ -368,6 +379,12 @@ impl<'a> Writer<'_, 'a, '_> {
             at: self.at(object.span.start),
             ..Declared::default()
         };
+        // Named before the members are written: a handler of `done` written
+        // before `run` takes what the run gives.
+        if self.is_task(index) && task_run(object).is_some() {
+            let constant = self.fresh("r");
+            self.tasks.insert(index, constant);
+        }
         self.members(index, object, &[], &mut declared);
         self.objects.push(declared);
     }
@@ -524,6 +541,11 @@ impl<'a> Writer<'_, 'a, '_> {
         {
             return Some(String::new());
         }
+        if signal == "done"
+            && let Some(run) = self.tasks.get(&object)
+        {
+            return Some(format!("value: __TaskValue<typeof {run}>"));
+        }
         let ty = self.native_type(object)?;
         let found = ty.signal(signal)?;
         Some(self.api.parameters(found, ty))
@@ -613,6 +635,21 @@ impl<'a> Writer<'_, 'a, '_> {
                 }
                 self.out.line("}", name_at);
             }
+            None if path == ["run"] && self.tasks.contains_key(&owner) => {
+                // A Task's run is a constant, as a QML function is, so that
+                // the Task's interface can be typed from it.
+                let Ok(analysis) = js::analyze(text, form, &[]) else {
+                    return;
+                };
+                let constant = self.tasks[&owner].clone();
+                self.out
+                    .line(&format!("const {constant} = (() => {{"), name_at);
+                self.locals(&analysis.free, span.start, &[]);
+                self.out.line("    return (", name_at);
+                self.out.verbatim(text, at);
+                self.out.line(");", name_at);
+                self.out.line("})();", name_at);
+            }
             None => {
                 let Ok(analysis) = js::analyze(text, form, &[]) else {
                     return;
@@ -667,9 +704,13 @@ impl<'a> Writer<'_, 'a, '_> {
             column: declared.at.1,
             verbatim: false,
         });
-        let (extends, open) = match self.native(index) {
-            Some(native) => (native, false),
-            None => ("QtObject".to_string(), true),
+        let (extends, open) = match (self.native(index), self.tasks.get(&index)) {
+            (Some(_), Some(run)) => (
+                format!("__TaskOf<__TaskArgs<typeof {run}>, __TaskValue<typeof {run}>>"),
+                false,
+            ),
+            (Some(native), None) => (native, false),
+            (None, _) => ("QtObject".to_string(), true),
         };
         // A member the object declares again shadows the one its type has,
         // whatever that one holds (`property Card top` beside Qt's table,
@@ -727,4 +768,17 @@ impl<'a> Writer<'_, 'a, '_> {
         self.out
             .line(&format!("declare const __o{index}: __O{index};"), origin);
     }
+}
+
+/// The `run` a Task is written with, when it is a script.
+fn task_run<'o, 'a>(object: &'o QmlObject<'a>) -> Option<&'o Expression<'a>> {
+    object.members.iter().find_map(|member| match member {
+        QmlMember::Binding(binding) if binding.name.as_simple() == Some("run") => {
+            match &binding.value {
+                QmlBindingValue::Expression(expression) => Some(expression),
+                _ => None,
+            }
+        }
+        _ => None,
+    })
 }
