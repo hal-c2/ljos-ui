@@ -42,8 +42,8 @@ const NOT_COUNTED: &str =
     "the wakes were not counted; use `When the wakes of the application's threads are counted`";
 
 /// The first line of a doc string, when it only says what the text is.
-const LABELS: [&str; 8] = [
-    "qml", "xml", "json", "text", "markdown", "toml", "gherkin", "sh",
+const LABELS: [&str; 10] = [
+    "qml", "xml", "json", "text", "markdown", "toml", "gherkin", "sh", "ts", "js",
 ];
 
 /// A doc string as the file or the text it stands for: without its label
@@ -106,14 +106,15 @@ impl Ran {
     }
 }
 
-/// Whether two texts are the same but for the line ends a doc string
-/// cannot carry: the last one, and spaces before one.
-/// Whether a file a step read is the file a doc string gives: the file is
-/// read without the spaces it is indented by, and every line of it counts.
+/// Whether a file a step read is the file a doc string gives, the doc
+/// string as the scenario has it: the doc string loses its label and its
+/// indent, and the file keeps every line and every space it has.
 pub(crate) fn same_file(file: &str, doc: &str) -> bool {
-    same_text(&inspector::dedent(file), &text_of(doc))
+    same_text(file, &text_of(doc))
 }
 
+/// Whether two texts are the same but for the line ends a doc string
+/// cannot carry: the last one, and spaces before one.
 pub(crate) fn same_text(actual: &str, want: &str) -> bool {
     let lines = |text: &str| -> Vec<String> {
         text.trim_end_matches('\n')
@@ -1493,12 +1494,22 @@ impl Slot {
 mod tests {
     use super::*;
 
-    // A file whose first line is a doc string's label keeps that line.
+    // A file whose first line is a label word keeps that line, and the
+    // doc string loses its own label once: `ts`, then a real line `text`.
     #[test]
     fn a_file_is_compared_whole_and_only_the_doc_string_loses_its_label() {
-        let file = "    text\n    shown: 1\n";
-        assert!(same_file(file, "qml\n    text\n    shown: 1"));
-        assert!(!same_file(file, "qml\n    shown: 1"));
+        let file = "text\nshown: 1\n";
+        assert!(same_file(file, "ts\n    text\n    shown: 1"));
+        assert!(!same_file(file, "ts\n    shown: 1"));
+        assert!(!same_file("shown: 1\n", "ts\n    text\n    shown: 1"));
+    }
+
+    // Only the doc string is read without its indent: a file that gained
+    // spaces on every line is not the file the doc string gives.
+    #[test]
+    fn a_file_keeps_its_indentation() {
+        assert!(!same_file("    a\n    b\n", "qml\n    a\n    b"));
+        assert!(same_file("a\n  b\n", "qml\n    a\n      b"));
     }
 
     #[test]
