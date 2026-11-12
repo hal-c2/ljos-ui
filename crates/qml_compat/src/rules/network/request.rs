@@ -16,7 +16,8 @@
 //!
 //! DECISION: every line stays where it was, as with every edit of the pass:
 //! the statements `fetch` gathers are emptied, not removed, so a lowered
-//! file has a blank line for each.
+//! run's findings point at the file as written, and `ljos migrate --write`
+//! takes the emptied lines out, as it does the pass's other emptied lines.
 //! DECISION: `setRequestHeader`s become an object of their names where each
 //! name is a different string, and a list of pairs otherwise, which joins
 //! the values of a name as the request did.

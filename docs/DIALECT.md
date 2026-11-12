@@ -2362,10 +2362,11 @@ names from Ljós's declarations, not lib.dom, so what the subset leaves out
 DECISION: an `async` function's written return type is a `Promise<T>`, and
 what it returns is checked against `T` once awaited, as TypeScript does.
 
-DECISION: `ljos migrate` keeps every line of a request it writes as
-`fetch`, as it does every edit: the statements the call gathers leave
-blank lines, and a request whose address, header or body is written
-over lines keeps the file, as the call it gathers them into is one line.
+DECISION: the pass keeps every line of a request it writes as `fetch`,
+as it does every edit: the statements the call gathers are emptied, and
+`ljos migrate --write` takes the emptied lines out. A request whose
+address, header or body is written over lines keeps the file, as the call
+it gathers them into is one line.
 Its `fetch(…).catch(() => Response.error()).then(async (http: Response) =>
 {…})` gives the handler a reply even where the request could not be made,
 whose `status` is 0 and whose body is empty, as the request's were.
