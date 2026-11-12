@@ -132,6 +132,21 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         &mut self,
         stmt_ctx: StatementContext,
     ) -> Statement<'a> {
+        // Ljós: an `is` that binds declares the names at the start of the
+        // item that holds it (see `qml/sugar.rs`).
+        if stmt_ctx == StatementContext::StatementList {
+            let outer = self.sugar.item.replace(self.cur_start());
+            let statement = self.parse_statement_list_item_unsugared(stmt_ctx);
+            self.sugar.item = outer;
+            return statement;
+        }
+        self.parse_statement_list_item_unsugared(stmt_ctx)
+    }
+
+    fn parse_statement_list_item_unsugared(
+        &mut self,
+        stmt_ctx: StatementContext,
+    ) -> Statement<'a> {
         let has_no_side_effects_comment =
             self.lexer.trivia_builder.previous_token_has_no_side_effects_comment();
         let pure_comment_index = self.lexer.trivia_builder.previous_token_has_pure_comment();
