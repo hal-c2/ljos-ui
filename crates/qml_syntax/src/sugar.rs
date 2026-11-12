@@ -261,7 +261,7 @@ mod tests {
     fn a_match_on_an_expression_reads_it_once() {
         assert_eq!(
             lowered("f(match (a.b) { when 1: \"one\"; })\n"),
-            "f((($s = a.b) => { if ($s === 1) return \"one\"; return $nomatch($s as never);})())\n"
+            "f((() => { const $s = a.b; if ($s === 1) return \"one\"; return $nomatch($s as never);})())\n"
         );
     }
 
@@ -293,8 +293,74 @@ mod tests {
     fn an_is_with_a_binding_declares_it_before_the_statement() {
         assert_eq!(
             lowered("if (v is [let a, ...]) use(a)\n"),
-            "var a; if ((Array.isArray(v) && v.length >= 1 && ((a = v[0]), true))) use(a)\n"
+            "let a; if ((Array.isArray(v) && v.length >= 1 && ((a = v[0]), true))) use(a)\n"
         );
+    }
+
+    #[test]
+    fn a_block_declares_a_name_once_however_many_is_bind_it() {
+        assert_eq!(
+            lowered("{ if (a is let x) f(x)\nif (b is let x) f(x) }\nif (c is let x) f(x)\n"),
+            "{ let x; if ((((x = a), true))) f(x)\nif ((((x = b), true))) f(x) }\nlet x; if ((((x = c), true))) f(x)\n"
+        );
+    }
+
+    #[test]
+    fn a_var_pattern_is_declared_with_var() {
+        assert_eq!(
+            lowered("if (v is [let a, var b]) use(a, b)\n"),
+            "let a; var b; if ((Array.isArray(v) && v.length === 2 && ((a = v[0]), true) && ((b = v[1]), true))) use(a, b)\n"
+        );
+    }
+
+    #[test]
+    fn a_match_that_awaits_is_an_async_arrow_awaited() {
+        assert_eq!(
+            lowered("async function f() { return match (await g()) { when 1: 2; default: 3; } }\n"),
+            "async function f() { return (await (async () => { const $s = await g(); if ($s === 1) return 2; return 3;})()) }\n"
+        );
+    }
+
+    #[test]
+    fn a_match_that_yields_is_a_generator_delegated_to() {
+        assert_eq!(
+            lowered("function* f() { return match (yield 1) { when 1: yield 2; default: 3; } }\n"),
+            "function* f() { return (yield* (function* () { const $s = yield 1; if ($s === 1) return yield 2; return 3;}).apply(this, arguments)) }\n"
+        );
+    }
+
+    #[test]
+    fn an_is_that_yields_in_an_async_generator_is_an_async_generator() {
+        assert_eq!(
+            lowered("async function* f() { return (yield await a) is 1; }\n"),
+            "async function* f() { return (yield* (async function* () { const $s = (yield await a); return $s === 1}).apply(this, arguments)); }\n"
+        );
+    }
+
+    #[test]
+    fn a_yield_of_a_function_inside_a_match_is_not_the_match_s() {
+        assert_eq!(
+            lowered(
+                "function* f() { return match (a) { when 1: function* () { yield 2 }; default: 3; } }\n"
+            ),
+            "function* f() { return (() => { if (a === 1) return function* () { yield 2 }; return 3;})() }\n"
+        );
+    }
+
+    #[test]
+    fn a_super_in_a_match_that_yields_is_an_error_at_it() {
+        let text = "class A extends B { *f() { return match (super.x) { when 1: yield 2; default: 3; } } }\n";
+        let out = desugar(text);
+        let [error] = out.diagnostics.as_slice() else {
+            panic!("{:?}", out.diagnostics);
+        };
+        assert!(
+            error.to_string().contains("no `super` or `new.target`"),
+            "{error}"
+        );
+        // A `match` that does not yield is an arrow, which has the method's.
+        let text = "class A extends B { *f() { return match (super.x) { when 1: 2; default: new.target; } } }\n";
+        assert!(desugar(text).diagnostics.is_empty());
     }
 
     #[test]

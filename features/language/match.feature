@@ -201,6 +201,103 @@ Feature: Choosing a value with match, and testing one with is
         """
       Then the property "said" of "root" is "hi 200"
 
+    Scenario: A match and an is may await, in the subject and in an arm, and read it in order
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          property var size: async function (key) {
+            const log = []
+            const n = match (await Promise.resolve(key)) {
+              when "s": 4;
+              when "m": (log.push("arm"), await Promise.resolve(8));
+              default: 0;
+            }
+            log.push("after")
+            const ok = (await Promise.resolve({ status: 200 })) is { status: 200 }
+            return `${n} ${ok} ${log.join(",")}`
+          }
+          Component.onCompleted: size("m").then(v => said = v)
+        }
+        """
+      When 10 milliseconds pass
+      Then the property "said" of "root" is "8 true arm,after"
+
+    Scenario: A match and an is in a generator yield from the subject and an arm, and the match is the arm's value
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          property var steps: function* () {
+            const n = match (yield 1) {
+              when "a": (yield arguments[0] + this.k) + 1;
+              default: 0;
+            }
+            const ok = (yield n) is "b"
+            return `${n} ${ok}`
+          }
+          Component.onCompleted: {
+            const run = steps.call({ k: 3 }, 10)
+            const seen = [run.next().value, run.next("a").value, run.next(5).value]
+            const last = run.next("b")
+            said = `${seen.join(" ")} | ${last.value} ${last.done}`
+          }
+        }
+        """
+      Then the property "said" of "root" is "1 13 6 | 6 true true"
+
+    Scenario: A match and an is in an async generator await and yield, and the match is the arm's value
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          property var steps: async function* () {
+            const n = match (yield await Promise.resolve(1)) {
+              when "a": (yield arguments[0] + this.k) + await Promise.resolve(1);
+              default: 0;
+            }
+            const ok = (yield await Promise.resolve(n)) is "b"
+            return `${n} ${ok}`
+          }
+          Component.onCompleted: (async () => {
+            const run = steps.call({ k: 3 }, 10)
+            const seen = [(await run.next()).value, (await run.next("a")).value, (await run.next(5)).value]
+            const last = await run.next("b")
+            said = `${seen.join(" ")} | ${last.value} ${last.done}`
+          })()
+        }
+        """
+      When 10 milliseconds pass
+      Then the property "said" of "root" is "1 13 6 | 6 true true"
+
+    Scenario: Two is in one block bind one name, and an inner block's is shadows an outer let
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var a: ({ body: "a" })
+          property var b: ({ body: "b" })
+          property string said: ""
+          function read() {
+            let body = "outer"
+            {
+              if (a is { let body }) said += body
+              if (b is { let body }) said += body
+            }
+            said += " " + body
+          }
+          Component.onCompleted: read()
+        }
+        """
+      Then the property "said" of "root" is "ab outer"
+
     Scenario: A match whose arms are calls is a statement, after a line with no semicolon
       Given the QML:
         """qml
@@ -393,6 +490,35 @@ Feature: Choosing a value with match, and testing one with is
         ljos: 1 errors
         """
 
+    Scenario: A name is binds is its block's, so the block may not declare it too
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function first(x: number): number {
+            const y = 1;
+            if (x is let y) {
+              return y;
+            }
+            return 0;
+          }
+          function second(reply: { body: string }, body: string): string {
+            if (reply is { let body }) {
+              return body;
+            }
+            return "";
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:26: error: `y` is a name of this block already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        Gauge.qml:11:32: error: `body` is a parameter already, and an `is` declares what it binds in the block around it: bind another name [ts-is-binding]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
+        """
+
   Rule: What the proposal leaves out is an error that says so
 
     Scenario: A name that is not in scope, an extractor and a relational pattern are errors
@@ -416,6 +542,24 @@ Feature: Choosing a value with match, and testing one with is
         Gauge.qml:4:57: error: `picked` is not defined; to bind the value, write `let picked` [ts-no-any]
         1 files, 4 errors, 0 warnings
         ljos: 4 errors
+        """
+
+    Scenario: A new.target in a match that yields is an error, as the generator it is lowered to has its own
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function* steps(): Generator<number, void, number> {
+            const n = match (yield 1) { when 1: new.target; default: 0; };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:49: error: a `match` or `is` that yields is lowered to a generator, which has no `super` or `new.target` of the function around it: read it into a name before, as in `const base = super.size;` [syntax]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
         """
 
     Scenario: and and or mixed need parentheses

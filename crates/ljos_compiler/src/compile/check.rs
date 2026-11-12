@@ -285,6 +285,10 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     /// The facts below it were found outside the function being walked:
     /// only those of a `const` hold inside it.
     floor: usize,
+    /// Where the parameters of the function being walked start in
+    /// `locals`, until its body's statements are walked: what an `is` in
+    /// that block declares may not be one of them.
+    params: Option<usize>,
     /// The facts assignments made, for where branches meet.
     assigned: Vec<Fact<'a>>,
     fns: Vec<FnCtx>,
@@ -327,6 +331,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             inferred: Vec::new(),
             facts: Vec::new(),
             floor: 0,
+            params: None,
             assigned: Vec::new(),
             fns: Vec::new(),
             own: HashMap::new(),
@@ -1296,12 +1301,14 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         let facts = self.facts.len();
         let floor = self.floor;
         let assigned = self.assigned.len();
+        let params = self.params.replace(locals);
         self.floor = facts;
         walk(self);
         self.locals.truncate(locals);
         self.facts.truncate(facts);
         self.assigned.truncate(assigned);
         self.floor = floor;
+        self.params = params;
     }
 
     // Names.

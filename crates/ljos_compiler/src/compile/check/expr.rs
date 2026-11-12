@@ -270,12 +270,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let inner = match &p.initializer {
                     Some(initializer) => {
                         let given = checker.expr(initializer, Some(param.ty));
-                        // The desugar holds a `match`'s subject in a
-                        // parameter's default; it is the subject's own
-                        // type, which a match on `"dot" | "dash"` covers.
-                        if param.ty == Ty::ERROR && !widen {
-                            given
-                        } else if param.ty == Ty::ERROR {
+                        if param.ty == Ty::ERROR {
                             checker.arena.widen(given)
                         } else {
                             param.ty
@@ -2084,6 +2079,30 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let ty = self.expr(&inner.argument, None);
                 web::awaited(&mut self.arena, ty)
             }
+            // A `match` or `is` that yields is a generator the desugar
+            // delegates to, `(function* () { … }).apply(this, arguments)`:
+            // its arms are checked, and it is what it returns, as the arrow
+            // of one that does not yield is.
+            Expression::YieldExpression(inner)
+                if inner.delegate
+                    && self.desugared(inner.span.start)
+                    && let Some(Expression::CallExpression(call)) = &inner.argument
+                    && let Expression::StaticMemberExpression(member) = &call.callee
+                    && let Expression::FunctionExpression(function) =
+                        member.object.without_parentheses()
+                    && let Some(body) = &function.body =>
+            {
+                self.nested += 1;
+                let f = self.callable(
+                    &function.params,
+                    None,
+                    Body::Statements(&body.statements),
+                    None,
+                    false,
+                );
+                self.nested -= 1;
+                self.sig_ret(f)
+            }
             _ => Ty::ERROR,
         }
     }
@@ -3231,12 +3250,56 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// Walks statements in a scope; whether the end of them is reached.
     pub(super) fn stmts(&mut self, statements: &[Statement<'a>]) -> bool {
+        let params = self.params.take();
         let locals = self.locals.len();
         // `let`, `const`, functions and types are the block's before their
-        // declarations run.
+        // declarations run. What an `is` declares is bound where the `is`
+        // is true.
         for statement in statements {
-            if let Some(declaration) = statement.as_declaration() {
+            if let Some(declaration) = statement.as_declaration()
+                && !matches!(statement, Statement::VariableDeclaration(d) if self.declared_by_is(d))
+            {
                 self.bind_ahead(declaration);
+            }
+        }
+        // A `let` an `is` declares is the block's, as one written is: a
+        // name the block declares itself, or a parameter where the block is
+        // a function's, would be declared twice, which does not load.
+        for statement in statements {
+            let Statement::VariableDeclaration(declaration) = statement else {
+                continue;
+            };
+            if declaration.kind != VariableDeclarationKind::Let || !self.declared_by_is(declaration)
+            {
+                continue;
+            }
+            for declarator in &declaration.declarations {
+                let BindingPattern::BindingIdentifier(id) = &declarator.id else {
+                    continue;
+                };
+                let name = id.name.as_str();
+                let own = self.locals[locals..]
+                    .iter()
+                    .any(|local| local.name == name && local.binding != Binding::Type);
+                let param = params.is_some_and(|from| {
+                    self.locals[from..locals]
+                        .iter()
+                        .any(|local| local.name == name && local.binding == Binding::Param)
+                });
+                if own || param {
+                    let what = if param {
+                        "a parameter"
+                    } else {
+                        "a name of this block"
+                    };
+                    self.report(
+                        Code::TsIsBinding,
+                        format!(
+                            "`{name}` is {what} already, and an `is` declares what it binds in the block around it: bind another name"
+                        ),
+                        id.span,
+                    );
+                }
             }
         }
         let mut live = true;
@@ -3335,12 +3398,31 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
+    /// Whether `declaration` is the `let x;` (or, for a `var` pattern,
+    /// `var x;`) the desugar writes before a statement whose `is` binds
+    /// `x`.
+    fn declared_by_is(&self, declaration: &VariableDeclaration<'a>) -> bool {
+        // Its names are the desugar's, written where the pattern names
+        // them; a `var` keeps the pattern's own keyword.
+        matches!(
+            declaration.kind,
+            VariableDeclarationKind::Let | VariableDeclarationKind::Var
+        ) && declaration.declarations.iter().all(|declarator| {
+            declarator.init.is_none() && self.desugared(declarator.id.span().start)
+        })
+    }
+
     pub(super) fn declaration(&mut self, declaration: &VariableDeclaration<'a>) {
-        // `var x;`, which the desugar writes before a statement whose `is`
-        // binds `x`.
-        if declaration.kind == VariableDeclarationKind::Var
-            && self.desugared(declaration.span.start)
-        {
+        if self.declared_by_is(declaration) {
+            if declaration.kind == VariableDeclarationKind::Var {
+                let start = declaration.span.start;
+                self.report(
+                    Code::TsNoVar,
+                    "`var` is the function's, wherever it is written; write `let` or `const`"
+                        .into(),
+                    Span::new(start, start + 3),
+                );
+            }
             for declarator in &declaration.declarations {
                 if let BindingPattern::BindingIdentifier(id) = &declarator.id {
                     self.bind(id.name.as_str(), Ty::NEVER, Binding::IsBound);
@@ -3384,7 +3466,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             let mut written = Vec::new();
                             self.fresh(init, &mut written);
                             if binding == Binding::Const {
+                                // The desugar's `const $s = subject;` is the
+                                // subject itself, as a name it tests is.
                                 if !written.is_empty()
+                                    && !self.desugared(declaration.span.start)
                                     && let BindingPattern::BindingIdentifier(id) = &declarator.id
                                 {
                                     let fresh = self.arena.union(written);

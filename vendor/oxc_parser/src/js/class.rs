@@ -399,11 +399,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     ///    `StatementList`[~Yield, +Await, ~Return]
     fn parse_class_static_block(&mut self, start: u32) -> ClassElement<'a> {
         self.bump_any(); // bump `static`
+        // Ljós: the block's `super` is the class's (`qml/sugar.rs`).
+        let supers = self.sugar.supers.len();
         let block = self.context(
             Context::Await | Context::NewTarget,
             Context::Yield | Context::Return,
             Self::parse_block,
         );
+        self.sugar.supers.truncate(supers);
         ClassElement::new_static_block(self.end_span(start), block.unbox().body, self)
     }
 
@@ -695,6 +698,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         let type_annotation = if self.is_ts { self.parse_ts_type_annotation() } else { None };
         // Initializer[+In, ?Yield, ?Await]opt
         // `new.target` is allowed in a class field initializer.
+        // Ljós: the initializer's `super` is the class's (`qml/sugar.rs`).
+        let supers = self.sugar.supers.len();
         let initializer = self.eat(Kind::Eq).then(|| {
             self.context(
                 Context::In | Context::NewTarget,
@@ -702,6 +707,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 Self::parse_assignment_expression_or_higher,
             )
         });
+        self.sugar.supers.truncate(supers);
 
         // Handle trailing `;` or newline
         let cur_token = self.cur_token();

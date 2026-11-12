@@ -621,3 +621,99 @@ fn a_file_put_back_beside_its_rows_module_is_lowered_again() {
     assert_eq!(read(dir.path(), "app/Main.qml"), main);
     assert_eq!(read(dir.path(), "app/Main.rows.ts"), rows);
 }
+
+// A `.ts` module that uses Ljós's `match`, so migrate renames it to
+// `.lts` (`ts-lts-syntax`), and the files that import it.
+const SIZE: &str = "export type Size = \"small\" | \"large\"\nexport function gap(size: Size): number {\n    return match (size) { when \"small\": 4; when \"large\": 8; }\n}\n";
+const LINE: &str =
+    "import { gap } from \"./size.ts\"\nexport const wide: number = gap(\"large\")\n";
+const PAD: &str = "import Ljos.Ui\nimport \"size.ts\" as Size\nItem { x: Size.gap(\"small\") }\n";
+const MAIN_PAD: &str =
+    "import Ljos.Ui\nimport \"lib/size.ts\" as Size\nItem { x: Size.gap(\"small\") }\n";
+
+fn project(dir: &Path) {
+    write(dir, "lib/size.ts", SIZE);
+    write(dir, "lib/line.ts", LINE);
+    write(dir, "lib/Pad.qml", PAD);
+    write(dir, "Main.qml", MAIN_PAD);
+}
+
+/// A directory named: its module is renamed, and so is the import of a
+/// file beside the directory, below the directory the command runs in.
+#[test]
+fn a_module_renamed_in_a_directory_is_renamed_in_the_files_beside_it_too() {
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "lib"]);
+    assert_eq!(status, 0, "{out}{err}");
+    assert!(
+        out.starts_with(
+            "renamed lib/size.ts to size.lts, and the imports that name it in Main.qml, lib/Pad.qml, lib/line.ts; files outside . were not looked in\n"
+        ),
+        "{out}"
+    );
+    assert!(!dir.path().join("lib/size.ts").exists());
+    assert_eq!(read(dir.path(), "lib/size.lts"), SIZE);
+    assert_eq!(
+        read(dir.path(), "lib/line.ts"),
+        LINE.replace("size.ts", "size.lts")
+    );
+    assert_eq!(
+        read(dir.path(), "lib/Pad.qml"),
+        PAD.replace("size.ts", "size.lts")
+    );
+    assert_eq!(
+        read(dir.path(), "Main.qml"),
+        MAIN_PAD.replace("size.ts", "size.lts")
+    );
+}
+
+/// Run where the module's project is not, the importers are looked for
+/// below the project alone, and the output says a file outside it was not
+/// read.
+#[test]
+fn a_module_of_another_directory_says_where_its_importers_were_looked_for() {
+    let dir = tempfile::tempdir().unwrap();
+    project(&dir.path().join("app"));
+    write(dir.path(), "tools/.keep", "");
+    let lib = dir.path().join("app/lib");
+    let module = lib.join("size.ts");
+    let (status, out, err) = ljos(
+        &dir.path().join("tools"),
+        &["migrate", "--write", module.to_str().unwrap()],
+    );
+    assert_eq!(status, 0, "{out}{err}");
+    let lib = lib.display();
+    assert!(
+        out.starts_with(&format!(
+            "renamed {lib}/size.ts to size.lts, and the imports that name it in {lib}/Pad.qml, {lib}/line.ts; files outside {lib} were not looked in\n"
+        )),
+        "{out}"
+    );
+    assert_eq!(read(dir.path(), "app/Main.qml"), MAIN_PAD);
+}
+
+/// An importer that cannot be written: the importers written before it
+/// get their text back and the module its name, so nothing names a file
+/// that is not there.
+#[test]
+fn an_importer_it_cannot_write_leaves_every_file_as_it_was() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    // `Main.qml` is written first, in the order of the paths.
+    std::fs::set_permissions(
+        dir.path().join("lib/line.ts"),
+        std::fs::Permissions::from_mode(0o444),
+    )
+    .unwrap();
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "lib"]);
+    assert_eq!(status, 2, "{out}{err}");
+    assert!(err.contains("lib/line.ts: "), "{err}");
+    assert!(!out.contains("renamed"), "{out}");
+    assert_eq!(read(dir.path(), "lib/size.ts"), SIZE);
+    assert!(!dir.path().join("lib/size.lts").exists());
+    assert_eq!(read(dir.path(), "Main.qml"), MAIN_PAD);
+    assert_eq!(read(dir.path(), "lib/Pad.qml"), PAD);
+    assert_eq!(read(dir.path(), "lib/line.ts"), LINE);
+}

@@ -34,6 +34,14 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         &mut self,
         in_ts_namespace_body: bool,
     ) -> (ArenaVec<'a, Directive<'a>>, ArenaVec<'a, Statement<'a>>) {
+        // Ljós: the block whose names an `is` declares (see `qml/sugar.rs`).
+        self.sugar_list(|p| p.parse_directives_and_statements_unsugared(in_ts_namespace_body))
+    }
+
+    fn parse_directives_and_statements_unsugared(
+        &mut self,
+        in_ts_namespace_body: bool,
+    ) -> (ArenaVec<'a, Directive<'a>>, ArenaVec<'a, Statement<'a>>) {
         let mut directives = ArenaVec::new_in(self);
         let mut statements = ArenaVec::new_in(self);
 
@@ -280,8 +288,10 @@ impl<'a, C: Config> ParserImpl<'a, C> {
     /// Section 14.2 Block Statement
     pub(crate) fn parse_block(&mut self) -> ArenaBox<'a, BlockStatement<'a>> {
         let start = self.cur_start();
-        let body = self.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
-            p.parse_statement_list_item(StatementContext::StatementList)
+        let body = self.sugar_list(|p| {
+            p.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
+                p.parse_statement_list_item(StatementContext::StatementList)
+            })
         });
         BlockStatement::boxed(self.end_span(start), body, self)
     }
@@ -752,7 +762,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
         // and report only the first duplicate, all in the single parsing pass.
         let mut first_default: Option<Span> = None;
         let mut reported_duplicate = false;
-        let cases = self.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
+        // Ljós: a `switch`'s clauses are one block (see `qml/sugar.rs`).
+        let cases = self.sugar_list(|p| p.parse_normal_list(Kind::LCurly, Kind::RCurly, |p| {
             let case = p.parse_switch_case();
             if case.test.is_none() {
                 match first_default {
@@ -765,7 +776,7 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 }
             }
             case
-        });
+        }));
         Statement::new_switch_statement(self.end_span(start), discriminant, cases, self)
     }
 
