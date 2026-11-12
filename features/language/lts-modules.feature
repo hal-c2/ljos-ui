@@ -178,6 +178,10 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
         property real w: Line.wide
       }
       """
+    And the file "tsconfig.json":
+      """json
+      { "extends": "./.ljos/tsconfig.base.json" }
+      """
     When the files are checked
     Then the check reports:
       """
@@ -237,6 +241,10 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
         property real gap: Size.gap
       }
       """
+    And the file "tsconfig.json":
+      """json
+      { "extends": "./.ljos/tsconfig.base.json" }
+      """
     When the files are checked
     Then the check reports:
       """
@@ -267,6 +275,10 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
         property real w: W.width(true)
       }
       """
+    And the file "tsconfig.json":
+      """json
+      { "extends": "./.ljos/tsconfig.base.json" }
+      """
     When the files are checked
     Then the check reports:
       """
@@ -294,6 +306,10 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
     And the file "size.lts":
       """ts
       export const margin: number = 4
+      """
+    And the file "tsconfig.json":
+      """json
+      { "extends": "./.ljos/tsconfig.base.json" }
       """
     When the files are checked
     Then the check reports:
@@ -324,6 +340,10 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       Item {
         property real w: W.width(true)
       }
+      """
+    And the file "tsconfig.json":
+      """json
+      { "extends": "./.ljos/tsconfig.base.json" }
       """
     When the files are checked
     Then the check reports:
