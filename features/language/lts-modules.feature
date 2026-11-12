@@ -183,7 +183,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: `--tsc` types the importer against the `.lts` module's declaration.
-  @backlog
   Scenario: TypeScript types a `.ts` module against the `.lts` module it imports
     Given the file "width.lts":
       """ts
@@ -195,7 +194,7 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
         }
       }
       """
-    And the file "line.ts":
+    And the file "line.ts" without its indentation:
       """ts
       import { type Width } from "./width.lts"
       export const wide: Width = 2
@@ -246,7 +245,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the declaration stock TypeScript reads for an `.lts` module.
-  @backlog
   Scenario: Checking emits a declaration for an `.lts` module in the generated directory
     Given the file "width.lts":
       """ts
@@ -312,9 +310,8 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the declaration is TypeScript's own emit, so an export needs its type.
-  @backlog
   Scenario: An `.lts` module's export without a declared type is an error
-    Given the file "width.lts":
+    Given the file "width.lts" without its indentation:
       """ts
       export function width(thick: boolean) {
         return match (thick) {
@@ -344,7 +341,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the tsconfig that lets stock TypeScript resolve `.lts` imports.
-  @backlog
   Scenario: A project with an `.lts` module and no tsconfig.json is told to get one
     Given the file "width.lts":
       """ts
@@ -371,7 +367,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the tsconfig that lets stock TypeScript resolve `.lts` imports.
-  @backlog
   Scenario: Migrating writes a tsconfig.json that extends the base
     Given the file "width.lts":
       """ts
@@ -405,7 +400,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the tsconfig that lets stock TypeScript resolve `.lts` imports.
-  @backlog
   Scenario: A tsconfig.json that does not extend the base is a warning
     Given the file "width.lts":
       """ts
@@ -438,7 +432,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the tsconfig that lets stock TypeScript resolve `.lts` imports.
-  @backlog
   Scenario: Migrating adds the base as the tsconfig.json's first key
     Given the file "width.lts":
       """ts
@@ -481,7 +474,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the tsconfig that lets stock TypeScript resolve `.lts` imports.
-  @backlog
   Scenario: Migrating puts the base last after the tsconfig.json's own extends
     Given the file "width.lts":
       """ts
@@ -521,7 +513,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: the tsconfig that lets stock TypeScript resolve `.lts` imports.
-  @backlog
   Scenario: Migrating appends the generated directory to the tsconfig.json's own rootDirs
     Given the file "width.lts":
       """ts
@@ -563,7 +554,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S7: no `.lts` module, no tsconfig to ask for.
-  @backlog
   Scenario: A project with no `.lts` module is not told about its tsconfig.json
     Given the file "width.ts":
       """ts

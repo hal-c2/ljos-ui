@@ -28,6 +28,7 @@ use ljos_compiler::{
 
 use crate::stdout::{out, outln};
 
+mod generated;
 mod lint;
 mod members;
 mod port;
@@ -86,6 +87,12 @@ pub struct Check {
     /// With `--port`: list at most this many missing items per module.
     #[arg(long, requires = "port", value_name = "N")]
     limit: Option<usize>,
+    /// The project's root, which `.ljos/` is written under: the
+    /// declarations of its `.lts` modules and the base its `tsconfig.json`
+    /// extends. Without it, the nearest directory up from the directories
+    /// with a `tsconfig.json`, else the deepest one they share.
+    #[arg(long, value_name = "DIR")]
+    project: Option<PathBuf>,
 }
 
 /// How a lint that is certain counts.
@@ -141,6 +148,7 @@ impl Check {
                 checked.project(dir, "")?;
             }
         }
+        generated::write(self.project.as_deref(), &self.dirs, &mut checked)?;
         for line in &checked.diagnostics {
             if !self.quiet || line.contains(": error: ") {
                 eprintln!("{line}");
@@ -313,6 +321,12 @@ impl Checked {
         if !lts.is_empty() {
             for module in ljos_compiler::module_clashes(dir)? {
                 modules.insert(module.key, module.diagnostics);
+            }
+            // DECISION: every `.lts` module is checked, imported or not:
+            // each has a declaration to write, which needs what is wrong
+            // with it said.
+            for module in ljos_compiler::lts_modules(dir)? {
+                modules.entry(module.key).or_insert(module.diagnostics);
             }
         }
         // DECISION: a module counts as a file of the project, checked.
