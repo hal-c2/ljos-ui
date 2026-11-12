@@ -16,6 +16,38 @@ fn qt_controls_are_lowered_to_ljos_controls() {
     }
 }
 
+/// A Label is built on Qt's Text, not on Ljós's face of it, which alone
+/// renames: it keeps `wrapMode` and `horizontalAlignment`, in a binding, a
+/// handler and a script.
+#[test]
+fn a_label_keeps_qt_s_names_for_what_its_text_has() {
+    let source = "import QtQuick\nimport QtQuick.Controls.Basic\nLabel {\n  id: l\n  wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight\n  onWrapModeChanged: console.log(l.wrapMode)\n}\n";
+    let Outcome::Lowered(done) = in_style(source, "Basic") else {
+        panic!("not lowered");
+    };
+    assert_eq!(
+        done.text,
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\nLabel {\n  id: l\n  wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight\n  onWrapModeChanged: console.log(l.wrapMode)\n}\n"
+    );
+}
+
+/// Only a face renames: every style's Label is built on the toolkit's
+/// Text, whether or not a module of Ljós's API exports it, and a type no
+/// Ljós module exports (Material's Label) has Qt's names as Basic's does.
+#[test]
+fn only_a_face_has_the_renames_of_the_type_it_faces() {
+    let renames = |uri: &str, name: &str| {
+        let ty = qt_types::module(uri)
+            .and_then(|m| m.type_named(name))
+            .unwrap_or_else(|| panic!("{uri} {name} is in the table"));
+        crate::renames_of(ty).is_some()
+    };
+    assert!(renames("QtQuick", "Text"));
+    assert!(!renames("QtQuick.Controls.Basic", "Label"));
+    assert!(!renames("QtQuick.Controls.Material", "Label"));
+    assert!(!renames("QtQuick.Controls.Universal", "Label"));
+}
+
 #[test]
 fn the_basic_style_is_lowered_whatever_style_the_program_starts_with() {
     let source = "import QtQuick\nimport QtQuick.Controls.Basic\nLabel { }\n";
