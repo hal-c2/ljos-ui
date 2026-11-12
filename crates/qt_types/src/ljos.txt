@@ -122,6 +122,7 @@ module Ljos.Blocks
 module Ljos.Controls
 	AbstractButton QtQuick.Templates.AbstractButton
 	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button Ljos/Controls/Button.qml
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
@@ -141,6 +142,7 @@ module Ljos.Controls
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup Ljos/Controls/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RoundButton QtQuick/Controls/Basic/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
@@ -322,6 +324,7 @@ module Ljos.Controls
 module Ljos.Controls.Basic
 	AbstractButton QtQuick.Templates.AbstractButton
 	ApplicationWindow QtQuick/Controls/Basic/ApplicationWindow.qml
+	BusyIndicator QtQuick/Controls/Basic/BusyIndicator.qml
 	Button QtQuick/Controls/Basic/Button.qml
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
@@ -340,6 +343,7 @@ module Ljos.Controls.Basic
 	Page QtQuick/Controls/Basic/Page.qml
 	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup QtQuick/Controls/Basic/Popup.qml
+	ProgressBar QtQuick/Controls/Basic/ProgressBar.qml
 	RoundButton QtQuick/Controls/Basic/RoundButton.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
