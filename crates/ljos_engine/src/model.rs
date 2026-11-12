@@ -807,6 +807,11 @@ pub(crate) struct RowShape {
     /// One property per role, in role order. A role named like one of
     /// the three above has none.
     pub(crate) roles: Vec<(Atom, PropIndex)>,
+    /// One property per member of a row that is a JS object, for a
+    /// delegate that requires `model`: `model.label` reads the row's
+    /// `label`, as in Qt 6.11.2 (found by running qml6). Not roles: a
+    /// write to one stays in the delegate, as it does in Qt.
+    pub(crate) members: Vec<(Atom, PropIndex)>,
 }
 
 impl RowShape {
@@ -815,11 +820,15 @@ impl RowShape {
     }
 
     fn of(meta: MetaRef, roles: &[Atom], kind: RowKind) -> Rc<RowShape> {
+        Rc::new(Self::build(meta, roles, kind))
+    }
+
+    fn build(meta: MetaRef, roles: &[Atom], kind: RowKind) -> RowShape {
         let own = |name: &str| match kind {
             RowKind::Delegate => meta.property_index(name),
             RowKind::Element => None,
         };
-        Rc::new(RowShape {
+        RowShape {
             index: own("index"),
             model: own("model"),
             model_data: own("modelData"),
@@ -828,8 +837,9 @@ impl RowShape {
                 .filter(|r| kind == RowKind::Element || !RESERVED.contains(&r.as_str()))
                 .filter_map(|r| Some((r.clone(), meta.property_index(r)?)))
                 .collect(),
+            members: Vec::new(),
             meta,
-        })
+        }
     }
 }
 
@@ -881,6 +891,9 @@ thread_local! {
     /// type is kept so the address stays its.
     static OBJECT_ROW_METAS: RefCell<HashMap<usize, (MetaRef, Rc<RowShape>)>> =
         RefCell::new(HashMap::new());
+    /// Row types of rows that are JS objects, by member list.
+    static MEMBER_ROW_SHAPES: RefCell<HashMap<Vec<Atom>, Rc<RowShape>>> =
+        RefCell::new(HashMap::new());
 }
 
 fn row_meta(kind: RowKind, roles: &[Atom]) -> MetaRef {
@@ -918,6 +931,31 @@ fn row_meta(kind: RowKind, roles: &[Atom]) -> MetaRef {
 /// The row type for a model with `roles`.
 pub(crate) fn row_shape(kind: RowKind, roles: &[Atom]) -> Rc<RowShape> {
     RowShape::of(row_meta(kind, roles), roles, kind)
+}
+
+/// The row type for a row of a model without roles that is a JS object
+/// with `members`: the three delegate names and one property per member.
+pub(crate) fn member_row_shape(members: &[Atom]) -> Rc<RowShape> {
+    if let Some(s) = MEMBER_ROW_SHAPES.with(|c| c.borrow().get(members).cloned()) {
+        return s;
+    }
+    let names: Vec<Atom> = members
+        .iter()
+        .filter(|n| !RESERVED.contains(&n.as_str()))
+        .cloned()
+        .collect();
+    let meta = row_meta(RowKind::Delegate, &names);
+    let shape = Rc::new(RowShape {
+        members: names
+            .iter()
+            .filter_map(|n| Some((n.clone(), meta.property_index(n)?)))
+            .collect(),
+        ..RowShape::build(meta, &[], RowKind::Delegate)
+    });
+    MEMBER_ROW_SHAPES.with(|c| {
+        c.borrow_mut().insert(members.to_vec(), shape.clone());
+    });
+    shape
 }
 
 /// The row type for a row that is an object of type `source`: the three
@@ -1355,6 +1393,7 @@ impl Engine {
                 for (name, p) in &shape.roles {
                     set(Some(*p), model.data(self, row, name));
                 }
+                self.set_members(data, &shape, model, row, WriteKind::Initial);
                 self.set_write_hook(data, Some(row_hook(model.clone(), shape.clone(), data)));
             }
         }
@@ -1368,6 +1407,28 @@ impl Engine {
 }
 
 impl Engine {
+    /// Writes the members of row `row` of `model` on the row object
+    /// `data` of type `shape`. A member the row lacks reads `undefined`.
+    pub(crate) fn set_members(
+        &self,
+        data: ObjectId,
+        shape: &RowShape,
+        model: &Rc<dyn ItemModel>,
+        row: usize,
+        kind: WriteKind,
+    ) {
+        if shape.members.is_empty() {
+            return;
+        }
+        let value = model.model_data(self, row).unwrap_or_default();
+        for (name, p) in &shape.members {
+            let v = self
+                .untrack(|| self.js_member(&value, name))
+                .unwrap_or_default();
+            let _ = self.write_internal(data, *p, v, kind);
+        }
+    }
+
     /// The row a row object shows is about to leave its model. What an
     /// earlier change left to run runs now, with the row and the model as
     /// that change left them: in Qt it ran when that change came, and holds

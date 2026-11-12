@@ -38,7 +38,7 @@ use crate::log::LogLevel;
 use crate::meta::{MetaObject, MetaRef, PropertyFlags};
 use crate::model::{
     DelegateSource, ItemModel, ModelChange, ModelRow, RowKey, RowKind, RowObject, RowShape,
-    row_hook, row_shape,
+    member_row_shape, row_hook, row_shape,
 };
 use crate::value::Value;
 use crate::{NodeId, Provenance, WriteKind};
@@ -790,6 +790,9 @@ pub(crate) struct RowPlan {
     /// Whether a required property is fed `modelData`, which a model
     /// without a value of its own for a row gives as the row object.
     feeds_model_data: bool,
+    /// Whether the delegate requires `model`: then a row that is a JS
+    /// object gives it the object's members too.
+    requires_model: bool,
 }
 
 struct Required {
@@ -836,12 +839,14 @@ impl RowPlan {
         let feeds_model_data = required
             .iter()
             .any(|r| matches!(r.feed, Some(Feed::ModelData)));
+        let requires_model = required.iter().any(|r| r.name == "model");
         Self {
             root,
             shape,
             required,
             direct,
             feeds_model_data,
+            requires_model,
         }
     }
 
@@ -900,9 +905,11 @@ impl Given {
 
     /// Whether a view may keep the delegate to show another row: a row
     /// object that is another object's properties can not be pointed
-    /// elsewhere.
+    /// elsewhere, nor can one with the members of a JS object take another
+    /// row's, which may have others.
     fn poolable(&self) -> bool {
-        self.row().is_none_or(|d| !d.aliased)
+        self.row()
+            .is_none_or(|d| !d.aliased && d.shape.members.is_empty())
     }
 
     fn set_index(&self, engine: &Engine, i: i32) {
@@ -1015,11 +1022,29 @@ fn give_row(
         }
         return Some(Given::Fed(root, plan));
     }
+    // In Qt (6.11.2, found by running qml6) a delegate that requires
+    // `model` of a model without roles reads the members of a row that is
+    // a JS object through it: `model.label`, `model[textRole]`.
+    let mut members = None;
+    let shape = if plan.requires_model
+        && !roles_in_context
+        && model.row_object(index).is_none()
+        && model.role_names().is_empty()
+    {
+        let names = members.insert(object_members(engine, model, index));
+        if names.is_empty() {
+            plan.shape.clone()
+        } else {
+            member_row_shape(&names.iter().map(Atom::from).collect::<Vec<_>>())
+        }
+    } else {
+        plan.shape.clone()
+    };
     // Owned by the delegate: it lives exactly as long.
     let data = engine
         .make_row(
             model,
-            &plan.shape,
+            &shape,
             index,
             Some(root),
             ljos || plan.feeds_model_data,
@@ -1029,13 +1054,16 @@ fn give_row(
         engine.set_context_object(ctx, Some(data.id));
     }
     if !plan.required.is_empty() {
-        let mut members = None;
         let same = Rc::ptr_eq(&data.shape, &plan.shape);
         for r in &plan.required {
             let (p, name) = (r.prop, r.name.clone());
             let row = data.id;
+            // A required property named like a member takes the member's
+            // value below, or its own default where the row lacks it.
             let from = if same {
                 r.from
+            } else if data.shape.members.iter().any(|(n, _)| n.as_str() == name) {
+                None
             } else {
                 data.shape.meta.property_index(&name)
             };
@@ -1115,6 +1143,9 @@ fn refresh_row(
     if let Some(p) = d.shape.model_data {
         let v = d.model_data(engine, model, i);
         let _ = engine.write_internal(d.id, p, v, WriteKind::Imperative);
+    }
+    if roles.is_empty() {
+        engine.set_members(d.id, &d.shape, model, i, WriteKind::Imperative);
     }
 }
 
