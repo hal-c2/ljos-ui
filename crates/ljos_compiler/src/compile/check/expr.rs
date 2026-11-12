@@ -2100,10 +2100,18 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     None,
                     Body::Statements(&body.statements),
                     None,
+                    function.r#async,
                     false,
                 );
                 self.nested -= 1;
-                self.sig_ret(f)
+                // `yield*` on an `async` generator gives what its body
+                // returns, not the promise an `async` function would.
+                let ret = self.sig_ret(f);
+                if function.r#async {
+                    web::awaited(&mut self.arena, ret)
+                } else {
+                    ret
+                }
             }
             _ => Ty::ERROR,
         }

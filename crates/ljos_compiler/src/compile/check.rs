@@ -126,12 +126,19 @@ pub(super) fn modules_only<'a, O: TypeOracle>(
     compiler: &mut Compiler<'_, 'a, '_, O>,
     modules: &[Module<'a>],
 ) {
-    let found = {
-        let mut checker = Checker::new(compiler, modules);
-        checker.read_all();
-        checker.module_found
-    };
+    let found = module_findings(compiler, modules);
     compiler.modules = checked_modules(modules, found);
+}
+
+/// What the checker finds in `modules`: each finding as it is made, at the
+/// offsets of the text it read, before [`checked_modules`] says one a place.
+pub(super) fn module_findings<'a, O: TypeOracle>(
+    compiler: &mut Compiler<'_, 'a, '_, O>,
+    modules: &[Module<'a>],
+) -> Vec<(usize, Code, String, Span)> {
+    let mut checker = Checker::new(compiler, modules);
+    checker.read_all();
+    checker.module_found
 }
 
 /// Each module, with what was found in it at its own lines, once each.
@@ -1726,5 +1733,91 @@ fn param(name: &str, ty: Ty) -> Param {
         ty,
         optional: false,
         written: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use qml_front::QtTypeOracle;
+    use qml_front::scope::Tree;
+    use qml_syntax::Allocator;
+
+    use super::super::Lines;
+    use super::*;
+    use crate::Project;
+
+    /// The `ts-is-binding` findings in the module `source`, read as
+    /// [`crate::check_modules`] reads one: through the desugar, so the map of what
+    /// it wrote is the compiler's own. Each is as the checker made it,
+    /// before the report says one a place, as (line, column, the text at
+    /// its span, message), in the order of the file.
+    fn is_bindings(source: &str) -> Vec<(usize, usize, String, String)> {
+        let mut project = Project::new(QtTypeOracle);
+        project.add_script("pick.lts", source);
+        let allocator = Allocator::default();
+        let root = allocator.alloc_str("import \"pick.lts\" as M0\nQtObject {}\n");
+        let qml_syntax::Lowered {
+            text, parsed, map, ..
+        } = qml_syntax::parse_lowered(&allocator, root);
+        let types = Types::new(&project.front, &project.oracle, "");
+        let tree = Tree::analyze(&parsed.document, types, &mut Vec::new());
+        let lines = Lines::lowered(root, map);
+        let mut compiler = Compiler::new(&project, "", root, text, lines, types, &tree);
+        let modules = modules(&allocator, &project, "", &parsed.document, false);
+        assert_eq!(modules.len(), 1, "the root reaches the module");
+        let mut found: Vec<_> = module_findings(&mut compiler, &modules)
+            .into_iter()
+            .filter(|(_, code, _, _)| *code == Code::TsIsBinding)
+            .map(|(at, _, message, span)| {
+                let module = &modules[at];
+                let span = module.map.span(span);
+                let (start, end) = (span.start as usize, span.end as usize);
+                let before = &module.original[..start];
+                let line = before.matches('\n').count() + 1;
+                let column = start - before.rfind('\n').map_or(0, |at| at + 1) + 1;
+                (
+                    line,
+                    column,
+                    module.original[start..end].to_string(),
+                    message,
+                )
+            })
+            .collect();
+        // In the order of the file, not of the checker's walk.
+        found.sort();
+        found
+    }
+
+    /// The walk that finds an `is` a scope between takes tells the blocks
+    /// and functions the desugar wrote from those a person wrote by the
+    /// desugar's own map. A block a person wrote declares what an `is` in
+    /// it binds, so the walk leaves it to that block: a clash there is said
+    /// once, by the block, and a block that shadows the name is fine. A
+    /// block the desugar wrote for a `match` arm is between the arm's `is`
+    /// and the `let` before the `match`, so a name the arm binds is said.
+    #[test]
+    fn the_walk_tells_the_blocks_the_desugar_wrote_from_those_written_by_hand() {
+        let source = "\
+const v: number = 7
+if (v is let h) { }
+{
+    const h = 1
+    if (v is let h) { }
+}
+{
+    if (v is let h) { }
+}
+export const r: number = match (v) { when let h and if (v is let h): h; default: 0; }
+export const s: number = match (v) { when let k and if (v is let m): k + m; default: 0; }
+";
+        let block = "`h` is a name of this block already, and an `is` declares what it binds in the block around it: bind another name";
+        let arm = "`h` is a name this `match` arm binds already, and an `is` in the arm declares what it binds before the `match`: bind another name";
+        assert_eq!(
+            is_bindings(source),
+            [
+                (5, 18, "h".to_string(), block.to_string()),
+                (10, 66, "h".to_string(), arm.to_string()),
+            ]
+        );
     }
 }
