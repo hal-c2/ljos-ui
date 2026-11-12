@@ -632,3 +632,67 @@ Feature: A web page in a WebEngineView
       """
     When 2 seconds pass
     Then the application has nothing scheduled
+
+  # A page whose scripts never stop keeps the browser working for good.
+  # Time passing waits for what the scene asked of it, not for that work
+  # to end, and the page still answers what it is asked.
+  @api-QtWebEngine.WebEngineView.runJavaScript
+  Scenario: A page that never stops working lets time pass and still answers
+    Given the text file "busy.html":
+      """
+      <!doctype html>
+      <html><head><title>Busy</title></head><body><script>
+      let n = 0;
+      setInterval(() => { n += 1; document.body.textContent = String(n); }, 1);
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        url: Qt.resolvedUrl("busy.html")
+        Timer {
+          interval: 2500; running: true
+          onTriggered: view.runJavaScript("n > 0", r => view.seen = String(r))
+        }
+      }
+      """
+    When 2 seconds pass
+    And 1 second passes
+    And 1 second passes
+    Then the property "seen" of "view" is "true"
+    And the property "title" of "view" is "Busy"
+    And the log has no warning matching "gave up waiting"
+
+  # A load that fails shows the browser's error page, which is not always
+  # drawn: time passing does not wait for its picture.
+  @api-QtWebEngine.WebEngineView.loadingChanged @api-QtWebEngine.WebEngineSettings.errorPageEnabled
+  Scenario Outline: A page that fails to load with error pages on lets time pass
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string failure: ""
+        url: "$SERVER/<path>"
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadFailedStatus)
+          failure = info.errorCode + " " + info.errorString + " " + info.errorDomain }
+      }
+      """
+    When 2 seconds pass
+    And 2 seconds pass
+    And 2 seconds pass
+    Then the property "failure" of "view" is "<failure>"
+    And the property "loading" of "view" is false
+    And the log has no warning matching "gave up waiting"
+
+    Examples:
+      | path     | failure                             |
+      | refused  | -102 net::ERR_CONNECTION_REFUSED 2  |
+      | loop     | -310 net::ERR_TOO_MANY_REDIRECTS 4  |
