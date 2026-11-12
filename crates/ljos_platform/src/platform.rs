@@ -16,7 +16,7 @@ use std::thread::ThreadId;
 use std::time::{Duration, Instant};
 
 use ljos_engine::{Atom, Engine, LogLevel, ObjectId};
-use ljos_runtime::{DrainBudget, SendError, SystemClock, UiHandle, UiInbox};
+use ljos_runtime::{DrainBudget, SendError, SystemClock, TIMER_GRANULARITY, UiHandle, UiInbox};
 
 use crate::badge::{BadgeService, RecordedBadge};
 use crate::clipboard::{ClipboardService, MemoryClipboard};
@@ -540,8 +540,8 @@ impl Platform {
     /// responsive never calls it. Gives up, with a warning, after 10 s
     /// without an answer or 60 s in all. Busy work is waited on only for
     /// [`BUSY_WAIT`] ([`Platform::awaited`]), and its news delivered
-    /// meanwhile. While it waits it runs the engine's timers already due,
-    /// as a frame would: what they do may be what answers.
+    /// meanwhile. While it waits it runs the engine's timers due when it
+    /// began, as a frame would: what they do may be what answers.
     pub fn finish(&self, engine: &Engine) {
         self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
@@ -566,6 +566,10 @@ impl Platform {
         // Busy work this finish waited on: if it is still under way when
         // waiting ends, the step goes on before it is done, and says so.
         let mut busy = Vec::new();
+        // The engine's work due when waiting began, as the scheduler
+        // rounds a deadline: what comes due later, on a clock that runs
+        // on while this waits, is the next frame's, not this wait's.
+        let due = engine.now().round_up_to(TIMER_GRANULARITY);
         loop {
             let seen = self.signal.count();
             self.deliver_now(engine);
@@ -576,13 +580,12 @@ impl Platform {
                 self.left_busy(engine, &busy, started);
                 return;
             }
-            // What the engine has due now may be what answers: a page's
-            // news that sends it elsewhere, the going handed on at once,
-            // ends the old page's promise. A running app does that work at
-            // its next frame while it waits, and so does this. What it
-            // posts ends the wait below. Work due later on the engine's
-            // clock is not waited for: a test's clock stands still here.
-            engine.turn(None, || engine.advance_timers(engine.now()));
+            // What the engine has due may be what answers: a page's news
+            // that sends it elsewhere, the going handed on at once, ends
+            // the old page's promise. A running app does that work at its
+            // next frame while it waits, and so does this. What it posts
+            // ends the wait below.
+            engine.turn(None, || engine.advance_timers(due));
             between();
             // Not past the moment busy work stops being waited on: what is
             // left after it may already be answered.
@@ -1218,6 +1221,31 @@ mod tests {
         );
         let log = engine.take_log();
         assert!(log.is_empty(), "{log:?}");
+    }
+
+    #[test]
+    fn work_that_comes_due_while_finish_waits_is_left_for_later() {
+        // The engine's own clock, which runs on while finish waits.
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        // Two answers, so finish waits again after the timer is due.
+        let first = platform.expect_for("answered first", None);
+        let second = platform.expect_for("answered second", None);
+        let fired = Rc::new(Cell::new(false));
+        let mark = Rc::clone(&fired);
+        engine.call_at(engine.now() + Duration::from_millis(50), move |_| {
+            mark.set(true);
+        });
+        let answering = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(first);
+            std::thread::sleep(Duration::from_millis(150));
+            drop(second);
+        });
+        platform.finish(&engine);
+        answering.join().unwrap();
+        assert_eq!(platform.pending(), 0);
+        assert!(!fired.get(), "a timer due after finish began fired in it");
     }
 
     /// Echoes what it was asked, as a 201, without a network.
