@@ -20,6 +20,7 @@ pub(crate) mod layout;
 mod loader;
 mod models;
 mod natives;
+pub(crate) mod network;
 mod shapes;
 pub(crate) mod states;
 mod text;
@@ -270,6 +271,7 @@ const AREAS: &[&Area] = &[
     &natives::AREA,
     &tools::AREA,
     &types::AREA,
+    &network::AREA,
 ];
 
 /// What Ljós calls Qt's type `name`, where it calls it otherwise. Whether a

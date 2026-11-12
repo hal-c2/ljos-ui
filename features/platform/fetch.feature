@@ -29,7 +29,7 @@ Feature: fetch: a script asks the network and awaits the reply
     Scenario: A script awaits a fetch and decodes the JSON it gives
       Given the QML:
         """qml
-        import Ljos.Ui
+        import Ljos.Ui; import Ljos.Core
         Item {
           id: root; objectName: "root"
           property string got: ""
@@ -52,7 +52,7 @@ Feature: fetch: a script asks the network and awaits the reply
     Scenario: A name the server does not have is a response that is not ok
       Given the QML:
         """qml
-        import Ljos.Ui
+        import Ljos.Ui; import Ljos.Core
         Item {
           id: root; objectName: "root"
           property string got: ""
@@ -66,7 +66,7 @@ Feature: fetch: a script asks the network and awaits the reply
     Scenario: A script sends a body with its own headers, and those it may not set are not sent
       Given the QML:
         """qml
-        import Ljos.Ui
+        import Ljos.Ui; import Ljos.Core
         Item {
           id: root; objectName: "root"
           property string got: ""
@@ -87,7 +87,7 @@ Feature: fetch: a script asks the network and awaits the reply
     Scenario: A body of text is said to be text, and bytes are sent as they are
       Given the QML:
         """qml
-        import Ljos.Ui
+        import Ljos.Ui; import Ljos.Core
         Item {
           id: root; objectName: "root"
           property string text: ""
@@ -107,12 +107,12 @@ Feature: fetch: a script asks the network and awaits the reply
     Scenario: A body is read once, as text, JSON or bytes
       Given the QML:
         """qml
-        import Ljos.Ui
+        import QtQuick
         Item {
           id: root; objectName: "root"
           property string got: ""
           Component.onCompleted: {
-            const read = async (): Promise<void> => {
+            const read = async () => {
               const reply = await fetch("$SERVER/act.json")
               const bytes = await reply.arrayBuffer()
               let again = ""
@@ -301,9 +301,34 @@ Feature: fetch: a script asks the network and awaits the reply
       When the files are checked
       Then the check reports:
         """
-        Main.qml:4:22: error: `XMLHttpRequest` is not in Ljós's API: use `fetch` [ts-forbidden]
+        Main.qml:4:30: error: `XMLHttpRequest` is not in Ljós's API: use `fetch` [ts-forbidden]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
+        """
+
+    @headless
+    Scenario: A name of the file's own is that one, though fetch has it too
+      Given the file "Headers.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          enum Kind { Plain, Bold }
+        }
+        """
+      And the file "Main.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property string shown: ""
+          property int kind: Headers.Bold
+          function fetch(name: string): string { return name + "!" }
+          function load(): void { shown = fetch("own") }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        2 files, 0 errors, 0 warnings
         """
 
     @headless
@@ -325,7 +350,7 @@ Feature: fetch: a script asks the network and awaits the reply
       When the files are checked with TypeScript
       Then TypeScript reports the lines:
         """
-        Main.qml:6:103: error TS2353: Object literal may only specify known properties, and 'mode' does not exist in type 'RequestInit'.
+        Main.qml:6:110: error: Object literal may only specify known properties, and 'mode' does not exist in type 'RequestInit'. [TS2353]
         """
 
   Rule: ljos migrate rewrites XMLHttpRequest's usual shape into fetch, and keeps every other
@@ -361,7 +386,8 @@ Feature: fetch: a script asks the network and awaits the reply
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        would lower ./Main.qml (10 edits)
+        would lower ./Main.qml (16 edits)
+        scripts of ./Main.qml stay JavaScript: typed, ljos check finds 3
         1 files, 1 lowered, 0 kept
         """
       When the author runs "ljos migrate --write ."
@@ -372,15 +398,23 @@ Feature: fetch: a script asks the network and awaits the reply
         Item {
             property string got: ""
             function load(): void {
+
                 var url = "https://example.org/api/activity";
 
-                fetch(url, { headers: { "Content-type": "application/json" } }).catch(() => Response.error()).then(async (http: Response) => {
+
+
+
+
+                fetch(url, { headers: { "Content-type": "application/json", "Connection": "close" } }).catch(() => Response.error()).then(async (http: Response) => {
+
                     if (http.status == 200) {
                         got = JSON.parse((await http.text()).toString()).activity
                     } else {
                         console.log("Failed to fetch")
                     }
+
                 })
+
             }
         }
         """
@@ -410,21 +444,27 @@ Feature: fetch: a script asks the network and awaits the reply
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Main.qml (8 edits)
+        lowered ./Main.qml (11 edits)
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript
         import Ljos.Ui
+        import Ljos.Core
         Item {
             property int size: 0
             property int status: 0
             Component.onCompleted: {
-                fetch("https://example.org/echo", { method: "POST", body: "ping" }).catch(() => Response.error()).then(async (request: Response) => { const requestBytes = await request.arrayBuffer()
+
+
+                fetch("https://example.org/echo", { method: "POST", body: "ping" }).catch(() => Response.error()).then(async (request: Response) => { const requestBytes = await request.arrayBuffer();
+
+
                     status = request.status
                     size = requestBytes.byteLength + requestBytes.byteLength
                 })
+
+
             }
         }
         """
@@ -456,12 +496,13 @@ Feature: fetch: a script asks the network and awaits the reply
 
       Examples:
         | line                                                    | read                     | at   | why                                                                                                     |
-        | http.open("GET", "https://example.org/a", false)        | http.responseText        | 6:13 | the request waits for its reply (`open`'s third argument is `false`), and `fetch` does not: make the function async and await `fetch` |
-        | http.open("GET", "https://example.org/a"); http.onprogress = null | http.responseText | 6:56 | the request's `onprogress` has no `fetch` of its usual shape: write it with `fetch` |
+        | http.open("GET", "https://example.org/a", false)        | http.responseText        | 6:51 | the request waits for its reply (`open`'s third argument is `false`), and `fetch` does not: make the function async and await `fetch` |
+        | http.open("GET", "https://example.org/a"); http.onprogress = null | http.responseText | 6:57 | the request's `onprogress` has no `fetch` of its usual shape: write it with `fetch` |
         | http.open("GET", "https://example.org/a")               | http.responseXML         | 9:28 | the request's `responseXML` has no `fetch` of its usual shape: write it with `fetch` |
         | http.open("GET", "https://example.org/a")               | String(http.readyState)  | 9:35 | the request's `readyState` is read where `fetch` has no such thing: write it with `fetch` |
-        | http.open("GET", "https://example.org/a"); const all = [http] | http.responseText        | 6:61 | the request is handed on, and what is done with it is not known: write it with `fetch` |
-        | http.open("GET", "https://example.org/a")               | this.responseText        | 9:28 | the handler reads `this`, which an arrow function does not have: name the request instead |
+        | http.open("GET", "https://example.org/a"); got = "early" | http.responseText      | 6:52 | code runs between the request's `open` and its `send`, which `fetch` is one call for: write it with `fetch` |
+        | http.open("GET", "https://example.org/a")               | String([http])           | 9:31 | the request is handed on, and what is done with it is not known: write it with `fetch` |
+        | http.open("GET", "https://example.org/a")               | this.responseText        | 9:23 | the handler reads `this`, which an arrow function does not have: name the request instead |
 
   Rule: A lowered request fetches what the request fetched
 
