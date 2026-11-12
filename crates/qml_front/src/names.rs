@@ -298,6 +298,10 @@ pub const CORE_GLOBALS: &[&str] = &[
     "hsva",
     "url",
     "App",
+    // docs/DIALECT.md §4.3.1: what was `Qt`'s.
+    "bind",
+    "matrix4x4",
+    "Color",
 ];
 
 /// Which global `name` is, if it is one.

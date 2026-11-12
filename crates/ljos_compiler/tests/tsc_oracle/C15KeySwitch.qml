@@ -7,10 +7,10 @@ Item {
     property real dy: 0
     function pressed(key: int): bool {
         switch (key) {
-        case Qt.Key_W: dy -= 1; return true
-        case Qt.Key_S: dy += 1; return true
-        case Qt.Key_A: dx -= 1; return true
-        case Qt.Key_D: dx += 1; return true
+        case Key.W: dy -= 1; return true
+        case Key.S: dy += 1; return true
+        case Key.A: dx -= 1; return true
+        case Key.D: dx += 1; return true
         default: return false
         }
     }

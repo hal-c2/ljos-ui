@@ -64,8 +64,8 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
         Gauge.qml:4:30: error: Type 'string' is not assignable to type 'number'. [TS2322]
         """
 
-    # QtQml's `QtObject` goes by its class in a file of `Ljos.Ui` alone: Ljós's own
-    # `QtQml.QtObject`, or beside Qt's table Qt's `QObject`.
+    # What a handler is handed when its signal says no more than an object goes by the
+    # class TypeScript declares it as: `QtObject`, or beside Qt's table Qt's `QObject`.
     @no-qt-table
     Scenario: A handler is given the types of its signal's arguments
       Given the file "Pad.qml":
@@ -79,7 +79,7 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
       When the files are checked with TypeScript
       Then TypeScript reports the lines:
         """
-        Pad.qml:4:33: error: Type 'QtQml_QtObject' is not assignable to type 'string'. [TS2322]
+        Pad.qml:4:33: error: Type 'QtObject' is not assignable to type 'string'. [TS2322]
         """
 
     @qt-table
@@ -98,36 +98,21 @@ Feature: Ljós's API as TypeScript declarations, and its scripts checked by Type
         Pad.qml:4:33: error: Type 'QObject' is not assignable to type 'string'. [TS2322]
         """
 
-    # TypeScript suggests the declared name nearest the one it cannot find, and beside
-    # Qt's table QtQml's `QtObject` is declared by its class `QObject`.
+    # `Timer` is Ljos.Core's, which the file does not import; TypeScript suggests the
+    # declared name nearest the one it cannot find.
     @no-qt-table
     Scenario: A type a file writes is one of the modules it imports, for TypeScript too
       Given the file "Holder.qml":
         """qml
         import Ljos.Ui
         Item {
-          property QtObject held
+          property Timer held
         }
         """
       When the files are checked with TypeScript
       Then TypeScript reports the lines:
         """
-        Holder.qml:3:11: error: Cannot find name 'QtObject'. Did you mean 'Object'? [TS2552]
-        """
-
-    @qt-table
-    Scenario: A type a file writes is one of the modules it imports, for TypeScript too, beside Qt's table
-      Given the file "Holder.qml":
-        """qml
-        import Ljos.Ui
-        Item {
-          property QtObject held
-        }
-        """
-      When the files are checked with TypeScript
-      Then TypeScript reports the lines:
-        """
-        Holder.qml:3:11: error: Cannot find name 'QtObject'. Did you mean 'QObject'? [TS2552]
+        Holder.qml:3:11: error: Cannot find name 'Timer'. Did you mean 'TimerId'? [TS2552]
         """
 
     # `TextEdit` declares the `HAlignment` of the base it shares with `TextInput` again,

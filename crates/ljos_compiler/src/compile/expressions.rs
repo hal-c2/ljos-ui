@@ -98,6 +98,31 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         id
     }
 
+    /// `Qt` in a file of Ljós's API, which has none: an error that says
+    /// where `Qt.member` is now (docs/DIALECT.md §4.3.1, §5.1).
+    fn qt_global(&mut self, member: Option<&str>, offset: u32) {
+        let span = self.lines.span(self.source, Span::new(offset, offset + 2));
+        let message = match member {
+            None => {
+                "`Qt` is not in a Ljós file: each of its members has a home in Ljos.Core or Ljos.Ui"
+                    .to_owned()
+            }
+            Some(member) => match qml_compat::where_is(member) {
+                qml_compat::Where::Home { text, module } => {
+                    format!("`Qt.{member}` is not in a Ljós file: use `{text}` ({module})")
+                }
+                qml_compat::Where::Colour { text } => format!(
+                    "`Qt.{member}` is not in a Ljós file: use `{text}` where it goes to a `color`"
+                ),
+                _ => format!(
+                    "`Qt.{member}` is not in a Ljós file, and Ljós's API has no home for it yet: write the file in Qt's QML"
+                ),
+            },
+        };
+        self.diagnostics
+            .push(Diagnostic::error(Code::QtGlobal, message, span));
+    }
+
     /// Resolves the script's free names and writes its function.
     #[allow(clippy::too_many_arguments)]
     fn function(
@@ -163,6 +188,14 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             };
             if free.name == "qsTr" && matches!(r.resolved, Resolved::Global { .. }) {
                 self.translates = true;
+            }
+            // `Qt.AlignLeft` resolves to the key's value, `Qt.platform` to
+            // the global: neither is in a file of Ljós's API.
+            if self.ljos_ui
+                && free.name == "Qt"
+                && matches!(r.resolved, Resolved::Global { .. } | Resolved::Enum(_))
+            {
+                self.qt_global(free.chain.first().map(String::as_str), offset);
             }
             // A global of a name `Ljos.Core` gives, in a file that imports
             // it, is that one: no global of QML's or JavaScript's has it.

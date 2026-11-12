@@ -773,8 +773,8 @@ Item {
 }
 
 /// A ListModel of several roles, its rows made by an Instantiator under
-/// `imports`; each row's object says what its delegate's `modelData` is.
-fn rows_of_several_roles(imports: &str) -> String {
+/// `imports`; each row's `object` says what its delegate's `modelData` is.
+fn rows_of_several_roles(imports: &str, object: &str) -> String {
     format!(
         r#"{imports}
 Item {{
@@ -785,7 +785,7 @@ Item {{
   }}
   Instantiator {{
     model: zones
-    QtObject {{
+    {object} {{
       objectName: "z" + index
       property bool isRow: modelData === model
       property bool isUndefined: modelData === undefined
@@ -804,12 +804,23 @@ fn a_delegate_of_ljos_ui_reads_its_row_as_model_data_and_one_of_qt_does_not() {
     let h = engine();
     h.engine
         .register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [support::Item]));
-    // The delegate is a `QtObject`, which a file of Ljós's API has from
-    // `Ljos.Core`.
-    h.engine
-        .register_module(ljos_engine::module!("Ljos.Core" 1.0 => [ljos_engine::QtObject]));
+    // The delegate is an `Object`, which a file of Ljós's API has from
+    // `Ljos.Core`: `QtObject` under the name Ljós's API gives it.
+    static OBJECT: std::sync::OnceLock<ljos_engine::MetaObject> = std::sync::OnceLock::new();
+    let object = OBJECT.get_or_init(|| {
+        ljos_engine::MetaBuilder::new("Object")
+            .module("Ljos.Core")
+            .face(<ljos_engine::QtObject as ljos_engine::QmlType>::static_meta())
+            .build()
+    });
+    h.engine.register_type(
+        "Ljos.Core",
+        ljos_engine::Version::new(1, 0),
+        ljos_engine::MetaRef::Static(object),
+    );
     let ljos = h.load(&rows_of_several_roles(
         "pragma Scripts: JavaScript\nimport Ljos.Ui\nimport Ljos.Core\nimport QtQml.Models",
+        "Object",
     ));
     let row = h.find(ljos, "z1");
     assert_eq!(
@@ -822,6 +833,7 @@ fn a_delegate_of_ljos_ui_reads_its_row_as_model_data_and_one_of_qt_does_not() {
     let h = engine();
     let qt = h.load(&rows_of_several_roles(
         "import QtQuick\nimport QtQml.Models",
+        "QtObject",
     ));
     let row = h.find(qt, "z1");
     assert_eq!(h.get(row, "isRow"), Value::Bool(false));

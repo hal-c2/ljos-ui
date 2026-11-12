@@ -203,6 +203,9 @@ pub enum Code {
     /// A `Controller` declared in an object that is not an item, which
     /// it would act on.
     ControllerHost,
+    /// `Qt` in a file of Ljós's API, which has none: the fix names where
+    /// the member is (docs/DIALECT.md §4.3.1).
+    QtGlobal,
 }
 
 impl Code {
@@ -242,6 +245,7 @@ impl Code {
             Code::TsBoundary => "ts-boundary",
             Code::LayoutAnchored => "layout-anchored",
             Code::ControllerHost => "controller-host",
+            Code::QtGlobal => "qt-global",
         }
     }
 }
