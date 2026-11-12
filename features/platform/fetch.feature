@@ -398,23 +398,16 @@ Feature: fetch: a script asks the network and awaits the reply
         Item {
             property string got: ""
             function load(): void {
-
                 var url = "https://example.org/api/activity";
 
 
-
-
-
                 fetch(url, { headers: { "Content-type": "application/json", "Connection": "close" } }).catch(() => Response.error()).then(async (http: Response) => {
-
                     if (http.status == 200) {
                         got = JSON.parse((await http.text()).toString()).activity
                     } else {
                         console.log("Failed to fetch")
                     }
-
                 })
-
             }
         }
         """
@@ -455,16 +448,10 @@ Feature: fetch: a script asks the network and awaits the reply
             property int size: 0
             property int status: 0
             Component.onCompleted: {
-
-
                 fetch("https://example.org/echo", { method: "POST", body: "ping" }).catch(() => Response.error()).then(async (request: Response) => { const requestBytes = await request.arrayBuffer();
-
-
                     status = request.status
                     size = requestBytes.byteLength + requestBytes.byteLength
                 })
-
-
             }
         }
         """

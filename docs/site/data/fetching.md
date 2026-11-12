@@ -129,12 +129,9 @@ http.send()
 becomes
 
 ```javascript
-
-
 fetch("https://example.org/activity.json").catch(() => Response.error()).then(async (http: Response) => {
     got = http.status + " " + (await http.text())
 })
-
 ```
 
-The lowered file keeps every line, so the statements the call gathers leave blank lines. Any other shape, a request that waits for its reply or a handler that reads `this`, keeps the file, and `ljos migrate` says what of it has no `fetch`.
+`ljos migrate --write` takes out the lines the statements the call gathers leave empty; `--compat lower` keeps them, so that its findings point at the file as written. Any other shape, a request that waits for its reply or a handler that reads `this`, keeps the file, and `ljos migrate` says what of it has no `fetch`.
