@@ -132,6 +132,7 @@ fn attached_in_optional_chains() {
         "Main",
         r##"
 import QtQuick
+import QtQuick as Q
 
 Item {
     Item { id: other }
@@ -142,6 +143,31 @@ Item {
     property var argument: parent?.contains(other.Keys.enabled)
     property var plainKey: parent?.Keys.forwardTo.Foo.x
     property var unconditional: other.Keys.enabled
+    property var hollow: parent?.parent.Keys.enabled
+    property var twice: parent?.parent?.Keys.enabled
+    property var afterLast: parent?.parent.Keys?.forwardTo
+    property var through: parent?.parent.Q.Keys.enabled
+    property var called: other.childAt?.(1, 1).Keys.enabled
+    property var calledOff: parent?.childAt?.(1, 1).Keys
+    property var calledElement: other.children?.[0]?.childAt?.(1, 1).Keys
+    property var inParens: (parent?.parent)?.Keys.enabled
+    property var calleeInParens: (other.childAt)?.(1, 1).Keys
+    property var waits: async () => parent?.parent.Keys.forwardTo[await 0]
+}
+"##,
+    )]));
+}
+
+#[test]
+fn attached_in_a_yielding_chain() {
+    insta::assert_snapshot!(compile(&[(
+        "Main",
+        r##"
+import QtQuick
+
+Item {
+    property var steps: function* () { return parent?.parent.Keys.forwardTo[yield 0] }
+    property var before: function* () { return (yield 0)?.Keys }
 }
 "##,
     )]));

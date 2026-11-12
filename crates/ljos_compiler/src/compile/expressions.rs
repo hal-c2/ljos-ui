@@ -12,9 +12,9 @@ use qml_front::{
 use qml_syntax::Span;
 
 use super::{
-    ATTACHED, ATTACHED_CHAIN, CHAIN_REST, Compiler, HELD, PLACE, Plan, SINGLETON, VALUE_AT,
-    VALUE_HELD, VALUE_IN, block, held, import_source, is_key_name, or_throw, read_or_throw,
-    the_type, type_name, value_in,
+    ATTACHED, CHAIN_LINK, CHAIN_THIS, Compiler, HELD, OPTIONAL, OPTIONAL_CALL, OPTIONAL_CALL_WAITS,
+    PLACE, Plan, SINGLETON, VALUE_AT, VALUE_HELD, VALUE_IN, block, held, import_source,
+    is_key_name, or_throw, read_or_throw, the_type, type_name, value_in,
 };
 use crate::{
     Code, Diagnostic,
@@ -394,42 +394,58 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 Some((member, type_name, object))
             })
             .collect();
-        for (member, (module, name), object) in &attached {
-            let Some(chain_end) = member.chain_end else {
-                edits.push(js::Edit {
-                    span: Span::new(object.start, object.start),
-                    text: format!("{ATTACHED}("),
-                });
-                edits.push(js::Edit {
-                    span: Span::new(object.end, member.end),
-                    text: format!(", {module:?}, {name:?})"),
-                });
+        // A read made off a chain's spine after a `?.` waits for the chain
+        // to meet something: see `chain_edits`.
+        let mut chained: Vec<Vec<&Attached>> = vec![Vec::new(); analysis.optional_chains.len()];
+        for read in &attached {
+            match read.0.chain {
+                Some(chain) => chained[chain].push(read),
+                None => edits.extend(attach(read)),
+            }
+        }
+        for (chain, reads) in analysis.optional_chains.iter().zip(&chained) {
+            let Some(last) = reads.iter().map(|(member, _, _)| member.end).max() else {
                 continue;
             };
-            // `parent?.Window.window`: where `parent` is nothing the whole
-            // chain is `undefined`, so the rest of it is given as a
-            // function that is not called then. The rest ends where
-            // another attached read of the chain is made off it
-            // (`a?.Window.contentItem.Layout`), which wraps this one.
-            let rest_end = attached
+            let links: Vec<&js::Link> = chain
+                .links
                 .iter()
-                .filter(|(other, _, _)| other.chain_end == Some(chain_end))
-                .filter(|(_, _, other)| other.start <= object.start && other.end >= member.end)
-                .map(|(_, _, other)| other.end)
-                .min()
-                .unwrap_or(chain_end);
-            edits.push(js::Edit {
-                span: Span::new(object.start, object.start),
-                text: format!("{ATTACHED_CHAIN}("),
-            });
-            edits.push(js::Edit {
-                span: Span::new(object.end, member.end),
-                text: format!(", {module:?}, {name:?}, ({CHAIN_REST}) => {CHAIN_REST}"),
-            });
-            edits.push(js::Edit {
-                span: Span::new(rest_end, rest_end),
-                text: ")".into(),
-            });
+                .filter(|link| link.token.start < last)
+                .collect();
+            let Some(first) = links.first() else {
+                edits.extend(reads.iter().flat_map(|read| attach(read)));
+                continue;
+            };
+            // What waits after the first `?.` of the chain, in the function
+            // the chain is in, ends up in a function of the chain's own.
+            let suspends: Vec<&js::Suspend> = analysis
+                .suspends
+                .iter()
+                .filter(|s| s.at >= first.token.start && s.at < chain.span.end)
+                .filter(|s| s.function.is_none_or(|start| start < chain.span.start))
+                .collect();
+            if let Some(at) = suspends.iter().find(|s| s.yields) {
+                let at = span.start + at.at;
+                self.diagnostics.push(Diagnostic::error(
+                    Code::Semantic,
+                    "a `?.` chain that reads an attached object cannot `yield` after its \
+                     first `?.`: yield before the chain"
+                        .to_owned(),
+                    self.span(Span::new(at, at + 5)),
+                ));
+                edits.extend(reads.iter().flat_map(|read| attach(read)));
+                continue;
+            }
+            // A callee that is itself an attached read is the attached
+            // object's member: it is called as it is read.
+            let called_attached = |end: u32| attached.iter().any(|(m, _, _)| m.end == end);
+            edits.extend(chain_edits(
+                chain,
+                &links,
+                reads,
+                !suspends.is_empty(),
+                &called_attached,
+            ));
         }
         // A handler that is a function takes the signal's arguments as its
         // own parameters: the wrapper's are not in its scope at run time.
@@ -864,4 +880,152 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             },
         }
     }
+}
+
+/// A member read as an attached object, the module and type that attach
+/// it, and what it is read off.
+type Attached<'m> = (&'m js::TypeMember, (String, String), Span);
+
+/// `other.Layout` as `__ljos_att(other, "QtQuick.Layouts", "Layout")`.
+fn attach((member, (module, name), object): &Attached) -> [js::Edit; 2] {
+    [
+        js::Edit {
+            span: Span::new(object.start, object.start),
+            text: format!("{ATTACHED}("),
+        },
+        js::Edit {
+            span: Span::new(object.end, member.end),
+            text: format!(", {module:?}, {name:?})"),
+        },
+    ]
+}
+
+/// `parent?.Window.window`: the attached read is a call, and a call is no
+/// member a `?.` could cut short. So each `?.` of the chain up to its last
+/// attached read becomes a call that is given what the `?.` follows and
+/// the rest of the chain as a function of it (`OPTIONAL`), and that
+/// gives `undefined` without calling it when what it is given is nothing.
+/// The rest of the chain is read as written: `x?.y.Window` throws where
+/// `x.y` is nothing, as `x?.y.z` does.
+///
+/// `links` are the chain's `?.`s up to its last attached read. The
+/// function after the `n`th starts with the calls that what follows it
+/// up to the next is in, outermost first: the next `?.`'s, then the
+/// attached reads', the last outermost. An optional call keeps its
+/// `this` (`OPTIONAL_CALL`). Where the chain waits after its first `?.`,
+/// the functions are `async` and the chain is waited for.
+fn chain_edits(
+    chain: &js::OptionalChain,
+    links: &[&js::Link],
+    reads: &[&Attached],
+    waits: bool,
+    called_attached: &dyn Fn(u32) -> bool,
+) -> Vec<js::Edit> {
+    let asynchronous = if waits { "async " } else { "" };
+    let call = if waits {
+        OPTIONAL_CALL_WAITS
+    } else {
+        OPTIONAL_CALL
+    };
+    // The `this` an optional call keeps, where it is kept.
+    let this = |link: &js::Link| match &link.kind {
+        js::LinkKind::Call(Some(js::This::Value { name_end, .. }))
+            if name_end.is_some_and(called_attached) =>
+        {
+            None
+        }
+        js::LinkKind::Call(Some(this)) => Some(this.clone()),
+        _ => None,
+    };
+    // After how many of the `?.`s a read is made.
+    let segment = |end: u32| links.iter().filter(|link| link.token.start < end).count();
+    let openers = |n: usize| {
+        let mut text = match links.get(n).map(|link| (link, this(link))) {
+            Some((_, Some(js::This::Super))) => format!("{call}(this, {asynchronous}() => "),
+            Some((_, Some(js::This::Value { .. }))) => format!("{call}("),
+            Some(_) => format!("{OPTIONAL}("),
+            None => String::new(),
+        };
+        let here = reads
+            .iter()
+            .filter(|(member, _, _)| segment(member.end) == n);
+        text.push_str(&format!("{ATTACHED}(").repeat(here.count()));
+        text
+    };
+    // The callee's object of an optional call, read by a function of it.
+    let reader = |n: usize| format!(", {asynchronous}({CHAIN_THIS}{n}) => {CHAIN_THIS}{n}");
+    let mut edits = vec![js::Edit {
+        span: Span::new(chain.span.start, chain.span.start),
+        text: format!("{}{}", if waits { "(await " } else { "" }, openers(0)),
+    }];
+    for paren in &chain.parens {
+        edits.push(js::Edit {
+            span: Span::new(paren.start, paren.start + 1),
+            text: String::new(),
+        });
+        edits.push(js::Edit {
+            span: Span::new(paren.end - 1, paren.end),
+            text: String::new(),
+        });
+    }
+    for (index, link) in links.iter().enumerate() {
+        let n = index + 1;
+        let mut text = format!(
+            ", {asynchronous}({CHAIN_LINK}{n}) => {}{CHAIN_LINK}{n}",
+            openers(n)
+        );
+        // `a?.f?.()`: what `f` is read off is what the `?.` before it met.
+        if let Some(next) = links.get(n)
+            && let Some(js::This::Value { object, .. }) = this(next)
+            && object.end <= link.token.start
+        {
+            text.push_str(&reader(n + 1));
+        }
+        // `parent?.Window`: the attached read is made of what the `?.` met.
+        let merged = reads.iter().find(|(member, _, object)| {
+            object.end <= link.token.start && link.token.end <= member.end
+        });
+        match merged {
+            Some((member, (module, name), object)) => edits.push(js::Edit {
+                span: Span::new(object.end, member.end),
+                text: format!("{text}, {module:?}, {name:?})"),
+            }),
+            None => {
+                if link.kind == js::LinkKind::Member {
+                    text.push('.');
+                }
+                edits.push(js::Edit {
+                    span: link.token,
+                    text,
+                });
+            }
+        }
+        // Unless the `?.` before gave it (see above).
+        if let Some(js::This::Value { object, .. }) = this(link)
+            && !index
+                .checked_sub(1)
+                .is_some_and(|before| object.end <= links[before].token.start)
+        {
+            edits.push(js::Edit {
+                span: Span::new(object.end, object.end),
+                text: reader(n),
+            });
+        }
+    }
+    for (member, (module, name), object) in reads {
+        let merged = links
+            .iter()
+            .any(|link| object.end <= link.token.start && link.token.end <= member.end);
+        if !merged {
+            edits.push(js::Edit {
+                span: Span::new(object.end, member.end),
+                text: format!(", {module:?}, {name:?})"),
+            });
+        }
+    }
+    edits.push(js::Edit {
+        span: Span::new(chain.span.end, chain.span.end),
+        text: ")".repeat(links.len() + usize::from(waits)),
+    });
+    edits
 }

@@ -1,0 +1,33 @@
+---
+source: crates/ljos_compiler/tests/golden.rs
+expression: "compile(&[(\"Main\",\nr##\"\nimport QtQuick\n\nItem {\n    property var steps: function* () { return parent?.parent.Keys.forwardTo[yield 0] }\n    property var before: function* () { return (yield 0)?.Keys }\n}\n\"##,)])"
+---
+file Main
+import QtQuick
+
+component c0 Main (file) id=Main signature=f53ff841
+  o0 QtQuick/Item key=/
+    property var steps
+    property var before
+    steps := e0
+    before := e1
+
+exprs
+  e0 property f0 scope=c0o0 at 5:25 params[$scope=c0o0] args[] refs[parent:scope]
+  e1 property f1 scope=c0o0 at 6:26 params[] args[] refs[]
+
+module
+// Main.qml, compiled by ljos_compiler: a function per binding, handler and method.
+
+// Main.qml:5:25 Item.steps
+export function f0($scope) {
+  return (function* () { return __ljos_att($scope.parent?.parent, "QtQuick", "Keys").forwardTo[yield 0] });
+}
+
+// Main.qml:6:26 Item.before
+export function f1() {
+  return (function* () { return __ljos_opt((yield 0), (__ljos_o1) => __ljos_att(__ljos_o1, "QtQuick", "Keys")) });
+}
+
+diagnostics
+  5:77: error: a `?.` chain that reads an attached object cannot `yield` after its first `?.`: yield before the chain
