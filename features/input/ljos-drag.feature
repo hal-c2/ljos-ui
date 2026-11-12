@@ -57,7 +57,7 @@ Feature: Ljós's gestures: Drag, Pointer, Wheel and DragSource
             property int starts: 0
             Drag {
               yAxis.enabled: false
-              buttons: Qt.LeftButton
+              buttons: MouseButton.Left
               onActiveChanged: if (active) box.starts += 1
             }
           }
@@ -149,7 +149,7 @@ Feature: Ljós's gestures: Drag, Pointer, Wheel and DragSource
           Item {
             id: box
             x: 40; width: 100; height: 100
-            Wheel { property: "x"; modifiers: Qt.NoModifier }
+            Wheel { property: "x"; modifiers: Modifier.None }
           }
           TestCase {
             name: "Wheel"
@@ -299,7 +299,7 @@ Feature: Ljós's gestures: Drag, Pointer, Wheel and DragSource
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Main.qml (12 edits)
+        lowered ./Main.qml (14 edits)
         1 files, 1 lowered, 0 kept
         """
       And the file "Main.qml" is:
@@ -308,9 +308,9 @@ Feature: Ljós's gestures: Drag, Pointer, Wheel and DragSource
         Rectangle {
           id: box
           DragSource.active: drag.active; DragSource.dragType: DragSource.Automatic
-          Drag { id: drag; buttons: Qt.LeftButton; snapMode: Drag.NoSnap }
+          Drag { id: drag; buttons: MouseButton.Left; snapMode: Drag.NoSnap }
           Pointer { devices: PointerDevice.Stylus }
-          Wheel { property: "rotation"; modifiers: Qt.ControlModifier }
+          Wheel { property: "rotation"; modifiers: Modifier.Control }
           Text { text: box.DragSource.active ? "away" : "here" }
         }
         """

@@ -227,7 +227,7 @@ Feature: A MouseArea that fills its parent is gestures on it
           Tap {
             gesturePolicy: Tap.ReleaseWithinBounds; longPressThreshold: 0
             onTapped: console.log("open")
-          } Hover { cursorShape: Qt.PointingHandCursor }
+          } Hover { cursorShape: Cursor.PointingHand }
           Rectangle {
             width: 20; height: 20
             PointerArea { anchors.fill: parent; onPressed: console.log("down") }

@@ -16,9 +16,9 @@ fn a_row_layout_is_a_row_with_its_defaults_written_out() {
     assert_eq!(
         text,
         "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Layout\nRow { spacing: 5;\n    width: 200\n    \
-         Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
-         Rectangle { Layout.fillWidth: true; Layout.alignment: Qt.AlignTop }\n    \
-         Item { Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }\n}\n"
+         Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
+         Rectangle { Layout.fillWidth: true; Layout.alignment: Align.Top }\n    \
+         Item { Layout.preferredWidth: 30; Layout.alignment: Align.Right | Align.VCenter }\n}\n"
     );
 }
 
@@ -48,8 +48,8 @@ fn a_grid_layout_is_a_grid_with_its_defaults_written_out() {
     assert!(
         text.ends_with(
             "Item { Grid { columnSpacing: 5; columns: 2; rowSpacing: 1; flow: Grid.LeftToRight\n    \
-             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
-             Item { Layout.preferredWidth: 30; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter } } }\n"
+             Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
+             Item { Layout.preferredWidth: 30; Layout.alignment: Align.Right | Align.VCenter } } }\n"
         ),
         "{text}"
     );
@@ -68,9 +68,9 @@ fn a_top_to_bottom_grid_layout_is_a_grid_of_its_rows() {
     assert!(
         text.ends_with(
             "Item { Grid { columnSpacing: 5; rowSpacing: 5; flow: Grid.TopToBottom; rows: 2\n    \
-             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
-             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 30; implicitHeight: 20 }\n    \
-             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 10; implicitHeight: 10 } } }\n"
+             Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 20; implicitHeight: 10 }\n    \
+             Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 30; implicitHeight: 20 }\n    \
+             Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 10; implicitHeight: 10 } } }\n"
         ),
         "{text}"
     );

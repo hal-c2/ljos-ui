@@ -171,6 +171,58 @@ pub enum Cause {
     NotNamed,
     /// An `XMLHttpRequest` that is not of the shape written as `fetch`.
     Xhr(Xhr),
+    /// A member of `Qt` with no home in Ljós's API yet (docs/DIALECT.md
+    /// §4.3.1): `member` as written after `Qt.`.
+    QtNoHome {
+        member: String,
+    },
+    /// A member of `Qt` whose home is a name the lowered file could not
+    /// reach: `name`, which `by` takes there.
+    QtHomeHidden {
+        member: String,
+        name: &'static str,
+        by: Hider,
+    },
+    /// `Qt.resolvedUrl` given the object to resolve against, which `url`
+    /// does not take.
+    QtResolvedAgainst,
+    /// A colour named by `Qt` (`Qt.red`) where the value is no `color`:
+    /// it is a number there.
+    QtColourNumber {
+        name: String,
+    },
+    /// `Qt.formatDate` and its family given a format that is not written as
+    /// a string, or a locale: a locale's `formatDate` reads a number as
+    /// another enum.
+    QtFormatNotText {
+        member: String,
+    },
+    /// A type a script names whose name in Ljós's API is a global of
+    /// JavaScript's there (`QtObject`, which is `Object`).
+    RenamedToGlobal {
+        name: String,
+        new: &'static str,
+    },
+}
+
+/// What takes a name a member of `Qt` lowers to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Hider {
+    /// A property, a function or a variable of the file of that name.
+    Own,
+    /// A member of the type of one of the file's objects.
+    Member,
+    /// A role of a delegate's model.
+    Role,
+    /// An object of a type the pass does not know, which may have it.
+    UnknownType,
+    /// A type of a directory or module the file imports by path.
+    Directory,
+    /// A file beside the file, or what the root of one declares.
+    Beside,
+    /// Another word of the file: a local, a parameter, a type it names.
+    Word,
 }
 
 /// Whose a name is, as a keep reason says it.
@@ -527,6 +579,38 @@ impl fmt::Display for Cause {
             ),
             Cause::NotNamed => f.write_str("it is not named: name it too"),
             Cause::Xhr(xhr) => xhr.fmt(f),
+            Cause::QtNoHome { member } => {
+                write!(f, "`Qt.{member}` has no home in Ljós's API yet")
+            }
+            Cause::QtHomeHidden { member, name, by } => {
+                let by = match by {
+                    Hider::Own => "which a property of the file hides",
+                    Hider::Member => "which a member of an object's type hides",
+                    Hider::Role => "which a role of a delegate could hide",
+                    Hider::UnknownType => {
+                        "which an object of a type the pass does not know could have"
+                    }
+                    Hider::Directory => "which a type of a directory the file imports could be",
+                    Hider::Beside => "which a file beside it has",
+                    Hider::Word => "which the file names something else",
+                };
+                write!(f, "`Qt.{member}` needs `{name}`, {by}")
+            }
+            Cause::QtResolvedAgainst => f.write_str(
+                "`Qt.resolvedUrl` given an object to resolve against has no home in Ljós's API yet",
+            ),
+            Cause::QtColourNumber { name } => write!(
+                f,
+                "`Qt.{name}` is a number here: Ljós's API names a colour only where it goes to a `color`"
+            ),
+            Cause::QtFormatNotText { member } => write!(
+                f,
+                "`Qt.{member}` given a format that is not a string has no home in Ljós's API yet"
+            ),
+            Cause::RenamedToGlobal { name, new } => write!(
+                f,
+                "`{name}` is `{new}` in Ljós's API, which a script reads as JavaScript's"
+            ),
         }
     }
 }

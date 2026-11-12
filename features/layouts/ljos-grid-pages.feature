@@ -55,9 +55,9 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
           objectName: "grid"
           columns: 2
           width: 200; height: 100
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20 }
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "c"; implicitWidth: 30; implicitHeight: 10; Layout.fillHeight: true }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20 }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "c"; implicitWidth: 30; implicitHeight: 10; Layout.fillHeight: true }
         }
         """
       When 100 milliseconds pass
@@ -106,8 +106,8 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
         Grid { columnSpacing: 5; rowSpacing: 5;
           columns: 2
           width: 200
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20; Layout.fillWidth: true }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20; Layout.fillWidth: true }
         }
         """
       When 100 milliseconds pass
@@ -162,9 +162,9 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
           flow: Grid.TopToBottom
           rows: 2
           width: 200; height: 100
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20 }
-          Rectangle { Layout.alignment: Qt.AlignVCenter; objectName: "c"; implicitWidth: 30; implicitHeight: 10; Layout.fillHeight: true }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "a"; implicitWidth: 30; implicitHeight: 10; Layout.fillWidth: true }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "b"; implicitWidth: 50; implicitHeight: 20 }
+          Rectangle { Layout.alignment: Align.VCenter; objectName: "c"; implicitWidth: 30; implicitHeight: 10; Layout.fillHeight: true }
         }
         """
       When 100 milliseconds pass
@@ -317,8 +317,8 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
             columnSpacing: 5
             rowSpacing: 5
             columns: 2
-            Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 10; implicitHeight: 10 }
-            Rectangle { implicitWidth: 10; implicitHeight: 20; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
+            Rectangle { Layout.alignment: Align.VCenter; implicitWidth: 10; implicitHeight: 10 }
+            Rectangle { implicitWidth: 10; implicitHeight: 20; Layout.alignment: Align.Right | Align.VCenter }
           }
         }
         """

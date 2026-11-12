@@ -18,8 +18,8 @@ use qt_types::Type;
 
 use crate::modules::{self, Ljos, Modules, Qt};
 use crate::{
-    CONTROLS_STYLE, Cause, Imported, Kept, Locals, MODELS, Native, Natives, Owner, ProjectModule,
-    Root, Ty, group, not_in, renames_of, renames_on, rules,
+    CONTROLS_STYLE, Cause, Hider, Imported, Kept, Locals, MODELS, Native, Natives, Owner,
+    ProjectModule, Root, Ty, group, not_in, renames_of, renames_on, rules,
 };
 
 /// An import of the file, in the order written, that decides what a type
@@ -211,18 +211,23 @@ impl<'s> Scope<'s> {
         }
     }
 
-    /// Whether `name`, which lowering a member of `Qt` would bring into the
-    /// file, may be a name of what is beside it: a type of a directory or a
-    /// module of the project it imports not under a name, a file beside it,
-    /// or what the root of one its types are built on declares.
-    pub(crate) fn may_be_beside(&self, name: &str) -> bool {
+    /// What may take `name`, which lowering a member of `Qt` would bring
+    /// into the file, beside it: a type of a directory or a module of the
+    /// project it imports not under a name, a file beside it, or what the
+    /// root of one its types are built on declares.
+    pub(crate) fn may_be_beside(&self, name: &str) -> Option<Hider> {
         let pathed = self
             .imports
             .iter()
             .any(|import| matches!(import, Import::Dir(_) | Import::Module(_)));
-        (pathed && name.starts_with(|c: char| c.is_ascii_uppercase()))
-            || self.locals.root(name).is_some()
-            || self.beside.borrow().iter().any(|d| d == name)
+        if pathed && name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            Some(Hider::Directory)
+        } else if self.locals.root(name).is_some() || self.beside.borrow().iter().any(|d| d == name)
+        {
+            Some(Hider::Beside)
+        } else {
+            None
+        }
     }
 
     /// Whether `name` is QtQuick.Layouts' type here, not the type of an
@@ -505,7 +510,10 @@ impl<'s> Scope<'s> {
             Qt::Layouts => (Ljos::Layout, rules::layout::LOWERED.contains(&name)),
             // The models are [`MODELS_MODULE`]'s.
             Qt::Qml if MODELS.contains(&name) => (Ljos::Models, true),
-            Qt::Qml => (Ljos::Core, name == "Qt" || has(Ljos::Core, name)),
+            Qt::Qml => (
+                Ljos::Core,
+                name == "Qt" || has(Ljos::Core, rules::new_name(name).unwrap_or(name)),
+            ),
             // What arranges children is `Ljos.Layout`'s.
             Qt::Quick => {
                 let new = rules::new_name(name).unwrap_or(name);

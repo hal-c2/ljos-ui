@@ -23,7 +23,7 @@ Rectangle {\n\
     Hover { id: hover; devices: PointerDevice.Mouse; onDevicesChanged: {} }\n\
     Tap {\n\
         id: tap\n\
-        buttons: Qt.RightButton; modifiers: Qt.ControlModifier\n\
+        buttons: MouseButton.Right; modifiers: Modifier.Control\n\
         gesturePolicy: Tap.WithinBounds\n\
         onTapped: console.log(tap.buttons, hover.pointerTypes)\n\
     }\n\
@@ -257,9 +257,9 @@ Item {\n\
         lowered(source),
         "pragma Scripts: JavaScript; import Ljos.Ui\n\
 Item {\n\
-    Drag { buttons: Qt.RightButton; snapMode: Drag.NoSnap }\n\
+    Drag { buttons: MouseButton.Right; snapMode: Drag.NoSnap }\n\
     Pointer { id: point; devices: PointerDevice.Stylus }\n\
-    Wheel { modifiers: Qt.ControlModifier }\n\
+    Wheel { modifiers: Modifier.Control }\n\
     property bool pen: point.active && point.devices > 0\n\
 }\n"
     );
@@ -343,11 +343,11 @@ Item {\n\
             gesturePolicy: Tap.ReleaseWithinBounds; longPressThreshold: 0\n\
             enabled: root.on && card.fill != \"red\"\n\
 \n\
-            buttons: Qt.RightButton\n\
+            buttons: MouseButton.Right\n\
             onTapped: {\n\
                 card.fill = \"red\"\n\
             }\n\
-        } Hover { enabled: root.on && card.fill != \"red\"; cursorShape: Qt.PointingHandCursor }\n\
+        } Hover { enabled: root.on && card.fill != \"red\"; cursorShape: Cursor.PointingHand }\n\
     }\n\
 }\n"
     );

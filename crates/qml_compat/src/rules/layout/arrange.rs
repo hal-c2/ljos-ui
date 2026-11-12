@@ -709,7 +709,7 @@ impl Arrange<'_, '_> {
                 Some((_, binding)) => self.centre(binding)?,
                 None => {
                     if let Some(at) = after_brace(self.source, child) {
-                        self.insert(at, " Layout.alignment: Qt.AlignVCenter;");
+                        self.insert(at, " Layout.alignment: Align.VCenter;");
                     }
                 }
             }
@@ -819,7 +819,7 @@ impl Arrange<'_, '_> {
         }
         let vertical = ["AlignTop", "AlignBottom", "AlignVCenter", "AlignCenter"];
         if !flags.iter().any(|f| vertical.contains(f)) {
-            self.insert(span.end as usize, " | Qt.AlignVCenter");
+            self.insert(span.end as usize, " | Align.VCenter");
         }
         Ok(())
     }

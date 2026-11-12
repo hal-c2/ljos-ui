@@ -41,12 +41,19 @@ fn kept_for(source: &str) -> String {
 }
 
 /// Every rename in the table says what `Ljos.Ui` has: the new name is
-/// there and the old one is not, so the table and the runtime cannot drift.
+/// there (or in `Ljos.Core`, as `QtObject`'s `Object` is) and the old one is
+/// not, so the table and the runtime cannot drift.
 #[test]
 fn the_renames_are_what_ljos_ui_has() {
     let ui = qt_types::module(MODULE).expect("Ljos.Ui is described");
+    let core = qt_types::module("Ljos.Core").expect("Ljos.Core is described");
     for (old, new) in type_renames() {
-        assert!(ui.type_named(new).is_some(), "{new}");
+        assert!(
+            ui.type_named(new)
+                .or_else(|| core.type_named(new))
+                .is_some(),
+            "{new}"
+        );
         // An old name is gone, unless another type now has it: Qt's
         // `DragHandler` is `Drag`, and Qt's `Drag` `DragSource`.
         assert!(
