@@ -146,3 +146,25 @@ Feature: A change handler run while the object is made
       }
       """
     Then the property "written" of "root" is "string"
+
+  # Found by ljos-fuzz (bindings), seed 43208726649, bucket value:onChanged+onCompleted:encoding.
+  # The objects' bindings are made children first, so a child's alias is in place before the
+  # binding of the property it names is made, and is told of its first value. Ljós tells an
+  # alias of a list so, and no alias of another type.
+  @backlog
+  Scenario: A child's alias is told of the first value of a binding its parent makes later
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        property string log: ""
+        property string label: JSON.stringify({})
+        Item {
+          property alias seen: root.label
+          onSeenChanged: root.log += "seen:" + seen + ";"
+        }
+      }
+      """
+    Then the property "log" of "root" is "seen:{};"

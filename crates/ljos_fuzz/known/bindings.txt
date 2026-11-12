@@ -208,3 +208,12 @@ warning:assign(ljos-only):Unable_to_assign_QColor_to_int      an outer handler r
 warning:assign(ljos-only):Unable_to_assign_QString_to_QRectF  an outer handler runs before a child's binding, which it so replaces too early (features/bindings/errors-during-creation.feature)
 value:load-handlers:nan-ljos          a handler that fails to write a later binding still takes it away, or runs at another time than on Qt (features/bindings/errors-during-creation.feature)
 value:alias-to-member:number          a handler run while made reads a later binding's member before it has run on Qt (features/bindings/errors-during-creation.feature)
+
+# The rotating seeds of the scheduled runs 43208726649 and 43260972647.
+value:load-handlers:record-vs-string  a url is an object to a script, here copied into a var by a handler (features/language/url-values.feature)
+value:load-handlers:text-nan-qt       a handler run while the object is made reads a binding not made yet, or takes a later binding away (features/bindings/creation-order.feature)
+value:load-member-alias:number        a size whose binding gives only NaN goes on following its implicit size, here through an alias of a point's member (features/items/geometry-nan.feature)
+value:onChanged+onCompleted:encoding  a child's alias is told of the first value of a binding its parent makes later (features/bindings/creation-order.feature)
+value:onChanged+signal-handler:text   a handler run while the object is made takes a later binding away, which a signal's argument then shows (features/bindings/creation-order.feature, features/bindings/errors-during-creation.feature)
+value:step:empty-ljos                 a list property is not an Array to Array.isArray, so a conditional writes another list (features/language/list-properties.feature)
+warning:binding-loop(qt-only):implicitWidth  an implicit width that reads a width bound to an expression is a loop while made, as Qt puts the width's binding in place last (features/bindings/loops.feature)
