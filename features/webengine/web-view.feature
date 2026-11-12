@@ -449,6 +449,37 @@ Feature: A web page in a WebEngineView
     And the pixel at 50, 50 of the window is "#00ff00"
     And the log has no warning matching "gave up waiting"
 
+  # A load another replaces stopped: time passing waits for the new page's
+  # picture, not for the one that never came. The first page is never
+  # answered, so it is still loading when the view goes elsewhere.
+  @ljos-only @api-QtWebEngine.WebEngineView.loadingChanged
+  Scenario: A load replaced while it loads says it stopped and the next page is drawn
+    Given the web server serves the text file "green.html":
+      """
+      <!doctype html>
+      <html><head><title>Green</title></head>
+      <body style="margin:0; background:#00ff00"></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        url: "$SERVER/held"
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status
+        onLoadProgressChanged: if (loadProgress > 0 && url.toString().endsWith("/held"))
+          url = "$SERVER/green.html"
+      }
+      """
+    When 1 millisecond passes
+    Then the property "seen" of "view" is "0 1 0 2"
+    And the property "title" of "view" is "Green"
+    And the pixel at 50, 50 of the window is "#00ff00"
+    And the log has no warning matching "gave up waiting"
+
   @api-QtWebEngine.WebEngineView.goBack @api-QtWebEngine.WebEngineView.goForward @api-QtWebEngine.WebEngineView.canGoBack @api-QtWebEngine.WebEngineView.canGoForward
   Scenario: The view goes back and forward through the pages it showed
     Given the QML:
