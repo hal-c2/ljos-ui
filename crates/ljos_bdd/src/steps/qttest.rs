@@ -84,13 +84,16 @@ fn files_migrated_checked(w: &mut LjosWorld) -> StepResult {
     })
 }
 
-// A file as `ljos migrate --write` left it, which the check then read. A
-// file given with `Given the file` keeps the spaces it is indented by in
-// the scenario, so both are read without them.
+// A file as `ljos migrate --write` left it, which the check then read,
+// whole and with its own indentation: the files it starts from are given
+// `without its indentation`. Only the doc string loses its label and indent.
 #[then(regex = r#"^the migrated file "([^"]+)" is:$"#)]
 fn migrated_file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     use crate::author::same_file;
-    let want = docstring(step)?;
+    let want = step
+        .docstring
+        .clone()
+        .ok_or_else(|| "this step needs a doc string".to_owned())?;
     w.each_test_report(
         |report| match report.files.iter().find(|(n, _)| *n == name) {
             Some((_, text)) if same_file(text, &want) => Ok(()),

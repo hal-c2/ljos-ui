@@ -62,22 +62,22 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   Scenario: Migrating renames such a module to `.lts` and the imports that name it
-    Given the file "size.ts":
+    Given the file "size.ts" without its indentation:
       """ts
       export function half(n: number): number {
         return n |> % / 2
       }
       """
-    And the file "line.ts":
+    And the file "line.ts" without its indentation:
       """ts
       import { half } from "./size.ts"
       export const quarter: number = half(half(8))
       """
-    And the file "qmldir":
+    And the file "qmldir" without its indentation:
       """
       Size 1.0 size.ts
       """
-    And the file "Pad.qml":
+    And the file "Pad.qml" without its indentation:
       """qml
       import Ljos.Ui
       import "size.ts" as Size
