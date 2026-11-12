@@ -27,6 +27,7 @@ pub(crate) const DRAWN: &[&str] = &[
     "CheckBox",
     "ComboBox",
     "Control",
+    "DelayButton",
     "Dialog",
     "Frame",
     "GroupBox",
@@ -38,6 +39,7 @@ pub(crate) const DRAWN: &[&str] = &[
     "Page",
     "Pane",
     "Popup",
+    "RoundButton",
     "ScrollBar",
     "ScrollView",
     "Slider",
@@ -46,6 +48,7 @@ pub(crate) const DRAWN: &[&str] = &[
     "TextArea",
     "TextField",
     "ToolBar",
+    "ToolButton",
     "ToolTip",
 ];
 
