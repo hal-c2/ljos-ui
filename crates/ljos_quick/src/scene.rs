@@ -653,6 +653,27 @@ pub(crate) fn pictures_wanted(e: &Engine) {
     }
 }
 
+/// A Controller's host changed ([`crate::controller`]): its `updated`
+/// runs in the next frame of every live scene. One at work now sees it as
+/// its frame ends.
+pub(crate) fn updates_wanted(e: &Engine) {
+    for s in e.extension::<Scenes>().live() {
+        let waker = {
+            let Ok(mut s) = s.try_borrow_mut() else {
+                continue;
+            };
+            if std::mem::replace(&mut s.dirty, true) {
+                None
+            } else {
+                s.waker.clone()
+            }
+        };
+        if let Some(w) = waker {
+            w();
+        }
+    }
+}
+
 /// A grab of `item` is asked for ([`crate::grab`]): the scenes that show
 /// it, and no other, take it at their next frame. One at work now sees
 /// the grab as its frame ends; one that shows the item only once its
@@ -1884,9 +1905,11 @@ impl QuickScene {
         crate::views::path_view::tick(engine, now);
         STEPPING.set(false);
         lap(&mut laps, &mut steps.animations);
-        // 6. Polish.
+        // 6. Polish. The Controllers whose hosts changed are told first,
+        // so what they write is laid out in this frame.
         drop(phase);
         phase = engine.enter_phase(Phase::Polish);
+        crate::controller::tell_updated(engine);
         self.polish(engine);
         lap(&mut laps, &mut steps.layout);
         // 7. Incubate. New items join the tree and are laid out in this
@@ -1952,6 +1975,7 @@ impl QuickScene {
             let mut s = self.shared.borrow_mut();
             let p = s.pending()
                 || self.a11y.pending()
+                || crate::controller::pending(engine)
                 || crate::grab::waiting(engine, |item| self.items.contains(item))
                 || crate::item_picture::wanted_since(engine, self.pictures_seen);
             // Unfinished jobs need the next frame although nothing they
