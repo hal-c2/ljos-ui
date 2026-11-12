@@ -56,6 +56,8 @@ impl HttpFetcher {
             .max_redirects(max_redirects)
             .max_redirects_will_error(true)
             .http_status_as_error(false)
+            // A reply's address is said only where a redirect was followed.
+            .save_redirect_history(true)
             .build();
         Self {
             agent: ureq::Agent::new_with_config(config),
@@ -202,10 +204,15 @@ impl HttpFetcher {
         }
         .map_err(|e| transport(url, e, failed))?;
         let status = response.status().as_u16();
+        // Whether a redirect was followed is ureq's record of it, not the
+        // texts compared: a URI prints the request's own address its way,
+        // `https://example.org` as `https://example.org/`.
         let landed = {
             use ureq::ResponseExt as _;
-            let landed = response.get_uri().to_string();
-            (landed != *url).then_some(landed)
+            let followed = response
+                .get_redirect_history()
+                .is_some_and(|history| history.len() > 1);
+            followed.then(|| response.get_uri().to_string())
         };
         let headers = response
             .headers()
@@ -534,6 +541,37 @@ mod tests {
             }
         });
         assert_eq!(HttpFetcher::new().fetch(&url).unwrap(), b"there");
+    }
+
+    #[test]
+    fn a_reply_says_its_address_only_where_a_redirect_was_followed() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            for response in [
+                ok("here"),
+                format!(
+                    "HTTP/1.1 302 Found\r\nContent-Length: 0\r\nLocation: http://{addr}/next\r\nConnection: close\r\n\r\n"
+                ),
+                ok("there"),
+            ] {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                read_request(&mut stream);
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+        // Written without a path, which the URI prints with one.
+        let plain = HttpFetcher::new()
+            .request(&Request::get(format!("http://{addr}")))
+            .unwrap();
+        assert_eq!(plain.url, None);
+        let moved = HttpFetcher::new()
+            .request(&Request::get(format!("http://{addr}/first")))
+            .unwrap();
+        assert_eq!(moved.url, Some(format!("http://{addr}/next")));
+        assert_eq!(moved.body, b"there");
     }
 
     #[test]
