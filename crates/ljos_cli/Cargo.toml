@@ -109,6 +109,10 @@ dhat-heap = ["dep:dhat"]
 tempfile.workspace = true
 # `tests/own_types.rs` asks which table of types the build has.
 qt_types = { path = "../qt_types" }
+# `tests/tsc_accepts.rs` reads the scenarios' files, and asks which of them
+# Ljós's syntax is desugared in.
+gherkin.workspace = true
+qml_syntax = { path = "../qml_syntax" }
 
 [lints]
 workspace = true

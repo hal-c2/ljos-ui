@@ -4,6 +4,11 @@
 //! "before" halves is written in Ljós's own API, which `ljos migrate` has
 //! nothing left to lower in.
 //!
+//! An example with Ljós's syntax in it (`match`, `is`, `|>`, or an `.lts`
+//! module) that the checker accepts passes `ljos check --tsc` too, with
+//! nothing said by TypeScript (docs/DIALECT.md §4.21), where there is a
+//! TypeScript to ask: the `tsc` `LJOS_TSC` names, or `deno`.
+//!
 //! What is not there yet is listed in `docs_site.txt` beside this file, with
 //! why; an entry that no longer applies fails too, so the list only shrinks.
 
@@ -525,6 +530,23 @@ fn unknown_member(out: &str) -> bool {
     out.contains("[unknown-property]") || out.contains("[unknown-signal]")
 }
 
+/// Whether any of `files` has Ljós's syntax in it, which `--tsc` gives
+/// TypeScript compiled away.
+fn desugared(files: &[(String, String)]) -> bool {
+    files.iter().any(|(name, text)| {
+        name.ends_with(".lts")
+            || ((name.ends_with(".qml") || name.ends_with(".ts") || name.ends_with(".js"))
+                && qml_syntax::desugar(text).text != *text)
+    })
+}
+
+/// Whether `ljos check --tsc` has a TypeScript to ask.
+fn has_typescript() -> bool {
+    std::env::var_os("LJOS_TSC").is_some_and(|v| !v.is_empty())
+        || std::env::var_os("PATH")
+            .is_some_and(|path| std::env::split_paths(&path).any(|dir| dir.join("deno").is_file()))
+}
+
 /// What is wrong with one example, if anything.
 fn verify(
     root: &Path,
@@ -538,7 +560,24 @@ fn verify(
     write(&dir, &project.files);
     let host_types = pending.is_some_and(|p| p.host_types);
     let shows_findings = pending.is_some_and(|p| p.shows_findings);
-    match ljos(&dir, &["check", "."]) {
+    let checked = ljos(&dir, &["check", "."]);
+    let accepted = matches!(&checked, Some((true, out)) if !out.contains(": error: "));
+    if accepted && !host_types && !shows_findings && desugared(&project.files) && has_typescript() {
+        match ljos(&dir, &["check", "--tsc", "."]) {
+            Some((true, out)) if !out.contains("[TS") => {}
+            Some((_, out)) => problems.push(format!(
+                "{} ({}): TypeScript refuses what `ljos check` accepts:\n{out}",
+                project.at, project.key
+            )),
+            None => problems.push(format!(
+                "{} ({}): `ljos check --tsc` ran past {}s",
+                project.at,
+                project.key,
+                DEADLINE.as_secs()
+            )),
+        }
+    }
+    match checked {
         None => problems.push(format!(
             "{} ({}): `ljos check` ran past {}s (see #394)",
             project.at,

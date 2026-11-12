@@ -480,7 +480,7 @@ Feature: Choosing a value with match, and testing one with is
           };
           return right + wrong
         }
-        export async function* steps(p: Promise<number>, q: Promise<string>) {
+        export async function* steps(p: Promise<number>, q: Promise<string>): AsyncGenerator<number, string, number> {
           const right: string = match (yield await p) {
             when 1: "one";
             default: await q;
@@ -497,6 +497,10 @@ Feature: Choosing a value with match, and testing one with is
         import Ljos.Ui
         import "pick.lts" as Pick
         Item {}
+        """
+      And the file "tsconfig.json":
+        """json
+        { "extends": "./.ljos/tsconfig.base.json" }
         """
       When the files are checked
       Then the check reports:
@@ -813,6 +817,10 @@ Feature: Choosing a value with match, and testing one with is
         Item {
           property real picked: Pick.run()
         }
+        """
+      And the file "tsconfig.json":
+        """json
+        { "extends": "./.ljos/tsconfig.base.json" }
         """
       When the files are checked
       Then the check reports:

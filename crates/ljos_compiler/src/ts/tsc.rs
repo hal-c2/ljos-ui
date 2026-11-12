@@ -20,6 +20,69 @@ pub const COMPILER_OPTIONS: &str = r#"{
     "lib": ["es2022"]
   }"#;
 
+/// Where the modules TypeScript reads are, beside the files it checks.
+/// An `.lts` module is not there as itself: an import of it, from a QML
+/// file, a module or a body, is read as its declaration, as stock
+/// TypeScript reads `.ljos/types/` through `rootDirs`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Layout {
+    /// The `.ts` modules, by their keys under [`super::MODULES`].
+    pub modules: Vec<String>,
+    /// The `.lts` modules, by their keys, and the paths of their
+    /// declarations.
+    pub lts: Vec<(String, String)>,
+}
+
+impl Layout {
+    /// The options that let TypeScript find the modules: `rootDirs` makes
+    /// the modules, declarations and bodies one directory, and
+    /// `allowArbitraryExtensions` reads `width.d.lts.ts` for `./width.lts`.
+    fn tsc_options(&self) -> &'static str {
+        if self.lts.is_empty() {
+            ""
+        } else {
+            concat!(
+                "\n    \"allowArbitraryExtensions\": true,",
+                "\n    \"rootDirs\": [\"m\", \"types\", \"check\"],"
+            )
+        }
+    }
+
+    /// Deno has no `rootDirs`: an import map sends what a body imports, and
+    /// every import of an `.lts` module, where the module would be.
+    fn deno_imports(&self) -> String {
+        let mut map: Vec<(String, String)> = Vec::new();
+        // What `rootDirs` makes one tree for tsc: an import from any of the
+        // three directories finds a module in `m`, and an `.lts` module's
+        // declaration in `types`. A declaration imports what its module
+        // imports, so `types` is one of the three.
+        for (key, declaration) in &self.lts {
+            for dir in [super::MODULES, super::BODIES, crate::lts::TYPES] {
+                map.push((format!("./{dir}/{key}"), format!("./{declaration}")));
+            }
+        }
+        if !self.lts.is_empty() {
+            for key in &self.modules {
+                for dir in [super::BODIES, crate::lts::TYPES] {
+                    map.push((
+                        format!("./{dir}/{key}"),
+                        format!("./{}/{key}", super::MODULES),
+                    ));
+                }
+            }
+        }
+        if map.is_empty() {
+            return String::new();
+        }
+        let entries = map
+            .iter()
+            .map(|(from, to)| format!("    {from:?}: {to:?}"))
+            .collect::<Vec<_>>()
+            .join(",\n");
+        format!(",\n  \"imports\": {{\n{entries}\n  }}")
+    }
+}
+
 /// A program that checks TypeScript.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Checker {
@@ -39,8 +102,14 @@ impl Checker {
         on_path("deno").map(Self::Deno)
     }
 
-    /// What TypeScript says of `files`, modules in `dir`.
-    pub fn check(&self, dir: &Path, files: &[String]) -> Result<Vec<Said>, TsError> {
+    /// What TypeScript says of `files`, modules in `dir` laid out as
+    /// `layout` says.
+    pub fn check(
+        &self,
+        dir: &Path,
+        files: &[String],
+        layout: &Layout,
+    ) -> Result<Vec<Said>, TsError> {
         let (mut command, config) = match self {
             Checker::Deno(deno) => {
                 let mut command = Command::new(deno);
@@ -49,7 +118,10 @@ impl Checker {
                     command,
                     (
                         "deno.json",
-                        format!("{{\n  \"compilerOptions\": {COMPILER_OPTIONS}\n}}\n"),
+                        format!(
+                            "{{\n  \"compilerOptions\": {COMPILER_OPTIONS}{}\n}}\n",
+                            layout.deno_imports()
+                        ),
                     ),
                 )
             }
@@ -61,7 +133,11 @@ impl Checker {
                     .map(|f| format!("{f:?}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let options = COMPILER_OPTIONS.replacen('{', "{\n    \"noEmit\": true,", 1);
+                let options = COMPILER_OPTIONS.replacen(
+                    '{',
+                    &format!("{{\n    \"noEmit\": true,{}", layout.tsc_options()),
+                    1,
+                );
                 (
                     command,
                     (

@@ -54,8 +54,13 @@ pub struct Origin {
 #[derive(Debug, Clone, Default)]
 pub struct Extracted {
     pub text: String,
-    /// One for each line of `text`.
+    /// One for each line of `text`, at the desugared file's lines and
+    /// columns (docs/DIALECT.md §4.21): TypeScript reads `match` and `is`
+    /// written away.
     pub origins: Vec<Option<Origin>>,
+    /// From the desugared file back to the file as written, when the two
+    /// differ.
+    pub back: Option<Back>,
 }
 
 impl Extracted {
@@ -63,11 +68,16 @@ impl Extracted {
     /// from 1).
     pub fn position(&self, line: u32, column: u32) -> Option<(u32, u32)> {
         let origin = (*self.origins.get(line.checked_sub(1)? as usize)?)?;
-        Some(if origin.verbatim {
+        let at = if origin.verbatim {
             (origin.line, origin.column + column.saturating_sub(1))
         } else {
             (origin.line, origin.column)
-        })
+        };
+        Some(
+            self.back
+                .as_ref()
+                .map_or(at, |back| back.position(at.0, at.1)),
+        )
     }
 
     fn line(&mut self, text: &str, origin: Option<Origin>) {
@@ -89,6 +99,60 @@ impl Extracted {
     }
 }
 
+/// From a line and column of a desugared text to the text as written: the
+/// desugar keeps lines, so it is the column that moves, through the
+/// [`qml_syntax::SpanMap`]. What the desugar wrote is said where what it
+/// stands for starts.
+#[derive(Debug, Clone)]
+pub struct Back {
+    lowered: String,
+    lowered_starts: Vec<u32>,
+    source: String,
+    source_starts: Vec<u32>,
+    map: qml_syntax::SpanMap,
+}
+
+impl Back {
+    /// None when the desugar changed nothing.
+    pub fn new(source: &str, lowered: &str, map: qml_syntax::SpanMap) -> Option<Self> {
+        (!map.is_identity()).then(|| Self {
+            lowered_starts: line_starts(lowered),
+            lowered: lowered.to_owned(),
+            source_starts: line_starts(source),
+            source: source.to_owned(),
+            map,
+        })
+    }
+
+    /// The written text's line and column (from 1, columns in characters)
+    /// of the desugared text's.
+    pub fn position(&self, line: u32, column: u32) -> (u32, u32) {
+        let Some(start) = line
+            .checked_sub(1)
+            .and_then(|l| self.lowered_starts.get(l as usize))
+        else {
+            return (line, column);
+        };
+        let start = *start as usize;
+        let offset = self.lowered[start..]
+            .char_indices()
+            .nth(column.saturating_sub(1) as usize)
+            .map_or(self.lowered.len(), |(i, _)| start + i);
+        let at = self.map.start(offset as u32) as usize;
+        let at = at.min(self.source.len());
+        let line = self.source_starts.partition_point(|s| *s as usize <= at);
+        let begin = self.source_starts[line - 1] as usize;
+        let mut end = at;
+        while !self.source.is_char_boundary(end) {
+            end -= 1;
+        }
+        (
+            line as u32,
+            self.source[begin..end].chars().count() as u32 + 1,
+        )
+    }
+}
+
 /// Whether the file is TypeScript's to check: written in Ljós's API, and not
 /// marked as still Qt's JavaScript (`pragma Scripts: JavaScript`), as the
 /// checker reads it.
@@ -107,9 +171,14 @@ pub fn extract(
     declarations: &str,
     modules: &str,
 ) -> Option<Extracted> {
-    let source = project.source(key)?;
+    let written = project.source(key)?;
     let allocator = Allocator::default();
-    let mut parsed = qml_syntax::parse(&allocator, source);
+    // TypeScript reads the file with `match` and `is` written away, at the
+    // desugared text's spans; what it says is moved back at the end.
+    let lowered = qml_syntax::parse_lowered(&allocator, written);
+    let back = Back::new(written, lowered.text, lowered.map);
+    let source = lowered.text;
+    let mut parsed = lowered.parsed;
     if parsed.panicked || !is_dialect(&parsed.document) {
         return None;
     }
@@ -185,6 +254,10 @@ pub fn extract(
     for object in objects {
         writer.declare(object);
     }
+    if back.is_some() {
+        super::declare_sugar(&mut writer.out.text);
+    }
+    writer.out.back = back;
     Some(writer.out)
 }
 

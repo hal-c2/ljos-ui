@@ -14,8 +14,8 @@ pub mod extract;
 pub mod tsc;
 
 pub use dts::Api;
-pub use extract::{Extracted, extract};
-pub use tsc::Checker;
+pub use extract::{Back, Extracted, extract};
+pub use tsc::{Checker, Layout};
 
 /// The name the declarations are written under, beside the modules.
 pub const DECLARATIONS: &str = "ljos.d.ts";
@@ -24,6 +24,16 @@ pub const DECLARATIONS: &str = "ljos.d.ts";
 /// written under as they are laid out in the project, so that what one
 /// imports from another is found.
 pub const MODULES: &str = "m";
+
+/// The directory, beside [`MODULES`], an `.lts` module's desugared body is
+/// written under, as `<path>.lts.body.ts`, so TypeScript checks it too. Its
+/// module's declaration is under [`crate::lts::TYPES`], as `ljos check`
+/// writes it to `.ljos/types/`, and what the body imports is found in
+/// [`MODULES`] and there (docs/DIALECT.md §4.21).
+pub const BODIES: &str = "check";
+
+/// What an `.lts` module's body is named after its key.
+pub const BODY_SUFFIX: &str = ".body.ts";
 
 #[derive(Debug, thiserror::Error)]
 pub enum TsError {
@@ -109,18 +119,35 @@ pub fn check_project(
     };
     let scratch = Scratch::new()?;
     let mut scripts: Vec<String> = Vec::new();
+    // Each module is TypeScript's desugared (docs/DIALECT.md §4.21), and
+    // what it says is moved back to the module as written. An `.lts`
+    // module is read twice: its importers read its declaration, as stock
+    // TypeScript reads `.ljos/types/`, and its body is checked on its own.
+    let mut backs: Vec<(String, Back)> = Vec::new();
+    let mut layout = Layout::default();
+    let mut bodies: Vec<String> = Vec::new();
     for (key, text) in project.scripts() {
         if !crate::script::module::is_module(key) || !within(key) {
             continue;
         }
-        let path = scratch.path().join(MODULES).join(key);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|source| TsError::Io {
-                path: parent.to_owned(),
-                source,
-            })?;
+        let mut desugared = qml_syntax::desugar(text);
+        if let Some(back) = Back::new(text, &desugared.text, desugared.map) {
+            backs.push((key.to_owned(), back));
+            declare_sugar(&mut desugared.text);
         }
-        std::fs::write(&path, text).map_err(|source| TsError::Io { path, source })?;
+        if crate::script::module::is_lts(key) {
+            let declaration = crate::lts::declaration_key(key);
+            if let Some(declared) = crate::lts::declare(key, text) {
+                write_in(&scratch.path().join(&declaration), &declared)?;
+            }
+            let body = format!("{BODIES}/{key}{BODY_SUFFIX}");
+            write_in(&scratch.path().join(&body), &desugared.text)?;
+            layout.lts.push((key.to_owned(), declaration));
+            bodies.push(body);
+        } else {
+            write_in(&scratch.path().join(MODULES).join(key), &desugared.text)?;
+            layout.modules.push(key.to_owned());
+        }
         scripts.push(key.to_owned());
     }
     // A JavaScript file with declarations beside it is given with them,
@@ -141,14 +168,8 @@ pub fn check_project(
         let name = key.rsplit('/').next().unwrap_or(key);
         let told = format!("// @ts-self-types=\"./{name}\"\n");
         for (key, text) in [(key, text.to_owned()), (script, told)] {
-            let path = scratch.path().join(MODULES).join(key);
-            if let Some(parent) = path.parent() {
-                std::fs::create_dir_all(parent).map_err(|source| TsError::Io {
-                    path: parent.to_owned(),
-                    source,
-                })?;
-            }
-            std::fs::write(&path, text).map_err(|source| TsError::Io { path, source })?;
+            write_in(&scratch.path().join(MODULES).join(key), &text)?;
+            layout.modules.push(key.to_owned());
         }
         scripts.push(key.to_owned());
     }
@@ -197,7 +218,7 @@ pub fn check_project(
         std::fs::write(&path, &extracted.text).map_err(|source| TsError::Io { path, source })?;
         modules.push((name, key.to_owned(), extracted, set));
     }
-    if modules.is_empty() {
+    if modules.is_empty() && bodies.is_empty() {
         return Ok(Outcome::Checked {
             files: Vec::new(),
             findings: Vec::new(),
@@ -205,31 +226,56 @@ pub fn check_project(
     }
     let mut findings: Vec<Finding> = Vec::new();
     let mut elsewhere: Vec<String> = Vec::new();
-    for set in 0..sets.len() {
-        let names: Vec<String> = modules
+    // The bodies go with the first set, or alone when no QML file is in
+    // Ljós's API: they need no declarations of it.
+    let runs = sets.len().max(usize::from(!bodies.is_empty()));
+    for set in 0..runs {
+        let mut names: Vec<String> = modules
             .iter()
             .filter(|(_, _, _, s)| *s == set)
             .map(|(name, _, _, _)| name.clone())
             .collect();
+        if set == 0 {
+            names.extend(bodies.iter().cloned());
+        }
         if names.is_empty() {
             continue;
         }
-        for said in checker.check(scratch.path(), &names)? {
-            // A module is its own text, so what TypeScript says of it is at
-            // its own lines.
-            if let Some(key) = said
+        for said in checker.check(scratch.path(), &names, &layout)? {
+            // A module is its own text desugared, line for line, so what
+            // TypeScript says of it is at its own lines.
+            let module = said
                 .file
                 .strip_prefix(MODULES)
                 .and_then(|rest| rest.strip_prefix('/'))
-                .filter(|key| scripts.iter().any(|s| s == key))
-            {
+                .or_else(|| {
+                    said.file
+                        .strip_prefix(BODIES)
+                        .and_then(|rest| rest.strip_prefix('/'))
+                        .and_then(|rest| rest.strip_suffix(BODY_SUFFIX))
+                })
+                .filter(|key| scripts.iter().any(|s| s == key));
+            if let Some(key) = module {
+                let (line, column) = backs
+                    .iter()
+                    .find(|(k, _)| k == key)
+                    .map_or((said.line, said.column), |(_, back)| {
+                        back.position(said.line, said.column)
+                    });
                 findings.push(Finding {
                     key: key.to_owned(),
-                    line: said.line,
-                    column: said.column,
+                    line,
+                    column,
                     code: said.code,
                     message: said.message,
                 });
+                continue;
+            }
+            // A declaration is written from a body TypeScript checks too:
+            // what is wrong with it is wrong with the body, and said there.
+            if let Some((key, _)) = layout.lts.iter().find(|(_, d)| *d == said.file)
+                && findings.iter().any(|f| f.key == *key)
+            {
                 continue;
             }
             let Some((_, key, extracted, _)) =
@@ -261,6 +307,35 @@ pub fn check_project(
     Ok(Outcome::Checked {
         files: modules.into_iter().map(|(_, key, _, _)| key).collect(),
         findings,
+    })
+}
+
+/// What the desugar's calls are declared as to TypeScript (docs/DIALECT.md
+/// §4.18): the runtime defines them, so a file that calls them declares
+/// them, after its last line, which leaves its lines where they are.
+pub const SUGAR: &str = "declare function $is<T>(s: unknown, p: (v: unknown) => v is T): s is T;\n\
+declare function $is<T>(s: unknown, p: T): s is T;\n\
+declare function $nomatch(x: never): never;\n";
+
+/// Declares [`SUGAR`] at the end of the desugared `text`.
+pub fn declare_sugar(text: &mut String) {
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(SUGAR);
+}
+
+/// Writes `text` to `path`, with the directories it is in.
+fn write_in(path: &Path, text: &str) -> Result<(), TsError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| TsError::Io {
+            path: parent.to_owned(),
+            source,
+        })?;
+    }
+    std::fs::write(path, text).map_err(|source| TsError::Io {
+        path: path.to_owned(),
+        source,
     })
 }
 
