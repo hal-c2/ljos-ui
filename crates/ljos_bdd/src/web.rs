@@ -12,7 +12,10 @@
 //! content type and the `x-` headers, one per line by name, a blank line, then
 //! the body. `/headers` answers with every header it was sent, the same
 //! way. `/status/<code>/<reason>` answers that status, with that reason
-//! phrase (`%20` a space) and no body.
+//! phrase (`%20` a space) and no body. `/loop` redirects to itself, a
+//! redirect that never ends. `/refused` redirects to a loopback port the
+//! server holds and never listens on, so the browser's connection is
+//! refused, as by a server that has gone.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
@@ -23,6 +26,11 @@ use std::thread::JoinHandle;
 
 /// What the QML writes for the server's address.
 pub const PLACEHOLDER: &str = "$SERVER";
+
+/// The path that redirects to itself.
+const LOOP: &str = "/loop";
+/// The path that redirects to a port that refuses.
+const REFUSED: &str = "/refused";
 
 type Files = Arc<Mutex<HashMap<String, Body>>>;
 
@@ -52,6 +60,8 @@ impl WebServer {
             .local_addr()
             .map_err(|e| format!("the scenario's web server has no address: {e}"))?
             .port();
+        let refusing = Refusing::bind()?;
+        let refused = format!("http://127.0.0.1:{}/", refusing.port);
         let files = Files::default();
         let stop = Arc::new(AtomicBool::new(false));
         let thread = {
@@ -59,6 +69,8 @@ impl WebServer {
             std::thread::Builder::new()
                 .name("ljos-bdd-web".to_owned())
                 .spawn(move || {
+                    // Held, unlistened, for as long as the server runs.
+                    let _refusing = refusing;
                     for stream in listener.incoming() {
                         if stop.load(Ordering::Acquire) {
                             break;
@@ -66,7 +78,7 @@ impl WebServer {
                         // One at a time: a scenario's few requests are
                         // small, and an answer is written whole at once.
                         if let Ok(stream) = stream {
-                            answer(stream, &files);
+                            answer(stream, &files, &refused);
                         }
                     }
                 })
@@ -125,9 +137,69 @@ impl Drop for WebServer {
     }
 }
 
+/// A loopback port bound and never listened on: nobody else can have it,
+/// and every connection to it is refused.
+#[derive(Debug)]
+struct Refusing {
+    port: u16,
+    #[cfg(unix)]
+    _socket: std::os::fd::OwnedFd,
+}
+
+impl Refusing {
+    #[cfg(unix)]
+    fn bind() -> Result<Self, String> {
+        use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd};
+        let fail = |what: &str| {
+            format!(
+                "the scenario's refusing port: {what}: {}",
+                std::io::Error::last_os_error()
+            )
+        };
+        // SAFETY: a new socket whose descriptor `OwnedFd` owns from here.
+        let fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_STREAM, 0) };
+        if fd < 0 {
+            return Err(fail("socket"));
+        }
+        // SAFETY: `fd` is a socket just made and owned by nothing else.
+        let socket = unsafe { OwnedFd::from_raw_fd(fd) };
+        // SAFETY: all zeroes is a valid `sockaddr_in`.
+        let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+        addr.sin_family = libc::AF_INET as libc::sa_family_t;
+        addr.sin_addr.s_addr = u32::from(std::net::Ipv4Addr::LOCALHOST).to_be();
+        let mut len = std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+        // SAFETY: `addr` is a `sockaddr_in` of `len` bytes, read and
+        // written by the calls only while they run.
+        unsafe {
+            if libc::bind(socket.as_raw_fd(), (&raw const addr).cast(), len) != 0 {
+                return Err(fail("bind"));
+            }
+            if libc::getsockname(socket.as_raw_fd(), (&raw mut addr).cast(), &mut len) != 0 {
+                return Err(fail("getsockname"));
+            }
+        }
+        Ok(Self {
+            port: u16::from_be(addr.sin_port),
+            _socket: socket,
+        })
+    }
+
+    // Without a socket left unlistened: a port that was free a moment ago.
+    #[cfg(not(unix))]
+    fn bind() -> Result<Self, String> {
+        let port = TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .map_err(|e| format!("the scenario's refusing port: {e}"))?
+            .port();
+        Ok(Self { port })
+    }
+}
+
 /// Reads one request and answers it: the file, what `/echo` or `/headers`
-/// was sent, the status `/status/…` names, or 404 for a name nobody served. The connection closes after it.
-fn answer(stream: TcpStream, files: &Files) {
+/// was sent, the status `/status/…` names, `/loop` itself again, `/refused`
+/// the refusing port, or 404 for a name nobody served. The connection
+/// closes after it.
+fn answer(stream: TcpStream, files: &Files, refused: &str) {
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() {
@@ -161,7 +233,11 @@ fn answer(stream: TcpStream, files: &Files) {
     }
     // By name: clients send headers in orders of their own.
     headers.sort();
-    let (status, content_type, body) = if path == "/echo" {
+    let mut location = "";
+    let (status, content_type, body) = if path == LOOP || path == REFUSED {
+        location = if path == LOOP { LOOP } else { refused };
+        ("302 Found".to_owned(), "text/plain", Vec::new())
+    } else if path == "/echo" {
         let mut text = format!("{method}\n");
         for (name, value) in &headers {
             if name == "content-type" || name.starts_with("x-") {
@@ -237,8 +313,13 @@ fn answer(stream: TcpStream, files: &Files) {
             ),
         }
     };
+    let location = if location.is_empty() {
+        String::new()
+    } else {
+        format!("Location: {location}\r\n")
+    };
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: {content_type}\r\n{location}Connection: close\r\n\r\n",
         body.len()
     );
     let mut stream = &stream;
@@ -296,6 +377,29 @@ mod tests {
         );
         assert!(reply.contains("Content-Length: 0\r\n"), "{reply}");
         assert!(get(&server, "/status/x/y").starts_with("HTTP/1.1 404 Not Found\r\n"));
+    }
+
+    #[test]
+    fn refused_redirects_to_a_port_that_refuses() {
+        let server = WebServer::start().unwrap();
+        let reply = get(&server, "/refused");
+        assert!(reply.starts_with("HTTP/1.1 302 Found\r\n"), "{reply}");
+        let port: u16 = reply
+            .split("\r\nLocation: http://127.0.0.1:")
+            .nth(1)
+            .and_then(|rest| rest.split('/').next())
+            .and_then(|port| port.parse().ok())
+            .unwrap_or_else(|| panic!("no loopback Location: {reply}"));
+        let refused = TcpStream::connect(("127.0.0.1", port)).unwrap_err();
+        assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
+    }
+
+    #[test]
+    fn loop_redirects_to_itself() {
+        let server = WebServer::start().unwrap();
+        let reply = get(&server, "/loop");
+        assert!(reply.starts_with("HTTP/1.1 302 Found\r\n"), "{reply}");
+        assert!(reply.contains("\r\nLocation: /loop\r\n"), "{reply}");
     }
 
     #[test]
