@@ -143,6 +143,8 @@
 //! style compiles now) adds what the style's files declare. The test says so
 //! when it is the case.
 
+pub mod ljos_enums;
+
 #[cfg(test)]
 mod tests;
 

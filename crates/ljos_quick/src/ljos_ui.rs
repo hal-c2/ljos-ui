@@ -246,6 +246,32 @@ pub(crate) fn register(engine: &Engine) {
     ] {
         engine.register_type(MODULE, version, MetaRef::Static(face()));
     }
+    for meta in enums() {
+        engine.register_type(MODULE, version, MetaRef::Static(meta));
+    }
+}
+
+/// The enums of Qt's `Qt` namespace, each a type of its own with Qt's
+/// numbers (docs/DIALECT.md §4.3.1): `Align.Left`, `Key.Digit0`,
+/// `Permission.Status.Granted`. Nothing makes one; a file reads its keys.
+fn enums() -> &'static [MetaObject] {
+    static METAS: OnceLock<Vec<MetaObject>> = OnceLock::new();
+    METAS.get_or_init(|| {
+        ljos_engine::ljos_enums::ljos_enums()
+            .iter()
+            .map(|e| {
+                let keys: Vec<(&str, i64)> =
+                    e.keys.iter().map(|k| (k.name.as_str(), k.value)).collect();
+                let meta = MetaBuilder::new(e.type_name()).module(MODULE).uncreatable();
+                if e.flags {
+                    meta.flags(e.enum_name(), &keys)
+                } else {
+                    meta.enumeration(e.enum_name(), &keys)
+                }
+                .build()
+            })
+            .collect()
+    })
 }
 
 #[cfg(test)]

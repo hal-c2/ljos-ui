@@ -386,7 +386,7 @@ module Ljos.Core
 	Connections QtQml.Connections
 	Controller Ljos.Core.Controller
 	Locale QtQml.Locale
-	QtObject QtQml.QtObject
+	Object Ljos.Core.Object
 	Timer QtQml.Timer
 	type Ljos.Core.Controller Controller
 		prototype QtQml.QtObject named
@@ -397,6 +397,9 @@ module Ljos.Core
 		signal attached host:QtObject
 		signal detached
 		signal updated
+	type Ljos.Core.Object Object
+		prop objectName QtQml.string named
+		signal objectNameChanged
 
 module Ljos.Design
 	Colors Ljos/Design/Colors.qml
@@ -875,30 +878,80 @@ module Ljos.Models
 
 module Ljos.Ui
 	Accessible QtQuick.Accessible
+	Align Ljos.Ui.Align
 	Animation QtQuick.Animation
+	ApplicationState Ljos.Ui.ApplicationState
+	ArrowType Ljos.Ui.ArrowType
+	AspectRatioMode Ljos.Ui.AspectRatioMode
+	Axis Ljos.Ui.Axis
+	BGMode Ljos.Ui.BGMode
 	Behavior QtQuick.Behavior
+	BrushStyle Ljos.Ui.BrushStyle
+	CaseSensitivity Ljos.Ui.CaseSensitivity
+	CheckState Ljos.Ui.CheckState
+	ChecksumType Ljos.Ui.ChecksumType
+	ClipOperation Ljos.Ui.ClipOperation
 	ColorAnimation QtQuick.ColorAnimation
+	ColorScheme Ljos.Ui.ColorScheme
 	ConicalGradient QtQuick.Shapes.ConicalGradient
+	ConnectionType Ljos.Ui.ConnectionType
+	ContextMenuPolicy Ljos.Ui.ContextMenuPolicy
+	ContextMenuTrigger Ljos.Ui.ContextMenuTrigger
+	ContrastPreference Ljos.Ui.ContrastPreference
+	Corner Ljos.Ui.Corner
+	Cursor Ljos.Ui.Cursor
+	CursorMoveStyle Ljos.Ui.CursorMoveStyle
+	DateFormat Ljos.Ui.DateFormat
+	DayOfWeek Ljos.Ui.DayOfWeek
+	Direction Ljos.Ui.Direction
+	DockWidgetArea Ljos.Ui.DockWidgetArea
 	DoubleValidator QtQuick.DoubleValidator
 	Drag Ljos.Ui.Drag
 	DragSource Ljos.Ui.DragSource
+	DropAction Ljos.Ui.DropAction
 	DropArea QtQuick.DropArea
 	Easing QtQuick.Easing
+	Edge Ljos.Ui.Edge
+	Elide Ljos.Ui.Elide
+	EnterKeyType Ljos.Ui.EnterKeyType
+	FillRule Ljos.Ui.FillRule
 	Flickable QtQuick.Flickable
+	FocusPolicy Ljos.Ui.FocusPolicy
+	FocusReason Ljos.Ui.FocusReason
 	Font QtQuick.Font
 	FontMetrics QtQuick.FontMetrics
+	GestureState Ljos.Ui.GestureState
+	GestureType Ljos.Ui.GestureType
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
+	HighDpiScaleFactorRoundingPolicy Ljos.Ui.HighDpiScaleFactorRoundingPolicy
 	Hover Ljos.Ui.Hover
 	Image QtQuick.Image
+	ImageConversionFlag Ljos.Ui.ImageConversionFlag
+	InputMethodHint Ljos.Ui.InputMethodHint
+	InputMethodQuery Ljos.Ui.InputMethodQuery
 	IntValidator QtQuick.IntValidator
 	Item QtQuick.Item
+	ItemDataRole Ljos.Ui.ItemDataRole
+	ItemFlag Ljos.Ui.ItemFlag
+	ItemSelectionMode Ljos.Ui.ItemSelectionMode
+	ItemSelectionOperation Ljos.Ui.ItemSelectionOperation
+	Key Ljos.Ui.Key
 	KeyEvent QtQuick.KeyEvent
+	KeyModifier Ljos.Ui.KeyModifier
 	Keys QtQuick.Keys
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
 	Loader Ljos.Ui.Loader
+	MaskMode Ljos.Ui.MaskMode
+	MatchFlag Ljos.Ui.MatchFlag
+	Modifier Ljos.Ui.Modifier
+	MouseButton Ljos.Ui.MouseButton
+	MouseEventFlag Ljos.Ui.MouseEventFlag
+	MouseEventSource Ljos.Ui.MouseEventSource
+	NativeGestureType Ljos.Ui.NativeGestureType
 	NumberAnimation QtQuick.NumberAnimation
+	Orientation Ljos.Ui.Orientation
 	ParallelAnimation QtQuick.ParallelAnimation
 	Path QtQuick.Path
 	PathAngleArc QtQuick.PathAngleArc
@@ -915,6 +968,10 @@ module Ljos.Ui
 	PathRectangle QtQuick.PathRectangle
 	PathSvg QtQuick.PathSvg
 	PauseAnimation QtQuick.PauseAnimation
+	PenCapStyle Ljos.Ui.PenCapStyle
+	PenJoinStyle Ljos.Ui.PenJoinStyle
+	PenStyle Ljos.Ui.PenStyle
+	Permission Ljos.Ui.Permission
 	Pointer Ljos.Ui.Pointer
 	PointerArea Ljos.Ui.PointerArea
 	PointerDevice QtQuick.PointerDevice
@@ -927,23 +984,114 @@ module Ljos.Ui
 	Repeater QtQuick.Repeater
 	RotationAnimation QtQuick.RotationAnimation
 	Screen QtQuick.Screen
+	ScreenOrientation Ljos.Ui.ScreenOrientation
 	ScriptAction QtQuick.ScriptAction
+	ScrollBarPolicy Ljos.Ui.ScrollBarPolicy
+	ScrollPhase Ljos.Ui.ScrollPhase
 	SequentialAnimation QtQuick.SequentialAnimation
 	Shape QtQuick.Shapes.Shape
 	ShapeGradient QtQuick.Shapes.ShapeGradient
 	ShapePath QtQuick.Shapes.ShapePath
 	Shortcut QtQuick.Shortcut
+	ShortcutContext Ljos.Ui.ShortcutContext
+	SizeHint Ljos.Ui.SizeHint
+	SizeMode Ljos.Ui.SizeMode
 	SmoothedAnimation QtQuick.SmoothedAnimation
+	SortOrder Ljos.Ui.SortOrder
+	SplitBehavior Ljos.Ui.SplitBehavior
 	SpringAnimation QtQuick.SpringAnimation
 	State QtQuick.State
+	TabFocusBehavior Ljos.Ui.TabFocusBehavior
 	Tap Ljos.Ui.Tap
 	Text Ljos.Ui.Text
 	TextEdit QtQuick.TextEdit
+	TextFlag Ljos.Ui.TextFlag
+	TextFormat Ljos.Ui.TextFormat
 	TextInput QtQuick.TextInput
+	TextInteractionFlag Ljos.Ui.TextInteractionFlag
 	TextMetrics QtQuick.TextMetrics
+	TimeSpec Ljos.Ui.TimeSpec
+	TimerId Ljos.Ui.TimerId
+	TimerType Ljos.Ui.TimerType
+	ToolBarArea Ljos.Ui.ToolBarArea
+	ToolButtonStyle Ljos.Ui.ToolButtonStyle
+	TouchPointState Ljos.Ui.TouchPointState
+	TransformationMode Ljos.Ui.TransformationMode
 	Transition QtQuick.Transition
 	Wheel Ljos.Ui.Wheel
 	Window QtQuick.Window
+	WindowModality Ljos.Ui.WindowModality
+	WindowState Ljos.Ui.WindowState
+	WindowType Ljos.Ui.WindowType
+	type Ljos.Ui.Align Align
+		is uncreatable
+		flags Align Left=1 Leading=1 Right=2 Trailing=2 HCenter=4 Justify=8 Absolute=16 HorizontalMask=31 Top=32 Bottom=64 VCenter=128 Baseline=256 VerticalMask=480 Center=132
+	type Ljos.Ui.ApplicationState ApplicationState
+		is uncreatable
+		enum ApplicationState Suspended=0 Hidden=1 Inactive=2 Active=4
+	type Ljos.Ui.ArrowType ArrowType
+		is uncreatable
+		enum ArrowType None=0 Up=1 Down=2 Left=3 Right=4
+	type Ljos.Ui.AspectRatioMode AspectRatioMode
+		is uncreatable
+		enum AspectRatioMode Ignore=0 Keep=1 KeepAspectRatioByExpanding=2
+	type Ljos.Ui.Axis Axis
+		is uncreatable
+		enum Axis X=0 Y=1 Z=2
+	type Ljos.Ui.BGMode BGMode
+		is uncreatable
+		enum BGMode Transparent=0 Opaque=1
+	type Ljos.Ui.BrushStyle BrushStyle
+		is uncreatable
+		enum BrushStyle None=0 SolidPattern=1 Dense1Pattern=2 Dense2Pattern=3 Dense3Pattern=4 Dense4Pattern=5 Dense5Pattern=6 Dense6Pattern=7 Dense7Pattern=8 HorPattern=9 VerPattern=10 CrossPattern=11 BDiagPattern=12 FDiagPattern=13 DiagCrossPattern=14 LinearGradientPattern=15 RadialGradientPattern=16 ConicalGradientPattern=17 TexturePattern=24
+	type Ljos.Ui.CaseSensitivity CaseSensitivity
+		is uncreatable
+		enum CaseSensitivity Insensitive=0 Sensitive=1
+	type Ljos.Ui.CheckState CheckState
+		is uncreatable
+		enum CheckState Unchecked=0 PartiallyChecked=1 Checked=2
+	type Ljos.Ui.ChecksumType ChecksumType
+		is uncreatable
+		enum ChecksumType Iso3309=0 ItuV41=1
+	type Ljos.Ui.ClipOperation ClipOperation
+		is uncreatable
+		enum ClipOperation None=0 Replace=1 Intersect=2
+	type Ljos.Ui.ColorScheme ColorScheme
+		is uncreatable
+		enum ColorScheme Unknown=0 Light=1 Dark=2
+	type Ljos.Ui.ConnectionType ConnectionType
+		is uncreatable
+		enum ConnectionType Auto=0 Direct=1 Queued=2 BlockingQueued=3 Unique=128 SingleShot=256
+	type Ljos.Ui.ContextMenuPolicy ContextMenuPolicy
+		is uncreatable
+		enum ContextMenuPolicy None=0 Default=1 Actions=2 Custom=3 Prevent=4
+	type Ljos.Ui.ContextMenuTrigger ContextMenuTrigger
+		is uncreatable
+		enum ContextMenuTrigger Press=0 Release=1
+	type Ljos.Ui.ContrastPreference ContrastPreference
+		is uncreatable
+		enum ContrastPreference None=0 High=1
+	type Ljos.Ui.Corner Corner
+		is uncreatable
+		enum Corner TopLeft=0 TopRight=1 BottomLeft=2 BottomRight=3
+	type Ljos.Ui.Cursor Cursor
+		is uncreatable
+		enum Cursor Arrow=0 UpArrow=1 Cross=2 Wait=3 IBeam=4 SizeVer=5 SizeHor=6 SizeBDiag=7 SizeFDiag=8 SizeAll=9 Blank=10 SplitV=11 SplitH=12 PointingHand=13 Forbidden=14 WhatsThis=15 Busy=16 OpenHand=17 ClosedHand=18 DragCopy=19 DragMove=20 DragLink=21 Last=21 Bitmap=24 Custom=25
+	type Ljos.Ui.CursorMoveStyle CursorMoveStyle
+		is uncreatable
+		enum CursorMoveStyle LogicalMove=0 VisualMove=1
+	type Ljos.Ui.DateFormat DateFormat
+		is uncreatable
+		enum DateFormat Text=0 ISO=1 RFC2822=8 ISODateWithMs=9
+	type Ljos.Ui.DayOfWeek DayOfWeek
+		is uncreatable
+		enum DayOfWeek Monday=1 Tuesday=2 Wednesday=3 Thursday=4 Friday=5 Saturday=6 Sunday=7
+	type Ljos.Ui.Direction Direction
+		is uncreatable
+		enum Direction LeftToRight=0 RightToLeft=1 Auto=2
+	type Ljos.Ui.DockWidgetArea DockWidgetArea
+		is uncreatable
+		flags DockWidgetArea Left=1 Right=2 Top=4 Bottom=8 Mask=15 All=15 None=0
 	type Ljos.Ui.Drag Drag
 		prototype Ljos.Core.Controller named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
@@ -1018,6 +1166,36 @@ module Ljos.Ui
 		signal filterChildrenChanged
 		signal smoothedChanged
 		signal thresholdChanged
+	type Ljos.Ui.DropAction DropAction
+		is uncreatable
+		flags DropAction Copy=1 Move=2 Link=4 Mask=255 TargetMove=32770 Ignore=0
+	type Ljos.Ui.Edge Edge
+		is uncreatable
+		flags Edge Top=1 Left=2 Right=4 Bottom=8
+	type Ljos.Ui.Elide Elide
+		is uncreatable
+		enum Elide Left=0 Right=1 Middle=2 None=3
+	type Ljos.Ui.EnterKeyType EnterKeyType
+		is uncreatable
+		enum EnterKeyType Default=0 Return=1 Done=2 Go=3 Send=4 Search=5 Next=6 Previous=7
+	type Ljos.Ui.FillRule FillRule
+		is uncreatable
+		enum FillRule OddEven=0 Winding=1
+	type Ljos.Ui.FocusPolicy FocusPolicy
+		is uncreatable
+		enum FocusPolicy None=0 Tab=1 Click=2 Strong=11 Wheel=15
+	type Ljos.Ui.FocusReason FocusReason
+		is uncreatable
+		enum FocusReason Mouse=0 Tab=1 Backtab=2 ActiveWindow=3 Popup=4 Shortcut=5 MenuBar=6 Other=7 None=8
+	type Ljos.Ui.GestureState GestureState
+		is uncreatable
+		enum GestureState None=0 Started=1 Updated=2 Finished=3 Canceled=4
+	type Ljos.Ui.GestureType GestureType
+		is uncreatable
+		enum GestureType Tap=1 TapAndHold=2 Pan=3 Pinch=4 Swipe=5 Custom=256 Last=-1
+	type Ljos.Ui.HighDpiScaleFactorRoundingPolicy HighDpiScaleFactorRoundingPolicy
+		is uncreatable
+		enum HighDpiScaleFactorRoundingPolicy Unset=0 Round=1 Ceil=2 Floor=3 RoundPreferFloor=4 PassThrough=5
 	type Ljos.Ui.Hover Hover
 		prototype Ljos.Core.Controller named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
@@ -1056,6 +1234,33 @@ module Ljos.Ui
 		signal hoveredChanged
 		signal blockingChanged
 		signal pointChanged
+	type Ljos.Ui.ImageConversionFlag ImageConversionFlag
+		is uncreatable
+		flags ImageConversionFlag ColorModeMask=3 AutoColor=0 ColorOnly=3 MonoOnly=2 AlphaDitherMask=12 ThresholdAlphaDither=0 OrderedAlphaDither=4 DiffuseAlphaDither=8 NoAlpha=12 DitherMask=48 DiffuseDither=0 OrderedDither=16 ThresholdDither=32 DitherModeMask=192 AutoDither=0 PreferDither=64 AvoidDither=128 NoOpaqueDetection=256 NoFormatConversion=512
+	type Ljos.Ui.InputMethodHint InputMethodHint
+		is uncreatable
+		flags InputMethodHint ImhNone=0 ImhHiddenText=1 ImhSensitiveData=2 ImhNoAutoUppercase=4 ImhPreferNumbers=8 ImhPreferUppercase=16 ImhPreferLowercase=32 ImhNoPredictiveText=64 ImhDate=128 ImhTime=256 ImhPreferLatin=512 ImhMultiLine=1024 ImhNoEditMenu=2048 ImhNoTextHandles=4096 ImhDigitsOnly=65536 ImhFormattedNumbersOnly=131072 ImhUppercaseOnly=262144 ImhLowercaseOnly=524288 ImhDialableCharactersOnly=1048576 ImhEmailCharactersOnly=2097152 ImhUrlCharactersOnly=4194304 ImhLatinOnly=8388608 ImhExclusiveInputMask=-65536
+	type Ljos.Ui.InputMethodQuery InputMethodQuery
+		is uncreatable
+		flags InputMethodQuery ImEnabled=1 ImCursorRectangle=2 ImFont=4 ImCursorPosition=8 ImSurroundingText=16 ImCurrentSelection=32 ImMaximumTextLength=64 ImAnchorPosition=128 ImHints=256 ImPreferredLanguage=512 ImAbsolutePosition=1024 ImTextBeforeCursor=2048 ImTextAfterCursor=4096 ImEnterKeyType=8192 ImAnchorRectangle=16384 ImInputItemClipRectangle=32768 ImReadOnly=65536 ImPlatformData=-2147483648 ImQuery=16570 ImQueryAll=-1
+	type Ljos.Ui.ItemDataRole ItemDataRole
+		is uncreatable
+		enum ItemDataRole Display=0 Decoration=1 Edit=2 ToolTip=3 StatusTip=4 WhatsThis=5 Font=6 TextAlignment=7 Background=8 Foreground=9 CheckState=10 AccessibleText=11 AccessibleDescription=12 SizeHint=13 InitialSortOrder=14 DisplayProperty=27 DecorationProperty=28 ToolTipProperty=29 StatusTipProperty=30 WhatsThisProperty=31 RangeModelData=40 RangeModelAdapter=41 User=256 StandardItemFlags=255 FileInfo=252 RemoteObjectsCache=255
+	type Ljos.Ui.ItemFlag ItemFlag
+		is uncreatable
+		flags ItemFlag None=0 IsSelectable=1 IsEditable=2 IsDragEnabled=4 IsDropEnabled=8 IsUserCheckable=16 IsEnabled=32 IsAutoTristate=64 NeverHasChildren=128 IsUserTristate=256
+	type Ljos.Ui.ItemSelectionMode ItemSelectionMode
+		is uncreatable
+		enum ItemSelectionMode ContainsItemShape=0 IntersectsItemShape=1 ContainsItemBoundingRect=2 IntersectsItemBoundingRect=3
+	type Ljos.Ui.ItemSelectionOperation ItemSelectionOperation
+		is uncreatable
+		enum ItemSelectionOperation ReplaceSelection=0 AddToSelection=1
+	type Ljos.Ui.Key Key
+		is uncreatable
+		enum Key Escape=16777216 Tab=16777217 Backtab=16777218 Backspace=16777219 Return=16777220 Enter=16777221 Insert=16777222 Delete=16777223 Pause=16777224 Print=16777225 SysReq=16777226 Clear=16777227 Home=16777232 End=16777233 Left=16777234 Up=16777235 Right=16777236 Down=16777237 PageUp=16777238 PageDown=16777239 Shift=16777248 Control=16777249 Meta=16777250 Alt=16777251 AltGr=16781571 CapsLock=16777252 NumLock=16777253 ScrollLock=16777254 F1=16777264 F2=16777265 F3=16777266 F4=16777267 F5=16777268 F6=16777269 F7=16777270 F8=16777271 F9=16777272 F10=16777273 F11=16777274 F12=16777275 F13=16777276 F14=16777277 F15=16777278 F16=16777279 F17=16777280 F18=16777281 F19=16777282 F20=16777283 F21=16777284 F22=16777285 F23=16777286 F24=16777287 F25=16777288 F26=16777289 F27=16777290 F28=16777291 F29=16777292 F30=16777293 F31=16777294 F32=16777295 F33=16777296 F34=16777297 F35=16777298 SuperL=16777299 SuperR=16777300 Menu=16777301 HyperL=16777302 HyperR=16777303 Help=16777304 DirectionL=16777305 DirectionR=16777312 Space=32 Any=32 Exclam=33 QuoteDbl=34 NumberSign=35 Dollar=36 Percent=37 Ampersand=38 Apostrophe=39 ParenLeft=40 ParenRight=41 Asterisk=42 Plus=43 Comma=44 Minus=45 Period=46 Slash=47 Digit0=48 Digit1=49 Digit2=50 Digit3=51 Digit4=52 Digit5=53 Digit6=54 Digit7=55 Digit8=56 Digit9=57 Colon=58 Semicolon=59 Less=60 Equal=61 Greater=62 Question=63 At=64 A=65 B=66 C=67 D=68 E=69 F=70 G=71 H=72 I=73 J=74 K=75 L=76 M=77 N=78 O=79 P=80 Q=81 R=82 S=83 T=84 U=85 V=86 W=87 X=88 Y=89 Z=90 BracketLeft=91 Backslash=92 BracketRight=93 AsciiCircum=94 Underscore=95 QuoteLeft=96 BraceLeft=123 Bar=124 BraceRight=125 AsciiTilde=126 Nobreakspace=160 Exclamdown=161 Cent=162 Sterling=163 Currency=164 Yen=165 Brokenbar=166 Section=167 Diaeresis=168 Copyright=169 Ordfeminine=170 Guillemotleft=171 Notsign=172 Hyphen=173 Registered=174 Macron=175 Degree=176 Plusminus=177 Twosuperior=178 Threesuperior=179 Acute=180 Mu=181 Micro=181 Paragraph=182 Periodcentered=183 Cedilla=184 Onesuperior=185 Masculine=186 Guillemotright=187 Onequarter=188 Onehalf=189 Threequarters=190 Questiondown=191 Agrave=192 Aacute=193 Acircumflex=194 Atilde=195 Adiaeresis=196 Aring=197 AE=198 Ccedilla=199 Egrave=200 Eacute=201 Ecircumflex=202 Ediaeresis=203 Igrave=204 Iacute=205 Icircumflex=206 Idiaeresis=207 ETH=208 Ntilde=209 Ograve=210 Oacute=211 Ocircumflex=212 Otilde=213 Odiaeresis=214 Multiply=215 Ooblique=216 Ugrave=217 Uacute=218 Ucircumflex=219 Udiaeresis=220 Yacute=221 THORN=222 Ssharp=223 Division=247 Ydiaeresis=255 Multikey=16781600 Codeinput=16781623 SingleCandidate=16781628 MultipleCandidate=16781629 PreviousCandidate=16781630 Modeswitch=16781694 Kanji=16781601 Muhenkan=16781602 Henkan=16781603 Romaji=16781604 Hiragana=16781605 Katakana=16781606 HiraganaKatakana=16781607 Zenkaku=16781608 Hankaku=16781609 ZenkakuHankaku=16781610 Touroku=16781611 Massyo=16781612 KanaLock=16781613 KanaShift=16781614 EisuShift=16781615 Eisutoggle=16781616 Hangul=16781617 HangulStart=16781618 HangulEnd=16781619 HangulHanja=16781620 HangulJamo=16781621 HangulRomaja=16781622 HangulJeonja=16781624 HangulBanja=16781625 HangulPreHanja=16781626 HangulPostHanja=16781627 HangulSpecial=16781631 DeadGrave=16781904 DeadAcute=16781905 DeadCircumflex=16781906 DeadTilde=16781907 DeadMacron=16781908 DeadBreve=16781909 DeadAbovedot=16781910 DeadDiaeresis=16781911 DeadAbovering=16781912 DeadDoubleacute=16781913 DeadCaron=16781914 DeadCedilla=16781915 DeadOgonek=16781916 DeadIota=16781917 DeadVoicedSound=16781918 DeadSemivoicedSound=16781919 DeadBelowdot=16781920 DeadHook=16781921 DeadHorn=16781922 Back=16777313 Forward=16777314 Stop=16777315 Refresh=16777316 VolumeDown=16777328 VolumeMute=16777329 VolumeUp=16777330 BassBoost=16777331 BassUp=16777332 BassDown=16777333 TrebleUp=16777334 TrebleDown=16777335 MediaPlay=16777344 MediaStop=16777345 MediaPrevious=16777346 MediaNext=16777347 MediaRecord=16777348 MediaPause=16777349 MediaTogglePlayPause=16777350 HomePage=16777360 Favorites=16777361 Search=16777362 Standby=16777363 OpenUrl=16777364 LaunchMail=16777376 LaunchMedia=16777377 Launch0=16777378 Launch1=16777379 Launch2=16777380 Launch3=16777381 Launch4=16777382 Launch5=16777383 Launch6=16777384 Launch7=16777385 Launch8=16777386 Launch9=16777387 LaunchA=16777388 LaunchB=16777389 LaunchC=16777390 LaunchD=16777391 LaunchE=16777392 LaunchF=16777393 LaunchG=16777486 LaunchH=16777487 MonBrightnessUp=16777394 MonBrightnessDown=16777395 KeyboardLightOnOff=16777396 KeyboardBrightnessUp=16777397 KeyboardBrightnessDown=16777398 PowerOff=16777399 WakeUp=16777400 Eject=16777401 ScreenSaver=16777402 WWW=16777403 Memo=16777404 LightBulb=16777405 Shop=16777406 History=16777407 AddFavorite=16777408 HotLinks=16777409 BrightnessAdjust=16777410 Finance=16777411 Community=16777412 AudioRewind=16777413 BackForward=16777414 ApplicationLeft=16777415 ApplicationRight=16777416 Book=16777417 CD=16777418 Calculator=16777419 ToDoList=16777420 ClearGrab=16777421 Close=16777422 Copy=16777423 Cut=16777424 Display=16777425 DOS=16777426 Documents=16777427 Excel=16777428 Explorer=16777429 Game=16777430 Go=16777431 ITouch=16777432 LogOff=16777433 Market=16777434 Meeting=16777435 MenuKB=16777436 MenuPB=16777437 MySites=16777438 News=16777439 OfficeHome=16777440 Option=16777441 Paste=16777442 Phone=16777443 Calendar=16777444 Reply=16777445 Reload=16777446 RotateWindows=16777447 RotationPB=16777448 RotationKB=16777449 Save=16777450 Send=16777451 Spell=16777452 SplitScreen=16777453 Support=16777454 TaskPane=16777455 Terminal=16777456 Tools=16777457 Travel=16777458 Video=16777459 Word=16777460 Xfer=16777461 ZoomIn=16777462 ZoomOut=16777463 Away=16777464 Messenger=16777465 WebCam=16777466 MailForward=16777467 Pictures=16777468 Music=16777469 Battery=16777470 Bluetooth=16777471 WLAN=16777472 UWB=16777473 AudioForward=16777474 AudioRepeat=16777475 AudioRandomPlay=16777476 Subtitle=16777477 AudioCycleTrack=16777478 Time=16777479 Hibernate=16777480 View=16777481 TopMenu=16777482 PowerDown=16777483 Suspend=16777484 ContrastAdjust=16777485 TouchpadToggle=16777488 TouchpadOn=16777489 TouchpadOff=16777490 MicMute=16777491 Red=16777492 Green=16777493 Yellow=16777494 Blue=16777495 ChannelUp=16777496 ChannelDown=16777497 Guide=16777498 Info=16777499 Settings=16777500 MicVolumeUp=16777501 MicVolumeDown=16777502 New=16777504 Open=16777505 Find=16777506 Undo=16777507 Redo=16777508 MediaLast=16842751 Unknown=33554431 Call=17825796 Camera=17825824 CameraFocus=17825825 Context1=17825792 Context2=17825793 Context3=17825794 Context4=17825795 Flip=17825798 Hangup=17825797 No=16842754 Select=16842752 Yes=16842753 ToggleCallHangup=17825799 VoiceDial=17825800 LastNumberRedial=17825801 Execute=16908291 Printer=16908290 Play=16908293 Sleep=16908292 Zoom=16908294 Exit=16908298 Cancel=16908289
+	type Ljos.Ui.KeyModifier KeyModifier
+		is uncreatable
+		flags KeyModifier META=268435456 SHIFT=33554432 CTRL=67108864 ALT=134217728 MODIFIERMASK=-33554432
 	type Ljos.Ui.ListView ListView
 		prototype Ljos.Ui.ItemView
 		attached Ljos.Ui.ItemViewAttached
@@ -1103,6 +1308,42 @@ module Ljos.Ui
 		signal progressChanged
 		signal loaded
 		method setSource
+	type Ljos.Ui.MaskMode MaskMode
+		is uncreatable
+		enum MaskMode InColor=0 OutColor=1
+	type Ljos.Ui.MatchFlag MatchFlag
+		is uncreatable
+		flags MatchFlag Exactly=0 Contains=1 StartsWith=2 EndsWith=3 RegularExpression=4 Wildcard=5 FixedString=8 TypeMask=15 CaseSensitive=16 Wrap=32 Recursive=64
+	type Ljos.Ui.Modifier Modifier
+		is uncreatable
+		flags Modifier None=0 Shift=33554432 Control=67108864 Alt=134217728 Meta=268435456 Keypad=536870912 GroupSwitch=1073741824 Mask=-33554432
+	type Ljos.Ui.MouseButton MouseButton
+		is uncreatable
+		flags MouseButton None=0 Left=1 Right=2 Middle=4 Back=8 XButton1=8 ExtraButton1=8 Forward=16 XButton2=16 ExtraButton2=16 Task=32 ExtraButton3=32 ExtraButton4=64 ExtraButton5=128 ExtraButton6=256 ExtraButton7=512 ExtraButton8=1024 ExtraButton9=2048 ExtraButton10=4096 ExtraButton11=8192 ExtraButton12=16384 ExtraButton13=32768 ExtraButton14=65536 ExtraButton15=131072 ExtraButton16=262144 ExtraButton17=524288 ExtraButton18=1048576 ExtraButton19=2097152 ExtraButton20=4194304 ExtraButton21=8388608 ExtraButton22=16777216 ExtraButton23=33554432 ExtraButton24=67108864 All=134217727 Max=67108864 Mask=-1
+	type Ljos.Ui.MouseEventFlag MouseEventFlag
+		is uncreatable
+		flags MouseEventFlag None=0 CreatedDoubleClick=1 Mask=255
+	type Ljos.Ui.MouseEventSource MouseEventSource
+		is uncreatable
+		enum MouseEventSource NotSynthesized=0 SynthesizedBySystem=1 SynthesizedByQt=2 SynthesizedByApplication=3
+	type Ljos.Ui.NativeGestureType NativeGestureType
+		is uncreatable
+		enum NativeGestureType Begin=0 End=1 Pan=2 Zoom=3 SmartZoom=4 Rotate=5 Swipe=6
+	type Ljos.Ui.Orientation Orientation
+		is uncreatable
+		enum Orientation Horizontal=1 Vertical=2
+	type Ljos.Ui.PenCapStyle PenCapStyle
+		is uncreatable
+		enum PenCapStyle FlatCap=0 SquareCap=16 RoundCap=32 Mask=48
+	type Ljos.Ui.PenJoinStyle PenJoinStyle
+		is uncreatable
+		enum PenJoinStyle MiterJoin=0 BevelJoin=64 RoundJoin=128 SvgMiterJoin=256 Mask=448
+	type Ljos.Ui.PenStyle PenStyle
+		is uncreatable
+		enum PenStyle None=0 SolidLine=1 DashLine=2 DotLine=3 DashDotLine=4 DashDotDotLine=5 CustomDashLine=6
+	type Ljos.Ui.Permission Permission
+		is uncreatable
+		enum Status Undetermined=0 Granted=1 Denied=2
 	type Ljos.Ui.Pointer Pointer
 		prototype Ljos.Core.Controller named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
@@ -1190,6 +1431,33 @@ module Ljos.Ui
 		signal topRightRadiusChanged
 		signal bottomLeftRadiusChanged
 		signal bottomRightRadiusChanged
+	type Ljos.Ui.ScreenOrientation ScreenOrientation
+		is uncreatable
+		flags ScreenOrientation Primary=0 Portrait=1 Landscape=2 InvertedPortrait=4 InvertedLandscape=8
+	type Ljos.Ui.ScrollBarPolicy ScrollBarPolicy
+		is uncreatable
+		enum ScrollBarPolicy AsNeeded=0 AlwaysOff=1 AlwaysOn=2
+	type Ljos.Ui.ScrollPhase ScrollPhase
+		is uncreatable
+		enum ScrollPhase None=0 Begin=1 Update=2 End=3 Momentum=4
+	type Ljos.Ui.ShortcutContext ShortcutContext
+		is uncreatable
+		enum ShortcutContext Widget=0 Window=1 Application=2 WidgetWithChildren=3
+	type Ljos.Ui.SizeHint SizeHint
+		is uncreatable
+		enum SizeHint Minimum=0 Preferred=1 Maximum=2 MinimumDescent=3 N=4
+	type Ljos.Ui.SizeMode SizeMode
+		is uncreatable
+		enum SizeMode Absolute=0 Relative=1
+	type Ljos.Ui.SortOrder SortOrder
+		is uncreatable
+		enum SortOrder Ascending=0 Descending=1
+	type Ljos.Ui.SplitBehavior SplitBehavior
+		is uncreatable
+		flags SplitBehavior KeepEmptyParts=0 SkipEmptyParts=1
+	type Ljos.Ui.TabFocusBehavior TabFocusBehavior
+		is uncreatable
+		enum TabFocusBehavior None=0 TextControls=1 ListControls=2 AllControls=255
 	type Ljos.Ui.Tap Tap
 		prototype Ljos.Core.Controller named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
@@ -1314,6 +1582,36 @@ module Ljos.Ui
 		signal linkActivated link:string
 		signal linkHovered link:string
 		method linkAt returns:string
+	type Ljos.Ui.TextFlag TextFlag
+		is uncreatable
+		enum TextFlag SingleLine=256 DontClip=512 ExpandTabs=1024 ShowMnemonic=2048 WordWrap=4096 WrapAnywhere=8192 DontPrint=16384 IncludeTrailingSpaces=134217728 HideMnemonic=32768 JustificationForced=65536 ForceLeftToRight=131072 ForceRightToLeft=262144 LongestVariant=524288
+	type Ljos.Ui.TextFormat TextFormat
+		is uncreatable
+		enum TextFormat Plain=0 Rich=1 Auto=2 Markdown=3
+	type Ljos.Ui.TextInteractionFlag TextInteractionFlag
+		is uncreatable
+		flags TextInteractionFlag None=0 SelectableByMouse=1 SelectableByKeyboard=2 LinksAccessibleByMouse=4 LinksAccessibleByKeyboard=8 Editable=16 EditorInteraction=19 BrowserInteraction=13
+	type Ljos.Ui.TimeSpec TimeSpec
+		is uncreatable
+		enum TimeSpec Local=0 UTC=1 OffsetFromUTC=2 Zone=3
+	type Ljos.Ui.TimerId TimerId
+		is uncreatable
+		enum TimerId Invalid=0
+	type Ljos.Ui.TimerType TimerType
+		is uncreatable
+		enum TimerType Precise=0 Coarse=1 VeryCoarse=2
+	type Ljos.Ui.ToolBarArea ToolBarArea
+		is uncreatable
+		flags ToolBarArea Left=1 Right=2 Top=4 Bottom=8 Mask=15 All=15 None=0
+	type Ljos.Ui.ToolButtonStyle ToolButtonStyle
+		is uncreatable
+		enum ToolButtonStyle IconOnly=0 TextOnly=1 TextBesideIcon=2 TextUnderIcon=3 FollowStyle=4
+	type Ljos.Ui.TouchPointState TouchPointState
+		is uncreatable
+		flags TouchPointState UnknownState=0 Pressed=1 Moved=2 Stationary=4 Released=8
+	type Ljos.Ui.TransformationMode TransformationMode
+		is uncreatable
+		enum TransformationMode Fast=0 Smooth=1
 	type Ljos.Ui.Wheel Wheel
 		prototype Ljos.Core.Controller named
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -1355,6 +1653,15 @@ module Ljos.Ui
 		signal blockingChanged
 		signal marginChanged
 		signal wheel event:QtObject
+	type Ljos.Ui.WindowModality WindowModality
+		is uncreatable
+		enum WindowModality NonModal=0 Modal=1 ApplicationModal=2
+	type Ljos.Ui.WindowState WindowState
+		is uncreatable
+		flags WindowState NoState=0 Minimized=1 Maximized=2 FullScreen=4 Active=8
+	type Ljos.Ui.WindowType WindowType
+		is uncreatable
+		flags WindowType Widget=0 Window=1 Dialog=3 Sheet=5 Drawer=7 Popup=9 Tool=11 ToolTip=13 SplashScreen=15 Desktop=17 Sub=18 Foreign=33 Cover=65 Mask=255 MSWindowsFixedSizeDialogHint=256 MSWindowsOwnDC=512 BypassWindowManagerHint=1024 X11BypassWindowManagerHint=1024 FramelessWindowHint=2048 TitleHint=4096 SystemMenuHint=8192 MinimizeButtonHint=16384 MaximizeButtonHint=32768 MinMaxButtonsHint=49152 ContextHelpButtonHint=65536 ShadeButtonHint=131072 StaysOnTopHint=262144 TransparentForInput=524288 OverridesSystemGestures=1048576 DoesNotAcceptFocus=2097152 MaximizeUsingFullscreenGeometryHint=4194304 ExpandedClientAreaHint=4194304 NoTitleBarBackgroundHint=8388608 CustomizeWindowHint=33554432 StaysOnBottomHint=67108864 CloseButtonHint=134217728 MacWindowToolBarButtonHint=268435456 BypassGraphicsProxyWidget=536870912 NoDropShadowWindowHint=1073741824 FullscreenButtonHint=-2147483648
 	type Ljos.Ui.HandlerPoint HandlerPoint
 		is uncreatable
 		prop position QtQml.point named readonly
