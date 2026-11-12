@@ -108,6 +108,12 @@ impl Ran {
 
 /// Whether two texts are the same but for the line ends a doc string
 /// cannot carry: the last one, and spaces before one.
+/// Whether a file a step read is the file a doc string gives: the file is
+/// read without the spaces it is indented by, and every line of it counts.
+pub(crate) fn same_file(file: &str, doc: &str) -> bool {
+    same_text(&inspector::dedent(file), &text_of(doc))
+}
+
 pub(crate) fn same_text(actual: &str, want: &str) -> bool {
     let lines = |text: &str| -> Vec<String> {
         text.trim_end_matches('\n')
@@ -1486,6 +1492,14 @@ impl Slot {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // A file whose first line is a doc string's label keeps that line.
+    #[test]
+    fn a_file_is_compared_whole_and_only_the_doc_string_loses_its_label() {
+        let file = "    text\n    shown: 1\n";
+        assert!(same_file(file, "qml\n    text\n    shown: 1"));
+        assert!(!same_file(file, "qml\n    shown: 1"));
+    }
 
     #[test]
     fn a_doc_string_loses_its_label_and_its_indent() {

@@ -89,11 +89,11 @@ fn files_migrated_checked(w: &mut LjosWorld) -> StepResult {
 // the scenario, so both are read without them.
 #[then(regex = r#"^the migrated file "([^"]+)" is:$"#)]
 fn migrated_file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
-    use crate::author::{same_text, text_of};
-    let want = text_of(&docstring(step)?);
+    use crate::author::same_file;
+    let want = docstring(step)?;
     w.each_test_report(
         |report| match report.files.iter().find(|(n, _)| *n == name) {
-            Some((_, text)) if same_text(&text_of(text), &want) => Ok(()),
+            Some((_, text)) if same_file(text, &want) => Ok(()),
             Some((_, text)) => Err(format!("the file {name:?} is:\n{text}")),
             None => {
                 let names: Vec<&str> = report.files.iter().map(|(n, _)| n.as_str()).collect();
