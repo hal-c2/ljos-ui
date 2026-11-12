@@ -1,7 +1,8 @@
 //! `Ljos.Core`: what a file of Ljós's own API says that is not an item
 //! (docs/DIALECT.md §4.1): a timer, a handler for another object's
 //! signals, a binding set from outside, a component, a plain object of
-//! properties and the locale's enums.
+//! properties, the locale's enums, and the `Controller` an item is given
+//! behaviour with (§4.20).
 //!
 //! They are `QtQml`'s types, exported from this module too, so a file of
 //! Ljós's API and the Qt file it was lowered from make the same objects.
@@ -12,13 +13,14 @@
 use ljos_engine::{Component, Connections, Engine, LocaleEnums, QtObject, Timer};
 
 use crate::Binding;
+use crate::controller::Controller;
 
 /// The module's name, as a file imports it.
 pub const MODULE: &str = "Ljos.Core";
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("Ljos.Core" 1.0 => [
-        QtObject, Component, Connections, Timer, Binding, LocaleEnums,
+        QtObject, Component, Connections, Timer, Binding, LocaleEnums, Controller,
     ]));
     engine.register_import(MODULE, "QtQml.Models");
 }
@@ -45,6 +47,7 @@ mod tests {
             "Timer",
             "Binding",
             "Locale",
+            "Controller",
         ] {
             assert!(engine.lookup_type(MODULE, name).is_some(), "{name}");
             assert!(

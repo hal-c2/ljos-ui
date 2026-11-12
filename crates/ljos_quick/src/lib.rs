@@ -17,6 +17,7 @@ mod by_type;
 pub use app_font::application_font_changed;
 mod canvas;
 mod context_menu;
+pub mod controller;
 mod drag;
 mod drop_area;
 mod effects;
