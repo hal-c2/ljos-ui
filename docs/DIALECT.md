@@ -1995,10 +1995,11 @@ The message shows a case left out, as ReScript's does, written as a
 pattern that would cover it:
 
 ```text
-Main.qml:14:11: error: `match` does not cover every case of `weather.state`.
-For example, this case is not handled:
-    when { status: "failed" }:
+Main.qml:14:11: error: `match` does not cover every case of `weather.state`; for example, this case is not handled: `when { status: "failed" }:` [ts-match-exhaustive]
 ```
+
+DECISION: the message is one line, as every finding `ljos check` prints
+is, so that tools that read findings line by line read this one too.
 
 **As ReScript and Elixir write it.** A `Task`'s state (§4.19) taken
 apart, with nesting, `or`, a guard and no `default`, so that the checker
@@ -2116,12 +2117,19 @@ match (permission.status) {
     when Permission.Status.Undetermined: permission.request();
 }
 // what runs
-(($s) => {
+(($s = permission.status) => {
     if ($is($s, Permission.Status.Granted)) return mapView.recenter();
     if ($is($s, Permission.Status.Denied)) return permissionMessageDialog.open();
     if ($is($s, Permission.Status.Undetermined)) return permission.request();
-    return $nomatch($s as never); })(permission.status)
+    return $nomatch($s as never); })()
 ```
+
+DECISION: the subject is the arrow's parameter's default, not its
+argument, so it stays where it is written: the lowering keeps the
+source's order, and a finding in the subject is reported on its own
+line. The checker types `$s` as the subject, unwidened, and a `match`
+as the union of its arms, as `?:` is: `match (thick) { when true: 3;
+when false: 1; }` is `3 | 1`, so it goes where a `1 | 3` does.
 
 - A literal lowers to `===`, which is the proposal's test for every
   literal but `NaN`, `+0` and `-0`; those lower to `Object.is`.
@@ -2759,11 +2767,11 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
 | ✓ `ts-no-cast` | No `as`: a decoder narrows; nothing casts (§4.4). No `!`. |
 | ✓ `ts-switch-exhaustive` | A `switch` on a union covers every case. |
-| `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
-| `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
+| ✓ `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
+| ✓ `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
-| `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
-| `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
+| ✓ `ts-lts-syntax` | No `match`, `is` or `\|>` in a `.ts` module; the fix renames it to `.lts` and rewrites the imports that name it (§4.21). |
+| ✓ `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
 | `lts-export-type` | An `.lts` module's exports carry the types `isolatedDeclarations` asks for, so its declaration is TypeScript's own emit (§4.21). |
 | `tsconfig-lts` | Warning: a project with an `.lts` module has no `tsconfig.json`, or one that does not extend `.ljos/tsconfig.base.json`, or one that sets `rootDirs` without its two entries; `ljos migrate` applies the fix (§4.21). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
