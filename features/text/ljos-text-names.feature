@@ -410,6 +410,29 @@ Feature: A Text in Ljós's API
         }
         """
 
+    # A control's Label is built on Qt's Text, not on Ljós's face of it: the runtime renames a
+    # member on the face alone, so a Label answers to `wrapMode` and `horizontalAlignment`.
+    @ljos-only @headless
+    Scenario: A Label, built on a Text, keeps Qt's names for them
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Label { width: 60; text: "one two three four"; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls.Basic
+        Label { width: 60; text: "one two three four"; wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight }
+        """
+      When the author runs "ljos check ."
+      Then the command prints:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
   Rule: A file whose Text the names cannot say is kept as written
 
     # Ljós's font has a weight and no boldness. A binding of `font.bold` is written as a weight;

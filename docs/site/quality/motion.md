@@ -160,7 +160,7 @@ ApplicationWindow {
 
         contentItem: Label {
             text: qsTr("Fades in without moving when reduced motion is enabled.")
-            wrap: Text.Wrap
+            wrapMode: Text.Wrap
         }
     }
 }
@@ -225,7 +225,7 @@ ApplicationWindow {
             Label {
                 width: parent.width
                 text: qsTr("Slides smoothly without recalculating layout every frame.")
-                wrap: Text.Wrap
+                wrapMode: Text.Wrap
             }
         }
     }

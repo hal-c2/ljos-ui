@@ -1980,16 +1980,14 @@ fn object_id<'a>(object: &QmlObject<'a>) -> Option<&'a str> {
     })
 }
 
-/// The renames of `ty` or the type it derives from that has some.
+/// The renames of `ty` itself. A type built on one that renames (a
+/// control's `Label` on `Text`) is built on Qt's type, not on Ljós's face
+/// of it, and the runtime renames on the face alone: such a type answers
+/// to Qt's names.
 fn renames_of(ty: &'static Type) -> Option<&'static [(&'static str, &'static str)]> {
-    let mut at = Some(ty);
-    while let Some(ty) = at {
-        if let Some((_, renames)) = member_renames().find(|(name, _)| *name == ty.name) {
-            return Some(renames);
-        }
-        at = ty.prototype();
-    }
-    None
+    member_renames()
+        .find(|(name, _)| *name == ty.name)
+        .map(|(_, renames)| renames)
 }
 
 fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {

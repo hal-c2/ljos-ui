@@ -16,6 +16,21 @@ fn qt_controls_are_lowered_to_ljos_controls() {
     }
 }
 
+/// A Label is built on Qt's Text, not on Ljós's face of it, which alone
+/// renames: it keeps `wrapMode` and `horizontalAlignment`, in a binding, a
+/// handler and a script.
+#[test]
+fn a_label_keeps_qt_s_names_for_what_its_text_has() {
+    let source = "import QtQuick\nimport QtQuick.Controls.Basic\nLabel {\n  id: l\n  wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight\n  onWrapModeChanged: console.log(l.wrapMode)\n}\n";
+    let Outcome::Lowered(done) = in_style(source, "Basic") else {
+        panic!("not lowered");
+    };
+    assert_eq!(
+        done.text,
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\nLabel {\n  id: l\n  wrapMode: Text.WordWrap; horizontalAlignment: Text.AlignRight\n  onWrapModeChanged: console.log(l.wrapMode)\n}\n"
+    );
+}
+
 #[test]
 fn the_basic_style_is_lowered_whatever_style_the_program_starts_with() {
     let source = "import QtQuick\nimport QtQuick.Controls.Basic\nLabel { }\n";
