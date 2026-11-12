@@ -2533,11 +2533,22 @@ const PRELUDE: &str = r##"
     const a = hostAttached(o, module, name);
     return a === undefined ? o[name] : a;
   };
-  // `parent?.Window.window`, compiled: as `__ljos_att`, with the rest of
-  // the chain as `rest`. An object that is nothing makes the whole chain
-  // `undefined`, as `?.` does, and the rest is never read.
-  g.__ljos_atq = function (o, module, name, rest) {
-    return o === undefined || o === null ? undefined : rest(g.__ljos_att(o, module, name));
+  // `a?.b.Window`, compiled: `a`, and the rest of the chain after the
+  // `?.` as `rest`, which is not called when `a` is nothing: the chain is
+  // `undefined` then, as `?.` makes it.
+  g.__ljos_opt = function (v, rest) {
+    return v === undefined || v === null ? undefined : rest(v);
+  };
+  // `a.f?.().Window`, compiled: as `__ljos_opt`, of the function `get`
+  // reads off `t`, called on `t`.
+  g.__ljos_optc = function (t, get, rest) {
+    const f = get(t);
+    return f === undefined || f === null ? undefined : rest((...a) => Reflect.apply(f, t, a));
+  };
+  // `__ljos_optc` where reading the function waits.
+  g.__ljos_optca = async function (t, get, rest) {
+    const f = await get(t);
+    return f === undefined || f === null ? undefined : rest((...a) => Reflect.apply(f, t, a));
   };
 
   // A name nothing in sight declares, compiled: what the engine found for

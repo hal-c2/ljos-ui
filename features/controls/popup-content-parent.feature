@@ -97,3 +97,23 @@ Feature: What is written in a popup sees where it is from the start
       Then the property "fromPlain" of "root" is 7
       And the property "nothing" of "root" is true
       And the log has no warnings
+
+    Scenario: Past where `?.` met something, the chain reads as written
+      Given the QML:
+        """qml
+        import QtQuick
+        Window {
+          id: win
+          objectName: "win"
+          width: 400; height: 400
+          Item { id: content }
+          property var hollow: ({ inner: null })
+          property var finder: ({ item: content, find() { return this.item } })
+          property string thrown: {
+            try { return String(hollow?.inner.Window) } catch (e) { return e.constructor.name }
+          }
+          property bool kept: finder.find?.().Window.window === win
+        }
+        """
+      Then the property "thrown" of "win" is "TypeError"
+      And the property "kept" of "win" is true

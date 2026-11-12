@@ -2376,13 +2376,26 @@ fn or_throw(free: &js::Free) -> String {
 /// defines it.
 pub(crate) const ATTACHED: &str = "__ljos_att";
 
-/// `parent?.Window.window`, compiled: what the type attached to an object
-/// that may be nothing, and the rest of the chain as a function of it,
-/// which is not called when the object is nothing. The engine defines it.
-pub(crate) const ATTACHED_CHAIN: &str = "__ljos_atq";
+/// `a?.b.Window`, compiled: `a` and the rest of the chain after the `?.`
+/// as a function of it, which is not called when `a` is nothing. The
+/// engine defines it.
+pub(crate) const OPTIONAL: &str = "__ljos_opt";
 
-/// The parameter of the rest of a chain [`ATTACHED_CHAIN`] is given.
-pub(crate) const CHAIN_REST: &str = "__ljos_o";
+/// `a.f?.().Window`, compiled: `a`, a function that reads `f` off it, and
+/// the rest of the chain as a function of `f` called on `a`. The engine
+/// defines it.
+pub(crate) const OPTIONAL_CALL: &str = "__ljos_optc";
+
+/// [`OPTIONAL_CALL`] where the chain waits (`a[await k]?.().Window`).
+pub(crate) const OPTIONAL_CALL_WAITS: &str = "__ljos_optca";
+
+/// The parameter of the rest of a chain after its `n`th `?.`, followed by
+/// `n`.
+pub(crate) const CHAIN_LINK: &str = "__ljos_o";
+
+/// The parameter of what reads a callee off its object, followed by the
+/// number of its `?.`.
+pub(crate) const CHAIN_THIS: &str = "__ljos_t";
 
 /// `__ljos_single($s_Theme)`: the one object a singleton type is, made on
 /// the first call. What the function is given for the type only stands for

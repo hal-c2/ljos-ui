@@ -49,7 +49,7 @@ export function f2($a_Keys, Keys) {
 
 // Main.qml:12:29 Item.untouched
 export function f3($scope, Text) {
-  return (__ljos_atq($scope.plain, "QtQuick", "Keys", (__ljos_o) => __ljos_o) + Text.AlignLeft);
+  return (__ljos_opt($scope.plain, (__ljos_o1) => __ljos_att(__ljos_o1, "QtQuick", "Keys")) + Text.AlignLeft);
 }
 
 // Main.qml:13:5 Item.set()

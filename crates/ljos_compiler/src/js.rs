@@ -24,7 +24,7 @@ use oxc_parser::Parser;
 use oxc_semantic::{Scoping, SemanticBuilder};
 use oxc_span::{GetSpan, SourceType, Span};
 use oxc_syntax::operator::{BinaryOperator, UnaryOperator};
-use oxc_syntax::scope::ScopeId;
+use oxc_syntax::scope::{ScopeFlags, ScopeId};
 
 /// How a script is written in QML.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,9 +80,61 @@ pub(crate) struct TypeMember {
     /// `object` as `value.Name`, where `Name` may be a namespace the type
     /// is named through (`item.L.Layout`): the name and `value`, whole.
     pub through: Option<(String, Span)>,
-    /// Where the `a?.b` chain the member is in ends, when an earlier `?.`
-    /// of the chain (or its own) may cut the rest of it short.
-    pub chain_end: Option<u32>,
+    /// The `a?.b` chain the member is on the spine of, in
+    /// [`Analysis::optional_chains`].
+    pub chain: Option<usize>,
+}
+
+/// An `a?.b` chain, outermost: where a `?.` meets nothing, the whole of it
+/// is `undefined`, and where it meets something the rest is read as
+/// written, so a member after it that is nothing throws.
+#[derive(Debug, Clone)]
+pub(crate) struct OptionalChain {
+    pub span: Span,
+    /// Its `?.`s, first to last.
+    pub links: Vec<Link>,
+    /// The parentheses that can go when the chain is written out:
+    /// `(a?.b)?.c` is `a?.b?.c`, the `?.` after them stopping the same
+    /// chain, and `(a.f)?.()` calls `f` with `this` as `a.f?.()` does.
+    pub parens: Vec<Span>,
+}
+
+/// A `?.` of an [`OptionalChain`].
+#[derive(Debug, Clone)]
+pub(crate) struct Link {
+    /// The `?.` itself.
+    pub token: Span,
+    pub kind: LinkKind,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum LinkKind {
+    /// `?.name`, `?.#name`.
+    Member,
+    /// `?.[key]`.
+    Element,
+    /// `?.(args)`.
+    Call(Option<This>),
+}
+
+/// What an optional call is made on, where its callee is a member: the
+/// function is called with that as `this`.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum This {
+    /// `a` of `a.f?.()`, whole, and where the callee's name ends when it
+    /// is one (`f`).
+    Value { object: Span, name_end: Option<u32> },
+    /// `super.f?.()`: `super` cannot be read alone.
+    Super,
+}
+
+/// An `await` or a `yield` of the script's, and where the function it
+/// waits in starts (None: the wrapper the script is put in).
+#[derive(Debug, Clone)]
+pub(crate) struct Suspend {
+    pub at: u32,
+    pub function: Option<u32>,
+    pub yields: bool,
 }
 
 /// What a member is written on: `a.b` of `a.b.x = 1`. Where that is a value
@@ -171,6 +223,10 @@ pub(crate) struct Analysis {
     pub calls: Vec<Call>,
     /// In order of appearance.
     pub type_members: Vec<TypeMember>,
+    /// The chains a [`TypeMember`] can be on, outermost first.
+    pub optional_chains: Vec<OptionalChain>,
+    /// In order of appearance.
+    pub suspends: Vec<Suspend>,
     /// The function a `Form::Function` script declares, and its parameters
     /// where they are plain names.
     pub function_params: Vec<String>,
@@ -250,7 +306,9 @@ pub(crate) fn analyze(text: &str, form: Form, args: &[String]) -> Result<Analysi
         args,
         chains: HashMap::new(),
         not_values: Vec::new(),
-        short_circuits: HashMap::new(),
+        chain_of: HashMap::new(),
+        absorbed: Vec::new(),
+        functions: Vec::new(),
         asked: Vec::new(),
         constructed: Vec::new(),
         instance_types: Vec::new(),
@@ -410,6 +468,103 @@ fn arg_value(expression: &Expression<'_>) -> ArgValue {
     }
 }
 
+/// One step of an `a?.b` chain's spine, outermost first.
+enum Step<'b, 'a> {
+    Member {
+        object: &'b Expression<'a>,
+        optional: bool,
+        /// Where the member's name starts, when it has one.
+        name: Option<u32>,
+        /// `a[key]`.
+        element: bool,
+    },
+    Call {
+        callee: &'b Expression<'a>,
+        optional: bool,
+    },
+    /// `a!`: the same value.
+    Through(&'b Expression<'a>),
+}
+
+impl<'b, 'a> Step<'b, 'a> {
+    fn of_chain(element: &'b ChainElement<'a>) -> Self {
+        match element {
+            ChainElement::StaticMemberExpression(m) => Step::Member {
+                object: &m.object,
+                optional: m.optional,
+                name: Some(m.property.span.start),
+                element: false,
+            },
+            ChainElement::ComputedMemberExpression(m) => Step::Member {
+                object: &m.object,
+                optional: m.optional,
+                name: None,
+                element: true,
+            },
+            ChainElement::PrivateFieldExpression(m) => Step::Member {
+                object: &m.object,
+                optional: m.optional,
+                name: None,
+                element: false,
+            },
+            ChainElement::CallExpression(c) => Step::Call {
+                callee: &c.callee,
+                optional: c.optional,
+            },
+            ChainElement::TSNonNullExpression(n) => Step::Through(&n.expression),
+        }
+    }
+
+    fn of(expression: &'b Expression<'a>) -> Option<Self> {
+        Some(match expression {
+            Expression::StaticMemberExpression(m) => Step::Member {
+                object: &m.object,
+                optional: m.optional,
+                name: Some(m.property.span.start),
+                element: false,
+            },
+            Expression::ComputedMemberExpression(m) => Step::Member {
+                object: &m.object,
+                optional: m.optional,
+                name: None,
+                element: true,
+            },
+            Expression::PrivateFieldExpression(m) => Step::Member {
+                object: &m.object,
+                optional: m.optional,
+                name: None,
+                element: false,
+            },
+            Expression::CallExpression(c) => Step::Call {
+                callee: &c.callee,
+                optional: c.optional,
+            },
+            Expression::TSNonNullExpression(n) => Step::Through(&n.expression),
+            _ => return None,
+        })
+    }
+}
+
+/// `expression` without the parentheses around it, which are noted, and
+/// TypeScript's assertions, which go anyway.
+fn unwrap<'b, 'a>(
+    mut expression: &'b Expression<'a>,
+    parens: &mut Vec<Span>,
+) -> &'b Expression<'a> {
+    loop {
+        expression = match expression {
+            Expression::ParenthesizedExpression(p) => {
+                parens.push(p.span);
+                &p.expression
+            }
+            Expression::TSNonNullExpression(n) => &n.expression,
+            Expression::TSAsExpression(n) => &n.expression,
+            Expression::TSSatisfiesExpression(n) => &n.expression,
+            _ => return expression,
+        };
+    }
+}
+
 struct Reader<'s, 'r> {
     scoping: &'s Scoping,
     /// The wrapped program's text.
@@ -424,9 +579,13 @@ struct Reader<'s, 'r> {
     /// Member expressions that are not read for their value: one that is
     /// assigned to, or called (the call needs its `this`).
     not_values: Vec<Span>,
-    /// The members on the spine of an `a?.b` chain from its first `?.`
-    /// on, by where their names start: where the chain ends.
-    short_circuits: HashMap<u32, u32>,
+    /// The named members on the spine of an `a?.b` chain, by where their
+    /// names start: the chain, in [`Analysis::optional_chains`].
+    chain_of: HashMap<u32, usize>,
+    /// The `a?.b` chains in parentheses that a chain around them took in.
+    absorbed: Vec<Span>,
+    /// Where the functions start that the visit is in, innermost last.
+    functions: Vec<u32>,
     /// Where the names start that a `typeof` is asked of.
     asked: Vec<u32>,
     /// Where the names start that a `new` makes one of.
@@ -445,6 +604,22 @@ impl Reader<'_, '_> {
             span.start.saturating_sub(self.offset),
             span.end.saturating_sub(self.offset),
         )
+    }
+
+    fn suspend(&mut self, at: u32, yields: bool) {
+        if at < self.offset {
+            return;
+        }
+        let function = self
+            .functions
+            .last()
+            .filter(|start| **start >= self.offset)
+            .map(|start| start - self.offset);
+        self.analysis.suspends.push(Suspend {
+            at: at - self.offset,
+            function,
+            yields,
+        });
     }
 
     fn delete(&mut self, start: u32, end: u32) {
@@ -661,64 +836,127 @@ impl Reader<'_, '_> {
         }
     }
 
-    /// Notes the members of `it`'s spine that a `?.` at or before them
-    /// may cut short: `Window` of `parent?.Window.window` is read off
+    /// Notes `it` as an [`OptionalChain`] and the named members on its
+    /// spine as on it: `Window` of `parent?.Window.window` is read off
     /// `parent` only when `parent` is something, and when it is not, the
     /// whole chain is `undefined`. An argument of a call in the chain is
     /// not on the spine.
     fn chain_spine(&mut self, it: &ChainExpression<'_>) {
-        // Outermost first: where a member's name starts (a named member
-        // only), and whether it is written with `?.`.
-        let mut spine: Vec<(Option<u32>, bool)> = Vec::new();
-        let mut next = match &it.expression {
-            ChainElement::StaticMemberExpression(m) => {
-                spine.push((Some(m.property.span.start), m.optional));
-                Some(&m.object)
-            }
-            ChainElement::ComputedMemberExpression(m) => {
-                spine.push((None, m.optional));
-                Some(&m.object)
-            }
-            ChainElement::PrivateFieldExpression(m) => {
-                spine.push((None, m.optional));
-                Some(&m.object)
-            }
-            ChainElement::CallExpression(c) => {
-                spine.push((None, c.optional));
-                Some(&c.callee)
-            }
-            ChainElement::TSNonNullExpression(n) => Some(&n.expression),
-        };
-        while let Some(e) = next {
-            next = match e {
-                Expression::StaticMemberExpression(m) => {
-                    spine.push((Some(m.property.span.start), m.optional));
-                    Some(&m.object)
+        let index = self.analysis.optional_chains.len();
+        let mut links: Vec<Link> = Vec::new();
+        let mut parens: Vec<Span> = Vec::new();
+        let mut step = Some(Step::of_chain(&it.expression));
+        while let Some(at) = step {
+            let (next, optional) = match at {
+                Step::Member {
+                    object,
+                    optional,
+                    name,
+                    element,
+                } => {
+                    if let Some(start) = name {
+                        self.chain_of.insert(start, index);
+                    }
+                    if optional {
+                        let kind = if element {
+                            LinkKind::Element
+                        } else {
+                            LinkKind::Member
+                        };
+                        links.push(self.link(object.span(), kind));
+                    }
+                    (object, optional)
                 }
-                Expression::ComputedMemberExpression(m) => {
-                    spine.push((None, m.optional));
-                    Some(&m.object)
+                Step::Call { callee, optional } => {
+                    if optional {
+                        let this = self.this_of(callee, &mut parens);
+                        links.push(self.link(callee.span(), LinkKind::Call(this)));
+                    }
+                    (callee, optional)
                 }
-                Expression::PrivateFieldExpression(m) => {
-                    spine.push((None, m.optional));
-                    Some(&m.object)
-                }
-                Expression::CallExpression(c) => {
-                    spine.push((None, c.optional));
-                    Some(&c.callee)
-                }
-                Expression::TSNonNullExpression(n) => Some(&n.expression),
-                _ => None,
+                Step::Through(inner) => (inner, false),
             };
+            step = Step::of(next).or_else(|| {
+                // `(a?.b)?.c`: where the inner chain stops, so does this
+                // one, so the two are one chain.
+                let mut around = Vec::new();
+                let Expression::ChainExpression(inner) = unwrap(next, &mut around) else {
+                    return None;
+                };
+                if !optional || around.is_empty() {
+                    return None;
+                }
+                parens.extend(around.iter().map(|p| self.local(*p)));
+                self.absorbed.push(inner.span);
+                Some(Step::of_chain(&inner.expression))
+            });
         }
-        let end = it.span.end - self.offset;
-        let mut cut = false;
-        for (name, optional) in spine.iter().rev() {
-            cut |= optional;
-            if cut && let Some(start) = name {
-                self.short_circuits.insert(*start, end);
+        links.reverse();
+        self.analysis.optional_chains.push(OptionalChain {
+            span: self.local(it.span),
+            links,
+            parens,
+        });
+    }
+
+    /// A `?.` written after `before`.
+    fn link(&self, before: Span, kind: LinkKind) -> Link {
+        // Spaces and comments may stand between the two.
+        let rest = &self.source[before.end as usize..];
+        let mut at = 0;
+        loop {
+            let skipped = rest[at..].len() - rest[at..].trim_start().len();
+            at += skipped;
+            if rest[at..].starts_with("//") {
+                at += rest[at..].find('\n').unwrap_or(rest.len() - at);
+            } else if rest[at..].starts_with("/*") {
+                at += rest[at..].find("*/").map_or(rest.len() - at, |end| end + 2);
+            } else if skipped == 0 {
+                break;
             }
         }
+        let start = before.end + at as u32;
+        Link {
+            token: self.local(Span::new(start, start + 2)),
+            kind,
+        }
+    }
+
+    /// What `callee?.()` calls its function on, when that is kept: the
+    /// object of a callee that is a member, through parentheses (which are
+    /// noted, to go) and TypeScript's assertions.
+    fn this_of(&self, callee: &Expression<'_>, parens: &mut Vec<Span>) -> Option<This> {
+        let mut around = Vec::new();
+        let (object, name_end) = match unwrap(callee, &mut around) {
+            Expression::StaticMemberExpression(m) => {
+                parens.extend(around.iter().map(|p| self.local(*p)));
+                (&m.object, Some(m.property.span.end))
+            }
+            Expression::ComputedMemberExpression(m) => {
+                parens.extend(around.iter().map(|p| self.local(*p)));
+                (&m.object, None)
+            }
+            Expression::PrivateFieldExpression(m) => {
+                parens.extend(around.iter().map(|p| self.local(*p)));
+                (&m.object, None)
+            }
+            // `(a?.f)?.()`: the chain in parentheses is taken into this
+            // one, parentheses and all (see `chain_spine`).
+            Expression::ChainExpression(inner) => match &inner.expression {
+                ChainElement::StaticMemberExpression(m) => (&m.object, Some(m.property.span.end)),
+                ChainElement::ComputedMemberExpression(m) => (&m.object, None),
+                ChainElement::PrivateFieldExpression(m) => (&m.object, None),
+                _ => return None,
+            },
+            _ => return None,
+        };
+        if let Expression::Super(_) = object {
+            return Some(This::Super);
+        }
+        Some(This::Value {
+            object: self.local(object.span()),
+            name_end: name_end.map(|end| end - self.offset),
+        })
     }
 
     /// `object.Name`, where it is a value the script reads.
@@ -747,7 +985,7 @@ impl Reader<'_, '_> {
             end: it.property.span.end - self.offset,
             base,
             through,
-            chain_end: self.short_circuits.get(&it.property.span.start).copied(),
+            chain: self.chain_of.get(&it.property.span.start).copied(),
         });
     }
 }
@@ -936,10 +1174,32 @@ impl<'a> Visit<'a> for Reader<'_, '_> {
     }
 
     fn visit_chain_expression(&mut self, it: &ChainExpression<'a>) {
-        if it.span.start >= self.offset {
+        if it.span.start >= self.offset && !self.absorbed.contains(&it.span) {
             self.chain_spine(it);
         }
         walk::walk_chain_expression(self, it);
+    }
+
+    fn visit_function(&mut self, it: &oxc_ast::ast::Function<'a>, flags: ScopeFlags) {
+        self.functions.push(it.span.start);
+        walk::walk_function(self, it, flags);
+        self.functions.pop();
+    }
+
+    fn visit_arrow_function_expression(&mut self, it: &oxc_ast::ast::ArrowFunctionExpression<'a>) {
+        self.functions.push(it.span.start);
+        walk::walk_arrow_function_expression(self, it);
+        self.functions.pop();
+    }
+
+    fn visit_await_expression(&mut self, it: &oxc_ast::ast::AwaitExpression<'a>) {
+        self.suspend(it.span.start, false);
+        walk::walk_await_expression(self, it);
+    }
+
+    fn visit_yield_expression(&mut self, it: &oxc_ast::ast::YieldExpression<'a>) {
+        self.suspend(it.span.start, true);
+        walk::walk_yield_expression(self, it);
     }
 
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
@@ -1234,8 +1494,10 @@ mod tests {
                     &text[m.object.start as usize..m.object.end as usize],
                     &text[m.object.start as usize..m.end as usize],
                     m.base.is_some(),
-                    m.chain_end
-                        .map(|e| &text[m.object.start as usize..e as usize]),
+                    m.chain.map(|c| {
+                        &text
+                            [m.object.start as usize..analysis.optional_chains[c].span.end as usize]
+                    }),
                 )
             })
             .collect();
@@ -1247,6 +1509,79 @@ mod tests {
                 ("a", "a.Layout", true, None),
                 ("(b.c)", "(b.c).Keys", false, None),
                 ("d", "d?.Layout", true, Some("d?.Layout.row")),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_links_of_optional_chains_are_noticed() {
+        let text = "a?.b.c /* ?. */ ?.[k]?.(1).Keys + (x?.y)?.z + (o.f)?.()";
+        let analysis = analyze(text, Form::Expression, &[]).unwrap();
+        let cut = |span: Span| &text[span.start as usize..span.end as usize];
+        // What the chain up to each `?.` is, the `?.`, and what follows it.
+        type Links<'t> = Vec<(&'t str, &'t str, String)>;
+        let chains: Vec<(&str, Links, Vec<&str>)> = analysis
+            .optional_chains
+            .iter()
+            .map(|chain| {
+                let links = chain
+                    .links
+                    .iter()
+                    .map(|link| {
+                        let kind = match &link.kind {
+                            LinkKind::Call(Some(This::Value { object, .. })) => {
+                                format!("call on {}", cut(*object))
+                            }
+                            kind => format!("{kind:?}"),
+                        };
+                        let before = &text[chain.span.start as usize..link.token.start as usize];
+                        (before, cut(link.token), kind)
+                    })
+                    .collect();
+                let parens = chain.parens.iter().map(|p| cut(*p)).collect();
+                (cut(chain.span), links, parens)
+            })
+            .collect();
+        let call = |on: &str| format!("call on {on}");
+        assert_eq!(
+            chains,
+            [
+                (
+                    "a?.b.c /* ?. */ ?.[k]?.(1).Keys",
+                    vec![
+                        ("a", "?.", "Member".to_owned()),
+                        ("a?.b.c /* ?. */ ", "?.", "Element".to_owned()),
+                        // `[k]` is read off `a?.b.c`, which the call keeps.
+                        ("a?.b.c /* ?. */ ?.[k]", "?.", call("a?.b.c")),
+                    ],
+                    vec![],
+                ),
+                // The chain in parentheses is taken into the one around it.
+                (
+                    "(x?.y)?.z",
+                    vec![
+                        ("(x", "?.", "Member".to_owned()),
+                        ("(x?.y)", "?.", "Member".to_owned()),
+                    ],
+                    vec!["(x?.y)"],
+                ),
+                ("(o.f)?.()", vec![("(o.f)", "?.", call("o"))], vec!["(o.f)"]),
+            ]
+        );
+        // Each `await` and `yield` knows the function it waits in.
+        let text = "async function f() { return p?.q.Keys(await z, async () => await w) }";
+        let analysis = analyze(text, Form::Function, &[]).unwrap();
+        let suspends: Vec<(u32, Option<u32>, bool)> = analysis
+            .suspends
+            .iter()
+            .map(|s| (s.at, s.function, s.yields))
+            .collect();
+        let arrow = text.find("async ()").unwrap() as u32;
+        assert_eq!(
+            suspends,
+            [
+                (text.find("await z").unwrap() as u32, Some(0), false),
+                (text.find("await w").unwrap() as u32, Some(arrow), false),
             ]
         );
     }
