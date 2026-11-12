@@ -24,9 +24,22 @@ use oxc_parser::Parser;
 use oxc_span::{GetSpan, SourceType, Span};
 
 /// Whether `path` names a TypeScript module, which is imported as a script
-/// is; a declaration file (`.d.ts`) is types alone and runs nothing.
+/// is: a `.ts` module, or an `.lts` one, which may use Ljós's syntax too. A
+/// declaration file (`.d.ts`) is types alone and runs nothing.
 pub(crate) fn is_module(path: &str) -> bool {
-    path.ends_with(".ts") && !path.ends_with(".d.ts")
+    is_lts(path) || (path.ends_with(".ts") && !path.ends_with(".d.ts"))
+}
+
+/// Whether `path` names an `.lts` module: TypeScript with Ljós's `match`,
+/// `is` and `|>` (docs/DIALECT.md §4.4), which the desugar writes away
+/// before anything reads it.
+pub fn is_lts(path: &str) -> bool {
+    path.ends_with(".lts")
+}
+
+/// The name `path`, a `.ts` module's, has as an `.lts` one.
+pub fn lts_name(path: &str) -> String {
+    format!("{}.lts", path.strip_suffix(".ts").unwrap_or(path))
 }
 
 /// Whether `path` names a JavaScript file, which Ljós's API reaches only
@@ -76,8 +89,32 @@ pub(crate) fn source_type() -> SourceType {
     SourceType::ts().with_module(true)
 }
 
-/// `source`, the text of the module at `key`, erased.
+/// `source`, the text of the module at `key`, erased: an `.lts` module's
+/// desugared first. What is found in it is at `source`'s offsets.
 pub(crate) fn erase(key: &str, source: &str) -> Erased {
+    if !is_lts(key) {
+        return erase_text(key, source);
+    }
+    let desugared = qml_syntax::desugar(source);
+    if let Some(error) = desugared.diagnostics.first() {
+        return Erased {
+            text: source.to_string(),
+            faults: vec![Fault {
+                span: Span::empty(error.span.start),
+                message: error.message.clone(),
+            }],
+            ..Erased::default()
+        };
+    }
+    let mut erased = erase_text(key, &desugared.text);
+    for fault in &mut erased.faults {
+        fault.span = desugared.map.span(fault.span);
+    }
+    erased
+}
+
+/// `source`, a module's text with no Ljós syntax left in it, erased.
+pub(crate) fn erase_text(key: &str, source: &str) -> Erased {
     let allocator = Allocator::default();
     let parsed = Parser::new(&allocator, source, source_type()).parse();
     if let Some(error) = parsed.diagnostics.first() {
@@ -198,7 +235,7 @@ impl<'s> Eraser<'s> {
         self.fault(
             span,
             format!(
-                "`{path}` is not a file beside the module: import a `.ts` or `.js` file by its path from here (`./{path}`)"
+                "`{path}` is not a file beside the module: import a `.ts`, `.lts` or `.js` file by its path from here (`./{path}`)"
             ),
         );
         false

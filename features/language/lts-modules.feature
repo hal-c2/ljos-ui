@@ -13,7 +13,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
   syntax in one is an error whose fix renames the file to `.lts`.
 
   # S5 builds `.lts` with `match`; S6 adds `|>` to it.
-  @backlog
   Scenario: An `.lts` module with a `match` compiles and runs
     Given the file "size.lts":
       """ts
@@ -36,9 +35,8 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
     Then the property "gap" of "root" is 12
 
-  @backlog
   Scenario: The new syntax in a `.ts` module is an error that names the rename
-    Given the file "size.ts":
+    Given the file "size.ts" without its indentation:
       """ts
       export type Size = "small" | "large"
       export function margin(size: Size): number {
@@ -116,7 +114,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       }
       """
 
-  @backlog
   Scenario: `.ts` and `.lts` modules import each other's values and types
     Given the file "kinds.ts":
       """ts
@@ -153,7 +150,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
     Then the property "total" of "root" is 4
 
-  @backlog
   Scenario: A type an `.lts` module exports is checked where a `.ts` module uses it
     Given the file "width.lts":
       """ts
@@ -165,7 +161,7 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
         }
       }
       """
-    And the file "line.ts":
+    And the file "line.ts" without its indentation:
       """ts
       import { type Width } from "./width.lts"
       export const wide: Width = 2
@@ -223,7 +219,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S5: one module name, one file.
-  @backlog
   Scenario: A `.ts` and an `.lts` module of the same name are an error
     Given the file "size.ts":
       """ts
@@ -292,9 +287,8 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       """
 
   # S5: the rename is withheld when its target is taken.
-  @backlog
   Scenario: The rename is not offered when an `.lts` module of the name is already there
-    Given the file "size.ts":
+    Given the file "size.ts" without its indentation:
       """ts
       export function margin(big: boolean): number {
         return match (big) {

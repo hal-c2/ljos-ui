@@ -84,22 +84,24 @@ pub(super) fn document<'a, O: TypeOracle>(
         (checker.found, checker.module_found)
     };
     compiler.modules = checked_modules(modules, in_modules);
-    found.sort_by_key(|(_, _, span)| span.start);
-    found.dedup_by_key(|(_, _, span)| span.start);
+    let map = &compiler.lines.map;
+    // A rule of style is about what was written: the text a `match` was
+    // lowered to is the compiler's, and a subject it repeats in each arm
+    // is one place of the file.
+    found.retain(|(code, _, span)| !(is_style(*code) && map.is_written(span.start)));
+    found.sort_by_key(|(_, _, span)| map.start(span.start));
+    found.dedup_by_key(|(_, _, span)| map.start(span.start));
     for (code, message, span) in found {
+        let at = compiler.lines.map.start(span.start);
         // A name not in sight is the compiler's warning in Qt's QML; in
         // Ljós's API it has no type, or is left out of the subset, which is
         // the checker's error.
         if matches!(code, Code::TsNoAny | Code::TsForbidden) {
             compiler
                 .diagnostics
-                .retain(|d| !(d.code == Code::UnresolvedName && d.span.start == span.start));
+                .retain(|d| !(d.code == Code::UnresolvedName && d.span.start == at));
         }
-        if compiler
-            .diagnostics
-            .iter()
-            .any(|d| d.span.start == span.start)
-        {
+        if compiler.diagnostics.iter().any(|d| d.span.start == at) {
             continue;
         }
         let span = compiler.span(span);
@@ -107,6 +109,14 @@ pub(super) fn document<'a, O: TypeOracle>(
             .diagnostics
             .push(Diagnostic::error(code, message, span));
     }
+}
+
+/// The rules about how a script is written rather than what it does.
+fn is_style(code: Code) -> bool {
+    matches!(
+        code,
+        Code::TsNoNull | Code::TsForbidden | Code::TsNoVar | Code::TsNoCast
+    )
 }
 
 /// Holds the modules a file in Qt's QML reaches to the checker's rules:
@@ -126,20 +136,30 @@ pub(super) fn modules_only<'a, O: TypeOracle>(
 /// Each module, with what was found in it at its own lines, once each.
 fn checked_modules(
     modules: &[Module<'_>],
-    mut found: Vec<(usize, Code, String, Span)>,
+    found: Vec<(usize, Code, String, Span)>,
 ) -> Vec<crate::CheckedModule> {
-    found.sort_by_key(|(index, _, _, span)| (*index, span.start));
-    found.dedup_by_key(|(index, _, _, span)| (*index, span.start));
     modules
         .iter()
         .enumerate()
         .map(|(index, module)| {
-            let lines = super::Lines::new(module.source);
-            let diagnostics = found
+            // Found in what was read, put back where the module has it, as
+            // a file's are (`document`), then what was said of it as
+            // written.
+            let mut here: Vec<(Code, String, Span)> = found
                 .iter()
-                .filter(|(at, ..)| *at == index)
-                .map(|(_, code, message, span)| {
-                    Diagnostic::error(*code, message.clone(), lines.span(module.source, *span))
+                .filter(|(at, code, _, span)| {
+                    *at == index && !(is_style(*code) && module.map.is_written(span.start))
+                })
+                .map(|(_, code, message, span)| (*code, message.clone(), module.map.span(*span)))
+                .chain(module.said.iter().cloned())
+                .collect();
+            here.sort_by_key(|(_, _, span)| span.start);
+            here.dedup_by_key(|(_, _, span)| span.start);
+            let lines = super::Lines::new(module.original);
+            let diagnostics = here
+                .into_iter()
+                .map(|(code, message, span)| {
+                    Diagnostic::error(code, message, lines.at(module.original, span))
                 })
                 .collect();
             crate::CheckedModule {
@@ -188,6 +208,10 @@ enum Binding {
     Dead,
     /// A TypeScript type, `type T = …` or `interface T {}`.
     Type,
+    /// A name an `is` binds (`x is { let y }`): the desugar declares it
+    /// with `var` before the statement, and it holds a value only where
+    /// the `is` was true. Its type is what the `is` gives it.
+    IsBound,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -234,6 +258,11 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     c: &'c Compiler<'t, 'a, 'p, O>,
     /// The text of what is walked: the file's, or a module's.
     source: &'a str,
+    /// `source`'s offsets to the text as written, which `match` and `is`
+    /// were lowered from.
+    map: &'c qml_syntax::SpanMap,
+    /// The text as written.
+    original: &'a str,
     /// The modules the file reaches, how far each is read, and the one
     /// being walked.
     modules: &'c [Module<'a>],
@@ -264,6 +293,9 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     states: Vec<Ty>,
     /// The element read by index last: what it gives may be undefined.
     indexed: Option<Span>,
+    /// The name a `match` or `is` pattern is, being typed: one not in
+    /// scope there was likely meant to bind the value.
+    pattern_name: Option<Span>,
     /// The QML object whose scope a script runs in: `this`.
     this: Option<usize>,
     /// Above 0, a script is in a `function` of its own, where `this` is
@@ -280,6 +312,8 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         Self {
             c,
             source: c.source,
+            map: &c.lines.map,
+            original: c.original,
             modules,
             read: modules.iter().map(|_| module::Read::Not).collect(),
             module: None,
@@ -298,6 +332,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             own: HashMap::new(),
             states: Vec::new(),
             indexed: None,
+            pattern_name: None,
             this: None,
             nested: 0,
             fresh: Vec::new(),
@@ -324,6 +359,18 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
 
     fn text(&self, span: Span) -> &'a str {
         &self.source[span.start as usize..span.end as usize]
+    }
+
+    /// Whether the desugar wrote what is at `at`, rather than copied it
+    /// from the text as written.
+    fn desugared(&self, at: u32) -> bool {
+        self.map.is_written(at)
+    }
+
+    /// What `span` stands for in the text as written.
+    fn as_written(&self, span: Span) -> &'a str {
+        let span = self.map.span(span);
+        &self.original[span.start as usize..span.end as usize]
     }
 
     // Objects.
@@ -1271,6 +1318,15 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             });
         }
         id
+    }
+
+    /// What an `is` gives the name it binds, `id`: each `is` that binds
+    /// it adds to its type.
+    fn bound(&mut self, id: u32, ty: Ty) {
+        if let Some(index) = self.locals.iter().rposition(|local| local.id == id) {
+            let now = self.locals[index].ty;
+            self.locals[index].ty = self.arena.or(now, ty);
+        }
     }
 
     fn local(&self, name: &str) -> Option<Local<'a>> {

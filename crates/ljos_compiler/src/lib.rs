@@ -27,6 +27,7 @@ mod oracle;
 mod project;
 pub mod reload;
 pub mod reload_lint;
+pub mod rename;
 pub mod roots;
 mod script;
 mod style;
@@ -34,7 +35,7 @@ pub mod tier1;
 pub mod ts;
 
 pub use alias::{Alias, AliasError, Aliases, Mount};
-pub use compile::{compile_file, is_ljos_ui, name_templates_in};
+pub use compile::{check_modules, compile_file, is_ljos_ui, name_templates_in};
 pub use controller::is_generated;
 pub use dump::dump;
 pub use natives::OracleNatives;
@@ -206,6 +207,17 @@ pub enum Code {
     /// `Qt` in a file of Ljós's API, which has none: the fix names where
     /// the member is (docs/DIALECT.md §4.3.1).
     QtGlobal,
+    // `match` and `is`, and the `.lts` modules they may be written in
+    // (docs/DIALECT.md §4.18, §4.4).
+    /// The checker: a `match` with no `default` that leaves a case out.
+    TsMatchExhaustive,
+    /// The checker: a name an `is` binds, read where the `is` may have
+    /// been false.
+    TsIsBinding,
+    /// `match`, `is` or `|>` in a `.ts` module, which stays TypeScript.
+    TsLtsSyntax,
+    /// A `name.ts` beside a `name.lts`: one module name, two files.
+    ModuleClash,
 }
 
 impl Code {
@@ -246,6 +258,10 @@ impl Code {
             Code::LayoutAnchored => "layout-anchored",
             Code::ControllerHost => "controller-host",
             Code::QtGlobal => "qt-global",
+            Code::TsMatchExhaustive => "ts-match-exhaustive",
+            Code::TsIsBinding => "ts-is-binding",
+            Code::TsLtsSyntax => "ts-lts-syntax",
+            Code::ModuleClash => "module-clash",
         }
     }
 }
@@ -374,6 +390,49 @@ pub fn compile_text<O: TypeOracle>(
         None => project.remove(key),
     }
     compiled
+}
+
+/// The modules under `dir` that a `.ts` and an `.lts` file both name
+/// (`size.ts`, `size.lts`): an import of the one is not an import of the
+/// other, so neither is the module. Each is checked whether or not a file
+/// imports it, with `module-clash` at its start.
+///
+/// DECISION: both files are checked, imported or not, so each says why it
+/// is not the module and what is wrong with it.
+pub fn module_clashes(dir: &Path) -> Result<Vec<CheckedModule>, Error> {
+    let project = Project::load(dir, QtTypeOracle)?;
+    let mut keys = Vec::new();
+    for (key, _) in project.scripts() {
+        if let Some(stem) = key.strip_suffix(".lts")
+            && project.script(&format!("{stem}.ts")).is_some()
+        {
+            keys.push(key.to_string());
+            keys.push(format!("{stem}.ts"));
+        }
+    }
+    let mut checked = check_modules(&project, &keys);
+    for module in &mut checked {
+        let stem = module.key.rsplit('/').next().unwrap_or(&module.key);
+        let stem = stem
+            .strip_suffix(".lts")
+            .or_else(|| stem.strip_suffix(".ts"))
+            .unwrap_or(stem);
+        module.diagnostics.insert(
+            0,
+            Diagnostic::error(
+                Code::ModuleClash,
+                format!("`{stem}.ts` and `{stem}.lts` are one module name; keep one file"),
+                SourceSpan {
+                    start: 0,
+                    end: 0,
+                    line: 1,
+                    column: 1,
+                },
+            ),
+        );
+    }
+    checked.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(checked)
 }
 
 /// Compiles every QML file under `dir` against Qt's types.

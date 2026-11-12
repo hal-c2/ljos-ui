@@ -302,6 +302,19 @@ impl Checked {
                     .push(format!("{name}.qml:{diagnostic} [{}]", diagnostic.code));
             }
         }
+        // A module name two files have is said on both, imported or not;
+        // a project with no `.lts` module has none.
+        let mut lts = Vec::new();
+        crate::walk::files_below(
+            dir,
+            |path| path.extension().is_some_and(|e| e == "lts"),
+            &mut lts,
+        )?;
+        if !lts.is_empty() {
+            for module in ljos_compiler::module_clashes(dir)? {
+                modules.insert(module.key, module.diagnostics);
+            }
+        }
         // DECISION: a module counts as a file of the project, checked.
         for (key, diagnostics) in modules {
             self.files += 1;
