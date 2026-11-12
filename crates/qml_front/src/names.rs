@@ -253,7 +253,13 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
 
     /// A capitalised name: a global, a namespace, or a type.
     fn capitalised(&self, name: &str) -> Option<Target<O::Type>> {
-        if let Some(global) = global(name) {
+        // A class of fetch's is the page's, and names as common as
+        // `Request` or `Headers` are a project's own types first: those
+        // were there before fetch was.
+        let fetch = FETCH_GLOBALS.contains(&name);
+        if let Some(global) = global(name)
+            && !fetch
+        {
             return Some(Target::Global(global));
         }
         if let Some(source) = self.types.namespace(name) {
@@ -263,6 +269,7 @@ impl<O: TypeOracle> Names<'_, '_, '_, O> {
             .find(&[name])
             .map(Target::Type)
             .or_else(|| self.core(name).map(Target::Global))
+            .or_else(|| fetch.then_some(Target::Global(Global::Js)))
     }
 
     /// `name` as what `Ljos.Core` gives, when the file imports it itself.
@@ -297,7 +304,7 @@ pub const CORE_GLOBALS: &[&str] = &[
 pub fn global(name: &str) -> Option<Global> {
     if QML_GLOBALS.contains(&name) {
         Some(Global::Qml)
-    } else if JS_GLOBALS.contains(&name) {
+    } else if JS_GLOBALS.contains(&name) || FETCH_GLOBALS.contains(&name) {
         Some(Global::Js)
     } else {
         None
@@ -380,4 +387,16 @@ pub const JS_GLOBALS: &[&str] = &[
     "Intl",
     "URL",
     "URLSearchParams",
+];
+
+/// What Ljós gives every script beside JavaScript's own, as a web page has
+/// them: `fetch` and the classes around it (docs/DIALECT.md §4.19).
+pub const FETCH_GLOBALS: &[&str] = &[
+    "fetch",
+    "Headers",
+    "Request",
+    "Response",
+    "AbortController",
+    "AbortSignal",
+    "DOMException",
 ];

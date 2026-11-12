@@ -88,7 +88,8 @@ pub(super) fn global_member(arena: &mut Arena, global: Global, name: &str) -> Op
                 .find(|known| *known == name)?;
             Some(method(arena, found))
         }
-        Global::Qt | Global::QsTr | Global::QsTrId | Global::Map => None,
+        Global::Class(class) => super::web::static_member(arena, class, name),
+        Global::Qt | Global::QsTr | Global::QsTrId | Global::Map | Global::Fetch => None,
     }
 }
 
@@ -137,12 +138,14 @@ pub(super) fn global_call(arena: &mut Arena, global: Global) -> Option<Sig> {
             None,
             Ty::STRING,
         ),
+        Global::Fetch => super::web::fetch(arena),
         Global::Math
         | Global::Console
         | Global::Qt
         | Global::Map
         | Global::Array
-        | Global::Json => return None,
+        | Global::Json
+        | Global::Class(_) => return None,
     })
 }
 
@@ -285,7 +288,13 @@ pub(super) fn method_sig(arena: &mut Arena, receiver: Ty, method: Method) -> Opt
         // DECISION: the value alone: a replacer and an indent take `null`
         // and functions of `any`, which the subset does not write.
         Method::Static(Global::Json, _) => sig(vec![param("value", Ty::UNKNOWN)], None, Ty::STRING),
+        Method::Static(Global::Class(class), name) => {
+            return super::web::static_sig(arena, class, name);
+        }
         Method::Static(..) => return None,
+        Method::Web(class, name) => return super::web::method_sig(arena, class, name),
+        // Their types hang on their callbacks': the checker's.
+        Method::Promise(_) => return None,
         Method::Primitive(name) => {
             let string = |name: &str| param(name, Ty::STRING);
             let number = |name: &str| param(name, Ty::NUMBER);
