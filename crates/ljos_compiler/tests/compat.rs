@@ -48,11 +48,11 @@ fn a_file_lowered_whole_is_compiled_as_lowered_and_written_as_it_was() {
 fn a_file_kept_keeps_the_files_it_names() {
     let mut project = Project::new(Runtime::new());
     project.add("Button", BUTTON);
-    // A Behavior is not of Ljós's API yet: Main is kept, and so is the
+    // An OpacityAnimator is not of Ljós's API yet: Main is kept, and so is the
     // Button it would set a `color` on.
     project.add(
         "Main",
-        "import QtQuick\nRectangle { Behavior on color { } Button { color: \"blue\" } }\n",
+        "import QtQuick\nRectangle { OpacityAnimator on opacity { } Button { color: \"blue\" } }\n",
     );
     project.add("other/Lone", BUTTON);
     project.set_compat(true);
@@ -81,7 +81,7 @@ fn a_file_changed_while_lowering_is_lowered_with_its_group_again() {
 
     project.add(
         "Main",
-        "import QtQuick\nItem { Behavior on x { } Button { } }\n",
+        "import QtQuick\nItem { OpacityAnimator on opacity { } Button { } }\n",
     );
     assert!(matches!(project.lowering("Button"), Some(Outcome::Kept(_))));
     assert_eq!(project.source("Button"), Some(BUTTON));
@@ -101,7 +101,7 @@ fn a_file_removed_leaves_its_group_and_the_files_that_named_it_lowered_again() {
     );
     project.add(
         "Kept",
-        "import QtQuick\nRectangle { Behavior on color { } }\n",
+        "import QtQuick\nRectangle { OpacityAnimator on opacity { } }\n",
     );
     project.add("Other", "import QtQuick\nItem { Kept { } }\n");
     project.set_compat(true);
