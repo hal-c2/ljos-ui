@@ -1195,6 +1195,14 @@ impl HostObjects for EngineHost {
             engine.reload_let_go(objs);
         }
     }
+
+    // The jobs run with the `Qt.callLater` queue (`run_pending_calls`),
+    // which a host asleep runs only once woken.
+    fn jobs_queued(&self) {
+        if let Ok(engine) = self.engine() {
+            engine.wake_host();
+        }
+    }
 }
 
 /// A script that holds an object a dev reload replaced (a closure an
@@ -1422,6 +1430,29 @@ impl Engine {
                 None
             }
         }
+    }
+
+    /// Whether promise jobs (a `then` callback, the rest of an `async`
+    /// function) wait to run, outside a run.
+    pub(crate) fn has_pending_js_jobs(&self) -> bool {
+        self.inner
+            .js
+            .borrow()
+            .as_ref()
+            .is_some_and(|js| js.host.has_pending_jobs())
+    }
+
+    /// Runs the promise jobs that wait, and those they queue, for at most a
+    /// dispatch's slice: a chain that never ends is cut off as a dispatch
+    /// that never ends is, and what is left runs on the next pass.
+    pub(crate) fn pump_js_jobs(&self) {
+        let js = self.inner.js.borrow().clone();
+        let Some(js) = js else { return };
+        if !js.host.has_pending_jobs() {
+            return;
+        }
+        let until = std::time::Instant::now() + js.slice().hard;
+        js.host.pump_jobs(until);
     }
 
     /// Whether the dispatch running now was interrupted inside a nested run.

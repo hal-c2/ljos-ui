@@ -1947,6 +1947,7 @@ impl JsHost {
             }
         }
         self.flush_released();
+        self.tell_queued_jobs();
         match outcome {
             Ok(r) => r,
             Err(payload) => Err(JsFault::Panic {
@@ -2421,7 +2422,20 @@ impl JsHost {
         self.state.stopped.set(false);
         drop(guard);
         self.flush_released();
+        self.tell_queued_jobs();
         n
+    }
+
+    /// Tells the host ([`HostObjects::jobs_queued`]) when jobs are queued
+    /// and no run is under way to leave them to.
+    fn tell_queued_jobs(&self) {
+        if !self.has_pending_jobs() {
+            return;
+        }
+        let host = self.state.host.borrow().clone();
+        if let Some(host) = host {
+            host.jobs_queued();
+        }
     }
 
     /// Runs native work a script asked for (compiling a component, making

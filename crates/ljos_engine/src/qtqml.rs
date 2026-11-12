@@ -893,6 +893,10 @@ impl Engine {
     /// When [`Engine::advance_timers`] must next run; `None` while nothing
     /// is scheduled (sleep until input).
     pub fn next_timer_deadline(&self) -> Option<Time> {
+        // Promise jobs are due at once, and only until they ran.
+        if self.has_pending_js_jobs() {
+            return Some(Time::ZERO);
+        }
         let st = self.inner.timers.borrow();
         // A queued `Qt.callLater` is due when the queue may next run, and
         // only until it ran: a mark on the scheduler would stay, since
@@ -931,7 +935,7 @@ impl Engine {
     }
 
     /// Fires every timer due at `now`, in deadline order, then runs the
-    /// `Qt.callLater` queue. A repeating timer due several times fires
+    /// promise jobs and the `Qt.callLater` queue. A repeating timer due several times fires
     /// several times, as if the host had woken for each.
     pub fn advance_timers(&self, now: Time) {
         let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
@@ -982,9 +986,20 @@ impl Engine {
         self.process_deferred_deletes();
     }
 
-    /// Runs the `Qt.callLater` queue if it is due. What the calls queue
-    /// runs on the next frame, not in this drain.
+    /// Runs the promise jobs that wait (a `then` callback, the rest of an
+    /// `async` function) and the `Qt.callLater` queue if it is due, then
+    /// the jobs the calls queued. What the calls queue runs on the next
+    /// frame, not in this drain.
     pub fn run_pending_calls(&self) {
+        // Qt runs a promise's continuations from the event loop once the
+        // code that settled it is done, not inside that code; the jobs
+        // queued before the calls go first, as there.
+        self.pump_js_jobs();
+        self.run_later_calls();
+        self.pump_js_jobs();
+    }
+
+    fn run_later_calls(&self) {
         let now = self.now();
         let calls = {
             let mut st = self.inner.timers.borrow_mut();
@@ -1008,8 +1023,12 @@ impl Engine {
         !self.inner.timers.borrow().calls.is_empty()
     }
 
-    /// Whether queued `Qt.callLater` work may run now.
+    /// Whether [`Engine::run_pending_calls`] has work to do now: promise
+    /// jobs, or queued `Qt.callLater` work that may run.
     pub fn has_due_calls(&self) -> bool {
+        if self.has_pending_js_jobs() {
+            return true;
+        }
         let now = self.now();
         let st = self.inner.timers.borrow();
         !st.calls.is_empty() && st.draining.is_none() && st.calls_due.is_none_or(|due| due <= now)

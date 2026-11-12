@@ -262,6 +262,13 @@ pub trait HostObjects {
             self.released(*obj);
         }
     }
+
+    /// A run ended with promise jobs queued (a `then` callback, the rest
+    /// of an `async` function), or a [`crate::JsHost::pump_jobs`] ran out
+    /// of time before they were done. Called between runs. Nothing runs
+    /// them unless the host schedules a pump: this is its cue, so that a
+    /// host asleep is woken only when there is a job.
+    fn jobs_queued(&self) {}
 }
 
 /// What a wrapper object holds: QuickJS's class of its own
