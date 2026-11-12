@@ -611,6 +611,9 @@ fn settle<'f>(
         if engine.has_due_calls() {
             engine.run_pending_calls();
         }
+        // The settle is one turn, whose end is too late for what a frame's
+        // promises queued: they run before the next frame.
+        engine.run_promise_jobs();
         let rest = settling.frame(engine, scene, clock, state)?;
         if let Some(h) = host.as_deref_mut() {
             h.after_frame(engine, scene);

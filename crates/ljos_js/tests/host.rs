@@ -1120,6 +1120,29 @@ fn panic_inside_a_host_callback_is_a_fault() {
 }
 
 #[test]
+fn a_panic_in_a_promise_job_unwinds_from_the_pump() {
+    let (host, store) = host_with_store();
+    store.insert(1, 1.0, 1.0);
+    let m = host
+        .load_module(
+            "pj.js",
+            "export function go(o) { Promise.resolve().then(() => o.echo('panic')); Promise.resolve().then(() => { globalThis.later = 1; }); }",
+        )
+        .unwrap();
+    host.call(m.function("go").unwrap(), &[JsValue::Object(1)])
+        .unwrap();
+    let pumped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        host.pump_jobs(Instant::now() + Duration::from_secs(1))
+    }));
+    assert!(pumped.is_err());
+    // The panic is not kept for the next dispatch, and the job after it
+    // still runs on the next pump.
+    assert_eq!(eval_num(&host, "1 + 2").unwrap(), 3.0);
+    assert_eq!(host.pump_jobs(Instant::now() + Duration::from_secs(1)), 1);
+    assert_eq!(eval_num(&host, "globalThis.later").unwrap(), 1.0);
+}
+
+#[test]
 fn faults_convert_for_the_supervisor() {
     let f = ljos_js::JsFault::JsOutOfMemory {
         label: "binding".into(),

@@ -457,6 +457,12 @@ impl fmt::Debug for TurnGuard<'_> {
 
 impl Drop for TurnGuard<'_> {
     fn drop(&mut self) {
+        if self.outer && !std::thread::panicking() {
+            // The turn's code is done, so what its promises queued runs
+            // now, still in the turn: its time is the turn's, and what it
+            // destroys goes with the turn's end.
+            self.engine.run_promise_jobs();
+        }
         let t = &self.engine.inner.turns;
         t.depth.set(t.depth.get() - 1);
         if self.outer {

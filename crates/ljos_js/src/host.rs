@@ -2384,7 +2384,10 @@ impl JsHost {
 
     /// Drains the promise job queue until it is empty or `until` passes.
     /// Returns the number of jobs executed. A job that throws is logged and
-    /// does not stop the others.
+    /// does not stop the others. A native function that panicked in a job
+    /// stops the pump, and the panic goes on unwinding from here, as it
+    /// does from [`JsHost::enter`]: kept, it would surface in whatever
+    /// dispatch came next.
     pub fn pump_jobs(&self, until: Instant) -> usize {
         if self.state.entered.replace(true) {
             return 0;
@@ -2405,6 +2408,10 @@ impl JsHost {
             match self.rt.execute_pending_job() {
                 Ok(true) => n += 1,
                 Ok(false) => break,
+                Err(_) if self.state.panicked.borrow().is_some() => {
+                    n += 1;
+                    break;
+                }
                 Err(e) => {
                     n += 1;
                     let text = e.0.with(|ctx| {
@@ -2421,6 +2428,9 @@ impl JsHost {
         self.state.stopped.set(false);
         drop(guard);
         self.flush_released();
+        if let Some(panic) = self.state.panicked.borrow_mut().take() {
+            std::panic::resume_unwind(panic);
+        }
         n
     }
 

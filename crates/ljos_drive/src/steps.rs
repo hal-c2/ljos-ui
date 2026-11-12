@@ -61,7 +61,8 @@ impl Settling {
         }
         let rest = !scene.needs_frame()
             && out.next_wake.is_none_or(|t| t > now)
-            && !engine.has_due_calls();
+            && !engine.has_due_calls()
+            && !engine.has_pending_jobs();
         if rest {
             state.wake = out.next_wake;
         }

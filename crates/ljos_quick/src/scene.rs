@@ -1965,6 +1965,7 @@ impl QuickScene {
             next_wake: if pending
                 || incubating
                 || engine.has_due_calls()
+                || engine.has_pending_jobs()
                 || engine.has_deferred_deletes()
                 || engine.has_pending_faults()
                 || crate::focus::tree::pending(engine)

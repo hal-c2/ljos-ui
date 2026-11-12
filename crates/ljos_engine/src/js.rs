@@ -1387,6 +1387,37 @@ impl Engine {
         self.inner.js.borrow().is_some()
     }
 
+    /// Whether a promise job (a `.then` callback, the rest of an `async`
+    /// function) waits to run and may run now: none runs while a script
+    /// does.
+    pub fn has_pending_jobs(&self) -> bool {
+        self.inner
+            .js
+            .borrow()
+            .as_ref()
+            .is_some_and(|js| js.host.has_pending_jobs())
+    }
+
+    /// Runs the promise jobs queued so far, and those they queue, within
+    /// one dispatch's hard slice. The outermost turn runs them as it ends
+    /// ([`Engine::begin_turn`]); a host that settles inside one turn runs
+    /// them between its frames. Nothing when no job waits, so an idle app
+    /// does no work for this.
+    pub fn run_promise_jobs(&self) {
+        let Some(js) = self.inner.js.borrow().clone() else {
+            return;
+        };
+        if !js.host.has_pending_jobs() {
+            return;
+        }
+        let until = std::time::Instant::now() + js.slice().hard;
+        // A turn's guard runs this as it drops, after the turn caught what
+        // its own code panicked with; a job's panic is caught here.
+        self.caught(|| {
+            js.host.pump_jobs(until);
+        });
+    }
+
     /// Runs JS; a failure is logged as Qt logs it and gives `None`.
     pub(crate) fn run_js<R>(
         &self,

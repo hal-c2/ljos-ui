@@ -200,6 +200,7 @@ impl Host {
             if engine.has_due_calls() {
                 engine.run_pending_calls();
             }
+            engine.run_promise_jobs();
             let rest = self.with_rig(|rig| {
                 settling.frame(engine, &mut rig.scene, &*rig.clock, &mut rig.drive)
             })?;

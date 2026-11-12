@@ -567,6 +567,15 @@ impl Engine {
     pub(crate) fn guarded(&self, origin: ObjectId, f: impl FnOnce()) -> bool {
         self.turn(Some(origin), f).is_some()
     }
+
+    /// Runs `f`, which no turn guards; a panic in it is reported as a
+    /// fault of the object whose code was running when it happened.
+    pub(crate) fn caught(&self, f: impl FnOnce()) {
+        if let Err(payload) = catch_unwind(AssertUnwindSafe(f)) {
+            let at = self.inner.faults.origin.get();
+            self.report_fault(at, Fault::from_panic(payload));
+        }
+    }
 }
 
 /// One line of a QuickJS stack: `at name (module:line:col)`,
