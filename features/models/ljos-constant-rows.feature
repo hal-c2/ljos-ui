@@ -144,7 +144,6 @@ Feature: A ListModel of constants is a typed list
         Rectangle {
           width: 120; height: 60; fill: "white"
           readonly property list<Rows.ZonesRow> zones: [
-
             { shade: "#c03030", wide: 30, tall: false },
             { shade: "#3030c0", wide: 50, tall: true }
           ]
@@ -315,7 +314,8 @@ Feature: A ListModel of constants is a typed list
             readonly property list<Rows.Row> rows: [
               { city: "Reykjavík", shift: 0 },
               { city: "Tokyo", shift: 9 }
-            ]; model: rows
+            ]
+            model: rows
           }
         }
         """
