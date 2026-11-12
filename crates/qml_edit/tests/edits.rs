@@ -957,3 +957,30 @@ fn a_match_is_kept_beside_an_edit_and_written_by_one() {
         "{out}"
     );
 }
+
+#[test]
+fn a_pipe_is_kept_beside_an_edit_and_written_by_one() {
+    let source = "import Ljos.Ui\n\nItem {\n    width: 640\n    property int half: width |> % / 2 |> Math.round(%)\n}\n";
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root(),
+            name: "width".into(),
+            value: "800".into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert_eq!(out, source.replace("width: 640", "width: 800"));
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root(),
+            name: "height".into(),
+            value: "width |> % * 3 / 4".into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert!(out.contains("height: width |> % * 3 / 4"), "{out}");
+}

@@ -250,3 +250,21 @@ fn a_match_and_an_is_are_kept_as_written() {
     let squeezed = laid_out.replace("    property string look", "  property string look");
     assert_eq!(fmt(&squeezed).matches("match (gap) {").count(), 1);
 }
+
+#[test]
+fn a_pipe_is_kept_as_written() {
+    let laid_out = "import Ljos.Ui\n\nItem {\n    property real oldPrice: 40\n    property real newPrice: 30\n    readonly property real discountPercent: oldPrice - newPrice |> Math.max(%, 0) / oldPrice * 100 |> Math.round(%)\n    readonly property int left: oldPrice |> % % 3\n    function shown(n: number): string {\n        return n |> (% + 1 |> `${%}`) + \"!\"\n    }\n}\n";
+    assert_eq!(fmt(laid_out), laid_out);
+    let squeezed = laid_out.replace(
+        "    readonly property int left",
+        "  readonly property int left",
+    );
+    assert_eq!(fmt(&squeezed), laid_out);
+    let squeezed = laid_out.replace("    function shown", "  function shown");
+    assert_eq!(
+        fmt(&squeezed)
+            .matches("return n |> (% + 1 |> `${%}`) + \"!\"")
+            .count(),
+        1
+    );
+}
