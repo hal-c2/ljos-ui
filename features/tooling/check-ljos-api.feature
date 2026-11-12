@@ -390,6 +390,23 @@ Feature: Checking the scripts of a file written in Ljós's API
         1 files, 0 errors, 0 warnings
         """
 
+    # Qt's table has `Easing` as a singleton object, whose enum keys are read off its name as a
+    # type's are.
+    Scenario: A singleton's name holds the keys of its enums
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Rectangle {
+          Behavior on opacity { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+          function curve(): int { return Easing.InOutQuad }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
     Scenario: A handler's parameters, and a callback's, take their types from where they go
       Given the file "Gauge.qml":
         """qml

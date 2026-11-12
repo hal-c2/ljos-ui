@@ -734,6 +734,22 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.script_member(object, &name, index.span())
     }
 
+    /// `Easing.OutCubic`: a key of an enum a native singleton declares, read
+    /// off its name. The name is typed as the object it holds (its members
+    /// are an object's), and its keys are a type's.
+    fn singleton_key(&mut self, o: u32, name: &str) -> Option<Ty> {
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let Obj::Native(ty) = self.objs[o as usize] else {
+            return None;
+        };
+        if !self.c.types.is_singleton(&QKind::Builtin(ty)) {
+            return None;
+        }
+        self.type_member(o, name)
+    }
+
     /// `card.DragSource`: the object the type `name` attaches to an object
     /// read off it, as QML reads one.
     fn attached_off(&mut self, name: &str) -> Option<Ty> {
@@ -754,6 +770,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Kind::Object(o) => self
                 .object_member(o, name)
                 .map(|own| own.ty)
+                .or_else(|| self.singleton_key(o, name))
                 .or_else(|| self.attached_off(name)),
             Kind::Type(o) => self.type_member(o, name),
             Kind::Namespace(namespace) => {
