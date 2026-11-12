@@ -217,3 +217,8 @@ value:onChanged+onCompleted:encoding  a child's alias is told of the first value
 value:onChanged+signal-handler:text   a handler run while the object is made takes a later binding away, which a signal's argument then shows (features/bindings/creation-order.feature, features/bindings/errors-during-creation.feature)
 value:step:empty-ljos                 a list property is not an Array to Array.isArray, so a conditional writes another list (features/language/list-properties.feature)
 warning:binding-loop(qt-only):implicitWidth  an implicit width that reads a width bound to an expression is a loop while made, as Qt puts the width's binding in place last (features/bindings/loops.feature)
+
+# The rotating seed of the dispatch run 43297327147.
+warning:assign(ljos-only):Unable_to_assign_int_to_QSizeF  a binding that gives an empty list again is told as a change, so what reads it warns again (features/language/list-properties.feature)
+value:alias:empty-qt                  a handler run while the object is made takes a later binding away, here read through an alias of the list (features/bindings/creation-order.feature)
+value:signal-handler:text             String() of an object passed as a var signal argument is "[object Object]", not Qt's "[object V4ReferenceObject]", a name of Qt's own engine

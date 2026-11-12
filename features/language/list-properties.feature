@@ -274,6 +274,26 @@ Feature: A list property declared in QML
     When the method "clear" of "root" is called
     Then the property "changes" of "root" is 1
 
+  # Found by ljos-fuzz (bindings), seed 43297327147, bucket
+  # warning:assign(ljos-only):Unable_to_assign_int_to_QSizeF. A binding that gives a list of the
+  # same entries again is no change; Ljós tells it as one when the list is empty.
+  @backlog
+  Scenario: A binding that gives an empty list again is no change
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        objectName: "root"
+        property real k: 1
+        property list<string> names: [String(k)].slice(1)
+        property int changes: 0
+        onNamesChanged: changes++
+        function poke() { k = 2 }
+      }
+      """
+    When the method "poke" of "root" is called
+    Then the property "changes" of "root" is 1
+
   Scenario Outline: Objects in brackets are a list only for a property of a list type
     Given the file "Bad.qml":
       """qml
