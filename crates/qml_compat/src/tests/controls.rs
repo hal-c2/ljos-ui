@@ -138,6 +138,8 @@ fn ljos_controls_has_what_qt_controls_have() {
         "TabBar",
         "TabButton",
         "SwipeView",
+        "ButtonGroup",
+        "RadioButton",
     ] {
         assert!(ljos.type_named(name).is_some(), "{name}");
         assert!(qt.type_named(name).is_some(), "{name}");
@@ -223,5 +225,17 @@ fn tab_bars_and_swipe_views_are_lowered() {
          TabButton { text: \"Inbox\" }\n    TabButton { text: \"Sent\" }\n  }\n  \
          SwipeView { id: swipe; currentIndex: bar.currentIndex\n    \
          Pane { Label { text: \"Inbox page\" } }\n  }\n}\n",
+    );
+}
+
+/// A button group draws nothing, so it is the same type in every style.
+#[test]
+fn button_groups_and_radio_buttons_are_lowered() {
+    lowered_unchanged(
+        "import QtQuick\nimport QtQuick.Controls\nItem {\n  \
+         ButtonGroup { id: size }\n  \
+         RadioButton { text: \"Small\"; ButtonGroup.group: size }\n  \
+         RadioButton { text: \"Large\"; checked: true; ButtonGroup.group: size }\n  \
+         Label { text: size.checkedButton ? size.checkedButton.text : \"none\" }\n}\n",
     );
 }

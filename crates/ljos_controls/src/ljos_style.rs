@@ -12,8 +12,7 @@
 use ljos_engine::{Engine, MetaRef, QmlType, Version};
 use ljos_platform::{FileDialog, FolderDialog};
 
-use crate::AbstractButton;
-use crate::ljos::DRAWN;
+use crate::ljos::{DRAWN, TEMPLATES};
 use crate::style::BASIC;
 use crate::util;
 
@@ -30,12 +29,9 @@ pub(crate) const PARTS: &str = "Ljos/Controls/impl";
 
 pub(crate) fn register(engine: &Engine, own: &[String], parts: &[String], basic: &[String]) {
     let version = Version::new(1, 0);
-    // A template draws nothing, so it is the same type in every style.
-    engine.register_type(
-        MODULE,
-        version,
-        MetaRef::Static(AbstractButton::static_meta()),
-    );
+    for meta in TEMPLATES {
+        engine.register_type(MODULE, version, MetaRef::Static(meta()));
+    }
     // The same dialogs as `Ljos.Controls.Basic`: the system draws them.
     for meta in [FileDialog::static_meta(), FolderDialog::static_meta()] {
         engine.register_type(MODULE, version, MetaRef::Static(meta));
