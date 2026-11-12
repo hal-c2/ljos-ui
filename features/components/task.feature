@@ -124,6 +124,32 @@ Feature: Task: async work run from its arguments, and where it got to
       Then the property "ran" of "root" is "Oslo;Bergen;Oslo;Bergen;"
       And the property "aborts" of "root" is 2
 
+    Scenario: A run aborted before it is called is never called
+      Given the QML:
+        """qml
+        import Ljos.Core
+        import Ljos.Ui
+        Item {
+          id: root; objectName: "root"
+          property string city: "Oslo"
+          property string ran: ""
+          Task {
+            id: task; objectName: "task"
+            args: [root.city]
+            run: async (city: string, signal: AbortSignal): Promise<string> => {
+              root.ran = root.ran + city + ";"
+              return city
+            }
+          }
+          function twice(): void { root.city = "Bergen"; root.city = "Trondheim" }
+        }
+        """
+      Then the property "ran" of "root" is "Oslo;"
+      When the method "twice" of "root" is called
+      Then the property "ran" of "root" is "Oslo;Trondheim;"
+      And the property "value" of "task" is "Trondheim"
+      And the log has no warnings
+
   Rule: A change of args aborts the run in progress and starts another
 
     Background:
@@ -483,7 +509,7 @@ Feature: Task: async work run from its arguments, and where it got to
         """
 
     @headless
-    Scenario: start is given none of run's arguments, or all it needs
+    Scenario: start is given none of run's arguments, or all of them, optional ones too
       Given the file "Weather.qml":
         """qml
         import Ljos.Core
@@ -494,17 +520,25 @@ Feature: Task: async work run from its arguments, and where it got to
             autoRun: false
             run: async (city: string, unit: string, signal: AbortSignal): Promise<string> => city + unit
           }
+          Task {
+            id: maybe
+            autoRun: false
+            run: async (city: string, unit?: string, signal?: AbortSignal): Promise<string> => city
+          }
           function own() { weather.start() }
           function all() { weather.start("Oslo", "C") }
           function part() { weather.start("Oslo") }
+          function lacks() { maybe.start("Oslo") }
+          function whole() { maybe.start("Oslo", "C") }
         }
         """
       When the files are checked
       Then the check reports:
         """
-        Weather.qml:11:43: error: `start` is given none of `run`'s arguments or all it needs, 2, and is given 1 [ts-assign-type]
-        1 files, 1 errors, 0 warnings
-        ljos: 1 errors
+        Weather.qml:16:43: error: `start` is given none of `run`'s 2 arguments before its signal, or all of them, and is given 1 [ts-assign-type]
+        Weather.qml:17:42: error: `start` is given none of `run`'s 2 arguments before its signal, or all of them, and is given 1 [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
         """
 
     @headless
@@ -519,19 +553,28 @@ Feature: Task: async work run from its arguments, and where it got to
             autoRun: false
             run: async (city: string, unit: string, signal: AbortSignal): Promise<string> => city + unit
           }
+          Task {
+            id: maybe
+            autoRun: false
+            run: async (city: string, unit?: string, signal?: AbortSignal): Promise<string> => city
+          }
           function own() { weather.start() }
           function all() { weather.start("Oslo", "C") }
           function part() { weather.start("Oslo") }
+          function lacks() { maybe.start("Oslo") }
+          function whole() { maybe.start("Oslo", "C") }
         }
         """
       When the files are checked with TypeScript
       Then the check reports the lines:
         """
-        Weather.qml:11:43: error: `start` is given none of `run`'s arguments or all it needs, 2, and is given 1 [ts-assign-type]
+        Weather.qml:16:43: error: `start` is given none of `run`'s 2 arguments before its signal, or all of them, and is given 1 [ts-assign-type]
+        Weather.qml:17:42: error: `start` is given none of `run`'s 2 arguments before its signal, or all of them, and is given 1 [ts-assign-type]
         """
       And TypeScript reports the lines:
         """
-        Weather.qml:11:43: error: Argument of type '["Oslo"]' is not assignable to parameter of type '[] | [city: string, unit: string]'. [TS2345]
+        Weather.qml:16:43: error: Argument of type '["Oslo"]' is not assignable to parameter of type '[] | [city: string, unit: string]'. [TS2345]
+        Weather.qml:17:42: error: Argument of type '["Oslo"]' is not assignable to parameter of type '[] | [city: string, unit: string]'. [TS2345]
         """
 
     @headless

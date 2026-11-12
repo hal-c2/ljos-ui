@@ -858,10 +858,12 @@ declare const App: {
 };
 
 /** A Task's (docs/DIALECT.md §4.19), typed from its run: what the run
- * takes before its signal is what `args` holds, and what its promise gives
- * is what the Task gives. `ljos check --tsc` makes each Task of a file one. */
+ * takes before its signal (optional or not) is what `args` holds, and what
+ * its promise gives is what the Task gives; `start` is given none of it or
+ * all of it. `ljos check --tsc` makes each Task of a file one. */
 type __TaskArgs<F> = F extends (...args: infer A) => unknown
-    ? (A extends [...infer B, AbortSignal] ? B : A)
+    ? (A extends [...infer B, AbortSignal] ? B
+        : Required<A> extends [...infer B, AbortSignal] ? B : A)
     : unknown[];
 type __TaskValue<F> = F extends (...args: never) => infer R ? Awaited<R> : unknown;
 type __TaskState<T> =
@@ -876,7 +878,7 @@ interface __TaskOf<A extends unknown[], T>
     readonly status: __TaskState<T>[\"status\"];
     readonly value: T | undefined;
     done(value: T): void;
-    start(...args: [] | A): void;
+    start(...args: [] | Required<A>): void;
     abort(): void;
 }
 

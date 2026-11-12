@@ -2303,11 +2303,13 @@ Text {
   cannot say.
 - `autoRun` (`true`) runs on a change of `args`; with it `false`, the Task
   runs only when told: `start()` runs it with `args`' own, and
-  `start(…)` with what it is given, every argument the run needs. `abort()` aborts the run in progress: its signal is
+  `start(…)` with what it is given, every argument before the signal,
+  optional ones too. `abort()` aborts the run in progress: its signal is
   aborted, and the Task has failed at once, with the signal's reason (an
   `AbortError`) as its `error` and the last run's value kept.
 - A run superseded by a change of `args` does not fail: the Task stays
-  pending, for the run that replaced it. `args` made again with the same
+  pending, for the run that replaced it. A run superseded before it was
+  called (`args` changed twice in one turn) is never called. `args` made again with the same
   elements runs nothing.
 - `run` may be a plain function: what it returns is the value, and what it
   throws is the error, as from an async one.
@@ -2320,7 +2322,7 @@ Text {
 - The checker types a Task from its `run`: an `args` written as an array
   is held to the run's parameters, element by element and in number
   (`ts-assign-type`), as is what `start(…)` is given: none of the
-  arguments, or all the run needs; `value`, `done` and
+  arguments, or all of them; `value`, `done` and
   `state` carry what the run's promise gives; and a `switch` or an `if` on
   `state.status` narrows `state`. `ljos check --tsc` declares the same
   Task to TypeScript.

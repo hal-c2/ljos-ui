@@ -86,7 +86,7 @@ A Task waiting on its run costs nothing: no timer and no frame. The reply wakes 
 
 ## Run when told
 
-With `autoRun: false`, a Task runs only when `start()` is called: with `args`' own, or, given arguments, with those, every one the run needs. `abort()` stops the run in progress, and the Task fails at once with the signal's reason, an `AbortError`. The signals `done(value)` and `failed(error)` are for what a binding cannot say, such as adding a row:
+With `autoRun: false`, a Task runs only when `start()` is called: with `args`' own, or, given arguments, with those: every one before the signal, optional ones too. `abort()` stops the run in progress, and the Task fails at once with the signal's reason, an `AbortError`. The signals `done(value)` and `failed(error)` are for what a binding cannot say, such as adding a row:
 
 ```qml
 import Ljos.Core
@@ -143,7 +143,7 @@ A reply that is not `ok` and a request that could not be made both fail the Task
 
 ## What the checker holds a Task to
 
-The checker types a Task from its `run`. `args`, written as an array, is held to the run's parameters before its signal, in number and element by element, as is what `start(…)` is given, which is none of them or all the run needs; `value` and `done` carry what the run's promise gives. A Task whose run takes a `name: string` and whose `args` is `[root.count]`, an `int`, is ``error: `name` is a string; this gives it a number [ts-assign-type]``, and reading `weather.value` into a `string` property is ``error: `last` is a string; this gives it a string or undefined [ts-assign-type]``. `ljos check --tsc` gives TypeScript the same Task.
+The checker types a Task from its `run`. `args`, written as an array, is held to the run's parameters before its signal, in number and element by element, as is what `start(…)` is given, which is none of them or all of them; `value` and `done` carry what the run's promise gives. A Task whose run takes a `name: string` and whose `args` is `[root.count]`, an `int`, is ``error: `name` is a string; this gives it a number [ts-assign-type]``, and reading `weather.value` into a `string` property is ``error: `last` is a string; this gives it a string or undefined [ts-assign-type]``. `ljos check --tsc` gives TypeScript the same Task.
 
 Write the run's return type, as the examples do: a run that returns what a function of the file gives, with no type written, gives `unknown`.
 
