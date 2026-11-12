@@ -197,7 +197,7 @@ fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
     let Some(driver) = tasks.driver(e) else {
         return Ok(());
     };
-    // Recorded before the run is called, which may settle it at once.
+    // Recorded before the driver is called: `settle` finds the run by it.
     tasks.entries.borrow_mut().entry(me).or_default().run = Some(Run {
         number,
         abort: Value::Undefined,
@@ -208,11 +208,13 @@ fn begin(e: &Engine, me: ObjectId, args: Value) -> Result<(), EngineError> {
         .map_err(|err| EngineError::Invoke(err.to_string()))?;
     let abort = e.js_member(&started, "abort").unwrap_or_default();
     let args = e.js_member(&started, "args").unwrap_or_default();
+    // Only for the run still in progress: one that replaced it keeps its
+    // own args.
     let mut entries = tasks.entries.borrow_mut();
     let entry = entries.entry(me).or_default();
-    entry.args = args;
     if let Some(run) = entry.run.as_mut().filter(|r| r.number == number) {
         run.abort = abort;
+        entry.args = args;
     }
     Ok(())
 }
@@ -430,8 +432,8 @@ impl Tasks {
     }
 }
 
-/// The JS end. `start` calls the run with the arguments and a signal, at
-/// once, and settles through the helper as its promise does; a run that
+/// The JS end. `start` calls the run with the arguments and a signal, in
+/// a microtask, and settles through the helper as its promise does; a run that
 /// throws has failed. Where no `AbortController` is (an engine without
 /// `fetch`), the signal is a plain one with the same members.
 const DRIVER: &str = r#"(function (helper) {
@@ -468,7 +470,10 @@ const DRIVER: &str = r#"(function (helper) {
   const start = (number, run, args) => {
     const given = Array.from(elements(args));
     const controller = typeof AbortController === "function" ? new AbortController() : plainController();
-    new Promise((resolve) => resolve(run(...given, controller.signal))).then(
+    // Called in a microtask, after `begin` has kept this run's abort: a
+    // run that starts the Task again, or changes its args, as it starts
+    // aborts this one rather than a run with nothing to abort it by.
+    Promise.resolve().then(() => run(...given, controller.signal)).then(
       (value) => helper.settle(number, true, value),
       (error) => helper.settle(number, false, error),
     );
