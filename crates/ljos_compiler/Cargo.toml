@@ -20,6 +20,8 @@ oxc_ast_visit.workspace = true
 oxc_parser.workspace = true
 oxc_span.workspace = true
 oxc_syntax.workspace = true
+oxc_codegen.workspace = true
+oxc_isolated_declarations.workspace = true
 # Not pinned in the workspace: the free names of a script are what JavaScript
 # scoping leaves unbound, and this is oxc's scope analysis of the same AST.
 oxc_semantic.workspace = true

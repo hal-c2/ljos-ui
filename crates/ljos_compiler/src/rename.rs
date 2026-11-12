@@ -9,6 +9,8 @@
 //! script's `.import "size.ts" as Size`, a module's `import … from
 //! "./size.ts"` (or `export … from`), and a `qmldir`'s `Size 1.0 size.ts`.
 
+use std::path::{Path, PathBuf};
+
 use oxc_allocator::Allocator;
 use oxc_ast::ast::Statement;
 use oxc_parser::Parser;
@@ -33,6 +35,152 @@ pub fn lts_syntax(text: &str) -> Option<Span> {
         return None;
     }
     desugared.uses.first().copied()
+}
+
+/// A `.ts` module's rename to `.lts`, with the files that import it, as
+/// `ljos migrate`, the authoring tools and the language server make it.
+#[derive(Debug)]
+pub struct LtsRename {
+    pub module: PathBuf,
+    /// The module's new path, beside it.
+    pub target: PathBuf,
+    /// The module's key below the directory its importers were looked for
+    /// in, and its new one.
+    pub from: String,
+    pub to: String,
+    /// In the order of their keys.
+    pub importers: Vec<Importer>,
+}
+
+/// A file that imports the module being renamed.
+#[derive(Debug)]
+pub struct Importer {
+    /// Its key below the directory importers were looked for in.
+    pub key: String,
+    pub path: PathBuf,
+    /// Its text now, and with the new name.
+    pub text: String,
+    pub renamed: String,
+}
+
+/// What renaming a `.ts` module to `.lts` would do.
+#[derive(Debug)]
+pub enum LtsPlan {
+    /// The module has no `match`, `is` or `|>`: it stays `.ts`.
+    NoSyntax,
+    /// The module is not below the directory importers are looked for in.
+    Outside,
+    /// A file already has the new name, `to`.
+    InTheWay {
+        to: String,
+    },
+    Rename(LtsRename),
+}
+
+/// The plan for `module`, whose text is `text`, with its importers looked
+/// for below `base`: every QML file, script, module and `qmldir` there
+/// whose imports name it.
+///
+/// # Errors
+/// A directory below `base` cannot be read.
+pub fn plan_lts(base: &Path, module: &Path, text: &str) -> std::io::Result<LtsPlan> {
+    if lts_syntax(text).is_none() {
+        return Ok(LtsPlan::NoSyntax);
+    }
+    let Some(from) = key_below(base, module) else {
+        return Ok(LtsPlan::Outside);
+    };
+    let to = lts_key(&from);
+    let target = module.with_extension("lts");
+    if target.exists() {
+        return Ok(LtsPlan::InTheWay {
+            to: to.rsplit('/').next().unwrap_or(&to).to_owned(),
+        });
+    }
+    let mut below = Vec::new();
+    crate::files_below(base, imports_modules, &mut below)?;
+    let mut importers = Vec::new();
+    for path in below {
+        let Some(key) = key_below(base, &path) else {
+            continue;
+        };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(renamed) = imports(&key, &text, &from, &to) {
+            importers.push(Importer {
+                key,
+                path,
+                text,
+                renamed,
+            });
+        }
+    }
+    importers.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(LtsPlan::Rename(LtsRename {
+        module: module.to_owned(),
+        target,
+        from,
+        to,
+        importers,
+    }))
+}
+
+impl LtsRename {
+    /// The module's new name, without its directory.
+    pub fn to_name(&self) -> &str {
+        self.to.rsplit('/').next().unwrap_or(&self.to)
+    }
+
+    /// Renames the module, then writes its importers in the order of their
+    /// keys. When one cannot be written, those written get their text back
+    /// and the module its name, so a failure leaves the files as they were.
+    ///
+    /// # Errors
+    /// Each file that could not be renamed or written, with why; the first
+    /// is what failed, the rest what could not be put back.
+    pub fn apply(&self) -> Result<(), Vec<(PathBuf, std::io::Error)>> {
+        std::fs::rename(&self.module, &self.target).map_err(|e| vec![(self.module.clone(), e)])?;
+        for (at, importer) in self.importers.iter().enumerate() {
+            if let Err(e) = std::fs::write(&importer.path, &importer.renamed) {
+                let mut failed = vec![(importer.path.clone(), e)];
+                // The one that failed too: a write empties the file before
+                // it writes, so one cut off part way holds neither text.
+                for importer in &self.importers[..=at] {
+                    if let Err(e) = std::fs::write(&importer.path, &importer.text) {
+                        failed.push((importer.path.clone(), e));
+                    }
+                }
+                if let Err(e) = std::fs::rename(&self.target, &self.module) {
+                    failed.push((self.target.clone(), e));
+                }
+                return Err(failed);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// A file that may import a module: a QML file, a script, a module or a
+/// `qmldir`.
+fn imports_modules(path: &Path) -> bool {
+    path.file_name().is_some_and(|name| name == "qmldir")
+        || path
+            .extension()
+            .is_some_and(|e| ["qml", "js", "mjs", "ts", "lts"].iter().any(|x| e == *x))
+}
+
+/// The key of `file` below `root`, `/`-separated; both are made absolute.
+fn key_below(root: &Path, file: &Path) -> Option<String> {
+    let root = crate::roots::absolute(root);
+    let file = crate::roots::absolute(file);
+    let rest = file.strip_prefix(&root).ok()?;
+    Some(
+        rest.components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+    )
 }
 
 /// `text`, the file at `file` (a key from the project's root, as `from`

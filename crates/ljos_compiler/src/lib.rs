@@ -22,6 +22,7 @@ mod controller;
 mod dump;
 pub mod i18n;
 mod js;
+pub mod lts;
 mod natives;
 mod oracle;
 mod project;
@@ -39,7 +40,9 @@ pub use compile::{check_modules, compile_file, is_ljos_ui, name_templates_in};
 pub use controller::is_generated;
 pub use dump::dump;
 pub use natives::OracleNatives;
-pub use project::{Project, declared_beside, described_in, resource_dirs, resources, skipped_dir};
+pub use project::{
+    Project, declared_beside, described_in, files_below, resource_dirs, resources, skipped_dir,
+};
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 pub use roots::Roots;
 pub use script::module::is_declarations;
@@ -218,6 +221,14 @@ pub enum Code {
     TsLtsSyntax,
     /// A `name.ts` beside a `name.lts`: one module name, two files.
     ModuleClash,
+    // What stock TypeScript reads of an `.lts` module: its declaration,
+    // and the `tsconfig.json` that finds it (docs/DIALECT.md §4.21, S7).
+    /// An export of an `.lts` module whose type its declaration needs
+    /// written.
+    LtsExportType,
+    /// A project with an `.lts` module whose `tsconfig.json` does not
+    /// extend the generated base, or replaces its `rootDirs`.
+    TsconfigLts,
 }
 
 impl Code {
@@ -262,6 +273,8 @@ impl Code {
             Code::TsIsBinding => "ts-is-binding",
             Code::TsLtsSyntax => "ts-lts-syntax",
             Code::ModuleClash => "module-clash",
+            Code::LtsExportType => "lts-export-type",
+            Code::TsconfigLts => "tsconfig-lts",
         }
     }
 }
@@ -431,6 +444,25 @@ pub fn module_clashes(dir: &Path) -> Result<Vec<CheckedModule>, Error> {
             ),
         );
     }
+    checked.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(checked)
+}
+
+/// Every `.lts` module under `dir`, checked whether or not a file imports
+/// it, and the modules they reach: each has a declaration to write
+/// (docs/DIALECT.md §4.21), which needs what is wrong with it said.
+pub fn lts_modules(dir: &Path) -> Result<Vec<CheckedModule>, Error> {
+    let project = Project::load(dir, QtTypeOracle)?;
+    let keys: Vec<String> = project
+        .scripts()
+        .map(|(key, _)| key)
+        .filter(|key| script::module::is_lts(key))
+        .map(str::to_owned)
+        .collect();
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut checked = check_modules(&project, &keys);
     checked.sort_by(|a, b| a.key.cmp(&b.key));
     Ok(checked)
 }
