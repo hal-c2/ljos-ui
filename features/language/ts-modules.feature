@@ -378,3 +378,25 @@ Feature: TypeScript modules imported by a QML file
       """
       Pick.qml:5:47: error: Type 'string' is not assignable to type 'Row'. [TS2322]
       """
+
+  Scenario: An object goes where a union of records is wanted by the literal that tells them apart
+    Given the file "feed.ts" without its indentation:
+      """ts
+      export type Feed = { status: "pending" } | { status: "done"; titles: readonly string[] }
+      export const waiting: Feed = { status: "pending" }
+      export const latest: Feed = { status: "done", titles: [] }
+      export const odd: Feed = { status: "done" }
+      """
+    And the file "Feed.qml":
+      """qml
+      import Ljos.Ui
+      import "feed.ts" as Feed
+      Item {}
+      """
+    When the files are checked
+    Then the check reports:
+      """
+      feed.ts:4:26: error: `odd` is `{ status: "pending" } | { status: "done"; titles: readonly string[] }`; this gives it `{ status: "done" }` [ts-assign-type]
+      2 files, 1 errors, 0 warnings
+      ljos: 1 errors
+      """

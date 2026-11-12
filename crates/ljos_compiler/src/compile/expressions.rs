@@ -608,9 +608,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 };
             }
             if self.warned.insert(name.to_string()) {
-                let span = self
-                    .lines
-                    .span(self.source, Span::new(offset, offset + name.len() as u32));
+                let span = self.span(Span::new(offset, offset + name.len() as u32));
                 self.diagnostics.push(Diagnostic::warning(
                     Code::UnresolvedName,
                     format!(

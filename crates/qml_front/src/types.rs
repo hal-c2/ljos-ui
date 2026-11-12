@@ -357,6 +357,24 @@ impl<'p, O: TypeOracle> Types<'p, O> {
         None
     }
 
+    /// The keys of the enum `name` a component in the chain of `kind`
+    /// declares, in the order it writes them. An enum of a builtin type
+    /// has none here: its keys may be combined as flags.
+    pub fn enum_keys(&self, kind: &Kind<O::Type>, name: &str) -> Option<Vec<String>> {
+        let mut kind = kind.clone();
+        for _ in 0..DEPTH {
+            let Kind::Component(key) = kind else {
+                return None;
+            };
+            let shape = self.project.shape(&key)?;
+            if let Some(keys) = shape.enums.get(name) {
+                return Some(keys.iter().map(|key| key.name.clone()).collect());
+            }
+            kind = self.root(&key, shape)?;
+        }
+        None
+    }
+
     /// Whether `Type.key`, or `Type.scope.key`, is a key of an enum of the
     /// type: one a component in its chain declares, or one of the builtin
     /// type the chain ends in.

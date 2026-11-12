@@ -2687,6 +2687,20 @@ const PRELUDE: &str = r##"
   };
   Object.defineProperty(g, "Qt", { value: Qt, writable: true, configurable: true });
 
+  // What `match` and `is` are lowered to (docs/DIALECT.md §4.21). A
+  // pattern that is a name compares with its value, or asks it when it is
+  // a function; `Object.is` makes NaN match NaN and keeps 0 and -0 apart.
+  Object.defineProperty(g, "$is", {
+    value: (s, p) => typeof p === "function" ? !!p(s) : Object.is(s, p),
+  });
+  Object.defineProperty(g, "$nomatch", {
+    value: (s) => {
+      let shown;
+      try { shown = typeof s === "string" ? JSON.stringify(s) : String(s); } catch (e) { shown = typeof s; }
+      throw new TypeError("no arm of the `match` matches " + shown);
+    },
+  });
+
   // What `Ljos.Core` gives a file that imports it (docs/DIALECT.md §4.3).
   // Not globals: the compiled file takes the ones it names from here, so a
   // file that does not import `Ljos.Core` has none of them. `App` reads
