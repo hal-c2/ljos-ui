@@ -22,7 +22,7 @@ use crate::badge::{BadgeService, RecordedBadge};
 use crate::clipboard::{ClipboardService, MemoryClipboard};
 use crate::dialogs::{DialogService, NoSystemDialogs};
 use crate::drop::{DragOutService, DropAction, ExternalDrag};
-use crate::fetch::{FetchError, Fetcher, NoNetwork, Request, Response};
+use crate::fetch::{Cancel, FetchError, Fetcher, NoNetwork, Request, Response};
 use crate::icon::Icon;
 use crate::menu_bar::{MenuBarService, RecordedMenuBar};
 use crate::open_url::{OpenUrlService, RecordedUrls};
@@ -160,6 +160,18 @@ impl Reply {
     }
 }
 
+impl Reply {
+    /// Lets the reply go unsent, for an answer the Engine thread has
+    /// already stopped waiting for ([`Platform::cancel_request`]).
+    fn abandon(mut self) {
+        self.kept = true;
+    }
+}
+
+/// A request [`Platform::request_cancellable`] sent, to cancel it by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct RequestId(u64);
+
 impl std::fmt::Debug for Post {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Post").finish_non_exhaustive()
@@ -262,6 +274,9 @@ pub struct Platform {
     // answer is a Response where a fetch's is bytes, and each delivery
     // stays statically typed instead of matching away a wrong variant.
     requests: RefCell<HashMap<u64, RequestDone>>,
+    /// What stops each request that may be cancelled, with its entry in
+    /// [`Platform::promises`], until its answer is delivered.
+    cancels: RefCell<HashMap<u64, (Cancel, u64)>>,
     next_fetch: Cell<u64>,
     resources: RefCell<HashMap<String, Rc<[u8]>>>,
     /// Files a program keeps inside itself, where they are until it is
@@ -325,6 +340,7 @@ impl Default for Platform {
             external_drops: RefCell::default(),
             fetches: RefCell::new(HashMap::new()),
             requests: RefCell::new(HashMap::new()),
+            cancels: RefCell::new(HashMap::new()),
             next_fetch: Cell::new(0),
             resources: RefCell::new(HashMap::new()),
             resource_files: RefCell::new(HashMap::new()),
@@ -1094,6 +1110,35 @@ impl Platform {
         self.on_thread(label, move || fetcher.request(&request), done);
     }
 
+    /// [`Platform::request`] that [`Platform::cancel_request`] can stop:
+    /// what a script's `fetch` with an `AbortSignal` sends.
+    pub fn request_cancellable(
+        &self,
+        request: Request,
+        done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
+    ) -> RequestId {
+        let label = format!("{} {}", request.method, request.url);
+        let fetcher = Arc::clone(&self.fetcher.borrow());
+        let cancel = Cancel::new();
+        let token = cancel.clone();
+        let work = move || fetcher.request_cancellable(&request, &token);
+        RequestId(self.spawn_request(label, Some(cancel), work, done))
+    }
+
+    /// Stops a request [`Platform::request_cancellable`] sent: its `done`
+    /// never runs, nothing waits for its answer any more, and its thread
+    /// stops at its next read. A request already answered is left as it is.
+    pub fn cancel_request(&self, id: RequestId) {
+        let Some((cancel, promise)) = self.cancels.borrow_mut().remove(&id.0) else {
+            return;
+        };
+        cancel.cancel();
+        // Dropped outside the borrow: what `done` holds may be anything.
+        let done = self.requests.borrow_mut().remove(&id.0);
+        drop(done);
+        self.answered(promise);
+    }
+
     /// Runs `work` on a thread of its own and gives `done` its answer on
     /// the Engine thread; `label` is what [`Platform::promises`] says.
     pub(crate) fn on_thread(
@@ -1102,15 +1147,38 @@ impl Platform {
         work: impl FnOnce() -> Result<Response, FetchError> + Send + 'static,
         done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
     ) {
+        self.spawn_request(label, None, work, done);
+    }
+
+    fn spawn_request(
+        &self,
+        label: String,
+        cancel: Option<Cancel>,
+        work: impl FnOnce() -> Result<Response, FetchError> + Send + 'static,
+        done: impl FnOnce(&Engine, Result<Response, FetchError>) + 'static,
+    ) -> u64 {
         let id = self.next_fetch_id();
         self.requests.borrow_mut().insert(id, Box::new(done));
         let reply = self.expect_for(label, None);
+        if let Some(cancel) = &cancel {
+            self.cancels
+                .borrow_mut()
+                .insert(id, (cancel.clone(), reply.id));
+        }
         let spawned = std::thread::Builder::new()
             .name("ljos-request".to_owned())
             .spawn(move || {
                 let result = work();
+                // Cancelled, the Engine thread has already stopped waiting
+                // for this answer: sending it would only wake it for nothing.
+                if cancel.as_ref().is_some_and(Cancel::is_cancelled) {
+                    reply.abandon();
+                    return;
+                }
                 reply.send(move |e| {
-                    let done = Platform::of(e).requests.borrow_mut().remove(&id);
+                    let platform = Platform::of(e);
+                    platform.cancels.borrow_mut().remove(&id);
+                    let done = platform.requests.borrow_mut().remove(&id);
                     if let Some(done) = done {
                         done(e, result);
                     }
@@ -1118,11 +1186,13 @@ impl Platform {
             });
         if let Err(err) = spawned {
             // The Reply went down with the closure, which counts it.
+            self.cancels.borrow_mut().remove(&id);
             let failed = FetchError::Failed(format!("no thread to fetch with: {err}"));
             if let Some(done) = self.requests.borrow_mut().remove(&id) {
                 self.fail_request_later(done, failed);
             }
         }
+        id
     }
 
     /// A key for a fetch or request waiting for its answer.
@@ -1472,6 +1542,7 @@ mod tests {
                 status: 201,
                 headers: vec![("x-method".to_owned(), request.method.to_string())],
                 body: request.body.clone(),
+                url: None,
             })
         }
     }

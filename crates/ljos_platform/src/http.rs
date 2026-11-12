@@ -5,7 +5,7 @@
 use std::io::Read as _;
 use std::time::Duration;
 
-use crate::fetch::{FetchError, Fetcher, Incoming, Request, Response};
+use crate::fetch::{Cancel, FetchError, Fetcher, Incoming, Request, Response};
 
 /// How long one fetch — DNS, connect, redirects and the body — may
 /// take before it is given up as failed.
@@ -142,6 +142,27 @@ impl Fetcher for HttpFetcher {
     }
 
     fn request(&self, request: &Request) -> Result<Response, FetchError> {
+        self.send(request, &Cancel::new())
+    }
+
+    fn request_cancellable(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<Response, FetchError> {
+        self.send(request, cancel)
+    }
+}
+
+/// How much of a reply is read at a time, and so how much a cancelled
+/// request may read before it stops.
+const READ_CHUNK: usize = 16 * 1024;
+
+impl HttpFetcher {
+    fn send(&self, request: &Request, cancel: &Cancel) -> Result<Response, FetchError> {
+        if cancel.is_cancelled() {
+            return Err(Cancel::error(request));
+        }
         let url = &request.url;
         let method = request.method;
         let display_url = ljos_engine::diagnostic_url(url);
@@ -181,6 +202,11 @@ impl Fetcher for HttpFetcher {
         }
         .map_err(|e| transport(url, e, failed))?;
         let status = response.status().as_u16();
+        let landed = {
+            use ureq::ResponseExt as _;
+            let landed = response.get_uri().to_string();
+            (landed != *url).then_some(landed)
+        };
         let headers = response
             .headers()
             .iter()
@@ -193,13 +219,22 @@ impl Fetcher for HttpFetcher {
             .collect();
         // One byte past the cap is read, to tell a reply of exactly
         // the cap from a larger one cut at it.
+        // Read a chunk at a time, not to the end, so that a cancelled
+        // request lets its connection go at its next read.
+        let mut reader = response.into_body().into_reader().take(self.max_bytes + 1);
         let mut bytes = Vec::new();
-        response
-            .into_body()
-            .into_reader()
-            .take(self.max_bytes + 1)
-            .read_to_end(&mut bytes)
-            .map_err(|e| failed(e.to_string()))?;
+        let mut chunk = vec![0; READ_CHUNK];
+        loop {
+            if cancel.is_cancelled() {
+                return Err(Cancel::error(request));
+            }
+            match reader.read(&mut chunk) {
+                Ok(0) => break,
+                Ok(n) => bytes.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(failed(e.to_string())),
+            }
+        }
         if bytes.len() as u64 > self.max_bytes {
             return Err(failed(format!(
                 "the reply is larger than {} bytes",
@@ -210,6 +245,7 @@ impl Fetcher for HttpFetcher {
             status,
             headers,
             body: bytes,
+            url: landed,
         })
     }
 }

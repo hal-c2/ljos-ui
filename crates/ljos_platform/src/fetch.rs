@@ -4,6 +4,8 @@
 //! fact, as a fetch that could not connect does.
 
 use std::fmt;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use thiserror::Error;
 
@@ -104,6 +106,9 @@ pub struct Response {
     pub status: u16,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
+    /// The URL the reply came from, once redirects were followed; `None`
+    /// when it is the request's own or the fetcher does not say.
+    pub url: Option<String>,
 }
 
 impl Response {
@@ -142,6 +147,37 @@ impl fmt::Debug for Incoming {
     }
 }
 
+/// Stops a request on its way: whoever asked no longer wants the reply.
+/// The thread that sends it looks at it before it sends and at each read
+/// of the reply, so a request stops at its next read rather than at once:
+/// a blocking connect or a server that sends nothing is not interrupted.
+#[derive(Clone, Debug, Default)]
+pub struct Cancel(Arc<AtomicBool>);
+
+impl Cancel {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    /// What a request stopped this way fails with. Nobody reads it: whoever
+    /// cancelled has stopped listening.
+    pub(crate) fn error(request: &Request) -> FetchError {
+        FetchError::Failed(format!(
+            "{} {} was cancelled",
+            request.method,
+            ljos_engine::diagnostic_url(&request.url)
+        ))
+    }
+}
+
 /// Reads a URL. Called on a thread of its own, so it may block.
 pub trait Fetcher: Send + Sync {
     fn fetch(&self, url: &str) -> Result<Vec<u8>, FetchError>;
@@ -173,11 +209,28 @@ pub trait Fetcher: Send + Sync {
                 status: 200,
                 headers: Vec::new(),
                 body,
+                url: None,
             }),
             method => Err(FetchError::Failed(format!(
                 "this application cannot send {method} requests"
             ))),
         }
+    }
+
+    /// [`Fetcher::request`] that stops when `cancel` says so, at the latest
+    /// at its next read of the reply.
+    ///
+    /// The default looks at `cancel` once, before it sends: a fetcher that
+    /// can stop half way overrides it.
+    fn request_cancellable(
+        &self,
+        request: &Request,
+        cancel: &Cancel,
+    ) -> Result<Response, FetchError> {
+        if cancel.is_cancelled() {
+            return Err(Cancel::error(request));
+        }
+        self.request(request)
     }
 }
 
@@ -346,6 +399,7 @@ mod tests {
                 ("x-dup".to_owned(), "second".to_owned()),
             ],
             body: b"hi \xff".to_vec(),
+            url: None,
         };
         assert!(r.ok());
         assert_eq!(r.header("content-type"), Some("text/plain"));
@@ -364,6 +418,7 @@ mod tests {
                 status,
                 headers: Vec::new(),
                 body: Vec::new(),
+                url: None,
             };
             assert_eq!(r.ok(), ok, "{status}");
         }

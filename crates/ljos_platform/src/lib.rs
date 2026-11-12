@@ -51,6 +51,7 @@ mod permissions;
 mod platform;
 mod sensors;
 mod settings;
+mod web_fetch;
 mod window_handle;
 mod xhr;
 mod xml_dom;
@@ -74,7 +75,8 @@ pub use drop::{
 };
 pub use fakes::FakeDialogs;
 pub use fetch::{
-    FetchError, Fetcher, Incoming, Method, NoNetwork, Request, Response, is_remote, reason_phrase,
+    Cancel, FetchError, Fetcher, Incoming, Method, NoNetwork, Request, Response, is_remote,
+    reason_phrase,
 };
 #[cfg(feature = "http")]
 pub use http::HttpFetcher;
@@ -96,7 +98,7 @@ pub use permissions::{
     LocationPermission, MicrophonePermission, Permission, PermissionAnswer, PermissionService,
     PermissionStatus, UngatedPermissions,
 };
-pub use platform::{BUSY_WAIT, CATEGORY, Job, Platform, Post, Promise, Reply, mounted};
+pub use platform::{BUSY_WAIT, CATEGORY, Job, Platform, Post, Promise, Reply, RequestId, mounted};
 pub use raw_window_handle;
 pub use sensors::{
     Accelerometer, AccelerometerReading, AmbientLightReading, AmbientLightSensor, Compass,
@@ -154,6 +156,7 @@ pub fn register(engine: &Engine) {
 
     open_url::register(engine);
     xhr::register(engine);
+    web_fetch::register(engine);
     engine.on_js_started(|e| {
         let platform = Platform::of(e);
         let installed = e.eval_js(INSTALL_PLATFORM).map(|install| {
