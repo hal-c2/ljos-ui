@@ -126,6 +126,65 @@ fn compile(root: &Path, files: &[PathBuf]) -> Vec<Vec<Diagnostic>> {
         .collect()
 }
 
+/// What the compiler says of the `.ts` and `.lts` modules at `paths`, as
+/// `ljos check` says it: each read with Ljós's syntax compiled away, and
+/// each finding at its place in the module as written.
+pub(super) fn modules(root: &Path, paths: &[PathBuf]) -> Vec<Diagnostic> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let Ok(project) = Project::load(root, QtTypeOracle) else {
+        return Vec::new();
+    };
+    let keys: Vec<(String, &PathBuf)> = paths
+        .iter()
+        .filter_map(|path| Some((module_key(root, path)?, path)))
+        .collect();
+    let wanted: Vec<String> = keys.iter().map(|(key, _)| key.clone()).collect();
+    let mut checked = ljos_compiler::check_modules(&project, &wanted);
+    checked.sort_by(|a, b| a.key.cmp(&b.key));
+    let mut out = Vec::new();
+    for module in checked {
+        let Some((_, path)) = keys.iter().find(|(key, _)| *key == module.key) else {
+            continue;
+        };
+        let mut said: Vec<Diagnostic> = module
+            .diagnostics
+            .into_iter()
+            .map(|d| Diagnostic {
+                file: path.to_string_lossy().into_owned(),
+                line: d.span.line,
+                column: d.span.column,
+                severity: if d.severity == ljos_compiler::Severity::Error {
+                    Severity::Error
+                } else {
+                    Severity::Warning
+                },
+                code: d.code.as_str().to_owned(),
+                message: d.message,
+                fix: None,
+                guide: None,
+            })
+            .collect();
+        said.sort_by(|a, b| {
+            (a.line, a.column, &a.code, &a.message).cmp(&(b.line, b.column, &b.code, &b.message))
+        });
+        said.dedup();
+        out.extend(said);
+    }
+    out
+}
+
+/// A module's key: its path below `root`, with its extension.
+fn module_key(root: &Path, path: &Path) -> Option<String> {
+    let below = path.strip_prefix(root).ok()?;
+    let parts: Vec<_> = below
+        .components()
+        .map(|c| c.as_os_str().to_str())
+        .collect::<Option<_>>()?;
+    Some(parts.join("/"))
+}
+
 /// The compiler's name of the file at `path`: its path below `root`
 /// without `.qml`.
 fn key(root: &Path, path: &Path) -> Option<String> {

@@ -9,7 +9,7 @@ expression: value
     "open_world": false,
     "read_only": true
   },
-  "description": "Lint QML files or directories: what `qml_check` reports and the accessibility and translation lints of `ljos check`, under the same codes (`ljos://lints` says what each wants); returns diagnostics, paginated.",
+  "description": "Lint QML files, `.ts` and `.lts` modules or directories: what `qml_check` reports and the accessibility and translation lints of `ljos check`, under the same codes (`ljos://lints` says what each wants); returns diagnostics, paginated.",
   "inputSchema": {
     "additionalProperties": false,
     "properties": {
@@ -21,7 +21,7 @@ expression: value
         ]
       },
       "paths": {
-        "description": "`.qml` files or directories, relative to the project root.",
+        "description": "`.qml` files, `.ts` and `.lts` modules or directories, relative to the\nproject root.",
         "items": {
           "type": "string"
         },

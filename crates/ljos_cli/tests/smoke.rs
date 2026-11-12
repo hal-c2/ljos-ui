@@ -80,7 +80,8 @@ fn mcp_server_answers_over_stdio() {
             "design_palette",
             "design_contrast",
             "blocks_list",
-            "qml_edit_apply"
+            "qml_edit_apply",
+            "module_rename_lts"
         ]
     );
 

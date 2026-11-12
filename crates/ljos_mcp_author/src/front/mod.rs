@@ -117,8 +117,14 @@ impl QmlFrontEnd {
     }
 
     fn analyse(&self, files: &[PathBuf], lint: bool) -> Vec<Diagnostic> {
-        let (found, held) = check::run(&self.root, files, lint);
-        compiled::merge(&self.root, files, found, &held)
+        let (qml, modules): (Vec<PathBuf>, Vec<PathBuf>) = files
+            .iter()
+            .cloned()
+            .partition(|path| path.extension().is_some_and(|e| e == "qml"));
+        let (found, held) = check::run(&self.root, &qml, lint);
+        let mut out = compiled::merge(&self.root, &qml, found, &held);
+        out.extend(compiled::modules(&self.root, &modules));
+        out
     }
 }
 
