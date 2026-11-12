@@ -152,7 +152,7 @@ pub fn finish_promised<'f, E>(
     let images = ImageStore::of(engine);
     let platform = Platform::of(engine);
     for round in 0..MAX_ANSWER_ROUNDS {
-        if images.pending() == 0 && platform.pending() == 0 {
+        if images.pending() == 0 && platform.awaited() == 0 {
             // What was posted without a promise is not counted as
             // pending, and only `finish` delivers it while the platform
             // holds answers back.
@@ -170,7 +170,7 @@ pub fn finish_promised<'f, E>(
         }
         // Left unanswered only when it gave up (and said so): waiting
         // again would only give up again.
-        let gave_up = platform.pending() > 0;
+        let gave_up = platform.awaited() > 0;
         settle()?;
         match serve.as_deref_mut() {
             Some(serve) => images.finish_with(engine, serve),
