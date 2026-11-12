@@ -2704,8 +2704,14 @@ const PRELUDE: &str = r##"
     get quitting() { return g.Qt.application?.aboutToQuit; },
     openUrlExternally(url) { return g.Qt.openUrlExternally(url); },
     quit() { g.Qt.quit(); },
-    // The host ends its loop as for quit(); it does not take the code yet.
-    exit(code) { g.Qt.quit(); },
+    // The host ends its loop as for quit(); it does not take the code yet,
+    // so a failure is said rather than passed off as success.
+    exit(code) {
+      if (code !== 0 && code !== undefined) {
+        g.console.warn(`App.exit(${code}): the code does not reach the process yet`);
+      }
+      g.Qt.quit();
+    },
   });
   const application = () => g.Qt.application;
   const App = new Proxy(appOwn, {

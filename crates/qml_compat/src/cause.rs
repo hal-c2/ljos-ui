@@ -197,6 +197,12 @@ pub enum Cause {
     QtFormatNotText {
         member: String,
     },
+    /// `Qt.application` handed on whole, as a target or a value: `App` is
+    /// the application read member by member, not the object.
+    QtApplicationWhole,
+    /// `Qt.exit` given a code not written as 0, which `App.exit` does not
+    /// carry to the process yet.
+    QtExitCode,
     /// A type a script names whose name in Ljós's API is a global of
     /// JavaScript's there (`QtObject`, which is `Object`).
     RenamedToGlobal {
@@ -606,6 +612,12 @@ impl fmt::Display for Cause {
             Cause::QtFormatNotText { member } => write!(
                 f,
                 "`Qt.{member}` given a format that is not a string has no home in Ljós's API yet"
+            ),
+            Cause::QtApplicationWhole => f.write_str(
+                "`Qt.application` handed on whole has no home in Ljós's API yet: `App` is read member by member",
+            ),
+            Cause::QtExitCode => f.write_str(
+                "`Qt.exit` with a code other than 0 has no home in Ljós's API yet: `App.exit` does not carry the code to the process",
             ),
             Cause::RenamedToGlobal { name, new } => write!(
                 f,

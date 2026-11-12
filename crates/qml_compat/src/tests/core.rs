@@ -278,3 +278,51 @@ fn a_connections_renames_the_handlers_of_its_target() {
         );
     }
 }
+
+#[test]
+fn qt_application_is_lowered_only_where_a_member_is_read_off_it() {
+    // `App` is the application's members, not its object.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nItem { property string n: Qt.application.name\n\
+             Component.onCompleted: Qt.application.name = \"x\" }\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { property string n: App.name\n\
+         Component.onCompleted: App.name = \"x\" }\n"
+    );
+    for written in [
+        "Connections { target: Qt.application; function onAboutToQuit() {} }",
+        "property var app: Qt.application",
+    ] {
+        assert_eq!(
+            kept_for(&format!("import QtQuick\nItem {{ {written} }}\n")),
+            "`Qt.application` handed on whole has no home in Ljós's API yet: `App` is read member by member",
+            "{written}"
+        );
+    }
+}
+
+#[test]
+fn qt_exit_is_lowered_only_with_a_code_of_0() {
+    // `App.exit` quits as `quit()` does; the code does not reach the process.
+    assert_eq!(
+        lowered("import QtQuick\nItem { function done() { Qt.exit(0) } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\n\
+         Item { function done() { App.exit(0) } }\n"
+    );
+    for written in [
+        "Qt.exit(1)",
+        "Qt.exit(code)",
+        "Qt.exit()",
+        "Qt.exit(...codes)",
+    ] {
+        assert_eq!(
+            kept_for(&format!(
+                "import QtQuick\nItem {{ function fail(code, codes) {{ {written} }} }}\n"
+            )),
+            "`Qt.exit` with a code other than 0 has no home in Ljós's API yet: `App.exit` does not carry the code to the process",
+            "{written}"
+        );
+    }
+}

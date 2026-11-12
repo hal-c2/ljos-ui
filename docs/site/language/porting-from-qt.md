@@ -95,7 +95,7 @@ Rectangle {
 
 ### Where `Qt`'s members go
 
-A file of Ljós's API has no `Qt` global: `ljos check` stops on one with a `qt-global` error that names the member's home, and `migrate` writes each member there. A file that uses a member with no home yet (`Qt.createComponent`, `Qt.createQmlObject`), or whose own names hide a home, is kept, and `migrate` says which member kept it. [Colours, the app and enums](values-and-the-app.md) describes the homes.
+A file of Ljós's API has no `Qt` global: `ljos check` stops on one with a `qt-global` error that names the member's home, and `migrate` writes each member there. A file that uses a member with no home yet (`Qt.createComponent`, `Qt.createQmlObject`), or whose own names hide a home, is kept, and `migrate` says which member kept it. So is a file that hands `Qt.application` on whole, as a `Connections` target or a value (`App` is read member by member), and one that calls `Qt.exit` with a code other than `0`, which does not reach the process yet. [Colours, the app and enums](values-and-the-app.md) describes the homes.
 
 | In Qt's QML | In Ljós's API |
 |---|---|

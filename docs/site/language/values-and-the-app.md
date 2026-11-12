@@ -59,7 +59,7 @@ Item {
 - `App.platform.os` names the system it runs on.
 - `App.language` is the language its text is translated into. It is writable, and the text that depends on it follows when it changes.
 - `App.hints` holds the system's hints for input and motion, such as `App.hints.mousePressAndHoldInterval`, and `App.inputMethod` the on-screen keyboard, such as `App.inputMethod.visible`.
-- `App.openUrlExternally(u)` opens a link in the system's browser, and `App.quit()` ends the application. `App.exit(code)` ends it too; the code does not reach the process yet.
+- `App.openUrlExternally(u)` opens a link in the system's browser, and `App.quit()` ends the application. `App.exit(code)` ends it too; a code other than `0` does not reach the process yet, and the log says so.
 
 Three functions go with it. `later(f, …)` calls `f` with the rest of its arguments once the current event has been handled. `url(u)` resolves `u` against the file it is written in. `bind(f)`, assigned to a property, makes the property follow `f` again after an assignment has broken its binding.
 

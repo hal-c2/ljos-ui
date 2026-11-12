@@ -347,3 +347,55 @@ Feature: No Qt global in a file of Ljós's API
         kept ./Swatch.qml:3:23: `Qt.red` is a number here: Ljós's API names a colour only where it goes to a `color`
         1 files, 0 lowered, 1 kept
         """
+
+    # `App` is the application read member by member: a target, or a value
+    # handed to native code, is not the application object.
+    @api-QtQml.Qt.application
+    @ljos-only @headless
+    Scenario: A file that hands Qt.application on whole stays Qt's
+      Given the file "Quitting.qml":
+        """qml
+        import QtQuick
+        Item {
+          Connections {
+            target: Qt.application
+            function onAboutToQuit() {}
+          }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        kept ./Quitting.qml:4:13: `Qt.application` handed on whole has no home in Ljós's API yet: `App` is read member by member
+        1 files, 0 lowered, 1 kept
+        """
+
+    @api-QtQml.Qt.exit
+    @ljos-only @headless
+    Scenario: A file that exits with a code other than 0 stays Qt's
+      Given the file "Failing.qml":
+        """qml
+        import QtQuick
+        Item {
+          function done() { Qt.exit(0) }
+          function fail(code) { Qt.exit(code) }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        kept ./Failing.qml:4:25: `Qt.exit` with a code other than 0 has no home in Ljós's API yet: `App.exit` does not carry the code to the process
+        1 files, 0 lowered, 1 kept
+        """
+
+    @ljos-only
+    Scenario: App.exit with a code other than 0 says the code does not reach the process
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        Item {
+          Component.onCompleted: App.exit(3)
+        }
+        """
+      Then the log has a warning matching "App\.exit\(3\): the code does not reach the process yet"
