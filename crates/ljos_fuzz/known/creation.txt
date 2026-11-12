@@ -43,3 +43,19 @@ warning:assign(ljos-only):Unable_to_assign_bool_to_color     a colour bound to a
 warning:assign(ljos-only):Unable_to_assign_QJSValue_to_point a point bound to what is no point is warned about (features/bindings/bound-to-another-type.feature)
 warning:assign(qt-only):Unable_to_assign_QPointF_to_QString  a string bound to a point is not told, and is the point's text (features/bindings/bound-to-another-type.feature)
 value:load-handlers:empty-qt            a string bound to a point is the point's text, not empty (features/bindings/bound-to-another-type.feature)
+
+# An initial property createObject cannot set leaves no object on Qt 6.12.0 and Ljós, which
+# follows it; the oracle, Qt 6.11.2, makes the object with the property's own value there
+# (@qt-diverges in features/components/create-object-converted.feature). Triaged from seed 101.
+value:step:null-ljos                    an object given a point from a number, or a real or int from "", is null, not made (features/components/create-object-converted.feature)
+value:step:undefined-qt                 an object given a point from a number is null, so a property read of it is "none", not undefined (features/components/create-object-converted.feature)
+value:step:empty-qt                     an object given an int from "" is null, so a property read of it is "none", not empty (features/components/create-object-converted.feature)
+value:step:bool-vs-string               an object given a point from a number is null, so a property read of it is "none", not a bool (features/components/create-object-converted.feature)
+value:step:color-vs-string              an object given a point from "" is null, so a property read of it is "none", not a colour (features/components/create-object-converted.feature)
+value:load-handlers:number-vs-string    an object given a real from "" is null, so a property read of it is "none", not a number (features/components/create-object-converted.feature)
+value:load-handlers:record-vs-string    an object given a point from "" is null, so a property read of it is "none", not a point (features/components/create-object-converted.feature)
+value:onChanged+onCompleted:empty-ljos  an object given a real from "" is null, so no later write tells its change (features/components/create-object-converted.feature)
+result:none/none:call:number-vs-string  a function writing an object given a real from "" finds none, not a number (features/components/create-object-converted.feature)
+result:none/none:call:bool-vs-string    a function writing an object given a real from "" finds none, not a bool (features/components/create-object-converted.feature)
+result:none/none:call:color-vs-string   a function writing an object given a point from "" finds none, not a colour (features/components/create-object-converted.feature)
+result:none/none:call:nan-qt            a function writing an object given a real from "" finds none, not NaN (features/components/create-object-converted.feature)
