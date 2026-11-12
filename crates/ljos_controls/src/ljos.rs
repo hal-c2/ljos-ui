@@ -11,12 +11,12 @@
 //! the pass lowers (`qml_compat`, through `ljos.txt`), so a control added
 //! here is one a file of Qt's may now be lowered with.
 
-use ljos_engine::{Engine, MetaRef, QmlType, Version};
+use ljos_engine::{Engine, MetaObject, MetaRef, QmlType, Version};
 use ljos_platform::{FileDialog, FolderDialog};
 
-use crate::AbstractButton;
 use crate::style::BASIC;
 use crate::util;
+use crate::{AbstractButton, ButtonGroup};
 
 /// The module's name, as a file imports it.
 pub const MODULE: &str = "Ljos.Controls.Basic";
@@ -42,6 +42,7 @@ pub(crate) const DRAWN: &[&str] = &[
     "Pane",
     "Popup",
     "ProgressBar",
+    "RadioButton",
     "RoundButton",
     "ScrollBar",
     "ScrollView",
@@ -58,14 +59,16 @@ pub(crate) const DRAWN: &[&str] = &[
     "ToolTip",
 ];
 
+/// The templates the module has: they draw nothing, so they are the same
+/// types in every style.
+pub(crate) const TEMPLATES: &[fn() -> &'static MetaObject] =
+    &[AbstractButton::static_meta, ButtonGroup::static_meta];
+
 pub(crate) fn register(engine: &Engine, basic: &[String]) {
     let version = Version::new(1, 0);
-    // A template draws nothing, so it is the same type in every style.
-    engine.register_type(
-        MODULE,
-        version,
-        MetaRef::Static(AbstractButton::static_meta()),
-    );
+    for meta in TEMPLATES {
+        engine.register_type(MODULE, version, MetaRef::Static(meta()));
+    }
     // QtQuick.Dialogs' own, as they are: the system's dialog when it has
     // one, else the one ljos_platform draws.
     for meta in [FileDialog::static_meta(), FolderDialog::static_meta()] {
