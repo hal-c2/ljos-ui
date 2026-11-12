@@ -540,7 +540,8 @@ impl Platform {
     /// responsive never calls it. Gives up, with a warning, after 10 s
     /// without an answer or 60 s in all. Busy work is waited on only for
     /// [`BUSY_WAIT`] ([`Platform::awaited`]), and its news delivered
-    /// meanwhile.
+    /// meanwhile. While it waits it runs the engine's timers already due,
+    /// as a frame would: what they do may be what answers.
     pub fn finish(&self, engine: &Engine) {
         self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
@@ -575,6 +576,13 @@ impl Platform {
                 self.left_busy(engine, &busy, started);
                 return;
             }
+            // What the engine has due now may be what answers: a page's
+            // news that sends it elsewhere, the going handed on at once,
+            // ends the old page's promise. A running app does that work at
+            // its next frame while it waits, and so does this. What it
+            // posts ends the wait below. Work due later on the engine's
+            // clock is not waited for: a test's clock stands still here.
+            engine.turn(None, || engine.advance_timers(engine.now()));
             between();
             // Not past the moment busy work stops being waited on: what is
             // left after it may already be answered.
@@ -1186,6 +1194,30 @@ mod tests {
             e.message
                 .contains("gave up waiting for 1 platform answer(s): \"never answered\"")
         }));
+    }
+
+    #[test]
+    fn work_due_now_that_answers_is_done_and_not_waited_for() {
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        // The answer is in the engine's own hands, due at once, as a page
+        // the app was told to leave and is going from at its next turn.
+        // A test's clock, which stands while finish waits.
+        engine.set_clock(Rc::new(ljos_runtime::VirtualClock::starting_at(
+            ljos_runtime::Time::from_millis(40),
+        )));
+        let reply = platform.expect_for("the page left", None);
+        engine.call_at(engine.now(), move |_| drop(reply));
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert!(
+            started.elapsed() < FINISH_TIMEOUT,
+            "finish waited {:?} for work it had due",
+            started.elapsed()
+        );
+        let log = engine.take_log();
+        assert!(log.is_empty(), "{log:?}");
     }
 
     /// Echoes what it was asked, as a 201, without a network.
