@@ -15,13 +15,15 @@
 //! phrase (`%20` a space) and no body. `/loop` redirects to itself, a
 //! redirect that never ends. `/refused` redirects to a loopback port the
 //! server holds and never listens on, so the browser's connection is
-//! refused, as by a server that has gone.
+//! refused, as by a server that has gone. `/held` is never answered: the
+//! connection stays open, the page loading, until the server stops, so a
+//! scenario can replace a load that is still going.
 
 use std::collections::HashMap;
 use std::io::{BufRead as _, BufReader, Read as _, Write as _};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::thread::JoinHandle;
 
 /// What the QML writes for the server's address.
@@ -31,6 +33,8 @@ pub const PLACEHOLDER: &str = "$SERVER";
 const LOOP: &str = "/loop";
 /// The path that redirects to a port that refuses.
 const REFUSED: &str = "/refused";
+/// The path never answered while the server runs.
+const HELD: &str = "/held";
 
 type Files = Arc<Mutex<HashMap<String, Body>>>;
 
@@ -45,7 +49,50 @@ pub struct WebServer {
     port: u16,
     files: Files,
     stop: Arc<AtomicBool>,
+    held: Arc<Held>,
     thread: Option<JoinHandle<()>>,
+}
+
+/// Connections to [`HELD`], each waited out on a thread of its own so the
+/// server goes on answering the rest, until the server lets them go.
+#[derive(Debug, Default)]
+struct Held {
+    released: Mutex<bool>,
+    release: Condvar,
+    threads: Mutex<Vec<JoinHandle<()>>>,
+}
+
+impl Held {
+    fn hold(self: &Arc<Self>, stream: TcpStream) {
+        let held = Arc::clone(self);
+        let thread = std::thread::Builder::new()
+            .name("ljos-bdd-web-held".to_owned())
+            .spawn(move || {
+                let released = held.released.lock().unwrap_or_else(PoisonError::into_inner);
+                let _released = held
+                    .release
+                    .wait_while(released, |released| !*released)
+                    .unwrap_or_else(PoisonError::into_inner);
+                // Closed with no answer, as by a server that went.
+                drop(stream);
+            });
+        if let Ok(thread) = thread {
+            self.threads
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(thread);
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().unwrap_or_else(PoisonError::into_inner) = true;
+        self.release.notify_all();
+        let threads =
+            std::mem::take(&mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner));
+        for thread in threads {
+            let _ = thread.join();
+        }
+    }
 }
 
 impl WebServer {
@@ -64,8 +111,9 @@ impl WebServer {
         let refused = format!("http://127.0.0.1:{}/", refusing.port);
         let files = Files::default();
         let stop = Arc::new(AtomicBool::new(false));
+        let held = Arc::new(Held::default());
         let thread = {
-            let (files, stop) = (Arc::clone(&files), Arc::clone(&stop));
+            let (files, stop, held) = (Arc::clone(&files), Arc::clone(&stop), Arc::clone(&held));
             std::thread::Builder::new()
                 .name("ljos-bdd-web".to_owned())
                 .spawn(move || {
@@ -78,7 +126,7 @@ impl WebServer {
                         // One at a time: a scenario's few requests are
                         // small, and an answer is written whole at once.
                         if let Ok(stream) = stream {
-                            answer(stream, &files, &refused);
+                            answer(stream, &files, &refused, &held);
                         }
                     }
                 })
@@ -88,6 +136,7 @@ impl WebServer {
             port,
             files,
             stop,
+            held,
             thread: Some(thread),
         })
     }
@@ -126,10 +175,12 @@ impl Drop for WebServer {
         // The thread waits in `accept`: one more connection wakes it to
         // see that it is to stop.
         let _ = TcpStream::connect(("127.0.0.1", self.port));
+        let joined = self.thread.take().map(JoinHandle::join);
+        // After the server is gone: nothing more is held from then on.
+        self.held.release();
         // A server that panicked fails the scenario that used it, unless
         // that scenario is failing already.
-        if let Some(thread) = self.thread.take()
-            && let Err(panic) = thread.join()
+        if let Some(Err(panic)) = joined
             && !std::thread::panicking()
         {
             std::panic::resume_unwind(panic);
@@ -198,8 +249,8 @@ impl Refusing {
 /// Reads one request and answers it: the file, what `/echo` or `/headers`
 /// was sent, the status `/status/…` names, `/loop` itself again, `/refused`
 /// the refusing port, or 404 for a name nobody served. The connection
-/// closes after it.
-fn answer(stream: TcpStream, files: &Files, refused: &str) {
+/// closes after it; `/held` is kept open, unanswered, until the server stops.
+fn answer(stream: TcpStream, files: &Files, refused: &str, held: &Arc<Held>) {
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() {
@@ -229,6 +280,11 @@ fn answer(stream: TcpStream, files: &Files, refused: &str) {
         .unwrap_or(0);
     let mut sent = Vec::new();
     if (&mut reader).take(length).read_to_end(&mut sent).is_err() {
+        return;
+    }
+    drop(reader);
+    if path == HELD {
+        held.hold(stream);
         return;
     }
     // By name: clients send headers in orders of their own.
@@ -392,6 +448,31 @@ mod tests {
             .unwrap_or_else(|| panic!("no loopback Location: {reply}"));
         let refused = TcpStream::connect(("127.0.0.1", port)).unwrap_err();
         assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
+    }
+
+    #[test]
+    fn held_is_never_answered_while_the_rest_are() {
+        let server = WebServer::start().unwrap();
+        server.serve("page.html", b"page".to_vec());
+        let mut held = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        held.write_all(b"GET /held HTTP/1.1\r\n\r\n").unwrap();
+        // Answered while the first is held: the server goes on.
+        assert!(get(&server, "/page.html").ends_with("page"));
+        held.set_read_timeout(Some(std::time::Duration::from_millis(200)))
+            .unwrap();
+        let waited = held.read(&mut [0u8; 1]).unwrap_err();
+        assert!(
+            matches!(
+                waited.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ),
+            "{waited}"
+        );
+        drop(server);
+        held.set_read_timeout(None).unwrap();
+        let mut rest = Vec::new();
+        held.read_to_end(&mut rest).unwrap();
+        assert!(rest.is_empty(), "closed with no answer");
     }
 
     #[test]
