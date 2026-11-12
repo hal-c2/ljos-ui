@@ -184,6 +184,26 @@ Feature: Binding loops
       """
     Then the log has a warning matching "Binding loop detected for property .implicitHeight."
 
+  # Found by ljos-fuzz (bindings), seed 43260972647, bucket
+  # warning:binding-loop(qt-only):implicitWidth. In Qt the size's own binding is put in place
+  # after the implicit size's has run, so the implicit size reads a size that still follows it,
+  # and gives it a new value once. A size given a literal is in place at once, and no loop is
+  # reported. Ljós reads the size's binding there.
+  @backlog
+  Scenario: An implicit width that reads a width bound to an expression is a loop while made
+    Given the QML:
+      """qml
+      import QtQuick
+      Item {
+        id: root
+        objectName: "root"
+        width: (0 >>> 1)
+        implicitWidth: root.width + 1
+      }
+      """
+    Then the log has a warning matching "Binding loop detected for property .implicitWidth."
+    And the property "implicitWidth" of "root" is 1
+
   # Found by ljos-fuzz (bindings), bucket warning:binding-loop(ljos-only):isNaN.
   # A font member that reads another is a loop (giving it a value changes the font it read),
   # unless the member it reads was given a size the font ignores.
