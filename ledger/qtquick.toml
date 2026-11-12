@@ -76,3 +76,941 @@ kind = "property"
 status = "partial"
 reason = "compat only: a `fetch` is awaited, and has no state to read"
 scenarios = ["@api-QtQml.XMLHttpRequest.readyState"]
+
+# The members of `Qt` (QtQml's `Qt` global) and where Ljós's API has each
+# (docs/DIALECT.md §4.3.1). A file of Ljós's API has no `Qt`: `ljos check`
+# names the home, and `ljos migrate` writes it. A row a scenario proves is
+# `supported`; one whose home no scenario proves yet is `partial`.
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "GlobalColor"
+kind = "enum"
+status = "supported"
+reason = "In a file of Ljós's API: a colour is its name, written where it goes to a `color` (`Qt.red` is `\"red\"`)"
+scenarios = ["@api-QtQml.Qt.GlobalColor"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ColorScheme"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ColorScheme` of Ljos.Ui, its keys named without the part they share (`ColorScheme.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ContrastPreference"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ContrastPreference` of Ljos.Ui, its keys named without the part they share (`ContrastPreference.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "MouseButtons"
+kind = "enum"
+status = "supported"
+reason = "In a file of Ljós's API: `MouseButton` of Ljos.Ui, its keys named without the part they share (`MouseButton.…`), with Qt's numbers"
+scenarios = ["@api-QtQml.Qt.MouseButtons"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "Orientations"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Orientation` of Ljos.Ui, its keys named without the part they share (`Orientation.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "FocusPolicy"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `FocusPolicy` of Ljos.Ui, its keys named without the part they share (`FocusPolicy.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TabFocusBehavior"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TabFocusBehavior` of Ljos.Ui, its keys named without the part they share (`TabFocusBehavior.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "SortOrder"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `SortOrder` of Ljos.Ui, its keys named without the part they share (`SortOrder.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "SplitBehavior"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `SplitBehavior` of Ljos.Ui, its keys named without the part they share (`SplitBehavior.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "Alignment"
+kind = "enum"
+status = "supported"
+reason = "In a file of Ljós's API: `Align` of Ljos.Ui, its keys named without the part they share (`Align.…`), with Qt's numbers"
+scenarios = ["@api-QtQml.Qt.Alignment"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TextFlag"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TextFlag` of Ljos.Ui, its keys named without the part they share (`TextFlag.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TextElideMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Elide` of Ljos.Ui, its keys named without the part they share (`Elide.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "WindowFlags"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `WindowType` of Ljos.Ui, its keys named without the part they share (`WindowType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "WindowStates"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `WindowState` of Ljos.Ui, its keys named without the part they share (`WindowState.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ApplicationState"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ApplicationState` of Ljos.Ui, its keys named without the part they share (`ApplicationState.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ScreenOrientations"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ScreenOrientation` of Ljos.Ui, its keys named without the part they share (`ScreenOrientation.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ImageConversionFlags"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ImageConversionFlag` of Ljos.Ui, its keys named without the part they share (`ImageConversionFlag.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "BGMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `BGMode` of Ljos.Ui, its keys named without the part they share (`BGMode.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "KeyboardModifiers"
+kind = "enum"
+status = "supported"
+reason = "In a file of Ljós's API: `Modifier` of Ljos.Ui, its keys named without the part they share (`Modifier.…`), with Qt's numbers"
+scenarios = ["@api-QtQml.Qt.KeyboardModifiers"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "Modifiers"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `KeyModifier` of Ljos.Ui, its keys named without the part they share (`KeyModifier.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ArrowType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ArrowType` of Ljos.Ui, its keys named without the part they share (`ArrowType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "PenStyle"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `PenStyle` of Ljos.Ui, its keys named without the part they share (`PenStyle.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "PenCapStyle"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `PenCapStyle` of Ljos.Ui, its keys named without the part they share (`PenCapStyle.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "PenJoinStyle"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `PenJoinStyle` of Ljos.Ui, its keys named without the part they share (`PenJoinStyle.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "BrushStyle"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `BrushStyle` of Ljos.Ui, its keys named without the part they share (`BrushStyle.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "SizeMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `SizeMode` of Ljos.Ui, its keys named without the part they share (`SizeMode.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "CursorShape"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Cursor` of Ljos.Ui, its keys named without the part they share (`Cursor.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TextFormat"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TextFormat` of Ljos.Ui, its keys named without the part they share (`TextFormat.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "AspectRatioMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `AspectRatioMode` of Ljos.Ui, its keys named without the part they share (`AspectRatioMode.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "DockWidgetAreas"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `DockWidgetArea` of Ljos.Ui, its keys named without the part they share (`DockWidgetArea.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ToolBarAreas"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ToolBarArea` of Ljos.Ui, its keys named without the part they share (`ToolBarArea.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "DateFormat"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `DateFormat` of Ljos.Ui, its keys named without the part they share (`DateFormat.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TimeSpec"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TimeSpec` of Ljos.Ui, its keys named without the part they share (`TimeSpec.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "DayOfWeek"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `DayOfWeek` of Ljos.Ui, its keys named without the part they share (`DayOfWeek.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ScrollBarPolicy"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ScrollBarPolicy` of Ljos.Ui, its keys named without the part they share (`ScrollBarPolicy.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "CaseSensitivity"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `CaseSensitivity` of Ljos.Ui, its keys named without the part they share (`CaseSensitivity.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "Corner"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Corner` of Ljos.Ui, its keys named without the part they share (`Corner.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "Edges"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Edge` of Ljos.Ui, its keys named without the part they share (`Edge.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ConnectionType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ConnectionType` of Ljos.Ui, its keys named without the part they share (`ConnectionType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ShortcutContext"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ShortcutContext` of Ljos.Ui, its keys named without the part they share (`ShortcutContext.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "FillRule"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `FillRule` of Ljos.Ui, its keys named without the part they share (`FillRule.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "MaskMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `MaskMode` of Ljos.Ui, its keys named without the part they share (`MaskMode.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ClipOperation"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ClipOperation` of Ljos.Ui, its keys named without the part they share (`ClipOperation.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ItemSelectionMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ItemSelectionMode` of Ljos.Ui, its keys named without the part they share (`ItemSelectionMode.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ItemSelectionOperation"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ItemSelectionOperation` of Ljos.Ui, its keys named without the part they share (`ItemSelectionOperation.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TransformationMode"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TransformationMode` of Ljos.Ui, its keys named without the part they share (`TransformationMode.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "Axis"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Axis` of Ljos.Ui, its keys named without the part they share (`Axis.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "FocusReason"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `FocusReason` of Ljos.Ui, its keys named without the part they share (`FocusReason.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ContextMenuPolicy"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ContextMenuPolicy` of Ljos.Ui, its keys named without the part they share (`ContextMenuPolicy.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ContextMenuTrigger"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ContextMenuTrigger` of Ljos.Ui, its keys named without the part they share (`ContextMenuTrigger.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "InputMethodQueries"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `InputMethodQuery` of Ljos.Ui, its keys named without the part they share (`InputMethodQuery.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "InputMethodHints"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `InputMethodHint` of Ljos.Ui, its keys named without the part they share (`InputMethodHint.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "EnterKeyType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `EnterKeyType` of Ljos.Ui, its keys named without the part they share (`EnterKeyType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ToolButtonStyle"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ToolButtonStyle` of Ljos.Ui, its keys named without the part they share (`ToolButtonStyle.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "LayoutDirection"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Direction` of Ljos.Ui, its keys named without the part they share (`Direction.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "DropActions"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `DropAction` of Ljos.Ui, its keys named without the part they share (`DropAction.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "CheckState"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `CheckState` of Ljos.Ui, its keys named without the part they share (`CheckState.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ItemDataRole"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ItemDataRole` of Ljos.Ui, its keys named without the part they share (`ItemDataRole.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ItemFlags"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ItemFlag` of Ljos.Ui, its keys named without the part they share (`ItemFlag.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "MatchFlags"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `MatchFlag` of Ljos.Ui, its keys named without the part they share (`MatchFlag.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "WindowModality"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `WindowModality` of Ljos.Ui, its keys named without the part they share (`WindowModality.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TextInteractionFlags"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TextInteractionFlag` of Ljos.Ui, its keys named without the part they share (`TextInteractionFlag.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "SizeHint"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `SizeHint` of Ljos.Ui, its keys named without the part they share (`SizeHint.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TouchPointStates"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TouchPointState` of Ljos.Ui, its keys named without the part they share (`TouchPointState.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "GestureState"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `GestureState` of Ljos.Ui, its keys named without the part they share (`GestureState.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "GestureType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `GestureType` of Ljos.Ui, its keys named without the part they share (`GestureType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "NativeGestureType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `NativeGestureType` of Ljos.Ui, its keys named without the part they share (`NativeGestureType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "CursorMoveStyle"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `CursorMoveStyle` of Ljos.Ui, its keys named without the part they share (`CursorMoveStyle.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TimerType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TimerType` of Ljos.Ui, its keys named without the part they share (`TimerType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "TimerId"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `TimerId` of Ljos.Ui, its keys named without the part they share (`TimerId.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ScrollPhase"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ScrollPhase` of Ljos.Ui, its keys named without the part they share (`ScrollPhase.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "MouseEventSource"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `MouseEventSource` of Ljos.Ui, its keys named without the part they share (`MouseEventSource.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "MouseEventFlags"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `MouseEventFlag` of Ljos.Ui, its keys named without the part they share (`MouseEventFlag.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "ChecksumType"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `ChecksumType` of Ljos.Ui, its keys named without the part they share (`ChecksumType.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "HighDpiScaleFactorRoundingPolicy"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `HighDpiScaleFactorRoundingPolicy` of Ljos.Ui, its keys named without the part they share (`HighDpiScaleFactorRoundingPolicy.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "PermissionStatus"
+kind = "enum"
+status = "partial"
+reason = "In a file of Ljós's API: `Permission.Status` of Ljos.Ui, its keys named without the part they share (`Permission.Status.…`), with Qt's numbers. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "alpha"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Color.of(…).alpha(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.alpha"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "application"
+kind = "property"
+status = "supported"
+reason = "In a file of Ljós's API: `App` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.application"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "binding"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `bind(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.binding"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "callLater"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `later(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.callLater"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "color"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Color.of(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.color"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "colorEqual"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Color.of(…).equals(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.colorEqual"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "createComponent"
+kind = "method"
+status = "partial"
+reason = "Only a file in Qt's QML has it: Ljós's API has no home for it yet, so `ljos migrate` keeps a file that uses it"
+scenarios = ["@api-QtQml.Qt.createComponent"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "createQmlObject"
+kind = "method"
+status = "partial"
+reason = "Only a file in Qt's QML has it: Ljós's API has no home for it yet, so `ljos migrate` keeps a file that uses it"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "darker"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Color.of(…).darker(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.darker"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "font"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Font.of(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.font"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "fontFamilies"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Font.families(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.fontFamilies"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "formatDate"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Locale.current.formatDate(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.formatDate"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "formatDateTime"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `Locale.current.formatDateTime(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "formatTime"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `Locale.current.formatTime(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "hsla"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `hsla(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "hsva"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `hsva(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "inputMethod"
+kind = "property"
+status = "supported"
+reason = "In a file of Ljós's API: `App.inputMethod` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.inputMethod"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "isQtObject"
+kind = "method"
+status = "partial"
+reason = "Only a file in Qt's QML has it: Ljós's API has no home for it yet, so `ljos migrate` keeps a file that uses it"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "lighter"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `Color.of(…).lighter(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "locale"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Locale.current`, or `Locale.named(name)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.locale"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "matrix4x4"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `matrix4x4(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.matrix4x4"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "openUrlExternally"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `App.openUrlExternally` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "platform"
+kind = "property"
+status = "supported"
+reason = "In a file of Ljós's API: `App.platform` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.platform"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "point"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `point(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.point"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "quaternion"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `quaternion(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "quit"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `App.quit` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.quit"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "rect"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `rect(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.rect"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "resolvedUrl"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `url(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.resolvedUrl"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "rgb"
+kind = "method"
+status = "partial"
+reason = "Only a file in Qt's QML has it: Ljós's API has no home for it yet, so `ljos migrate` keeps a file that uses it"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "rgba"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `rgba(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.rgba"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "size"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `size(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.size"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "styleHints"
+kind = "property"
+status = "supported"
+reason = "In a file of Ljós's API: `App.hints` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.styleHints"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "tint"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `Color.of(…).tint(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.tint"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "uiLanguage"
+kind = "property"
+status = "supported"
+reason = "In a file of Ljós's API: `App.language` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.uiLanguage"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "vector2d"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `vector2d(…)` of Ljos.Core. No scenario proves the home yet"
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "vector3d"
+kind = "method"
+status = "supported"
+reason = "In a file of Ljós's API: `vector3d(…)` of Ljos.Core"
+scenarios = ["@api-QtQml.Qt.vector3d"]
+
+[[row]]
+module = "QtQml"
+type = "Qt"
+member = "vector4d"
+kind = "method"
+status = "partial"
+reason = "In a file of Ljós's API: `vector4d(…)` of Ljos.Core. No scenario proves the home yet"
