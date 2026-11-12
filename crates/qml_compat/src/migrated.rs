@@ -103,10 +103,124 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
         }
         return out;
     }
+    let unit = Unit::of(&written);
     for (at, (line, was)) in lowered.iter().zip(&written).enumerate() {
-        laid_out(&mut out, line, was, &lowered[at + 1..]);
+        laid_out(
+            &mut out,
+            line,
+            was,
+            &lowered[..at],
+            &lowered[at + 1..],
+            unit,
+        );
     }
     out
+}
+
+/// The step a file is indented by, read from its lines as written: a tab
+/// where its first indented line starts with one, else the least step in
+/// spaces between one line and the next, four in a file with none.
+#[derive(Clone, Copy)]
+struct Unit {
+    tabs: bool,
+    spaces: usize,
+}
+
+impl Unit {
+    fn of(lines: &[&str]) -> Self {
+        let indents = lines
+            .iter()
+            .map(|line| line.trim_end_matches(['\n', '\r']))
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| &line[..line.len() - line.trim_start().len()]);
+        let tabs = indents
+            .clone()
+            .find(|indent| !indent.is_empty())
+            .is_some_and(|indent| indent.starts_with('\t'));
+        let widths: Vec<usize> = indents
+            .filter(|indent| !indent.contains('\t'))
+            .map(str::len)
+            .collect();
+        let spaces = widths
+            .windows(2)
+            .map(|pair| pair[0].abs_diff(pair[1]))
+            .filter(|step| *step > 0)
+            .min()
+            .unwrap_or(4);
+        Self { tabs, spaces }
+    }
+
+    /// One level in from `indent`, in the characters `indent` is made of,
+    /// or the file's where it is empty.
+    fn deeper(self, indent: &str) -> String {
+        let tabs = if indent.is_empty() {
+            self.tabs
+        } else {
+            indent.contains('\t')
+        };
+        if tabs {
+            format!("{indent}\t")
+        } else {
+            format!("{indent}{}", " ".repeat(self.spaces))
+        }
+    }
+}
+
+/// The indent of the line among `before` and `head`, the last read first,
+/// that opens the `]` or `}` `head` ends with: the member whose list or
+/// object it closes. Brackets in strings and comments are not counted.
+/// `None` where no line above opens it.
+fn opener<'a>(before: &[&'a str], head: &str) -> Option<&'a str> {
+    let mut depth = 0usize;
+    let mut close = |brackets: Vec<u8>| {
+        brackets.into_iter().rev().any(|bracket| {
+            if matches!(bracket, b']' | b'}') {
+                depth += 1;
+                false
+            } else {
+                depth = depth.saturating_sub(1);
+                depth == 0
+            }
+        })
+    };
+    if close(brackets(head)) {
+        return None;
+    }
+    before.iter().rev().find_map(|line| {
+        close(brackets(line)).then(|| &line[..line.len() - line.trim_start().len()])
+    })
+}
+
+/// The brackets of a line's code, in order, with those in a string, a
+/// `//` comment or a `/* */` comment on the line left out.
+fn brackets(line: &str) -> Vec<u8> {
+    let bytes = line.as_bytes();
+    let mut found = Vec::new();
+    let mut quote = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        let byte = bytes[at];
+        if let Some(open) = quote {
+            if byte == b'\\' {
+                at += 1;
+            } else if byte == open {
+                quote = None;
+            }
+        } else if bytes[at..].starts_with(b"//") {
+            break;
+        } else if bytes[at..].starts_with(b"/*") {
+            match line[at + 2..].find("*/") {
+                Some(close) => at += close + 3,
+                None => break,
+            }
+        } else if matches!(byte, b'"' | b'\'' | b'`') {
+            quote = Some(byte);
+        } else if matches!(byte, b'[' | b']' | b'{' | b'}') {
+            found.push(byte);
+        }
+        at += 1;
+    }
+    found
 }
 
 /// Whether a line, read from its start (inside a `/* */` comment where
@@ -146,8 +260,9 @@ fn header(mut text: &str, in_comment: bool) -> Option<bool> {
 }
 
 /// One line below the imports, `line` as the pass made it of `was`, with
-/// `after` the lines the pass made below it.
-fn laid_out(out: &mut String, line: &str, was: &str, after: &[&str]) {
+/// `before` and `after` the lines the pass made above and below it, and
+/// `unit` the step the file is indented by.
+fn laid_out(out: &mut String, line: &str, was: &str, before: &[&str], after: &[&str], unit: Unit) {
     let content = line.trim_end_matches(['\n', '\r']);
     let end = &line[content.len()..];
     let was = was.trim_end_matches(['\n', '\r']);
@@ -162,7 +277,9 @@ fn laid_out(out: &mut String, line: &str, was: &str, after: &[&str]) {
     };
     // A binding written after a `{` is a member of the object it opens, so
     // it is indented as the object's next line is, or a level in where that
-    // line closes it.
+    // line closes it. One written after a `]` or `}` is a member beside the
+    // one whose list or object closes there, indented as the line that
+    // opened it is, which the closing line need not be.
     let members = if inside {
         after
             .iter()
@@ -170,9 +287,13 @@ fn laid_out(out: &mut String, line: &str, was: &str, after: &[&str]) {
             .find(|next| !next.trim().is_empty())
             .map(|next| &next[..next.len() - next.trim_start().len()])
             .filter(|deeper| deeper.len() > indent.len() && deeper.starts_with(indent))
-            .map_or_else(|| format!("{indent}    "), str::to_owned)
+            .map_or_else(|| unit.deeper(indent), str::to_owned)
     } else {
-        indent.to_owned()
+        let Some(member) = opener(before, head) else {
+            out.push_str(line);
+            return;
+        };
+        member.to_owned()
     };
     out.push_str(head.trim_end());
     out.push_str(end_or_newline(end));
@@ -447,6 +568,39 @@ mod tests {
         assert_eq!(
             migrated(written, lowered, true),
             "import Ljos.Ui\nListView {\n    readonly property list<Rows.Row> rows: [\n        { a: 1 }\n    ]\n    model: rows\n}\n"
+        );
+    }
+
+    /// A tab-indented file's members a level in are a tab in, not four
+    /// spaces.
+    #[test]
+    fn a_member_a_level_in_is_indented_as_the_file_is() {
+        let written = "import QtQuick\nItem {\n\tGrid {\n\t}\n}\n";
+        let lowered =
+            "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\n\tGrid { columns: 4;\n\t}\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nItem {\n\tGrid {\n\t\tcolumns: 4\n\t}\n}\n"
+        );
+        // A file indented by two spaces, the object at its top level.
+        let written = "import QtQuick\nGrid {\n}\nItem {\n  x: 1\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nGrid { columns: 4;\n}\nItem {\n  x: 1\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nGrid {\n  columns: 4\n}\nItem {\n  x: 1\n}\n"
+        );
+    }
+
+    /// A list whose last element closes on the line of its `]`: the binding
+    /// after it is indented as the member that opened the list is, not as
+    /// the element.
+    #[test]
+    fn a_binding_after_a_list_closed_on_its_last_element_is_the_members() {
+        let written = "import QtQuick\nListView {\n\tmodel: ListModel {\n\t\tListElement { a: \"[\" }\n\t\tListElement { a: 1 } }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nListView {\n\treadonly property list<Rows.Row> rows: [\n\t\t{ a: \"[\" },\n\t\t{ a: 1 } ]; model: rows\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nListView {\n\treadonly property list<Rows.Row> rows: [\n\t\t{ a: \"[\" },\n\t\t{ a: 1 } ]\n\tmodel: rows\n}\n"
         );
     }
 
