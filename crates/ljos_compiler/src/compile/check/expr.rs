@@ -867,6 +867,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     // Calls.
 
     fn call(&mut self, call: &CallExpression<'a>, short: &mut bool) -> Ty {
+        if self.is_controller(call) {
+            return self.controller(call);
+        }
         let callee = self.link(&call.callee, short);
         let callee = self.optional(callee, call.optional, short);
         let callee = self.defined(callee, call.callee.span());

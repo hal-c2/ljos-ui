@@ -426,6 +426,18 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if let Some(arrangement) = parent.and_then(|p| self.arrangement(p)) {
             self.anchored(object, &arrangement, &[]);
         }
+        if let Some(p) = parent.filter(|p| self.place[*p].component == at.component)
+            && let Some(holder) = self.hostless(index, p)
+        {
+            self.diagnostics.push(Diagnostic::error(
+                Code::ControllerHost,
+                format!(
+                    "a `Controller` acts on the item it is declared in, and a `{holder}` is not \
+                     an item: declare it in one"
+                ),
+                self.span(object.type_name.span),
+            ));
+        }
         let parent = parent
             .map(|p| self.place[p])
             .filter(|p| p.component == at.component)
@@ -1388,6 +1400,40 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             TypeRef::Native { module, name } if module == "QtQuick" && name == "Flow" => Some(name),
             _ => None,
         }
+    }
+
+    /// The name of the type of `parent`, where the object `index` is a
+    /// Controller it holds and it is neither an item nor a Controller: the
+    /// Controller has no host (docs/DIALECT.md §4.20). In a file of Ljós's
+    /// API, as Qt's handlers, which are Controllers, are told only when
+    /// they run.
+    fn hostless(&self, index: usize, parent: usize) -> Option<String> {
+        if !self.ljos_ui {
+            return None;
+        }
+        let oracle = self.types.oracle;
+        let controller = oracle.module_type("Ljos.Core", "Controller")?;
+        let item = oracle.module_type("QtQuick", "Item")?;
+        let derives = |ty, from| {
+            let mut at = Some(ty);
+            for _ in 0..64 {
+                match at {
+                    Some(here) if here == from => return true,
+                    Some(here) => at = oracle.prototype(here),
+                    None => return false,
+                }
+            }
+            false
+        };
+        let base = |i: usize| self.types.base(self.tree.objects[i].kind.as_ref()?);
+        if !derives(base(index)?, controller) {
+            return None;
+        }
+        let holder = base(parent)?;
+        if derives(holder, item) || derives(holder, controller) {
+            return None;
+        }
+        Some(oracle.name(holder).to_string())
     }
 
     /// Reports each anchor a child of an arrangement sets: the arrangement
