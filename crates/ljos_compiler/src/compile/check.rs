@@ -20,6 +20,7 @@
 //! said again.
 
 mod builtins;
+mod controller;
 mod expr;
 mod module;
 mod ty;
