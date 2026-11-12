@@ -309,6 +309,31 @@ Feature: Ljós's controls as Basic draws them: the module Ljos.Controls.Basic
         Label { text: "Ready" }
         """
 
+    # Without `QtQuick` or `QtQml` the controls' import has the line the pass writes, and an import
+    # of a module of Ljós's stays as it is.
+    @ljos-only @headless
+    Scenario: A file that imports only the controls is lowered too
+      Given the file "Main.qml":
+        """qml
+        import QtQuick.Controls
+        import Ljos
+        Menu { title: qsTr("Window"); SystemMenu.role: SystemMenu.WindowRole }
+        """
+      When the author runs "ljos migrate --style Basic --write ."
+      Then the command prints:
+        """
+        lowered ./Main.qml (1 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "Main.qml" is:
+        """qml
+        import Ljos.Controls.Basic
+        import Ljos
+        Menu { title: qsTr("Window"); SystemMenu.role: SystemMenu.WindowRole }
+        """
+      When the author runs "ljos check ."
+      Then the command exits with status 0
+
     @ljos-only @headless
     Scenario: The controls of a program that starts with another style keep the file
       Given the file "Main.qml":

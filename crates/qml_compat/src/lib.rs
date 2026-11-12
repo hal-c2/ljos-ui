@@ -106,7 +106,7 @@ pub const JAVASCRIPT: &str = "pragma Scripts: JavaScript";
 /// What [`lower`] made of a file.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Outcome {
-    /// It does not import `QtQuick`: there is nothing to lower.
+    /// It imports no Qt module the pass lowers: there is nothing to lower.
     Unchanged,
     /// The file in Ljós's API.
     Lowered(Lowered),
@@ -525,16 +525,26 @@ struct Pass<'s> {
 type Step = Result<(), Kept>;
 
 impl<'s> Pass<'s> {
-    /// Whether the file imports `QtQuick` and so has something to lower.
+    /// Whether the file imports a Qt module the pass lowers, one whose
+    /// import takes a line, and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
         let qt_imports = self.scope.read(&document.imports)?;
-        if !qt_imports
-            .iter()
-            .any(|(row, _)| matches!(row.qt, Qt::Quick | Qt::Qml))
-        {
-            return Ok(false);
-        }
         let lines = modules::lines(&qt_imports.iter().map(|(row, _)| *row).collect::<Vec<_>>());
+        let own = |ljos: Ljos| lines.contains(&modules::Line::Takes(ljos));
+        // `QtQuick`'s line, else `QtQml`'s, else that of the first import
+        // that takes one: a file of the controls alone has it on theirs.
+        let shared = [Ljos::Ui, Ljos::Core]
+            .into_iter()
+            .find(|l| own(*l))
+            .or_else(|| {
+                lines.iter().find_map(|line| match line {
+                    modules::Line::Takes(ljos) => Some(*ljos),
+                    modules::Line::Emptied => None,
+                })
+            });
+        let Some(shared) = shared else {
+            return Ok(false);
+        };
         if self.stem.is_some() {
             let quick = self.scope.modules.quick();
             self.tables = tables::tables(self.source, &document.root, &|name| {
@@ -565,13 +575,11 @@ impl<'s> Pass<'s> {
         }
         // On the import's line, so every line stays where it was. Each Qt
         // import takes the line of the Ljós module it lowers to, or is
-        // emptied ([`modules::lines`]). `QtQuick`'s, else `QtQml`'s, has the
-        // pragma and the Ljós modules the file names a type of that no
-        // import of its lowers to: a file that makes a model imports
-        // `Ljos.Models` there, and one a child of a type of another file
-        // may be given a `Layout` in, `Ljos.Layout`.
-        let own = |ljos: Ljos| lines.contains(&modules::Line::Takes(ljos));
-        let shared = if own(Ljos::Ui) { Ljos::Ui } else { Ljos::Core };
+        // emptied ([`modules::lines`]). The `shared` line has the pragma
+        // and the Ljós modules the file names a type of that no import of
+        // its lowers to: a file that makes a model imports `Ljos.Models`
+        // there, and one a child of a type of another file may be given a
+        // `Layout` in, `Ljos.Layout`.
         // A file whose constant tables are typed lists imports their rows
         // module on that line too.
         let rows = match (self.stem, self.tables.is_empty()) {
