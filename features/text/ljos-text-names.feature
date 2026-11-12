@@ -384,6 +384,30 @@ Feature: A Text in Ljós's API
         }
         """
 
+    # Ljos.Controls.Basic's Label is Qt's Basic Label, built on the toolkit's Text, not on
+    # Ljos.Ui's face of it: it keeps Qt's names, and the Text beside it takes Ljós's.
+    @ljos-only @headless
+    Scenario: A Label keeps the names it has in Ljos.Controls.Basic
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Controls.Basic
+        Item {
+          Label { width: 200; text: "Long words"; wrapMode: Text.Wrap; font.pixelSize: 14 }
+          Text { y: 40; width: 200; text: "Long words"; wrapMode: Text.Wrap }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls.Basic
+        Item {
+          Label { width: 200; text: "Long words"; wrapMode: Text.Wrap; font.size: 14 }
+          Text { y: 40; width: 200; text: "Long words"; wrap: Text.Wrap }
+        }
+        """
+
     @ljos-only @headless
     Scenario: A state's changes to a Text are written in Ljós's names
       Given the file "Main.qml":

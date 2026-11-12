@@ -222,7 +222,7 @@ ApplicationWindow {
 
         contentItem: Label {
             text: qsTr("Popup surface separated by a step and border.")
-            wrap: Text.Wrap
+            wrapMode: Text.Wrap
         }
     }
 }
