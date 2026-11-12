@@ -312,7 +312,8 @@ Feature: Ljós's Grid and Flow
       When the author runs "ljos migrate . --write"
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout
+        import Ljos.Ui
+        import Ljos.Layout
         Grid { columns: 4;
           Rectangle { width: 10; height: 10 }
           Rectangle { width: 10; height: 10 }
@@ -345,7 +346,8 @@ Feature: Ljós's Grid and Flow
       When the author runs "ljos migrate . --write"
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout
+        import Ljos.Ui
+        import Ljos.Layout
         Rectangle {
           width: 80; height: 40; fill: "white"
           Grid {
