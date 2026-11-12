@@ -3,20 +3,27 @@
 //! The pass keeps every line where it was, so that what a lowered run says
 //! of a file points at the file as written: its imports share the line of
 //! `pragma Scripts: JavaScript`, and a Qt import whose module another's line
-//! has is left an empty line. A migrated file is the one a person reads and
-//! changes from then on, so it is laid out as a file written in Ljós's API
-//! is, and says its scripts are JavaScript only where they are.
+//! has is left an empty line. Below the imports it is the same: a binding it
+//! takes out (`target:` of a `PropertyChanges`, a table's `id:`) leaves its
+//! line empty, and one it writes out (`spacing: 5` of a `ColumnLayout`, a
+//! view's `model: rows`) goes on the line of the object's `{` or the list's
+//! `]`. A migrated file is the one a person reads and changes from then on,
+//! so it is laid out as a file written in Ljós's API is, and says its
+//! scripts are JavaScript only where they are.
 
 use crate::JAVASCRIPT;
 
 /// `lowered`, the text the pass made of `written`, with each import of the
 /// pragma's line on a line of its own and the lines the pass emptied of a
 /// Qt import taken out. Without the pragma where `typed`: the file's scripts
-/// are held to the checker's rules.
+/// are held to the checker's rules. Below the imports, a line the pass
+/// emptied is taken out and each binding it wrote after a `{` or a `]` is
+/// put on a line of its own.
 ///
-/// Only the lines before the first that is not an import, a pragma, a
-/// comment or empty are read, and a line is taken out only where it was an
-/// import as written, so an empty line a person left is kept.
+/// A line is taken out only where it was not empty as written, so an empty
+/// line a person left is kept. Below the imports a line is read beside the
+/// line it was only while the two files have as many lines, which the pass
+/// keeps; where they do not, the rest is left as the pass made it.
 #[must_use]
 pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
     let mut out = String::with_capacity(lowered.len());
@@ -25,6 +32,8 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
     // Inside a `/* */` comment that began on a line above: its lines are
     // the header's too, whatever they start with.
     let mut in_comment = false;
+    // The first line below the imports, and the line it was.
+    let mut body = None;
     for line in lines.by_ref() {
         let was = as_written.next().unwrap_or("");
         let content = line.trim_end_matches(['\n', '\r']);
@@ -72,14 +81,30 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
         if trimmed.is_empty() && is_import(was) {
             continue;
         }
-        out.push_str(line);
         match header(rest, false) {
-            Some(open) => in_comment = open,
-            None => break,
+            Some(open) => {
+                out.push_str(line);
+                in_comment = open;
+            }
+            None => {
+                body = Some((line, was));
+                break;
+            }
         }
     }
-    for line in lines {
-        out.push_str(line);
+    // A line that ends a comment and goes on with code is the header's,
+    // so the lines below it are read from the next.
+    let (first, was) = body.unzip();
+    let lowered: Vec<&str> = first.into_iter().chain(lines).collect();
+    let written: Vec<&str> = was.into_iter().chain(as_written).collect();
+    if lowered.len() != written.len() {
+        for line in lowered {
+            out.push_str(line);
+        }
+        return out;
+    }
+    for (at, (line, was)) in lowered.iter().zip(&written).enumerate() {
+        laid_out(&mut out, line, was, &lowered[at + 1..]);
     }
     out
 }
@@ -118,6 +143,97 @@ fn header(mut text: &str, in_comment: bool) -> Option<bool> {
         }
         return None;
     }
+}
+
+/// One line below the imports, `line` as the pass made it of `was`, with
+/// `after` the lines the pass made below it.
+fn laid_out(out: &mut String, line: &str, was: &str, after: &[&str]) {
+    let content = line.trim_end_matches(['\n', '\r']);
+    let end = &line[content.len()..];
+    let was = was.trim_end_matches(['\n', '\r']);
+    if content.trim().is_empty() && !was.trim().is_empty() {
+        return;
+    }
+    let rest = content.trim_start();
+    let indent = &content[..content.len() - rest.len()];
+    let Some((head, bindings, inside)) = written_out(was, content) else {
+        out.push_str(line);
+        return;
+    };
+    // A binding written after a `{` is a member of the object it opens, so
+    // it is indented as the object's next line is, or a level in where that
+    // line closes it.
+    let members = if inside {
+        after
+            .iter()
+            .map(|next| next.trim_end_matches(['\n', '\r']))
+            .find(|next| !next.trim().is_empty())
+            .map(|next| &next[..next.len() - next.trim_start().len()])
+            .filter(|deeper| deeper.len() > indent.len() && deeper.starts_with(indent))
+            .map_or_else(|| format!("{indent}    "), str::to_owned)
+    } else {
+        indent.to_owned()
+    };
+    out.push_str(head.trim_end());
+    out.push_str(end_or_newline(end));
+    for (at, binding) in bindings.iter().enumerate() {
+        out.push_str(&members);
+        out.push_str(binding);
+        out.push_str(if at + 1 == bindings.len() {
+            end
+        } else {
+            end_or_newline(end)
+        });
+    }
+}
+
+/// The bindings the pass wrote at the end of `line`, which it made of
+/// `was`: after the `{` that ends `was` (each ending in `;`, the third of
+/// the result `true`), or after a `]` or `}` that ends a line of `was` with
+/// no `;` (each after a `;`). `None` where it wrote none, or wrote what is
+/// not a plain `name: value` binding.
+fn written_out<'a>(was: &str, line: &'a str) -> Option<(&'a str, Vec<&'a str>, bool)> {
+    let was = was.trim_end();
+    let line = line.trim_end();
+    if was.contains(['"', '\'', ';', '/']) {
+        return None;
+    }
+    let (head, tail, inside) = if was.ends_with('{') {
+        let braces = was.matches('{').count();
+        let (at, _) = line.match_indices('{').nth(braces - 1)?;
+        let tail = line[at + 1..].trim();
+        (&line[..=at], tail.strip_suffix(';')?, true)
+    } else {
+        let (head, tail) = line.split_once(';')?;
+        if !head.trim_end().ends_with([']', '}']) {
+            return None;
+        }
+        (head, tail, false)
+    };
+    let bindings: Vec<&str> = tail.split(';').map(str::trim).collect();
+    bindings
+        .iter()
+        .all(|binding| is_binding(binding))
+        .then_some((head, bindings, inside))
+}
+
+/// `name: value`, the name dotted or not, the value one with no string,
+/// list, object or call in it.
+fn is_binding(text: &str) -> bool {
+    let Some((name, value)) = text.split_once(':') else {
+        return false;
+    };
+    let name = name.trim_end();
+    let value = value.trim();
+    !name.is_empty()
+        && name.split('.').all(|part| {
+            part.chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        })
+        && !value.is_empty()
+        && !value.contains(['"', '\'', '`', '{', '}', '[', ']', '(', ')', ':', ';'])
 }
 
 /// The statements of the pragma's line, split at each `;`, the `//`
@@ -297,6 +413,77 @@ mod tests {
         assert_eq!(
             migrated(written, lowered, true),
             "/* c */ import A /* x\n y */\nimport B\nimport C\nItem {}\n"
+        );
+    }
+
+    /// What the pass writes out after an object's `{` goes on lines of its
+    /// own, indented as the object's members are.
+    #[test]
+    fn a_binding_written_after_a_brace_goes_on_a_line_of_its_own() {
+        let written =
+            "import QtQuick.Layouts\nColumnLayout {\n  RowLayout {\n      Text {}\n  }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Layout\nColumn { spacing: 5;\n  Row { spacing: 5; Layout.fillWidth: false;\n      Text {}\n  }\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Layout\nColumn {\n  spacing: 5\n  Row {\n      spacing: 5\n      Layout.fillWidth: false\n      Text {}\n  }\n}\n"
+        );
+    }
+
+    /// An object whose next line closes it has its members a level in.
+    #[test]
+    fn a_member_of_an_object_with_nothing_else_is_a_level_in() {
+        let written = "import QtQuick\nItem {\n    Grid {\n    }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\n    Grid { columns: 4;\n    }\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nItem {\n    Grid {\n        columns: 4\n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn a_binding_written_after_a_list_goes_on_a_line_of_its_own() {
+        let written = "import QtQuick\nListView {\n    model: ListModel {\n        ListElement { a: 1 }\n    }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nListView {\n    readonly property list<Rows.Row> rows: [\n        { a: 1 }\n    ]; model: rows\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nListView {\n    readonly property list<Rows.Row> rows: [\n        { a: 1 }\n    ]\n    model: rows\n}\n"
+        );
+    }
+
+    /// A line the pass emptied goes; an empty line as written stays.
+    #[test]
+    fn a_line_the_pass_emptied_goes() {
+        let written = "import QtQuick\nItem {\n\n    PropertyChanges {\n        target: box\n        width: 3\n    }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\n\n    PropertyChanges {\n\n        box.width: 3\n    }\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nItem {\n\n    PropertyChanges {\n        box.width: 3\n    }\n}\n"
+        );
+    }
+
+    /// What is not a plain binding the pass wrote is left where it is: a
+    /// line that had a `;`, a string or a comment as written, and anything
+    /// after a `{` that is not `name: value;`.
+    #[test]
+    fn what_a_person_wrote_on_one_line_stays_there() {
+        let written =
+            "import QtQuick\nItem { // a\n    Row { x: 1;\n    }\n    Column {\n    }\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nItem { // a\n    Row { x: 1; spacing: 5;\n    }\n    Column { f(); \n    }\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nItem { // a\n    Row { x: 1; spacing: 5;\n    }\n    Column { f(); \n    }\n}\n"
+        );
+    }
+
+    /// Where the two files do not have as many lines, no line below the
+    /// imports is read beside another.
+    #[test]
+    fn a_file_of_another_length_is_left_below_its_imports() {
+        let written = "import QtQuick\nItem {\n    x: 1\n}\n";
+        let lowered = "pragma Scripts: JavaScript; import Ljos.Ui\nItem {\n\n    Row { spacing: 5;\n    }\n}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "import Ljos.Ui\nItem {\n\n    Row { spacing: 5;\n    }\n}\n"
         );
     }
 

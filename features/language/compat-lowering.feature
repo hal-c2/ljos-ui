@@ -325,7 +325,8 @@ Feature: Qt's QML lowered to Ljós's API
 
     # The pass keeps each line where it was, so a lowered run's findings point at the file as
     # written; migrate writes the file a person reads from then on, so its imports are laid out one
-    # to a line. `pragma Scripts: JavaScript` only turns the checker's rules off, and the program is
+    # to a line, a binding the pass writes out after an object's `{` or a list's `]` goes on a line
+    # of its own, and a line the pass empties goes. `pragma Scripts: JavaScript` only turns the checker's rules off, and the program is
     # the same without it: migrate leaves it out where the checker finds nothing more without it.
     @ljos-only @headless
     Scenario: A file whose scripts keep the checker's rules is migrated typed
@@ -358,7 +359,8 @@ Feature: Qt's QML lowered to Ljós's API
           width: 120; height: 60; fill: "#202020"
           property int taps: 0
           function bump(by: int) { taps += by }
-          Column { spacing: 5;
+          Column {
+            spacing: 5
             Rectangle { implicitWidth: 20; implicitHeight: 20; fill: taps === 2 ? "#c03030" : "#30a050" }
           }
         }

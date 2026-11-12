@@ -119,7 +119,6 @@ Feature: States in Ljós's API
             State {
               name: "dim"
               PropertyChanges {
-
                 explicit: true
                 face.fill: "#202020"
                 face.onFillChanged: root.seen()
