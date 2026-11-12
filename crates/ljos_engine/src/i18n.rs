@@ -731,6 +731,18 @@ pub(crate) const PRELUDE: &str = r##"
     define(o, "toString", function toString(value, format, precision) {
       return localeToString(name, this, arguments.length, value, format, precision);
     });
+    // Ljós's homes for Qt.formatDate and its family (docs/DIALECT.md
+    // §4.3.1): a format string, or a Locale.FormatType, short when none.
+    const formatIn = (part) => (date, format) => {
+      const d = date instanceof Date ? date : new Date(date);
+      if (isNaN(d.getTime())) return "";
+      const pattern = typeof format === "string" ? format
+        : localeFormat(name, part, typeof format === "number" ? format : SHORT);
+      return write(d, name, pattern, part);
+    };
+    define(o, "formatDate", formatIn(DATE));
+    define(o, "formatTime", formatIn(TIME));
+    define(o, "formatDateTime", formatIn(BOTH));
     define(o, LOCALE, name);
     return Object.freeze(o);
   });

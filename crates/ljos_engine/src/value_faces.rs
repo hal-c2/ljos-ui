@@ -924,6 +924,8 @@ pub(crate) const COLORS: &str = r##"
     ["darker", function (factor) { return Qt.darker(this, factor); }],
     ["alpha", function (value) { return Qt.alpha(this, value); }],
     ["tint", function (tint) { return Qt.tint(this, tint); }],
+    // Ljós's home for `Qt.colorEqual` (docs/DIALECT.md §4.3.1).
+    ["equals", function (other) { return Qt.colorEqual(this, other); }],
   ]) {
     Object.defineProperty(proto, name, { value: f, writable: true, configurable: true });
   }

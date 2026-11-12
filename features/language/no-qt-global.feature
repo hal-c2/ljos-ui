@@ -19,6 +19,10 @@ Feature: No Qt global in a file of Ljós's API
 
   Rule: Each member of Qt has a home in Ljós's API
 
+    @api-QtQml.Qt.Alignment @api-QtQml.Qt.MouseButtons @api-QtQml.Qt.KeyboardModifiers @api-QtQml.Qt.binding
+    @api-QtQml.Qt.color @api-QtQml.Qt.colorEqual @api-QtQml.Qt.font @api-QtQml.Qt.fontFamilies
+    @api-QtQml.Qt.formatDate @api-QtQml.Qt.inputMethod @api-QtQml.Qt.locale @api-QtQml.Qt.matrix4x4
+    @api-QtQml.Qt.styleHints @api-QtQml.Qt.uiLanguage
     @qt-parity
     Scenario: Colours, fonts, a binding, the application, a locale and enum keys, as written in Qt's QML
       Given the QML:
@@ -40,8 +44,7 @@ Feature: No Qt global in a file of Ljós's API
           property int digit: Qt.Key_0
           property int button: Qt.LeftButton
           property int control: Qt.ControlModifier
-          property int base: 3
-          property int twice: 0
+          property int base: 3; property int twice: 0
           property string language: Qt.uiLanguage
           Component.onCompleted: {
             twice = Qt.binding(() => base * 2)
@@ -80,16 +83,14 @@ Feature: No Qt global in a file of Ljós's API
           property int px: Font.of({ family: "Sans", pixelSize: 20 }).pixelSize
           property bool listed: Array.isArray(Font.families())
           property real m11: matrix4x4(2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1).m11
-          property string day: Locale.current.formatDate(new Date(2020, 0, 2), "yyyy-MM-dd")
+          property string day: Locale.current.formatDate("2020-01-02T12:00", "yyyy-MM-dd")
           property string german: Locale.named("de_DE").name
           property bool hinted: App.hints.mousePressAndHoldInterval > 0
           property bool typing: App.inputMethod.visible
           property int corner: Align.Left | Align.Top
-          property int digit: Key.Digit0
-          property int button: Button.Left
+          property int digit: Key.Digit0; property int button: MouseButton.Left
           property int control: Modifier.Control
-          property int base: 3
-          property int twice: 0
+          property int base: 3; property int twice: 0
           property string language: App.language
           Component.onCompleted: {
             twice = bind(() => base * 2)
@@ -126,16 +127,14 @@ Feature: No Qt global in a file of Ljós's API
           property color light: c.lighter(1.5)
           property bool same: Color.of("red").equals("#ff0000")
           property int px: Font.of({ family: "Sans", pixelSize: 20 }).pixelSize
-          property string day: Locale.current.formatDate(new Date(2020, 0, 2), "yyyy-MM-dd")
+          property string when: "2020-01-02T12:00"
+          property string day: Locale.current.formatDate(when, "yyyy-MM-dd")
           property string german: Locale.named("de_DE").name
           property string named: App.name
           property bool typing: App.inputMethod.visible
           property int corner: Align.Left | Align.Top
-          property int base: 3
-          property int twice: 0
-          function press(key: int): void {
-            if (key === Key.Digit0) App.exit(0)
-          }
+          property int base: 3; property int twice: 0
+          function press(key: int): void { if (key === Key.Digit0) App.exit(0) }
           Component.onCompleted: {
             twice = bind(() => base * 2)
             App.language = "is_IS"
@@ -150,6 +149,7 @@ Feature: No Qt global in a file of Ljós's API
 
   Rule: A file of Ljós's API has no Qt
 
+    @api-QtQml.Qt.createComponent
     @ljos-only @headless
     Scenario: Qt in a file of Ljós's API is an error that names the member's home
       Given the file "Main.qml":
@@ -166,9 +166,9 @@ Feature: No Qt global in a file of Ljós's API
       When the files are checked
       Then the check reports:
         """
-        Main.qml:4:23: error: `Qt.AlignLeft` is not in a Ljós file: use `Align.Left` (Ljos.Ui) [qt-global]
-        Main.qml:6:27: error: `Qt.callLater` is not in a Ljós file: use `later` (Ljos.Core) [qt-global]
-        Main.qml:7:27: error: `Qt.createComponent` is not in a Ljós file, and Ljós's API has no home for it yet: write the file in Qt's QML [qt-global]
+        Main.qml:4:31: error: `Qt.AlignLeft` is not in a Ljós file: use `Align.Left` (Ljos.Ui) [qt-global]
+        Main.qml:6:35: error: `Qt.callLater` is not in a Ljós file: use `later` (Ljos.Core) [qt-global]
+        Main.qml:7:35: error: `Qt.createComponent` is not in a Ljós file, and Ljós's API has no home for it yet: write the file in Qt's QML [qt-global]
         1 files, 3 errors, 0 warnings
         ljos: 3 errors
         """
@@ -186,26 +186,27 @@ Feature: No Qt global in a file of Ljós's API
       When the files are checked
       Then the check reports:
         """
-        Loose.qml:4:23: error: `Qt.platform` is not in a Ljós file: use `App.platform` (Ljos.Core) [qt-global]
+        Loose.qml:4:31: error: `Qt.platform` is not in a Ljós file: use `App.platform` (Ljos.Core) [qt-global]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
 
     @ljos-only
-    Scenario: A script of a file in Ljós's API that reaches Qt as it runs finds nothing
+    Scenario: A script of a file in Ljós's API that reaches Qt by a name it makes as it runs finds nothing
       Given the QML:
         """qml
         pragma Scripts: JavaScript
         import Ljos.Ui
         Item {
           id: root; objectName: "root"
-          property bool seesQt: typeof Qt !== "undefined"
+          property bool seesQt: eval("typeof " + "Qt") !== "undefined"
         }
         """
       Then the property "seesQt" of "root" is false
 
   Rule: ljos migrate writes each member where it now is
 
+    @api-QtQml.Qt.GlobalColor @api-QtQml.Qt.application @api-QtQml.Qt.quit
     @ljos-only @headless
     Scenario: A file whose every member of Qt has a home is lowered with the homes
       Given the file "Panel.qml":
@@ -230,7 +231,7 @@ Feature: No Qt global in a file of Ljós's API
       Then the command prints:
         """
         lowered ./Panel.qml (16 edits)
-        scripts of ./Panel.qml stay JavaScript: typed, ljos check finds 1
+        scripts of ./Panel.qml stay JavaScript: typed, ljos check finds 2
         1 files, 1 lowered, 0 kept
         """
       And the file "Panel.qml" is:
