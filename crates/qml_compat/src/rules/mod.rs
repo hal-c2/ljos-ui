@@ -248,9 +248,8 @@ pub(crate) fn unqualified() -> impl Iterator<Item = &'static str> {
 struct Area {
     /// The Qt types Ljós calls by another name: (Qt's name, Ljós's).
     types: &'static [(&'static str, &'static str)],
-    /// Per Qt type (and what derives from it), the members Ljós calls by
-    /// another name where no face of Ljos.Ui says them: none, for a type
-    /// that would otherwise have those of what Ljós's table builds it on.
+    /// Per Qt type, the members Ljós calls by another name where no face
+    /// of Ljos.Ui says them.
     members: &'static [(&'static str, &'static [(&'static str, &'static str)])],
 }
 
@@ -293,8 +292,10 @@ pub fn type_renames() -> impl Iterator<Item = &'static (&'static str, &'static s
     AREAS.iter().flat_map(|area| area.types.iter())
 }
 
-/// Per Qt type (and what derives from it), the members Ljós calls by another
-/// name. A property's change signal and its handler follow its name.
+/// Per Qt type, the members Ljós calls by another name: a type's own, never
+/// those of what it derives from, since only a face renames and a type
+/// built on the faced one is built on the toolkit's. A property's change
+/// signal and its handler follow its name.
 /// Every one is a property: a member that is called is a method, and not
 /// one of these.
 ///
