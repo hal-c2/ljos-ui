@@ -108,9 +108,11 @@ impl Ran {
 
 /// Whether a file a step read is the file a doc string gives, the doc
 /// string as the scenario has it: the doc string loses its label and its
-/// indent, and the file keeps every line and every space it has.
+/// indent, and the file keeps every line and every space it has. Only its
+/// last line end is let go, which a doc string cannot carry; a space at the
+/// end of a line counts, as in a template literal it is part of a value.
 pub(crate) fn same_file(file: &str, doc: &str) -> bool {
-    same_text(file, &text_of(doc))
+    file.strip_suffix('\n').unwrap_or(file) == text_of(doc)
 }
 
 /// Whether two texts are the same but for the line ends a doc string
@@ -1506,6 +1508,24 @@ mod tests {
 
     // Only the doc string is read without its indent: a file that gained
     // spaces on every line is not the file the doc string gives.
+    // A space at the end of a line is part of the file: in a template
+    // literal it is part of a value. Only the last line end is let go.
+    #[test]
+    fn a_file_keeps_the_spaces_at_the_ends_of_its_lines() {
+        assert!(!same_file(
+            "const s = `a \nb`;\n",
+            "ts\n    const s = `a\n    b`;"
+        ));
+        assert!(same_file(
+            "const s = `a\nb`;\n",
+            "ts\n    const s = `a\n    b`;"
+        ));
+        assert!(same_file(
+            "const s = `a\nb`;",
+            "ts\n    const s = `a\n    b`;"
+        ));
+    }
+
     #[test]
     fn a_file_keeps_its_indentation() {
         assert!(!same_file("    a\n    b\n", "qml\n    a\n    b"));
