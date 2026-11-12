@@ -21,7 +21,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     path::{Path, PathBuf},
-    sync::{Arc, Condvar, Mutex, PoisonError},
+    sync::{Arc, Condvar, Mutex, OnceLock, PoisonError, Weak},
     time::{Duration, Instant},
 };
 
@@ -40,6 +40,22 @@ pub const TIMEOUT_VAR: &str = "LJOS_BDD_SCENARIO_DEADLINE";
 /// The slowest scenarios of the ledger take seconds, so this is far past
 /// any that is merely slow: a deadline is for a run that hangs.
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// The watchdog that ends this process, so a step can ask it how long the
+/// scenario has left. A run has one; other watchdogs (tests') do not end
+/// the process and are not asked.
+static ENDS_THE_RUN: OnceLock<Weak<Shared>> = OnceLock::new();
+
+/// How long what runs now (a scenario or a phase) has left before the
+/// watchdog that ends the process fires; `None` when none keeps its time.
+///
+/// A step that waits on something that may never end gives up within
+/// this, so it fails its scenario as itself rather than having the
+/// watchdog end the run naming only the step.
+#[must_use]
+pub fn time_left() -> Option<Duration> {
+    ENDS_THE_RUN.get()?.upgrade()?.time_left()
+}
 
 /// The deadline `LJOS_BDD_SCENARIO_DEADLINE` asks for, `None` for none.
 ///
@@ -110,6 +126,12 @@ impl Shared {
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    fn time_left(&self) -> Option<Duration> {
+        let state = self.lock();
+        let (_, since, deadline) = state.running.as_ref()?;
+        Some(deadline.saturating_sub(since.elapsed()))
+    }
 }
 
 /// Keeps the time of every scenario. Cloning it shares the same clock.
@@ -138,14 +160,25 @@ impl Watchdog {
     /// [`OVERRUN_EXIT`]. Paths are shown relative to `root`.
     #[must_use]
     pub fn start(deadline: Duration, root: &Path) -> Self {
-        Self::with_overrun(
+        let dog = Self::with_overrun(
             deadline,
             root,
             Box::new(|report| {
                 eprintln!("{report}");
                 exit_now(OVERRUN_EXIT);
             }),
-        )
+        );
+        if let Some(shared) = &dog.shared {
+            let _ = ENDS_THE_RUN.set(Arc::downgrade(shared));
+        }
+        dog
+    }
+
+    /// How long what runs now has left; `None` when nothing runs or this
+    /// watchdog never fires.
+    #[cfg(test)]
+    fn time_left(&self) -> Option<Duration> {
+        self.shared.as_ref()?.time_left()
     }
 
     /// [`Watchdog::start`] that calls `overrun` with the report instead of
@@ -537,6 +570,19 @@ mod tests {
             "ljos-bdd: closing web pages ran past its deadline of 0 s; the run ends here"
         );
         assert!(rx.recv_timeout(Duration::from_millis(100)).is_err());
+    }
+
+    #[test]
+    fn the_time_left_counts_from_the_start_of_what_runs() {
+        let (dog, _rx) = firing(Duration::from_secs(3600));
+        assert_eq!(dog.time_left(), None, "nothing runs");
+        dog.set(Some(scenario(&["a"])), None);
+        std::thread::sleep(Duration::from_millis(50));
+        let left = dog.time_left().expect("a scenario runs");
+        assert!(left <= Duration::from_millis(3_600_000 - 50), "{left:?}");
+        dog.idle();
+        assert_eq!(dog.time_left(), None, "nothing runs");
+        assert_eq!(Watchdog::off().time_left(), None, "it never fires");
     }
 
     #[test]

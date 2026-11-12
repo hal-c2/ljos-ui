@@ -348,17 +348,14 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         let read = pipe.read_to_end(&mut out).map(|_| out);
         let _ = said.send(read);
     });
-    let deadline = check_deadline(
-        run.tsc,
-        crate::watchdog::timeout_from_env().unwrap_or(Some(crate::watchdog::DEFAULT_TIMEOUT)),
-    );
+    let deadline = check_deadline(run.tsc, crate::watchdog::time_left());
     let out = match heard.recv_timeout(deadline) {
         Ok(read) => read.map_err(|e| failed(format!("cannot read `ljos check`: {e}")))?,
         Err(_) => {
             #[cfg(unix)]
             end_group(child.id());
             return Err(failed(format!(
-                "`ljos check` did not finish in {} seconds",
+                "`ljos check` did not finish in {:.0} seconds",
                 deadline.as_secs_f64()
             )));
         }
@@ -386,18 +383,18 @@ const CHECK_DEADLINE: Duration = Duration::from_secs(60);
 /// has longer.
 const TSC_CHECK_DEADLINE: Duration = Duration::from_secs(240);
 
-/// How long `ljos check` has inside a scenario that has `scenario`, `None`
-/// for no deadline. It ends a fifth before the scenario's own: a check that
-/// never ends then fails its scenario as one, where the watchdog, set
-/// shorter than the check's own deadline, would end the run and name only
-/// the step.
-fn check_deadline(tsc: bool, scenario: Option<Duration>) -> Duration {
+/// How long `ljos check` has, with `left` the time its scenario has left,
+/// `None` for no limit. Given four fifths of that when it is the shorter,
+/// a check that never ends fails its scenario as one, however short the
+/// scenario deadline and however late in the scenario the check, where the
+/// watchdog would end the run and name only the step.
+fn check_deadline(tsc: bool, left: Option<Duration>) -> Duration {
     let own = if tsc {
         TSC_CHECK_DEADLINE
     } else {
         CHECK_DEADLINE
     };
-    scenario.map_or(own, |scenario| own.min(scenario.mul_f64(0.8)))
+    left.map_or(own, |left| own.min(left.mul_f64(0.8)))
 }
 
 /// Kills the process group `leader` leads.
@@ -496,14 +493,16 @@ mod tests {
 
     #[test]
     fn a_check_ends_before_the_scenario_it_is_in() {
-        let default = Some(crate::watchdog::DEFAULT_TIMEOUT);
-        assert_eq!(check_deadline(false, default), CHECK_DEADLINE);
-        assert_eq!(check_deadline(true, default), TSC_CHECK_DEADLINE);
-        // A scenario deadline set shorter than the check's own.
-        let short = Some(Duration::from_secs(100));
-        assert_eq!(check_deadline(false, short), CHECK_DEADLINE);
-        assert_eq!(check_deadline(true, short), Duration::from_secs(80));
-        // A run with no scenario deadline.
+        // A check at the start of a scenario with the default deadline.
+        let fresh = Some(crate::watchdog::DEFAULT_TIMEOUT);
+        assert_eq!(check_deadline(false, fresh), CHECK_DEADLINE);
+        assert_eq!(check_deadline(true, fresh), TSC_CHECK_DEADLINE);
+        // A scenario with less left than the check's own deadline: set
+        // short, or late in a scenario after slow steps.
+        let late = Some(Duration::from_secs(10));
+        assert_eq!(check_deadline(false, late), Duration::from_secs(8));
+        assert_eq!(check_deadline(true, late), Duration::from_secs(8));
+        // Nothing keeps the scenario's time.
         assert_eq!(check_deadline(true, None), TSC_CHECK_DEADLINE);
     }
 
