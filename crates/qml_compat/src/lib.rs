@@ -298,6 +298,13 @@ pub enum Imported<'a> {
     Dir(&'a str),
 }
 
+/// Whether `uri` is a module of Ljós's own API (`Ljos.Blocks`), whose
+/// types and members have Ljós's names. Without Qt's table QtQuick is
+/// described by Ljós's table too, and it is still Qt's, so the name says.
+pub fn is_ljos_api(uri: &str) -> bool {
+    uri == "Ljos" || uri.starts_with("Ljos.")
+}
+
 /// No files beside this one.
 pub fn no_locals(_: &str) -> Option<Root> {
     None
@@ -547,6 +554,9 @@ impl<'s> Pass<'s> {
         let Some(shared) = shared else {
             return Ok(false);
         };
+        // Only once there is something to lower: a file in Ljós's API
+        // alone imports what the pass writes and is no one's to keep.
+        self.scope.beside_what_it_lowers_to()?;
         if self.stem.is_some() {
             let quick = self.scope.modules.quick();
             self.tables = tables::tables(self.source, &document.root, &|name| {

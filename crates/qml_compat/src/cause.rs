@@ -40,6 +40,12 @@ pub enum Cause {
     ModuleNotLowered {
         uri: String,
     },
+    /// An import, beside Qt's modules, of a Ljós module the pass writes
+    /// for them: the lowered file would import it twice, and its types
+    /// stand for Qt's where they share a name.
+    ImportsWhatItLowersTo {
+        uri: String,
+    },
     /// A Qt type the Ljós module it lowers to does not have yet.
     NotInModule {
         name: String,
@@ -411,6 +417,10 @@ impl fmt::Display for Cause {
             Cause::ModuleNotLowered { uri } => {
                 write!(f, "it imports `{uri}`, which is not lowered yet")
             }
+            Cause::ImportsWhatItLowersTo { uri } => write!(
+                f,
+                "it imports `{uri}` beside Qt's modules, which lower to it"
+            ),
             Cause::NotInModule { name, module } => write!(f, "`{name}` is not in {module} yet"),
             Cause::AttachedNotInLayout { name } => {
                 write!(f, "`{name}`'s attached properties are not in {LAYOUT} yet")

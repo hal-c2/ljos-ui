@@ -58,6 +58,8 @@ pub(crate) struct Scope<'s> {
     pub(crate) natives: Option<&'s dyn Natives>,
     /// The modules of the program's own types the file imports.
     native_modules: Vec<String>,
+    /// The first import of a Ljós module the pass writes, and where.
+    writes: Option<(String, usize)>,
     pub(crate) ids: Vec<(String, Ty)>,
     pub(crate) inline: Vec<(String, Root)>,
     /// The names the file imports under (`import "box.js" as Box`), which
@@ -86,6 +88,7 @@ impl<'s> Scope<'s> {
             // modules still are: they are in the table the pass reads.
             natives: Some(locals.natives().unwrap_or(&crate::own::Own)),
             native_modules: Vec::new(),
+            writes: None,
             ids: Vec::new(),
             inline: Vec::new(),
             qualifiers: Vec::new(),
@@ -147,6 +150,9 @@ impl<'s> Scope<'s> {
                 // The program's own types are what it registers, in Qt's
                 // API and in Ljós's: the import stays as it is written.
                 other if self.natives.is_some_and(|n| n.has_module(other)) => {
+                    if self.writes.is_none() && modules::written(other) {
+                        self.writes = Some((other.to_owned(), at));
+                    }
                     if import.alias.is_none() {
                         self.native_modules.push(other.to_owned());
                         self.imports.push(Import::Native(other.to_owned()));
@@ -192,6 +198,17 @@ impl<'s> Scope<'s> {
         }
         self.modules.share_lines();
         Ok(qt_imports)
+    }
+
+    /// Keeps a file that imports, beside the Qt modules the pass lowers,
+    /// a Ljós module the pass writes for them: Ljós's types of Qt's names
+    /// would stand for Qt's, whose members are then not renamed, and the
+    /// lowered file would import the module twice.
+    pub(crate) fn beside_what_it_lowers_to(&self) -> Result<(), Kept> {
+        match &self.writes {
+            Some((uri, at)) => Err(no(Cause::ImportsWhatItLowersTo { uri: uri.clone() }, *at)),
+            None => Ok(()),
+        }
     }
 
     /// Whether `name`, which lowering a member of `Qt` would bring into the

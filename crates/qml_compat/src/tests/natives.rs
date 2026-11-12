@@ -394,3 +394,43 @@ fn a_module_ljos_has_not_is_kept() {
         kept_for("import QtQuick\nimport Ljos.Nowhere\nItem { }\n").contains("not lowered yet")
     );
 }
+
+/// A Ljós module the pass writes for Qt's, imported beside them, keeps the
+/// file: its `Rectangle` would stand for QtQuick's, whose `color` would
+/// then not be renamed, and the lowered file would import it twice.
+#[test]
+fn a_ljos_module_the_pass_writes_beside_qt_s_keeps_the_file() {
+    assert_eq!(
+        cause_of("import QtQuick\nimport Ljos.Ui\nRectangle { color: \"red\" }\n"),
+        Cause::ImportsWhatItLowersTo {
+            uri: "Ljos.Ui".into()
+        }
+    );
+    assert_eq!(
+        cause_of("import Ljos.Layout\nimport QtQuick\nColumn { }\n"),
+        Cause::ImportsWhatItLowersTo {
+            uri: "Ljos.Layout".into()
+        }
+    );
+    // A file in Ljós's API alone has nothing to lower.
+    assert_eq!(
+        lower("import Ljos.Ui\nRectangle { fill: \"red\" }\n", &no_locals),
+        Outcome::Unchanged
+    );
+}
+
+/// A `Slot` is an item as Ljós's table writes it, built on `QtQuick.Item`:
+/// what is read or set on one is as on an `Item`. A name neither has is
+/// left as it is on both, for the checker to name; an attached `Drag` read
+/// off one is Ljós's `DragSource`, as off an item.
+#[test]
+fn a_slot_is_lowered_as_the_item_it_is_built_on() {
+    let item = lowered("import QtQuick\nItem { Item { bogus: 1 } }\n");
+    let slot = lowered("import QtQuick\nimport Ljos.Blocks\nItem { Slot { bogus: 1 } }\n");
+    assert!(item.ends_with("Item { Item { bogus: 1 } }\n"), "{item}");
+    assert!(slot.ends_with("Item { Slot { bogus: 1 } }\n"), "{slot}");
+    let drag = lowered(
+        "import QtQuick\nimport Ljos.Blocks\nItem { Slot { id: s }\n property bool on: s.Drag.active }\n",
+    );
+    assert!(drag.contains("s.DragSource.active"), "{drag}");
+}
