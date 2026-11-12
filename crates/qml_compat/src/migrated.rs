@@ -35,7 +35,10 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
         let indent = &content[..content.len() - rest.len()];
         if in_comment {
             out.push_str(line);
-            in_comment = !rest.contains("*/");
+            match header(rest, true) {
+                Some(open) => in_comment = open,
+                None => break,
+            }
             continue;
         }
         if let Some(imports) = rest.strip_prefix(JAVASCRIPT) {
@@ -70,22 +73,51 @@ pub fn migrated(written: &str, lowered: &str, typed: bool) -> String {
             continue;
         }
         out.push_str(line);
-        if let Some(comment) = trimmed.strip_prefix("/*") {
-            in_comment = !comment.contains("*/");
-            continue;
-        }
-        if !(trimmed.is_empty()
-            || is_import(trimmed)
-            || trimmed.starts_with("pragma ")
-            || trimmed.starts_with("//"))
-        {
-            break;
+        match header(rest, false) {
+            Some(open) => in_comment = open,
+            None => break,
         }
     }
     for line in lines {
         out.push_str(line);
     }
     out
+}
+
+/// Whether a line, read from its start (inside a `/* */` comment where
+/// `in_comment`), is the header's: empty, a comment, an import or a
+/// pragma, with whatever follows a comment's `*/` read as well. `Some`
+/// says whether it leaves a `/* */` comment open; `None` is code, where
+/// the header ends.
+fn header(mut text: &str, in_comment: bool) -> Option<bool> {
+    // What follows the `*/` that ends the comment the line is in or opens,
+    // or `None` while the comment goes on.
+    fn past(text: &str) -> Option<&str> {
+        text.find("*/").map(|close| &text[close + 2..])
+    }
+    if in_comment {
+        let Some(after) = past(text) else {
+            return Some(true);
+        };
+        text = after;
+    }
+    loop {
+        let trimmed = text.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            return Some(false);
+        }
+        if let Some(opened) = trimmed.strip_prefix("/*") {
+            let Some(after) = past(opened) else {
+                return Some(true);
+            };
+            text = after;
+            continue;
+        }
+        if is_import(trimmed) || trimmed.starts_with("pragma ") {
+            return Some(statements(trimmed).2);
+        }
+        return None;
+    }
 }
 
 /// The statements of the pragma's line, split at each `;`, the `//`
@@ -239,6 +271,19 @@ mod tests {
             migrated(written, lowered, true),
             "import Ljos.Ui\nimport Ljos.Layout /* items,\n   all */\nRow {}\n"
         );
+    }
+
+    /// What follows a comment's `*/` on its line is read too: code there
+    /// ends the header, so a string below that holds the pragma's text is
+    /// left as it is.
+    #[test]
+    fn code_after_a_comment_on_its_line_ends_the_header() {
+        for text in [
+            "/* a */ Item { property string s: \"\npragma Scripts: JavaScript; import A\n\" }\n",
+            "/* a\n */ Item { property string s: \"\npragma Scripts: JavaScript; import A\n\" }\n",
+        ] {
+            assert_eq!(migrated(text, text, true), text);
+        }
     }
 
     #[test]
