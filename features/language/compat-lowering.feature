@@ -492,6 +492,30 @@ Feature: Qt's QML lowered to Ljós's API
       When the author runs "ljos check shell"
       Then the command exits with status 0
 
+    # The modules the pass writes for Qt's are not carried over beside them: `Ljos.Ui`'s `Rectangle`
+    # would stand for QtQuick's, its Qt-named `color` would be left as it is, and the lowered file
+    # would import `Ljos.Ui` twice. Such a file is kept, and says which import keeps it.
+    @ljos-only @headless
+    Scenario: A file that imports Ljos.Ui beside QtQuick is kept
+      Given the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import Ljos.Ui
+        Rectangle { color: "red" }
+        """
+      When the author runs "ljos migrate --write app"
+      Then the command prints:
+        """
+        kept app/Main.qml:2:1: it imports `Ljos.Ui` beside Qt's modules, which lower to it
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "app/Main.qml" is:
+        """qml
+        import QtQuick
+        import Ljos.Ui
+        Rectangle { color: "red" }
+        """
+
   Rule: A name a script binds is the script's wherever the script reads it
 
     # A loop's, a `catch`'s or a function's name is found before an id and before the members of the

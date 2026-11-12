@@ -155,6 +155,49 @@ fn a_ljos_module_beside_qt_s_stays_and_the_rest_is_lowered() {
     assert_eq!(status, 0, "{out}{err}");
 }
 
+/// Beside Qt's modules, a Ljós module the pass writes for them keeps the
+/// file as it was: its types would stand for Qt's, whose members are then
+/// not renamed, and the lowered file would import it twice.
+#[test]
+fn a_ljos_module_the_pass_writes_beside_qt_s_keeps_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let ui = "import QtQuick\nimport Ljos.Ui\nRectangle { color: \"red\" }\n";
+    let layout = "import QtQuick\nimport Ljos.Layout\nColumn { }\n";
+    write(dir.path(), "app/Main.qml", ui);
+    write(dir.path(), "app/Stack.qml", layout);
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(
+        out,
+        "kept app/Main.qml:2:1: it imports `Ljos.Ui` beside Qt's modules, which lower to it\n\
+         kept app/Stack.qml:2:1: it imports `Ljos.Layout` beside Qt's modules, which lower to it\n\
+         2 files, 0 lowered, 2 kept\n"
+    );
+    assert_eq!(read(dir.path(), "app/Main.qml"), ui);
+    assert_eq!(read(dir.path(), "app/Stack.qml"), layout);
+}
+
+/// What a `Slot` sets that no item has is not lowered away: the lowered
+/// file keeps it, and the checker names it, as on any item.
+#[test]
+fn a_name_a_slot_has_not_is_left_for_check_to_name() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Main.qml",
+        "import QtQuick\nimport Ljos.Blocks\nColumn { Slot { name: \"x\"; bogus: 1 } }\n",
+    );
+    let (status, _, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{err}");
+    assert!(read(dir.path(), "app/Main.qml").contains("Slot { name: \"x\"; bogus: 1 }"));
+    let (_, out, err) = ljos(dir.path(), &["check", "app"]);
+    assert!(
+        format!("{out}{err}")
+            .contains("warning: `bogus` is not a property of `Slot` [unknown-property]"),
+        "{out}{err}"
+    );
+}
+
 /// `Ljos.Blocks`, what a shell is built of, is a module of Ljós's own as
 /// `Ljos.Design` is: a shell written against QtQuick beside it is lowered,
 /// and its `Slot`s are carried over as they are written.
