@@ -218,7 +218,7 @@ Feature: States in Ljós's API
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         Item {
           Rectangle {
             id: face
