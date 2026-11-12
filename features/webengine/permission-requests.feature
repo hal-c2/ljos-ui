@@ -16,7 +16,8 @@ Feature: A view answers what a page asks permission for
   deny() answers the page, then or later; a request nobody answers keeps
   the page waiting. An answer to what a page keeps being allowed
   (notifications, its location, the clipboard, local fonts) is kept for
-  the profile, so the page is not asked again.
+  the profile, so the page is not asked again. A question whose view went
+  unanswered is not an answer: the page is asked again.
 
   Background:
     Given the web server serves the text file "notify.html":
@@ -78,6 +79,107 @@ Feature: A view answers what a page asks permission for
     When 2 seconds pass
     Then the property "asked" of "view" is 8
     And the property "title" of "view" is "error 1"
+
+  # A page from a web server asks the view to read the clipboard after a
+  # click. The off-screen Qt oracle never shows this page: its title stays
+  # the host and nothing is asked, so it cannot say what the page read.
+  @ljos-only @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
+  Scenario: A page granted the clipboard reads it
+    Given the web server serves the text file "paste.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head>
+      <body style="margin:0"><div style="height:100px; background:#00ff00" onclick="
+        navigator.clipboard.writeText('copied').then(() => navigator.clipboard.readText())
+          .then(text => document.title = 'read ' + text, error => document.title = error.name)"></div>
+      </body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        focus: true
+        property int asked: -1
+        url: "$SERVER/paste.html"
+        onPermissionRequested: permission => { asked = permission.permissionType; permission.grant() }
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "asked" of "view" is 9
+    And the property "title" of "view" is "read copied"
+
+  @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant
+  Scenario: A page from a web server is asked for its location
+    Given the web server serves the text file "where.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      navigator.geolocation.getCurrentPosition(() => document.title = "found",
+        error => document.title = "error " + error.code, { timeout: 1000 })
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property int asked: -1
+        url: "$SERVER/where.html"
+        onPermissionRequested: permission => { asked = permission.permissionType; permission.grant() }
+      }
+      """
+    When 3 seconds pass
+    Then the property "asked" of "view" is 8
+
+  # A view that goes leaves its question unanswered, not refused: the
+  # next view of the same page is asked again, however many went before.
+  @api-QtWebEngine.WebEngineView.permissionRequested
+  Scenario: A page whose views went without answering is asked by the next one
+    Given the web server serves the text file "where.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      navigator.geolocation.getCurrentPosition(() => document.title = "found",
+        error => document.title = "error " + error.code, { timeout: 5000 })
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 100
+        property int asked: 0
+        property int views: 1
+        property string last: ""
+        Component {
+          id: page
+          WebEngineView {
+            url: "$SERVER/where.html"
+            property var kept: null
+            onPermissionRequested: permission => { root.asked++; kept = permission }
+            onTitleChanged: root.last = title
+          }
+        }
+        Loader { id: loader; anchors.fill: parent; sourceComponent: page }
+        Timer {
+          interval: 1500; repeat: true; running: root.views < 5
+          onTriggered: { loader.active = false; loader.active = true; root.views++ }
+        }
+      }
+      """
+    When 10 seconds pass
+    Then the property "asked" of "root" is 5
+    And the property "last" of "root" is "waiting"
 
   @api-QtWebEngine.WebEngineView.permissionRequested
   Scenario: A request nobody answers keeps the page waiting
