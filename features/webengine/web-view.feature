@@ -232,6 +232,71 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "32 true 1 true"
     And the property "title" of "view" is "Fixture Page"
 
+  # A failed load is reported once and stays failed: the view does not
+  # try the page again by itself, and a test waits for nothing more (a
+  # wait given up on says so in the log). With error pages off, the view
+  # stays titled as it was before the load.
+  @api-QtWebEngine.WebEngineView.loadingChanged @api-QtWebEngine.WebEngineSettings.errorPageEnabled
+  Scenario: A page whose server refuses the connection fails to load and says why
+    Given the web server serves the text file "served.html":
+      """
+      <!doctype html><html><head><title>Served Page</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        property string failure: ""
+        settings.errorPageEnabled: false
+        url: "$SERVER/served.html"
+        function goAway() { url = "$SERVER/refused" }
+        onLoadingChanged: info => { seen += (seen ? " " : "") + info.status
+          if (info.status === WebEngineView.LoadFailedStatus)
+            failure = info.errorCode + " " + info.errorString + " " + info.errorDomain + " [" + title + "]" }
+      }
+      """
+    When 2 seconds pass
+    And the method "goAway" of "view" is called
+    And 2 seconds pass
+    And 2 seconds pass
+    And 2 seconds pass
+    Then the property "failure" of "view" is "-102 net::ERR_CONNECTION_REFUSED 2 [Served Page]"
+    And the property "seen" of "view" is "0 2 0 3"
+    And the property "title" of "view" is "Served Page"
+    And the property "loading" of "view" is false
+    And the log has no warning matching "gave up waiting"
+
+  @api-QtWebEngine.WebEngineView.loadingChanged @api-QtWebEngine.WebEngineSettings.errorPageEnabled
+  Scenario: A page that redirects to itself fails to load and says why
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        property string failure: ""
+        settings.errorPageEnabled: false
+        url: "$SERVER/loop"
+        onLoadingChanged: info => { seen += (seen ? " " : "") + info.status
+          if (info.status === WebEngineView.LoadFailedStatus)
+            failure = info.errorCode + " " + info.errorString + " " + info.errorDomain + " [" + title + "]" }
+      }
+      """
+    When 2 seconds pass
+    And 2 seconds pass
+    And 2 seconds pass
+    Then the property "failure" of "view" is "-310 net::ERR_TOO_MANY_REDIRECTS 4 []"
+    And the property "seen" of "view" is "0 3"
+    And the property "title" of "view" is ""
+    And the property "loading" of "view" is false
+    And the log has no warning matching "gave up waiting"
+
   Scenario: A port a browser does not visit fails to load and says why
     Given the QML:
       """qml
