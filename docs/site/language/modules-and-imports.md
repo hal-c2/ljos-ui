@@ -70,7 +70,7 @@ pragma Scripts: JavaScript
 import Ljos.Ui
 import Ljos.Core
 
-QtObject {
+Object {
     enum Mode { Light, Dark }
     property int base: 4
     property int twice: base * 2

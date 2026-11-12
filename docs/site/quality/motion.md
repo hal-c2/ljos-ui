@@ -119,12 +119,11 @@ On Ljós, the runtime enforces reduced motion across every animation even if a c
 
 ### Gating motion in your own components
 
-A component can also gate its own motion. Its file then says what it does under reduced motion, to a reader and to any runtime that leaves the transition logic to the application. Include an explicit opacity fade and gate spatial motion and decorative loops on `motionPreference`:
+A component can also gate its own motion. Its file then says what it does under reduced motion, to a reader and to any runtime that leaves the transition logic to the application. Include an explicit opacity fade and gate spatial motion and decorative loops on `motionPreference`. Ljós's own API has no home for `Qt.MotionPreference` yet, so this example is written in Qt's:
 
 ```qml
-pragma Scripts: JavaScript
-import Ljos.Ui
-import Ljos.Controls.Basic
+import QtQuick
+import QtQuick.Controls.Basic
 
 ApplicationWindow {
     width: 360
