@@ -494,6 +494,9 @@ fn ten_plain_items() {
     // values and sixty allocations fewer. The graph's nodes in pages, not
     // a vector that doubles, two fewer and 14 kB less (MEM3). The scene's
     // list of what moved, reused, one fewer (MIR). 11.2 kB kept an instance.
+    // `fetch`'s helper is one more object an engine, made when JavaScript
+    // starts, as `Qt.inputMethod`'s is: nothing an item pays, but the
+    // object table's growth falls elsewhere in the count (192 bytes).
     assert_eq!(
         b,
         Budget {
@@ -511,7 +514,7 @@ fn ten_plain_items() {
                 atoms: 0,
             },
             allocations: 671,
-            bytes: 120152,
+            bytes: 120344,
         }
     );
 }
@@ -591,14 +594,15 @@ fn bytes_a_thousand_instances_keep() {
     // bytes for each copy of the style an instance keeps (48 one-line,
     // 16 wrapped and plain). A node's count of the change that marked it,
     // 64 bits where a byte wrapped, is 8 bytes a node (20.8, 23.1 and
-    // 11.1 kB before). The rest is mostly the graph's nodes, the objects
-    // and the text's runs.
+    // 11.1 kB before). `fetch`'s helper, one more object an engine, moves
+    // that growth again: 12 bytes more `plain` (11.1 kB before). The rest
+    // is mostly the graph's nodes, the objects and the text's runs.
     assert_eq!(
         kept,
         Kept {
             one_line: 20898,
             wrapped: 23205,
-            plain: 11131,
+            plain: 11143,
         }
     );
 }
