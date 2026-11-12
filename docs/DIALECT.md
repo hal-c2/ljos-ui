@@ -2340,8 +2340,9 @@ never `undefined` where the run is done.
 DECISION: `Response.json()` gives `unknown`; a decoder narrows it.
 
 DECISION: `Response.url` is the address the reply came from, after any
-redirect the platform followed, and `redirected` says whether it differs
-from the request's.
+redirect the platform followed, and `redirected` says whether one was
+followed, as WHATWG has it: the request's address written its own way
+(`https://example.org` for `https://example.org/`) is not a redirect.
 
 DECISION: a method is one of those the platform sends (`GET`, `HEAD`,
 `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS`, `PROPFIND`); another rejects
