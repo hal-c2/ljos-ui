@@ -178,6 +178,14 @@ struct Run {
     /// Where the browser last said it is: a URL whose request is rejected
     /// leaves the view there.
     at: String,
+    /// A load failed while error pages are off: the browser's error page
+    /// is neither shown nor titled, until the next load starts.
+    blank: bool,
+    /// The title the browser last gave, and the one shown when the load
+    /// under way started: a load that fails with error pages off leaves
+    /// the view titled as before it.
+    title: String,
+    title_before: String,
     /// The permissions and desktop media requests handed out for the page
     /// shown: those answered go when the next page starts loading, those
     /// still asked when they are answered or the view goes.
@@ -715,6 +723,8 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                 .with_mut::<WebEngineView, _>(me, |v| {
                     v.run.load = Some(reply);
                     v.run.awaiting_frame = false;
+                    v.run.blank = false;
+                    v.run.title_before = v.run.title.clone();
                     std::mem::take(&mut v.run.asked)
                 })
                 .unwrap_or_default();
@@ -743,9 +753,28 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                 let _ = e.set_internal(me, WebEngineView::LOAD_PROGRESS, 100);
             }
             let _ = e.set_internal(me, WebEngineView::LOADING, false);
+            // A page that could not be reached shows the browser's error
+            // page only while error pages are on; off, the view is left
+            // empty, titled as it was before the load.
+            let blank = status == LoadStatus::Failed
+                && code < 0
+                && e.with::<WebEngineView, _>(me, |v| !v.settings.error_page_enabled)
+                    .unwrap_or(false);
+            if blank {
+                let (serial, title) = e
+                    .with_mut::<WebEngineView, _>(me, |v| {
+                        v.run.blank = true;
+                        keep_frame(&mut v.run, None);
+                        v.run.title = v.run.title_before.clone();
+                        (v.run.serial, v.run.title.clone())
+                    })
+                    .unwrap_or_default();
+                bump(e, serial);
+                let _ = e.set_internal(me, WebEngineView::TITLE, title);
+            }
             // The load is over for a test once its picture is there; a
-            // view that cannot be seen draws none.
-            let seen = e.untrack(|| shown_tracked(e, me));
+            // view that cannot be seen draws none, nor does one left empty.
+            let seen = !blank && e.untrack(|| shown_tracked(e, me));
             let _ = e.with_mut::<WebEngineView, _>(me, |v| {
                 if seen && v.run.browser.is_some() {
                     v.run.awaiting_frame = true;
@@ -764,7 +793,15 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.reporting = false);
         }
         Event::Title(title) => {
-            let _ = e.set_internal(me, WebEngineView::TITLE, title);
+            let shown = e
+                .with_mut::<WebEngineView, _>(me, |v| {
+                    (!v.run.blank).then(|| v.run.title.clone_from(&title))
+                })
+                .ok()
+                .flatten();
+            if shown.is_some() {
+                let _ = e.set_internal(me, WebEngineView::TITLE, title);
+            }
         }
         Event::Progress(p) => {
             let _ = e.set_internal(
@@ -777,6 +814,9 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             let _ = e.set_internal(me, WebEngineView::CAN_GO_BACK, back);
             let _ = e.set_internal(me, WebEngineView::CAN_GO_FORWARD, forward);
         }
+        Event::Frame(_)
+            if e.with::<WebEngineView, _>(me, |v| v.run.blank)
+                .unwrap_or(false) => {}
         Event::Frame(image) => {
             let Ok(serial) = e.with_mut::<WebEngineView, _>(me, |v| {
                 keep_frame(&mut v.run, Some(image));

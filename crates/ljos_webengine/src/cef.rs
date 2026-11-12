@@ -306,16 +306,21 @@ fn start_pump() -> Arc<Pump> {
                         if let Some(post) = post
                             && !std::mem::replace(&mut st.posted, true)
                         {
-                            let p = p.clone();
+                            // A full inbox makes the send wait, and whoever
+                            // asks for work meanwhile (CEF's threads, the
+                            // Engine thread) must not wait on this lock.
+                            drop(st);
+                            let q = p.clone();
                             post.send(move |_| {
-                                p.state
+                                q.state
                                     .lock()
                                     .unwrap_or_else(PoisonError::into_inner)
                                     .posted = false;
                                 hold_awake();
                                 do_message_loop_work();
-                                follow_up(&p);
+                                follow_up(&q);
                             });
+                            st = p.state.lock().unwrap_or_else(PoisonError::into_inner);
                         }
                     }
                 }
@@ -501,6 +506,14 @@ fn initialize_cef(e: &Engine) -> Result<Global, String> {
     }
     if let Some(platform) = ozone_platform(&words) {
         words.push(format!("--ozone-platform={platform}"));
+    }
+    // Chromium tries a page that failed again by itself, later and later,
+    // for as long as it is shown. A view's load fails once and stays
+    // failed until the application or the person reloads it, and a
+    // browser trying again keeps CEF's work (and a test waiting on it)
+    // going for minutes.
+    if !words.iter().any(|w| w.ends_with("-auto-reload")) {
+        words.push("--disable-auto-reload".to_owned());
     }
     let words: &'static [CString] = Vec::leak(
         words
