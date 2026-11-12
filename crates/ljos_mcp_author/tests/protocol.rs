@@ -283,11 +283,20 @@ async fn project_info_reports_ledger_and_capabilities() {
     let dir = fixture();
     let c = connect(dir.path(), CapSet::of([Cap::Inspect])).await;
     let body = ok(&c, "project_info", json!({})).await;
-    // The project's own ledger: QtQuick's five placeholder rows and
-    // XMLHttpRequest's three, which is compat only (docs/DIALECT.md §4.19).
-    assert_eq!(body["ledger"]["rows"], 8);
-    assert_eq!(body["ledger"]["by_status"]["unsupported"], 5);
-    assert_eq!(body["ledger"]["by_status"]["partial"], 3);
+    // The project's own ledger, counted as it stands: it grows as Qt's
+    // members get homes or are kept compat only.
+    assert_eq!(
+        body["ledger"]["rows"],
+        LEDGER.lines().filter(|l| *l == "[[row]]").count()
+    );
+    assert_eq!(
+        body["ledger"]["by_status"]["unsupported"],
+        LEDGER.matches("status = \"unsupported\"").count()
+    );
+    assert_eq!(
+        body["ledger"]["by_status"]["partial"],
+        LEDGER.matches("status = \"partial\"").count()
+    );
     assert_eq!(body["ledger"]["modules"], json!(["QtQml", "QtQuick"]));
     assert_eq!(body["front_end_wired"], true);
     assert_eq!(body["capabilities"], json!(["inspect"]));

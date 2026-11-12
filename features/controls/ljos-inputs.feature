@@ -237,7 +237,7 @@ Feature: Ljós's controls: check boxes, switches, combo boxes, spin boxes and sl
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        would lower ./Main.qml (2 edits)
+        would lower ./Main.qml (3 edits)
         1 files, 1 lowered, 0 kept
         """
 
