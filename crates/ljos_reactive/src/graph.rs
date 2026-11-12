@@ -3337,9 +3337,11 @@ impl<V: Clone + 'static> Graph<V> {
 
     /// Lifts the batches open now while the guard lives, so that what
     /// runs meanwhile runs as with none open: a write flushes, and a batch
-    /// flushes as it ends. The flushes run what `own` queues, and what the
-    /// batches queued before waits for them to end, as do the scopes asked
-    /// to freeze. One who makes something in steps inside a batch, and
+    /// flushes as it ends. The flushes run what `own` queues. What the
+    /// batches queued before waits for them to end, unless what runs
+    /// meanwhile reaches it again: then it moves to `own` and runs with the
+    /// rest, as it would with no batch open. The scopes asked to freeze
+    /// wait for the batches to end. One who makes something in steps inside a batch, and
     /// needs what each step reaches run before the next, as when no batch
     /// is open, opens a queue of its own and lifts the batches over it.
     pub fn lift_batches<'g>(&'g self, own: &LevelGuard<'g, V>) -> BatchLift<'g, V> {

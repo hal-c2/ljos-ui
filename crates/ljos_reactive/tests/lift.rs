@@ -1,6 +1,6 @@
 //! `Graph::lift_batches`: work done in steps inside a batch, over a queue
 //! of its own, runs as it would with no batch open, and what the batch
-//! held back before still waits for it.
+//! held back before still waits for it unless that work reaches it again.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -54,6 +54,22 @@ fn what_is_queued_over_the_lift_runs_at_once_and_what_came_before_waits() {
     let mut ran = log.take();
     ran.sort_unstable();
     assert_eq!(ran, ["before", "own"]);
+}
+
+#[test]
+fn what_came_before_and_is_reached_again_over_the_lift_runs_with_it() {
+    let g: Graph<i64> = Graph::new();
+    let log = Log::default();
+    let before = watching(&g, g.root(), "before", &log);
+    log.take();
+    g.batch(|| {
+        g.set(before, 1);
+        let queue = g.own_queue(g.changes_so_far());
+        let _lift = g.lift_batches(&queue);
+        g.set(before, 2);
+        assert_eq!(log.take(), ["before"], "as with no batch open");
+    });
+    assert!(log.borrow().is_empty(), "not again when the batch ends");
 }
 
 #[test]

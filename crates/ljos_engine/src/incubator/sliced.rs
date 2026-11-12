@@ -28,7 +28,8 @@
 //! stages run with that batch lifted over a queue of their own
 //! ([`ljos_reactive::Graph::lift_batches`]): what they reach runs as it
 //! would with no batch open, before anything is completed, and what the
-//! batch held back before still waits for it to end.
+//! batch held back before still waits for it to end, unless they reach it
+//! again.
 
 use rustc_hash::FxHashSet as HashSet;
 
