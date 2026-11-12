@@ -6,10 +6,10 @@ Item {
     property int chosen: -1
     property int moved: 0
     function keyed(key: int, modifiers: int): bool {
-        const ctrl = (modifiers & Qt.ControlModifier) !== 0
-        if (ctrl && key >= Qt.Key_1 && key <= Qt.Key_9) {
-            chosen = key - Qt.Key_1
-        } else if (key === Qt.Key_Down) {
+        const ctrl = (modifiers & Modifier.Control) !== 0
+        if (ctrl && key >= Key.Digit1 && key <= Key.Digit9) {
+            chosen = key - Key.Digit1
+        } else if (key === Key.Down) {
             moved += 1
         } else {
             return false

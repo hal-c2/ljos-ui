@@ -691,6 +691,20 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         }))
     }
 
+    /// Whether `key` of the type `from` is the Ljós name of a key of Qt's
+    /// enum `qt`: `MouseButton.Left` goes where Qt's `MouseButtons` does
+    /// (docs/DIALECT.md §4.3.1).
+    fn is_ljos_key(&self, qt: &str, from: u32, key: &str) -> bool {
+        let Some(ljos) = qt_types::ljos_enums::of_qt_enum(qt) else {
+            return false;
+        };
+        let Obj::Native(ty) = &self.objs[from as usize] else {
+            return false;
+        };
+        self.c.types.oracle.name(*ty) == ljos.type_name()
+            && ljos.keys.iter().any(|(_, own, _)| *own == key)
+    }
+
     /// Whether `key` is a key of the enum `name` of the object `o`.
     fn has_key(&self, o: u32, name: &str, key: &str) -> bool {
         match self.kind_of(o) {
@@ -716,6 +730,9 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 })),
                 None => None,
             };
+        }
+        if let Some(ty) = self.type_static(&kind, name) {
+            return Some(ty);
         }
         if types.is_singleton(&kind) {
             return self.kind_member(&kind, name).map(|own| own.ty);
@@ -1384,8 +1401,8 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 source,
                 Kind::Unknown | Kind::Null | Kind::Undefined | Kind::Void
             ),
-            (Kind::Enum { object, name }, Kind::Key { key, .. }) => {
-                self.has_key(*object, name, key)
+            (Kind::Enum { object, name }, Kind::Key { object: from, key }) => {
+                self.has_key(*object, name, key) || self.is_ljos_key(name, *from, key)
             }
             // DECISION: a number a script works out goes into an enum, as
             // Qt's flags are combined with `|`; a number written as a
@@ -1480,7 +1497,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     fn object_takes(&self, target: u32, source: u32) -> bool {
         let wanted = &self.objs[target as usize];
         if let Obj::Native(ty) = wanted
-            && self.c.types.oracle.name(*ty) == "QtObject"
+            && matches!(self.c.types.oracle.name(*ty), "QtObject" | "Object")
         {
             return true;
         }

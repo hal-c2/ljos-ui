@@ -1959,6 +1959,9 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 let (ty, rest) = members.split_first()?;
                 (self.types.find(&[name, ty])?, Some(name), rest)
             }
+            // A file of Ljós's API has no `Qt`: the script is compiled, and
+            // reports it (docs/DIALECT.md §4.3.1).
+            Target::Global(_) if name == "Qt" && self.ljos_ui => return None,
             Target::Global(_) if name == "Qt" => {
                 return match members.as_slice() {
                     [key] if is_key_name(key) => self.qt_enum(key),
@@ -2192,10 +2195,22 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
                 ));
             }
             if self.cores.contains("url") {
-                source.push_str("\nconst url = (u) => Qt.resolvedUrl(u);\n");
+                let qt = if self.ljos_ui { FILE_QT } else { "Qt" };
+                source.push_str(&format!("\nconst url = (u) => {qt}.resolvedUrl(u);\n"));
             }
         }
-        if MAKERS.iter().any(|maker| source.contains(maker)) {
+        if self.ljos_ui {
+            // A file of Ljós's API has no `Qt` (docs/DIALECT.md §4.3.1): the
+            // module's own name hides the global, so a script that reaches
+            // for it as it runs finds nothing. `url` resolves against the
+            // file through a `Qt` only the module's helper can name.
+            if self.cores.contains("url") {
+                source.push_str(&format!(
+                    "\nlet {FILE_QT} = globalThis.Qt;\nexport function {AT}(url) {{\n  {FILE_QT} = globalThis.{QT_AT}(url);\n}}\n"
+                ));
+            }
+            source.push_str("\nconst Qt = undefined;\n");
+        } else if MAKERS.iter().any(|maker| source.contains(maker)) {
             // What a script makes by address is addressed from its own
             // file, which only the running program can place: the module
             // has a `Qt` of its own, and the runtime says where the file
@@ -2468,6 +2483,10 @@ const QT_AT: &str = "__ljos_qt";
 /// The runtime's object of what `Ljos.Core` gives a file that imports it.
 const CORE: &str = "__ljos_core";
 
+/// The `Qt` a file of Ljós's API resolves its `url(…)` against, under a
+/// name its scripts cannot write.
+const FILE_QT: &str = "__ljos_fileQt";
+
 /// The runtime's maker of a file's `qsTr`: `(context) => qsTr`.
 const TR_IN: &str = "__ljos_qsTr";
 
@@ -2475,9 +2494,9 @@ const TR_IN: &str = "__ljos_qsTr";
 /// one scope: a module's export ([`AT`]) shadows a global of the same name
 /// ([`PLACE`]) in that module alone, so two of them alike would break only
 /// the files that use both.
-const HELPERS: [&str; 12] = [
+const HELPERS: [&str; 13] = [
     VALUE_AT, VALUE_IN, VALUE_HELD, PLACE, NAMED, KNOWN, ATTACHED, SINGLETON, AT, QT_AT, TR_IN,
-    CORE,
+    CORE, FILE_QT,
 ];
 
 const _: () = assert!(

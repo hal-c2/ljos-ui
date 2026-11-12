@@ -4,9 +4,9 @@ import Ljos.Ui
 Item {
     property int chosen: -1
     function keyed(key: int, modifiers: int): bool {
-        const ctrl = modifiers & Qt.ControlModifier
-        if (ctrl && key >= Qt.Key_1 && key <= Qt.Key_9) {
-            chosen = key - Qt.Key_1
+        const ctrl = modifiers & Modifier.Control
+        if (ctrl && key >= Key.Digit1 && key <= Key.Digit9) {
+            chosen = key - Key.Digit1
             return true
         }
         return false

@@ -7,6 +7,6 @@ Item {
     PointerArea { id: area }
     Connections {
         target: area
-        function onWheel(wheel: QtObject) { turns += 1 }
+        function onWheel(wheel: Object) { turns += 1 }
     }
 }

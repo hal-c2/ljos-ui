@@ -552,36 +552,246 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 }],
                 Ty::STRING,
             ),
-            "App" => {
-                let field = |name: &str, ty: Ty| Field {
-                    name: name.into(),
-                    ty,
-                    optional: false,
-                    readonly: true,
-                };
-                let platform = self.arena.intern(Kind::Record(Box::new([
-                    field("os", Ty::STRING),
-                    field("pluginName", Ty::STRING),
-                ])));
-                let open = made(
+            "App" => self.app(),
+            // docs/DIALECT.md §4.3.1: what was `Qt`'s.
+            // DECISION: a binding goes to a property of any type, as
+            // `Qt.binding`'s does; what it gives is not checked yet.
+            "bind" => {
+                let f = self.arena.function(Sig {
+                    params: Box::new([]),
+                    rest: None,
+                    ret: Ty::UNKNOWN,
+                    guard: None,
+                });
+                made(
                     self,
                     vec![Param {
-                        name: "url".into(),
-                        ty: Ty::STRING,
+                        name: "f".into(),
+                        ty: f,
                         optional: false,
                         written: None,
                     }],
-                    Ty::BOOLEAN,
+                    Ty::ERROR,
+                )
+            }
+            // Sixteen numbers, an array of them, or none for the identity.
+            "matrix4x4" => {
+                let ret = value(self, name);
+                self.arena.function(Sig {
+                    params: Box::new([]),
+                    rest: Some(Ty::UNKNOWN),
+                    ret,
+                    guard: None,
+                })
+            }
+            "Color" => {
+                let named = self.arena.or(Ty::STRING, Ty::COLOR);
+                let of = made(
+                    self,
+                    vec![Param {
+                        name: "color".into(),
+                        ty: named,
+                        optional: false,
+                        written: None,
+                    }],
+                    Ty::COLOR,
                 );
-                let quit = made(self, Vec::new(), Ty::VOID);
-                self.arena.intern(Kind::Record(Box::new([
-                    field("openUrlExternally", open),
-                    field("platform", platform),
-                    field("quit", quit),
-                ])))
+                self.arena.intern(Kind::Record(Box::new([Field {
+                    name: "of".into(),
+                    ty: of,
+                    optional: false,
+                    readonly: true,
+                }])))
             }
             _ => Ty::ERROR,
         }
+    }
+
+    /// `App`: the application, with what was on `Qt` about it.
+    fn app(&mut self) -> Ty {
+        let field = |name: &str, ty: Ty, readonly: bool| Field {
+            name: name.into(),
+            ty,
+            optional: false,
+            readonly,
+        };
+        let sig = |checker: &mut Self, params: Vec<Param>, ret: Ty| {
+            checker.arena.function(Sig {
+                params: params.into_boxed_slice(),
+                rest: None,
+                ret,
+                guard: None,
+            })
+        };
+        let param = |name: &str, ty: Ty, optional: bool| Param {
+            name: name.into(),
+            ty,
+            optional,
+            written: None,
+        };
+        let platform = self.arena.intern(Kind::Record(Box::new([
+            field("os", Ty::STRING, true),
+            field("pluginName", Ty::STRING, true),
+        ])));
+        let open = sig(self, vec![param("url", Ty::STRING, false)], Ty::BOOLEAN);
+        let quit = sig(self, Vec::new(), Ty::VOID);
+        let exit = sig(self, vec![param("code", Ty::NUMBER, true)], Ty::VOID);
+        let arguments = self.arena.array(Ty::STRING, true);
+        // DECISION: the input method, the style hints, the screens and the
+        // application's font are Qt's objects with no type in the oracle
+        // yet: what is read off them is not checked.
+        self.arena.intern(Kind::Record(Box::new([
+            field("arguments", arguments, true),
+            field("displayName", Ty::STRING, false),
+            field("domain", Ty::STRING, false),
+            field("exit", exit, true),
+            field("font", Ty::ERROR, true),
+            field("hints", Ty::ERROR, true),
+            field("inputMethod", Ty::ERROR, true),
+            field("language", Ty::STRING, false),
+            field("layoutDirection", Ty::NUMBER, true),
+            field("name", Ty::STRING, false),
+            field("openUrlExternally", open, true),
+            field("organization", Ty::STRING, false),
+            field("platform", platform, true),
+            field("quit", quit, true),
+            field("quitting", Ty::ERROR, true),
+            field("screens", Ty::ERROR, true),
+            field("state", Ty::NUMBER, true),
+            field("supportsMultipleWindows", Ty::BOOLEAN, true),
+            field("version", Ty::STRING, false),
+        ])))
+    }
+
+    /// What a type of Ljos.Core or Ljos.Ui has of what was `Qt`'s
+    /// (docs/DIALECT.md §4.3.1): `Locale.current`, `Locale.named(n)`,
+    /// `Font.of(o)`, `Font.families()`.
+    pub(super) fn type_static(&mut self, kind: &QKind<O::Type>, name: &str) -> Option<Ty> {
+        let QKind::Builtin(ty) = kind else {
+            return None;
+        };
+        let oracle = self.c.types.oracle;
+        let is = |uri: &str, type_name: &str| oracle.module_type(uri, type_name) == Some(*ty);
+        let param = |name: &str, ty: Ty| Param {
+            name: name.into(),
+            ty,
+            optional: false,
+            written: None,
+        };
+        if is("QtQml", "Locale") {
+            return match name {
+                "current" => Some(self.locale()),
+                "named" => {
+                    let ret = self.locale();
+                    Some(self.arena.function(Sig {
+                        params: Box::new([param("name", Ty::STRING)]),
+                        rest: None,
+                        ret,
+                        guard: None,
+                    }))
+                }
+                _ => None,
+            };
+        }
+        if is("QtQuick", "Font") {
+            return match name {
+                "of" => {
+                    let ret = match oracle.module_type("QtQuick", "font") {
+                        Some(font) => self.object_ty(&QKind::Builtin(font)),
+                        None => Ty::ERROR,
+                    };
+                    Some(self.arena.function(Sig {
+                        params: Box::new([param("font", Ty::UNKNOWN)]),
+                        rest: None,
+                        ret,
+                        guard: None,
+                    }))
+                }
+                "families" => {
+                    let ret = self.arena.array(Ty::STRING, true);
+                    Some(self.arena.function(Sig {
+                        params: Box::new([]),
+                        rest: None,
+                        ret,
+                        guard: None,
+                    }))
+                }
+                _ => None,
+            };
+        }
+        None
+    }
+
+    /// A locale, as `Locale.current` and `Locale.named(n)` give it.
+    fn locale(&mut self) -> Ty {
+        let field = |name: &str, ty: Ty| Field {
+            name: name.into(),
+            ty,
+            optional: false,
+            readonly: true,
+        };
+        let param = |name: &str, ty: Ty, optional: bool| Param {
+            name: name.into(),
+            ty,
+            optional,
+            written: None,
+        };
+        let sig = |checker: &mut Self, params: Vec<Param>, ret: Ty| {
+            checker.arena.function(Sig {
+                params: params.into_boxed_slice(),
+                rest: None,
+                ret,
+                guard: None,
+            })
+        };
+        // A format string, or a Locale.FormatType.
+        let format = self.arena.or(Ty::STRING, Ty::NUMBER);
+        let date = sig(
+            self,
+            vec![
+                param("date", Ty::UNKNOWN, false),
+                param("format", format, true),
+            ],
+            Ty::STRING,
+        );
+        let named = sig(
+            self,
+            vec![
+                param("index", Ty::NUMBER, false),
+                param("format", Ty::NUMBER, true),
+            ],
+            Ty::STRING,
+        );
+        let pattern = sig(self, vec![param("format", Ty::NUMBER, true)], Ty::STRING);
+        let strings = self.arena.array(Ty::STRING, true);
+        let numbers = self.arena.array(Ty::NUMBER, true);
+        self.arena.intern(Kind::Record(Box::new([
+            field("amText", Ty::STRING),
+            field("dateFormat", pattern),
+            field("dateTimeFormat", pattern),
+            field("dayName", named),
+            field("decimalPoint", Ty::STRING),
+            field("exponential", Ty::STRING),
+            field("firstDayOfWeek", Ty::NUMBER),
+            field("formatDate", date),
+            field("formatDateTime", date),
+            field("formatTime", date),
+            field("groupSeparator", Ty::STRING),
+            field("measurementSystem", Ty::NUMBER),
+            field("monthName", named),
+            field("name", Ty::STRING),
+            field("negativeSign", Ty::STRING),
+            field("percent", Ty::STRING),
+            field("pmText", Ty::STRING),
+            field("positiveSign", Ty::STRING),
+            field("standaloneDayName", named),
+            field("standaloneMonthName", named),
+            field("textDirection", Ty::NUMBER),
+            field("timeFormat", pattern),
+            field("uiLanguages", strings),
+            field("weekDays", numbers),
+            field("zeroDigit", Ty::STRING),
+        ])))
     }
 
     /// What a colour has of its own: its channels, and the methods that
@@ -607,6 +817,20 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             "darker" | "lighter" => colour_of(self, "factor", Ty::NUMBER, true),
             "alpha" => colour_of(self, "alpha", Ty::NUMBER, false),
             "tint" => colour_of(self, "tint", Ty::COLOR, false),
+            "equals" => {
+                let other = self.arena.or(Ty::STRING, Ty::COLOR);
+                self.arena.function(Sig {
+                    params: Box::new([Param {
+                        name: "other".into(),
+                        ty: other,
+                        optional: false,
+                        written: None,
+                    }]),
+                    rest: None,
+                    ret: Ty::BOOLEAN,
+                    guard: None,
+                })
+            }
             _ => return None,
         })
     }
