@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use qt_types::Type;
 
-use crate::{Holds, Native, Natives};
+use crate::{Holds, Native, Natives, is_ljos_api};
 
 /// Ljós's own modules, as its table describes them.
 pub(crate) struct Own;
@@ -16,12 +16,6 @@ pub(crate) struct Own;
 /// The types handed out, by their [`Native`] number. Ljós's table has a
 /// few hundred, so the list stays small whatever is lowered.
 static TYPES: Mutex<Vec<&'static Type>> = Mutex::new(Vec::new());
-
-/// Whether `uri` is of Ljós's own API. Without Qt's table QtQuick is
-/// described by Ljós's table too, and it is still Qt's, so the name says.
-fn is_ljos_api(uri: &str) -> bool {
-    uri == "Ljos" || uri.starts_with("Ljos.")
-}
 
 fn number(ty: &'static Type) -> Native {
     let mut types = TYPES
@@ -83,9 +77,13 @@ impl Natives for Own {
         })
     }
 
-    // Built on nothing whose names Ljós changes: what a file sets on one
-    // of its types is in Ljós's names already.
-    fn toolkit_base(&self, _ty: Native) -> Option<(String, String)> {
-        None
+    // The table writes a type of Ljós's as built on the toolkit's
+    // (`Slot` on `QtQuick.Item`): what it sets of that type's is checked
+    // and renamed as it is on the program's types, and a name neither has
+    // is not passed over.
+    fn toolkit_base(&self, ty: Native) -> Option<(String, String)> {
+        let base = std::iter::successors(self::ty(ty).prototype(), |t| t.prototype())
+            .find(|t| !is_ljos_api(t.module))?;
+        Some((base.module.to_owned(), base.name.to_owned()))
     }
 }

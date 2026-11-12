@@ -7,7 +7,7 @@
 
 use std::cell::RefCell;
 
-use qml_compat::{Holds, Native};
+use qml_compat::{Holds, Native, is_ljos_api};
 use qml_front::{QtTypeOracle, TypeOracle};
 
 /// The native types `oracle` has beside the table of types, as
@@ -58,12 +58,6 @@ impl<'o, O: TypeOracle> OracleNatives<'o, O> {
     }
 }
 
-/// Whether `uri` is a module of Ljós's own API, whose types and members
-/// have Ljós's names: nothing in a file that names them is lowered.
-fn is_ljos_api(uri: &str) -> bool {
-    uri == "Ljos" || uri.starts_with("Ljos.")
-}
-
 impl<O: TypeOracle> qml_compat::Natives for OracleNatives<'_, O> {
     fn has_module(&self, uri: &str) -> bool {
         // A module of the table's in Qt's API is the toolkit's, whatever
@@ -109,7 +103,19 @@ impl<O: TypeOracle> qml_compat::Natives for OracleNatives<'_, O> {
     }
 
     fn toolkit_base(&self, ty: Native) -> Option<(String, String)> {
-        let base = self.oracle.toolkit_base(self.ty(ty))?;
+        let ty = self.ty(ty);
+        let oracle = self.oracle;
+        // A type of Ljós's own table is written as built on the toolkit's
+        // through its prototypes (`Slot` on `QtQuick.Item`), as
+        // qml_compat's own description of it has it too.
+        let base = oracle.toolkit_base(ty).or_else(|| {
+            oracle.module(ty).filter(|module| is_ljos_api(module))?;
+            std::iter::successors(oracle.prototype(ty), |t| oracle.prototype(*t)).find(|t| {
+                oracle
+                    .module(*t)
+                    .is_some_and(|module| !is_ljos_api(&module))
+            })
+        })?;
         Some((self.oracle.module(base)?, self.oracle.name(base).to_owned()))
     }
 }
