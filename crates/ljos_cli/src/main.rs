@@ -16,6 +16,7 @@ mod check;
 mod demand;
 mod design;
 mod fmt;
+mod generated;
 #[cfg(feature = "dhat-heap")]
 mod heap;
 
@@ -25,6 +26,7 @@ mod heap;
 #[global_allocator]
 static ALLOC: ljos_shell::CountingAlloc = ljos_shell::CountingAlloc;
 mod i18n;
+mod lsp;
 mod migrate;
 mod observe;
 mod parent;
@@ -74,6 +76,10 @@ enum Command {
     /// The table of types Ljós's API is checked against, for another
     /// tool: `--dts` writes it as TypeScript declarations.
     Types(types::Types),
+    /// Serve the language server protocol on stdio, for an editor: what
+    /// `ljos check` finds in an open QML file, `.ts` or `.lts` module, at
+    /// its place in the text, and the rename of a `.ts` module to `.lts`.
+    Lsp,
     /// Run the design audit on what a QML file shows, under a matrix of
     /// settings (colour scheme, contrast, text size, window size); exits
     /// with 1 when it finds an error.
@@ -193,6 +199,10 @@ fn run() -> anyhow::Result<()> {
         Command::Design { command } => design::run(command),
         Command::Check(check) => check.run(),
         Command::Types(types) => types.run(),
+        Command::Lsp => match lsp::run()? {
+            0 => Ok(()),
+            status => exit(status),
+        },
         Command::Audit(audit) => match audit.run()? {
             0 => Ok(()),
             status => exit(status),

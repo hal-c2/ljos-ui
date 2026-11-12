@@ -95,17 +95,58 @@ fn migrated_file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult 
         .clone()
         .ok_or_else(|| "this step needs a doc string".to_owned())?;
     w.each_test_report(
-        |report| match report.files.iter().find(|(n, _)| *n == name) {
-            Some((_, text)) if same_file(text, &want) => Ok(()),
-            Some((_, text)) => Err(format!("the file {name:?} is:\n{text}")),
+        |report| match report.files.get(&name) {
+            Some(text) if same_file(text, &want) => Ok(()),
+            Some(text) => Err(format!("the file {name:?} is:\n{text}")),
             None => {
-                let names: Vec<&str> = report.files.iter().map(|(n, _)| n.as_str()).collect();
+                let names: Vec<&str> = report.files.keys().map(String::as_str).collect();
                 Err(format!(
                     "no file {name:?} after the migration; there are {names:?}"
                 ))
             }
         },
     )
+}
+
+// `ljos check` given one directory of the files, as a project whose
+// `tsconfig.json` is further up is checked a directory at a time.
+#[when(regex = r#"^the files in "([^"]+)" are checked$"#)]
+fn files_in_checked(w: &mut LjosWorld, dir: String) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        dir: Some(dir),
+        ..TestRun::default()
+    })
+}
+
+// `ljos check --project`: the root `.ljos/` is written under, named.
+#[when(regex = r#"^the files are checked with the project root "([^"]+)"$"#)]
+fn files_checked_project(w: &mut LjosWorld, dir: String) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        project: Some(dir),
+        ..TestRun::default()
+    })
+}
+
+// `ljos types` on the files: the declarations of their `.lts` modules,
+// written as `ljos check` writes them; `twice`, what a second run writes.
+#[when(regex = r"^the declarations of the files are written( twice)?$")]
+fn files_declared(w: &mut LjosWorld, twice: String) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        types: if twice.is_empty() { 1 } else { 2 },
+        ..TestRun::default()
+    })
+}
+
+#[then(regex = r#"^the check left no file "([^"]+)"$"#)]
+fn check_left_no_file(w: &mut LjosWorld, name: String) -> StepResult {
+    match w.checked_file(&name) {
+        None => Err("no check ran; use `When the files are checked`".into()),
+        Some(Err(_)) => Ok(()),
+        Some(Ok(text)) => Err(format!("the check left {name:?}:\n{text}")),
+    }
 }
 
 // `ljos check --stats`: the coverage tables after what it finds.

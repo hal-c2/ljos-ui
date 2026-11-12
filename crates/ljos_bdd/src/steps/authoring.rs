@@ -243,6 +243,18 @@ fn answer_text_is(w: &mut LjosWorld, pointer: String, step: &Step) -> StepResult
 #[then(regex = r#"^the file "([^"]+)" is:$"#)]
 fn file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult {
     let want = author_doc(step)?;
+    // After `When the files are checked` (or migrated), the project is the
+    // one the check read and wrote, not the author's. A file the scenario
+    // gave keeps the spaces its doc string is indented by, and what was
+    // added to it is indented as it is.
+    if let Some(actual) = w.checked_file(&name) {
+        let actual = actual?;
+        return if crate::author::same_text(&crate::author::text_of(actual), &want) {
+            Ok(())
+        } else {
+            Err(format!("the file {name:?} is:\n{actual}"))
+        };
+    }
     let (author, files) = w.author();
     author.file_is(files, &name, &want)
 }

@@ -12,6 +12,7 @@
 //! [`normalise`] takes those out so that one expectation serves both.
 
 use std::{
+    collections::BTreeMap,
     fs,
     io::Read as _,
     path::{Path, PathBuf},
@@ -54,6 +55,12 @@ pub struct TestRun {
     pub tsc: bool,
     /// The `TZ` the runner starts with; UTC when `None`.
     pub time_zone: Option<String>,
+    /// With `check`: `--project`, the directory `.ljos/` is written under,
+    /// relative to the scenario's files.
+    pub project: Option<String>,
+    /// With `check`: `ljos types` instead of `ljos check`, as many times
+    /// as this says, so a scenario sees what a second run writes.
+    pub types: usize,
 }
 
 impl TestRun {
@@ -77,10 +84,11 @@ pub struct TestReport {
     pub status: i32,
     /// The machine-readable report, from a runner that writes one.
     pub json: Option<Value>,
-    /// After `ljos migrate --write`, each file of the project as the
-    /// migration left it, by its path in the project: what it renamed and
-    /// rewrote is gone with the directory once the check is done.
-    pub files: Vec<(String, String)>,
+    /// Every text file of the project once the run was over, by its path
+    /// below the project (`/` between its parts), dot directories too:
+    /// what a check or a migration left. Empty for a runner that only
+    /// reads.
+    pub files: BTreeMap<String, String>,
 }
 
 impl TestReport {
@@ -116,14 +124,14 @@ pub fn expected_lines(text: &str) -> Vec<String> {
 static RUN_ID: AtomicU32 = AtomicU32::new(0);
 
 /// The files of one scenario on disk, removed when the run is over.
-struct Staged {
-    root: PathBuf,
+pub(crate) struct Staged {
+    pub(crate) root: PathBuf,
     /// The directory given to the runner, as the runner prints it.
-    suite: PathBuf,
+    pub(crate) suite: PathBuf,
 }
 
 impl Staged {
-    fn new(files: &[QmlFile]) -> Result<Self> {
+    pub(crate) fn new(files: &[QmlFile]) -> Result<Self> {
         let root = std::env::temp_dir().join(format!(
             "ljos-bdd-tests-{}-{}",
             std::process::id(),
@@ -180,7 +188,7 @@ pub fn normalise(text: &str, suite: &Path) -> Vec<String> {
         .collect()
 }
 
-fn failed(what: impl std::fmt::Display) -> BackendError {
+pub(crate) fn failed(what: impl std::fmt::Display) -> BackendError {
     BackendError::Failed(what.to_string())
 }
 
@@ -314,10 +322,10 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok());
     Ok(TestReport {
-        files: Vec::new(),
         lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
         status,
         json,
+        files: BTreeMap::new(),
     })
 }
 
@@ -329,18 +337,26 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
     // What is found goes to the error stream and the count to the output:
     // one pipe for both keeps them in the order they were written. A
     // migration that fails stops before the check, as a script would.
-    let script = if run.migrate {
-        r#"l=$0; d=$1; shift; "$l" migrate --write "$d" 2>&1 && exec "$l" check "$@" "$d" 2>&1"#
+    let script = if run.types > 0 {
+        r#"l=$0; d=$1; n=$2; shift 2; while [ "$n" -gt 0 ]; do "$l" types "$@" "$d" 2>&1 || exit; n=$((n - 1)); done"#
+    } else if run.migrate {
+        r#"l=$0; d=$1; shift 2; "$l" migrate --write "$d" 2>&1 && exec "$l" check "$@" "$d" 2>&1"#
     } else {
-        r#"l=$0; d=$1; shift; exec "$l" check "$@" "$d" 2>&1"#
+        r#"l=$0; d=$1; shift 2; exec "$l" check "$@" "$d" 2>&1"#
     };
     let mut command = Command::new("sh");
     command
         .args(["-c", script])
         .arg(ljos_bin()?)
-        .arg(&staged.suite)
+        .arg(run.input(&staged.suite))
+        .arg(run.types.to_string())
         .args(run.stats.then_some("--stats"))
         .args(run.tsc.then_some("--tsc"))
+        .args(
+            run.project
+                .iter()
+                .flat_map(|p| ["--project".into(), staged.suite.join(p).into_os_string()]),
+        )
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
@@ -376,32 +392,38 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .map_err(|e| failed(format!("cannot wait for `ljos check`: {e}")))?
         .code()
         .ok_or_else(|| failed("`ljos check` was killed"))?;
-    let mut files = Vec::new();
-    if run.migrate {
-        read_tree(&staged.suite, &staged.suite, &mut files);
-        files.sort();
-    }
     Ok(TestReport {
-        files,
         lines: normalise(&String::from_utf8_lossy(&out), &staged.suite),
         status,
         json: None,
+        files: snapshot(&staged.suite),
     })
 }
 
-/// Every text file under `dir`, by its path from `base`.
-fn read_tree(dir: &Path, base: &Path, out: &mut Vec<(String, String)>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            read_tree(&path, base, out);
-        } else if let (Ok(text), Ok(name)) = (fs::read_to_string(&path), path.strip_prefix(base)) {
-            out.push((name.display().to_string(), text));
+/// The text files below `dir`, as [`TestReport::files`] keeps them.
+pub(crate) fn snapshot(dir: &Path) -> BTreeMap<String, String> {
+    fn walk(dir: &Path, below: &str, into: &mut BTreeMap<String, String>) {
+        let Ok(entries) = fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let key = if below.is_empty() {
+                name
+            } else {
+                format!("{below}/{name}")
+            };
+            let path = entry.path();
+            if path.is_dir() {
+                walk(&path, &key, into);
+            } else if let Ok(text) = fs::read_to_string(&path) {
+                into.insert(key, text);
+            }
         }
     }
+    let mut files = BTreeMap::new();
+    walk(dir, "", &mut files);
+    files
 }
 
 /// How long `ljos check` has. It reads a scenario's few files in well under
@@ -464,13 +486,13 @@ pub fn declarations() -> Result<TestReport> {
         )));
     }
     Ok(TestReport {
-        files: Vec::new(),
         lines: String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(|l| l.trim_end().to_owned())
             .collect(),
         status,
         json: None,
+        files: BTreeMap::new(),
     })
 }
 
@@ -514,10 +536,10 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         return Err(failed(format!("{runner} did not finish in 60 seconds")));
     }
     Ok(TestReport {
-        files: Vec::new(),
         lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
         status,
         json: None,
+        files: BTreeMap::new(),
     })
 }
 
@@ -602,8 +624,7 @@ Totals: 1 passed, 1 failed, 0 skipped, 0 blacklisted, 12ms
     #[test]
     fn lines_are_looked_for_as_a_block() {
         let report = TestReport {
-            files: Vec::new(),
-            lines: vec!["a".into(), "b".into(), "c".into()],
+                lines: vec!["a".into(), "b".into(), "c".into()],
             ..TestReport::default()
         };
         assert!(report.has_lines(&["b".into(), "c".into()]));

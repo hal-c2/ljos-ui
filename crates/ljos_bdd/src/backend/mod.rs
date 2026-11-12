@@ -9,6 +9,7 @@ pub mod desktop;
 pub mod fake_platform;
 pub mod inspector;
 pub mod ljos;
+pub mod lsp;
 pub mod qt;
 mod rfb;
 pub mod testrun;
