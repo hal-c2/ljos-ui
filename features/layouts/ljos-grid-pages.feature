@@ -310,7 +310,7 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
       When the author runs "ljos migrate . --write"
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Layout
         Item {
           Grid { columnSpacing: 5; rowSpacing: 5;
@@ -336,7 +336,7 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
       When the author runs "ljos migrate . --write"
       Then the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Layout
         Pages {
           currentIndex: 1

@@ -304,7 +304,7 @@ Feature: Ljós's controls as Basic draws them: the module Ljos.Controls.Basic
         """
       And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript; import Ljos.Ui
+        import Ljos.Ui
         import Ljos.Controls.Basic
         Label { text: "Ready" }
         """
