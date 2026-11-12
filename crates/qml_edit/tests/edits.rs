@@ -925,3 +925,35 @@ fn removing_is_found_as_setting_is() {
         Err(Error::NoBinding { .. })
     ));
 }
+
+/// An edit beside a `match`, or one that writes a `match`, leaves the
+/// script syntax as written: Studio's edits round-trip it.
+#[test]
+fn a_match_is_kept_beside_an_edit_and_written_by_one() {
+    let source = "import Ljos.Ui\n\nItem {\n    width: 640\n    property string look: match (width) {\n        when 640: \"wide\";\n        default: \"narrow\";\n    }\n}\n";
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root(),
+            name: "width".into(),
+            value: "800".into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert_eq!(out, source.replace("width: 640", "width: 800"));
+    let out = apply(
+        source,
+        &Edit::SetBinding {
+            object: root(),
+            name: "height".into(),
+            value: "match (width) { when 640: 480; default: 600; }".into(),
+        },
+    )
+    .expect("the edit applies")
+    .text;
+    assert!(
+        out.contains("height: match (width) { when 640: 480; default: 600; }"),
+        "{out}"
+    );
+}

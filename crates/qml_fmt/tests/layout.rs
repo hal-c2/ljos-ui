@@ -240,3 +240,13 @@ fn same_tree_tells_a_changed_token_from_changed_spacing() {
     assert!(same_tree("import A\nItem {}", "import B\nItem {}").is_err());
     assert!(same_tree("Item {}", "Item {").is_err());
 }
+
+/// `match` and `is` are Ljós's script syntax: the formatter keeps them as
+/// written, as it keeps every script, and its own check reads them.
+#[test]
+fn a_match_and_an_is_are_kept_as_written() {
+    let laid_out = "import Ljos.Ui\n\nItem {\n    property real gap: 12\n    property string look: match (gap) {\n        when 12: \"wide\";\n        when let n and if (n > 20): \"huge\";\n        default: \"narrow\";\n    }\n    function ok(r: { status: number }): boolean {\n        return r is { status: 200 }\n    }\n}\n";
+    assert_eq!(fmt(laid_out), laid_out);
+    let squeezed = laid_out.replace("    property string look", "  property string look");
+    assert_eq!(fmt(&squeezed).matches("match (gap) {").count(), 1);
+}
