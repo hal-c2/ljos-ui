@@ -372,6 +372,24 @@ Feature: Checking the scripts of a file written in Ljós's API
         ljos: 1 errors
         """
 
+    # Qt's table says the role is a `QAccessible::Role`: an enum of the namespace
+    # Accessible is extended with, whose keys are Accessible's own.
+    Scenario: An attached property holds the keys of an enum its type is extended with
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        PointerArea {
+          Accessible.role: Accessible.Button
+          Accessible.name: "Count"
+          function press() { Accessible.role = Accessible.CheckBox }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
     Scenario: A handler's parameters, and a callback's, take their types from where they go
       Given the file "Gauge.qml":
         """qml

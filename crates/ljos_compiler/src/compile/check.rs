@@ -652,7 +652,19 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
     /// The enum a property of `owner` declared as `written` holds.
     fn enum_of(&mut self, owner: O::Type, written: &str) -> Option<Ty> {
         let oracle = self.c.types.oracle;
-        if let Some(name) = written.split_once("::").map(|(_, name)| name) {
+        if let Some((scope, name)) = written.split_once("::") {
+            // A class other than `Qt` that names the enum may be one the
+            // owner is extended with: Qt's table says `Accessible.role` is
+            // a `QAccessible::Role`, whose keys are `Accessible.Button`.
+            if scope != "Qt"
+                && let Some(home) = oracle.enum_home(owner, name)
+            {
+                let object = self.obj(Obj::Native(home));
+                return Some(self.arena.intern(Kind::Enum {
+                    object,
+                    name: name.into(),
+                }));
+            }
             let qt = self.c.qt?;
             let object = self.obj(Obj::Native(qt));
             return Some(self.arena.intern(Kind::Enum {
