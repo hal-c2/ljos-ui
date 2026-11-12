@@ -81,7 +81,8 @@ fn a_run_that_queues_a_job_gives_one_cue_when_it_ends() {
     .unwrap();
     assert_eq!(cues.0.get(), 1);
     assert!(host.has_pending_jobs());
-    host.pump_jobs(Instant::now() + Duration::from_secs(1));
+    let pumped = host.pump_jobs(Instant::now() + Duration::from_secs(1));
+    assert!(pumped.faults.is_empty());
     assert!(!host.has_pending_jobs());
     // Drained: no cue for a pump that leaves nothing.
     assert_eq!(cues.0.get(), 1);
@@ -93,6 +94,6 @@ fn a_pump_out_of_time_gives_a_cue_for_what_is_left() {
     run(&host, "Promise.resolve().then(() => {})");
     assert_eq!(cues.0.get(), 1);
     // A deadline already passed runs nothing and leaves the job.
-    assert_eq!(host.pump_jobs(Instant::now()), 0);
+    assert_eq!(host.pump_jobs(Instant::now()).ran, 0);
     assert_eq!(cues.0.get(), 2);
 }
