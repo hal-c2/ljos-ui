@@ -1,4 +1,4 @@
-//! `match` and `is` written away (docs/DIALECT.md §4.21): one desugar,
+//! `match`, `is` and the pipe `|>` written away (docs/DIALECT.md §4.21): one desugar,
 //! which every reader of a script calls before it reads one.
 
 use oxc_allocator::Allocator;
@@ -20,7 +20,7 @@ pub use oxc_parser::qml::sugar::SpanMap;
 
 use crate::{Diagnostic, Parsed};
 
-/// A script's text with `match` and `is` written away.
+/// A script's text with `match`, `is` and `|>` written away.
 #[derive(Debug, Clone)]
 pub struct Desugared {
     /// Plain TypeScript: line N of it is line N of the input.
@@ -31,11 +31,11 @@ pub struct Desugared {
     /// spans. `text` is still written where there are some: a pattern in
     /// error matches nothing.
     pub diagnostics: Vec<Diagnostic>,
-    /// The keyword of each `match` and `is` in the input, in order.
+    /// The keyword of each `match`, `is` and `|>` in the input, in order.
     pub uses: Vec<Span>,
 }
 
-/// `text`, a script or module, with `match` and `is` written away. It is
+/// `text`, a script or module, with `match`, `is` and `|>` written away. It is
 /// read as a TypeScript module, which a QML file's script, an `.lts` module
 /// and a `.ts` module all parse as.
 pub fn desugar(text: &str) -> Desugared {
@@ -423,6 +423,116 @@ mod tests {
                 "{text}: {first:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_pipe_chain_is_one_arrow_whose_steps_are_consts() {
+        assert_eq!(
+            lowered("x = a |> f(%) |> g(%, %)\n"),
+            "x = (() => { const $0 = a; const $1 = f($0); return g($1, $1);})()\n"
+        );
+    }
+
+    #[test]
+    fn a_pipe_in_a_body_has_its_own_topic_and_its_head_reads_the_outer_one() {
+        assert_eq!(
+            lowered("x = 3 |> (% + 1 |> % * 10) + %\n"),
+            "x = (() => { const $0 = 3; return ((() => { const $1 = $0 + 1; return $1 * 10;})()) + $0;})()\n"
+        );
+    }
+
+    #[test]
+    fn a_pipe_keeps_its_lines_and_maps_the_topic_to_the_percent() {
+        let text = "x = a\n  |> f(%)\n  |> g(%)\ny = 1\n";
+        let out = lowered(text);
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines[1].contains("f($0)"), "{lines:?}");
+        assert!(lines[2].contains("g($1)"), "{lines:?}");
+        assert_eq!(lines[3], "y = 1");
+        let topic = desugar(text);
+        let at = topic.text.find("g($1)").unwrap() as u32 + 2;
+        assert_eq!(
+            topic.map.span(Span::sized(at, 2)),
+            Span::sized(text.rfind('%').unwrap() as u32, 1)
+        );
+        assert!(topic.map.is_written(at));
+    }
+
+    #[test]
+    fn a_pipe_statement_after_a_line_with_no_semicolon_starts_with_one() {
+        assert_eq!(
+            lowered("f()\nx |> g(%)\n"),
+            "f()\n;(() => { const $0 = x; return g($0);})()\n"
+        );
+    }
+
+    #[test]
+    fn a_pipe_that_awaits_is_an_async_arrow_awaited() {
+        assert_eq!(
+            lowered("async function f(p) { return await p |> % + 1 }\n"),
+            "async function f(p) { return (await (async () => { const $0 = await p; return $0 + 1;})()) }\n"
+        );
+    }
+
+    #[test]
+    fn a_pipe_that_yields_is_a_generator_delegated_to() {
+        assert_eq!(
+            lowered("function* f() { return 1 |> (yield %) }\n"),
+            "function* f() { return (yield* (function* () { const $0 = 1; return (yield $0);}).apply(this, arguments)) }\n"
+        );
+    }
+
+    #[test]
+    fn percent_after_an_operand_is_the_remainder() {
+        assert_eq!(
+            lowered("x = n |> % % 3\ny = n % 2\n"),
+            "x = (() => { const $0 = n; return $0 % 3;})()\ny = n % 2\n"
+        );
+    }
+
+    #[test]
+    fn the_pipe_s_keyword_is_its_first_bar() {
+        let out = desugar("x = a |> f(%) |> g(%)\n");
+        assert_eq!(out.uses, vec![Span::sized(6, 2)]);
+    }
+
+    #[test]
+    fn what_the_pipe_forbids_is_an_error_at_it() {
+        for (text, at, says) in [
+            ("x = n |> 1", "1", "does not use its topic"),
+            ("x = n |> % |> 2", "2", "does not use its topic"),
+            ("x = % + 1", "%", "there is no pipe here"),
+            ("x = n |> () => %", "()", "arrow function"),
+            ("x = n |> % ? 1 : 2", "% ?", "conditional"),
+            ("x = n |> y = %", "y =", "assignment"),
+            ("function* f() { n |> yield % }", "yield", "`yield`"),
+            ("x = n |> (() => 1)()", "(", "does not use its topic"),
+        ] {
+            let out = desugar(text);
+            let [first] = out.diagnostics.as_slice() else {
+                panic!("{text}: {:?}", out.diagnostics);
+            };
+            assert_eq!(
+                first.span.start as usize,
+                text.find(at).unwrap(),
+                "{text}: {first:?}"
+            );
+            assert!(first.to_string().contains(says), "{text}: {first}");
+        }
+        // The other pipes of other proposals are not read.
+        for text in ["x = n |>> f(%)", "x = n |?> f(%)", "x = n +> f(%)"] {
+            assert!(!desugar(text).diagnostics.is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_closure_in_a_body_reads_the_topic_of_its_own_evaluation() {
+        // Each evaluation has its own `const`, so `% * 10` is the `n` it
+        // was made for.
+        assert_eq!(
+            lowered("x = a.map(n => n |> (() => % * 10))\n"),
+            "x = a.map(n => (() => { const $0 = n; return (() => $0 * 10);})())\n"
+        );
     }
 
     #[test]

@@ -255,6 +255,8 @@ impl<'a, C: Config> ParserImpl<'a, C> {
             Kind::NoSubstitutionTemplate | Kind::TemplateHead => {
                 self.parse_template_literal_expression(false)
             }
+            // Ljós: `%`, the topic of a pipe's body, see `qml/sugar/pipe.rs`.
+            Kind::Percent if self.sugar.on => self.parse_sugar_topic(),
             Kind::Percent if self.options.allow_v8_intrinsics => {
                 self.parse_v8_intrinsic_expression()
             }
@@ -1344,6 +1346,11 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 last_operand_precedence = Some(Precedence::Compare);
                 continue;
             }
+            // Ljós: `|>` is not `|`; the pipe is read by the assignment
+            // expression around this one.
+            if self.at_sugar_pipe() {
+                break;
+            }
 
             let Some(left_precedence) = kind_to_precedence(kind) else { break };
 
@@ -1549,6 +1556,12 @@ impl<'a, C: Config> ParserImpl<'a, C> {
                 func.pure = true;
             }
             return arrow_expr;
+        }
+
+        // Ljós: `head |> body`, at the precedence of `=>` and `=`, see
+        // `qml/sugar/pipe.rs`.
+        if self.at_sugar_pipe() {
+            return self.parse_sugar_pipe(start, lhs);
         }
 
         if kind.is_assignment_operator() {
