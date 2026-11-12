@@ -31,7 +31,8 @@ pub struct Controller {
     #[qml(base)]
     pub object: QtObject,
     /// The item it is declared in, or the host of the Controller it is
-    /// declared in. Unset outside an item.
+    /// declared in, or the item a popup it is declared in keeps its
+    /// content in ([`adopt`]). Unset outside all of them.
     #[qml(notify, readonly, holds = "Item")]
     pub host: Option<ObjectId>,
     /// What is declared in it: other Controllers, gestures, objects of
@@ -56,6 +57,10 @@ impl Controller {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, me) = (cx.engine, cx.this);
+        // Adopted before it was complete: put into a popup that is.
+        if let Some(host) = host(e, me) {
+            return take(e, me, host);
+        }
         let Some(host) = host_of(e, me) else {
             return Ok(());
         };
@@ -95,6 +100,60 @@ pub fn host_of(e: &Engine, obj: ObjectId) -> Option<ObjectId> {
 /// The host a Controller has, once it is complete.
 pub fn host(e: &Engine, controller: ObjectId) -> Option<ObjectId> {
     e.get(controller, Controller::HOST).ok().flatten()
+}
+
+/// Gives `obj`, if it is a Controller with no host, the item `host` as
+/// its host. For an object that is not an item but keeps what is
+/// declared in it in an item (a popup and its content item), which calls
+/// this for each object declared in it once that item is known. What
+/// is declared in the Controller is adopted with it.
+pub fn adopt(e: &Engine, obj: ObjectId, host: ObjectId) -> Result<(), EngineError> {
+    if !e.inherits(obj, Controller::static_meta())
+        || self::host(e, obj).is_some()
+        || !is_item(e, host)
+    {
+        return Ok(());
+    }
+    e.set_internal(obj, Controller::HOST, Some(host))?;
+    let complete = e
+        .flags(obj)
+        .is_some_and(|f| f.contains(ljos_engine::ObjectFlags::COMPLETED));
+    // One not complete yet takes its host when it completes.
+    if complete { take(e, obj, host) } else { Ok(()) }
+}
+
+/// A Controller adopted by `host`, which is not what it is declared in:
+/// it and what is declared in it go among the host's resources, and a
+/// gesture that took what it is declared in for its `parent` and its
+/// `target`, as a gesture does when nobody gives it one, takes the host.
+fn take(e: &Engine, me: ObjectId, host: ObjectId) -> Result<(), EngineError> {
+    let was = e.owner(me);
+    share_resource(e, host, me)?;
+    for child in crate::tree::list(e, me, Controller::DATA.index) {
+        if e.inherits(child, Controller::static_meta()) {
+            adopt(e, child, host)?;
+        } else {
+            share_resource(e, host, child)?;
+        }
+    }
+    if let Some(was) = was.filter(|w| *w != host) {
+        for name in ["parent", "target"] {
+            if let Some(p) = e.find_property(me, name)
+                && e.untrack(|| e.read(me, p)).as_object() == Some(was)
+            {
+                e.write_internal(
+                    me,
+                    p,
+                    ljos_engine::Value::Object(host),
+                    ljos_engine::WriteKind::Imperative,
+                )?;
+            }
+        }
+    }
+    if listens(e, me) {
+        after_host_completes(e, me, host)?;
+    }
+    Ok(())
 }
 
 const ATTACHED: &str = "attached";
