@@ -254,6 +254,44 @@ Feature: Controllers: behaviour an item is given by declaring it
       Then the property "taps" of "root" is 1
       And the property "nested" of "root" is 1
 
+    Scenario: A popup's Controllers and gestures move to the content item that replaces its own
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Controls
+        import Ljos.Core
+        Item {
+          id: root; objectName: "root"; width: 400; height: 300
+          property int taps: 0
+          property int nested: 0
+          property int detaches: 0
+          Popup {
+            id: popup; objectName: "popup"
+            x: 0; y: 0; width: 200; height: 200; padding: 0
+            Component.onCompleted: open()
+            TapHandler { onTapped: root.taps = root.taps + 1 }
+            Controller {
+              objectName: "c"
+              property bool onNew: false
+              property int attaches: 0
+              onAttached: (host) => { attaches = attaches + 1; onNew = host === replacement }
+              onDetached: root.detaches = root.detaches + 1
+              TapHandler { onTapped: root.nested = root.nested + 1 }
+            }
+          }
+          Item { id: replacement; objectName: "replacement" }
+          function replace() { popup.contentItem = replacement }
+        }
+        """
+      When the method "replace" of "root" is called
+      Then the property "onNew" of "c" is true
+      And the property "attaches" of "c" is 2
+      And the property "detaches" of "root" is 1
+      When the user presses the pointer at 50, 50
+      And the user releases the pointer at 50, 50
+      Then the property "taps" of "root" is 1
+      And the property "nested" of "root" is 1
+
   Rule: A TypeScript module exports a Controller with controller({ … })
 
     Background:
