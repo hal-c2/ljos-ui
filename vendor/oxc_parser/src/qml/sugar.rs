@@ -168,8 +168,9 @@ fn unescaped(text: &str) -> Option<(char, usize)> {
     let (hex, len) = match after.strip_prefix('{') {
         Some(braced) => {
             // A code point has at most six hex digits; past that it is no
-            // escape, and the scan stays linear.
-            let end = braced.get(..braced.len().min(8))?.find('}')?;
+            // escape, and the scan stays linear. The `}` is looked for among
+            // bytes: the eighth may be inside a character of more than one.
+            let end = braced.as_bytes()[..braced.len().min(8)].iter().position(|&b| b == b'}')?;
             (&braced[..end], 2 + 1 + end + 1)
         }
         None => (after.get(..4)?, 2 + 4),

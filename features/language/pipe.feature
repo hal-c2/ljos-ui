@@ -217,6 +217,21 @@ Feature: Handing a value from step to step with the pipe
         """
       Then the property "said" of "root" is "7 zero subject"
 
+    Scenario: A name spelled with an escape is the name it spells
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          id: root; objectName: "root"
+          readonly property int twelve: escaped()
+          function escaped(): number {
+            const \u{24}0/*€*/ = 10
+            return 2 |> % + \u{24}0/*€*/
+          }
+        }
+        """
+      Then the property "twelve" of "root" is 12
+
   Rule: The checker types `%` as the head, and each step as its body
 
     Scenario: The examples check clean, and the text the desugar writes is not held to the rules about how a person writes
