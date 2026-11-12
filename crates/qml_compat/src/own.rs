@@ -79,11 +79,14 @@ impl Natives for Own {
 
     // The table writes a type of Ljós's as built on the toolkit's
     // (`Slot` on `QtQuick.Item`): what it sets of that type's is checked
-    // and renamed as it is on the program's types, and a name neither has
-    // is not passed over.
+    // and renamed, and a name neither has is not passed over.
     fn toolkit_base(&self, ty: Native) -> Option<(String, String)> {
         let base = std::iter::successors(self::ty(ty).prototype(), |t| t.prototype())
             .find(|t| !is_ljos_api(t.module))?;
         Some((base.module.to_owned(), base.name.to_owned()))
+    }
+
+    fn has_ljos_names(&self, _ty: Native) -> bool {
+        true
     }
 }

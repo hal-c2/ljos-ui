@@ -149,6 +149,64 @@ fn a_singletons_members_are_typed_by_what_they_hold() {
     assert!(done.text.contains("seen: tone.color"), "{}", done.text);
 }
 
+/// `Studio.Kit` as though its types were Ljós's own, built on Ljós's face
+/// of the toolkit's.
+struct LjosKit;
+
+impl Natives for LjosKit {
+    fn has_module(&self, uri: &str) -> bool {
+        Kit.has_module(uri)
+    }
+
+    fn module_type(&self, uri: &str, name: &str) -> Option<Native> {
+        Kit.module_type(uri, name)
+    }
+
+    fn name(&self, ty: Native) -> String {
+        Kit.name(ty)
+    }
+
+    fn is_singleton(&self, ty: Native) -> bool {
+        Kit.is_singleton(ty)
+    }
+
+    fn has_member(&self, ty: Native, name: &str) -> bool {
+        Kit.has_member(ty, name)
+    }
+
+    fn property(&self, ty: Native, name: &str) -> Option<Holds> {
+        Kit.property(ty, name)
+    }
+
+    fn toolkit_base(&self, ty: Native) -> Option<(String, String)> {
+        Kit.toolkit_base(ty)
+    }
+
+    fn has_ljos_names(&self, _ty: Native) -> bool {
+        true
+    }
+}
+
+#[test]
+fn a_name_ljos_renames_on_the_base_of_a_type_of_ljos_s_own_is_renamed() {
+    let Outcome::Lowered(done) = lower(
+        "import QtQuick\nimport Studio.Kit\nItem { Swatch { id: s; color: \"red\" }\n  property color c: s.color }\n",
+        &Styled {
+            locals: &no_locals,
+            style: CONTROLS_STYLE,
+            natives: Some(&LjosKit),
+        },
+    ) else {
+        panic!("not lowered");
+    };
+    assert!(
+        done.text.contains("Swatch { id: s; fill: \"red\" }"),
+        "{}",
+        done.text
+    );
+    assert!(done.text.contains("c: s.fill"), "{}", done.text);
+}
+
 #[test]
 fn a_name_ljos_renames_on_a_native_types_toolkit_base_keeps_the_file() {
     for (body, at) in [
