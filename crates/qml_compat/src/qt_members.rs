@@ -48,13 +48,7 @@ const SAME: &[&str] = &[
 ];
 
 /// The members `App` has under Qt's name.
-const ON_APP: &[&str] = &[
-    "platform",
-    "openUrlExternally",
-    "quit",
-    "exit",
-    "inputMethod",
-];
+const ON_APP: &[&str] = &["platform", "openUrlExternally", "quit", "inputMethod"];
 
 /// A colour's own methods `Qt` takes the colour of first:
 /// `Qt.darker(c, 2)` is `Color.of(c).darker(2)`.
@@ -174,6 +168,8 @@ pub(crate) struct Call {
     pub(crate) arguments: Vec<Option<Range<usize>>>,
     /// Whether each argument is written as a string.
     pub(crate) texts: Vec<bool>,
+    /// Whether each argument is written as the number 0.
+    pub(crate) zeros: Vec<bool>,
     /// The whole call, `Qt.darker(c, 2)`.
     pub(crate) span: Range<usize>,
 }
@@ -212,6 +208,9 @@ pub(crate) struct Members {
     delegate: bool,
     /// The file has an object whose type the pass does not know.
     unknown: bool,
+    /// Where `Qt` is in `Qt.application.member`: the application read
+    /// off, where `App` is it.
+    read_off: Vec<usize>,
 }
 
 impl Members {
@@ -219,6 +218,12 @@ impl Members {
     /// `Qt.application.name`, or the callee of a call told of.
     pub(crate) fn has(&self, at: usize) -> bool {
         self.uses.iter().any(|u| u.at == at)
+    }
+
+    /// `Qt.application.member` with `Qt` at `qt`: a member read off the
+    /// application, told of before `Qt.application` is.
+    pub(crate) fn read_off(&mut self, qt: usize) {
+        self.read_off.push(qt);
     }
 
     /// `Qt.member`, read as `whole`, at `qt` (the span of `Qt`) and `at`
@@ -272,6 +277,17 @@ impl Members {
         }
         if let Some(name) = SAME.iter().find(|name| **name == member) {
             return Ok(named((*name).to_owned(), name));
+        }
+        if member == "exit" {
+            // The host quits as for `quit()` and does not take the code:
+            // only an exit that says all went well keeps its meaning.
+            return match call {
+                Some(call) if call.zeros.as_slice() == [true] => Ok(Lowered {
+                    changes: vec![(qt.clone(), APP.to_owned())],
+                    name: Some(APP),
+                }),
+                _ => Err(Cause::QtExitCode),
+            };
         }
         if ON_APP.contains(&member) {
             return Ok(Lowered {
@@ -329,7 +345,10 @@ impl Members {
                     });
                 }
             },
-            "application" => named(APP.into(), APP),
+            // `App` is the application's members, not its object: a
+            // `Connections` target or a value handed on would not be it.
+            "application" if self.read_off.contains(&qt.start) => named(APP.into(), APP),
+            "application" => return Err(Cause::QtApplicationWhole),
             "uiLanguage" => named(format!("{APP}.language"), APP),
             "styleHints" => named(format!("{APP}.hints"), APP),
             // Qt 6 resolves `Qt.resolvedUrl(u, ctx)` against the file of

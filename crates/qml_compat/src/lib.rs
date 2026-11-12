@@ -2504,6 +2504,16 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                         )
                     })
                     .collect(),
+                zeros: it
+                    .arguments
+                    .iter()
+                    .map(|a| {
+                        matches!(
+                            a.as_expression(),
+                            Some(Expression::NumericLiteral(n)) if n.value == 0.0
+                        )
+                    })
+                    .collect(),
                 span: span(it.span),
             };
             self.pass.members.qt(
@@ -2542,6 +2552,16 @@ impl<'a> Visit<'a> for Script<'_, '_> {
             }
         }
         let name = it.property.name.as_str();
+        // `Qt.application.name`: told before the walk reaches
+        // `Qt.application`, which is lowered only where read off.
+        if let Expression::StaticMemberExpression(inner) = &it.object
+            && inner.property.name == "application"
+            && let Expression::Identifier(qt) = &inner.object
+            && qt.name == "Qt"
+            && !self.own.binds("Qt", qt.span.start)
+        {
+            self.pass.members.read_off(qt.span.start as usize);
+        }
         // A parameter or a local called `Qt` is no global: its members stay.
         if let Expression::Identifier(qt) = &it.object
             && qt.name == "Qt"
