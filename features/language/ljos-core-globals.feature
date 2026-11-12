@@ -14,7 +14,9 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
   has the same from `Ljos.Core`, which it imports: `point(…)`,
   `rgba(…)`, a colour's own `darker`, `later(…)`, `url(…)` and
   `App.platform`. A file that does not import `Ljos.Core` has none of
-  them, and a property of the same name is the property.
+  them, and a property of the same name is the property. A file whose
+  member of `Qt` cannot be lowered to its home stays Qt's whole: a file
+  of Ljós's API has no `Qt`.
 
   Rule: Ljos.Core makes what Qt makes
 
@@ -169,7 +171,7 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Badge.qml (8 edits)
+        lowered ./Badge.qml (9 edits)
         scripts of ./Badge.qml stay JavaScript: typed, ljos check finds 2
         1 files, 1 lowered, 0 kept
         """
@@ -182,7 +184,7 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
           property point at: point(3, 4)
           property vector3d v: vector3d(1, 2, 3)
           property color tone: rgba(0.8, 0.4, 0.2, 1)
-          property color shade: Qt.darker(tone, 2)
+          property color shade: Color.of(tone).darker(2)
           property string os: App.platform.os
           property url icon: url("badge.png")
           property int calls: 0
@@ -192,7 +194,7 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         """
 
     @ljos-only @headless
-    Scenario: A member whose Ljós name the file uses for something else stays Qt's
+    Scenario: A file that uses a member's Ljós name for something else stays Qt's
       Given the file "Frame.qml":
         """qml
         import QtQuick
@@ -202,19 +204,22 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         }
         """
       When the author runs "ljos migrate --write ."
-      Then the file "Frame.qml" is:
+      Then the command prints:
+        """
+        kept ./Frame.qml:3:23: `Qt.size` needs `size`, which a property of the file hides
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "Frame.qml" is:
         """qml
-        pragma Scripts: JavaScript
-        import Ljos.Ui
-        import Ljos.Core
+        import QtQuick
         Item {
           property size size: Qt.size(5, 6)
-          property point at: point(3, 4)
+          property point at: Qt.point(3, 4)
         }
         """
 
     @ljos-only @headless
-    Scenario: A file with a delegate keeps Qt's members, which a role could hide
+    Scenario: A file with a delegate stays Qt's, as a role could hide a member's Ljós name
       Given the file "List.qml":
         """qml
         import QtQuick
@@ -228,17 +233,17 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         }
         """
       When the author runs "ljos migrate --write ."
-      Then the file "Dots.qml" is:
+      Then the command's output mentions "kept ./Dots.qml:3:39: `Qt.point` needs `point`, which a role of a delegate could hide"
+      And the file "Dots.qml" is:
         """qml
-        pragma Scripts: JavaScript
-        import Ljos.Ui
+        import QtQuick
         List {
           delegate: Item { property point at: Qt.point(1, 0) }
         }
         """
 
     @ljos-only @headless
-    Scenario: A member whose Ljós name a directory imported by path may have stays Qt's
+    Scenario: A file that imports a directory by path stays Qt's, as the directory may have a member's Ljós name
       Given the file "qml/App.qml":
         """qml
         import QtQuick
@@ -254,20 +259,19 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         }
         """
       When the author runs "ljos migrate --write ."
-      Then the file "Main.qml" is:
+      Then the command's output mentions "kept ./Main.qml:4:23: `Qt.platform` needs `App`, which a type of a directory the file imports could be"
+      And the file "Main.qml" is:
         """qml
-        pragma Scripts: JavaScript
-        import Ljos.Ui
-        import Ljos.Core
+        import QtQuick
         import "qml"
         Item {
           property string os: Qt.platform.os
-          property point at: point(3, 4)
+          property point at: Qt.point(3, 4)
         }
         """
 
     @ljos-only @headless
-    Scenario: Qt.resolvedUrl given the object to resolve against stays Qt's
+    Scenario: A file that gives Qt.resolvedUrl the object to resolve against stays Qt's
       Given the file "Icons.qml":
         """qml
         import QtQuick
@@ -277,13 +281,16 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         }
         """
       When the author runs "ljos migrate --write ."
-      Then the file "Icons.qml" is:
+      Then the command prints:
+        """
+        kept ./Icons.qml:4:24: `Qt.resolvedUrl` given an object to resolve against has no home in Ljós's API yet
+        1 files, 0 lowered, 1 kept
+        """
+      And the file "Icons.qml" is:
         """qml
-        pragma Scripts: JavaScript
-        import Ljos.Ui
-        import Ljos.Core
+        import QtQuick
         Item {
-          property url plain: url("a.png")
+          property url plain: Qt.resolvedUrl("a.png")
           property url placed: Qt.resolvedUrl("b.png", this)
         }
         """
