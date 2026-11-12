@@ -1,7 +1,7 @@
 //! Pages shown by the Chromium Embedded Framework, drawn off-screen.
 //!
 //! CEF runs on the Engine thread with an external message pump: it says
-//! when it next has work ([`schedule_work`]), a thread waits for that
+//! when it next has work ([`want_work`]), a thread waits for that
 //! moment and posts one job that does the work. Nothing runs between, so
 //! an idle page costs nothing. Each view has a windowless browser whose
 //! pictures (BGRA with the rectangles that changed) become successive
@@ -212,20 +212,26 @@ thread_local! {
     /// On the Engine thread: its platform, and while the browser works,
     /// the answer it is promised. A harness waits for what is promised,
     /// as a user waits for a page, so a test's time passes once the
-    /// browser has settled.
+    /// browser has settled. A page whose scripts never stop never lets
+    /// it settle, so the promise is busy work: waited on while a browser
+    /// starts or loads, and after that for a while from when the view
+    /// last told the browser something, and no longer.
     static AWAKE: RefCell<(Option<std::rc::Rc<Platform>>, Option<Reply>)> =
         const { RefCell::new((None, None)) };
 }
 
 /// The browser has work: promised to the Engine thread, when this is it.
-fn hold_awake() {
+/// `told`: the view told it something, so what follows is awaited afresh.
+fn hold_awake(told: bool) {
     let _ = AWAKE.try_with(|a| {
         let mut a = a.borrow_mut();
-        if a.1.is_none()
-            && let Some(platform) = &a.0
-        {
-            let reply = platform.expect_for("the web engine's work", None);
-            a.1 = Some(reply);
+        let (Some(platform), held) = &mut *a else {
+            return;
+        };
+        match held {
+            Some(reply) if told => platform.renew(reply),
+            Some(_) => {}
+            None => *held = Some(platform.expect_busy("the web engine's work")),
         }
     });
 }
@@ -236,20 +242,40 @@ fn release_awake() {
     drop(reply);
 }
 
-/// Work is wanted in `delay_ms`: CEF asks, from any thread, or the view
-/// told the browser something.
-fn schedule_work(delay_ms: i64) {
+/// The view told the browser something: work for its UI thread that CEF
+/// does not announce, awaited afresh.
+fn told_work() {
+    want_work(0, true);
+}
+
+/// Work is wanted in `delay_ms`: CEF asks, from any thread, or (`told`)
+/// the view told the browser something.
+fn want_work(delay_ms: i64, told: bool) {
     let Some(pump) = PUMP.get() else {
         return;
     };
     let due = Instant::now() + Duration::from_millis(delay_ms.max(0) as u64);
-    hold_awake();
+    hold_awake(told);
     let mut st = pump.state.lock().unwrap_or_else(PoisonError::into_inner);
     st.asked = true;
     if st.due.is_none_or(|d| due < d) {
         st.due = Some(due);
         pump.wake.notify_one();
     }
+}
+
+/// Whether a browser is starting or loading a page: work that was asked
+/// for and ends, so it is waited on to the end.
+fn loading() -> bool {
+    GLOBAL
+        .try_with(|g| match g.try_borrow().as_deref() {
+            Ok(Some(Ok(global))) => global.browsers.iter().any(|shared| {
+                !shared.closing.load(Ordering::Relaxed)
+                    && (shared.booting() || Shared::lock(&shared.load).url.is_some())
+            }),
+            _ => false,
+        })
+        .unwrap_or(false)
 }
 
 /// After a turn: a follow-up, unless the browser has been quiet long
@@ -316,8 +342,11 @@ fn start_pump() -> Arc<Pump> {
                                     .lock()
                                     .unwrap_or_else(PoisonError::into_inner)
                                     .posted = false;
-                                hold_awake();
+                                hold_awake(false);
                                 do_message_loop_work();
+                                if loading() {
+                                    hold_awake(true);
+                                }
                                 follow_up(&q);
                             });
                             st = p.state.lock().unwrap_or_else(PoisonError::into_inner);
@@ -382,7 +411,7 @@ wrap_browser_process_handler! {
     struct PumpHandler;
     impl BrowserProcessHandler {
         fn on_schedule_message_pump_work(&self, delay_ms: i64) {
-            schedule_work(delay_ms);
+            want_work(delay_ms, false);
         }
     }
 }
@@ -795,7 +824,7 @@ enum Asked {
 
 impl Asked {
     fn answer(self, allow: bool, shared: &Shared) {
-        schedule_work(0);
+        told_work();
         match self {
             Asked::Prompt { callback, .. } => callback.cont(if allow {
                 PermissionRequestResult::ACCEPT
@@ -911,7 +940,7 @@ impl Shared {
     /// The browser's host, for telling it something: what it is told
     /// becomes work for its UI thread that CEF does not announce.
     fn host(&self) -> Option<BrowserHost> {
-        schedule_work(0);
+        told_work();
         Self::lock(&self.browser).as_ref().and_then(|b| b.host())
     }
 
@@ -2327,7 +2356,7 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
 
 impl CefPage {
     fn browser(&self) -> Option<::cef::Browser> {
-        schedule_work(0);
+        told_work();
         Shared::lock(&self.shared.browser).clone()
     }
 

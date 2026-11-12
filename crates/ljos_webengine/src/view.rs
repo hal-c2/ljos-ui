@@ -773,8 +773,10 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                 let _ = e.set_internal(me, WebEngineView::TITLE, title);
             }
             // The load is over for a test once its picture is there; a
-            // view that cannot be seen draws none, nor does one left empty.
-            let seen = !blank && e.untrack(|| shown_tracked(e, me));
+            // view that cannot be seen draws none, and a load that failed
+            // may have none to draw: the browser's error page is not
+            // always drawn, and was waited on for good.
+            let seen = status == LoadStatus::Succeeded && e.untrack(|| shown_tracked(e, me));
             let _ = e.with_mut::<WebEngineView, _>(me, |v| {
                 if seen && v.run.browser.is_some() {
                     v.run.awaiting_frame = true;
