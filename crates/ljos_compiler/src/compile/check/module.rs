@@ -513,13 +513,18 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 Statement::ExportDeclaration(export) => Some(&export.declaration),
                 other => other.as_declaration(),
             };
-            if let Some(declaration) = declaration {
+            if let Some(declaration) = declaration
+                && !matches!(statement, Statement::VariableDeclaration(d) if self.declared_by_is(d))
+            {
                 self.bind_ahead(declaration);
                 if module.declarations {
                     self.bind_declared(declaration);
                 }
             }
         }
+        // What an `is` at the top declares is the module's, beside what it
+        // imports and declares.
+        self.is_declared_twice(body, 0, None);
         // Declarations run nothing: what they say is bound above.
         if module.declarations {
             return self.exports(module);
