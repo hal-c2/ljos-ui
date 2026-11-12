@@ -2,7 +2,8 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#contentItem-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-controls-popup.html#contentChildren-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-window.html (attached properties)
-# Verified on Qt 6.11.2 and 6.12.0 (qml6, offscreen).
+# Verified on Qt 6.11.2 and 6.12.0 (qml6, offscreen), but for the scenario
+# tagged @ljos-only: qml6 does not parse `async` functions.
 
 @qt-parity
 Feature: What is written in a popup sees where it is from the start
@@ -117,3 +118,20 @@ Feature: What is written in a popup sees where it is from the start
         """
       Then the property "thrown" of "win" is "TypeError"
       And the property "kept" of "win" is true
+
+    # Ljós only: Qt's QML takes no `async` function.
+    @ljos-only
+    Scenario: A key an optional call waits for is waited for by the chain
+      Given the QML:
+        """qml
+        import QtQuick
+        Window {
+          id: win
+          objectName: "win"
+          Item { id: host }
+          property var look: async key => host[await key]?.(1, 1).Window.window === win
+          property string kind: typeof look
+        }
+        """
+      Then the property "kind" of "win" is "function"
+      And the log has no warnings

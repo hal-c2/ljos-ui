@@ -153,6 +153,8 @@ Item {
     property var inParens: (parent?.parent)?.Keys.enabled
     property var calleeInParens: (other.childAt)?.(1, 1).Keys
     property var waits: async () => parent?.parent.Keys.forwardTo[await 0]
+    property var waitsInCallee: async () => other[await "childAt"]?.(1, 1).Keys
+    property var waitsBeforeCallee: async () => (await other).childAt?.(1, 1).Keys
 }
 "##,
     )]));
@@ -168,6 +170,7 @@ import QtQuick
 Item {
     property var steps: function* () { return parent?.parent.Keys.forwardTo[yield 0] }
     property var before: function* () { return (yield 0)?.Keys }
+    property var inCallee: function* () { return parent[yield "childAt"]?.(1, 1).Keys }
 }
 "##,
     )]));
