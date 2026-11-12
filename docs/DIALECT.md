@@ -1862,7 +1862,11 @@ oldPrice - newPrice |> Math.max(%, 0) / oldPrice * 100 |> Math.round(%)
 The parts keep their order and their lines, so the lowered text reads as
 the source does and a position in it maps back to the `%` it stands for.
 A topic is named by how many bodies deep it is, so a pipe inside a body
-declares a name its head does not read. A pipe that awaits is an `async`
+declares a name its head does not read. The names the lowering declares,
+the topics and a `match`'s `$s`, start with one `$` more than any name
+the file writes, so a body never reads one of them in place of the
+file's own: in a file that has a `$0`, the topics are `$$0`, `$$1`, ….
+A pipe that awaits is an `async`
 arrow, awaited; one that yields is a generator delegated to, as a `match`
 is (§4.18). A pipe that starts a statement is written after a `;`, so it
 never calls the line before it. Tier 1 compiles an arrow called where it

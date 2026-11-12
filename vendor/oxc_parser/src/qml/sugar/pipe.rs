@@ -14,7 +14,9 @@
 //! lines, and one closure stands for the whole chain. Each evaluation has
 //! its own `const`s, so a closure in a body keeps the topic it saw. The
 //! topics are numbered by how many bodies deep they are, so a pipe inside
-//! a body declares a name its head does not read. A chain that awaits is
+//! a body declares a name its head does not read, and they start with
+//! more `$`s than any name the file writes, so a body never reads one of
+//! them in place of the file's own. A chain that awaits is
 //! an awaited `async` arrow, and one that yields a generator, as for
 //! `match`.
 
@@ -41,7 +43,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let name = match self.sugar.topic {
             Some(index) => {
                 self.sugar.topics.push((index, span.start));
-                format!("${index}")
+                self.sugar.name(index)
             }
             None => {
                 self.sugar_error(
@@ -97,7 +99,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
         pieces.push(text(open_text, first));
         for (i, part) in parts[..parts.len() - 1].iter().enumerate() {
-            pieces.push(text(format!(" const ${} = ", index + i as u32), *part));
+            pieces.push(text(format!(" const {} = ", self.sugar.name(index + i as u32)), *part));
             pieces.push(Piece::Copy(*part));
             pieces.push(text(";", Span::empty(part.end)));
         }

@@ -77,7 +77,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
 
     fn parse_qml_document(&mut self) -> QmlDocument<'a> {
         self.lexer.qml = true;
-        self.sugar.on = true;
+        self.sugar.start(self.source_text);
         self.token = self.lexer.first_token();
         let start = self.cur_start();
 

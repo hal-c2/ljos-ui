@@ -198,6 +198,25 @@ Feature: Handing a value from step to step with the pipe
         """
       Then the property "gap" of "root" is 13
 
+    Scenario: A name the file writes is never one the lowering declares
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Item {
+          id: root; objectName: "root"
+          property int n: 7
+          readonly property string said: both()
+          function both(): string {
+            const $0 = "zero"
+            const $s = "subject"
+            const piped = n |> `${%} ${$0}`
+            const matched = match (n + 1) { when 8: $s; default: "none" }
+            return `${piped} ${matched}`
+          }
+        }
+        """
+      Then the property "said" of "root" is "7 zero subject"
+
   Rule: The checker types `%` as the head, and each step as its body
 
     Scenario: The examples check clean, and the text the desugar writes is not held to the rules about how a person writes
