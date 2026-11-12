@@ -446,7 +446,7 @@ Feature: Controllers: behaviour an item is given by declaring it
         import Ljos.Core
         import Ljos.Ui
         Item {
-          property QtObject held: QtObject {
+          property Object held: Object {
             property Controller inner: Controller {}
           }
           Controller {}
@@ -455,7 +455,7 @@ Feature: Controllers: behaviour an item is given by declaring it
       When the files are checked
       Then the check reports:
         """
-        Pick.qml:5:40: error: a `Controller` acts on the item it is declared in, and a `QtObject` is not an item: declare it in one [controller-host]
+        Pick.qml:5:40: error: a `Controller` acts on the item it is declared in, and an `Object` is not an item: declare it in one [controller-host]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
