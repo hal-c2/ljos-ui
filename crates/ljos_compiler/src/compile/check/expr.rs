@@ -9,9 +9,9 @@ use qml_syntax::{
         Argument, ArrayExpressionElement, ArrowFunctionBody, AssignmentOperator, AssignmentTarget,
         BinaryOperator, BindingPattern, CallExpression, ChainElement, Expression, FormalParameters,
         Function, IdentifierReference, LogicalOperator, ObjectPropertyKind, PropertyKey,
-        SimpleAssignmentTarget, SpreadElement, Statement, TSLiteral, TSSignature, TSType,
-        TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator, TSTypePredicateName, UnaryOperator,
-        VariableDeclaration, VariableDeclarationKind,
+        SimpleAssignmentTarget, SpreadElement, Statement, StaticMemberExpression, TSLiteral,
+        TSSignature, TSType, TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator,
+        TSTypePredicateName, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
     },
 };
 
@@ -1080,16 +1080,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     /// `?.` met what may be undefined, and the chain then gives undefined.
     fn link(&mut self, e: &Expression<'a>, short: &mut bool) -> Ty {
         match e {
-            Expression::StaticMemberExpression(m) => {
-                let object = self.link(&m.object, short);
-                let object = self.optional(object, m.optional, short);
-                let object = self.defined(object, m.object.span());
-                let base = self.member_at(object, &m.property, &m.object);
-                match self.root_local(&m.object) {
-                    Some(local) => self.fact(self.text(m.span), local).unwrap_or(base),
-                    None => base,
-                }
-            }
+            Expression::StaticMemberExpression(m) => self.static_member(m, short).1,
             Expression::ComputedMemberExpression(m) => {
                 let object = self.link(&m.object, short);
                 let object = self.optional(object, m.optional, short);
@@ -1115,6 +1106,19 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             _ => self.expr(e, None),
         }
+    }
+
+    /// `object.name`: the object's type, and the member's.
+    fn static_member(&mut self, m: &StaticMemberExpression<'a>, short: &mut bool) -> (Ty, Ty) {
+        let object = self.link(&m.object, short);
+        let object = self.optional(object, m.optional, short);
+        let object = self.defined(object, m.object.span());
+        let base = self.member_at(object, &m.property, &m.object);
+        let member = match self.root_local(&m.object) {
+            Some(local) => self.fact(self.text(m.span), local).unwrap_or(base),
+            None => base,
+        };
+        (object, member)
     }
 
     fn optional(&mut self, object: Ty, optional: bool, short: &mut bool) -> Ty {
@@ -1191,9 +1195,18 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         if self.is_sugar(call, "$nomatch") {
             return self.no_match(call);
         }
-        let callee = self.link(&call.callee, short);
+        let (receiver, callee) = match &call.callee {
+            Expression::StaticMemberExpression(m) => {
+                let (object, member) = self.static_member(m, short);
+                (Some((object, m.property.name.as_str())), member)
+            }
+            callee => (None, self.link(callee, short)),
+        };
         let callee = self.optional(callee, call.optional, short);
         let callee = self.defined(callee, call.callee.span());
+        if let Some((object, name)) = receiver {
+            self.task_call(object, name, call);
+        }
         match self.arena.kind(callee).clone() {
             Kind::Function(_) => self.apply(callee, &call.arguments, call.span),
             Kind::Method(receiver, Method::Array("map")) => self.map(receiver, call),
