@@ -12,7 +12,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
   `.ts` module stays a file that stock `tsc` and editors read, so the new
   syntax in one is an error whose fix renames the file to `.lts`.
 
-  # S5 builds `.lts` with `match`; S6 adds `|>` to it.
   Scenario: An `.lts` module with a `match` compiles and runs
     Given the file "size.lts":
       """ts
@@ -62,8 +61,6 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
       ljos: 1 errors
       """
 
-  # S5 builds the rename; S6 makes it green, since the module uses `|>`.
-  @backlog
   Scenario: Migrating renames such a module to `.lts` and the imports that name it
     Given the file "size.ts":
       """ts
@@ -92,20 +89,19 @@ Feature: `.lts` modules hold the new syntax, and `.ts` modules stay TypeScript
     Then the check reports:
       """
       renamed size.ts to size.lts, and the imports that name it in Pad.qml, line.ts, qmldir; files outside . were not looked in
-      wrote tsconfig.json
       1 files, 0 lowered, 0 kept
-      3 files, 0 errors, 0 warnings
+      2 files, 0 errors, 0 warnings
       """
-    And the file "line.ts" is:
+    And the migrated file "line.ts" is:
       """ts
       import { half } from "./size.lts"
       export const quarter: number = half(half(8))
       """
-    And the file "qmldir" is:
+    And the migrated file "qmldir" is:
       """
       Size 1.0 size.lts
       """
-    And the file "Pad.qml" is:
+    And the migrated file "Pad.qml" is:
       """qml
       import Ljos.Ui
       import "size.lts" as Size

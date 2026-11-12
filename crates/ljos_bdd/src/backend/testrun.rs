@@ -77,6 +77,10 @@ pub struct TestReport {
     pub status: i32,
     /// The machine-readable report, from a runner that writes one.
     pub json: Option<Value>,
+    /// After `ljos migrate --write`, each file of the project as the
+    /// migration left it, by its path in the project: what it renamed and
+    /// rewrote is gone with the directory once the check is done.
+    pub files: Vec<(String, String)>,
 }
 
 impl TestReport {
@@ -154,10 +158,16 @@ impl Drop for Staged {
 #[must_use]
 pub fn normalise(text: &str, suite: &Path) -> Vec<String> {
     let dir = format!("{}/", suite.display());
+    // The suite itself, as `ljos migrate` names where it looked, is the
+    // directory a scenario's files are in: `.`.
+    let suite = suite.display().to_string();
     text.lines()
         .filter(|l| !l.starts_with("********* ") && !l.starts_with("Config: "))
         .map(|l| {
-            let l = l.replace("qmltestrunner::", "").replace(&dir, "");
+            let l = l
+                .replace("qmltestrunner::", "")
+                .replace(&dir, "")
+                .replace(&suite, ".");
             let l = match l.strip_prefix("Totals: ") {
                 Some(rest) => match rest.split_once(" skipped") {
                     Some((head, _)) => format!("Totals: {head} skipped"),
@@ -304,6 +314,7 @@ pub fn run_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .ok()
         .and_then(|text| serde_json::from_str(&text).ok());
     Ok(TestReport {
+        files: Vec::new(),
         lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
         status,
         json,
@@ -365,11 +376,32 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .map_err(|e| failed(format!("cannot wait for `ljos check`: {e}")))?
         .code()
         .ok_or_else(|| failed("`ljos check` was killed"))?;
+    let mut files = Vec::new();
+    if run.migrate {
+        read_tree(&staged.suite, &staged.suite, &mut files);
+        files.sort();
+    }
     Ok(TestReport {
+        files,
         lines: normalise(&String::from_utf8_lossy(&out), &staged.suite),
         status,
         json: None,
     })
+}
+
+/// Every text file under `dir`, by its path from `base`.
+fn read_tree(dir: &Path, base: &Path, out: &mut Vec<(String, String)>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            read_tree(&path, base, out);
+        } else if let (Ok(text), Ok(name)) = (fs::read_to_string(&path), path.strip_prefix(base)) {
+            out.push((name.display().to_string(), text));
+        }
+    }
 }
 
 /// How long `ljos check` has. It reads a scenario's few files in well under
@@ -432,6 +464,7 @@ pub fn declarations() -> Result<TestReport> {
         )));
     }
     Ok(TestReport {
+        files: Vec::new(),
         lines: String::from_utf8_lossy(&out.stdout)
             .lines()
             .map(|l| l.trim_end().to_owned())
@@ -481,6 +514,7 @@ pub fn run_qt(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         return Err(failed(format!("{runner} did not finish in 60 seconds")));
     }
     Ok(TestReport {
+        files: Vec::new(),
         lines: normalise(&String::from_utf8_lossy(&out.stdout), &staged.suite),
         status,
         json: None,
@@ -568,6 +602,7 @@ Totals: 1 passed, 1 failed, 0 skipped, 0 blacklisted, 12ms
     #[test]
     fn lines_are_looked_for_as_a_block() {
         let report = TestReport {
+            files: Vec::new(),
             lines: vec!["a".into(), "b".into(), "c".into()],
             ..TestReport::default()
         };

@@ -108,7 +108,7 @@ impl Ran {
 
 /// Whether two texts are the same but for the line ends a doc string
 /// cannot carry: the last one, and spaces before one.
-fn same_text(actual: &str, want: &str) -> bool {
+pub(crate) fn same_text(actual: &str, want: &str) -> bool {
     let lines = |text: &str| -> Vec<String> {
         text.trim_end_matches('\n')
             .lines()
