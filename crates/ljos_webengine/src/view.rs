@@ -772,18 +772,28 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
                 bump(e, serial);
                 let _ = e.set_internal(me, WebEngineView::TITLE, title);
             }
-            // The load is over for a test once its picture is there; a
-            // view that cannot be seen draws none, and a load that failed
-            // may have none to draw: the browser's error page is not
-            // always drawn, and was waited on for good.
-            let seen = status == LoadStatus::Succeeded && e.untrack(|| shown_tracked(e, me));
-            let _ = e.with_mut::<WebEngineView, _>(me, |v| {
-                if seen && v.run.browser.is_some() {
-                    v.run.awaiting_frame = true;
-                } else {
-                    v.run.load = None;
-                }
-            });
+            // The load is over for a test once its picture is there, and
+            // the browser is asked to draw it: a load that stopped may have
+            // nothing new to draw. A view that cannot be seen draws none,
+            // and a load that failed may show the browser's error page,
+            // which is not always drawn and was waited on for good.
+            let seen = status != LoadStatus::Failed && e.untrack(|| shown_tracked(e, me));
+            let drawing = e
+                .with_mut::<WebEngineView, _>(me, |v| match v.run.browser.clone() {
+                    Some(browser) if seen => {
+                        v.run.awaiting_frame = true;
+                        Some(browser)
+                    }
+                    _ => {
+                        v.run.load = None;
+                        None
+                    }
+                })
+                .ok()
+                .flatten();
+            if let Some(browser) = drawing {
+                browser.redraw();
+            }
             emit_loading(e, me, &url, status, code, error, domain);
         }
         Event::Url(url) => {
