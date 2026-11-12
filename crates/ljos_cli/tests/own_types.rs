@@ -457,7 +457,8 @@ impl<'a, 'c> Module<'a, 'c> {
             let is_flags = meta
                 .own_properties()
                 .iter()
-                .any(|p| matches!(&p.ty, TypeTag::Flags(name) if *name == enumeration.name));
+                .any(|p| matches!(&p.ty, TypeTag::Flags(name) if *name == enumeration.name))
+                || enumeration.flags;
             let word = if is_flags { "flags" } else { "enum" };
             let _ = write!(out, "\t\t{word} {}", enumeration.name);
             for (key, number) in &enumeration.keys {
@@ -697,6 +698,59 @@ fn the_table_of_own_types_is_what_the_types_declare() {
         path.display(),
         first_difference(&committed, &now)
     );
+}
+
+/// The enums of `Qt` as types of `Ljos.Ui`, beside the table: what the
+/// compiler, the checker and `ljos migrate` know of them
+/// (docs/DIALECT.md §4.3.1).
+#[test]
+fn the_table_of_ljos_enums_is_the_engines() {
+    let now = ljos_engine::ljos_enums::written();
+    let path = committed().with_file_name("ljos_enums.txt");
+    if writing() {
+        fs::write(&path, now).expect("the table can be written");
+        return;
+    }
+    let committed = fs::read_to_string(&path).expect("the table is committed");
+    assert!(
+        committed == now,
+        "{} is not the engine's table of Ljós's enums. Write it again with\n\n    {COMMAND}\n\n\
+         and commit it. First difference: {}",
+        path.display(),
+        first_difference(&committed, &now)
+    );
+}
+
+/// An enum of `Ljos.Ui` is named nothing another module of Ljós's has: a
+/// file imports `Ljos.Ui` beside them, and the one imported last would be
+/// what `Button.Left` reads (the controls' `Button` is why Qt's
+/// `MouseButtons` is `MouseButton`).
+#[test]
+fn no_enum_of_ljos_ui_has_the_name_of_a_type_of_another_ljos_module() {
+    if writing() {
+        return;
+    }
+    let modules = qt_types::modules();
+    let others = modules
+        .iter()
+        .filter(|uri| uri.starts_with("Ljos") && **uri != "Ljos.Ui");
+    assert!(
+        others.clone().any(|uri| *uri == "Ljos.Controls"),
+        "{modules:?}"
+    );
+    for module in others {
+        let described = qt_types::module(module).expect("a listed module is described");
+        for e in ljos_engine::ljos_enums::ljos_enums() {
+            let name = e.name.split('.').next().unwrap_or(e.name);
+            if let Some(ty) = described.type_named(name) {
+                assert!(
+                    ty.class.starts_with("Ljos.Ui."),
+                    "`{name}` is an enum of Ljos.Ui and a type of {module} ({})",
+                    ty.class
+                );
+            }
+        }
+    }
 }
 
 /// The modules the table has from Ljós's own description: all of them in a

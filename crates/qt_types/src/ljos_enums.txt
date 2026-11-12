@@ -1,0 +1,1117 @@
+# The enums of Qt's `Qt` namespace as types of `Ljos.Ui` (docs/DIALECT.md
+# §4.3.1): a line per enum, `<type> flags|enum <Qt's enum>`, then a line per
+# key, `<Qt's key> <Ljós's key> <number>`.
+#
+# Do not edit: `crates/ljos_cli/tests/own_types.rs` writes this file from
+# the engine's table (`crates/ljos_engine/src/ljos_enums.rs`).
+
+ColorScheme enum ColorScheme
+	Unknown Unknown 0
+	Light Light 1
+	Dark Dark 2
+
+ContrastPreference enum ContrastPreference
+	NoPreference None 0
+	HighContrast High 1
+
+MouseButton flags MouseButtons
+	NoButton None 0
+	LeftButton Left 1
+	RightButton Right 2
+	MiddleButton Middle 4
+	BackButton Back 8
+	XButton1 XButton1 8
+	ExtraButton1 ExtraButton1 8
+	ForwardButton Forward 16
+	XButton2 XButton2 16
+	ExtraButton2 ExtraButton2 16
+	TaskButton Task 32
+	ExtraButton3 ExtraButton3 32
+	ExtraButton4 ExtraButton4 64
+	ExtraButton5 ExtraButton5 128
+	ExtraButton6 ExtraButton6 256
+	ExtraButton7 ExtraButton7 512
+	ExtraButton8 ExtraButton8 1024
+	ExtraButton9 ExtraButton9 2048
+	ExtraButton10 ExtraButton10 4096
+	ExtraButton11 ExtraButton11 8192
+	ExtraButton12 ExtraButton12 16384
+	ExtraButton13 ExtraButton13 32768
+	ExtraButton14 ExtraButton14 65536
+	ExtraButton15 ExtraButton15 131072
+	ExtraButton16 ExtraButton16 262144
+	ExtraButton17 ExtraButton17 524288
+	ExtraButton18 ExtraButton18 1048576
+	ExtraButton19 ExtraButton19 2097152
+	ExtraButton20 ExtraButton20 4194304
+	ExtraButton21 ExtraButton21 8388608
+	ExtraButton22 ExtraButton22 16777216
+	ExtraButton23 ExtraButton23 33554432
+	ExtraButton24 ExtraButton24 67108864
+	AllButtons All 134217727
+	MaxMouseButton Max 67108864
+	MouseButtonMask Mask -1
+
+Orientation enum Orientations
+	Horizontal Horizontal 1
+	Vertical Vertical 2
+
+FocusPolicy enum FocusPolicy
+	NoFocus None 0
+	TabFocus Tab 1
+	ClickFocus Click 2
+	StrongFocus Strong 11
+	WheelFocus Wheel 15
+
+TabFocusBehavior enum TabFocusBehavior
+	NoTabFocus None 0
+	TabFocusTextControls TextControls 1
+	TabFocusListControls ListControls 2
+	TabFocusAllControls AllControls 255
+
+SortOrder enum SortOrder
+	AscendingOrder Ascending 0
+	DescendingOrder Descending 1
+
+SplitBehavior flags SplitBehavior
+	KeepEmptyParts KeepEmptyParts 0
+	SkipEmptyParts SkipEmptyParts 1
+
+Align flags Alignment
+	AlignLeft Left 1
+	AlignLeading Leading 1
+	AlignRight Right 2
+	AlignTrailing Trailing 2
+	AlignHCenter HCenter 4
+	AlignJustify Justify 8
+	AlignAbsolute Absolute 16
+	AlignHorizontal_Mask HorizontalMask 31
+	AlignTop Top 32
+	AlignBottom Bottom 64
+	AlignVCenter VCenter 128
+	AlignBaseline Baseline 256
+	AlignVertical_Mask VerticalMask 480
+	AlignCenter Center 132
+
+TextFlag enum TextFlag
+	TextSingleLine SingleLine 256
+	TextDontClip DontClip 512
+	TextExpandTabs ExpandTabs 1024
+	TextShowMnemonic ShowMnemonic 2048
+	TextWordWrap WordWrap 4096
+	TextWrapAnywhere WrapAnywhere 8192
+	TextDontPrint DontPrint 16384
+	TextIncludeTrailingSpaces IncludeTrailingSpaces 134217728
+	TextHideMnemonic HideMnemonic 32768
+	TextJustificationForced JustificationForced 65536
+	TextForceLeftToRight ForceLeftToRight 131072
+	TextForceRightToLeft ForceRightToLeft 262144
+	TextLongestVariant LongestVariant 524288
+
+Elide enum TextElideMode
+	ElideLeft Left 0
+	ElideRight Right 1
+	ElideMiddle Middle 2
+	ElideNone None 3
+
+WindowType flags WindowFlags
+	Widget Widget 0
+	Window Window 1
+	Dialog Dialog 3
+	Sheet Sheet 5
+	Drawer Drawer 7
+	Popup Popup 9
+	Tool Tool 11
+	ToolTip ToolTip 13
+	SplashScreen SplashScreen 15
+	Desktop Desktop 17
+	SubWindow Sub 18
+	ForeignWindow Foreign 33
+	CoverWindow Cover 65
+	WindowType_Mask Mask 255
+	MSWindowsFixedSizeDialogHint MSWindowsFixedSizeDialogHint 256
+	MSWindowsOwnDC MSWindowsOwnDC 512
+	BypassWindowManagerHint BypassWindowManagerHint 1024
+	X11BypassWindowManagerHint X11BypassWindowManagerHint 1024
+	FramelessWindowHint FramelessWindowHint 2048
+	WindowTitleHint TitleHint 4096
+	WindowSystemMenuHint SystemMenuHint 8192
+	WindowMinimizeButtonHint MinimizeButtonHint 16384
+	WindowMaximizeButtonHint MaximizeButtonHint 32768
+	WindowMinMaxButtonsHint MinMaxButtonsHint 49152
+	WindowContextHelpButtonHint ContextHelpButtonHint 65536
+	WindowShadeButtonHint ShadeButtonHint 131072
+	WindowStaysOnTopHint StaysOnTopHint 262144
+	WindowTransparentForInput TransparentForInput 524288
+	WindowOverridesSystemGestures OverridesSystemGestures 1048576
+	WindowDoesNotAcceptFocus DoesNotAcceptFocus 2097152
+	MaximizeUsingFullscreenGeometryHint MaximizeUsingFullscreenGeometryHint 4194304
+	ExpandedClientAreaHint ExpandedClientAreaHint 4194304
+	NoTitleBarBackgroundHint NoTitleBarBackgroundHint 8388608
+	CustomizeWindowHint CustomizeWindowHint 33554432
+	WindowStaysOnBottomHint StaysOnBottomHint 67108864
+	WindowCloseButtonHint CloseButtonHint 134217728
+	MacWindowToolBarButtonHint MacWindowToolBarButtonHint 268435456
+	BypassGraphicsProxyWidget BypassGraphicsProxyWidget 536870912
+	NoDropShadowWindowHint NoDropShadowWindowHint 1073741824
+	WindowFullscreenButtonHint FullscreenButtonHint -2147483648
+
+WindowState flags WindowStates
+	WindowNoState NoState 0
+	WindowMinimized Minimized 1
+	WindowMaximized Maximized 2
+	WindowFullScreen FullScreen 4
+	WindowActive Active 8
+
+ApplicationState enum ApplicationState
+	ApplicationSuspended Suspended 0
+	ApplicationHidden Hidden 1
+	ApplicationInactive Inactive 2
+	ApplicationActive Active 4
+
+ScreenOrientation flags ScreenOrientations
+	PrimaryOrientation Primary 0
+	PortraitOrientation Portrait 1
+	LandscapeOrientation Landscape 2
+	InvertedPortraitOrientation InvertedPortrait 4
+	InvertedLandscapeOrientation InvertedLandscape 8
+
+ImageConversionFlag flags ImageConversionFlags
+	ColorMode_Mask ColorModeMask 3
+	AutoColor AutoColor 0
+	ColorOnly ColorOnly 3
+	MonoOnly MonoOnly 2
+	AlphaDither_Mask AlphaDitherMask 12
+	ThresholdAlphaDither ThresholdAlphaDither 0
+	OrderedAlphaDither OrderedAlphaDither 4
+	DiffuseAlphaDither DiffuseAlphaDither 8
+	NoAlpha NoAlpha 12
+	Dither_Mask DitherMask 48
+	DiffuseDither DiffuseDither 0
+	OrderedDither OrderedDither 16
+	ThresholdDither ThresholdDither 32
+	DitherMode_Mask DitherModeMask 192
+	AutoDither AutoDither 0
+	PreferDither PreferDither 64
+	AvoidDither AvoidDither 128
+	NoOpaqueDetection NoOpaqueDetection 256
+	NoFormatConversion NoFormatConversion 512
+
+BGMode enum BGMode
+	TransparentMode Transparent 0
+	OpaqueMode Opaque 1
+
+Modifier flags KeyboardModifiers
+	NoModifier None 0
+	ShiftModifier Shift 33554432
+	ControlModifier Control 67108864
+	AltModifier Alt 134217728
+	MetaModifier Meta 268435456
+	KeypadModifier Keypad 536870912
+	GroupSwitchModifier GroupSwitch 1073741824
+	KeyboardModifierMask Mask -33554432
+
+KeyModifier flags Modifiers
+	META META 268435456
+	SHIFT SHIFT 33554432
+	CTRL CTRL 67108864
+	ALT ALT 134217728
+	MODIFIER_MASK MODIFIERMASK -33554432
+
+ArrowType enum ArrowType
+	NoArrow None 0
+	UpArrow Up 1
+	DownArrow Down 2
+	LeftArrow Left 3
+	RightArrow Right 4
+
+PenStyle enum PenStyle
+	NoPen None 0
+	SolidLine SolidLine 1
+	DashLine DashLine 2
+	DotLine DotLine 3
+	DashDotLine DashDotLine 4
+	DashDotDotLine DashDotDotLine 5
+	CustomDashLine CustomDashLine 6
+
+PenCapStyle enum PenCapStyle
+	FlatCap FlatCap 0
+	SquareCap SquareCap 16
+	RoundCap RoundCap 32
+	MPenCapStyle Mask 48
+
+PenJoinStyle enum PenJoinStyle
+	MiterJoin MiterJoin 0
+	BevelJoin BevelJoin 64
+	RoundJoin RoundJoin 128
+	SvgMiterJoin SvgMiterJoin 256
+	MPenJoinStyle Mask 448
+
+BrushStyle enum BrushStyle
+	NoBrush None 0
+	SolidPattern SolidPattern 1
+	Dense1Pattern Dense1Pattern 2
+	Dense2Pattern Dense2Pattern 3
+	Dense3Pattern Dense3Pattern 4
+	Dense4Pattern Dense4Pattern 5
+	Dense5Pattern Dense5Pattern 6
+	Dense6Pattern Dense6Pattern 7
+	Dense7Pattern Dense7Pattern 8
+	HorPattern HorPattern 9
+	VerPattern VerPattern 10
+	CrossPattern CrossPattern 11
+	BDiagPattern BDiagPattern 12
+	FDiagPattern FDiagPattern 13
+	DiagCrossPattern DiagCrossPattern 14
+	LinearGradientPattern LinearGradientPattern 15
+	RadialGradientPattern RadialGradientPattern 16
+	ConicalGradientPattern ConicalGradientPattern 17
+	TexturePattern TexturePattern 24
+
+SizeMode enum SizeMode
+	AbsoluteSize Absolute 0
+	RelativeSize Relative 1
+
+Cursor enum CursorShape
+	ArrowCursor Arrow 0
+	UpArrowCursor UpArrow 1
+	CrossCursor Cross 2
+	WaitCursor Wait 3
+	IBeamCursor IBeam 4
+	SizeVerCursor SizeVer 5
+	SizeHorCursor SizeHor 6
+	SizeBDiagCursor SizeBDiag 7
+	SizeFDiagCursor SizeFDiag 8
+	SizeAllCursor SizeAll 9
+	BlankCursor Blank 10
+	SplitVCursor SplitV 11
+	SplitHCursor SplitH 12
+	PointingHandCursor PointingHand 13
+	ForbiddenCursor Forbidden 14
+	WhatsThisCursor WhatsThis 15
+	BusyCursor Busy 16
+	OpenHandCursor OpenHand 17
+	ClosedHandCursor ClosedHand 18
+	DragCopyCursor DragCopy 19
+	DragMoveCursor DragMove 20
+	DragLinkCursor DragLink 21
+	LastCursor Last 21
+	BitmapCursor Bitmap 24
+	CustomCursor Custom 25
+
+TextFormat enum TextFormat
+	PlainText Plain 0
+	RichText Rich 1
+	AutoText Auto 2
+	MarkdownText Markdown 3
+
+AspectRatioMode enum AspectRatioMode
+	IgnoreAspectRatio Ignore 0
+	KeepAspectRatio Keep 1
+	KeepAspectRatioByExpanding KeepAspectRatioByExpanding 2
+
+DockWidgetArea flags DockWidgetAreas
+	LeftDockWidgetArea Left 1
+	RightDockWidgetArea Right 2
+	TopDockWidgetArea Top 4
+	BottomDockWidgetArea Bottom 8
+	DockWidgetArea_Mask Mask 15
+	AllDockWidgetAreas All 15
+	NoDockWidgetArea None 0
+
+ToolBarArea flags ToolBarAreas
+	LeftToolBarArea Left 1
+	RightToolBarArea Right 2
+	TopToolBarArea Top 4
+	BottomToolBarArea Bottom 8
+	ToolBarArea_Mask Mask 15
+	AllToolBarAreas All 15
+	NoToolBarArea None 0
+
+DateFormat enum DateFormat
+	TextDate Text 0
+	ISODate ISO 1
+	RFC2822Date RFC2822 8
+	ISODateWithMs ISODateWithMs 9
+
+TimeSpec enum TimeSpec
+	LocalTime Local 0
+	UTC UTC 1
+	OffsetFromUTC OffsetFromUTC 2
+	TimeZone Zone 3
+
+DayOfWeek enum DayOfWeek
+	Monday Monday 1
+	Tuesday Tuesday 2
+	Wednesday Wednesday 3
+	Thursday Thursday 4
+	Friday Friday 5
+	Saturday Saturday 6
+	Sunday Sunday 7
+
+ScrollBarPolicy enum ScrollBarPolicy
+	ScrollBarAsNeeded AsNeeded 0
+	ScrollBarAlwaysOff AlwaysOff 1
+	ScrollBarAlwaysOn AlwaysOn 2
+
+CaseSensitivity enum CaseSensitivity
+	CaseInsensitive Insensitive 0
+	CaseSensitive Sensitive 1
+
+Corner enum Corner
+	TopLeftCorner TopLeft 0
+	TopRightCorner TopRight 1
+	BottomLeftCorner BottomLeft 2
+	BottomRightCorner BottomRight 3
+
+Edge flags Edges
+	TopEdge Top 1
+	LeftEdge Left 2
+	RightEdge Right 4
+	BottomEdge Bottom 8
+
+ConnectionType enum ConnectionType
+	AutoConnection Auto 0
+	DirectConnection Direct 1
+	QueuedConnection Queued 2
+	BlockingQueuedConnection BlockingQueued 3
+	UniqueConnection Unique 128
+	SingleShotConnection SingleShot 256
+
+ShortcutContext enum ShortcutContext
+	WidgetShortcut Widget 0
+	WindowShortcut Window 1
+	ApplicationShortcut Application 2
+	WidgetWithChildrenShortcut WidgetWithChildren 3
+
+FillRule enum FillRule
+	OddEvenFill OddEven 0
+	WindingFill Winding 1
+
+MaskMode enum MaskMode
+	MaskInColor InColor 0
+	MaskOutColor OutColor 1
+
+ClipOperation enum ClipOperation
+	NoClip None 0
+	ReplaceClip Replace 1
+	IntersectClip Intersect 2
+
+ItemSelectionMode enum ItemSelectionMode
+	ContainsItemShape ContainsItemShape 0
+	IntersectsItemShape IntersectsItemShape 1
+	ContainsItemBoundingRect ContainsItemBoundingRect 2
+	IntersectsItemBoundingRect IntersectsItemBoundingRect 3
+
+ItemSelectionOperation enum ItemSelectionOperation
+	ReplaceSelection ReplaceSelection 0
+	AddToSelection AddToSelection 1
+
+TransformationMode enum TransformationMode
+	FastTransformation Fast 0
+	SmoothTransformation Smooth 1
+
+Axis enum Axis
+	XAxis X 0
+	YAxis Y 1
+	ZAxis Z 2
+
+FocusReason enum FocusReason
+	MouseFocusReason Mouse 0
+	TabFocusReason Tab 1
+	BacktabFocusReason Backtab 2
+	ActiveWindowFocusReason ActiveWindow 3
+	PopupFocusReason Popup 4
+	ShortcutFocusReason Shortcut 5
+	MenuBarFocusReason MenuBar 6
+	OtherFocusReason Other 7
+	NoFocusReason None 8
+
+ContextMenuPolicy enum ContextMenuPolicy
+	NoContextMenu None 0
+	DefaultContextMenu Default 1
+	ActionsContextMenu Actions 2
+	CustomContextMenu Custom 3
+	PreventContextMenu Prevent 4
+
+ContextMenuTrigger enum ContextMenuTrigger
+	Press Press 0
+	Release Release 1
+
+InputMethodQuery flags InputMethodQueries
+	ImEnabled ImEnabled 1
+	ImCursorRectangle ImCursorRectangle 2
+	ImFont ImFont 4
+	ImCursorPosition ImCursorPosition 8
+	ImSurroundingText ImSurroundingText 16
+	ImCurrentSelection ImCurrentSelection 32
+	ImMaximumTextLength ImMaximumTextLength 64
+	ImAnchorPosition ImAnchorPosition 128
+	ImHints ImHints 256
+	ImPreferredLanguage ImPreferredLanguage 512
+	ImAbsolutePosition ImAbsolutePosition 1024
+	ImTextBeforeCursor ImTextBeforeCursor 2048
+	ImTextAfterCursor ImTextAfterCursor 4096
+	ImEnterKeyType ImEnterKeyType 8192
+	ImAnchorRectangle ImAnchorRectangle 16384
+	ImInputItemClipRectangle ImInputItemClipRectangle 32768
+	ImReadOnly ImReadOnly 65536
+	ImPlatformData ImPlatformData -2147483648
+	ImQueryInput ImQuery 16570
+	ImQueryAll ImQueryAll -1
+
+InputMethodHint flags InputMethodHints
+	ImhNone ImhNone 0
+	ImhHiddenText ImhHiddenText 1
+	ImhSensitiveData ImhSensitiveData 2
+	ImhNoAutoUppercase ImhNoAutoUppercase 4
+	ImhPreferNumbers ImhPreferNumbers 8
+	ImhPreferUppercase ImhPreferUppercase 16
+	ImhPreferLowercase ImhPreferLowercase 32
+	ImhNoPredictiveText ImhNoPredictiveText 64
+	ImhDate ImhDate 128
+	ImhTime ImhTime 256
+	ImhPreferLatin ImhPreferLatin 512
+	ImhMultiLine ImhMultiLine 1024
+	ImhNoEditMenu ImhNoEditMenu 2048
+	ImhNoTextHandles ImhNoTextHandles 4096
+	ImhDigitsOnly ImhDigitsOnly 65536
+	ImhFormattedNumbersOnly ImhFormattedNumbersOnly 131072
+	ImhUppercaseOnly ImhUppercaseOnly 262144
+	ImhLowercaseOnly ImhLowercaseOnly 524288
+	ImhDialableCharactersOnly ImhDialableCharactersOnly 1048576
+	ImhEmailCharactersOnly ImhEmailCharactersOnly 2097152
+	ImhUrlCharactersOnly ImhUrlCharactersOnly 4194304
+	ImhLatinOnly ImhLatinOnly 8388608
+	ImhExclusiveInputMask ImhExclusiveInputMask -65536
+
+EnterKeyType enum EnterKeyType
+	EnterKeyDefault Default 0
+	EnterKeyReturn Return 1
+	EnterKeyDone Done 2
+	EnterKeyGo Go 3
+	EnterKeySend Send 4
+	EnterKeySearch Search 5
+	EnterKeyNext Next 6
+	EnterKeyPrevious Previous 7
+
+ToolButtonStyle enum ToolButtonStyle
+	ToolButtonIconOnly IconOnly 0
+	ToolButtonTextOnly TextOnly 1
+	ToolButtonTextBesideIcon TextBesideIcon 2
+	ToolButtonTextUnderIcon TextUnderIcon 3
+	ToolButtonFollowStyle FollowStyle 4
+
+Direction enum LayoutDirection
+	LeftToRight LeftToRight 0
+	RightToLeft RightToLeft 1
+	LayoutDirectionAuto Auto 2
+
+DropAction flags DropActions
+	CopyAction Copy 1
+	MoveAction Move 2
+	LinkAction Link 4
+	ActionMask Mask 255
+	TargetMoveAction TargetMove 32770
+	IgnoreAction Ignore 0
+
+CheckState enum CheckState
+	Unchecked Unchecked 0
+	PartiallyChecked PartiallyChecked 1
+	Checked Checked 2
+
+ItemDataRole enum ItemDataRole
+	DisplayRole Display 0
+	DecorationRole Decoration 1
+	EditRole Edit 2
+	ToolTipRole ToolTip 3
+	StatusTipRole StatusTip 4
+	WhatsThisRole WhatsThis 5
+	FontRole Font 6
+	TextAlignmentRole TextAlignment 7
+	BackgroundRole Background 8
+	ForegroundRole Foreground 9
+	CheckStateRole CheckState 10
+	AccessibleTextRole AccessibleText 11
+	AccessibleDescriptionRole AccessibleDescription 12
+	SizeHintRole SizeHint 13
+	InitialSortOrderRole InitialSortOrder 14
+	DisplayPropertyRole DisplayProperty 27
+	DecorationPropertyRole DecorationProperty 28
+	ToolTipPropertyRole ToolTipProperty 29
+	StatusTipPropertyRole StatusTipProperty 30
+	WhatsThisPropertyRole WhatsThisProperty 31
+	RangeModelDataRole RangeModelData 40
+	RangeModelAdapterRole RangeModelAdapter 41
+	UserRole User 256
+	StandardItemFlagsRole StandardItemFlags 255
+	FileInfoRole FileInfo 252
+	RemoteObjectsCacheRole RemoteObjectsCache 255
+
+ItemFlag flags ItemFlags
+	NoItemFlags None 0
+	ItemIsSelectable IsSelectable 1
+	ItemIsEditable IsEditable 2
+	ItemIsDragEnabled IsDragEnabled 4
+	ItemIsDropEnabled IsDropEnabled 8
+	ItemIsUserCheckable IsUserCheckable 16
+	ItemIsEnabled IsEnabled 32
+	ItemIsAutoTristate IsAutoTristate 64
+	ItemNeverHasChildren NeverHasChildren 128
+	ItemIsUserTristate IsUserTristate 256
+
+MatchFlag flags MatchFlags
+	MatchExactly Exactly 0
+	MatchContains Contains 1
+	MatchStartsWith StartsWith 2
+	MatchEndsWith EndsWith 3
+	MatchRegularExpression RegularExpression 4
+	MatchWildcard Wildcard 5
+	MatchFixedString FixedString 8
+	MatchTypeMask TypeMask 15
+	MatchCaseSensitive CaseSensitive 16
+	MatchWrap Wrap 32
+	MatchRecursive Recursive 64
+
+WindowModality enum WindowModality
+	NonModal NonModal 0
+	WindowModal Modal 1
+	ApplicationModal ApplicationModal 2
+
+TextInteractionFlag flags TextInteractionFlags
+	NoTextInteraction None 0
+	TextSelectableByMouse SelectableByMouse 1
+	TextSelectableByKeyboard SelectableByKeyboard 2
+	LinksAccessibleByMouse LinksAccessibleByMouse 4
+	LinksAccessibleByKeyboard LinksAccessibleByKeyboard 8
+	TextEditable Editable 16
+	TextEditorInteraction EditorInteraction 19
+	TextBrowserInteraction BrowserInteraction 13
+
+SizeHint enum SizeHint
+	MinimumSize Minimum 0
+	PreferredSize Preferred 1
+	MaximumSize Maximum 2
+	MinimumDescent MinimumDescent 3
+	NSizeHints N 4
+
+TouchPointState flags TouchPointStates
+	TouchPointUnknownState UnknownState 0
+	TouchPointPressed Pressed 1
+	TouchPointMoved Moved 2
+	TouchPointStationary Stationary 4
+	TouchPointReleased Released 8
+
+GestureState enum GestureState
+	NoGesture None 0
+	GestureStarted Started 1
+	GestureUpdated Updated 2
+	GestureFinished Finished 3
+	GestureCanceled Canceled 4
+
+GestureType enum GestureType
+	TapGesture Tap 1
+	TapAndHoldGesture TapAndHold 2
+	PanGesture Pan 3
+	PinchGesture Pinch 4
+	SwipeGesture Swipe 5
+	CustomGesture Custom 256
+	LastGestureType Last -1
+
+NativeGestureType enum NativeGestureType
+	BeginNativeGesture Begin 0
+	EndNativeGesture End 1
+	PanNativeGesture Pan 2
+	ZoomNativeGesture Zoom 3
+	SmartZoomNativeGesture SmartZoom 4
+	RotateNativeGesture Rotate 5
+	SwipeNativeGesture Swipe 6
+
+CursorMoveStyle enum CursorMoveStyle
+	LogicalMoveStyle LogicalMove 0
+	VisualMoveStyle VisualMove 1
+
+TimerType enum TimerType
+	PreciseTimer Precise 0
+	CoarseTimer Coarse 1
+	VeryCoarseTimer VeryCoarse 2
+
+TimerId enum TimerId
+	Invalid Invalid 0
+
+ScrollPhase enum ScrollPhase
+	NoScrollPhase None 0
+	ScrollBegin Begin 1
+	ScrollUpdate Update 2
+	ScrollEnd End 3
+	ScrollMomentum Momentum 4
+
+MouseEventSource enum MouseEventSource
+	MouseEventNotSynthesized NotSynthesized 0
+	MouseEventSynthesizedBySystem SynthesizedBySystem 1
+	MouseEventSynthesizedByQt SynthesizedByQt 2
+	MouseEventSynthesizedByApplication SynthesizedByApplication 3
+
+MouseEventFlag flags MouseEventFlags
+	NoMouseEventFlag None 0
+	MouseEventCreatedDoubleClick CreatedDoubleClick 1
+	MouseEventFlagMask Mask 255
+
+ChecksumType enum ChecksumType
+	ChecksumIso3309 Iso3309 0
+	ChecksumItuV41 ItuV41 1
+
+HighDpiScaleFactorRoundingPolicy enum HighDpiScaleFactorRoundingPolicy
+	Unset Unset 0
+	Round Round 1
+	Ceil Ceil 2
+	Floor Floor 3
+	RoundPreferFloor RoundPreferFloor 4
+	PassThrough PassThrough 5
+
+Permission.Status enum PermissionStatus
+	Undetermined Undetermined 0
+	Granted Granted 1
+	Denied Denied 2
+
+Key enum Key
+	Key_Escape Escape 16777216
+	Key_Tab Tab 16777217
+	Key_Backtab Backtab 16777218
+	Key_Backspace Backspace 16777219
+	Key_Return Return 16777220
+	Key_Enter Enter 16777221
+	Key_Insert Insert 16777222
+	Key_Delete Delete 16777223
+	Key_Pause Pause 16777224
+	Key_Print Print 16777225
+	Key_SysReq SysReq 16777226
+	Key_Clear Clear 16777227
+	Key_Home Home 16777232
+	Key_End End 16777233
+	Key_Left Left 16777234
+	Key_Up Up 16777235
+	Key_Right Right 16777236
+	Key_Down Down 16777237
+	Key_PageUp PageUp 16777238
+	Key_PageDown PageDown 16777239
+	Key_Shift Shift 16777248
+	Key_Control Control 16777249
+	Key_Meta Meta 16777250
+	Key_Alt Alt 16777251
+	Key_AltGr AltGr 16781571
+	Key_CapsLock CapsLock 16777252
+	Key_NumLock NumLock 16777253
+	Key_ScrollLock ScrollLock 16777254
+	Key_F1 F1 16777264
+	Key_F2 F2 16777265
+	Key_F3 F3 16777266
+	Key_F4 F4 16777267
+	Key_F5 F5 16777268
+	Key_F6 F6 16777269
+	Key_F7 F7 16777270
+	Key_F8 F8 16777271
+	Key_F9 F9 16777272
+	Key_F10 F10 16777273
+	Key_F11 F11 16777274
+	Key_F12 F12 16777275
+	Key_F13 F13 16777276
+	Key_F14 F14 16777277
+	Key_F15 F15 16777278
+	Key_F16 F16 16777279
+	Key_F17 F17 16777280
+	Key_F18 F18 16777281
+	Key_F19 F19 16777282
+	Key_F20 F20 16777283
+	Key_F21 F21 16777284
+	Key_F22 F22 16777285
+	Key_F23 F23 16777286
+	Key_F24 F24 16777287
+	Key_F25 F25 16777288
+	Key_F26 F26 16777289
+	Key_F27 F27 16777290
+	Key_F28 F28 16777291
+	Key_F29 F29 16777292
+	Key_F30 F30 16777293
+	Key_F31 F31 16777294
+	Key_F32 F32 16777295
+	Key_F33 F33 16777296
+	Key_F34 F34 16777297
+	Key_F35 F35 16777298
+	Key_Super_L SuperL 16777299
+	Key_Super_R SuperR 16777300
+	Key_Menu Menu 16777301
+	Key_Hyper_L HyperL 16777302
+	Key_Hyper_R HyperR 16777303
+	Key_Help Help 16777304
+	Key_Direction_L DirectionL 16777305
+	Key_Direction_R DirectionR 16777312
+	Key_Space Space 32
+	Key_Any Any 32
+	Key_Exclam Exclam 33
+	Key_QuoteDbl QuoteDbl 34
+	Key_NumberSign NumberSign 35
+	Key_Dollar Dollar 36
+	Key_Percent Percent 37
+	Key_Ampersand Ampersand 38
+	Key_Apostrophe Apostrophe 39
+	Key_ParenLeft ParenLeft 40
+	Key_ParenRight ParenRight 41
+	Key_Asterisk Asterisk 42
+	Key_Plus Plus 43
+	Key_Comma Comma 44
+	Key_Minus Minus 45
+	Key_Period Period 46
+	Key_Slash Slash 47
+	Key_0 Digit0 48
+	Key_1 Digit1 49
+	Key_2 Digit2 50
+	Key_3 Digit3 51
+	Key_4 Digit4 52
+	Key_5 Digit5 53
+	Key_6 Digit6 54
+	Key_7 Digit7 55
+	Key_8 Digit8 56
+	Key_9 Digit9 57
+	Key_Colon Colon 58
+	Key_Semicolon Semicolon 59
+	Key_Less Less 60
+	Key_Equal Equal 61
+	Key_Greater Greater 62
+	Key_Question Question 63
+	Key_At At 64
+	Key_A A 65
+	Key_B B 66
+	Key_C C 67
+	Key_D D 68
+	Key_E E 69
+	Key_F F 70
+	Key_G G 71
+	Key_H H 72
+	Key_I I 73
+	Key_J J 74
+	Key_K K 75
+	Key_L L 76
+	Key_M M 77
+	Key_N N 78
+	Key_O O 79
+	Key_P P 80
+	Key_Q Q 81
+	Key_R R 82
+	Key_S S 83
+	Key_T T 84
+	Key_U U 85
+	Key_V V 86
+	Key_W W 87
+	Key_X X 88
+	Key_Y Y 89
+	Key_Z Z 90
+	Key_BracketLeft BracketLeft 91
+	Key_Backslash Backslash 92
+	Key_BracketRight BracketRight 93
+	Key_AsciiCircum AsciiCircum 94
+	Key_Underscore Underscore 95
+	Key_QuoteLeft QuoteLeft 96
+	Key_BraceLeft BraceLeft 123
+	Key_Bar Bar 124
+	Key_BraceRight BraceRight 125
+	Key_AsciiTilde AsciiTilde 126
+	Key_nobreakspace Nobreakspace 160
+	Key_exclamdown Exclamdown 161
+	Key_cent Cent 162
+	Key_sterling Sterling 163
+	Key_currency Currency 164
+	Key_yen Yen 165
+	Key_brokenbar Brokenbar 166
+	Key_section Section 167
+	Key_diaeresis Diaeresis 168
+	Key_copyright Copyright 169
+	Key_ordfeminine Ordfeminine 170
+	Key_guillemotleft Guillemotleft 171
+	Key_notsign Notsign 172
+	Key_hyphen Hyphen 173
+	Key_registered Registered 174
+	Key_macron Macron 175
+	Key_degree Degree 176
+	Key_plusminus Plusminus 177
+	Key_twosuperior Twosuperior 178
+	Key_threesuperior Threesuperior 179
+	Key_acute Acute 180
+	Key_mu Mu 181
+	Key_micro Micro 181
+	Key_paragraph Paragraph 182
+	Key_periodcentered Periodcentered 183
+	Key_cedilla Cedilla 184
+	Key_onesuperior Onesuperior 185
+	Key_masculine Masculine 186
+	Key_guillemotright Guillemotright 187
+	Key_onequarter Onequarter 188
+	Key_onehalf Onehalf 189
+	Key_threequarters Threequarters 190
+	Key_questiondown Questiondown 191
+	Key_Agrave Agrave 192
+	Key_Aacute Aacute 193
+	Key_Acircumflex Acircumflex 194
+	Key_Atilde Atilde 195
+	Key_Adiaeresis Adiaeresis 196
+	Key_Aring Aring 197
+	Key_AE AE 198
+	Key_Ccedilla Ccedilla 199
+	Key_Egrave Egrave 200
+	Key_Eacute Eacute 201
+	Key_Ecircumflex Ecircumflex 202
+	Key_Ediaeresis Ediaeresis 203
+	Key_Igrave Igrave 204
+	Key_Iacute Iacute 205
+	Key_Icircumflex Icircumflex 206
+	Key_Idiaeresis Idiaeresis 207
+	Key_ETH ETH 208
+	Key_Ntilde Ntilde 209
+	Key_Ograve Ograve 210
+	Key_Oacute Oacute 211
+	Key_Ocircumflex Ocircumflex 212
+	Key_Otilde Otilde 213
+	Key_Odiaeresis Odiaeresis 214
+	Key_multiply Multiply 215
+	Key_Ooblique Ooblique 216
+	Key_Ugrave Ugrave 217
+	Key_Uacute Uacute 218
+	Key_Ucircumflex Ucircumflex 219
+	Key_Udiaeresis Udiaeresis 220
+	Key_Yacute Yacute 221
+	Key_THORN THORN 222
+	Key_ssharp Ssharp 223
+	Key_division Division 247
+	Key_ydiaeresis Ydiaeresis 255
+	Key_Multi_key Multikey 16781600
+	Key_Codeinput Codeinput 16781623
+	Key_SingleCandidate SingleCandidate 16781628
+	Key_MultipleCandidate MultipleCandidate 16781629
+	Key_PreviousCandidate PreviousCandidate 16781630
+	Key_Mode_switch Modeswitch 16781694
+	Key_Kanji Kanji 16781601
+	Key_Muhenkan Muhenkan 16781602
+	Key_Henkan Henkan 16781603
+	Key_Romaji Romaji 16781604
+	Key_Hiragana Hiragana 16781605
+	Key_Katakana Katakana 16781606
+	Key_Hiragana_Katakana HiraganaKatakana 16781607
+	Key_Zenkaku Zenkaku 16781608
+	Key_Hankaku Hankaku 16781609
+	Key_Zenkaku_Hankaku ZenkakuHankaku 16781610
+	Key_Touroku Touroku 16781611
+	Key_Massyo Massyo 16781612
+	Key_Kana_Lock KanaLock 16781613
+	Key_Kana_Shift KanaShift 16781614
+	Key_Eisu_Shift EisuShift 16781615
+	Key_Eisu_toggle Eisutoggle 16781616
+	Key_Hangul Hangul 16781617
+	Key_Hangul_Start HangulStart 16781618
+	Key_Hangul_End HangulEnd 16781619
+	Key_Hangul_Hanja HangulHanja 16781620
+	Key_Hangul_Jamo HangulJamo 16781621
+	Key_Hangul_Romaja HangulRomaja 16781622
+	Key_Hangul_Jeonja HangulJeonja 16781624
+	Key_Hangul_Banja HangulBanja 16781625
+	Key_Hangul_PreHanja HangulPreHanja 16781626
+	Key_Hangul_PostHanja HangulPostHanja 16781627
+	Key_Hangul_Special HangulSpecial 16781631
+	Key_Dead_Grave DeadGrave 16781904
+	Key_Dead_Acute DeadAcute 16781905
+	Key_Dead_Circumflex DeadCircumflex 16781906
+	Key_Dead_Tilde DeadTilde 16781907
+	Key_Dead_Macron DeadMacron 16781908
+	Key_Dead_Breve DeadBreve 16781909
+	Key_Dead_Abovedot DeadAbovedot 16781910
+	Key_Dead_Diaeresis DeadDiaeresis 16781911
+	Key_Dead_Abovering DeadAbovering 16781912
+	Key_Dead_Doubleacute DeadDoubleacute 16781913
+	Key_Dead_Caron DeadCaron 16781914
+	Key_Dead_Cedilla DeadCedilla 16781915
+	Key_Dead_Ogonek DeadOgonek 16781916
+	Key_Dead_Iota DeadIota 16781917
+	Key_Dead_Voiced_Sound DeadVoicedSound 16781918
+	Key_Dead_Semivoiced_Sound DeadSemivoicedSound 16781919
+	Key_Dead_Belowdot DeadBelowdot 16781920
+	Key_Dead_Hook DeadHook 16781921
+	Key_Dead_Horn DeadHorn 16781922
+	Key_Back Back 16777313
+	Key_Forward Forward 16777314
+	Key_Stop Stop 16777315
+	Key_Refresh Refresh 16777316
+	Key_VolumeDown VolumeDown 16777328
+	Key_VolumeMute VolumeMute 16777329
+	Key_VolumeUp VolumeUp 16777330
+	Key_BassBoost BassBoost 16777331
+	Key_BassUp BassUp 16777332
+	Key_BassDown BassDown 16777333
+	Key_TrebleUp TrebleUp 16777334
+	Key_TrebleDown TrebleDown 16777335
+	Key_MediaPlay MediaPlay 16777344
+	Key_MediaStop MediaStop 16777345
+	Key_MediaPrevious MediaPrevious 16777346
+	Key_MediaNext MediaNext 16777347
+	Key_MediaRecord MediaRecord 16777348
+	Key_MediaPause MediaPause 16777349
+	Key_MediaTogglePlayPause MediaTogglePlayPause 16777350
+	Key_HomePage HomePage 16777360
+	Key_Favorites Favorites 16777361
+	Key_Search Search 16777362
+	Key_Standby Standby 16777363
+	Key_OpenUrl OpenUrl 16777364
+	Key_LaunchMail LaunchMail 16777376
+	Key_LaunchMedia LaunchMedia 16777377
+	Key_Launch0 Launch0 16777378
+	Key_Launch1 Launch1 16777379
+	Key_Launch2 Launch2 16777380
+	Key_Launch3 Launch3 16777381
+	Key_Launch4 Launch4 16777382
+	Key_Launch5 Launch5 16777383
+	Key_Launch6 Launch6 16777384
+	Key_Launch7 Launch7 16777385
+	Key_Launch8 Launch8 16777386
+	Key_Launch9 Launch9 16777387
+	Key_LaunchA LaunchA 16777388
+	Key_LaunchB LaunchB 16777389
+	Key_LaunchC LaunchC 16777390
+	Key_LaunchD LaunchD 16777391
+	Key_LaunchE LaunchE 16777392
+	Key_LaunchF LaunchF 16777393
+	Key_LaunchG LaunchG 16777486
+	Key_LaunchH LaunchH 16777487
+	Key_MonBrightnessUp MonBrightnessUp 16777394
+	Key_MonBrightnessDown MonBrightnessDown 16777395
+	Key_KeyboardLightOnOff KeyboardLightOnOff 16777396
+	Key_KeyboardBrightnessUp KeyboardBrightnessUp 16777397
+	Key_KeyboardBrightnessDown KeyboardBrightnessDown 16777398
+	Key_PowerOff PowerOff 16777399
+	Key_WakeUp WakeUp 16777400
+	Key_Eject Eject 16777401
+	Key_ScreenSaver ScreenSaver 16777402
+	Key_WWW WWW 16777403
+	Key_Memo Memo 16777404
+	Key_LightBulb LightBulb 16777405
+	Key_Shop Shop 16777406
+	Key_History History 16777407
+	Key_AddFavorite AddFavorite 16777408
+	Key_HotLinks HotLinks 16777409
+	Key_BrightnessAdjust BrightnessAdjust 16777410
+	Key_Finance Finance 16777411
+	Key_Community Community 16777412
+	Key_AudioRewind AudioRewind 16777413
+	Key_BackForward BackForward 16777414
+	Key_ApplicationLeft ApplicationLeft 16777415
+	Key_ApplicationRight ApplicationRight 16777416
+	Key_Book Book 16777417
+	Key_CD CD 16777418
+	Key_Calculator Calculator 16777419
+	Key_ToDoList ToDoList 16777420
+	Key_ClearGrab ClearGrab 16777421
+	Key_Close Close 16777422
+	Key_Copy Copy 16777423
+	Key_Cut Cut 16777424
+	Key_Display Display 16777425
+	Key_DOS DOS 16777426
+	Key_Documents Documents 16777427
+	Key_Excel Excel 16777428
+	Key_Explorer Explorer 16777429
+	Key_Game Game 16777430
+	Key_Go Go 16777431
+	Key_iTouch ITouch 16777432
+	Key_LogOff LogOff 16777433
+	Key_Market Market 16777434
+	Key_Meeting Meeting 16777435
+	Key_MenuKB MenuKB 16777436
+	Key_MenuPB MenuPB 16777437
+	Key_MySites MySites 16777438
+	Key_News News 16777439
+	Key_OfficeHome OfficeHome 16777440
+	Key_Option Option 16777441
+	Key_Paste Paste 16777442
+	Key_Phone Phone 16777443
+	Key_Calendar Calendar 16777444
+	Key_Reply Reply 16777445
+	Key_Reload Reload 16777446
+	Key_RotateWindows RotateWindows 16777447
+	Key_RotationPB RotationPB 16777448
+	Key_RotationKB RotationKB 16777449
+	Key_Save Save 16777450
+	Key_Send Send 16777451
+	Key_Spell Spell 16777452
+	Key_SplitScreen SplitScreen 16777453
+	Key_Support Support 16777454
+	Key_TaskPane TaskPane 16777455
+	Key_Terminal Terminal 16777456
+	Key_Tools Tools 16777457
+	Key_Travel Travel 16777458
+	Key_Video Video 16777459
+	Key_Word Word 16777460
+	Key_Xfer Xfer 16777461
+	Key_ZoomIn ZoomIn 16777462
+	Key_ZoomOut ZoomOut 16777463
+	Key_Away Away 16777464
+	Key_Messenger Messenger 16777465
+	Key_WebCam WebCam 16777466
+	Key_MailForward MailForward 16777467
+	Key_Pictures Pictures 16777468
+	Key_Music Music 16777469
+	Key_Battery Battery 16777470
+	Key_Bluetooth Bluetooth 16777471
+	Key_WLAN WLAN 16777472
+	Key_UWB UWB 16777473
+	Key_AudioForward AudioForward 16777474
+	Key_AudioRepeat AudioRepeat 16777475
+	Key_AudioRandomPlay AudioRandomPlay 16777476
+	Key_Subtitle Subtitle 16777477
+	Key_AudioCycleTrack AudioCycleTrack 16777478
+	Key_Time Time 16777479
+	Key_Hibernate Hibernate 16777480
+	Key_View View 16777481
+	Key_TopMenu TopMenu 16777482
+	Key_PowerDown PowerDown 16777483
+	Key_Suspend Suspend 16777484
+	Key_ContrastAdjust ContrastAdjust 16777485
+	Key_TouchpadToggle TouchpadToggle 16777488
+	Key_TouchpadOn TouchpadOn 16777489
+	Key_TouchpadOff TouchpadOff 16777490
+	Key_MicMute MicMute 16777491
+	Key_Red Red 16777492
+	Key_Green Green 16777493
+	Key_Yellow Yellow 16777494
+	Key_Blue Blue 16777495
+	Key_ChannelUp ChannelUp 16777496
+	Key_ChannelDown ChannelDown 16777497
+	Key_Guide Guide 16777498
+	Key_Info Info 16777499
+	Key_Settings Settings 16777500
+	Key_MicVolumeUp MicVolumeUp 16777501
+	Key_MicVolumeDown MicVolumeDown 16777502
+	Key_New New 16777504
+	Key_Open Open 16777505
+	Key_Find Find 16777506
+	Key_Undo Undo 16777507
+	Key_Redo Redo 16777508
+	Key_MediaLast MediaLast 16842751
+	Key_unknown Unknown 33554431
+	Key_Call Call 17825796
+	Key_Camera Camera 17825824
+	Key_CameraFocus CameraFocus 17825825
+	Key_Context1 Context1 17825792
+	Key_Context2 Context2 17825793
+	Key_Context3 Context3 17825794
+	Key_Context4 Context4 17825795
+	Key_Flip Flip 17825798
+	Key_Hangup Hangup 17825797
+	Key_No No 16842754
+	Key_Select Select 16842752
+	Key_Yes Yes 16842753
+	Key_ToggleCallHangup ToggleCallHangup 17825799
+	Key_VoiceDial VoiceDial 17825800
+	Key_LastNumberRedial LastNumberRedial 17825801
+	Key_Execute Execute 16908291
+	Key_Printer Printer 16908290
+	Key_Play Play 16908293
+	Key_Sleep Sleep 16908292
+	Key_Zoom Zoom 16908294
+	Key_Exit Exit 16908298
+	Key_Cancel Cancel 16908289

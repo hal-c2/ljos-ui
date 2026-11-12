@@ -320,6 +320,10 @@ pub struct EnumInfo {
     /// A key is negative, so a number the enum holds reads signed (see
     /// [`Value::of_enum_field`]).
     pub signed: bool,
+    /// Its keys are combined with `|`. A plain enum is a union of its keys
+    /// to the checker, which holds a `switch` on one to cover them; a
+    /// flags' value can be any mix, so no switch covers it.
+    pub flags: bool,
 }
 
 /// One signal.
@@ -1387,7 +1391,18 @@ impl MetaBuilder {
             name: Atom::intern(name),
             keys: keys.iter().map(|(k, v)| (Atom::intern(k), *v)).collect(),
             signed: keys.iter().any(|(_, v)| *v < 0),
+            flags: false,
         });
+        self
+    }
+
+    /// As [`enumeration`](Self::enumeration), for an enum whose keys are
+    /// combined with `|` (see [`EnumInfo::flags`]).
+    pub fn flags(mut self, name: &str, keys: &[(&str, i64)]) -> Self {
+        self = self.enumeration(name, keys);
+        if let Some(last) = self.meta.enums.last_mut() {
+            last.flags = true;
+        }
         self
     }
 

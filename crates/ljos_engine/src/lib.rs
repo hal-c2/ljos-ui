@@ -82,6 +82,7 @@ pub use made_on_read::{BindOnRead, MakeOnRead};
 mod journal;
 mod keyed;
 pub use keyed::{Keyed, KeyedRows, KeyedSource};
+pub mod ljos_enums;
 mod made_when_reached;
 mod member_aliases;
 mod memory;
