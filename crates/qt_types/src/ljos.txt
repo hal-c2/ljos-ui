@@ -384,9 +384,19 @@ module Ljos.Core
 	Binding QtQml.Binding
 	Component QtQml.Component
 	Connections QtQml.Connections
+	Controller Ljos.Core.Controller
 	Locale QtQml.Locale
 	QtObject QtQml.QtObject
 	Timer QtQml.Timer
+	type Ljos.Core.Controller Controller
+		prototype QtQml.QtObject named
+		default data
+		prop host QtQuick.Item named pointer readonly
+		prop data QtQml.var named list
+		signal hostChanged
+		signal attached host:QtObject
+		signal detached
+		signal updated
 
 module Ljos.Design
 	Colors Ljos/Design/Colors.qml
@@ -935,7 +945,7 @@ module Ljos.Ui
 	Wheel Ljos.Ui.Wheel
 	Window QtQuick.Window
 	type Ljos.Ui.Drag Drag
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -1009,7 +1019,7 @@ module Ljos.Ui
 		signal smoothedChanged
 		signal thresholdChanged
 	type Ljos.Ui.Hover Hover
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -1094,7 +1104,7 @@ module Ljos.Ui
 		signal loaded
 		method setSource
 	type Ljos.Ui.Pointer Pointer
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -1181,7 +1191,7 @@ module Ljos.Ui
 		signal bottomLeftRadiusChanged
 		signal bottomRightRadiusChanged
 	type Ljos.Ui.Tap Tap
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -1305,7 +1315,7 @@ module Ljos.Ui
 		signal linkHovered link:string
 		method linkAt returns:string
 	type Ljos.Ui.Wheel Wheel
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767
@@ -4080,7 +4090,7 @@ module QtQuick
 		signal uniqueIdChanged
 		signal nameChanged
 	type QtQuick.PointerHandler PointerHandler
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		is uncreatable
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -4607,7 +4617,7 @@ module QtQuick
 		method clearColumnReordering
 		method clearRowReordering
 	type QtQuick.TapHandler TapHandler
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		enum GesturePolicy DragThreshold=0 WithinBounds=1 ReleaseWithinBounds=2 DragWithinBounds=3
 		flags GrabPermissions TakeOverForbidden=0 CanTakeOverFromHandlersOfSameType=1 CanTakeOverFromHandlersOfDifferentType=2 CanTakeOverFromItems=4 CanTakeOverFromAnything=15 ApprovesTakeOverByHandlersOfSameType=16 ApprovesTakeOverByHandlersOfDifferentType=32 ApprovesTakeOverByItems=64 ApprovesCancellation=128 ApprovesTakeOverByAnything=240
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
@@ -4904,7 +4914,7 @@ module QtQuick
 		prop phase Qt::ScrollPhase readonly
 		prop accepted QtQml.bool named
 	type QtQuick.WheelHandler WheelHandler
-		prototype QtQml.QtObject named
+		prototype Ljos.Core.Controller named
 		enum DeviceType Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		flags DeviceTypes Unknown=0 UnknownDevice=0 Mouse=1 TouchScreen=2 TouchPad=4 Puck=8 Stylus=16 Airbrush=32 Keyboard=4096 AllDevices=2147483647
 		enum PointerType Unknown=0 Generic=1 Finger=2 Pen=4 Eraser=8 Cursor=16 AllPointerTypes=32767

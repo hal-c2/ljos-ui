@@ -11,11 +11,11 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, QtObject, Timer, Value, WriteKind,
-    qml_impl,
+    Cx, Engine, EngineError, LogLevel, ObjectId, QmlObject, Timer, Value, WriteKind, qml_impl,
 };
 use ljos_render::kurbo;
 
+use crate::controller::Controller;
 use crate::flickable::wheel::wheel_angle;
 use crate::input::{MouseArea, MouseButtons, PointerSource, WheelEvent};
 use crate::item::{
@@ -45,18 +45,19 @@ pub(crate) struct HandlerState {
     timer: Cell<Option<ObjectId>>,
 }
 
-/// `WheelHandler` (QtQuick). Its parent item is the object that owns it,
-/// and it lives in that item's `resources`.
+/// `WheelHandler` (QtQuick). Its parent item is its host, the item it is
+/// declared in or the host of the Controller it is declared in, and it
+/// lives in that item's `resources`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
     name = "WheelHandler",
-    extends = QtObject,
+    extends = Controller,
     enums = crate::handlers::device_enums
 )]
 pub struct WheelHandler {
     #[qml(base)]
-    pub object: QtObject,
+    pub controller: Controller,
     #[qml(notify)]
     pub enabled: bool,
     #[qml(notify, readonly)]
@@ -118,7 +119,7 @@ pub struct WheelHandler {
 impl Default for WheelHandler {
     fn default() -> Self {
         Self {
-            object: QtObject::default(),
+            controller: Controller::default(),
             enabled: true,
             parent: None,
             target: None,
@@ -151,7 +152,7 @@ impl WheelHandler {
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
         let (e, h) = (cx.engine, cx.this);
-        let owner = e.owner(h);
+        let owner = crate::controller::host(e, h).or_else(|| e.owner(h));
         if cx.get(WheelHandler::PARENT)?.is_none() {
             e.set_internal(h, WheelHandler::PARENT, owner)?;
         }
