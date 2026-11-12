@@ -541,9 +541,11 @@ impl Platform {
     /// without an answer or 60 s in all. Busy work is waited on only for
     /// [`BUSY_WAIT`] ([`Platform::awaited`]), and its news delivered
     /// meanwhile. While it waits it runs, as a frame would, the engine's
-    /// timers due when it began and those the news it delivers asks for,
-    /// once due: what they do may be what answers. Timers that only come
-    /// due as time passes while it waits are left for the next frame.
+    /// timers due when it began, and every timer armed while it waits, by
+    /// the news it delivers or by the timers it runs, each once it is due:
+    /// what they do may be what answers. Timers armed before it began that
+    /// only come due as time passes while it waits are left for the next
+    /// frame.
     pub fn finish(&self, engine: &Engine) {
         self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
@@ -572,14 +574,13 @@ impl Platform {
         // rounds a deadline: what comes due later, on a clock that runs
         // on while this waits, is the next frame's, not this wait's.
         let due = engine.now().round_up_to(TIMER_GRANULARITY);
+        // Timers armed from here on are this wait's, at their own
+        // deadline: the news it delivers asks for them, or the timers it
+        // runs do, and a clock that runs on puts them after `due`.
+        let first = engine.next_timer_id();
         loop {
             let seen = self.signal.count();
-            // What the news delivered here asks for is this wait's at its
-            // own deadline: a clock that runs on puts it after `due`.
-            let mark = engine.next_timer_id();
             self.deliver_now(engine);
-            let made = mark..engine.next_timer_id();
-            let by = engine.now().round_up_to(TIMER_GRANULARITY);
             let now = Instant::now();
             self.busy_awaited(now, &mut busy);
             let (awaited, busy_until) = self.awaiting(now);
@@ -591,13 +592,19 @@ impl Platform {
             // that sends it elsewhere, the going handed on at once, ends
             // the old page's promise. A running app does that work at its
             // next frame while it waits, and so does this: what was due
-            // when it began, and what the news it delivered asked for once
-            // that is due. What it posts ends the wait below.
+            // when it began, and what was armed since, once that is due.
+            // What it posts ends the wait below.
+            let made = first..engine.next_timer_id();
+            let by = engine.now().round_up_to(TIMER_GRANULARITY);
             engine.turn(None, || engine.advance_timers_made(due, made, by));
             between();
             // Not past the moment busy work stops being waited on: what is
-            // left after it may already be answered.
+            // left after it may already be answered. Nor past the moment
+            // the next timer armed here comes due, which may answer too.
             let wait = busy_until.map_or(slice, |u| slice.min(u.saturating_duration_since(now)));
+            let wait = engine
+                .next_timer_made(first..engine.next_timer_id())
+                .map_or(wait, |at| wait.min(at - engine.now()));
             let sent = self
                 .signal
                 .sent
@@ -1256,6 +1263,75 @@ mod tests {
         platform.finish(&engine);
         assert_eq!(platform.pending(), 0);
         assert!(!fired.get(), "a timer due after finish began fired in it");
+        assert!(engine.take_log().is_empty());
+    }
+
+    /// Moves `clock` by `by` in a job of its own: time that passes while
+    /// finish waits, on a test's clock.
+    fn pass(e: &Engine, clock: &ljos_runtime::VirtualClock, by: Duration) {
+        let clock = clock.clone();
+        Platform::of(e).poster().send(move |_| clock.advance(by));
+    }
+
+    #[test]
+    fn work_news_asks_for_later_is_done_once_it_is_due() {
+        let engine = Engine::new();
+        let clock = ljos_runtime::VirtualClock::starting_at(ljos_runtime::Time::from_millis(40));
+        engine.set_clock(Rc::new(clock.clone()));
+        let platform = Platform::of(&engine);
+        let reply = platform.expect_for("the page left", None);
+        // Armed before finish began, as due as the answer: still left
+        // for the next frame.
+        let fired = Rc::new(Cell::new(false));
+        let mark = Rc::clone(&fired);
+        engine.call_at(engine.now() + Duration::from_millis(5), move |_| {
+            mark.set(true);
+        });
+        // The news asks for the going 5 ms on, and time passes.
+        platform.poster().send(move |e| {
+            e.call_at(e.now() + Duration::from_millis(5), move |_| drop(reply));
+            pass(e, &clock, Duration::from_millis(5));
+        });
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert!(
+            started.elapsed() < FINISH_TIMEOUT,
+            "finish waited {:?} for work its news asked for",
+            started.elapsed()
+        );
+        assert!(
+            !fired.get(),
+            "a timer armed before finish began fired in it"
+        );
+        assert!(engine.take_log().is_empty());
+    }
+
+    #[test]
+    fn work_the_work_news_asks_for_asks_for_is_done_once_it_is_due() {
+        let engine = Engine::new();
+        let clock = ljos_runtime::VirtualClock::starting_at(ljos_runtime::Time::from_millis(40));
+        engine.set_clock(Rc::new(clock.clone()));
+        let platform = Platform::of(&engine);
+        let reply = platform.expect_for("the page left", None);
+        // The news asks for work 5 ms on, and that work asks for the
+        // going 5 ms after it: a cascade, with time passing for each.
+        platform.poster().send(move |e| {
+            let then = clock.clone();
+            e.call_at(e.now() + Duration::from_millis(5), move |e| {
+                e.call_at(e.now() + Duration::from_millis(5), move |_| drop(reply));
+                pass(e, &then, Duration::from_millis(5));
+            });
+            pass(e, &clock, Duration::from_millis(5));
+        });
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert!(
+            started.elapsed() < FINISH_TIMEOUT,
+            "finish waited {:?} for work its timers asked for",
+            started.elapsed()
+        );
         assert!(engine.take_log().is_empty());
     }
 
