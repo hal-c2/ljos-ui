@@ -204,6 +204,9 @@ pub trait Browser {
     /// Forgets what the profile keeps of the answer to `origin` asking
     /// for `kind`, so it is asked again.
     fn forget_permission(&self, origin: &str, kind: i32);
+    /// The page is drawn again as it is, even with nothing on it changed:
+    /// a load that ended has its picture.
+    fn redraw(&self);
     /// The browser goes: no event comes from it after this.
     fn close(&self);
 }

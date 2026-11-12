@@ -248,6 +248,14 @@ fn told_work() {
     want_work(0, true);
 }
 
+/// The browser was told something on its own account (a reply to what it
+/// said, a page's question passed on): work for its UI thread that CEF
+/// does not announce, which does not wait on it afresh, or a page that
+/// keeps asking would keep its view busy for good.
+fn own_work() {
+    want_work(0, false);
+}
+
 /// Work is wanted in `delay_ms`: CEF asks, from any thread, or (`told`)
 /// the view told the browser something.
 fn want_work(delay_ms: i64, told: bool) {
@@ -789,6 +797,9 @@ struct Boot {
     behind: bool,
     /// The view's first page asked for the blank page to go.
     forgetting: bool,
+    /// The view asked for a picture before there was one to draw: the
+    /// page is drawn once the blank one is in.
+    redraw: bool,
 }
 
 impl Boot {
@@ -937,10 +948,11 @@ impl Shared {
         m.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The browser's host, for telling it something: what it is told
-    /// becomes work for its UI thread that CEF does not announce.
+    /// The browser's host, for telling it something on its own account:
+    /// what it is told becomes work for its UI thread that CEF does not
+    /// announce. What the view tells it goes through [`CefPage::host`].
     fn host(&self) -> Option<BrowserHost> {
-        told_work();
+        own_work();
         Self::lock(&self.browser).as_ref().and_then(|b| b.host())
     }
 
@@ -963,7 +975,7 @@ impl Shared {
     /// One more of what the blank page waits for came; once both have,
     /// the view's first page loads.
     fn boot_step(&self, step: impl FnOnce(&mut Boot)) {
-        let url = {
+        let next = {
             let mut boot = Self::lock(&self.boot);
             if boot.done() {
                 return;
@@ -972,10 +984,21 @@ impl Shared {
             if !boot.done() {
                 return;
             }
-            boot.url.take()
+            (boot.url.take(), std::mem::take(&mut boot.redraw))
         };
-        if let Some(url) = url {
-            self.load(&url);
+        match next {
+            (Some(url), _) => self.load(&url),
+            (None, true) => self.redraw(),
+            (None, false) => {}
+        }
+    }
+
+    /// The page is drawn again as it is.
+    fn redraw(&self) {
+        if let Some(host) = self.host() {
+            host.invalidate(PaintElementType::from(
+                sys::cef_paint_element_type_t::PET_VIEW,
+            ));
         }
     }
 
@@ -2342,6 +2365,7 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
     if start.hidden {
         host.was_hidden(1);
     }
+    told_work();
     shared.send_dev(out);
     host.set_audio_muted(start.muted as c_int);
     let page = std::rc::Rc::new(CefPage { shared });
@@ -2361,7 +2385,14 @@ impl CefPage {
     }
 
     fn host(&self) -> Option<BrowserHost> {
+        told_work();
         self.shared.host()
+    }
+
+    /// DevTools messages the view sends, as [`CefPage::host`] tells.
+    fn send_dev(&self, messages: Vec<Vec<u8>>) {
+        told_work();
+        self.shared.send_dev(messages);
     }
 }
 
@@ -2498,7 +2529,7 @@ impl Page for CefPage {
                 }
             }
         }
-        self.shared.send_dev(out);
+        self.send_dev(out);
     }
 
     fn set_scripts(&self, scripts: &[Script]) {
@@ -2509,7 +2540,7 @@ impl Page for CefPage {
             false,
             &mut out,
         );
-        self.shared.send_dev(out);
+        self.send_dev(out);
     }
 
     fn mouse(&self, m: PageMouse) {
@@ -2638,6 +2669,19 @@ impl Page for CefPage {
         }
     }
 
+    fn redraw(&self) {
+        {
+            let mut boot = Shared::lock(&self.shared.boot);
+            if !boot.done() {
+                // Nothing of the blank page is drawn.
+                boot.redraw = true;
+                return;
+            }
+        }
+        told_work();
+        self.shared.redraw();
+    }
+
     fn close(&self) {
         if self.shared.closing.swap(true, Ordering::Relaxed) {
             return;
@@ -2756,7 +2800,7 @@ pub(crate) fn clear_http_cache(e: &Engine, _spec: &ProfileSpec) {
             json!({}),
             Pending::Ignore,
         );
-        page.shared.send_dev(vec![m]);
+        page.send_dev(vec![m]);
     }
 }
 
