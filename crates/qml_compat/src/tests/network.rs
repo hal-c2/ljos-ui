@@ -31,7 +31,30 @@ fn what_is_sent_is_the_fetch_s_init() {
         "{lowered}"
     );
     assert!(
-        lowered.contains("got = (await r.json()).name + r.url + r.headers.get(\"x\")\n"),
+        lowered.contains(
+            "got = (await r.json().catch(() => null)).name + r.url + r.headers.get(\"x\")\n"
+        ),
+        "{lowered}"
+    );
+    assert_eq!(lowered.lines().count(), source.lines().count());
+}
+
+#[test]
+fn a_json_body_read_twice_is_null_where_it_is_not_json_and_the_status_check_still_runs() {
+    let source = loading(
+        "        const r = new XMLHttpRequest()\n        r.open(\"GET\", \"u\")\n        r.responseType = \"json\"\n        r.onreadystatechange = function() {\n            if (r.readyState !== 4) return\n            if (r.status === 200) { got = r.response.a + r.response.b } else { console.log(\"failed\") }\n        }\n        r.send()\n",
+    );
+    let lowered = lowered(&source);
+    assert!(
+        lowered.contains(
+            "then(async (r: Response) => { const rJson = await r.json().catch(() => null);\n"
+        ),
+        "{lowered}"
+    );
+    assert!(
+        lowered.contains(
+            "if (r.status === 200) { got = rJson.a + rJson.b } else { console.log(\"failed\") }"
+        ),
         "{lowered}"
     );
     assert_eq!(lowered.lines().count(), source.lines().count());
