@@ -155,6 +155,31 @@ fn a_ljos_module_beside_qt_s_stays_and_the_rest_is_lowered() {
     assert_eq!(status, 0, "{out}{err}");
 }
 
+/// `Ljos.Blocks`, what a shell is built of, is a module of Ljós's own as
+/// `Ljos.Design` is: a shell written against QtQuick beside it is lowered,
+/// and its `Slot`s are carried over as they are written.
+#[test]
+fn a_shell_of_blocks_beside_qt_s_is_lowered() {
+    let dir = tempfile::tempdir().unwrap();
+    write(
+        dir.path(),
+        "app/Main.qml",
+        "import QtQuick\nimport Ljos.Blocks\nColumn { Slot { name: \"x\" } }\n",
+    );
+    let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app"]);
+    assert_eq!(status, 0, "{err}");
+    assert_eq!(
+        out,
+        "lowered app/Main.qml (1 edits)\n1 files, 1 lowered, 0 kept\n"
+    );
+    assert_eq!(
+        read(dir.path(), "app/Main.qml"),
+        "import Ljos.Ui\nimport Ljos.Layout\nimport Ljos.Blocks\nColumn { Slot { name: \"x\" } }\n"
+    );
+    let (status, out, err) = ljos(dir.path(), &["check", "app"]);
+    assert_eq!(status, 0, "{out}{err}");
+}
+
 #[test]
 fn a_kept_file_keeps_the_files_it_names_and_says_where() {
     let dir = tempfile::tempdir().unwrap();

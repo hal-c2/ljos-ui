@@ -448,6 +448,50 @@ Feature: Qt's QML lowered to Ljós's API
       When the author runs "ljos check app"
       Then the command exits with status 0
 
+    # `Ljos.Blocks`, what a shell is built of, is a module of Ljós's like `Ljos.Design`: a shell
+    # written against QtQuick beside it has its Qt half lowered, and its slots and contributions are
+    # carried over as written. Lowered or not, it places the contributions the same way.
+    @ljos-only @headless
+    Scenario: A shell of blocks beside Qt's is lowered, its slots as they are written
+      Given the file "shell/Main.qml":
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Rectangle {
+          width: 60; height: 20; color: "#202020"
+          Row { Slot { name: "tools" } }
+          Contribution { slot: "tools"; order: 2
+            Rectangle { width: 10; height: 10; color: "#c03030" } }
+          Contribution { slot: "tools"; order: 1
+            Rectangle { width: 10; height: 10; color: "#30a050" } }
+        }
+        """
+      When the author runs "ljos render shell --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render shell --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate --write shell"
+      Then the command prints:
+        """
+        lowered shell/Main.qml (4 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "shell/Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        import Ljos.Blocks
+        Rectangle {
+          width: 60; height: 20; fill: "#202020"
+          Row { Slot { name: "tools" } }
+          Contribution { slot: "tools"; order: 2
+            Rectangle { width: 10; height: 10; fill: "#c03030" } }
+          Contribution { slot: "tools"; order: 1
+            Rectangle { width: 10; height: 10; fill: "#30a050" } }
+        }
+        """
+      When the author runs "ljos check shell"
+      Then the command exits with status 0
+
   Rule: A name a script binds is the script's wherever the script reads it
 
     # A loop's, a `catch`'s or a function's name is found before an id and before the members of the
