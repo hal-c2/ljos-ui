@@ -696,7 +696,7 @@ struct ParserImpl<'a, C: ParserConfig> {
     /// Precomputed typescript detection
     is_ts: bool,
 
-    /// Ljós: `match` and `is`, read as text edits (see `qml/sugar.rs`).
+    /// Ljós: `match`, `is` and `|>`, read as text edits (see `qml/sugar.rs`).
     sugar: qml::sugar::Sugar,
 }
 

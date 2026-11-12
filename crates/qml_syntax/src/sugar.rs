@@ -558,4 +558,38 @@ mod tests {
         };
         assert_eq!(crate::text(source, height.span), "height: 3");
     }
+
+    // The placeholder the parser leaves for a topic is built as every other
+    // name it reads, so an AST read with hashes off has none hashed.
+    #[test]
+    fn a_topic_is_named_as_the_parser_names_any_identifier() {
+        use oxc_ast::ast::{Expression, Ident, Statement};
+        use oxc_parser::ParseOptions;
+
+        fn argument<'a>(text: &'a str, allocator: &'a Allocator) -> Ident<'a> {
+            let options = ParseOptions {
+                enable_ident_hashes: false,
+                ..ParseOptions::default()
+            };
+            let (parsed, _) = Parser::new(allocator, text, SourceType::ts())
+                .with_options(options)
+                .parse_with_sugar();
+            let Some(Statement::ExpressionStatement(statement)) = parsed.program.body.first()
+            else {
+                panic!("{text}")
+            };
+            let Expression::CallExpression(call) = &statement.expression else {
+                panic!("{text}")
+            };
+            let Some(Expression::Identifier(id)) = call.arguments[0].as_expression() else {
+                panic!("{text}")
+            };
+            id.name
+        }
+        let allocator = Allocator::default();
+        assert_eq!(
+            argument("f(%)", &allocator),
+            argument("f($topic)", &allocator)
+        );
+    }
 }

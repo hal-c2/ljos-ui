@@ -20,7 +20,6 @@
 
 use oxc_ast::ast::Expression;
 use oxc_span::{GetSpan, Span};
-use oxc_str::Ident;
 
 use super::{Edit, Piece, text};
 use crate::{ParserConfig, ParserImpl, lexer::Kind};
@@ -54,7 +53,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             }
         };
         self.sugar.edits.push(Edit { span, pieces: vec![text(name, span)], keyword: None });
-        Expression::new_identifier(span, Ident::from("$topic"), self)
+        Expression::new_identifier(span, self.ident("$topic"), self)
     }
 
     /// `head |> body`, at `|>`, after a head that is a short-circuit
