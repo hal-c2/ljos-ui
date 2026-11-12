@@ -314,7 +314,8 @@ Feature: Qt's QML lowered to Ljós's API
         import Ljos.Layout
         Rectangle {
           width: 80; height: 40; fill: "#202020"
-          Row { spacing: 5;
+          Row {
+            spacing: 5
             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 20; fill: "#c03030" }
             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 20; implicitHeight: 20; fill: "#30a050" }
           }

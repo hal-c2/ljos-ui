@@ -314,7 +314,8 @@ Feature: Ljós's Grid and Flow
         """qml
         import Ljos.Ui
         import Ljos.Layout
-        Grid { columns: 4;
+        Grid {
+          columns: 4
           Rectangle { width: 10; height: 10 }
           Rectangle { width: 10; height: 10 }
           Rectangle { width: 10; height: 10 }

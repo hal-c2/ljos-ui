@@ -313,7 +313,9 @@ Feature: GridLayout lowers to Grid, and StackLayout to Pages
         import Ljos.Ui
         import Ljos.Layout
         Item {
-          Grid { columnSpacing: 5; rowSpacing: 5;
+          Grid {
+            columnSpacing: 5
+            rowSpacing: 5
             columns: 2
             Rectangle { Layout.alignment: Qt.AlignVCenter; implicitWidth: 10; implicitHeight: 10 }
             Rectangle { implicitWidth: 10; implicitHeight: 20; Layout.alignment: Qt.AlignRight | Qt.AlignVCenter }
