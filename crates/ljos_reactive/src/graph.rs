@@ -452,6 +452,9 @@ struct Inner<V> {
     /// that are being brought up to date for it (`settle`).
     passed_on: Vec<NodeId>,
     batch_depth: u32,
+    /// Batches still open that a [`BatchLift`] has lifted for now: what
+    /// they hold back is not done, so the scopes to freeze wait for them.
+    lifted: u32,
     flush_depth: u32,
     /// Scopes to freeze once the work under way is done (`set_frozen`).
     freeze_later: Vec<ScopeId>,
@@ -608,14 +611,16 @@ impl<V: Clone + 'static> Graph<V> {
     /// What a [`BatchGuard`] does, once rather than in each batch's caller.
     #[inline(never)]
     fn leave_batch(&self) {
-        let outermost = {
+        let (outermost, lifted) = {
             let mut i = self.inner.borrow_mut();
             i.batch_depth -= 1;
-            i.batch_depth == 0
+            (i.batch_depth == 0, i.lifted > 0)
         };
         if outermost && !std::thread::panicking() {
             self.flush();
-            self.freeze_waiting();
+            if !lifted {
+                self.freeze_waiting();
+            }
         }
     }
 }
@@ -727,6 +732,19 @@ impl<V: Clone + 'static> Drop for LevelGuard<'_, V> {
     }
 }
 
+/// The batches open when it was made, lifted while it lives
+/// ([`Graph::lift_batches`]).
+#[derive(Debug)]
+pub struct BatchLift<'g, V: Clone + 'static>(&'g Graph<V>, u32);
+
+impl<V: Clone + 'static> Drop for BatchLift<'_, V> {
+    fn drop(&mut self) {
+        let mut i = self.0.inner.borrow_mut();
+        i.batch_depth += self.1;
+        i.lifted -= self.1;
+    }
+}
+
 struct FlushGuard<'g, V: Clone + 'static>(&'g Graph<V>);
 
 impl<V: Clone + 'static> Drop for FlushGuard<'_, V> {
@@ -734,7 +752,7 @@ impl<V: Clone + 'static> Drop for FlushGuard<'_, V> {
         let idle = {
             let mut i = self.0.inner.borrow_mut();
             i.flush_depth -= 1;
-            i.flush_depth == 0 && i.batch_depth == 0
+            i.flush_depth == 0 && i.batch_depth == 0 && i.lifted == 0
         };
         if idle && !std::thread::panicking() {
             self.0.freeze_waiting();
@@ -892,6 +910,7 @@ impl<V: Clone + 'static> Graph<V> {
                 settling: Vec::new(),
                 passed_on: Vec::new(),
                 batch_depth: 0,
+                lifted: 0,
                 flush_depth: 0,
                 freeze_later: Vec::new(),
                 told: Waiting::default(),
@@ -1078,7 +1097,7 @@ impl<V: Clone + 'static> Graph<V> {
                 return Err(ReactiveError::DeadScope(scope));
             }
             g.freeze_later.retain(|s| *s != scope);
-            if frozen && (g.batch_depth > 0 || g.flush_depth > 0) {
+            if frozen && (g.batch_depth > 0 || g.lifted > 0 || g.flush_depth > 0) {
                 g.freeze_later.push(scope);
                 return Ok(());
             }
@@ -3314,6 +3333,21 @@ impl<V: Clone + 'static> Graph<V> {
         i.forget_lift_walks();
         i.forget_restamp_walks();
         LevelGuard(self, open, Some(below))
+    }
+
+    /// Lifts the batches open now while the guard lives, so that what
+    /// runs meanwhile runs as with none open: a write flushes, and a batch
+    /// flushes as it ends. The flushes run what `own` queues, and what the
+    /// batches queued before waits for them to end, as do the scopes asked
+    /// to freeze. One who makes something in steps inside a batch, and
+    /// needs what each step reaches run before the next, as when no batch
+    /// is open, opens a queue of its own and lifts the batches over it.
+    pub fn lift_batches<'g>(&'g self, own: &LevelGuard<'g, V>) -> BatchLift<'g, V> {
+        debug_assert!(std::ptr::eq(own.0, self), "an own queue of another graph");
+        let mut i = self.inner.borrow_mut();
+        let depth = std::mem::take(&mut i.batch_depth);
+        i.lifted += depth;
+        BatchLift(self, depth)
     }
 
     /// Holds back `n`'s queued direct observers until the guard drops.

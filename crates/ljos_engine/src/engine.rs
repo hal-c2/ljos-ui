@@ -2537,6 +2537,15 @@ impl Engine {
         self.inner.graph.own_queue(since)
     }
 
+    /// The batches open now lifted over `own` while the guard lives
+    /// ([`ljos_reactive::Graph::lift_batches`]).
+    pub(crate) fn lift_batches<'a>(
+        &'a self,
+        own: &ljos_reactive::LevelGuard<'a, Value>,
+    ) -> ljos_reactive::BatchLift<'a, Value> {
+        self.inner.graph.lift_batches(own)
+    }
+
     /// How far the changes have counted, for [`Engine::own_queue`].
     pub fn changes_so_far(&self) -> ljos_reactive::Change {
         self.inner.graph.changes_so_far()
