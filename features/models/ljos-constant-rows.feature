@@ -205,7 +205,6 @@ Feature: A ListModel of constants is a typed list
         Item {
           width: 120; height: 40
           readonly property list<Rows.ZonesRow> zones: [
-
             { city: "Oslo", shift: 1 }
           ]
           Repeater { model: zones; Text { text: modelData.city } }
