@@ -169,6 +169,8 @@ pub enum Cause {
     /// A file found only through another, which `ljos migrate` was not
     /// named.
     NotNamed,
+    /// An `XMLHttpRequest` that is not of the shape written as `fetch`.
+    Xhr(Xhr),
 }
 
 /// Whose a name is, as a keep reason says it.
@@ -524,6 +526,7 @@ impl fmt::Display for Cause {
                 "`{path}` is a script of the project's, not the module of this file's rows"
             ),
             Cause::NotNamed => f.write_str("it is not named: name it too"),
+            Cause::Xhr(xhr) => xhr.fmt(f),
         }
     }
 }
@@ -861,5 +864,101 @@ impl From<Row> for Cause {
 impl From<Layout> for Cause {
     fn from(layout: Layout) -> Self {
         Cause::Layout(layout)
+    }
+}
+
+/// Why an `XMLHttpRequest` is not written as `fetch`
+/// (`rules::network::request`): what of it has no `fetch` of its usual
+/// shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Xhr {
+    /// `open`'s third argument is `false`: the script waits for the reply.
+    Waits,
+    /// A member of the request's, set, read or called, that its usual shape
+    /// does not have.
+    Member { name: String },
+    /// `readyState` read other than to wait for the request to be done.
+    ReadyState,
+    /// The request is a value given to something else.
+    HandedOn,
+    /// The handler is a `function` that reads `this`.
+    This,
+    /// A statement that is not the request's between its first and its
+    /// `send`.
+    Between,
+    /// It is not opened, answered in `onreadystatechange` and sent, each
+    /// once.
+    Unfinished,
+    /// Its `onreadystatechange` does not wait for `readyState` 4 first.
+    Unguarded,
+    /// The handler is not a function of no parameters written there.
+    Handler,
+    /// Made where it is not a local of its own (`[new XMLHttpRequest()]`).
+    Made,
+    /// What it is sent with spans lines, which a lowered file cannot gather
+    /// onto one.
+    Lines,
+    /// A name the pass renames is in what it is sent with.
+    Moved,
+}
+
+impl fmt::Display for Xhr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Xhr::Waits => f.write_str(
+                "the request waits for its reply (`open`'s third argument is `false`), and \
+                 `fetch` does not: make the function async and await `fetch`",
+            ),
+            Xhr::Member { name } => write!(
+                f,
+                "the request's `{name}` has no `fetch` of its usual shape: write it with `fetch`"
+            ),
+            Xhr::ReadyState => f.write_str(
+                "the request's `readyState` is read where `fetch` has no such thing: write it \
+                 with `fetch`",
+            ),
+            Xhr::HandedOn => f.write_str(
+                "the request is handed on, and what is done with it is not known: write it \
+                 with `fetch`",
+            ),
+            Xhr::This => f.write_str(
+                "the handler reads `this`, which an arrow function does not have: name the \
+                 request instead",
+            ),
+            Xhr::Between => f.write_str(
+                "code runs between the request's `open` and its `send`, which `fetch` is one \
+                 call for: write it with `fetch`",
+            ),
+            Xhr::Unfinished => f.write_str(
+                "the request is not opened, answered in `onreadystatechange` and sent, each \
+                 once: write it with `fetch`",
+            ),
+            Xhr::Unguarded => f.write_str(
+                "the request's `onreadystatechange` runs as the request goes, not once it is \
+                 done (`readyState` 4): write it with `fetch`",
+            ),
+            Xhr::Handler => f.write_str(
+                "the request's `onreadystatechange` is not a function of its own: write it \
+                 with `fetch`",
+            ),
+            Xhr::Made => f.write_str(
+                "an `XMLHttpRequest` is made where it is not a local of its own: write it \
+                 with `fetch`",
+            ),
+            Xhr::Lines => f.write_str(
+                "what the request is sent with spans lines, and a lowered file keeps every \
+                 line: write it with `fetch`",
+            ),
+            Xhr::Moved => f.write_str(
+                "what the request is sent with reads a name Ljós renames: write it with `fetch`",
+            ),
+        }
+    }
+}
+
+impl From<Xhr> for Cause {
+    fn from(xhr: Xhr) -> Self {
+        Cause::Xhr(xhr)
     }
 }

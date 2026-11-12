@@ -55,6 +55,7 @@ use rows::{Delegate, Owns, Rows};
 use rules::states::animation::Animating;
 use rules::{arrange, font, gesture};
 
+pub use cause::Xhr;
 pub use cause::{Animated, Cause, Differs, Font, Layout, Loader, Owner, Row};
 pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
@@ -376,6 +377,7 @@ fn lower_parsed(
         aimed: Vec::new(),
         animating: Animating::None,
         changed: Vec::new(),
+        requests: Vec::new(),
     };
     let mut unqualified = Unqualified::default();
     unqualified.object(&parsed.document.root);
@@ -386,6 +388,9 @@ fn lower_parsed(
             let mut changes = pass.changes;
             changes.sort_by_key(|c| c.range.start);
             changes.dedup();
+            if let Some(at) = into_requests(&changes, &pass.requests) {
+                return kept(Cause::Xhr(Xhr::Moved), at);
+            }
             let text = qml_edit::splice(source, &changes);
             let allocator = Allocator::default();
             let again = qml_syntax::parse(&allocator, &text);
@@ -407,6 +412,28 @@ fn lower_parsed(
         }
         Err(kept) => Outcome::Kept(kept),
     }
+}
+
+/// Where an edit other than a request's reaches into what writing the
+/// request as `fetch` copies or empties: the request's text is copied as
+/// written, so the edit would be lost.
+fn into_requests(changes: &[Change], requests: &[Range<usize>]) -> Option<usize> {
+    let reaches = |edit: &Range<usize>, request: &Range<usize>| {
+        if edit.is_empty() {
+            request.start < edit.start && edit.start < request.end
+        } else {
+            edit.start < request.end && request.start < edit.end
+        }
+    };
+    changes
+        .iter()
+        .filter(|change| !requests.contains(&change.range))
+        .find(|change| {
+            requests
+                .iter()
+                .any(|request| reaches(&change.range, request))
+        })
+        .map(|change| change.range.start)
 }
 
 /// The module of the row types of the file `stem.qml`.
@@ -535,6 +562,8 @@ struct Pass<'s> {
     /// What the file's `PropertyChanges` set: the id of the object, where
     /// it is one, and the member.
     changed: Vec<(Option<String>, String)>,
+    /// What writing requests as `fetch` edits ([`rules::network::request`]).
+    requests: Vec<Range<usize>>,
 }
 
 type Step = Result<(), Kept>;
@@ -1513,10 +1542,18 @@ impl<'s> Pass<'s> {
         };
         node.visit(&mut script);
         script.row_done();
-        match script.kept {
-            Some(kept) => Err(kept),
-            None => Ok(()),
+        if let Some(kept) = script.kept {
+            return Err(kept);
         }
+        let own = std::mem::take(&mut script.own);
+        // A request of XMLHttpRequest's usual shape is written as `fetch`,
+        // and no other edit may reach into what that rewrites.
+        let requests = rules::network::request::lower(self.source, node, &own)?;
+        for change in requests {
+            self.requests.push(change.range.clone());
+            self.changes.push(change);
+        }
+        Ok(())
     }
 
     /// Whether `object`, of type `ty`, has `model`, `modelData` and
