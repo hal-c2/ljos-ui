@@ -112,6 +112,9 @@ pub struct DueTimer {
     pub kind: TimerKind,
     /// The effective (rounded or snapped) deadline it was scheduled for.
     pub deadline: Time,
+    /// The id of the first run of a recurring timer, its own otherwise:
+    /// pass it to [`FrameScheduler::rearm`] for the next run.
+    pub origin: TimerId,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -119,6 +122,8 @@ struct Entry {
     kind: TimerKind,
     deadline: Time,
     latest: Time,
+    /// Which timer this is a later run of, if any: its own id otherwise.
+    origin: TimerId,
 }
 
 #[derive(Debug)]
@@ -178,6 +183,17 @@ impl FrameScheduler {
     /// Registers a one-shot timer. Recurring timers re-register from their
     /// handler, which keeps drift and pausing under the caller's control.
     pub fn add_timer(&mut self, at: Time, kind: TimerKind) -> TimerId {
+        self.add(at, kind, None)
+    }
+
+    /// Registers the next run of a recurring timer whose first run was
+    /// `origin` ([`DueTimer::origin`]): a new id, but the same timer for
+    /// [`Self::due_or_made`], which asks when a timer was first armed.
+    pub fn rearm(&mut self, at: Time, kind: TimerKind, origin: TimerId) -> TimerId {
+        self.add(at, kind, Some(origin))
+    }
+
+    fn add(&mut self, at: Time, kind: TimerKind, origin: Option<TimerId>) -> TimerId {
         let deadline = match kind {
             TimerKind::Animation => self.snap_to_tick(at),
             _ => at.round_up_to(TIMER_GRANULARITY),
@@ -191,6 +207,7 @@ impl FrameScheduler {
                 kind,
                 deadline,
                 latest,
+                origin: origin.unwrap_or(id),
             },
         );
         self.by_deadline.insert((deadline, id));
@@ -269,14 +286,17 @@ impl FrameScheduler {
     }
 
     /// The id the next timer added gets. Two of them, one taken before
-    /// some work runs and one after, name the timers that work added.
+    /// some work runs and one after, name the timers that work added,
+    /// and the later runs of those that recur.
     pub fn next_timer_id(&self) -> TimerId {
         TimerId(self.next_id)
     }
 
-    /// [`Self::due`], and also the timers in `made` whose deadline is
+    /// [`Self::due`], and also the timers first armed in `made`
+    /// ([`Self::rearm`] keeps that for later runs) whose deadline is
     /// `<= by`: what some work asked for, run when its own time has come
-    /// though `now` is earlier, while the others wait for `now`.
+    /// though `now` is earlier, while the others wait for `now`, recurring
+    /// or not.
     pub fn due_or_made(&mut self, now: Time, made: Range<TimerId>, by: Time) -> Due<'_> {
         Due {
             sched: self,
@@ -285,12 +305,15 @@ impl FrameScheduler {
         }
     }
 
-    /// The earliest deadline among the active timers in `made`: when what
-    /// some work asked for next comes due.
+    /// The earliest deadline among the active timers first armed in
+    /// `made`: when what some work asked for next comes due.
     pub fn next_deadline_of(&self, made: Range<TimerId>) -> Option<Time> {
         self.by_deadline
             .iter()
-            .find(|(_, id)| made.contains(id) && self.is_active(&self.timers[id]))
+            .find(|(_, id)| {
+                let e = &self.timers[id];
+                made.contains(&e.origin) && self.is_active(e)
+            })
             .map(|&(t, _)| t)
     }
 
@@ -351,9 +374,11 @@ impl Iterator for Due<'_> {
             s.by_deadline
                 .range(..=(last, TimerId(u64::MAX)))
                 .find(|(deadline, id)| {
-                    s.is_active(&s.timers[id])
+                    let e = &s.timers[id];
+                    s.is_active(e)
                         && (*deadline <= now
-                            || made.is_some_and(|(ids, by)| ids.contains(id) && deadline <= by))
+                            || made
+                                .is_some_and(|(ids, by)| ids.contains(&e.origin) && deadline <= by))
                 })?;
         let e = s.timers.remove(&id)?;
         s.by_deadline.remove(&(e.deadline, id));
@@ -362,6 +387,7 @@ impl Iterator for Due<'_> {
             id,
             kind: e.kind,
             deadline: e.deadline,
+            origin: e.origin,
         })
     }
 }
@@ -387,12 +413,40 @@ mod tests {
         let made_later = s.add_timer(ms(40), TimerKind::Timer);
         let ids = mark..s.next_timer_id();
         let after = s.add_timer(ms(14), TimerKind::Timer);
-        let due: Vec<_> = s.due_or_made(ms(10), ids, ms(20)).map(|d| d.id).collect();
+        let due: Vec<_> = s
+            .due_or_made(ms(10), ids.clone(), ms(20))
+            .map(|d| d.id)
+            .collect();
         assert_eq!(due, vec![made]);
-        let ids = mark..s.next_timer_id();
         assert_eq!(s.next_deadline_of(ids), Some(ms(40)));
         assert_eq!(due_ids(&mut s, ms(40)), vec![before, after, made_later]);
         assert_eq!(s.next_deadline_of(mark..s.next_timer_id()), None);
+    }
+
+    #[test]
+    fn a_later_run_is_made_when_its_first_run_was() {
+        let mut s = FrameScheduler::new();
+        let before = s.add_timer(ms(10), TimerKind::Timer);
+        let mark = s.next_timer_id();
+        let made = s.add_timer(ms(10), TimerKind::Timer);
+        // Both ran, and both run again: each later run gets a new id.
+        let ran = s.due(ms(10)).collect::<Vec<_>>();
+        assert_eq!(
+            ran.iter().map(|d| d.id).collect::<Vec<_>>(),
+            vec![before, made]
+        );
+        let again: Vec<_> = ran
+            .iter()
+            .map(|d| s.rearm(ms(20), d.kind, d.origin))
+            .collect();
+        let ids = mark..s.next_timer_id();
+        assert!(ids.contains(&again[0]) && ids.contains(&again[1]));
+        // Only the run of the timer first armed in `ids` is made.
+        assert_eq!(s.next_deadline_of(ids.clone()), Some(ms(20)));
+        let due: Vec<_> = s.due_or_made(ms(10), ids, ms(20)).collect();
+        assert_eq!(due.iter().map(|d| d.id).collect::<Vec<_>>(), vec![again[1]]);
+        assert_eq!(due[0].origin, made);
+        assert_eq!(due_ids(&mut s, ms(20)), vec![again[0]]);
     }
 
     #[test]

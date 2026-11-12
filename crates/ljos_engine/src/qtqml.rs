@@ -813,7 +813,7 @@ pub(crate) fn unpark_timers(engine: &Engine) {
             continue;
         };
         if running {
-            engine.timer_schedule_at(o, due.max(now), interval);
+            engine.timer_schedule_at(o, due.max(now), interval, None);
         }
     }
 }
@@ -948,10 +948,12 @@ impl Engine {
         self.inner.timers.borrow().sched.next_timer_id()
     }
 
-    /// [`Engine::advance_timers`] that also fires the timers in `made`
-    /// whose own deadline is `<= by`: what some work asked for once its
-    /// time has come, on a clock that ran on while the work ran, without
-    /// what came due only as time passed after `now`.
+    /// [`Engine::advance_timers`] that also fires the timers first armed
+    /// in `made` whose own deadline is `<= by`: what some work asked for
+    /// once its time has come, on a clock that ran on while the work ran,
+    /// without what came due only as time passed after `now`. A repeating
+    /// `Timer` is the same timer on every run: one started in `made`
+    /// keeps ticking, and one started before does not join it.
     pub fn advance_timers_made(&self, now: Time, made: Range<TimerId>, by: Time) {
         self.advance_timers_with(now, Some((made, by)));
     }
@@ -1006,7 +1008,7 @@ impl Engine {
                     } else {
                         due.deadline
                     };
-                    self.timer_fire(o, at);
+                    self.timer_fire(o, at, due.origin);
                 }
             }
         }
@@ -1179,7 +1181,7 @@ impl Engine {
             return;
         }
         self.inner.timers.borrow_mut().parked.remove(&obj);
-        self.timer_schedule(obj, now, interval);
+        self.timer_schedule(obj, now, interval, None);
         // Starts within one turn trigger once (checked with qml6).
         let posted = self.inner.timers.borrow().by_start.contains_key(&obj);
         if on_start && on_start_flag && !posted {
@@ -1194,16 +1196,23 @@ impl Engine {
         }
     }
 
-    fn timer_schedule(&self, obj: ObjectId, from: Time, interval: i32) {
+    /// Arms `obj` to fire `interval` ms after `from`. `origin` is the first
+    /// run of the timer this run repeats: the same timer still, for what
+    /// asks when it was armed ([`Engine::advance_timers_made`]).
+    fn timer_schedule(&self, obj: ObjectId, from: Time, interval: i32, origin: Option<TimerId>) {
         let ms = Duration::from_millis(u64::try_from(interval.max(0)).unwrap_or(0));
-        self.timer_schedule_at(obj, from + ms, interval);
+        self.timer_schedule_at(obj, from + ms, interval, origin);
     }
 
-    fn timer_schedule_at(&self, obj: ObjectId, at: Time, interval: i32) {
+    fn timer_schedule_at(&self, obj: ObjectId, at: Time, interval: i32, origin: Option<TimerId>) {
         let interval = Duration::from_millis(u64::try_from(interval.max(0)).unwrap_or(0));
         {
             let mut st = self.inner.timers.borrow_mut();
-            let id = st.sched.add_timer(at, TimerKind::for_interval(interval));
+            let kind = TimerKind::for_interval(interval);
+            let id = match origin {
+                Some(origin) => st.sched.rearm(at, kind, origin),
+                None => st.sched.add_timer(at, kind),
+            };
             st.pending.insert(id, Pending::Timer(obj));
             st.by_timer.insert(obj, id);
             st.due_at.insert(obj, at);
@@ -1212,7 +1221,8 @@ impl Engine {
     }
 
     /// A timer came due at `at`: re-arm (repeat) or stop, then emit.
-    fn timer_fire(&self, obj: ObjectId, at: Time) {
+    /// `origin` is its first run's id, which the next run keeps.
+    fn timer_fire(&self, obj: ObjectId, at: Time, origin: TimerId) {
         let Ok((running, repeat, interval)) =
             self.with::<Timer, _>(obj, |t| (t.running, t.repeat, t.interval))
         else {
@@ -1225,7 +1235,7 @@ impl Engine {
             *self.inner.timers.borrow_mut().fired.entry(obj).or_default() += 1;
         }
         if repeat {
-            self.timer_schedule(obj, at, interval.max(1));
+            self.timer_schedule(obj, at, interval.max(1), Some(origin));
         } else {
             // The timer stopping itself is not an assignment: a binding on
             // `running` stays.
