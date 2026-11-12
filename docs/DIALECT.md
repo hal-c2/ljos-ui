@@ -428,7 +428,7 @@ part they share with it:
 | Qt | Ljós |
 |---|---|
 | `Qt.AlignLeft`, `Qt.AlignHCenter`, `Qt.AlignTop \| Qt.AlignRight` | `Align.Left`, `Align.HCenter`, `Align.Top \| Align.Right` |
-| `Qt.Key_Return`, `Qt.Key_A` | `Key.Return`, `Key.A` |
+| `Qt.Key_Return`, `Qt.Key_A`, `Qt.Key_0` | `Key.Return`, `Key.A`, `Key.Digit0` (§4.7) |
 | `Qt.LeftButton`, `Qt.AllButtons` | `Button.Left`, `Button.All` |
 | `Qt.ControlModifier`, `Qt.NoModifier` | `Modifier.Control`, `Modifier.None` (as §4.7 writes them) |
 | `Qt.Horizontal` | `Orientation.Horizontal` |
@@ -440,8 +440,15 @@ part they share with it:
 
 The full table is generated beside `ljos.txt` from `QtQml.Qt`'s enums,
 with the short names above written by hand and the rest following the
-rule. A key keeps Qt's number, so a value passes between a Ljós file and a
-kept Qt file unchanged. `Qt.Align*` was M3's (§13); S1 takes it.
+rule. A key the rule would leave starting with a digit (`Key_0` would be
+`Key.0`) or empty is written by hand too (`Key.Digit0`, as §4.7 has it),
+and the generator refuses a table that has one. A key keeps Qt's number,
+so a value passes between a Ljós file and a kept Qt file unchanged. The
+table records which enums are sets of flags, combined with `|` (`Align`,
+`Modifier`, `Button`), and which are plain (`Permission.Status`,
+`Orientation`, `CheckState`): a plain enum is a union of its keys to the
+checker, and a `switch` or a `match` on it is held to exhaustiveness
+(§5.1). `Qt.Align*` was M3's (§13); S1 takes it.
 
 **What a file is told.** `Qt` in a file of Ljós's API is a check error
 (`qt-global`) whose fix names the home: `` `Qt.callLater` is not in a
@@ -1873,12 +1880,12 @@ match (subject) {
 
 The clauses are tried in order, and the first whose pattern matches the
 subject (and whose guard is `true`) gives the value. With no match and no
-`default`, it throws a `TypeError`, as the proposal says; on a union the
-checker makes that unreachable (below). Patterns:
+`default`, it throws a `TypeError`, as the proposal says; the checker
+makes that unreachable (below). Patterns:
 
 | Pattern | Matches | Example |
 |---|---|---|
-| literal | the same value (`SameValue`, but `0` matches `-0`) | `when "checked":`, `when 0:`, `when true:`, `when undefined:` |
+| literal | the same value (`SameValueZero`: `NaN` matches `NaN`, `0` matches `-0`) | `when "checked":`, `when 0:`, `when true:`, `when undefined:`, `when NaN:` |
 | relational | a comparison with the subject | `when < 60:`, `when >= 1440:`, `when !== "":` |
 | a constant | the same value as a constant in scope: an enum's key, a `const` of a literal type | `when Permission.Status.Granted:` |
 | binding | anything, and names it | `when let n:` |
@@ -1902,11 +1909,16 @@ What Ljós leaves out of the proposal, and why:
   is never written, so `let` is the one form; `const x` is accepted as a
   synonym, as the proposal allows.
 
-**Exhaustiveness.** A `match` with no `default` over a union must cover
-every member of it, as a `switch` must (`ts-match-exhaustive`, §5.1): the
-literals of a union of literals (`boolean` is `true | false`), and the
+**Exhaustiveness.** A `match` with no `default` is accepted only where
+the checker proves it covers its subject (`ts-match-exhaustive`, §5.1):
+the literals of a union of literals (`boolean` is `true | false`), the
+keys of a plain enum (§4.3.1; an enum of flags is not a union), and the
 tags of a union of records discriminated by one literal key (`{ kind:
-"a", … } | { kind: "b", … }`). Each clause narrows the subject for its
+"a", … } | { kind: "b", … }`). On any other subject (a `number`, a
+`string`, an enum of flags) a `match` needs a `default`, and the message
+says so: `` `match` on `number` needs a `default:` ``. This is stricter
+than the proposal, whose `match` throws at run time; Ljós makes that
+throw unreachable, as it does a `switch`'s missing case. Each clause narrows the subject for its
 expression and its guard, and removes what it matched from the subject's
 type for the clauses after it, as TypeScript's narrowing does. A clause
 with a guard removes nothing. The message names what is missing:
@@ -1986,12 +1998,18 @@ match (permission.status) {
     if ($s === Permission.Status.Granted) return mapView.recenter();
     if ($s === Permission.Status.Denied) return permissionMessageDialog.open();
     if ($s === Permission.Status.Undetermined) return permission.request();
-    return $nomatch($s); })(permission.status)
+    return $nomatch($s as never); })(permission.status)
 ```
 
-`$nomatch` throws the proposal's `TypeError`. For `tsc` it is declared
-`(x: never) => never`, so TypeScript finds the same missing case the
-checker does.
+`$nomatch` throws the proposal's `TypeError`, which the checker has made
+unreachable. The desugar writes it as `$nomatch($s as never)`, declared
+`(x: never) => never`: TypeScript's narrowing is weaker than the
+checker's on nested patterns and guards, and H1 promises that `tsc`
+accepts every file the checker accepts (§4.21), so the checker, not
+`tsc`, is what finds a missing case. The cast is text the desugar wrote,
+to which `ts-no-cast` does not apply (§4.21). A literal pattern lowers to
+`===`, except `NaN`, which lowers to `Number.isNaN($s)`, so the lowering
+is `SameValueZero` too.
 
 DECISION: `match` follows the proposal's README form, `when pattern:`
 clauses ended by `;`, and the proposal wherever it changes; custom
@@ -2056,11 +2074,11 @@ Task {
         Forecast.decode(await (await fetch(`https://example.org/w/${name}`, { signal })).json())
 }
 Text {
-    text: match (weather.status) {
-        when "initial": "";
-        when "pending": qsTr("Loading…");
-        when "done":    weather.value.summary;
-        when "failed":  qsTr("No forecast");
+    text: match (weather.state) {
+        when { status: "initial" }:         "";
+        when { status: "pending" }:         qsTr("Loading…");
+        when { status: "done", let value }: value.summary;
+        when { status: "failed" }:          qsTr("No forecast");
     }
 }
 ```
@@ -2071,10 +2089,15 @@ Text {
 - When `args` changes, by element with `!==`, the Task aborts the run in
   progress through its signal and starts another. The value of a run that
   was superseded is dropped, even when it comes back.
-- `status` is `"initial"`, `"pending"`, `"done"` or `"failed"`; `value` is
-  the last run's result (`T | undefined`), kept while the next one is
-  pending; `error` is why the last run failed (`unknown`). All three are
-  properties, so bindings read them.
+- `state` is where the Task got to, as one value a `match` can take
+  apart: `{ status: "initial" } | { status: "pending"; value: T |
+  undefined } | { status: "done"; value: T } | { status: "failed"; error:
+  unknown; value: T | undefined }`, where a pending or failed state keeps
+  the last run's value. Matching `status: "done"` gives a `value` typed
+  `T`, with no `undefined` to test for. `status`, `value` (`T |
+  undefined`) and `error` are the same, read one at a time, for a binding
+  that wants only one (`visible: weather.status === "pending"`). All four
+  are properties, so bindings read them.
 - The signals `done(value)` and `failed(error)` are for effects a binding
   cannot say.
 - `autoRun` (`true`) runs on a change of `args`; with it `false`, the Task
@@ -2147,6 +2170,10 @@ compat only.
 
 DECISION: `Task` is in `Ljos.Core`, and is a Controller.
 
+DECISION: a Task's progress is one discriminated `state` as well as
+`status`, `value` and `error`, so a `match` on it gives a `value` that is
+never `undefined` where the run is done.
+
 DECISION: `Response.json()` gives `unknown`; a decoder narrows it.
 
 ### 4.20 Controllers
@@ -2164,8 +2191,9 @@ item. That item is its **host**. It has:
 - a lifecycle, as signals: `attached(host)` once its host is complete,
   or when it is put into a host; `detached()` when the host goes, or the
   controller is taken out (a `Loader` unloading, a delegate removed);
-  `updated()` once after a turn in which a property of the host changed,
-  after bindings settle and before drawing;
+  `updated()` once after `attached`, and then once after each turn in
+  which a property of the host changed, after bindings settle and before
+  drawing;
 - properties, functions, signals and children of its own, as any object
   has. Its children are its host's too: a gesture (§4.7) or a `Task`
   declared in a Controller acts on the Controller's host.
@@ -2178,7 +2206,13 @@ Controller's state is its properties, and its effects are bindings and the
 three signals.
 
 `updated()` costs nothing unless a Controller handles it; the engine
-calls it only for Controllers that do.
+calls it only for Controllers that do. What `updated` handlers write does
+not arm `updated` again: a handler sees the changes of the turn before
+it, not its own, so it can never keep the engine awake (rule 6). The
+bindings that read what it wrote update as usual. Where a property
+follows from the host, a binding says it better than `updated` does:
+`readonly property bool compact: host.width < width`. `updated` is for
+the effects a binding cannot say.
 
 `osmbuildings` drives its camera with an `Item` that fills the view, to
 hold two `DragHandler`s, a pinch, a wheel and the clip planes:
@@ -2250,17 +2284,16 @@ bindings the camera reads, not writes made from a handler that has to be
 called once by hand at the start.
 
 **In TypeScript.** A module exports a Controller made by `controller`,
-with typed properties and its lifecycle as functions. `attached` may
-return a function, which runs on `detached`, as React's effects return
-their cleanup:
+with typed properties, bindings (a function of the host and the
+Controller, re-evaluated when what it reads changes, as a QML binding
+is), and its lifecycle as functions. `attached` may return a function,
+which runs on `detached`, as React's effects return their cleanup:
 
 ```ts
 // breakpoint.ts
 export const Breakpoint = controller({
-    properties: { width: 600, compact: false },
-    updated(host, self) {
-        self.compact = host.width < self.width
-    },
+    properties: { width: 600 },
+    bindings: { compact: (host, self) => host.width < self.width },
 })
 ```
 
@@ -2301,6 +2334,12 @@ outside an item (in a `QtObject` or at a file's root) has no host and
 
 DECISION: the lifecycle is three signals (`attached`, `detached`,
 `updated`), handled with `on…` in QML and given as functions in a module.
+`updated` runs once after `attached`, and what its handlers write does
+not run it again.
+
+DECISION: a `match` with no `default` is accepted only where the checker
+proves it covers its subject, and the desugar casts `$nomatch`'s argument
+to `never`, so `tsc` accepts what the checker accepts (§4.18).
 
 DECISION: Controllers are written in QML or in a TypeScript module, and
 both make the same object; the module form has no class.
@@ -2373,7 +2412,7 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-no-any` | No `any`, written or inferred. A parameter without a type is an error. |
 | ✓ `ts-no-cast` | No `as`: a decoder narrows; nothing casts (§4.4). No `!`. |
 | ✓ `ts-switch-exhaustive` | A `switch` on a union covers every case. |
-| `ts-match-exhaustive` | A `match` with no `default` on a union covers every case (§4.18). |
+| `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
@@ -2473,8 +2512,9 @@ How it holds the other rules:
   decoder's result is no exception: a decoder narrows, and nothing
   casts (§4.4).
 - `ts-switch-exhaustive`: a `switch` with no `default` on a union of
-  literals (strings, numbers, booleans, `undefined`) names the cases it
-  leaves out. A switch on a wider type, or on a QML enum, whose keys Qt
+  literals (strings, numbers, booleans, `undefined`) or on a plain enum of
+  Ljós's API (§4.3.1) names the cases it leaves out. A switch on a wider
+  type, on an enum of flags, or on an enum of a kept Qt file, whose keys Qt
   combines as flags, is not held to it.
 - `ts-readonly`: a member written `readonly`, an element of a
   `readonly T[]` (a `list<T>` property reads as one) and the array
