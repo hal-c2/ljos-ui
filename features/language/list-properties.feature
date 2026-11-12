@@ -291,6 +291,7 @@ Feature: A list property declared in QML
         function poke() { k = 2 }
       }
       """
+    Then the property "changes" of "root" is 1
     When the method "poke" of "root" is called
     Then the property "changes" of "root" is 1
 
