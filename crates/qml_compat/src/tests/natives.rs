@@ -350,3 +350,47 @@ fn an_attached_drag_read_off_a_native_type_is_an_items_where_it_is_built_on_one(
         "`.Drag` is read off one of the program's own types, built on no type of the toolkit's, and only an item's is Qt's attached `Drag`"
     );
 }
+
+// Ljós's own modules imported beside Qt's, where the caller describes no
+// types of the program's: their types are Ljós's API already, so the
+// import is carried over and the rest is lowered.
+
+/// A shell's `Ljos.Blocks` beside QtQuick: the import and its `Slot`
+/// stay as they are written.
+#[test]
+fn a_shell_of_blocks_beside_qt_s_is_lowered() {
+    assert_eq!(
+        lowered("import QtQuick\nimport Ljos.Blocks\nColumn { Slot { name: \"x\" } }\n"),
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Layout\nimport Ljos.Blocks\nColumn { Slot { name: \"x\" } }\n"
+    );
+}
+
+/// What a type of Ljós's own sets is in Ljós's names already: a
+/// `Contribution`'s `order` and a `Slot`'s `width` are not Qt's to rename,
+/// while the `Rectangle` inside is QtQuick's and is.
+#[test]
+fn what_a_type_of_ljos_s_own_sets_is_kept_and_qt_s_lowered() {
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport Ljos.Blocks\nItem {\n  Slot { name: \"tools\"; width: 10 }\n  Contribution { slot: \"tools\"; order: 1\n    Rectangle { color: \"red\" } }\n}\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Blocks\nItem {\n  Slot { name: \"tools\"; width: 10 }\n  Contribution { slot: \"tools\"; order: 1\n    Rectangle { fill: \"red\" } }\n}\n"
+    );
+}
+
+/// Any module Ljós's table describes is its own, not only `Ljos.Blocks`.
+#[test]
+fn a_design_singleton_beside_qt_s_is_lowered() {
+    let text = lowered("import QtQuick\nimport Ljos.Design\nRectangle { width: Spacing.md }\n");
+    assert!(text.contains("import Ljos.Design\n"), "{text}");
+    assert!(text.contains("Spacing.md"), "{text}");
+}
+
+/// A module Ljós's table does not have is not Ljós's, whatever its name
+/// starts with, and is not known.
+#[test]
+fn a_module_ljos_has_not_is_kept() {
+    assert!(
+        kept_for("import QtQuick\nimport Ljos.Nowhere\nItem { }\n").contains("not lowered yet")
+    );
+}
