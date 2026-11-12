@@ -1198,6 +1198,37 @@ const NOT_YET: &[(&str, &str)] = &[
     ("QtQuick.Flow", "does not attach under its own name"),
     ("QtQuick.Grid", "does not attach under its own name"),
     ("QtQuick.Row", "does not attach under its own name"),
+    // A gesture is a Controller here (DIALECT §4.20), whose default property
+    // holds the Controllers that act on it as their host; Qt's handlers
+    // have none.
+    (
+        "QtQuick.PointerHandler",
+        "a Controller: `data` holds Controllers",
+    ),
+    (
+        "QtQuick.DragHandler",
+        "a Controller: `data` holds Controllers",
+    ),
+    (
+        "QtQuick.HoverHandler",
+        "a Controller: `data` holds Controllers",
+    ),
+    (
+        "QtQuick.PinchHandler",
+        "a Controller: `data` holds Controllers",
+    ),
+    (
+        "QtQuick.PointHandler",
+        "a Controller: `data` holds Controllers",
+    ),
+    (
+        "QtQuick.TapHandler",
+        "a Controller: `data` holds Controllers",
+    ),
+    (
+        "QtQuick.WheelHandler",
+        "a Controller: `data` holds Controllers",
+    ),
     // Items to Qt, so they have an item's default property; neither can be
     // written as an object, so nothing is ever written in one.
     ("QtQuick.Positioner", "attached only: no default property"),
