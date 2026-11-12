@@ -24,6 +24,7 @@ mod controller;
 mod expr;
 mod module;
 mod shadow;
+mod task;
 mod ty;
 mod web;
 
@@ -79,6 +80,7 @@ pub(super) fn document<'a, O: TypeOracle>(
     let (mut found, in_modules) = {
         let mut checker = Checker::new(compiler, modules);
         checker.declare(&document.root, None);
+        checker.tasks(&document.root, None);
         checker.functions(&document.root, None);
         checker.object(&document.root);
         checker.read_all();
@@ -317,6 +319,8 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     /// written there, with those literals' types: a variable given one
     /// widens them, as given the literals.
     fresh: Vec<(u32, Ty)>,
+    /// The file's Tasks whose `run` is typed, by object.
+    tasks_typed: HashMap<usize, task::TaskSig>,
 }
 
 impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
@@ -349,6 +353,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             this: None,
             nested: 0,
             fresh: Vec::new(),
+            tasks_typed: HashMap::new(),
         }
     }
 
@@ -1111,6 +1116,9 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         if let Some(signal) = handled(last) {
             let sig = self.handler_signal(owner, &path[..path.len() - 1], &signal);
             self.handler(sig, value);
+            return;
+        }
+        if path == ["args"] && self.task_args(owner, value) {
             return;
         }
         let target = self.member_of_path(owner, path);
