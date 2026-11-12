@@ -2303,10 +2303,26 @@ Text {
   cannot say.
 - `autoRun` (`true`) runs on a change of `args`; with it `false`, the Task
   runs only when told: `start()`, which takes the arguments to use, or
-  takes `args`' own. `abort()` aborts the run in progress.
+  takes `args`' own. `abort()` aborts the run in progress: its signal is
+  aborted, and the Task has failed at once, with the signal's reason (an
+  `AbortError`) as its `error` and the last run's value kept.
+- A run superseded by a change of `args` does not fail: the Task stays
+  pending, for the run that replaced it. `args` made again with the same
+  elements runs nothing.
+- `run` may be a plain function: what it returns is the value, and what it
+  throws is the error, as from an async one.
+- A change of where the Task got to is one step: `state`, `status`,
+  `value` and `error` change together, each notifies at most once, and a
+  binding that reads two of them is evaluated once.
 - A Task is a Controller (§4.20) of the item it is declared in. When that
   item goes, the run in progress is aborted. So a delegate scrolled out of
   a list cancels its request.
+- The checker types a Task from its `run`: an `args` written as an array
+  is held to the run's parameters, element by element and in number
+  (`ts-assign-type`), as is what `start(…)` is given; `value`, `done` and
+  `state` carry what the run's promise gives; and a `switch` or an `if` on
+  `state.status` narrows `state`. `ljos check --tsc` declares the same
+  Task to TypeScript.
 
 `todolist` adds a random task from a web API when a button is pressed:
 
@@ -2362,7 +2378,12 @@ differences are the browser's and are documented on the site's page: CORS
 applies there and not on the desktop, and a browser fetch cannot set some
 headers (`Connection`, `Host`). `Task` and `Controller` are engine types,
 built on properties and the object tree, which ljos-web has in its own
-runtime; it provides them with the same features.
+runtime; it provides them with the same features. It has neither yet. Its
+runtime must provide `Controller` (a host, and attached and detached as
+the host comes and goes) and, on it, `Task` as above: runs numbered so a
+superseded result is dropped, the browser's `AbortController` for each
+run, the four parts set as one step, and the run aborted when the host
+goes.
 
 DECISION: `fetch` and its objects are globals of every file, as on every
 JavaScript platform, and not names of `Ljos.Core`: they mean what they mean
@@ -2374,6 +2395,20 @@ DECISION: `Task` is in `Ljos.Core`, and is a Controller.
 DECISION: a Task's progress is one discriminated `state` as well as
 `status`, `value` and `error`, so a `match` on it gives a `value` that is
 never `undefined` where the run is done.
+
+DECISION: a Task's `error` is `unknown`, as a `catch` binding is in
+TypeScript: what a run throws need not be an `Error`. A script narrows it
+(§4.4) before reading its `message`.
+
+DECISION: `abort()` fails the Task with its signal's reason, so `failed`
+and `state` say that the run did not finish; a run superseded by `args`
+leaves the Task pending, since another run is under way.
+
+DECISION: an `args` that is not an array written in place (one a function
+gives, say) is checked as what it is, against nothing: the subset has no
+tuple type to hold it to. A `run` whose return type is not written, and
+which returns what a function of the file gives, gives `unknown`: the
+examples write the run's return type.
 
 DECISION: `Response.json()` gives `unknown`; a decoder narrows it.
 
@@ -3615,6 +3650,9 @@ bindings and states without a rule.
 - DECISION (§4.3.1): `Qt.binding`'s home is `bind(f)` in `Ljos.Core`,
   assignable to a property of `f`'s return type (the project lead's
   answer to §18, 2026-11-12).
+- DECISION (§4.19): a Task's function is `run:` and the call that runs it
+  is `start()`; lit's `task:` and `run()` are not taken. `run` reads as
+  what the Task does, and `start` cannot be mistaken for it.
 
 ## 16. Risks
 
@@ -3709,5 +3747,4 @@ choice is the project lead's.
 | Translated text (§4.13) | (a) `qsTr` with `.arg` counts checked; (b) also a tagged template ``tr`…` ``; (c) only the template | (a) now, (b) later: (a) lowers with no edit, and (b) is sugar over the same catalogue |
 | Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
 | States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
-| `Task`'s names (§4.19) | (a) `run:` the function and `start()` the call; (b) lit's: `task:` the function and `run()` the call | (a): `run` reads as what the Task does, and `start` cannot be mistaken for it |
 | Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |
