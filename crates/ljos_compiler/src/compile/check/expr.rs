@@ -748,12 +748,29 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         Some(self.object_ty(&QKind::Builtin(attached)))
     }
 
+    /// `Easing.OutCubic`: a singleton's name is its one object, and QML
+    /// reads the keys of the enums its type declares through that name as
+    /// through a type's. Beside Qt's table `Easing` is a singleton; without
+    /// it, it is a type that is not, so a key looked for on the type alone
+    /// was found on one table and not the other.
+    fn singleton_key(&mut self, o: u32, name: &str) -> Option<Ty> {
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return None;
+        }
+        let kind = self.kind_of(o)?;
+        if !self.c.types.is_singleton(&kind) {
+            return None;
+        }
+        self.type_member(o, name)
+    }
+
     fn member_one(&mut self, part: Ty, name: &str) -> Option<Ty> {
         use builtins::Primitive as P;
         match self.arena.kind(part).clone() {
             Kind::Object(o) => self
                 .object_member(o, name)
                 .map(|own| own.ty)
+                .or_else(|| self.singleton_key(o, name))
                 .or_else(|| self.attached_off(name)),
             Kind::Type(o) => self.type_member(o, name),
             Kind::Namespace(namespace) => {
