@@ -7,7 +7,8 @@
 # Found by ljos-fuzz (creation), buckets value:load-handlers:bool, value:step:bool,
 # value:step:number, value:step:text-number, value:load-handlers:invalid-qt,
 # value:load-handlers:nan-ljos, value:onChanged+onCompleted:empty-qt and
-# warning:other(qt-only):Could_not_set_initial_property_pN.
+# warning:other(qt-only):Could_not_set_initial_property_pN; and, with Qt 6.11.2 as the
+# oracle, value:step:null-ljos and the other buckets of an object Qt 6.12.0 gives back null.
 
 @qt-parity
 Feature: What createObject makes of its initial properties
@@ -32,6 +33,7 @@ Feature: What createObject makes of its initial properties
             property int i
             property color c: "red"
             property real r: root.n * 2
+            property point at
             onRChanged: root.log += "r;"
           }
         }
@@ -80,3 +82,18 @@ Feature: What createObject makes of its initial properties
   Scenario: An initial real given "" leaves no object
     When the method "give" of "root" is called with {"r": ""}
     Then the property "seen" of "root" is "none"
+
+  # Qt 6.11.2 makes the object with the point at the origin; Qt 6.12.0 says it
+  # cannot set the point, completes the object, destroys it and gives back
+  # null. Ljós follows 6.12.
+  @qt-diverges
+  Scenario Outline: An initial point given <given> leaves no object
+    When the method "give" of "root" is called with {"at": <given>}
+    Then the property "seen" of "root" is "none"
+    And the log has a warning matching "Could not set initial property at"
+
+    Examples:
+      | given |
+      | 0     |
+      | false |
+      | ""    |
