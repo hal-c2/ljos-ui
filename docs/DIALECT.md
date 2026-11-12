@@ -3515,6 +3515,10 @@ bindings and states without a rule.
   one property and binding system, in QML or a TypeScript module.
 - DECISION (§4.3.1): no `Qt` in a file that imports `Ljos.Ui`; every
   member has a home in Ljós's API and `ljos migrate` writes it.
+- DECISION (§4.20, the project lead's, 2026-11-12): a Controller's
+  lifecycle is named `attached`, `detached` and `updated`, handled with
+  `onAttached`, `onDetached` and `onUpdated`; lit's
+  `hostConnected`/`hostDisconnected`/`hostUpdated` are not taken.
 
 ## 16. Risks
 
@@ -3612,5 +3616,4 @@ choice is the project lead's.
 | `QtObject`'s name (§4.1, §4.3.1) | (a) keep `QtObject`; (b) `Object`; (c) another word | (b): no Qt name survives S1. `Object` is named only where a type goes, so `Object.keys(…)` in a script stays JavaScript's |
 | `Task`'s names (§4.19) | (a) `run:` the function and `start()` the call; (b) lit's: `task:` the function and `run()` the call | (a): `run` reads as what the Task does, and `start` cannot be mistaken for it |
 | `Qt.binding`'s home (§4.3.1) | (a) `bind(f)` in `Ljos.Core`, assignable to a property of `f`'s type; (b) none: a file with `Qt.binding` is kept | (a): it is the one member with no declarative edit, and only (a) lets every `Qt` member migrate (4 corpus files use it) |
-| Controller lifecycle names (§4.20) | (a) `attached`/`detached`/`updated`; (b) lit's `hostConnected`/`hostDisconnected`/`hostUpdated` | (a): shorter, and QML's handlers read `onAttached` |
 | Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |
