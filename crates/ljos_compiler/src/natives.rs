@@ -125,3 +125,24 @@ impl<O: TypeOracle> qml_compat::Natives for OracleNatives<'_, O> {
             .is_some_and(|module| is_ljos_api(&module))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use qml_compat::Natives;
+
+    use super::*;
+
+    // The CLI lowers through these natives, not qml_compat's own
+    // description: a type of Ljós's own must be told the same way there.
+    #[test]
+    fn a_type_of_ljos_s_own_has_ljos_s_names_on_the_toolkit_type_it_is_built_on() {
+        let natives = OracleNatives::new(&QtTypeOracle);
+        let slot = natives.module_type("Ljos.Blocks", "Slot").expect("Slot");
+        assert!(natives.has_ljos_names(slot));
+        assert_eq!(
+            natives.toolkit_base(slot),
+            Some(("QtQuick".to_owned(), "Item".to_owned()))
+        );
+        assert!(natives.module_type("QtQuick", "Item").is_none());
+    }
+}
