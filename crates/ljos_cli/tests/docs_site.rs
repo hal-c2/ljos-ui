@@ -383,16 +383,17 @@ fn stale_host_types(passed: bool, out: &str) -> Option<String> {
     if passed {
         return Some("`ljos check` passes it".to_owned());
     }
-    let errors: Vec<_> = out
-        .lines()
-        .filter(|line| line.contains(": error: "))
+    let errors: Vec<_> = diagnostics(out)
+        .into_iter()
+        .filter(|d| d.severity == "error")
         .collect();
     if errors.is_empty() {
         return Some(format!("`ljos check` fails with no error found:\n{out}"));
     }
     let other: Vec<_> = errors
         .into_iter()
-        .filter(|line| !line.trim_end().ends_with("[unknown-type]"))
+        .filter(|d| d.code != Some("unknown-type"))
+        .map(|d| d.text)
         .collect();
     (!other.is_empty()).then(|| {
         format!(
@@ -400,6 +401,68 @@ fn stale_host_types(passed: bool, out: &str) -> Option<String> {
             other.join("\n")
         )
     })
+}
+
+/// One diagnostic `ljos check` printed: its header line and the lines
+/// after it up to the next header, since a message may run over lines.
+struct Diagnostic<'a> {
+    severity: &'a str,
+    /// The last `[code]` of its lines, where `ljos check` puts it.
+    code: Option<&'a str>,
+    text: String,
+}
+
+/// `ljos check`'s output read diagnostic by diagnostic: one starts at a
+/// `<path>:<line>:<column>: <severity>: ` header, and any other line
+/// belongs to the one above it. `ljos check` has no machine-readable
+/// form of its diagnostics (its `--json` is `--port`'s).
+fn diagnostics(out: &str) -> Vec<Diagnostic<'_>> {
+    let mut found: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in out.lines() {
+        match header(line) {
+            Some(severity) => found.push((severity, vec![line])),
+            None => {
+                if let Some((_, lines)) = found.last_mut() {
+                    lines.push(line);
+                }
+            }
+        }
+    }
+    found
+        .into_iter()
+        .map(|(severity, lines)| Diagnostic {
+            severity,
+            code: lines.iter().rev().find_map(|line| code(line)),
+            text: lines.join("\n"),
+        })
+        .collect()
+}
+
+/// The severity of a diagnostic's header line: `<path>:<line>:<column>:
+/// <severity>: `, `None` for any other line.
+fn header(line: &str) -> Option<&str> {
+    let (place, severity) = ["error", "warning"].iter().find_map(|severity| {
+        let at = line.find(&format!(": {severity}: "))?;
+        Some((&line[..at], *severity))
+    })?;
+    let mut parts = place.rsplitn(3, ':');
+    let column = parts.next()?;
+    let row = parts.next()?;
+    let path = parts.next()?;
+    let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    (digits(column) && digits(row) && !path.is_empty()).then_some(severity)
+}
+
+/// The `[code]` a line ends with: a lint or diagnostic code is lower case
+/// words joined by `-`.
+fn code(line: &str) -> Option<&str> {
+    let code = line.trim_end().strip_suffix(']')?;
+    let code = &code[code.rfind('[')? + 1..];
+    (!code.is_empty()
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+    .then_some(code)
 }
 
 /// `ljos` in `dir`, ended at the deadline: `None` when it was.
@@ -697,4 +760,31 @@ fn a_host_types_entry_is_stale_once_check_passes_or_fails_on_anything_else() {
     );
 
     assert!(stale_host_types(false, "ljos: cannot read .\n").is_some());
+
+    // A message that runs over lines has its code at the end of its last.
+    let wrapped = "Main.qml:8:5: error: `Counter` is not a type of anything the file imports:\n\
+        \x20 it imports Ljos.Ui, and the program registers its own types\n\
+        \x20 in Rust [unknown-type]\n\
+        1 files, 1 errors, 0 warnings\nljos: 1 errors\n";
+    assert_eq!(stale_host_types(false, wrapped), None);
+
+    // A second diagnostic of another code makes it stale, wrapped or not.
+    let second = format!(
+        "{wrapped}Main.qml:12:3: error: `wdth` is not a property\n\
+        \x20 of `Item` [unknown-property]\n"
+    );
+    let why = stale_host_types(false, &second).expect("another code makes it stale");
+    assert!(
+        why.contains("[unknown-property]") && !why.contains("Counter"),
+        "{why}"
+    );
+
+    // A warning's lines are its own, not the error's above it.
+    let warned = "Main.qml:8:5: error: `Counter` is not a type [unknown-type]\n\
+        Main.qml:9:5: warning: `MouseArea` is only for a pointer\n\
+        \x20 [focus-pointer-only]\n";
+    assert_eq!(stale_host_types(false, warned), None);
+
+    // An error with no code at all is not the program's types either.
+    assert!(stale_host_types(false, "Main.qml:1:1: error: cannot read it\n").is_some());
 }
