@@ -1784,7 +1784,9 @@ has none of them.
 
 `rssnews`' delegate shows how long ago an article came out. Qt's version
 rebuilds the date string by hand and threads `result` through nested
-`if`s (the `match` is §4.18; `Instant` and `Clock` are §4.3's):
+`if`s. The Ljós version pipes the minutes into a `match` whose arms are
+guards, Elixir's `cond` in TC39's form (§4.18); `Instant` and `Clock` are
+§4.3's:
 
 ```qml
 // Qt (rssnews/content/NewsDelegate.qml, abridged)
@@ -1819,11 +1821,11 @@ function timeSinceEvent(pubDate: string): string {
     const published = Instant.parseRfc2822(pubDate)
     if (published === undefined) return pubDate
     return Clock.now(Clock.Resolution.Minute).since(published).minutes |> match (%) {
-        when < 2:    qsTr("Just now");
-        when < 60:   qsTr("%1 minutes ago").arg(%);
-        when < 120:  qsTr("1 hour ago");
-        when < 1440: Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
-        default:     Locale.current.formatDate(published, Locale.Format.Long);
+        when if (% < 2):    qsTr("Just now");
+        when if (% < 60):   qsTr("%1 minutes ago").arg(%);
+        when if (% < 120):  qsTr("1 hour ago");
+        when if (% < 1440): Math.floor(% / 60) |> qsTr("%1 hours ago").arg(%);
+        default:            Locale.current.formatDate(published, Locale.Format.Long);
     }
 }
 ```
@@ -1867,62 +1869,170 @@ it saw. The budget gate (§11) measures the cost, and tier 1 removes it.
 `switch` on a status, chains of `if`/`else if` on a number, and
 `[a && "x", b && "y"].filter(Boolean).join("_")` for combinations.
 
-**The design.** `match` is the expression of TC39's pattern-matching
-proposal:
+**Where it comes from.** Four languages were read for this section, as
+they stand on 2026-11-12: ReScript's `switch`, Elixir's `case` and
+`cond`, TC39's pattern-matching proposal (stage 1; its README as of
+2025-10-03), and Go. The syntax is TC39's, exactly, since a Ljós script
+is TypeScript and adds nothing TC39 has not proposed (§1). The others
+decide what the checker holds a `match` to and how it says so:
+
+| Idea | ReScript | Elixir | TC39 | Go | Ljós takes |
+|---|---|---|---|---|---|
+| The form | `switch x { \| p => e }`, an expression | `case x do p -> e end`, an expression | `match (x) { when p: e; default: e; }`, an expression | `switch`, a statement; no patterns | TC39's form, as an expression that may stand as a statement |
+| No case matches | cannot happen: the compiler warns first | `CaseClauseError` | `TypeError` | nothing runs | TC39's `TypeError`, which the checker makes unreachable: a `match` never gives `undefined` for want of a case |
+| Exhaustiveness | checked; the warning shows a case left out ("You forgot to handle a possible case here, for example: …") | not checked | not specified ("a development-time error is less costly than a production-time error") | not checked (an `exhaustive` linter exists outside the language) | checked, as ReScript does, and the message shows a case left out (below) |
+| A catch-all | `_`, with the advice not to use it at the top, since it turns the check off | `_` | `default:` | `default:` | `default:`, and the same advice in the site's page: on a union, leaving `default` out is what lets the checker find a new member |
+| Literals | yes | yes | `SameValue`, but the pattern `0` matches `-0` too | `case 1, 2:` compares with `==` | TC39's |
+| Nested destructuring | yes | yes | array and object patterns, nested | none | TC39's |
+| Or-patterns | `\| A \| B =>`, also inside a record | none (one clause per pattern, or a guard with `or`) | `or`, anywhere in a pattern, with `and` and `not` | `case a, b:` | TC39's `or`, `and`, `not` |
+| Guards | `\| p if cond =>` | `p when cond ->`; an error in a guard fails the guard | `p and if (cond)`: a guard is a pattern | none | TC39's guard pattern; an error in a guard is an error, as TC39 has it, and the checker requires a `boolean` (`ts-condition-boolean`) |
+| Comparing with a variable | a name always binds, so comparing needs a guard | a name binds; the pin `^x` compares | a name compares (by `SameValue`, or calls it if it is a function); `let x` binds | `case x:` compares | TC39's: a bare name compares, as Elixir's pin does, and `let`/`const` binds |
+| Type tests | variant tags | `when is_binary(x)` | a predicate function, or `String`, `Number`, `Boolean` as a pattern | the type switch, `switch v := x.(type)` | TC39's predicates and primitive constructors; a type guard (§4.4) as a pattern narrows |
+| A chain of conditions | `if`/`else` | `cond`, which raises `CondClauseError` when none holds | `when if (cond):`, a guard alone | the tagless `switch { case c: }` | TC39's guard alone, `when if (cond):`, with no form of its own (DECISION below) |
+| Destructuring in `let` and parameters | yes | `=` is a match | JavaScript's | none | JavaScript's, as it is; a test that can fail is `is` (below) |
+
+Go was checked because a change there was remembered: Go has added no
+pattern matching or destructuring. The proposals for sum types
+(golang/go#19412, #57644, #76949, the last with a match statement) are
+open; the one for limited pattern matching in error handling (#65266)
+was closed with Go's 2025 decision to add no new error-handling syntax.
+Go's tagless `switch` is its `cond`, and its type switch its type test;
+neither is exhaustive.
+
+**The design.** `match` is the expression of TC39's proposal:
 
 ```js
 match (subject) {
     when pattern: expression;
-    when pattern if (guard): expression;
+    when pattern and if (condition): expression;
     default: expression;
 }
 ```
 
-The clauses are tried in order, and the first whose pattern matches the
-subject (and whose guard is `true`) gives the value. With no match and no
-`default`, it throws a `TypeError`, as the proposal says; the checker
-makes that unreachable (below). Patterns:
+The arms are tried in order, and the first whose pattern matches the
+subject gives the value. With no match and no `default`, it throws a
+`TypeError`, as the proposal says; the checker makes that unreachable
+(below). Each arm is a block scope of its own: what its pattern binds is
+seen by its condition and its expression, and by nothing outside.
+Patterns:
 
 | Pattern | Matches | Example |
 |---|---|---|
-| literal | the same value (`SameValueZero`: `NaN` matches `NaN`, `0` matches `-0`) | `when "checked":`, `when 0:`, `when true:`, `when undefined:`, `when NaN:` |
-| relational | a comparison with the subject | `when < 60:`, `when >= 1440:`, `when !== "":` |
-| a constant | the same value as a constant in scope: an enum's key, a `const` of a literal type | `when Permission.Status.Granted:` |
-| binding | anything, and names it | `when let n:` |
+| literal | the same value, by `SameValue` (`NaN` matches `NaN`), except that the pattern `0` matches `-0` too; `+0` and `-0` match only themselves. No coercion: `1` does not match `"1"` | `when "checked":`, `when 0:`, `when true:`, `when undefined:`, `when NaN:` |
+| variable | a name, `a.b` or `a[b]` in scope: a function is called with the subject and matches if it returns `true`; anything else matches the same value (`SameValue`) | `when Permission.Status.Granted:`, `when selected:`, `when isRow:` |
+| primitive type | a value of that type | `when String:`, `when Number:`, `when Boolean:` |
+| regular expression | a string the expression finds a match in | `` when /^https?:/: `` |
+| binding | anything, and names it | `when let n:`, `when const n:` |
 | array | an array of exactly this length; `...` or `...let rest` for "at least" | `when [let x, let y]:`, `when [0, ...let rest]:` |
-| object | an object with these keys, each matching its pattern; `key` alone tests that the key is there | `when { status: 200, let body }:` |
-| `and`, `or`, `not` | both, either, neither (mixing two needs parentheses) | `when 301 or 304:`, `when not undefined:` |
+| object | an object with these keys, each matching its pattern; `key` alone tests that the key is there, `let key` binds it | `when { status: 200, let body }:` |
+| `and`, `or`, `not` | both, either, neither; mixing two needs parentheses | `when 301 or 304:`, `when not undefined:`, `when { status: "done" or "failed" }:` |
+| guard | anything, where the condition is `true` | `when let n and if (n > 0):`, `when if (minutes < 2):` |
 
-`x is pattern` is the same test as a boolean, and narrows `x` where it is
-`true`: `if (reply is { status: 200 })`.
+A bare name in a pattern compares; it never binds. That is Elixir's pin
+(`^x`) by default, and the reverse of ReScript, where `x` binds and
+comparing needs a guard. A name that is not in scope is an error, whose
+message gives the fix for the other reading: `` `x` is not defined; to
+bind the value, write `let x` ``.
+
+`x is pattern` is the same test as a boolean. It narrows `x` where it is
+`true`, and what it binds is in scope in the block around it, as the
+proposal has it:
+
+```ts
+if (reply is { status: 200, let body }) {
+    show(body)
+}
+```
+
+A read of a binding where the checker cannot prove the `is` was `true`
+(in the `else`, or after the `if`) is an error, `ts-is-binding`; in
+JavaScript it would throw a `ReferenceError`.
 
 What Ljós leaves out of the proposal, and why:
 
-- **Custom matchers** (`Symbol.customMatcher`, extractor patterns such as
-  `when Option.Some(let x)`). They need classes and symbols, which the
-  subset forbids (§5.1). A decoder (§4.4) does their job: `when let x if
-  (isPoint(x))`.
-- **Bindings in `is`.** `if (x is { let body })` would bind `body` in the
-  `if`'s block; the proposal has not settled that scoping, so Ljós waits
-  for it. `is` without `let` is in.
-- **`var` and `const` bindings.** `var` is forbidden (§5.1) and a binding
-  is never written, so `let` is the one form; `const x` is accepted as a
-  synonym, as the proposal allows.
+- **Extractors and custom matcher objects** (`when Option.Some(let x)`,
+  an object with a `Symbol.customMatcher`). They need classes and
+  symbols, which the subset forbids (§5.1). A predicate does the test, and
+  a type guard (§4.4) narrows as it does: `when isRow:`, or `when let r
+  and isRow:` to name it too.
+- **A class as a pattern.** There are no classes (`ts-forbidden`).
+- **`var` bindings** (`ts-no-var`) and `null` patterns (`ts-no-null`), as
+  everywhere in a script. `let` and `const` bind alike, since a binding
+  in a pattern is never written.
+- **The proposal's possible future enhancements**: relational patterns
+  (`when < 10:`), `void` patterns, `async match`, defaults, chained
+  guards and `catch` integration. They are not in the proposal, so Ljós
+  has none of them; a guard says what a relational pattern would.
 
 **Exhaustiveness.** A `match` with no `default` is accepted only where
 the checker proves it covers its subject (`ts-match-exhaustive`, §5.1):
 the literals of a union of literals (`boolean` is `true | false`), the
 keys of a plain enum (§4.3.1; an enum of flags is not a union), and the
 tags of a union of records discriminated by one literal key (`{ kind:
-"a", … } | { kind: "b", … }`). On any other subject (a `number`, a
-`string`, an enum of flags) a `match` needs a `default`, and the message
-says so: `` `match` on `number` needs a `default:` ``. This is stricter
-than the proposal, whose `match` throws at run time; Ljós makes that
-throw unreachable, as it does a `switch`'s missing case. Each clause narrows the subject for its
-expression and its guard, and removes what it matched from the subject's
-type for the clauses after it, as TypeScript's narrowing does. A clause
-with a guard removes nothing. The message names what is missing:
-`` `match` does not cover "pressed" ``.
+"a", … } | { kind: "b", … }`). Each arm narrows the subject for its
+condition and its expression, and removes from the subject's type, for
+the arms after it, what its pattern matches whole. An arm with a guard
+or a predicate removes nothing, since the checker cannot know when the
+condition holds. On any other subject (a `number`, a `string`, an enum of
+flags) a `match` needs a `default`, and the message says so: `` `match`
+on `number` needs a `default:` ``. This is stricter than the proposal,
+whose `match` throws at run time; Ljós makes that throw unreachable, as
+it does a `switch`'s missing case.
+
+The message shows a case left out, as ReScript's does, written as a
+pattern that would cover it:
+
+```text
+Main.qml:14:11: error: `match` does not cover every case of `weather.state`.
+For example, this case is not handled:
+    when { status: "failed" }:
+```
+
+**As ReScript and Elixir write it.** A `Task`'s state (§4.19) taken
+apart, with nesting, `or`, a guard and no `default`, so that the checker
+holds it to every status:
+
+```qml
+Text {
+    text: match (feed.state) {
+        when { status: "initial" or "pending" }:                      qsTr("Loading…");
+        when { status: "done", value: [] }:                           qsTr("Nothing new");
+        when { status: "done", value: [let only] }:                   only.title;
+        when { status: "done", let value } and if (value.length > 99): qsTr("99+ new");
+        when { status: "done", let value }:                           qsTr("%1 new").arg(value.length);
+        when { status: "failed", error: { name: "AbortError" } }:     "";
+        when { status: "failed" }:                                    qsTr("Could not load");
+    }
+}
+```
+
+The fifth arm has no guard and matches every `done` state whole, so after
+it `done` is covered; the last arm covers `failed`. Leave it out, and the
+message above names `{ status: "failed" }`.
+
+Comparing with a value in scope, Elixir's pin, is a bare name:
+
+```qml
+// Elixir: case row do %{key: ^selected} -> :highlight; … end
+color: match (row) {
+    when { key: selected }:                             "steelblue";
+    when { let key } and if (key.startsWith("draft/")): "gray";
+    default:                                            "black";
+}
+```
+
+A chain of conditions with nothing to take apart, Elixir's `cond` and
+Go's tagless `switch`, is a `match` whose arms are guards alone, on the
+value they test. `default:` is `cond`'s `true ->`, and since guards
+remove nothing, the checker asks for it (`osmbuildings`' camera, §4.20):
+
+```qml
+readonly property real clipNear: match (camera.z) {
+    when if (camera.z < 1):   0.01;
+    when if (camera.z < 100): 0.1;
+    default:                  1;
+}
+```
 
 `lightningviewer`'s button picks an image for its look from four flags,
 by joining the names of those that hold:
@@ -1981,7 +2091,7 @@ onRecenterRequested: match (permission.status) {
 enum it belongs to. With no `default`, the checker holds the `match` to
 all three statuses, so a fourth added to `Permission.Status` is an error
 here, where Qt's `default:` would quietly ask again. A `match` whose
-clauses are calls is a statement as well as an expression.
+arms are calls is a statement as well as an expression.
 
 **Lowering.** `match` is compiled away (§4.21), line for line, to an
 arrow of the subject made of `if`s, called at once:
@@ -1995,25 +2105,66 @@ match (permission.status) {
 }
 // what runs
 (($s) => {
-    if ($s === Permission.Status.Granted) return mapView.recenter();
-    if ($s === Permission.Status.Denied) return permissionMessageDialog.open();
-    if ($s === Permission.Status.Undetermined) return permission.request();
+    if ($is($s, Permission.Status.Granted)) return mapView.recenter();
+    if ($is($s, Permission.Status.Denied)) return permissionMessageDialog.open();
+    if ($is($s, Permission.Status.Undetermined)) return permission.request();
     return $nomatch($s as never); })(permission.status)
 ```
 
-`$nomatch` throws the proposal's `TypeError`, which the checker has made
-unreachable. The desugar writes it as `$nomatch($s as never)`, declared
-`(x: never) => never`: TypeScript's narrowing is weaker than the
-checker's on nested patterns and guards, and H1 promises that `tsc`
-accepts every file the checker accepts (§4.21), so the checker, not
-`tsc`, is what finds a missing case. The cast is text the desugar wrote,
-to which `ts-no-cast` does not apply (§4.21). A literal pattern lowers to
-`===`, except `NaN`, which lowers to `Number.isNaN($s)`, so the lowering
-is `SameValueZero` too.
+- A literal lowers to `===`, which is the proposal's test for every
+  literal but `NaN`, `+0` and `-0`; those lower to `Object.is`.
+- A variable pattern lowers to `$is($s, p)`, which does the proposal's
+  test at run time: a function is called with the subject, anything else
+  is compared by `Object.is`. Which it is depends on the value, not the
+  syntax, and the desugar reads only syntax. The checker knows the type,
+  so tier 1 compiles an enum key to `===` and a predicate to a call.
+- `String`, `Number` and `Boolean` lower to `typeof`; a regular
+  expression to its `test`, on a subject the checker has typed `string`.
+  A regular expression with the `g` or `y` flag is an error in a pattern:
+  it keeps its place between tests, so the same string could match once
+  and then not.
+- An object pattern tests each key as the proposal's `HasProperty` does,
+  and reads each value once in a `match`, as the proposal's caching has
+  it. A binding lowers to a `const` in the arm's block.
+- A guard lowers to its condition, after the arm's bindings.
+- Where the subject is a local name, the desugar tests the name itself,
+  not a copy, so `tsc` narrows what the arm reads as the checker does.
+- `x is pattern` lowers to the same test, with its bindings declared at
+  the start of the statement that holds it.
 
-DECISION: `match` follows the proposal's README form, `when pattern:`
-clauses ended by `;`, and the proposal wherever it changes; custom
-matchers and bindings in `is` wait (above).
+`$is` is declared to `tsc` as a type guard of its subject (`$is<T>(s:
+unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:
+T): s is T` for a value). `$nomatch` throws the proposal's `TypeError`,
+which the checker has made unreachable. The desugar writes it as
+`$nomatch($s as never)`, declared `(x: never) => never`: TypeScript's
+narrowing is weaker than the checker's on nested patterns and guards,
+and H1 promises that `tsc` accepts every file the checker accepts
+(§4.21), so the checker, not `tsc`, is what finds a missing case. The
+cast is text the desugar wrote, to which `ts-no-cast` does not apply
+(§4.21). A binding of an `is` that the pattern did not reach is
+`undefined` in what runs, where JavaScript would throw; `ts-is-binding`
+makes the difference unreachable.
+
+DECISION: `match` and `is` follow the proposal's README as of
+2025-10-03, and the proposal wherever it changes: `when pattern:` arms
+ended by `;`, a guard as the pattern `if (condition)` joined by `and`,
+variable patterns that compare or call, the primitive constructors and
+regular expressions as patterns, and bindings in `is` scoped to the
+block around it. Extractors, custom matcher objects and the proposal's
+possible future enhancements, relational patterns among them, are not
+in it.
+
+DECISION: `cond`-style chains get no form of their own. A guard alone,
+`when if (condition):`, is TC39's own way to say one, `default:` is
+`cond`'s `true ->`, and the checker's rule that guards remove nothing
+gives Elixir's `CondClauseError` at check time, as an error that the
+`match` needs a `default:`. The subject is the value the conditions
+test, so that a reader sees what is being decided; `match (true)` is
+allowed and means the same.
+
+DECISION: exhaustiveness is checked as ReScript checks it, and the
+message shows a case left out as a pattern; a `match` never gives
+`undefined` for want of a case, as Elixir's never does.
 
 DECISION: `match` is an expression and may stand as a statement, so it
 replaces `switch` in a handler too. `switch` stays, with its own
@@ -2262,7 +2413,9 @@ Controller {
     property bool panEnabled: true
 
     readonly property real clipNear: match (camera.z) {
-        when < 1: 0.01; when < 100: 0.1; default: 1;
+        when if (camera.z < 1):   0.01;
+        when if (camera.z < 100): 0.1;
+        default:                  1;
     }
     readonly property real clipFar: clipNear * 10000
 
@@ -2414,6 +2567,7 @@ print. Those the checker builds are marked ✓.
 | ✓ `ts-no-cast` | No `as`: a decoder narrows; nothing casts (§4.4). No `!`. |
 | ✓ `ts-switch-exhaustive` | A `switch` on a union covers every case. |
 | `ts-match-exhaustive` | A `match` with no `default` covers every case of its subject, which must be a union of literals, a plain enum or a discriminated union; on any other subject it needs a `default` (§4.18). |
+| `ts-is-binding` | A binding of `x is pattern` is read only where the `is` is known `true` (§4.18). |
 | `qt-global` | No `Qt` in a file of Ljós's API; the fix names the member's home (§4.3.1). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
@@ -3187,8 +3341,16 @@ bindings and states without a rule.
   proposals define them, compiled away by one desugar before the
   compiler, the checker, `tsc` or an editor reads them.
 - DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic.
-- DECISION (§4.18): `match` has the TC39 README's form; custom matchers
-  and bindings in `is` wait for the proposal.
+- DECISION (§4.18): `match` and `is` follow TC39's README as of
+  2025-10-03: guards are the pattern `and if (…)`, a bare name compares
+  (Elixir's pin), predicates and the primitive constructors are
+  patterns, and bindings in `is` are scoped to the block around it.
+  Extractors, custom matcher objects and the proposal's future
+  enhancements (relational patterns among them) are not in it.
+- DECISION (§4.18): `cond`-style chains get no form of their own: a
+  guard alone, `when if (…):`, with `default:` as `cond`'s `true ->`.
+- DECISION (§4.18): exhaustiveness is checked as ReScript checks it, and
+  the message shows a case left out as a pattern.
 - DECISION (§4.19): async work is WHATWG's `fetch` with `async`/`await`,
   over `Platform::request`, with nothing that polls; `Task` declares it.
   `XMLHttpRequest` is compat only.
@@ -3227,8 +3389,8 @@ bindings and states without a rule.
   by pixels. Compare their JSON and logs.
 - **R10: low coverage until `Ljos.Layout` and `Ljos.Controls`.** The
   pass's real complexity shows only when Controls lowers.
-- **R12: TC39 moves.** Both proposals can change, and pattern matching
-  is at stage 1. Ljós follows them: a change is a desugar change and a
+- **R12: TC39 moves.** Both proposals can change: pattern matching is
+  at stage 1, and §4.18 follows its README as of 2025-10-03. Ljós follows them: a change is a desugar change and a
   `ljos migrate` rewrite of the old form, so files never fork from the
   proposal.
 - **R13: the cost of an arrow per step.** A pipe or a `match` compiled to
