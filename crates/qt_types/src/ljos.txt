@@ -124,15 +124,20 @@ module Ljos.Controls
 	Button Ljos/Controls/Button.qml
 	CheckBox Ljos/Controls/CheckBox.qml
 	ComboBox Ljos/Controls/ComboBox.qml
+	Control QtQuick/Controls/Basic/Control.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	Icon Ljos/Controls/Icon.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label Ljos/Controls/Label.qml
 	Menu Ljos/Controls/Menu.qml
 	MenuItem Ljos/Controls/MenuItem.qml
 	MenuSeparator Ljos/Controls/MenuSeparator.qml
+	Page QtQuick/Controls/Basic/Page.qml
+	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup Ljos/Controls/Popup.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
@@ -142,6 +147,7 @@ module Ljos.Controls
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField Ljos/Controls/TextField.qml
 	Theme Ljos/Controls/Theme.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
 	ToolTip Ljos/Controls/ToolTip.qml
 	type Ljos/Controls/Button.qml Button
 		prototype QtQuick.Templates.Button named
@@ -314,14 +320,19 @@ module Ljos.Controls.Basic
 	Button QtQuick/Controls/Basic/Button.qml
 	CheckBox QtQuick/Controls/Basic/CheckBox.qml
 	ComboBox QtQuick/Controls/Basic/ComboBox.qml
+	Control QtQuick/Controls/Basic/Control.qml
 	Dialog QtQuick/Controls/Basic/Dialog.qml
 	FileDialog QtQuick.Dialogs.FileDialog
 	FolderDialog QtQuick.Dialogs.FolderDialog
+	Frame QtQuick/Controls/Basic/Frame.qml
+	GroupBox QtQuick/Controls/Basic/GroupBox.qml
 	ItemDelegate QtQuick/Controls/Basic/ItemDelegate.qml
 	Label QtQuick/Controls/Basic/Label.qml
 	Menu QtQuick/Controls/Basic/Menu.qml
 	MenuItem QtQuick/Controls/Basic/MenuItem.qml
 	MenuSeparator QtQuick/Controls/Basic/MenuSeparator.qml
+	Page QtQuick/Controls/Basic/Page.qml
+	Pane QtQuick/Controls/Basic/Pane.qml
 	Popup QtQuick/Controls/Basic/Popup.qml
 	ScrollBar QtQuick/Controls/Basic/ScrollBar.qml
 	ScrollView QtQuick/Controls/Basic/ScrollView.qml
@@ -330,6 +341,7 @@ module Ljos.Controls.Basic
 	Switch QtQuick/Controls/Basic/Switch.qml
 	TextArea QtQuick/Controls/Basic/TextArea.qml
 	TextField QtQuick/Controls/Basic/TextField.qml
+	ToolBar QtQuick/Controls/Basic/ToolBar.qml
 	ToolTip QtQuick/Controls/Basic/ToolTip.qml
 
 module Ljos.Controls.impl

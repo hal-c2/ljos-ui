@@ -123,8 +123,31 @@ fn ljos_controls_has_what_qt_controls_have() {
         "TextArea",
         "TextField",
         "ToolTip",
+        "Control",
+        "Pane",
+        "Frame",
+        "GroupBox",
+        "Page",
+        "ToolBar",
     ] {
         assert!(ljos.type_named(name).is_some(), "{name}");
         assert!(qt.type_named(name).is_some(), "{name}");
     }
+}
+
+#[test]
+fn panes_frames_pages_and_bare_controls_are_lowered() {
+    // The `Rectangle` a control is given is still a fill.
+    assert_eq!(
+        lowered(
+            "import QtQuick\nimport QtQuick.Controls.Basic\nPage {\n  title: \"Notes\"\n  \
+             header: Label { text: title }\n  \
+             Pane { padding: 12; Frame { GroupBox { title: \"Size\" } } }\n  \
+             Control { contentItem: Rectangle { color: \"red\" } }\n}\n"
+        ),
+        "pragma Scripts: JavaScript; import Ljos.Ui\nimport Ljos.Controls.Basic\nPage {\n  title: \"Notes\"\n  \
+         header: Label { text: title }\n  \
+         Pane { padding: 12; Frame { GroupBox { title: \"Size\" } } }\n  \
+         Control { contentItem: Rectangle { fill: \"red\" } }\n}\n"
+    );
 }
