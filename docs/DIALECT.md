@@ -3571,6 +3571,12 @@ bindings and states without a rule.
   lifecycle is named `attached`, `detached` and `updated`, handled with
   `onAttached`, `onDetached` and `onUpdated`; lit's
   `hostConnected`/`hostDisconnected`/`hostUpdated` are not taken.
+- DECISION (§4.1, §4.3.1): `QtObject`'s name is `Object`. It is named only
+  where a type goes, so `Object.keys(…)` in a script stays JavaScript's
+  (the project lead's answer to §18, 2026-11-12).
+- DECISION (§4.3.1): `Qt.binding`'s home is `bind(f)` in `Ljos.Core`,
+  assignable to a property of `f`'s return type (the project lead's
+  answer to §18, 2026-11-12).
 
 ## 16. Risks
 
@@ -3665,7 +3671,5 @@ choice is the project lead's.
 | Translated text (§4.13) | (a) `qsTr` with `.arg` counts checked; (b) also a tagged template ``tr`…` ``; (c) only the template | (a) now, (b) later: (a) lowers with no edit, and (b) is sugar over the same catalogue |
 | Static rows (§4.8) | (a) typed lists with `key`, ListModel for edits; (b) a typed ListModel for everything | (a): constant tables cost nothing at start, and reducers return lists |
 | States (§4.9) | (a) typed unions plus `when:`; (b) a state-machine type | (a): 37 imperative assignments in 8 files do not pay for (b) |
-| `QtObject`'s name (§4.1, §4.3.1) | (a) keep `QtObject`; (b) `Object`; (c) another word | (b): no Qt name survives S1. `Object` is named only where a type goes, so `Object.keys(…)` in a script stays JavaScript's |
 | `Task`'s names (§4.19) | (a) `run:` the function and `start()` the call; (b) lit's: `task:` the function and `run()` the call | (a): `run` reads as what the Task does, and `start` cannot be mistaken for it |
-| `Qt.binding`'s home (§4.3.1) | (a) `bind(f)` in `Ljos.Core`, assignable to a property of `f`'s type; (b) none: a file with `Qt.binding` is kept | (a): it is the one member with no declarative edit, and only (a) lets every `Qt` member migrate (4 corpus files use it) |
 | Lists as persistent vectors (§4.8) | (a) plain arrays, diffed in O(n); (b) persistent vectors, O(changes) | (a) now, measure, then (b) if a view of thousands of rows shows it |
