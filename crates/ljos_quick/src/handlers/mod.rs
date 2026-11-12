@@ -37,6 +37,7 @@ pub(crate) use pinch::gesture as pinch_gesture;
 pub use pinch::{PinchGesture, PinchHandler, PinchPhase};
 pub use point::PointHandler;
 
+use crate::controller::Controller;
 use crate::enums::mouse_button;
 use crate::input::{Modifiers, MouseArea, PointerEvent, PointerSource, TapHandler};
 use crate::item::{Item, is_a, is_item, is_unset, scene_transform};
@@ -233,18 +234,20 @@ pub(crate) fn device_enums() -> EnumTable {
 
 /// What every pointer handler has: Qt's `PointerHandler` and
 /// `PointerDeviceHandler` together, since no file names the second. Not
-/// made from QML: the handlers derive from it.
+/// made from QML: the handlers derive from it. It is a Controller whose
+/// host is the item it acts on (docs/DIALECT.md §4.20), so a gesture
+/// declared in a Controller acts on that one's host.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
     name = "PointerHandler",
-    extends = QtObject,
+    extends = Controller,
     uncreatable,
     enums = grab_permission_enums
 )]
 pub struct PointerHandler {
     #[qml(base)]
-    pub object: QtObject,
+    pub controller: Controller,
     #[qml(notify)]
     pub enabled: bool,
     /// The handler holds the pointer for its gesture.
@@ -288,7 +291,7 @@ pub struct PointerHandler {
 impl Default for PointerHandler {
     fn default() -> Self {
         Self {
-            object: QtObject::default(),
+            controller: Controller::default(),
             enabled: true,
             active: false,
             target: None,
@@ -317,11 +320,14 @@ impl PointerHandler {
 }
 
 /// Fills in `parent` and, when nobody gave one, `target` (a `target: null`
-/// is a target of none). For each handler's `on_complete`.
+/// is a target of none). For each handler's `on_complete`. The parent is
+/// the handler's host, which is the item it is declared in or the host of
+/// the Controller it is declared in; outside both it is what owns it.
 pub(crate) fn completed(cx: &Cx) -> Result<(), EngineError> {
     let (e, h) = (cx.engine, cx.this);
     if cx.get(PointerHandler::PARENT)?.is_none() {
-        e.set_internal(h, PointerHandler::PARENT, e.owner(h))?;
+        let host = crate::controller::host(e, h);
+        e.set_internal(h, PointerHandler::PARENT, host.or_else(|| e.owner(h)))?;
     }
     if is_unset(e, h, PointerHandler::TARGET.index) {
         let parent = cx.get(PointerHandler::PARENT)?;

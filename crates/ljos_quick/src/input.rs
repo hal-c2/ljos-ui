@@ -12,6 +12,7 @@ use ljos_engine::{
 use ljos_render::kurbo;
 use ljos_runtime::Time;
 
+use crate::controller::Controller;
 use crate::enums::{gesture_policy, mouse_button};
 use crate::handlers::{PointValues, point_value};
 use crate::item::{Item, scene_transform};
@@ -411,18 +412,19 @@ impl Default for HandlerPoint {
     }
 }
 
-/// `TapHandler` (QtQuick). Its parent item is the object that owns it,
-/// and it lives in that item's `resources`.
+/// `TapHandler` (QtQuick). Its parent item is its host, the item it is
+/// declared in or the host of the Controller it is declared in, and it
+/// lives in that item's `resources`.
 #[derive(Debug, QmlObject)]
 #[qml(
     module = "QtQuick",
     name = "TapHandler",
-    extends = QtObject,
+    extends = Controller,
     enums = crate::enums::tap_handler_enums
 )]
 pub struct TapHandler {
     #[qml(base)]
-    pub object: QtObject,
+    pub controller: Controller,
     #[qml(notify)]
     pub enabled: bool,
     #[qml(notify, readonly)]
@@ -482,7 +484,7 @@ pub(crate) const TAP_ACCEPTED: crate::handlers::Accepted = crate::handlers::Acce
 impl Default for TapHandler {
     fn default() -> Self {
         Self {
-            object: QtObject::default(),
+            controller: Controller::default(),
             enabled: true,
             pressed: false,
             tap_count: 0,
@@ -537,7 +539,8 @@ impl TapHandler {
 
     #[qml(on_complete)]
     fn completed(cx: &Cx) -> Result<(), EngineError> {
-        let owner = cx.engine.owner(cx.this);
+        let owner =
+            crate::controller::host(cx.engine, cx.this).or_else(|| cx.engine.owner(cx.this));
         if cx.get(TapHandler::PARENT)?.is_none() {
             cx.engine.set_internal(cx.this, TapHandler::PARENT, owner)?;
         }
