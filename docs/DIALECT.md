@@ -1849,20 +1849,25 @@ And the translated strings now carry their number (`%1`), which Qt's
 concatenation could not give a translator.
 
 **Lowering.** The pipe is compiled away (§4.21): the program that runs
-has no pipe in it. The body becomes a function of the topic, called with
-the head:
+has no pipe in it. A chain is one arrow, called where it is written, whose
+head and steps are `const`s the next step reads:
 
 ```js
 // written
 oldPrice - newPrice |> Math.max(%, 0) / oldPrice * 100 |> Math.round(%)
 // what runs (tier 2, tsc and ljos-web read this)
-(($1) => Math.round($1))((($0) => Math.max($0, 0) / oldPrice * 100)(oldPrice - newPrice))
+(() => { const $0 = oldPrice - newPrice; const $1 = Math.max($0, 0) / oldPrice * 100; return Math.round($1);})()
 ```
 
-A body that uses `await` outside a nested function is an `async` arrow
-whose call is awaited. Ljós has no `this`, `arguments` or `yield` in a
-script, so the arrow means exactly what the pipe means. Tier 1 gives the
-topic a register instead of a closure.
+The parts keep their order and their lines, so the lowered text reads as
+the source does and a position in it maps back to the `%` it stands for.
+A topic is named by how many bodies deep it is, so a pipe inside a body
+declares a name its head does not read. A pipe that awaits is an `async`
+arrow, awaited; one that yields is a generator delegated to, as a `match`
+is (§4.18). A pipe that starts a statement is written after a `;`, so it
+never calls the line before it. Tier 1 compiles an arrow called where it
+is written in place: the topics are registers, and nothing is made or
+called.
 
 **Types.** The checker types `%` as the head's type and each step as its
 body's, so `"3" |> Math.max(%, 0)` is `ts-assign-type` at the `%`.
@@ -1870,10 +1875,12 @@ body's, so `"3" |> Math.max(%, 0)` is `ts-assign-type` at the `%`.
 DECISION: the pipe follows TC39's Hack proposal exactly: `%` as the
 topic, the proposal's early errors, and none of its deferred operators. Where the proposal changes, Ljós follows it.
 
-DECISION: a pipe compiles to an arrow called with the head, line for line,
-not to temporaries hoisted into the function: the arrow gives each
-evaluation its own `%`, so a closure that reads the topic keeps the value
-it saw. The budget gate (§11) measures the cost, and tier 1 removes it.
+DECISION: a chain compiles to one arrow with a `const` for each step,
+line for line, not to an arrow for each step and not to temporaries
+hoisted into the function: each evaluation has its own `const`s, so a
+closure that reads the topic keeps the value it saw, and one closure
+stands for the whole chain. The budget gate (§11) measures the cost, and
+tier 1 removes it.
 
 ### 4.18 `match` and `is`
 
