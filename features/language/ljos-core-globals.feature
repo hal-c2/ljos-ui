@@ -20,6 +20,9 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
 
   Rule: Ljos.Core makes what Qt makes
 
+    @api-QtQml.Qt.alpha @api-QtQml.Qt.callLater @api-QtQml.Qt.darker @api-QtQml.Qt.platform
+    @api-QtQml.Qt.point @api-QtQml.Qt.rect @api-QtQml.Qt.resolvedUrl @api-QtQml.Qt.rgba
+    @api-QtQml.Qt.size @api-QtQml.Qt.tint @api-QtQml.Qt.vector3d
     @qt-parity
     Scenario: Values, colours, a later call and the platform, as written in Qt's QML
       Given the QML:
@@ -171,8 +174,8 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Badge.qml (9 edits)
-        scripts of ./Badge.qml stay JavaScript: typed, ljos check finds 2
+        lowered ./Badge.qml (10 edits)
+        scripts of ./Badge.qml stay JavaScript: typed, ljos check finds 1
         1 files, 1 lowered, 0 kept
         """
       And the file "Badge.qml" is:

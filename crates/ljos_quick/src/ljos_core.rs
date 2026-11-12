@@ -10,7 +10,12 @@
 //! It brings `QtQml.Models`; a lowered file has the models from
 //! `Ljos.Models`.
 
-use ljos_engine::{Component, Connections, Engine, LocaleEnums, QtObject, Timer};
+use std::sync::OnceLock;
+
+use ljos_engine::{
+    Component, Connections, Engine, LocaleEnums, MetaBuilder, MetaObject, MetaRef, QmlType,
+    QtObject, Timer, Version,
+};
 
 use crate::Binding;
 use crate::controller::Controller;
@@ -20,9 +25,23 @@ pub const MODULE: &str = "Ljos.Core";
 
 pub(crate) fn register(engine: &Engine) {
     engine.register_module(ljos_engine::module!("Ljos.Core" 1.0 => [
-        QtObject, Component, Connections, Timer, Binding, LocaleEnums, Controller,
+        Component, Connections, Timer, Binding, LocaleEnums, Controller,
     ]));
+    engine.register_type(MODULE, Version::new(1, 0), MetaRef::Static(object()));
     engine.register_import(MODULE, "QtQml.Models");
+}
+
+/// `QtObject`, called `Object`: a plain object of properties, with no name
+/// of Qt's (docs/DIALECT.md §4.3.1). It is named only where a type goes, so
+/// `Object.keys(…)` in a script is still JavaScript's.
+fn object() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("Object")
+            .module(MODULE)
+            .face(QtObject::static_meta())
+            .build()
+    })
 }
 
 #[cfg(test)]
@@ -41,7 +60,7 @@ mod tests {
     fn the_core_types_are_found_here_and_not_in_ljos_ui() {
         let engine = engine();
         for name in [
-            "QtObject",
+            "Object",
             "Component",
             "Connections",
             "Timer",
@@ -70,6 +89,14 @@ mod tests {
             &binding,
             &engine.lookup_type("QtQml", "Binding").expect("registered")
         ));
+    }
+
+    #[test]
+    fn qt_object_is_called_object() {
+        let engine = engine();
+        assert!(engine.lookup_type(MODULE, "QtObject").is_none());
+        let object = engine.lookup_type(MODULE, "Object").expect("registered");
+        assert_eq!(object.name.as_str(), "Object");
     }
 
     #[test]

@@ -2691,10 +2691,42 @@ const PRELUDE: &str = r##"
   // Not globals: the compiled file takes the ones it names from here, so a
   // file that does not import `Ljos.Core` has none of them. `App` reads
   // `Qt` when asked, which the platform fills in after this.
-  const App = Object.freeze({
+  // `App` is the application object (`Qt.application`, which the
+  // platform installs) with what was on `Qt` about the application in
+  // front of it: its own members first, then the application's.
+  const appOwn = Object.freeze({
     get platform() { return g.Qt.platform; },
+    get inputMethod() { return g.Qt.inputMethod; },
+    get hints() { return g.Qt.styleHints; },
+    get language() { return g.Qt.uiLanguage; },
+    set language(name) { g.Qt.uiLanguage = name; },
+    // `aboutToQuit`, said as what happens.
+    get quitting() { return g.Qt.application?.aboutToQuit; },
     openUrlExternally(url) { return g.Qt.openUrlExternally(url); },
     quit() { g.Qt.quit(); },
+    // The host ends its loop as for quit(); it does not take the code yet.
+    exit(code) { g.Qt.quit(); },
+  });
+  const application = () => g.Qt.application;
+  const App = new Proxy(appOwn, {
+    get(own, key) {
+      if (key in own) return Reflect.get(own, key);
+      const app = application();
+      return app == null ? undefined : app[key];
+    },
+    set(own, key, value) {
+      if (key in own) return Reflect.set(own, key, value);
+      const app = application();
+      if (app == null) return false;
+      app[key] = value;
+      return true;
+    },
+    has(own, key) {
+      const app = application();
+      return key in own || (app != null && key in app);
+    },
+    defineProperty: () => false,
+    deleteProperty: () => false,
   });
   Object.defineProperty(g, "__ljos_core", {
     value: Object.freeze({
@@ -2704,6 +2736,26 @@ const PRELUDE: &str = r##"
       quaternion: Qt.quaternion,
       rgba, hsla, hsva,
       App,
+      // docs/DIALECT.md §4.3.1: what was `Qt`'s.
+      bind: Qt.binding,
+      matrix4x4: (...a) => g.Qt.matrix4x4(...a),
+      Color: Object.freeze({ of: (v) => g.Qt.color(v) }),
+    }),
+  });
+
+  // What a type of Ljos.Core or Ljos.Ui has of what was `Qt`'s, by
+  // `module.name` (incubator/types.rs). Read when the type is first named,
+  // after the platform has filled `Qt` in.
+  Object.defineProperty(g, "__ljos_typeStatics", {
+    value: Object.freeze({
+      "QtQml.Locale": Object.freeze({
+        get current() { return g.Qt.locale(); },
+        named: (name) => g.Qt.locale(name),
+      }),
+      "QtQuick.Font": Object.freeze({
+        of: (v) => g.Qt.font(v),
+        families: () => g.Qt.fontFamilies(),
+      }),
     }),
   });
 

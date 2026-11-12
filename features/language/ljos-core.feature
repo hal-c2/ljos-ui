@@ -66,7 +66,7 @@ Feature: Ljos.Core: timers, connections, bindings and components
           property int heard: 0
           property int doubled: -1
           property bool ready: false
-          QtObject { id: counter; objectName: "counter"; property int count: 0; signal bumped() }
+          Object { id: counter; objectName: "counter"; property int count: 0; signal bumped() }
           Timer {
             interval: 100; running: root.ready
             onTriggered: { root.ticks += 1; counter.count += 3; counter.bumped() }
@@ -168,7 +168,7 @@ Feature: Ljos.Core: timers, connections, bindings and components
       When the author runs "ljos migrate --write ."
       Then the command prints:
         """
-        lowered ./Clock.qml (1 edits)
+        lowered ./Clock.qml (2 edits)
         lowered ./Dial.qml (4 edits)
         lowered ./Pulse.qml (1 edits)
         3 files, 3 lowered, 0 kept
@@ -185,7 +185,7 @@ Feature: Ljos.Core: timers, connections, bindings and components
       And the file "Clock.qml" is:
         """qml
         import Ljos.Core
-        QtObject {
+        Object {
           property int hours: 0
         }
         """
@@ -222,10 +222,10 @@ Feature: Ljos.Core: timers, connections, bindings and components
         import Ljos.Ui
         import Ljos.Core
         Item {
-          property QtObject o
+          property Object o
           property Component c
-          property list<QtObject> xs
-          signal picked(QtObject o)
+          property list<Object> xs
+          signal picked(Object o)
         }
         """
       When the files are checked
@@ -270,4 +270,21 @@ Feature: Ljos.Core: timers, connections, bindings and components
         """qml
         import Ljos.Ui
         Rectangle { width: 40; height: 40; fill: "#336699" }
+        """
+
+    @ljos-only @headless
+    Scenario: A script that names QtObject keeps its file, as Object there is JavaScript's
+      Given the file "Kinds.qml":
+        """qml
+        import QtQuick
+        Item {
+          property QtObject o
+          function plain(v) { return v instanceof QtObject }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command prints:
+        """
+        kept ./Kinds.qml:4:43: `QtObject` is `Object` in Ljós's API, which a script reads as JavaScript's
+        1 files, 0 lowered, 1 kept
         """

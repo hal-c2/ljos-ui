@@ -20,11 +20,19 @@ pub(crate) struct TypeFaces {
 }
 
 /// Puts `Symbol.hasInstance` on the enums of a type; not enumerable, so the
-/// type still lists only its enums.
+/// type still lists only its enums. A type `__ljos_typeStatics` names by
+/// `module.name` also gets those members, its homes for what was `Qt`'s
+/// (docs/DIALECT.md §4.3.1): `Locale.current`, `Font.of`.
 pub(crate) const TYPE_FACES: &str = r#"
-globalThis.__ljos_typeFace = (enums, index) => Object.defineProperty(enums, Symbol.hasInstance, {
-  value: (v) => __ljos_instanceOf(v, index),
-});
+globalThis.__ljos_typeFace = (enums, index, name) => {
+  const statics = globalThis.__ljos_typeStatics?.[name];
+  if (statics)
+    for (const [key, d] of Object.entries(Object.getOwnPropertyDescriptors(statics)))
+      Object.defineProperty(enums, key, { ...d, enumerable: false });
+  return Object.defineProperty(enums, Symbol.hasInstance, {
+    value: (v) => __ljos_instanceOf(v, index),
+  });
+};
 "#;
 
 impl Engine {
@@ -44,7 +52,11 @@ impl Engine {
         let index = all.faces.borrow().len();
         let made = (|| {
             let make: ljos_js::rquickjs::Function = s.ctx().globals().get("__ljos_typeFace")?;
-            let value: ljos_js::rquickjs::Value = make.call((s.to_value(&enums)?, index))?;
+            let name = match &meta.module {
+                Some(module) => format!("{module}.{}", meta.name),
+                None => meta.name.to_string(),
+            };
+            let value: ljos_js::rquickjs::Value = make.call((s.to_value(&enums)?, index, name))?;
             Ok::<_, ljos_js::rquickjs::Error>(s.keep(value))
         })();
         match made {
