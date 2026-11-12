@@ -149,11 +149,16 @@ enum Read {
 }
 
 impl Read {
-    fn method(self) -> &'static str {
+    /// The read of `name`'s body, a promise of what the request's
+    /// `responseText` or `response` was.
+    fn call(self, name: &str) -> String {
         match self {
-            Read::Text => "text",
-            Read::Json => "json",
-            Read::Bytes => "arrayBuffer",
+            Read::Text => format!("{name}.text()"),
+            // The request's `response` was null where the body was not JSON,
+            // a failed request's or an error page's among them, and `json()`
+            // rejects there: the handler's own check of `status` still runs.
+            Read::Json => format!("{name}.json().catch(() => null)"),
+            Read::Bytes => format!("{name}.arrayBuffer()"),
         }
     }
 
@@ -580,7 +585,7 @@ impl<'s> Request<'s> {
             _ => false,
         };
         if inline {
-            request.change(reads[0], format!("(await {name}.{}())", read.method()));
+            request.change(reads[0], format!("(await {})", read.call(name)));
         } else if !reads.is_empty() {
             let around =
                 &source[list[0].span().start as usize..list[list.len() - 1].span().end as usize];
@@ -595,7 +600,7 @@ impl<'s> Request<'s> {
                 })
                 .find(|candidate| !around.contains(candidate.as_str()))
                 .unwrap_or(base);
-            prelude = format!(" const {local} = await {name}.{}();", read.method());
+            prelude = format!(" const {local} = await {};", read.call(name));
             for at in &reads {
                 request.change(*at, local.clone());
             }

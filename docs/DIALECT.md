@@ -2369,6 +2369,9 @@ over lines keeps the file, as the call it gathers them into is one line.
 Its `fetch(…).catch(() => Response.error()).then(async (http: Response) =>
 {…})` gives the handler a reply even where the request could not be made,
 whose `status` is 0 and whose body is empty, as the request's were.
+A `responseType` of `"json"` is read with `json().catch(() => null)`:
+the request's `response` was null where the body was not JSON, and the
+handler's own check of `status` still runs.
 DECISION: `fetch` and its classes are found after the file's own names: a
 function `fetch` of the component, or a type `Headers` or `Request` of the
 project, is that one, in the checker and in the program alike, as those

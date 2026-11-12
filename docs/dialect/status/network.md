@@ -11,7 +11,8 @@ Built:
   `readyState` 4, and sent) is one `fetch(…).catch(() => Response.error())
   .then(async (http: Response) => {…})`, with `responseText`, `response`,
   `status`, `statusText`, `responseURL` and `getResponseHeader` read from
-  the reply.
+  the reply; a `"json"` `response` is `json().catch(() => null)`, null
+  where the body is not JSON, as it was.
 - Every other shape keeps the file, and says what of it has no `fetch`.
 
 Remaining:
