@@ -1047,6 +1047,23 @@ impl Shared {
         });
     }
 
+    /// Chromium stops asking an origin whose last few questions went
+    /// unanswered or dismissed, and refuses it by itself for days. A view
+    /// is asked every time: what the profile keeps is what views answered.
+    fn forget_embargo(&self, url: &str) {
+        let Some(context) = self.host().and_then(|h| h.request_context()) else {
+            return;
+        };
+        let url = cef_string(url);
+        let kind = ContentSettingTypes::PERMISSION_AUTOBLOCKER_DATA;
+        if context
+            .website_setting(Some(&url), Some(&url), kind)
+            .is_some()
+        {
+            context.set_website_setting(Some(&url), Some(&url), kind, None);
+        }
+    }
+
     fn apply_zoom(&self, host: &BrowserHost) {
         let factor = *Self::lock(&self.zoom);
         host.set_zoom_level(factor.ln() / 1.2f64.ln());
@@ -1054,11 +1071,19 @@ impl Shared {
 }
 
 /// What the page asked and nobody answered is refused: the page goes.
+/// Nobody decided, so the profile keeps no answer and the origin's next
+/// page is asked again.
 fn refuse_asked(shared: &Shared) {
     let asked = std::mem::take(&mut *Shared::lock(&shared.asked));
     for (_, a) in asked {
-        if !matches!(a, Asked::Notifications { .. }) {
-            a.answer(false, shared);
+        match a {
+            // DENY would be kept as the origin's answer.
+            Asked::Prompt { callback, .. } => {
+                told_work();
+                callback.cont(PermissionRequestResult::IGNORE);
+            }
+            Asked::Notifications { .. } => {}
+            a => a.answer(false, shared),
         }
     }
 }
@@ -1407,6 +1432,7 @@ wrap_load_handler! {
             let Some(frame) = frame else {
                 return;
             };
+            self.shared.forget_embargo(&frame_url(frame));
             if frame.is_main() != 1 {
                 // Only that frame's document goes.
                 media_gone(&self.shared, Some(&frame_id(frame)));
