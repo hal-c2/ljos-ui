@@ -16,7 +16,8 @@
 #                   layout        a layout or delegate migrate does not follow
 #                   host-module   the program's own module, registered in Rust
 #   host-types      it uses types a Rust program registers, which `ljos check`
-#                   has no description of
+#                   has no description of: it must fail there, and only with
+#                   `[unknown-type]` errors
 #   shows-findings  it shows what the checks find, so `ljos check` fails on it
 
 controls/accessibility.md 1 gap:pragma

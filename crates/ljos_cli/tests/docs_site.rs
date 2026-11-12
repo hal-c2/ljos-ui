@@ -281,6 +281,12 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
         };
         let mut files: Vec<(String, String)> = Vec::new();
         for block in &members {
+            if block.flags.contains("before") {
+                problems.push(format!(
+                    "{}: a `qml before` in group `{group}`: only an ungrouped one is compared with the block after it",
+                    block.at()
+                ));
+            }
             let name = block.attr("file").unwrap_or("Main.qml").to_owned();
             if files.iter().any(|(seen, _)| *seen == name) {
                 problems.push(format!(
@@ -297,6 +303,36 @@ fn projects(all: &[Block], problems: &mut Vec<String>) -> Vec<Project> {
             before: members.iter().any(|block| block.flags.contains("before")),
             after: None,
         });
+    }
+    out
+}
+
+/// What each `qml before` should migrate to: the files of the example
+/// after it, by the before's key. One whose after is no example's root, or
+/// is another `before`, is a problem rather than a comparison skipped.
+fn afters(
+    projects: &[Project],
+    problems: &mut Vec<String>,
+) -> BTreeMap<String, Vec<(String, String)>> {
+    let by_key: BTreeMap<_, _> = projects.iter().map(|p| (p.key.as_str(), p)).collect();
+    let mut out = BTreeMap::new();
+    for project in projects {
+        let Some(key) = &project.after else {
+            continue;
+        };
+        match by_key.get(key.as_str()) {
+            None => problems.push(format!(
+                "{} ({}): the `qml` block after it ({key}) is a file of a group, not an example's root, so nothing compares them; put the after half right after it, ungrouped or as its group's root",
+                project.at, project.key
+            )),
+            Some(after) if after.before => problems.push(format!(
+                "{} ({}): the `qml` block after it ({key}) is another `qml before`",
+                project.at, project.key
+            )),
+            Some(after) => {
+                out.insert(project.key.clone(), after.files.clone());
+            }
+        }
     }
     out
 }
@@ -339,6 +375,31 @@ fn pending() -> BTreeMap<String, Pending> {
         out.insert(format!("{page}#{nth}"), entry);
     }
     out
+}
+
+/// Why a `host-types` entry no longer applies, from how `ljos check` ended:
+/// it should fail, and only because it cannot find the program's types.
+fn stale_host_types(passed: bool, out: &str) -> Option<String> {
+    if passed {
+        return Some("`ljos check` passes it".to_owned());
+    }
+    let errors: Vec<_> = out
+        .lines()
+        .filter(|line| line.contains(": error: "))
+        .collect();
+    if errors.is_empty() {
+        return Some(format!("`ljos check` fails with no error found:\n{out}"));
+    }
+    let other: Vec<_> = errors
+        .into_iter()
+        .filter(|line| !line.trim_end().ends_with("[unknown-type]"))
+        .collect();
+    (!other.is_empty()).then(|| {
+        format!(
+            "`ljos check` fails on more than the program's types:\n{}",
+            other.join("\n")
+        )
+    })
 }
 
 /// `ljos` in `dir`, ended at the deadline: `None` when it was.
@@ -401,7 +462,7 @@ fn verify(
     root: &Path,
     project: &Project,
     pending: Option<&Pending>,
-    afters: &BTreeMap<String, Vec<(String, String)>>,
+    after: Option<&Vec<(String, String)>>,
 ) -> Vec<String> {
     let mut problems = Vec::new();
     let id = project.key.replace(['/', '#', '.'], "_");
@@ -409,24 +470,30 @@ fn verify(
     write(&dir, &project.files);
     let host_types = pending.is_some_and(|p| p.host_types);
     let shows_findings = pending.is_some_and(|p| p.shows_findings);
-    if !host_types {
-        match ljos(&dir, &["check", "."]) {
-            None => problems.push(format!(
-                "{} ({}): `ljos check` ran past {}s (see #394)",
-                project.at,
-                project.key,
-                DEADLINE.as_secs()
-            )),
-            Some((true, _)) if shows_findings => problems.push(format!(
-                "{} ({}): listed as showing findings, but `ljos check` passes it",
-                project.at, project.key
-            )),
-            Some((false, out)) if !shows_findings => problems.push(format!(
-                "{} ({}): `ljos check` fails:\n{out}",
-                project.at, project.key
-            )),
-            Some(_) => {}
+    match ljos(&dir, &["check", "."]) {
+        None => problems.push(format!(
+            "{} ({}): `ljos check` ran past {}s (see #394)",
+            project.at,
+            project.key,
+            DEADLINE.as_secs()
+        )),
+        Some((passed, out)) if host_types => {
+            if let Some(why) = stale_host_types(passed, &out) {
+                problems.push(format!(
+                    "{} ({}): listed as using a Rust program's types, but {why}; take `host-types` off tests/docs_site.txt or fix the block",
+                    project.at, project.key
+                ));
+            }
         }
+        Some((true, _)) if shows_findings => problems.push(format!(
+            "{} ({}): listed as showing findings, but `ljos check` passes it",
+            project.at, project.key
+        )),
+        Some((false, out)) if !shows_findings => problems.push(format!(
+            "{} ({}): `ljos check` fails:\n{out}",
+            project.at, project.key
+        )),
+        Some(_) => {}
     }
     if !project.before {
         let qt = imports_qt(&project.files);
@@ -451,7 +518,7 @@ fn verify(
             _ => {}
         }
     }
-    if let Some(after) = project.after.as_ref().and_then(|key| afters.get(key)) {
+    if let Some(after) = after {
         let moved = root.join(format!("{id}_migrated"));
         write(&moved, &project.files);
         let Some((true, out)) = ljos(&moved, &["migrate", "--write", "."]) else {
@@ -530,10 +597,7 @@ fn every_example_says_what_it_is_and_qml_passes_ljos_check_in_ljos_api() {
             ));
         }
     }
-    let afters: BTreeMap<String, Vec<(String, String)>> = projects
-        .iter()
-        .map(|p| (p.key.clone(), p.files.clone()))
-        .collect();
+    let afters = afters(&projects, &mut problems);
 
     let root = tempfile::tempdir().unwrap();
     let queue = Mutex::new(projects.iter());
@@ -546,7 +610,12 @@ fn every_example_says_what_it_is_and_qml_passes_ljos_check_in_ljos_api() {
                     let Some(project) = queue.lock().unwrap().next() else {
                         break;
                     };
-                    let mine = verify(root.path(), project, pending.get(&project.key), &afters);
+                    let mine = verify(
+                        root.path(),
+                        project,
+                        pending.get(&project.key),
+                        afters.get(&project.key),
+                    );
                     found.lock().unwrap().extend(mine);
                 }
             });
@@ -560,4 +629,72 @@ fn every_example_says_what_it_is_and_qml_passes_ljos_check_in_ljos_api() {
         problems.len(),
         problems.join("\n\n")
     );
+}
+
+/// The problems with one page of fences, as the docs test reads them.
+fn page_problems(page: &str, text: &str) -> Vec<String> {
+    let mut problems = Vec::new();
+    let projects = projects(&blocks(page, text), &mut problems);
+    afters(&projects, &mut problems);
+    problems
+}
+
+#[test]
+fn a_before_whose_after_is_no_examples_root_is_a_problem() {
+    let file_of_a_group = "```qml before\nItem {}\n```\n\n\
+        ```qml group=g file=Card.qml\nItem {}\n```\n\n\
+        ```qml group=g\nCard {}\n```\n";
+    let problems = page_problems(PORTING, file_of_a_group);
+    assert!(
+        problems.iter().any(
+            |p| p.starts_with(&format!("docs/site/{PORTING}:1 ({PORTING}#1)"))
+                && p.contains(&format!("({PORTING}#2) is a file of a group"))
+        ),
+        "{problems:#?}"
+    );
+
+    let another_before =
+        "```qml before\nItem {}\n```\n\n```qml before\nItem {}\n```\n\n```qml\nItem {}\n```\n";
+    let problems = page_problems(PORTING, another_before);
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.starts_with(&format!("docs/site/{PORTING}:1 "))
+                && p.contains("is another `qml before`")),
+        "{problems:#?}"
+    );
+
+    let grouped_before = "```qml before group=g\nItem {}\n```\n\n```qml\nItem {}\n```\n";
+    let problems = page_problems(PORTING, grouped_before);
+    assert!(
+        problems.iter().any(|p| p.starts_with(&format!(
+            "docs/site/{PORTING}:1: a `qml before` in group `g`"
+        ))),
+        "{problems:#?}"
+    );
+
+    let compared = "```qml before\nItem {}\n```\n\n```qml\nItem {}\n```\n";
+    assert_eq!(page_problems(PORTING, compared), Vec::<String>::new());
+}
+
+#[test]
+fn a_host_types_entry_is_stale_once_check_passes_or_fails_on_anything_else() {
+    let unknown = "Main.qml:8:5: error: `Counter` is not a type of anything the file imports [unknown-type]\n\
+        Main.qml:22:9: warning: `onClicked` on a `MouseArea` [focus-pointer-only]\n\
+        1 files, 1 errors, 1 warnings\nljos: 1 errors\n";
+    assert_eq!(stale_host_types(false, unknown), None);
+
+    let passes = stale_host_types(true, "1 files, 0 errors, 0 warnings\n");
+    assert!(passes.is_some_and(|why| why.contains("passes")));
+
+    let other = format!(
+        "{unknown}Main.qml:3:1: error: `wdth` is not a property of `Item` [unknown-property]\n"
+    );
+    let why = stale_host_types(false, &other).expect("another error makes it stale");
+    assert!(
+        why.contains("[unknown-property]") && !why.contains("[unknown-type]"),
+        "{why}"
+    );
+
+    assert!(stale_host_types(false, "ljos: cannot read .\n").is_some());
 }
