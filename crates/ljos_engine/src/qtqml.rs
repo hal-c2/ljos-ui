@@ -7,6 +7,7 @@
 //! calls [`Engine::advance_timers`] then; tests use a `VirtualClock` and
 //! call it directly.
 
+use std::ops::Range;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -938,11 +939,32 @@ impl Engine {
     /// promise jobs and the `Qt.callLater` queue. A repeating timer due several times fires
     /// several times, as if the host had woken for each.
     pub fn advance_timers(&self, now: Time) {
+        self.advance_timers_with(now, None);
+    }
+
+    /// The id the next timer armed or call queued gets: one taken before
+    /// some work runs and one after name what that work asked for.
+    pub fn next_timer_id(&self) -> TimerId {
+        self.inner.timers.borrow().sched.next_timer_id()
+    }
+
+    /// [`Engine::advance_timers`] that also fires the timers in `made`
+    /// whose own deadline is `<= by`: what some work asked for once its
+    /// time has come, on a clock that ran on while the work ran, without
+    /// what came due only as time passed after `now`.
+    pub fn advance_timers_made(&self, now: Time, made: Range<TimerId>, by: Time) {
+        self.advance_timers_with(now, Some((made, by)));
+    }
+
+    fn advance_timers_with(&self, now: Time, made: Option<(Range<TimerId>, Time)>) {
         let mut fired: FxHashMap<ObjectId, u32> = FxHashMap::default();
         loop {
             let next = {
                 let mut st = self.inner.timers.borrow_mut();
-                let d = st.sched.due(now).next();
+                let d = match &made {
+                    Some((ids, by)) => st.sched.due_or_made(now, ids.clone(), *by).next(),
+                    None => st.sched.due(now).next(),
+                };
                 d.and_then(|d| st.pending.remove(&d.id).map(|p| (d, p)))
             };
             let Some((due, what)) = next else { break };

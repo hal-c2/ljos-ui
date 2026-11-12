@@ -540,8 +540,10 @@ impl Platform {
     /// responsive never calls it. Gives up, with a warning, after 10 s
     /// without an answer or 60 s in all. Busy work is waited on only for
     /// [`BUSY_WAIT`] ([`Platform::awaited`]), and its news delivered
-    /// meanwhile. While it waits it runs the engine's timers due when it
-    /// began, as a frame would: what they do may be what answers.
+    /// meanwhile. While it waits it runs, as a frame would, the engine's
+    /// timers due when it began and those the news it delivers asks for,
+    /// once due: what they do may be what answers. Timers that only come
+    /// due as time passes while it waits are left for the next frame.
     pub fn finish(&self, engine: &Engine) {
         self.finish_waiting(engine, FINISH_TIMEOUT, FINISH_LIMIT, &mut || {});
     }
@@ -572,7 +574,12 @@ impl Platform {
         let due = engine.now().round_up_to(TIMER_GRANULARITY);
         loop {
             let seen = self.signal.count();
+            // What the news delivered here asks for is this wait's at its
+            // own deadline: a clock that runs on puts it after `due`.
+            let mark = engine.next_timer_id();
             self.deliver_now(engine);
+            let made = mark..engine.next_timer_id();
+            let by = engine.now().round_up_to(TIMER_GRANULARITY);
             let now = Instant::now();
             self.busy_awaited(now, &mut busy);
             let (awaited, busy_until) = self.awaiting(now);
@@ -583,9 +590,10 @@ impl Platform {
             // What the engine has due may be what answers: a page's news
             // that sends it elsewhere, the going handed on at once, ends
             // the old page's promise. A running app does that work at its
-            // next frame while it waits, and so does this. What it posts
-            // ends the wait below.
-            engine.turn(None, || engine.advance_timers(due));
+            // next frame while it waits, and so does this: what was due
+            // when it began, and what the news it delivered asked for once
+            // that is due. What it posts ends the wait below.
+            engine.turn(None, || engine.advance_timers_made(due, made, by));
             between();
             // Not past the moment busy work stops being waited on: what is
             // left after it may already be answered.
@@ -1225,10 +1233,11 @@ mod tests {
 
     #[test]
     fn work_that_comes_due_while_finish_waits_is_left_for_later() {
-        // The engine's own clock, which runs on while finish waits.
+        // A clock that runs on while finish waits, moved by the test.
         let engine = Engine::new();
+        let clock = ljos_runtime::VirtualClock::starting_at(ljos_runtime::Time::from_millis(40));
+        engine.set_clock(Rc::new(clock.clone()));
         let platform = Platform::of(&engine);
-        // Two answers, so finish waits again after the timer is due.
         let first = platform.expect_for("answered first", None);
         let second = platform.expect_for("answered second", None);
         let fired = Rc::new(Cell::new(false));
@@ -1236,16 +1245,48 @@ mod tests {
         engine.call_at(engine.now() + Duration::from_millis(50), move |_| {
             mark.set(true);
         });
-        let answering = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(150));
+        // The first answer comes once the timer is due, and the second
+        // after it, so finish waits again with the timer due.
+        let post = platform.poster();
+        platform.poster().send(move |_| {
+            clock.advance(Duration::from_millis(100));
             drop(first);
-            std::thread::sleep(Duration::from_millis(150));
-            drop(second);
+            post.send(move |_| drop(second));
         });
         platform.finish(&engine);
-        answering.join().unwrap();
         assert_eq!(platform.pending(), 0);
         assert!(!fired.get(), "a timer due after finish began fired in it");
+        assert!(engine.take_log().is_empty());
+    }
+
+    #[test]
+    fn work_news_asks_for_at_once_is_done_on_a_clock_that_runs_on() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        // The system clock: the going is asked for after finish began,
+        // at a later time than any due then.
+        let engine = Engine::new();
+        let platform = Platform::of(&engine);
+        let reply = platform.expect_for("the page left", None);
+        // What the news asks for later stays for later.
+        let later = Arc::new(AtomicBool::new(false));
+        let mark = Arc::clone(&later);
+        platform.poster().send(move |e| {
+            std::thread::sleep(2 * TIMER_GRANULARITY);
+            e.call_at(e.now() + Duration::from_secs(3600), move |_| {
+                mark.store(true, Ordering::SeqCst);
+            });
+            e.call_at(e.now(), move |_| drop(reply));
+        });
+        let started = Instant::now();
+        platform.finish(&engine);
+        assert_eq!(platform.pending(), 0);
+        assert!(
+            started.elapsed() < FINISH_TIMEOUT,
+            "finish waited {:?} for work its news asked for",
+            started.elapsed()
+        );
+        assert!(!later.load(Ordering::SeqCst));
+        assert!(engine.take_log().is_empty());
     }
 
     /// Echoes what it was asked, as a 201, without a network.
