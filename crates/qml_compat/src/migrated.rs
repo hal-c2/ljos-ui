@@ -286,6 +286,20 @@ mod tests {
         }
     }
 
+    /// An import above the pragma's line that opens a `/* */` comment a
+    /// later line closes: the comment is the header's, and the pragma's
+    /// line under it is still laid out.
+    #[test]
+    fn an_import_that_opens_a_comment_keeps_the_header_going() {
+        let written =
+            "/* c */ import A /* x\n y */\nimport QtQuick\nimport QtQuick.Layouts\nItem {}\n";
+        let lowered = "/* c */ import A /* x\n y */\npragma Scripts: JavaScript; import B; import C\n\nItem {}\n";
+        assert_eq!(
+            migrated(written, lowered, true),
+            "/* c */ import A /* x\n y */\nimport B\nimport C\nItem {}\n"
+        );
+    }
+
     #[test]
     fn carriage_returns_are_kept() {
         let written = "import QtQuick\r\nimport QtQuick.Layouts\r\nRow {}\r\n";
