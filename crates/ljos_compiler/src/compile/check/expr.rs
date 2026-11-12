@@ -3810,6 +3810,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Statement::SwitchStatement(statement) => {
                 let over = self.expr(&statement.discriminant, None);
                 let path = self.path(&statement.discriminant);
+                let tagged = self.tagged(&statement.discriminant);
                 let locals = self.locals.len();
                 let assigned = self.assigned.len();
                 let mut covered = Vec::with_capacity(statement.cases.len());
@@ -3838,6 +3839,14 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     {
                         self.push_fact(key, local, labels, base);
                     }
+                    // `switch (v.kind)`, of a union of records: `v` is the
+                    // records whose `kind` is a label.
+                    if let Some((key, local, now, base, field)) = tagged
+                        && let Some(labels) = labels
+                    {
+                        let ty = self.records_tagged(now, field, labels);
+                        self.push_fact(key, local, ty, base);
+                    }
                     let mut live = true;
                     for statement in &case.consequent {
                         live &= self.statement(statement);
@@ -3864,6 +3873,42 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Statement::BreakStatement(_) | Statement::ContinueStatement(_) => false,
             _ => true,
         }
+    }
+
+    /// The path of `v` in `v.field`, where `v` is a union of records: what
+    /// a `switch` on the field narrows.
+    #[allow(clippy::type_complexity)]
+    fn tagged(&mut self, e: &Expression<'a>) -> Option<(&'a str, Option<u32>, Ty, Ty, &'a str)> {
+        let Expression::StaticMemberExpression(m) = e.without_parentheses() else {
+            return None;
+        };
+        if m.optional {
+            return None;
+        }
+        let (key, local, now, base) = self.path(&m.object)?;
+        let records = matches!(self.arena.kind(now), Kind::Union(_))
+            && self
+                .arena
+                .members(now)
+                .iter()
+                .all(|part| matches!(self.arena.kind(*part), Kind::Record(_)));
+        records.then_some((key, local, now, base, m.property.name.as_str()))
+    }
+
+    /// The records of `union` whose `field` may be one of `labels`.
+    fn records_tagged(&mut self, union: Ty, field: &str, labels: Ty) -> Ty {
+        let kept: Vec<Ty> = self
+            .arena
+            .members(union)
+            .into_iter()
+            .filter(|part| {
+                let ty = self
+                    .record_field(*part, field)
+                    .map_or(Ty::ERROR, |found| found.0);
+                self.takes(labels, ty) || self.takes(ty, labels)
+            })
+            .collect();
+        self.arena.union(kept)
     }
 
     /// A `switch` with no `default` on a union of literals, whose cases
