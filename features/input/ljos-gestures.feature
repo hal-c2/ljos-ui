@@ -56,6 +56,56 @@ Feature: Ljós's gestures: Tap and Hover
       And the user clicks the right button at 20, 20
       Then the property "taps" of "root" is 2
 
+    # qml6 parents a handler declared in a Window to the window's content item. Its scene
+    # driver holds what it loads in a window of its own, so the window is a test's.
+    @qt-parity
+    Scenario: A TapHandler declared in a Window takes the taps on the window
+      Given the file "tst_window_tap.qml":
+        """qml
+        import QtQuick
+        import QtTest
+        Item {
+          Window {
+            id: w
+            width: 200; height: 100; visible: true
+            property int taps: 0
+            TapHandler { onTapped: w.taps += 1 }
+          }
+          TestCase {
+            name: "WindowTap"
+            when: windowShown
+            function test_taps() {
+              mouseClick(w.contentItem, 50, 50)
+              mouseClick(w.contentItem, 150, 60)
+              compare(w.taps, 2)
+            }
+          }
+        }
+        """
+      When the tests are run
+      Then the test report has the lines:
+        """
+        PASS   : WindowTap::test_taps()
+        """
+
+    @ljos-only
+    Scenario: A Tap declared in a Window takes the taps on the window
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        Window {
+          id: root; objectName: "root"
+          width: 200; height: 100; visible: true
+          property int taps: 0
+          Tap { onTapped: root.taps += 1 }
+        }
+        """
+      When the user presses the pointer at 50, 50
+      And the user releases the pointer at 50, 50
+      And the user presses the pointer at 150, 60
+      And the user releases the pointer at 150, 60
+      Then the property "taps" of "root" is 2
+
     @ljos-only
     Scenario: A Tap's devices and its enums are the handler's
       Given the QML:

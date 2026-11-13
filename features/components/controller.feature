@@ -460,9 +460,9 @@ Feature: Controllers: behaviour an item is given by declaring it
         ljos: 1 errors
         """
 
-    # Ljós's own table describes a `Window` as a `Rectangle`, and Qt's as no item; the
-    # answer is the same with either table.
-    Scenario: The checker reports a gesture declared in a Window, with or without Qt's type table
+    # Ljós's own table describes a `Window` as a `Rectangle`; Qt's as no item, whose children
+    # go into its content item, where qml6 hosts a handler declared in it.
+    Scenario: The checker takes a gesture in a Window, with or without Qt's type table
       Given the file "Pick.qml":
         """qml
         import Ljos.Ui
@@ -475,9 +475,7 @@ Feature: Controllers: behaviour an item is given by declaring it
       When the files are checked
       Then the check reports:
         """
-        Pick.qml:5:11: error: a `Controller` acts on the item it is declared in, and a `Window` is not an item: declare it in one [controller-host]
-        1 files, 1 errors, 0 warnings
-        ljos: 1 errors
+        1 files, 0 errors, 0 warnings
         """
 
     Scenario: The checker takes a gesture in an ApplicationWindow, which hosts it in its content
