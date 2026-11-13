@@ -63,13 +63,18 @@ pub(crate) fn handler(project: &Arc<Project>) -> ToolHandler {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| SurfaceError::not_found(format!("`{}` cannot be read: {e}", args.path)))?;
         let plan = plan_lts(project.root(), &path, &text).map_err(|e| {
+            let at = e.path.strip_prefix(project.root()).unwrap_or(&e.path);
             SurfaceError::new(
                 ErrorCode::Internal,
                 format!(
-                    "the project cannot be read for `{}`'s importers: {e}",
-                    args.path
+                    "`{}` cannot be read, so whether it imports `{}` is not known, and nothing \
+                     is renamed: {}",
+                    at.display(),
+                    args.path,
+                    e.error
                 ),
             )
+            .with_details(json!({ "unreadable": at.display().to_string() }))
         })?;
         let rename = match plan {
             LtsPlan::Rename(rename) => rename,

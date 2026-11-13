@@ -435,8 +435,8 @@ impl<W: Write> Server<W> {
             })
             .collect();
         let read = |path: &Path| match open.get(&absolute(path)) {
-            Some((_, document)) => Some(document.text.clone()),
-            None => std::fs::read_to_string(path).ok(),
+            Some((_, document)) => Ok(document.text.clone()),
+            None => std::fs::read_to_string(path),
         };
         let Ok(LtsPlan::Rename(rename)) = plan_lts_with(&self.root, &path, &text, read) else {
             return Vec::new();

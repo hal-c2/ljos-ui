@@ -1835,3 +1835,28 @@ async fn prompts_that_write_qml_end_with_the_design_checks() {
         assert!(text.contains("app_audit"), "{prompt}");
     }
 }
+
+/// A file below the root that cannot be read may import the module, so
+/// `module_rename_lts` refuses and names it, and nothing is renamed.
+#[tokio::test]
+async fn module_rename_lts_names_a_file_it_cannot_read_and_renames_nothing() {
+    let dir = fixture();
+    dir.write(
+        "size.ts",
+        "export const k: number = match (1) { default: 2 }\n",
+    );
+    let mut pad = b"import \"size.ts\" as Size\nItem {}\n".to_vec();
+    pad.extend([0xff, 0xfe, b'\n']);
+    std::fs::write(dir.root.join("Pad.qml"), pad).unwrap();
+    let c = connect(&dir.root, CapSet::of([Cap::Fs])).await;
+    let (is_error, body) = call(
+        &c,
+        "module_rename_lts",
+        json!({ "path": "size.ts", "write": true }),
+    )
+    .await;
+    assert!(is_error, "{body}");
+    assert_eq!(body["error"]["details"]["unreadable"], "Pad.qml", "{body}");
+    assert!(dir.root.join("size.ts").exists());
+    assert!(!dir.root.join("size.lts").exists());
+}
