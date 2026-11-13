@@ -630,7 +630,10 @@ fn rename_lts(root: &Path, here: Option<&Path>, module: &Path, write: bool) -> O
             return Some(false);
         }
         Err(e) => {
-            eprintln!("{}: {e}", base.display());
+            eprintln!(
+                "{e}; {} is not renamed, as what cannot be read may import it",
+                module.display()
+            );
             return None;
         }
     };

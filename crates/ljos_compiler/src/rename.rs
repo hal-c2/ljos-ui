@@ -79,29 +79,41 @@ pub enum LtsPlan {
     Rename(LtsRename),
 }
 
+/// Something below the directory importers are looked for in that cannot
+/// be read: a directory, or a file that may import the module. Whether it
+/// does is not known, so there is no plan, rather than one that leaves it
+/// naming the old path.
+#[derive(Debug, thiserror::Error)]
+#[error("{}: {error}", path.display())]
+pub struct Unreadable {
+    pub path: PathBuf,
+    #[source]
+    pub error: std::io::Error,
+}
+
 /// The plan for `module`, whose text is `text`, with its importers looked
 /// for below `base`: every QML file, script, module and `qmldir` there
 /// whose imports name it.
 ///
 /// # Errors
-/// A directory below `base` cannot be read.
-pub fn plan_lts(base: &Path, module: &Path, text: &str) -> std::io::Result<LtsPlan> {
-    plan_lts_with(base, module, text, |path| {
-        std::fs::read_to_string(path).ok()
-    })
+/// A directory below `base`, or a file there that may import the module,
+/// cannot be read (as text).
+pub fn plan_lts(base: &Path, module: &Path, text: &str) -> Result<LtsPlan, Unreadable> {
+    plan_lts_with(base, module, text, |path| std::fs::read_to_string(path))
 }
 
 /// [`plan_lts`], with each importer's text as `read` gives it: an editor
 /// gives the text it has of a file it has open, which may not be saved.
 ///
 /// # Errors
-/// A directory below `base` cannot be read.
+/// A directory below `base` cannot be read, or `read` fails for a file
+/// there that may import the module.
 pub fn plan_lts_with(
     base: &Path,
     module: &Path,
     text: &str,
-    read: impl Fn(&Path) -> Option<String>,
-) -> std::io::Result<LtsPlan> {
+    read: impl Fn(&Path) -> std::io::Result<String>,
+) -> Result<LtsPlan, Unreadable> {
     if lts_syntax(text).is_none() {
         return Ok(LtsPlan::NoSyntax);
     }
@@ -116,7 +128,10 @@ pub fn plan_lts_with(
         });
     }
     let mut below = Vec::new();
-    crate::files_below(base, imports_modules, &mut below)?;
+    crate::files_below(base, imports_modules, &mut below).map_err(|error| Unreadable {
+        path: base.to_owned(),
+        error,
+    })?;
     let mut importers = Vec::new();
     for path in below {
         // DECISION: a link is not an importer, as the rename would write
@@ -132,9 +147,10 @@ pub fn plan_lts_with(
         let Some(key) = key_below(base, &path) else {
             continue;
         };
-        let Some(text) = read(&path) else {
-            continue;
-        };
+        let text = read(&path).map_err(|error| Unreadable {
+            path: path.clone(),
+            error,
+        })?;
         if let Some(renamed) = imports(&key, &text, &from, &to) {
             let (key, path) = if key == from {
                 (to.clone(), target.clone())
@@ -454,6 +470,26 @@ mod tests {
         assert_eq!(failed.len(), 2, "{failed:?}");
         assert_eq!(std::fs::read_to_string(&module).unwrap(), text);
         assert!(!project.path().join("size.lts").exists());
+    }
+
+    /// A file that cannot be read may import the module, so the rename is
+    /// refused rather than leave it naming the old path.
+    #[test]
+    fn a_file_that_cannot_be_read_refuses_the_rename() {
+        let project = tempfile::tempdir().unwrap();
+        let mut pad = b"import \"size.ts\" as Size\nItem { property string s: \"".to_vec();
+        pad.extend([0xff, 0xfe]);
+        pad.extend(b"\" }\n");
+        std::fs::write(project.path().join("Pad.qml"), pad).unwrap();
+        let module = project.path().join("size.ts");
+        let text = "export const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        let plan = plan_lts(project.path(), &module, text);
+        let Err(Unreadable { path, error }) = plan else {
+            panic!("the rename is refused: {plan:?}");
+        };
+        assert_eq!(path, project.path().join("Pad.qml"));
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     }
 
     #[test]

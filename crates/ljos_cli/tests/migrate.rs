@@ -693,6 +693,24 @@ fn a_module_of_another_directory_says_where_its_importers_were_looked_for() {
     assert_eq!(read(dir.path(), "app/Main.qml"), MAIN_PAD);
 }
 
+/// A file below that cannot be read may import the module: the module is
+/// not renamed, and the file is named.
+#[test]
+fn a_file_it_cannot_read_leaves_the_module_as_it_was() {
+    let dir = tempfile::tempdir().unwrap();
+    project(dir.path());
+    let mut pad = PAD.as_bytes().to_vec();
+    pad.extend([0xff, 0xfe, b'\n']);
+    std::fs::write(dir.path().join("lib/Pad.qml"), &pad).unwrap();
+    let (code, out, err) = ljos(dir.path(), &["migrate", "--write", "lib"]);
+    assert_eq!(code, 2, "{out}{err}");
+    assert!(err.contains("lib/Pad.qml: "), "{err}");
+    assert!(!out.contains("renamed"), "{out}");
+    assert_eq!(read(dir.path(), "lib/size.ts"), SIZE);
+    assert!(!dir.path().join("lib/size.lts").exists());
+    assert_eq!(std::fs::read(dir.path().join("lib/Pad.qml")).unwrap(), pad);
+}
+
 /// An importer whose write fails part way, as on a full disk: it and the
 /// importers written before it get their text back, and the module its
 /// name, so nothing names a file that is not there.
