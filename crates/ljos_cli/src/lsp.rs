@@ -29,7 +29,7 @@
 //! a crate of the protocol's types: the server speaks a handful of them.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
     sync::mpsc,
@@ -38,7 +38,7 @@ use std::{
 
 use ljos_compiler::{
     Project, Severity, check_modules, compile_file,
-    rename::{Importer, LtsPlan, plan_lts_with},
+    rename::{Importer, LtsPlan, Unreadable, plan_lts_with},
 };
 use qml_front::QtTypeOracle;
 use serde_json::{Value, json};
@@ -112,6 +112,10 @@ struct Server<W> {
     stale: Vec<String>,
     /// That the project cannot be read was said, and not since it was read.
     told: bool,
+    /// The files whose being unreadable kept the rename to `.lts` from
+    /// being offered, and was said: each is said once, not on every request
+    /// for actions, until a rename is offered again.
+    unread: HashSet<PathBuf>,
     /// The project as last read from disk, with the open documents' texts
     /// put over their files'; read when first needed.
     project: Option<Project<QtTypeOracle>>,
@@ -138,6 +142,7 @@ impl<W: Write> Server<W> {
             open: HashMap::new(),
             stale: Vec::new(),
             told: false,
+            unread: HashSet::new(),
             project: None,
             out,
             shut: false,
@@ -260,10 +265,23 @@ impl<W: Write> Server<W> {
                 }
             }
             "textDocument/codeAction" => {
-                let actions = params["textDocument"]["uri"]
-                    .as_str()
-                    .map(|uri| self.actions(uri))
-                    .unwrap_or_default();
+                let actions = match params["textDocument"]["uri"].as_str() {
+                    Some(uri) => self.actions(uri),
+                    None => Ok(Vec::new()),
+                };
+                let actions = match actions {
+                    Ok(actions) => {
+                        if !actions.is_empty() {
+                            // Every file below the root was read.
+                            self.unread.clear();
+                        }
+                        actions
+                    }
+                    Err((module, e)) => {
+                        self.unreadable(&module, e)?;
+                        Vec::new()
+                    }
+                };
                 self.answer(id, Value::Array(actions))?;
             }
             "shutdown" => {
@@ -405,22 +423,54 @@ impl<W: Write> Server<W> {
         Ok(())
     }
 
+    /// The editor is told, once for the file, that the rename of `module`
+    /// to `.lts` is not offered as a file that may import it cannot be read.
+    ///
+    /// DECISION: `window/showMessage`, as a warning, not `logMessage`: the
+    /// author who asked for the fix sees why it is not there, not a log
+    /// they would have to open; once for each file keeps it from coming
+    /// back on every request for actions, which editors make as the caret
+    /// moves.
+    fn unreadable(&mut self, module: &Path, e: Unreadable) -> io::Result<()> {
+        if !self.unread.insert(e.path.clone()) {
+            return Ok(());
+        }
+        let shown = |path: &Path| {
+            path.strip_prefix(&self.root)
+                .unwrap_or(path)
+                .display()
+                .to_string()
+        };
+        let message = format!(
+            "ljos: `{}` cannot be read, so whether it imports `{}` is not known, and the rename to `.lts` is not offered: {}",
+            shown(&e.path),
+            shown(module),
+            e.error
+        );
+        self.notify("window/showMessage", json!({"type": 2, "message": message}))
+    }
+
     /// The rename to `.lts` of the `.ts` module at `uri`, when it uses
     /// Ljós's syntax, as a workspace edit: the file renamed, and each file
     /// that imports it given the new name.
-    fn actions(&self, uri: &str) -> Vec<Value> {
+    ///
+    /// # Errors
+    /// A file that may import the module cannot be read, with the module.
+    fn actions(&self, uri: &str) -> Result<Vec<Value>, (PathBuf, Unreadable)> {
         let Some(path) = path_of(uri) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let name = path.to_string_lossy();
         if !name.ends_with(".ts") || name.ends_with(".d.ts") {
-            return Vec::new();
+            return Ok(Vec::new());
         }
         let text = match self.open.get(uri) {
             Some(document) => document.text.clone(),
             None => match std::fs::read_to_string(&path) {
                 Ok(text) => text,
-                Err(_) => return Vec::new(),
+                // The module itself is gone or unreadable: its own check
+                // says so, and there is nothing to rename.
+                Err(_) => return Ok(Vec::new()),
             },
         };
         // An importer the editor has open is edited as the editor has it,
@@ -438,8 +488,10 @@ impl<W: Write> Server<W> {
             Some((_, document)) => Ok(document.text.clone()),
             None => std::fs::read_to_string(path),
         };
-        let Ok(LtsPlan::Rename(rename)) = plan_lts_with(&self.root, &path, &text, read) else {
-            return Vec::new();
+        let rename = match plan_lts_with(&self.root, &path, &text, read) {
+            Ok(LtsPlan::Rename(rename)) => rename,
+            Ok(_) => return Ok(Vec::new()),
+            Err(e) => return Err((path, e)),
         };
         // A module that imports itself is edited before it is renamed, under
         // the name the editor has it by: an edit of the old name after the
@@ -472,11 +524,11 @@ impl<W: Write> Server<W> {
         }));
         changes.extend(others.into_iter().map(edit));
         let file = |key: &str| key.rsplit('/').next().unwrap_or(key).to_owned();
-        vec![json!({
+        Ok(vec![json!({
             "title": format!("Rename {} to {}", file(&rename.from), file(&rename.to)),
             "kind": "quickfix",
             "edit": {"documentChanges": changes},
-        })]
+        })])
     }
 
     fn answer(&mut self, id: Option<Value>, result: Value) -> io::Result<()> {
@@ -816,7 +868,7 @@ mod tests {
         server
             .handle(&json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri, "languageId": "typescript", "version": 3, "text": text}}}))
             .unwrap();
-        let actions = server.actions(&uri);
+        let actions = server.actions(&uri).unwrap();
         let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
         assert_eq!(changes.len(), 2, "{changes:?}");
         assert_eq!(
@@ -825,6 +877,46 @@ mod tests {
             "{changes:?}"
         );
         assert_eq!(changes[1]["kind"], "rename", "{changes:?}");
+    }
+
+    /// A file that cannot be read may import the module, so the rename is
+    /// not offered; the editor is told why, naming the file, once for the
+    /// file and not on every request for actions.
+    #[test]
+    fn a_file_that_cannot_be_read_is_said_once_and_no_rename_is_offered() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut pad = b"import \"size.ts\" as Size\nItem { property string s: \"".to_vec();
+        pad.extend([0xff, 0xfe]);
+        pad.extend(b"\" }\n");
+        std::fs::write(dir.path().join("Pad.qml"), pad).unwrap();
+        let size = dir.path().join("size.ts");
+        let text = "export const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&size, text).unwrap();
+        let mut server = super::Server::new(dir.path().to_owned(), Vec::new());
+        let uri = url(&size);
+        server
+            .handle(&json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri, "languageId": "typescript", "version": 1, "text": text}}}))
+            .unwrap();
+        let ask = |id: i64| json!({"jsonrpc": "2.0", "id": id, "method": "textDocument/codeAction", "params": {"textDocument": {"uri": uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}, "context": {"diagnostics": []}}});
+        server.handle(&ask(2)).unwrap();
+        server.handle(&ask(3)).unwrap();
+        let mut heard = &server.out[..];
+        let mut messages = Vec::new();
+        while let Some(message) = read(&mut heard).unwrap() {
+            messages.push(message);
+        }
+        let told: Vec<&Value> = messages
+            .iter()
+            .filter(|m| m["method"] == "window/showMessage")
+            .collect();
+        assert_eq!(told.len(), 1, "said once: {messages:?}");
+        let message = told[0]["params"]["message"].as_str().unwrap();
+        assert!(message.contains("Pad.qml"), "{message}");
+        assert!(message.contains("size.ts"), "{message}");
+        for id in [2, 3] {
+            let answer = messages.iter().find(|m| m["id"] == id).unwrap();
+            assert_eq!(answer["result"], json!([]), "{answer}");
+        }
     }
 
     #[test]
