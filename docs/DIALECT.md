@@ -2825,12 +2825,25 @@ read it:
   stdio. It answers `initialize`, `shutdown` and `exit`, keeps the text
   of each file the editor has open (`didOpen`, `didChange` with whole
   texts, `didClose`), and publishes the compiler's findings for a file
-  on open and on each change, at the editor's line and UTF-16 column. It
-  reads the editor's text, not the disk's. On `didSave` of an `.lts`
-  module it writes the project's declarations as `ljos check` does. For
+  on open and on each change, at the editor's line and UTF-16 column.
+  The messages that came while it worked are handled together, and a
+  file opened or changed is checked once, before the next request is
+  answered: a burst of keystrokes is one check, of the last text. It
+  reads the editor's text, not the disk's: the project is read once and
+  kept, with every open file's text over its file's, so a keystroke
+  checks one file against what the editor has of the others and reads
+  nothing. It is read again after `didSave`, `didClose` or
+  `workspace/didChangeWatchedFiles`, and after a save or a watched
+  change every open file is checked again, as one may import what
+  changed. A project it cannot read is said in a `window/showMessage`,
+  once until it reads it, and nothing is published for it. On `didSave`
+  of an `.lts` module it writes the project's declarations as `ljos
+  check` does. For
   a `.ts` module with the new syntax, `codeAction` offers the rename to
   `.lts` as one workspace edit: the file's rename and the new text of
-  each importer. It does nothing between messages. Lints, members and
+  each importer, made from the editor's text of an importer it has open
+  and for that text's version, so an editor that has moved on refuses
+  it rather than lose what it has. It does nothing between messages. Lints, members and
   `--tsc` stay `ljos check`'s, so a keystroke never waits on TypeScript.
 - **What ljos-web calls.** ljos-web reads QML with `qml_syntax::parse`,
   which keeps the syntax as written, so it reads `match`, `is` and `|>`

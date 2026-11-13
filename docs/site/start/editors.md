@@ -27,7 +27,7 @@ A `.ts` module stays plain TypeScript, so that `tsc`, `tsserver` and every edito
 ljos lsp
 ```
 
-It takes the project from the editor's workspace folder. For each open file it publishes what the compiler finds, on open and on each change, from the text in the editor rather than the file on disk. Between messages it waits; it does not watch or poll anything.
+It takes the project from the editor's workspace folder. For each open file it publishes what the compiler finds, on open and on each change, from the text in the editor rather than the file on disk; keystrokes that come faster than it checks are checked once, as the last one left the text. When you save a file it checks every open file again, so a file that imports the one you saved sees the change. Between messages it waits; it does not watch or poll anything.
 
 In Neovim, with the built-in client:
 
@@ -50,7 +50,14 @@ args = ["lsp"]
 [[language]]
 name = "qml"
 language-servers = ["ljos"]
+
+[[language]]
+name = "typescript"
+file-types = ["ts", "mts", "cts", "lts"]
+language-servers = ["typescript-language-server", "ljos"]
 ```
+
+Helix takes each key you give a language in place of its own, so the `typescript` entry lists the server and file types Helix already has for TypeScript as well as `ljos` and `lts`.
 
 Any other editor that runs a language server as a command takes the same `ljos lsp`. An `.lts` file is TypeScript to an editor's highlighter: map the `lts` extension to TypeScript.
 
