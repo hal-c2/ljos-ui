@@ -10821,6 +10821,23 @@ module QtQuick3D.Helpers
 		prop frames QtQml.int named readonly
 		prop gpuTime QtQml.real named readonly
 		prop gpuPostTime QtQml.real named readonly
+		prop drawCallCount QtQml.int named readonly
+		prop drawVertexCount QtQml.real named readonly
+		prop renderPassCount QtQml.int named readonly
+		prop pipelineSwitches QtQml.int named readonly
+		prop bindGroupSets QtQml.int named readonly
+		prop bufferWrites QtQml.int named readonly
+		prop bufferWriteBytes QtQml.real named readonly
+		prop textureUploads QtQml.int named readonly
+		prop textureUploadBytes QtQml.real named readonly
+		prop pipelinesCreated QtQml.int named readonly
+		prop modelsDrawn QtQml.int named readonly
+		prop modelsCulled QtQml.int named readonly
+		prop syncTime QtQml.real named readonly
+		prop renderPrepareTime QtQml.real named readonly
+		prop encodeTime QtQml.real named readonly
+		prop submitTime QtQml.real named readonly
+		prop renderTime QtQml.real named readonly
 		signal fpsChanged
 		signal frameTimeChanged
 		signal drawCallsChanged
@@ -10828,6 +10845,23 @@ module QtQuick3D.Helpers
 		signal framesChanged
 		signal gpuTimeChanged
 		signal gpuPostTimeChanged
+		signal drawCallCountChanged
+		signal drawVertexCountChanged
+		signal renderPassCountChanged
+		signal pipelineSwitchesChanged
+		signal bindGroupSetsChanged
+		signal bufferWritesChanged
+		signal bufferWriteBytesChanged
+		signal textureUploadsChanged
+		signal textureUploadBytesChanged
+		signal pipelinesCreatedChanged
+		signal modelsDrawnChanged
+		signal modelsCulledChanged
+		signal syncTimeChanged
+		signal renderPrepareTimeChanged
+		signal encodeTimeChanged
+		signal submitTimeChanged
+		signal renderTimeChanged
 		method refresh
 	type QtQuick3D.Helpers.RenderStats RenderStats
 		prototype QtQml.QtObject named
@@ -10837,11 +10871,23 @@ module QtQuick3D.Helpers
 		prop maxFrameTime QtQml.real named readonly
 		prop renderTime QtQml.real named readonly
 		prop syncTime QtQml.real named readonly
+		prop renderPrepareTime QtQml.real named readonly
+		prop lastCompletedGpuTime QtQml.real named readonly
+		prop drawCallCount QtQml.int named readonly
+		prop drawVertexCount QtQml.int named readonly
+		prop renderPassCount QtQml.int named readonly
+		prop pipelineCount QtQml.int named readonly
 		signal fpsChanged
 		signal frameTimeChanged
 		signal maxFrameTimeChanged
 		signal renderTimeChanged
 		signal syncTimeChanged
+		signal renderPrepareTimeChanged
+		signal lastCompletedGpuTimeChanged
+		signal drawCallCountChanged
+		signal drawVertexCountChanged
+		signal renderPassCountChanged
+		signal pipelineCountChanged
 	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3
