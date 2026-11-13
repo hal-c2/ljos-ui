@@ -127,7 +127,8 @@ fn a_module_of_the_project_is_of_the_group_of_the_files_that_import_it() {
 
 /// A project with a module `Gauges` of QML files (`Dial`, a `Rectangle`;
 /// `Palette`, a singleton `QtObject`; `Text`, `Label` and `Timer`, types of
-/// its own of Qt's names), a native module `Sensors`, and a directory `parts` with `Swatch`.
+/// its own of Qt's names, and `App`, of Ljós's), a native module `Sensors`,
+/// and a directory `parts` with `Swatch`. It knows every type of each.
 struct Project;
 
 impl Locals for Project {
@@ -150,9 +151,14 @@ impl Locals for Project {
             (Imported::Module("Gauges"), "Text") => Some(root_of("Rectangle", &[])),
             (Imported::Module("Gauges"), "Label") => Some(root_of("Rectangle", &[])),
             (Imported::Module("Gauges"), "Timer") => Some(root_of("Rectangle", &[])),
+            (Imported::Module("Gauges"), "App") => Some(root_of("QtObject", &[])),
             (Imported::Dir("parts"), "Swatch") => Some(root_of("Rectangle", &[])),
             _ => None,
         }
+    }
+
+    fn imports_type(&self, from: Imported<'_>, name: &str) -> Option<bool> {
+        Some(self.imported(from, name).is_some())
     }
 }
 
@@ -188,8 +194,8 @@ fn a_directory_imported_by_path_has_its_types_by_their_roots() {
     assert!(text.contains("fill: Lib.tint"), "{text}");
 }
 
-/// A module of the project may bring an `App` of its own: `Qt.platform`
-/// has nowhere to go, and keeps the file.
+/// A module of the project that brings an `App` of its own leaves
+/// `Qt.platform` nowhere to go, and keeps the file.
 #[test]
 fn a_member_of_qt_whose_home_a_module_of_the_project_may_name_keeps_the_file() {
     match lower(
@@ -202,6 +208,16 @@ fn a_member_of_qt_whose_home_a_module_of_the_project_may_name_keeps_the_file() {
         ),
         other => panic!("lowered: {other:?}"),
     }
+}
+
+/// Where the project knows every type of what the file imports, and none
+/// is `App`, `Qt.platform` is `App.platform`.
+#[test]
+fn a_member_of_qt_whose_home_no_type_the_file_imports_is_lowered() {
+    let text =
+        lowered_in_project("import QtQuick\nimport \"parts\"\nItem { x: Qt.platform.os.length }\n");
+    assert!(text.contains("x: App.platform.os.length"), "{text}");
+    assert!(text.contains("import Ljos.Core"), "{text}");
 }
 
 #[test]

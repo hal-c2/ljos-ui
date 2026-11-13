@@ -1289,6 +1289,37 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
         };
         self.around.root_of(&*self.held, &file)
     }
+
+    fn imports_type(&self, from: qml_compat::Imported<'_>, name: &str) -> Option<bool> {
+        let front = self.around.front;
+        let tree = self.around.tree;
+        match from {
+            qml_compat::Imported::Module(uri) => {
+                // C++ the build compiles into the module may register types
+                // no file of it is.
+                let native = tree.is_some_and(|tree| {
+                    (tree.modules.iter()).any(|(_, m)| m.uri == uri && !m.native.is_empty())
+                });
+                (front.has_module(uri) && !native).then(|| front.module_type(uri, name).is_some())
+            }
+            qml_compat::Imported::Dir(path) => {
+                let dir = front.import_dir(self.key, path);
+                // A directory outside the project, or not read yet, may have
+                // any type; one a `qmldir` describes names its types there,
+                // not by its files.
+                let outside = dir.starts_with("..") || dir.starts_with('/');
+                let known = tree.is_none_or(|tree| {
+                    tree.read.contains(&dir) && !tree.modules.iter().any(|(at, _)| *at == dir)
+                });
+                (!outside && known).then(|| {
+                    let file = join(&dir, name);
+                    front.has(&file)
+                        || self.around.sources.contains_key(&file)
+                        || self.around.paths.contains_key(&file)
+                })
+            }
+        }
+    }
 }
 
 /// Which of the modules `found` describes (each with the key and the path

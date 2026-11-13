@@ -216,11 +216,16 @@ impl<'s> Scope<'s> {
     /// project it imports not under a name, a file beside it, or what the
     /// root of one its types are built on declares.
     pub(crate) fn may_be_beside(&self, name: &str) -> Option<Hider> {
-        let pathed = self
-            .imports
-            .iter()
-            .any(|import| matches!(import, Import::Dir(_) | Import::Module(_)));
-        if pathed && name.starts_with(|c: char| c.is_ascii_uppercase()) {
+        // Only a capitalised name is a type. A directory or module whose
+        // types the project knows takes the name only if it has it; one
+        // whose types it does not know may.
+        let imported = name.starts_with(|c: char| c.is_ascii_uppercase())
+            && self.imports.iter().any(|import| {
+                import
+                    .imported()
+                    .is_some_and(|from| self.locals.imports_type(from, name) != Some(false))
+            });
+        if imported {
             Some(Hider::Directory)
         } else if self.locals.root(name).is_some() || self.beside.borrow().iter().any(|d| d == name)
         {

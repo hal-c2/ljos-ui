@@ -186,6 +186,13 @@ pub trait Locals {
         None
     }
 
+    /// Whether `from` has a type `name`, whatever its root is; none when
+    /// what it has is not known, and a name the pass would bring into the
+    /// file may then be one of its types.
+    fn imports_type(&self, _from: Imported<'_>, _name: &str) -> Option<bool> {
+        None
+    }
+
     /// The program's own types, as the checker is told them
     /// (`ljostypes.json`); none when they are not described, and a file
     /// that imports a module of them is kept. Ljós's own modules
@@ -269,6 +276,10 @@ impl Locals for Styled<'_> {
 
     fn imported(&self, from: Imported<'_>, name: &str) -> Option<Root> {
         self.locals.imported(from, name)
+    }
+
+    fn imports_type(&self, from: Imported<'_>, name: &str) -> Option<bool> {
+        self.locals.imports_type(from, name)
     }
 
     fn controls_style(&self) -> Option<&str> {

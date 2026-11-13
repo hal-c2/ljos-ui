@@ -274,6 +274,51 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         """
 
     @ljos-only @headless
+    Scenario: A directory or module the file imports that has no type of a member's Ljós name leaves the name free
+      Given the file "parts/Swatch.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 4; height: 4 }
+        """
+      And the file "Site/qmldir":
+        """
+        module Site
+        NavLink 1.0 NavLink.qml
+        """
+      And the file "Site/NavLink.qml":
+        """qml
+        import QtQuick
+        Text { text: "home" }
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import Site
+        import "parts"
+        Item {
+          property string os: Qt.platform.os
+          property int enter: Qt.Key_Return
+          Swatch {}
+          NavLink {}
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the command's output mentions "lowered ./Main.qml"
+      And the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        import Ljos.Core
+        import Site
+        import "parts"
+        Item {
+          property string os: App.platform.os
+          property int enter: Key.Return
+          Swatch {}
+          NavLink {}
+        }
+        """
+
+    @ljos-only @headless
     Scenario: A file that gives Qt.resolvedUrl the object to resolve against stays Qt's
       Given the file "Icons.qml":
         """qml
