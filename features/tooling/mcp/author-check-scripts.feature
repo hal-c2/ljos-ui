@@ -80,6 +80,19 @@ Feature: The authoring tools read `.ts` and `.lts` modules as `ljos check` does
       And the answer's "/diagnostics/0/file" is "width.lts"
       And the answer's "/diagnostics/0/code" is "lts-export-type"
 
+    Scenario: A module named in a directory a walk of the project skips is still checked
+      Given the file "build/size.lts":
+        """ts
+        export const gap = [1].length
+        """
+      When the agent calls the tool "qml_check" with:
+        """json
+        {"paths": ["build/size.lts"]}
+        """
+      Then the answer's "/diagnostics" has 1 entries
+      And the answer's "/diagnostics/0/file" is "build/size.lts"
+      And the answer's "/diagnostics/0/code" is "lts-export-type"
+
   Rule: The rename `ts-lts-syntax` names is the agent's to make
 
     Scenario: Renaming a `.ts` module renames the imports that name it
