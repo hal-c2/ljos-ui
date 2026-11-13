@@ -384,6 +384,43 @@ Feature: A Text in Ljós's API
         }
         """
 
+    @ljos-only @headless
+    Scenario: A font sized in points is sized by the points of its screen, and draws the same
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 200; height: 80; color: "white"
+          property bool big: true
+          Text { text: "Points"; font.pointSize: 12 }
+          Text { y: 40; text: "More"; font { pointSize: big ? 18 : 9; bold: true } }
+        }
+        """
+      When the author runs "ljos migrate --write ."
+      Then the file "Main.qml" is:
+        """qml
+        import Ljos.Ui
+        Rectangle {
+          width: 200; height: 80; fill: "white"
+          property bool big: true
+          Text { text: "Points"; font.size: Screen.points(12) }
+          Text { y: 40; text: "More"; font { size: Screen.points(big ? 18 : 9); weight: Font.Bold } }
+        }
+        """
+      Given the file "Qt.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 200; height: 80; color: "white"
+          property bool big: true
+          Text { text: "Points"; font.pointSize: 12 }
+          Text { y: 40; text: "More"; font { pointSize: big ? 18 : 9; bold: true } }
+        }
+        """
+      When the author runs "ljos render . --entry Qt.qml --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --entry Main.qml --out lowered.png --settle 0"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+
     # Ljos.Controls.Basic's Label is Qt's Basic Label, built on the toolkit's Text, not on
     # Ljos.Ui's face of it: it keeps Qt's names, and the Text beside it takes Ljós's.
     @ljos-only @headless
@@ -469,21 +506,55 @@ Feature: A Text in Ljós's API
         1 files, 0 lowered, 1 kept
         """
 
-    # A point is the screen's logical DPI / 72 of a pixel, known when the file runs; the lowering
-    # writes `Screen.points(n)`, and until `Screen` is in Ljos.Ui a file that says it is kept.
+    # A font has no size in points in Ljós: `size` is in pixels. A point is the screen's logical
+    # DPI / 72 of a pixel, known when the file runs, so a binding of `font.pointSize` is written as
+    # `font.size: Screen.points(n)` (docs/DIALECT.md §4.13). A script's `.pointSize` is a value the
+    # pass does not follow, and keeps the file.
     @ljos-only @headless
-    Scenario: A font sized in points keeps the file
+    Scenario: A script that reads a font's size in points keeps the file
       Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+          Text { id: label; text: "Points"; font.pointSize: 12 }
+          Text { text: label.font.pointSize }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:4:27: `.pointSize` of a font is read or written, and Ljós's font has only a `size` in pixels
+        1 files, 0 lowered, 1 kept
+        """
+
+    @ljos-only @headless
+    Scenario: A font given both a size in points and one in pixels keeps the file
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Text { text: "Points"; font.pointSize: 12; font.pixelSize: 20 }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:2:29: `font.pointSize` and `font.pixelSize` are both set, and are one `size` in Ljós
+        1 files, 0 lowered, 1 kept
+        """
+
+    @ljos-only @headless
+    Scenario: A font sized in points beside a file called Screen keeps the file
+      Given the file "Screen.qml":
+        """qml
+        import QtQuick
+        Item { }
+        """
+      And the file "Main.qml":
         """qml
         import QtQuick
         Text { text: "Points"; font.pointSize: 12 }
         """
       When the author runs "ljos migrate ."
-      Then the command prints:
-        """
-        kept ./Main.qml:2:29: `font.pointSize` has no Ljós name until `Screen` is in Ljos.Ui
-        1 files, 0 lowered, 1 kept
-        """
+      Then the command's output mentions "kept ./Main.qml:2:29: `font.pointSize` needs `Screen`, which a file beside it has"
 
     @ljos-only @headless
     Scenario: A size read off something whose type is not known keeps the file

@@ -1422,6 +1422,10 @@ impl<'s> Pass<'s> {
         };
         let written = font::written(name.parts[index], &binding.value, beside)
             .map_err(|cause| self.no(cause, range.start))?;
+        if name.parts[index] == "pointSize" {
+            self.members.points(range.start);
+            self.scope.modules.names(Ljos::Ui);
+        }
         if let Some(new) = written.name {
             self.change(range, new);
         }
