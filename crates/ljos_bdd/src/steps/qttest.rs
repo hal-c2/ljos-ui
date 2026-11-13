@@ -94,18 +94,16 @@ fn migrated_file_is(w: &mut LjosWorld, name: String, step: &Step) -> StepResult 
         .docstring
         .clone()
         .ok_or_else(|| "this step needs a doc string".to_owned())?;
-    w.each_test_report(
-        |report| match report.files.get(&name) {
-            Some(text) if same_file(text, &want) => Ok(()),
-            Some(text) => Err(format!("the file {name:?} is:\n{text}")),
-            None => {
-                let names: Vec<&str> = report.files.keys().map(String::as_str).collect();
-                Err(format!(
-                    "no file {name:?} after the migration; there are {names:?}"
-                ))
-            }
-        },
-    )
+    w.each_test_report(|report| match report.files.get(&name) {
+        Some(text) if same_file(text, &want) => Ok(()),
+        Some(text) => Err(format!("the file {name:?} is:\n{text}")),
+        None => {
+            let names: Vec<&str> = report.files.keys().map(String::as_str).collect();
+            Err(format!(
+                "no file {name:?} after the migration; there are {names:?}"
+            ))
+        }
+    })
 }
 
 // `ljos check` given one directory of the files, as a project whose

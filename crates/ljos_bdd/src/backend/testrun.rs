@@ -628,7 +628,7 @@ Totals: 1 passed, 1 failed, 0 skipped, 0 blacklisted, 12ms
     #[test]
     fn lines_are_looked_for_as_a_block() {
         let report = TestReport {
-                lines: vec!["a".into(), "b".into(), "c".into()],
+            lines: vec!["a".into(), "b".into(), "c".into()],
             ..TestReport::default()
         };
         assert!(report.has_lines(&["b".into(), "c".into()]));
