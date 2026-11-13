@@ -909,6 +909,7 @@ module Ljos.Ui
 	BGMode Ljos.Ui.BGMode
 	Behavior QtQuick.Behavior
 	BrushStyle Ljos.Ui.BrushStyle
+	Canvas QtQuick.Canvas
 	CaseSensitivity Ljos.Ui.CaseSensitivity
 	CheckState Ljos.Ui.CheckState
 	ChecksumType Ljos.Ui.ChecksumType
@@ -946,6 +947,7 @@ module Ljos.Ui
 	GestureType Ljos.Ui.GestureType
 	Gradient QtQuick.Gradient
 	GradientStop QtQuick.GradientStop
+	GridView Ljos.Ui.GridView
 	HighDpiScaleFactorRoundingPolicy Ljos.Ui.HighDpiScaleFactorRoundingPolicy
 	Hover Ljos.Ui.Hover
 	Image QtQuick.Image
@@ -961,6 +963,7 @@ module Ljos.Ui
 	Key Ljos.Ui.Key
 	KeyEvent QtQuick.KeyEvent
 	KeyModifier Ljos.Ui.KeyModifier
+	KeyNavigation QtQuick.KeyNavigation
 	Keys QtQuick.Keys
 	LinearGradient QtQuick.Shapes.LinearGradient
 	ListView Ljos.Ui.ListView
@@ -989,6 +992,7 @@ module Ljos.Ui
 	PathQuad QtQuick.PathQuad
 	PathRectangle QtQuick.PathRectangle
 	PathSvg QtQuick.PathSvg
+	PathView QtQuick.PathView
 	PauseAnimation QtQuick.PauseAnimation
 	PenCapStyle Ljos.Ui.PenCapStyle
 	PenJoinStyle Ljos.Ui.PenJoinStyle
@@ -1004,7 +1008,9 @@ module Ljos.Ui
 	Rectangle Ljos.Ui.Rectangle
 	RegularExpressionValidator QtQuick.RegularExpressionValidator
 	Repeater QtQuick.Repeater
+	Rotation QtQuick.Rotation
 	RotationAnimation QtQuick.RotationAnimation
+	Scale QtQuick.Scale
 	Screen QtQuick.Screen
 	ScreenOrientation Ljos.Ui.ScreenOrientation
 	ScriptAction QtQuick.ScriptAction
@@ -1040,6 +1046,7 @@ module Ljos.Ui
 	TouchPointState Ljos.Ui.TouchPointState
 	TransformationMode Ljos.Ui.TransformationMode
 	Transition QtQuick.Transition
+	Translate QtQuick.Translate
 	Wheel Ljos.Ui.Wheel
 	Window QtQuick.Window
 	WindowModality Ljos.Ui.WindowModality
@@ -1215,6 +1222,23 @@ module Ljos.Ui
 	type Ljos.Ui.GestureType GestureType
 		is uncreatable
 		enum GestureType Tap=1 TapAndHold=2 Pan=3 Pinch=4 Swipe=5 Custom=256 Last=-1
+	type Ljos.Ui.GridView GridView
+		prototype Ljos.Ui.ItemView
+		attached Ljos.Ui.ItemViewAttached
+		enum Flow FlowLeftToRight=0 FlowTopToBottom=1
+		enum SnapMode NoSnap=0 SnapToRow=1 SnapOneRow=2
+		prop flow Flow
+		prop cellWidth QtQml.real named
+		prop cellHeight QtQml.real named
+		prop snapMode SnapMode
+		signal flowChanged
+		signal cellWidthChanged
+		signal cellHeightChanged
+		signal snapModeChanged
+		method moveCurrentIndexUp
+		method moveCurrentIndexDown
+		method moveCurrentIndexLeft
+		method moveCurrentIndexRight
 	type Ljos.Ui.HighDpiScaleFactorRoundingPolicy HighDpiScaleFactorRoundingPolicy
 		is uncreatable
 		enum HighDpiScaleFactorRoundingPolicy Unset=0 Round=1 Ceil=2 Floor=3 RoundPreferFloor=4 PassThrough=5
