@@ -2,7 +2,7 @@
 title: Controllers
 description: Give an item behaviour by declaring a Controller in it, written as a QML file or as a TypeScript module, and act on its host when it is attached, detached and updated.
 section: language
-order: 8
+order: 9
 ---
 
 # Controllers
