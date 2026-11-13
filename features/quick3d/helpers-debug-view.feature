@@ -88,6 +88,6 @@ Feature: A panel of how the scene is drawn
     Then the property "fps" of "readout" is at least 1
     And the property "frame" of "readout" is at least 0
     And the property "longest" of "readout" is at least 0
-    And the property "render" of "readout" is -1
-    And the property "sync" of "readout" is -1
+    And the property "render" of "readout" is at least 0
+    And the property "sync" of "readout" is at least 0
     And the log has no warnings

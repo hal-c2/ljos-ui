@@ -40,6 +40,62 @@ pub struct RenderStatistics {
     /// FXAA); -1 when the scene is not post-processed or not measured.
     #[qml(notify, readonly)]
     gpu_post_time: f64,
+    /// Draw calls of the last frame, of every pass: shadows, depth, the
+    /// scene and its post-processing.
+    #[qml(notify, readonly)]
+    draw_call_count: i32,
+    /// Vertices those drew, each copy of an instanced model counted.
+    #[qml(notify, readonly)]
+    draw_vertex_count: f64,
+    /// Render passes of the last frame.
+    #[qml(notify, readonly)]
+    render_pass_count: i32,
+    /// Pipelines set on the last frame's passes.
+    #[qml(notify, readonly)]
+    pipeline_switches: i32,
+    /// Bind groups set on the last frame's passes.
+    #[qml(notify, readonly)]
+    bind_group_sets: i32,
+    /// Writes into buffers in the last frame.
+    #[qml(notify, readonly)]
+    buffer_writes: i32,
+    /// The bytes of those.
+    #[qml(notify, readonly)]
+    buffer_write_bytes: f64,
+    /// Writes into textures in the last frame.
+    #[qml(notify, readonly)]
+    texture_uploads: i32,
+    /// The bytes of those.
+    #[qml(notify, readonly)]
+    texture_upload_bytes: f64,
+    /// Render pipelines made for the last frame.
+    #[qml(notify, readonly)]
+    pipelines_created: i32,
+    /// Models the camera saw in the last frame.
+    #[qml(notify, readonly)]
+    models_drawn: i32,
+    /// Models left out of it because the camera did not see them.
+    #[qml(notify, readonly)]
+    models_culled: i32,
+    /// Milliseconds spent reading the scene into the renderer's for the
+    /// last frame; -1 before a frame is drawn.
+    #[qml(notify, readonly)]
+    sync_time: f64,
+    /// Milliseconds the renderer spent preparing the last frame: walking
+    /// the scene, culling, sorting, writing uniforms, making pipelines.
+    #[qml(notify, readonly)]
+    render_prepare_time: f64,
+    /// Milliseconds it spent recording the last frame's passes.
+    #[qml(notify, readonly)]
+    encode_time: f64,
+    /// Milliseconds the host's submit of them took; 0 where the host
+    /// submits them with its own drawing and does not time them apart.
+    #[qml(notify, readonly)]
+    submit_time: f64,
+    /// Milliseconds of rendering the last frame after preparing it:
+    /// recording and submitting it.
+    #[qml(notify, readonly)]
+    render_time: f64,
     #[qml(skip)]
     seen: u64,
 }
@@ -87,6 +143,51 @@ fn refresh(cx: &Cx) {
         RenderStatistics::GPU_POST_TIME,
         s.gpu_post_seconds.map_or(-1.0, |g| g * 1000.0),
     );
+    let f = &s.last;
+    let ms = |seconds: f64| {
+        if s.frames == 0 {
+            -1.0
+        } else {
+            seconds * 1000.0
+        }
+    };
+    let _ = cx.set(RenderStatistics::DRAW_CALL_COUNT, count(f.draw_calls));
+    let _ = cx.set(RenderStatistics::DRAW_VERTEX_COUNT, f.vertices as f64);
+    let _ = cx.set(RenderStatistics::RENDER_PASS_COUNT, count(f.render_passes));
+    let _ = cx.set(
+        RenderStatistics::PIPELINE_SWITCHES,
+        count(f.pipeline_switches),
+    );
+    let _ = cx.set(RenderStatistics::BIND_GROUP_SETS, count(f.bind_group_sets));
+    let _ = cx.set(RenderStatistics::BUFFER_WRITES, count(f.buffer_writes));
+    let _ = cx.set(
+        RenderStatistics::BUFFER_WRITE_BYTES,
+        f.buffer_write_bytes as f64,
+    );
+    let _ = cx.set(RenderStatistics::TEXTURE_UPLOADS, count(f.texture_uploads));
+    let _ = cx.set(
+        RenderStatistics::TEXTURE_UPLOAD_BYTES,
+        f.texture_upload_bytes as f64,
+    );
+    let _ = cx.set(
+        RenderStatistics::PIPELINES_CREATED,
+        count(f.pipelines_created),
+    );
+    let _ = cx.set(RenderStatistics::MODELS_DRAWN, count(f.models_drawn));
+    let _ = cx.set(RenderStatistics::MODELS_CULLED, count(f.models_culled));
+    let _ = cx.set(RenderStatistics::SYNC_TIME, ms(f.sync_seconds));
+    let _ = cx.set(RenderStatistics::RENDER_PREPARE_TIME, ms(f.prepare_seconds));
+    let _ = cx.set(RenderStatistics::ENCODE_TIME, ms(f.encode_seconds));
+    let _ = cx.set(RenderStatistics::SUBMIT_TIME, ms(f.submit_seconds));
+    let _ = cx.set(
+        RenderStatistics::RENDER_TIME,
+        ms(f.encode_seconds + f.submit_seconds),
+    );
+}
+
+/// A count as QML's int, which a frame's never outgrows.
+fn count(n: u64) -> i32 {
+    i32::try_from(n).unwrap_or(i32::MAX)
 }
 
 /// How often `RenderStats` reads the numbers; `fps` counts this long.
@@ -109,14 +210,35 @@ pub struct RenderStats {
     /// The longest of those in the last second.
     #[qml(notify, readonly)]
     max_frame_time: f64,
-    /// Milliseconds the GPU took for the last frame; -1 when the host does
-    /// not measure it.
+    /// Milliseconds the CPU spent rendering the last frame after preparing
+    /// it: recording its passes and submitting them, as Qt has it; -1
+    /// before a frame is drawn.
     #[qml(notify, readonly)]
     render_time: f64,
-    /// Always -1: reading a scene is a part of the UI thread's turn, which
-    /// is not timed apart from the rest of it.
+    /// Milliseconds spent reading the QML scene into the renderer's for
+    /// the last frame; -1 before a frame is drawn.
     #[qml(notify, readonly)]
     sync_time: f64,
+    /// Milliseconds the renderer spent preparing the last frame: walking
+    /// the scene, culling, sorting, writing uniforms, making pipelines.
+    #[qml(notify, readonly)]
+    render_prepare_time: f64,
+    /// Milliseconds the GPU took for a recent frame (its timestamps come
+    /// back frames later); -1 when the host does not measure it.
+    #[qml(notify, readonly)]
+    last_completed_gpu_time: f64,
+    /// Draw calls of the last frame, of every pass.
+    #[qml(notify, readonly)]
+    draw_call_count: i32,
+    /// Vertices those drew, each copy of an instanced model counted.
+    #[qml(notify, readonly)]
+    draw_vertex_count: i32,
+    /// Render passes of the last frame.
+    #[qml(notify, readonly)]
+    render_pass_count: i32,
+    /// Render pipelines made so far.
+    #[qml(notify, readonly)]
+    pipeline_count: i32,
     #[qml(skip)]
     seen: u64,
 }
@@ -129,6 +251,8 @@ impl RenderStats {
         let e = cx.engine;
         e.set_internal(me, Self::SYNC_TIME, -1.0)?;
         e.set_internal(me, Self::RENDER_TIME, -1.0)?;
+        e.set_internal(me, Self::RENDER_PREPARE_TIME, -1.0)?;
+        e.set_internal(me, Self::LAST_COMPLETED_GPU_TIME, -1.0)?;
         let timer = e.create_native_incomplete(Timer::default(), Some(me))?;
         e.set(timer, Timer::INTERVAL, STATS_INTERVAL_MS)?;
         e.set(timer, Timer::REPEAT, true)?;
@@ -161,8 +285,31 @@ fn read_stats(e: &Engine, me: ObjectId) {
     let _ = e.set_internal(me, RenderStats::MAX_FRAME_TIME, longest);
     let _ = e.set_internal(
         me,
-        RenderStats::RENDER_TIME,
+        RenderStats::LAST_COMPLETED_GPU_TIME,
         s.gpu_seconds.map_or(-1.0, |g| g * 1000.0),
+    );
+    if s.frames == 0 {
+        return;
+    }
+    let f = &s.last;
+    let _ = e.set_internal(
+        me,
+        RenderStats::RENDER_TIME,
+        (f.encode_seconds + f.submit_seconds) * 1000.0,
+    );
+    let _ = e.set_internal(me, RenderStats::SYNC_TIME, f.sync_seconds * 1000.0);
+    let _ = e.set_internal(
+        me,
+        RenderStats::RENDER_PREPARE_TIME,
+        f.prepare_seconds * 1000.0,
+    );
+    let _ = e.set_internal(me, RenderStats::DRAW_CALL_COUNT, count(f.draw_calls));
+    let _ = e.set_internal(me, RenderStats::DRAW_VERTEX_COUNT, count(f.vertices));
+    let _ = e.set_internal(me, RenderStats::RENDER_PASS_COUNT, count(f.render_passes));
+    let _ = e.set_internal(
+        me,
+        RenderStats::PIPELINE_COUNT,
+        count(s.total.pipelines_created),
     );
 }
 
