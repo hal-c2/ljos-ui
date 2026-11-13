@@ -128,10 +128,8 @@ pub fn plan_lts_with(
         });
     }
     let mut below = Vec::new();
-    crate::files_below(base, imports_modules, &mut below).map_err(|error| Unreadable {
-        path: base.to_owned(),
-        error,
-    })?;
+    crate::files_below_naming(base, imports_modules, &mut below)
+        .map_err(|(path, error)| Unreadable { path, error })?;
     let mut importers = Vec::new();
     for path in below {
         // DECISION: a link is not an importer, as the rename would write
@@ -490,6 +488,33 @@ mod tests {
         };
         assert_eq!(path, project.path().join("Pad.qml"));
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    /// A directory that cannot be listed is named, not the directory the
+    /// walk began at: that is the one to fix.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_that_cannot_be_read_is_named_and_refuses_the_rename() {
+        use std::os::unix::fs::PermissionsExt;
+        let project = tempfile::tempdir().unwrap();
+        let shut = project.path().join("lib/shut");
+        std::fs::create_dir_all(&shut).unwrap();
+        let module = project.path().join("size.ts");
+        let text = "export const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // One who may read anything (root) reads it anyway.
+        let listable = std::fs::read_dir(&shut).is_ok();
+        let plan = plan_lts(project.path(), &module, text);
+        std::fs::set_permissions(&shut, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if listable {
+            return;
+        }
+        let Err(Unreadable { path, error }) = plan else {
+            panic!("the rename is refused: {plan:?}");
+        };
+        assert_eq!(path, shut);
+        assert_eq!(error.kind(), std::io::ErrorKind::PermissionDenied);
     }
 
     #[test]
