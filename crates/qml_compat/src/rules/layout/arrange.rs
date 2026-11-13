@@ -240,7 +240,6 @@ struct Arrange<'s, 't> {
     changes: Vec<Change>,
 }
 
-/// The axes, as an index: width, then height.
 /// The anchors that place a child on each axis, by the axis: what a
 /// positioner along the other axis leaves to it.
 const ACROSS: [&[&str]; 2] = [
@@ -264,6 +263,7 @@ const ACROSS: [&[&str]; 2] = [
     ],
 ];
 
+/// The axes, as an index: width, then height.
 const W: usize = 0;
 const H: usize = 1;
 const SIZE: [&str; 2] = ["width", "height"];

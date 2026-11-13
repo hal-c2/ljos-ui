@@ -273,6 +273,30 @@ Feature: Ljos.Core: what Qt's QML has from the Qt global
         }
         """
 
+    # A `qmldir` names a directory's types, whatever its files are called.
+    @ljos-only @headless
+    Scenario: A directory the file imports by path whose qmldir names a member's Ljós name keeps it Qt's
+      Given the file "site/Application.qml":
+        """qml
+        import QtQuick
+        Item { property string os: "mine" }
+        """
+      And the file "site/qmldir":
+        """
+        module site
+        App 1.0 Application.qml
+        """
+      And the file "Main.qml":
+        """qml
+        import QtQuick
+        import "site"
+        Item {
+          property string os: Qt.platform.os
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command's output mentions "kept ./Main.qml:4:23: `Qt.platform` needs `App`, which a type of a directory the file imports could be"
+
     @ljos-only @headless
     Scenario: A directory or module the file imports that has no type of a member's Ljós name leaves the name free
       Given the file "parts/Swatch.qml":

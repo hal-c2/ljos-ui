@@ -135,8 +135,9 @@ fn corpus_file(path: &str) -> Option<String> {
     text
 }
 
-/// The corpus button sizes its text in points, which has no Ljós name until
-/// `Screen` is in `Ljos.Ui`; the file is kept, and says where.
+/// The corpus button sizes its text in points through an alias that a script
+/// reads and writes `.pointSize` of, which `Screen.points` cannot stand for;
+/// the file is kept, and says where.
 #[test]
 fn the_corpus_button_is_kept_for_the_alias_of_its_point_size() {
     let Some(source) = corpus_file("examples/demos/hangman/qml/SimpleButton.qml") else {
