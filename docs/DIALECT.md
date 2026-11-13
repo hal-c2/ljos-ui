@@ -2665,10 +2665,10 @@ that replaces it, `detached` from the old and `attached` to the new, so
 that its gestures act on what is shown. A Controller
 outside an item (held by an `Object`) has no host and `attached` does
 not run; the checker says so in a file of Ljós's API
-(`controller-host`). So does one declared directly in a `Window`, which
-is no item to act on, with or without Qt's table of types; an
-`ApplicationWindow`, which hosts what is declared in it in its content
-item, takes one as a popup does.
+(`controller-host`). One declared directly in a `Window` or an
+`ApplicationWindow` acts on the window, as a handler declared there acts
+on its content item in Qt, and the checker takes it with or without
+Qt's table of types.
 
 DECISION: the lifecycle is three signals (`attached`, `detached`,
 `updated`), handled with `on…` in QML and given as functions in a module.

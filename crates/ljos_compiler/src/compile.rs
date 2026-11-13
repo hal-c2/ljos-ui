@@ -1510,16 +1510,15 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         {
             return None;
         }
-        // A window that does not host what is declared in it in a content
-        // item is no item to act on. Ljós's own table describes `Window` as
-        // a `Rectangle`, which Qt's does not, and the checker answers the
-        // same with either.
-        if let Some(window) = oracle.module_type("QtQuick", "Window")
-            && derives(holder, window)
+        // A window hosts what is declared in it: Ljós's `Window` is a
+        // `Rectangle`, and Qt's, which its table describes as no item, puts
+        // it into its content item. The checker answers the same with
+        // either table.
+        if derives(holder, item)
+            || oracle
+                .module_type("QtQuick", "Window")
+                .is_some_and(|window| derives(holder, window))
         {
-            return Some(oracle.name(holder).to_string());
-        }
-        if derives(holder, item) {
             return None;
         }
         Some(oracle.name(holder).to_string())
