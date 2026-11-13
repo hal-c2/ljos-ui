@@ -7,7 +7,7 @@
 //! rather than searched for as text, so a comment or string that happens
 //! to hold the name is left alone: a QML file's `import "size.ts"`, a
 //! script's `.import "size.ts" as Size`, a module's `import … from
-//! "./size.ts"` (or `export … from`), and a `qmldir`'s `Size 1.0 size.ts`.
+//! "./size.ts"` (or `export … from`, `export * from`), and a `qmldir`'s `Size 1.0 size.ts`.
 
 use std::path::{Path, PathBuf};
 
@@ -158,6 +158,16 @@ impl LtsRename {
         self.to.rsplit('/').next().unwrap_or(&self.to)
     }
 
+    /// Where `importer` is once the module is renamed: a module that
+    /// imports itself is its own importer, at its new name.
+    fn written_at<'a>(&'a self, importer: &'a Importer) -> &'a Path {
+        if importer.key == self.from {
+            &self.target
+        } else {
+            &importer.path
+        }
+    }
+
     /// Renames the module, then writes its importers in the order of their
     /// keys. When one cannot be written, those written get their text back
     /// and the module its name, so a failure leaves the files as they were.
@@ -168,13 +178,15 @@ impl LtsRename {
     pub fn apply(&self) -> Result<(), Vec<(PathBuf, std::io::Error)>> {
         std::fs::rename(&self.module, &self.target).map_err(|e| vec![(self.module.clone(), e)])?;
         for (at, importer) in self.importers.iter().enumerate() {
-            if let Err(e) = std::fs::write(&importer.path, &importer.renamed) {
-                let mut failed = vec![(importer.path.clone(), e)];
+            let path = self.written_at(importer);
+            if let Err(e) = std::fs::write(path, &importer.renamed) {
+                let mut failed = vec![(path.to_owned(), e)];
                 // The one that failed too: a write empties the file before
                 // it writes, so one cut off part way holds neither text.
                 for importer in &self.importers[..=at] {
-                    if let Err(e) = std::fs::write(&importer.path, &importer.text) {
-                        failed.push((importer.path.clone(), e));
+                    let path = self.written_at(importer);
+                    if let Err(e) = std::fs::write(path, &importer.text) {
+                        failed.push((path.to_owned(), e));
                     }
                 }
                 if let Err(e) = std::fs::rename(&self.target, &self.module) {
@@ -308,8 +320,8 @@ fn script(text: &str, named: &dyn Fn(&str) -> bool) -> Vec<Span> {
     spans
 }
 
-/// The written path of each `import … from` and `export … from` of a
-/// module that is the module, read with Ljós's syntax where it has some.
+/// The written path of each `import … from`, `export … from` and
+/// `export * from` of a module that is the module, read with Ljós's syntax where it has some.
 fn es_module(file: &str, text: &str, named: &dyn Fn(&str) -> bool) -> Vec<Span> {
     let allocator = Allocator::default();
     let source_type = if file.ends_with(".mjs") {
@@ -328,6 +340,7 @@ fn es_module(file: &str, text: &str, named: &dyn Fn(&str) -> bool) -> Vec<Span> 
         .filter_map(|statement| match statement {
             Statement::ImportDeclaration(import) => Some(&import.source),
             Statement::ExportFromDeclaration(export) => Some(&export.source),
+            Statement::ExportAllDeclaration(export) => Some(&export.source),
             _ => None,
         })
         .filter(|source| named(source.value.as_str()))
@@ -373,6 +386,60 @@ mod tests {
             .as_deref(),
             Some("module Pads\nSize 1.0 size.lts\n")
         );
+    }
+
+    /// A barrel's `export * from` and `export * as … from` name the
+    /// module as an `export { … } from` does.
+    #[test]
+    fn an_export_of_everything_names_the_new_file() {
+        let barrel = "export * from \"./size.ts\"\nexport * as Size from './size.ts'\n";
+        assert_eq!(
+            imports("index.ts", barrel, "size.ts", "size.lts").as_deref(),
+            Some("export * from \"./size.lts\"\nexport * as Size from './size.lts'\n")
+        );
+    }
+
+    /// A module that imports itself is its own importer: its import is
+    /// rewritten in the renamed file, and nothing is left at the old name.
+    #[test]
+    fn a_module_that_imports_itself_says_its_new_name_in_its_new_file() {
+        let project = tempfile::tempdir().unwrap();
+        let module = project.path().join("size.ts");
+        let text = "import * as Me from \"./size.ts\"\nexport const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        let LtsPlan::Rename(rename) = plan_lts(project.path(), &module, text).unwrap() else {
+            panic!("the module is renamed");
+        };
+        rename.apply().unwrap();
+        assert!(!module.exists(), "nothing is left at the old name");
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("size.lts")).unwrap(),
+            "import * as Me from \"./size.lts\"\nexport const k: number = match (1) { default: 2 }\n"
+        );
+    }
+
+    /// When an importer after it cannot be written, a module that imports
+    /// itself is back at its old name with its old text.
+    #[test]
+    fn a_module_that_imports_itself_is_put_back_when_the_rename_fails() {
+        let project = tempfile::tempdir().unwrap();
+        let module = project.path().join("size.ts");
+        let text = "import * as Me from \"./size.ts\"\nexport const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        let LtsPlan::Rename(mut rename) = plan_lts(project.path(), &module, text).unwrap() else {
+            panic!("the module is renamed");
+        };
+        // An importer whose directory is gone cannot be written.
+        rename.importers.push(Importer {
+            key: "z/gone.ts".to_owned(),
+            path: project.path().join("z/gone.ts"),
+            text: String::new(),
+            renamed: String::new(),
+        });
+        let failed = rename.apply().unwrap_err();
+        assert_eq!(failed.len(), 2, "{failed:?}");
+        assert_eq!(std::fs::read_to_string(&module).unwrap(), text);
+        assert!(!project.path().join("size.lts").exists());
     }
 
     #[test]
