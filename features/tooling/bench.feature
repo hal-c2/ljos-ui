@@ -126,6 +126,28 @@ Feature: Measuring an application under a limit
       Then the command exits with status 0
       And the JSON file "out/report.json" has "/runs/0/load/instructions_missing" equal to "not asked for"
 
+  Rule: What each 3D frame cost is summed up when asked for
+
+    # A runtime that counts its 3D frames writes a line of JSON for each
+    # one to the file the bench names, stamped in microseconds since the
+    # epoch. This one says it drew twelve times in every frame.
+    Scenario: The frames of the run and of its load are summed up
+      Given the file "app.sh":
+        """sh
+        #!/bin/sh
+        n=0
+        while [ $n -lt 300 ]; do
+          n=$((n + 1))
+          echo "{\"t_us\":$(date +%s%6N),\"frame\":$n,\"draw_calls\":12,\"encode_ms\":0.5}" >> "$LJOS_3D_FRAMES"
+          sleep 0.05
+        done
+        """
+      When the author runs "ljos bench Main.qml --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 1 --frames3d --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/frames3d/first/draw_calls" equal to 12
+      And the JSON file "out/report.json" has "/runs/0/frames3d/first/cpu_ms" equal to 0.5
+      And the JSON file "out/report.json" has "/runs/0/frames3d/load/costs/draw_calls/p99" equal to 12
+
   Rule: A kill for want of memory is a result, not an error
 
     Scenario: The kernel kills the application

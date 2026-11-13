@@ -274,6 +274,10 @@ const METRICS: &[Metric] = &[
         value: |r| r.idle.as_ref()?.frames.as_ref()?.p95_ms,
     },
     Metric {
+        title: "99th percentile frame interval while idle (ms; animations)",
+        value: |r| r.idle.as_ref()?.frames.as_ref()?.p99_ms,
+    },
+    Metric {
         title: "Slowest frame interval while idle (ms; animations)",
         value: |r| r.idle.as_ref()?.frames.as_ref()?.max_ms,
     },
@@ -310,6 +314,10 @@ const METRICS: &[Metric] = &[
         value: |r| r.load.as_ref()?.frames.as_ref()?.p95_ms,
     },
     Metric {
+        title: "99th percentile frame interval while driven (ms)",
+        value: |r| r.load.as_ref()?.frames.as_ref()?.p99_ms,
+    },
+    Metric {
         title: "Median input-to-frame latency while driven (ms)",
         value: |r| r.load.as_ref()?.frames.as_ref()?.latency_p50_ms,
     },
@@ -330,6 +338,93 @@ const METRICS: &[Metric] = &[
         },
     },
 ];
+
+/// What 3D frames cost as the runtime counted them, when a run has them
+/// (`--frames3d`): left out of a report none of whose runs drew one.
+#[allow(clippy::cast_precision_loss)]
+const METRICS_3D: &[Metric] = &[
+    Metric {
+        title: "Time to first 3D frame handed to the GPU (ms; --frames3d)",
+        value: |r| r.frames3d.as_ref()?.first_ms,
+    },
+    Metric {
+        title: "Pipelines made for the first 3D frame (--frames3d)",
+        value: |r| r.frames3d.as_ref()?.first.get("pipelines_created").copied(),
+    },
+    Metric {
+        title: "Bytes uploaded for the first 3D frame (MiB; --frames3d)",
+        value: |r| {
+            let first = &r.frames3d.as_ref()?.first;
+            let bytes = first.get("buffer_write_bytes")? + first.get("texture_upload_bytes")?;
+            Some(bytes / MIB)
+        },
+    },
+    Metric {
+        title: "3D frames drawn while idle (per second; --frames3d)",
+        value: |r| Some(r.frames3d.as_ref()?.idle.as_ref()?.fps),
+    },
+    Metric {
+        title: "3D frames drawn while driven (per second; --frames3d)",
+        value: |r| Some(r.frames3d.as_ref()?.load.as_ref()?.fps),
+    },
+    Metric {
+        title: "Median CPU of a 3D frame while driven (ms: sync, prepare, encode, submit)",
+        value: |r| driven3d(r, "cpu_ms").map(|s| s.p50),
+    },
+    Metric {
+        title: "99th percentile CPU of a 3D frame while driven (ms)",
+        value: |r| driven3d(r, "cpu_ms").map(|s| s.p99),
+    },
+    Metric {
+        title: "Median sync of a 3D frame while driven (ms)",
+        value: |r| driven3d(r, "sync_ms").map(|s| s.p50),
+    },
+    Metric {
+        title: "Median prepare of a 3D frame while driven (ms)",
+        value: |r| driven3d(r, "prepare_ms").map(|s| s.p50),
+    },
+    Metric {
+        title: "Median encode of a 3D frame while driven (ms)",
+        value: |r| driven3d(r, "encode_ms").map(|s| s.p50),
+    },
+    Metric {
+        title: "Median submit of a 3D frame while driven (ms)",
+        value: |r| driven3d(r, "submit_ms").map(|s| s.p50),
+    },
+    Metric {
+        title: "Median GPU time of a 3D frame while driven (ms)",
+        value: |r| driven3d(r, "gpu_ms").map(|s| s.p50),
+    },
+    Metric {
+        title: "Draw calls of a 3D frame while driven (median)",
+        value: |r| driven3d(r, "draw_calls").map(|s| s.p50),
+    },
+    Metric {
+        title: "Pipeline switches of a 3D frame while driven (median)",
+        value: |r| driven3d(r, "pipeline_switches").map(|s| s.p50),
+    },
+    Metric {
+        title: "Bind group sets of a 3D frame while driven (median)",
+        value: |r| driven3d(r, "bind_group_sets").map(|s| s.p50),
+    },
+    Metric {
+        title: "Buffer writes of a 3D frame while driven (mean)",
+        value: |r| driven3d(r, "buffer_writes").map(|s| s.mean),
+    },
+    Metric {
+        title: "Bytes written to buffers in a 3D frame while driven (KiB, mean)",
+        value: |r| driven3d(r, "buffer_write_bytes").map(|s| s.mean / 1024.0),
+    },
+    Metric {
+        title: "Texture uploads of a 3D frame while driven (mean)",
+        value: |r| driven3d(r, "texture_uploads").map(|s| s.mean),
+    },
+];
+
+/// A number of the 3D frames drawn while driven.
+fn driven3d<'r>(r: &'r Run, name: &str) -> Option<&'r crate::frames3d::Stat> {
+    r.frames3d.as_ref()?.load.as_ref()?.costs.get(name)
+}
 
 /// Frames the client sent over `span`, whether they changed a pixel or not.
 #[allow(clippy::cast_precision_loss)]
@@ -477,7 +572,8 @@ pub fn markdown(report: &Report) -> String {
                 .as_ref()
                 .map_or(String::new(), |c| format!(" on CPUs {c}")),
         );
-        for metric in METRICS {
+        let counted = |m: &&Metric| runs.iter().any(|r| (m.value)(r).is_some());
+        for metric in METRICS.iter().chain(METRICS_3D.iter().filter(counted)) {
             let _ = writeln!(out, "### {}\n", metric.title);
             let mut head = String::from("| App |");
             let mut rule = String::from("|---|");

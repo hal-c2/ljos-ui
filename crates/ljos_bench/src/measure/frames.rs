@@ -52,6 +52,7 @@ pub(super) fn frames(times: &[u64], start: u64, seconds: f64, inputs: &[u64]) ->
         fps,
         p50_ms: quantile(&gaps, 0.5),
         p95_ms: quantile(&gaps, 0.95),
+        p99_ms: quantile(&gaps, 0.99),
         max_ms: gaps.last().copied(),
         latency_p50_ms: quantile(&waits, 0.5),
         latency_p95_ms: quantile(&waits, 0.95),
@@ -73,6 +74,7 @@ mod tests {
         assert_eq!(f.count, 4);
         assert_eq!(f.max_ms, Some(67.0));
         assert_eq!(f.p50_ms, Some(17.0));
+        assert_eq!(f.p99_ms, Some(67.0));
         assert_eq!(f.latency_p50_ms, None);
         let none = frames(&[], 0, 1.0, &[]);
         assert_eq!((none.count, none.p50_ms), (0, None));

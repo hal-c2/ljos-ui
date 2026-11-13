@@ -11,6 +11,7 @@
 pub mod cgroup;
 pub mod compare;
 pub mod counters;
+pub mod frames3d;
 pub mod gate;
 pub mod measure;
 pub mod motion;
@@ -214,6 +215,7 @@ pub fn run(
                     gesture: measure::Gesture::Click,
                     detail: false,
                     instructions: false,
+                    frames3d: false,
                 };
                 measure::run(setup, &app.id, &rt, &Profile::desktop(), warm, false, &[])?;
             }
