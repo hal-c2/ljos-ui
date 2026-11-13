@@ -271,18 +271,21 @@ impl Programs {
                 bind_group_layouts: &groups,
                 immediate_size: 0,
             });
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("ljos_3d program"),
-                // What a snippet samples inside its own branches is Qt's to allow and
-                // WebGPU's to refuse; off, it reads as it does everywhere else.
-                source: wgpu::ShaderSource::Wgsl(
-                    format!(
-                        "diagnostic(off, derivative_uniformity);\n{}",
-                        program.wgsl()
-                    )
-                    .into(),
-                ),
-            });
+            let module = crate::counted::create_shader_module(
+                device,
+                wgpu::ShaderModuleDescriptor {
+                    label: Some("ljos_3d program"),
+                    // What a snippet samples inside its own branches is Qt's to allow and
+                    // WebGPU's to refuse; off, it reads as it does everywhere else.
+                    source: wgpu::ShaderSource::Wgsl(
+                        format!(
+                            "diagnostic(off, derivative_uniformity);\n{}",
+                            program.wgsl()
+                        )
+                        .into(),
+                    ),
+                },
+            );
             Compiled {
                 program: Arc::downgrade(program),
                 layout,
@@ -332,57 +335,60 @@ impl Programs {
                 }
             }
         };
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("ljos_3d custom material"),
-            layout: Some(&c.pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &c.module,
-                entry_point: Some(if key.extra {
-                    MATERIAL_VERTEX_EXTRA
-                } else {
-                    MATERIAL_VERTEX
-                }),
-                compilation_options: Default::default(),
-                buffers: &[
-                    Some(vertex),
-                    Some(crate::gpu_extra::instance_layout()),
-                    key.extra.then(crate::gpu_extra::extra_layout),
-                ],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: key.topology.wgpu(),
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: match key.cull {
-                    CullMode::Back => Some(wgpu::Face::Back),
-                    CullMode::Front => Some(wgpu::Face::Front),
-                    CullMode::None => None,
+        let pipeline = crate::counted::create_render_pipeline(
+            device,
+            &wgpu::RenderPipelineDescriptor {
+                label: Some("ljos_3d custom material"),
+                layout: Some(&c.pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &c.module,
+                    entry_point: Some(if key.extra {
+                        MATERIAL_VERTEX_EXTRA
+                    } else {
+                        MATERIAL_VERTEX
+                    }),
+                    compilation_options: Default::default(),
+                    buffers: &[
+                        Some(vertex),
+                        Some(crate::gpu_extra::instance_layout()),
+                        key.extra.then(crate::gpu_extra::extra_layout),
+                    ],
                 },
-                ..Default::default()
+                primitive: wgpu::PrimitiveState {
+                    topology: key.topology.wgpu(),
+                    front_face: wgpu::FrontFace::Ccw,
+                    cull_mode: match key.cull {
+                        CullMode::Back => Some(wgpu::Face::Back),
+                        CullMode::Front => Some(wgpu::Face::Front),
+                        CullMode::None => None,
+                    },
+                    ..Default::default()
+                },
+                depth_stencil: Some(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: Some(key.depth_write),
+                    depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                    stencil: Default::default(),
+                    bias: Default::default(),
+                }),
+                multisample: wgpu::MultisampleState {
+                    count: key.samples,
+                    ..Default::default()
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &c.module,
+                    entry_point: Some(MATERIAL_FRAGMENT),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: key.format,
+                        blend: Some(blend),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                multiview_mask: None,
+                cache: None,
             },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
-                depth_write_enabled: Some(key.depth_write),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: Default::default(),
-                bias: Default::default(),
-            }),
-            multisample: wgpu::MultisampleState {
-                count: key.samples,
-                ..Default::default()
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &c.module,
-                entry_point: Some(MATERIAL_FRAGMENT),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: key.format,
-                    blend: Some(blend),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        );
         self.materials.insert(key, pipeline);
     }
 
@@ -403,34 +409,37 @@ impl Programs {
         self.effects
             .entry((program.id(), format))
             .or_insert_with(|| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("ljos_3d effect"),
-                    layout: Some(&c.pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &c.module,
-                        entry_point: Some(EFFECT_VERTEX),
-                        compilation_options: Default::default(),
-                        buffers: &[],
+                crate::counted::create_render_pipeline(
+                    device,
+                    &wgpu::RenderPipelineDescriptor {
+                        label: Some("ljos_3d effect"),
+                        layout: Some(&c.pipeline_layout),
+                        vertex: wgpu::VertexState {
+                            module: &c.module,
+                            entry_point: Some(EFFECT_VERTEX),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: wgpu::PrimitiveState {
+                            topology: wgpu::PrimitiveTopology::TriangleStrip,
+                            ..Default::default()
+                        },
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: &c.module,
+                            entry_point: Some(EFFECT_FRAGMENT),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format,
+                                blend: None,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
                     },
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleStrip,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: &c.module,
-                        entry_point: Some(EFFECT_FRAGMENT),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
+                )
             })
     }
 
@@ -483,11 +492,14 @@ impl Programs {
                 resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
             });
         }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d program"),
-            layout: &self.compiled[&program.id()].layout,
-            entries: &entries,
-        })
+        crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d program"),
+                layout: &self.compiled[&program.id()].layout,
+                entries: &entries,
+            },
+        )
     }
 
     /// Makes `slots[i]` bind `material` with `header`, uploading what
@@ -533,12 +545,15 @@ impl Programs {
                 || s.depth != depth.map(|d| d.1)
         });
         if fresh {
-            let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ljos_3d custom material"),
-                size: bytes.len() as u64,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            });
+            let buffer = crate::counted::create_buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("ljos_3d custom material"),
+                    size: bytes.len() as u64,
+                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                },
+            );
             let group = self.group(
                 device,
                 program,
@@ -564,7 +579,7 @@ impl Programs {
         }
         let slot = &mut slots[i];
         if slot.written != bytes {
-            queue.write_buffer(&slot.buffer, 0, &bytes);
+            crate::counted::write_buffer(queue, &slot.buffer, 0, &bytes);
             slot.written = bytes;
         }
     }

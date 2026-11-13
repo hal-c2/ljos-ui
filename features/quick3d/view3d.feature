@@ -84,3 +84,8 @@ Feature: A 3D scene in a View3D
     Scenario: A change to the scene is drawn and then nothing more is scheduled
       When the property "eulerRotation.y" of "cube" is set to 45
       Then the application has nothing scheduled
+
+    Scenario: A light that casts shadows schedules nothing once its maps are drawn
+      When the property "castsShadow" of "sun" is set to true
+      And 100 milliseconds pass
+      Then the application has nothing scheduled

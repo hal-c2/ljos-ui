@@ -64,41 +64,44 @@ impl Surfaces {
                     write_mask: wgpu::ColorWrites::ALL,
                 })
             };
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ljos_3d surfaces"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some(if extra { "vs_extra" } else { "vs_main" }),
-                    compilation_options: Default::default(),
-                    buffers: vertex,
-                },
-                primitive: wgpu::PrimitiveState {
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: cull,
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: crate::post::DEPTH,
-                    depth_write_enabled: Some(true),
-                    depth_compare: Some(wgpu::CompareFunction::Less),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some(if custom {
-                        "fs_surface_unlit"
-                    } else {
-                        "fs_surface"
+            crate::counted::create_render_pipeline(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("ljos_3d surfaces"),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some(if extra { "vs_extra" } else { "vs_main" }),
+                        compilation_options: Default::default(),
+                        buffers: vertex,
+                    },
+                    primitive: wgpu::PrimitiveState {
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: cull,
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: crate::post::DEPTH,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::Less),
+                        stencil: Default::default(),
+                        bias: Default::default(),
                     }),
-                    compilation_options: Default::default(),
-                    targets: &[target(NORMAL), target(MATERIAL)],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some(if custom {
+                            "fs_surface_unlit"
+                        } else {
+                            "fs_surface"
+                        }),
+                        compilation_options: Default::default(),
+                        targets: &[target(NORMAL), target(MATERIAL)],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
+                },
+            )
         });
     }
 

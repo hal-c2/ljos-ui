@@ -8,7 +8,6 @@
 //! target's joint buffer, bound beside the model's uniforms.
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 use crate::instancing::MAX_JOINTS;
 use crate::math::Mat4;
@@ -120,13 +119,14 @@ pub(crate) fn upload_extra(device: &wgpu::Device, mesh: &Mesh) -> Option<wgpu::B
             color: mesh.colors.get(i).copied().unwrap_or([1.0; 4]),
         })
         .collect();
-    Some(
-        device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+    Some(crate::counted::create_buffer_init(
+        device,
+        &wgpu::util::BufferInitDescriptor {
             label: Some("ljos_3d second vertices"),
             contents: bytemuck::cast_slice(&vertices),
             usage: wgpu::BufferUsages::VERTEX,
-        }),
-    )
+        },
+    ))
 }
 
 /// Bytes one skin's joints take: a slot of the joint buffer.
@@ -182,12 +182,15 @@ impl<T: Pod + PartialEq> Rows<T> {
         usage: wgpu::BufferUsages,
         capacity: u64,
     ) -> wgpu::Buffer {
-        device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(label),
-            size: capacity * std::mem::size_of::<T>() as u64,
-            usage: usage | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        })
+        crate::counted::create_buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some(label),
+                size: capacity * std::mem::size_of::<T>() as u64,
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        )
     }
 
     /// Writes `rows`. Whether the buffer was made again, which a bind
@@ -208,7 +211,12 @@ impl<T: Pod + PartialEq> Rows<T> {
             .unwrap_or(self.written.len().min(rows.len()));
         if first < rows.len() {
             let offset = first as u64 * std::mem::size_of::<T>() as u64;
-            queue.write_buffer(&self.buffer, offset, bytemuck::cast_slice(&rows[first..]));
+            crate::counted::write_buffer(
+                queue,
+                &self.buffer,
+                offset,
+                bytemuck::cast_slice(&rows[first..]),
+            );
         }
         self.written.clear();
         self.written.extend_from_slice(rows);

@@ -340,20 +340,23 @@ pub fn layer_count(wanted: usize) -> u32 {
 
 /// An array of depth layers; `layers` from [`layer_count`].
 pub fn maps(device: &wgpu::Device, size: u32, layers: u32) -> Maps {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("ljos_3d shadow maps"),
-        size: wgpu::Extent3d {
-            width: size,
-            height: size,
-            depth_or_array_layers: layers,
+    let texture = crate::counted::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("ljos_3d shadow maps"),
+            size: wgpu::Extent3d {
+                width: size,
+                height: size,
+                depth_or_array_layers: layers,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
+    );
     let array = texture.create_view(&wgpu::TextureViewDescriptor {
         label: Some("ljos_3d shadow maps"),
         dimension: Some(wgpu::TextureViewDimension::D2Array),

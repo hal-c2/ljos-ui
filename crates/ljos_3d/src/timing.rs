@@ -108,12 +108,15 @@ impl Timer {
             return None;
         }
         let read = |_| Read {
-            buffer: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ljos_3d timing read"),
-                size: BYTES,
-                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                mapped_at_creation: false,
-            }),
+            buffer: crate::counted::create_buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("ljos_3d timing read"),
+                    size: BYTES,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                },
+            ),
             state: Arc::new(AtomicU8::new(FREE)),
             shadows: false,
             post: false,
@@ -124,12 +127,15 @@ impl Timer {
                 ty: wgpu::QueryType::Timestamp,
                 count: QUERIES,
             }),
-            resolve: device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some("ljos_3d timing resolve"),
-                size: BYTES,
-                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
+            resolve: crate::counted::create_buffer(
+                device,
+                &wgpu::BufferDescriptor {
+                    label: Some("ljos_3d timing resolve"),
+                    size: BYTES,
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                },
+            ),
             reads: std::array::from_fn(read),
             this: None,
             period: 1.0,

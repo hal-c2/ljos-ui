@@ -271,7 +271,9 @@ impl Views {
             );
         }
         if drawn {
+            let submit = ljos_3d::stats::Stopwatch::start();
             device.queue.submit([encoder.finish()]);
+            ljos_3d::stats::frame_end(submit.seconds());
         }
         if released {
             device.release();

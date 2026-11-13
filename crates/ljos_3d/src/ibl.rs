@@ -143,20 +143,23 @@ fn cube_texture(
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: side,
-            height: side,
-            depth_or_array_layers: 6,
+    crate::counted::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: side,
+                height: side,
+                depth_or_array_layers: 6,
+            },
+            mip_level_count: levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
         },
-        mip_level_count: levels,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage,
-        view_formats: &[],
-    })
+    )
 }
 
 fn cube_view(texture: &wgpu::Texture, base: u32, levels: Option<u32>) -> wgpu::TextureView {
@@ -240,41 +243,47 @@ impl Ibl {
             label: Some("ljos_3d probe environment"),
             entries: &[params_entry(), cube_entry(2), sampler_entry(3)],
         });
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ljos_3d probe"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ibl.wgsl").into()),
-        });
+        let shader = crate::counted::create_shader_module(
+            device,
+            wgpu::ShaderModuleDescriptor {
+                label: Some("ljos_3d probe"),
+                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/ibl.wgsl").into()),
+            },
+        );
         let pipeline = |layout: &wgpu::BindGroupLayout, entry: &str| {
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("ljos_3d probe"),
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ljos_3d probe"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
+            crate::counted::create_render_pipeline(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("ljos_3d probe"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some(entry),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
                 },
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(entry),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         };
         let equirect = pipeline(&source_layout, "fs_equirect");
         let downsample = pipeline(&cube_layout, "fs_downsample");
@@ -318,7 +327,8 @@ impl Ibl {
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
-        queue.write_texture(
+        crate::counted::write_texture(
+            queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &black,
                 mip_level: 0,
@@ -338,24 +348,27 @@ impl Ibl {
             },
         );
         let black_view = cube_view(&black, 0, None);
-        self.none = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d no probe"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&black_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&black_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        }));
+        self.none = Some(crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d no probe"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&black_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&black_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            },
+        ));
     }
 
     pub(crate) fn group(&self, bound: Bound) -> &wgpu::BindGroup {
@@ -447,19 +460,22 @@ impl Ibl {
             return;
         };
         for (step, target, group) in &cube.steps {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ljos_3d reflection probe"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
+            let mut pass = crate::counted::Pass::begin(
+                encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("ljos_3d reflection probe"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                },
+            );
             pass.set_pipeline(match step {
                 MirrorStep::Side => &self.side,
                 MirrorStep::Down => &self.downsample,
@@ -475,8 +491,9 @@ impl Ibl {
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
         let sides: Vec<wgpu::TextureView> = (0..6)
             .map(|_| {
-                device
-                    .create_texture(&wgpu::TextureDescriptor {
+                crate::counted::create_texture(
+                    device,
+                    &wgpu::TextureDescriptor {
                         label: Some("ljos_3d reflection probe side"),
                         size: wgpu::Extent3d {
                             width: across,
@@ -489,8 +506,9 @@ impl Ibl {
                         format: FORMAT,
                         usage,
                         view_formats: &[],
-                    })
-                    .create_view(&wgpu::TextureViewDescriptor::default())
+                    },
+                )
+                .create_view(&wgpu::TextureViewDescriptor::default())
             })
             .collect();
         let levels = levels_of(across);
@@ -557,13 +575,16 @@ impl Ibl {
             bytes[i * stride..i * stride + std::mem::size_of::<Params>()]
                 .copy_from_slice(bytemuck::bytes_of(p));
         }
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ljos_3d reflection probe passes"),
-            size: bytes.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&buffer, 0, &bytes);
+        let buffer = crate::counted::create_buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("ljos_3d reflection probe passes"),
+                size: bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        crate::counted::write_buffer(queue, &buffer, 0, &bytes);
         let slot = |i: usize| {
             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: &buffer,
@@ -572,42 +593,48 @@ impl Ibl {
             })
         };
         let of_cube = |i: usize, view: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ljos_3d reflection probe pass"),
-                layout: &self.cube_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: slot(i),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            })
+            crate::counted::create_bind_group(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("ljos_3d reflection probe pass"),
+                    layout: &self.cube_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: slot(i),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                    ],
+                },
+            )
         };
         let mut steps = Vec::new();
         let mut i = 0;
         for (face, side) in sides.iter().enumerate() {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ljos_3d reflection probe pass"),
-                layout: &self.source_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: slot(i),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(side),
-                    },
-                ],
-            });
+            let group = crate::counted::create_bind_group(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("ljos_3d reflection probe pass"),
+                    layout: &self.source_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: slot(i),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(side),
+                        },
+                    ],
+                },
+            );
             steps.push((MirrorStep::Side, face_view(&raw, 0, face as u32), group));
             i += 1;
         }
@@ -643,24 +670,27 @@ impl Ibl {
         }
         let spec_view = cube_view(&spec, 0, None);
         let irr_view = cube_view(&irr, 0, None);
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d reflection probe"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&spec_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&irr_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        let group = crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d reflection probe"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&spec_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&irr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            },
+        );
         MirrorCube {
             sides,
             steps,
@@ -700,7 +730,8 @@ impl Ibl {
                 return;
             }
             for (face, data) in bytes.chunks_exact(side).enumerate() {
-                queue.write_texture(
+                crate::counted::write_texture(
+                    queue,
                     wgpu::TexelCopyTextureInfo {
                         texture,
                         mip_level: into,
@@ -750,24 +781,27 @@ impl Ibl {
         write(&irr, 0, last);
         let spec_view = cube_view(&spec, 0, None);
         let irr_view = cube_view(&irr, 0, None);
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d probe"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&spec_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&irr_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        let group = crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d probe"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&spec_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&irr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            },
+        );
         Some((
             group,
             levels.saturating_sub(2) as f32,
@@ -791,21 +825,25 @@ impl Ibl {
             PixelEncoding::Rgbe => 1,
             PixelEncoding::Srgb8Straight => 2,
         };
-        let source = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("ljos_3d probe image"),
-            size: wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
+        let source = crate::counted::create_texture(
+            device,
+            &wgpu::TextureDescriptor {
+                label: Some("ljos_3d probe image"),
+                size: wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
             },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        queue.write_texture(
+        );
+        crate::counted::write_texture(
+            queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &source,
                 mip_level: 0,
@@ -907,13 +945,16 @@ impl Ibl {
             bytes[i * stride..i * stride + std::mem::size_of::<Params>()]
                 .copy_from_slice(bytemuck::bytes_of(p));
         }
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ljos_3d probe passes"),
-            size: bytes.len() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-        queue.write_buffer(&buffer, 0, &bytes);
+        let buffer = crate::counted::create_buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("ljos_3d probe passes"),
+                size: bytes.len() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
+        crate::counted::write_buffer(queue, &buffer, 0, &bytes);
         let slot = |i: usize| {
             wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                 buffer: &buffer,
@@ -922,41 +963,47 @@ impl Ibl {
             })
         };
         let cube_group = |i: usize, view: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ljos_3d probe pass"),
-                layout: &self.cube_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: slot(i),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            })
+            crate::counted::create_bind_group(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("ljos_3d probe pass"),
+                    layout: &self.cube_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: slot(i),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                    ],
+                },
+            )
         };
         let mut pass = |target: &wgpu::TextureView,
                         pipeline: &wgpu::RenderPipeline,
                         group: &wgpu::BindGroup| {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ljos_3d probe pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
+            let mut pass = crate::counted::Pass::begin(
+                encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("ljos_3d probe pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: target,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                },
+            );
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.draw(0..3, 0..1);
@@ -964,20 +1011,23 @@ impl Ibl {
 
         let mut i = 0;
         for face in 0..6 {
-            let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ljos_3d probe pass"),
-                layout: &self.source_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: slot(i),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&source_view),
-                    },
-                ],
-            });
+            let group = crate::counted::create_bind_group(
+                device,
+                &wgpu::BindGroupDescriptor {
+                    label: Some("ljos_3d probe pass"),
+                    layout: &self.source_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: slot(i),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(&source_view),
+                        },
+                    ],
+                },
+            );
             pass(&face_view(&env, 0, face), &self.equirect, &group);
             i += 1;
         }
@@ -1007,24 +1057,27 @@ impl Ibl {
 
         let spec_view = cube_view(&spec, 0, None);
         let irr_view = cube_view(&irr, 0, None);
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d probe"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&spec_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&irr_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-            ],
-        });
+        let group = crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d probe"),
+                layout: &self.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&spec_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&irr_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                ],
+            },
+        );
         Some((
             group,
             (spec_levels - 1) as f32,

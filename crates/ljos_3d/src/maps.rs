@@ -283,11 +283,14 @@ impl Maps {
                 resource: wgpu::BindingResource::Sampler(s),
             });
         }
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d maps"),
-            layout: &self.layout,
-            entries: &entries,
-        })
+        crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d maps"),
+                layout: &self.layout,
+                entries: &entries,
+            },
+        )
     }
 
     fn upload(
@@ -335,26 +338,30 @@ pub(crate) fn upload(
     levels: &[Level],
 ) -> wgpu::TextureView {
     let (w, h, _) = levels[0];
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
+    let texture = crate::counted::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: levels.len() as u32,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: if srgb {
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            } else {
+                wgpu::TextureFormat::Rgba8Unorm
+            },
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
         },
-        mip_level_count: levels.len() as u32,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: if srgb {
-            wgpu::TextureFormat::Rgba8UnormSrgb
-        } else {
-            wgpu::TextureFormat::Rgba8Unorm
-        },
-        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
+    );
     for (mip, (w, h, data)) in levels.iter().enumerate() {
-        queue.write_texture(
+        crate::counted::write_texture(
+            queue,
             wgpu::TexelCopyTextureInfo {
                 texture: &texture,
                 mip_level: mip as u32,
