@@ -148,7 +148,23 @@ impl Check {
                 checked.project(dir, "")?;
             }
         }
-        generated::write(self.project.as_deref(), &self.dirs, &mut checked)?;
+        // DECISION: each project of a tree has its own `.ljos/`, under the
+        // directory the tree lays it out in, as it is checked on its own.
+        if self.tree {
+            for dir in &self.dirs {
+                for project in baseline::project_dirs(dir) {
+                    let only = std::slice::from_ref(&project);
+                    generated::write(Some(&project), only, &self.dirs, &mut checked)?;
+                }
+            }
+        } else {
+            generated::write(
+                self.project.as_deref(),
+                &self.dirs,
+                &self.dirs,
+                &mut checked,
+            )?;
+        }
         for line in &checked.diagnostics {
             if !self.quiet || line.contains(": error: ") {
                 eprintln!("{line}");

@@ -134,9 +134,11 @@ impl Migrate {
         // A project with `.lts` modules, or about to have one, gets the
         // `tsconfig.json` stock TypeScript reads them with (`tsconfig-lts`).
         let lts = match crate::generated::find(None, &self.paths) {
-            Ok(found) => {
-                found.or_else(|| renamed.then(|| crate::generated::Lts::empty(&self.paths)))
-            }
+            // Declarations whose modules are all gone are `ljos check`'s to
+            // remove; the tsconfig.json is for a project with a module.
+            Ok(found) => found
+                .filter(|lts| !lts.modules.is_empty())
+                .or_else(|| renamed.then(|| crate::generated::Lts::empty(&self.paths))),
             Err(e) => {
                 eprintln!("{e:#}");
                 failed = true;
@@ -144,6 +146,15 @@ impl Migrate {
             }
         };
         if let Some(lts) = lts {
+            // DECISION: the base the fixed tsconfig.json extends is written
+            // with it, as `ljos check` would write it, and not said: it is
+            // a generated file, not one of the project's.
+            if self.write
+                && let Err(e) = lts.write()
+            {
+                eprintln!("{e:#}");
+                failed = true;
+            }
             match lts.fix_tsconfig(self.write) {
                 Ok(said) => {
                     for line in said {

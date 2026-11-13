@@ -229,6 +229,8 @@ pub enum Code {
     /// A project with an `.lts` module whose `tsconfig.json` does not
     /// extend the generated base, or replaces its `rootDirs`.
     TsconfigLts,
+    /// The generated directory, `.ljos/`, cannot be written.
+    LtsGenerated,
 }
 
 impl Code {
@@ -275,6 +277,7 @@ impl Code {
             Code::ModuleClash => "module-clash",
             Code::LtsExportType => "lts-export-type",
             Code::TsconfigLts => "tsconfig-lts",
+            Code::LtsGenerated => "lts-generated",
         }
     }
 }
