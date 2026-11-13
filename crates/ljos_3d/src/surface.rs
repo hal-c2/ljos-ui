@@ -307,23 +307,28 @@ impl<'w> SurfaceView<'w> {
             &mut self.target,
         );
         {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ljos_3d present"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                ..Default::default()
-            });
+            let mut pass = crate::counted::Pass::begin(
+                &mut encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("ljos_3d present"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                },
+            );
             renderer.blit(&mut pass, self.view_format, &self.target);
         }
         drop(renderer);
+        let submit = crate::stats::Stopwatch::start();
         gpu.queue.submit([encoder.finish()]);
+        crate::stats::frame_end(submit.seconds());
         gpu.queue.present(frame);
         self.presented = Some(scene.revision());
         true

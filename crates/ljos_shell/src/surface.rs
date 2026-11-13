@@ -401,6 +401,10 @@ impl Painter {
                 );
                 let all = started.elapsed();
                 let waited = std::time::Duration::from_secs_f32(waited.max(0.0)).min(all);
+                // The views' passes went in egui-wgpu's own submit, which
+                // is not timed apart from its waits.
+                #[cfg(feature = "quick3d")]
+                ljos_3d::stats::frame_end(0.0);
                 #[cfg(feature = "quick3d")]
                 let (gpu_3d, gpu_post) = (
                     crate::scene3d::take_gpu_time(painter),

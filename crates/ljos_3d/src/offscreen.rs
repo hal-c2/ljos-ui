@@ -105,7 +105,9 @@ impl Offscreen {
             .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
         self.renderer
             .render(&self.device, &self.queue, &mut encoder, scene, &mut target);
+        let submit = crate::stats::Stopwatch::start();
         self.queue.submit([encoder.finish()]);
+        crate::stats::frame_end(submit.seconds());
         read_back(&self.device, &self.queue, target.texture())
     }
 }
@@ -121,6 +123,7 @@ pub fn read_back(
     let row = width * 4;
     let padded =
         row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    // The read back is the caller's, not the renderer's: not counted.
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("ljos_3d read back"),
         size: u64::from(padded * height),

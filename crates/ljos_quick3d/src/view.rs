@@ -66,6 +66,8 @@ impl ItemPaint for Picture {
 /// Reads the view's scene. Tracked: any property of a node, material or
 /// environment the walk reads paints the view again when it changes.
 pub(crate) fn read(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
+    use ljos::item::ljos_3d::stats;
+    let clock = stats::Stopwatch::start();
     let built = crate::scene::build(e, me);
     // The engine's tracking is what paints the view again, so nobody
     // listens: the slot only keeps a scene that draws the same.
@@ -73,6 +75,8 @@ pub(crate) fn read(e: &Engine, me: ObjectId) -> Rc<dyn ItemPaint> {
     let scene = e
         .with(me, |v: &View3D| v.last.borrow_mut().offer(built))
         .unwrap_or_default();
+    // Reading the scene is renderStats' syncTime, the next frame's.
+    stats::add_sync_seconds(clock.seconds());
     Rc::new(Picture(Arc::new(View3dOp {
         key: me.data().as_ffi(),
         scene,

@@ -16,7 +16,6 @@
 use std::collections::HashMap;
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 use crate::custom::{
     BufferFormat, Effect, GlowBlend, Illumination, LensFlare, PassTexture, PostProcess,
@@ -142,10 +141,13 @@ impl Pipes {
             bind_group_layouts: &[Some(&layout)],
             immediate_size: 0,
         });
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ljos_3d post"),
-            source: wgpu::ShaderSource::Wgsl(POST_WGSL.into()),
-        });
+        let module = crate::counted::create_shader_module(
+            device,
+            wgpu::ShaderModuleDescriptor {
+                label: Some("ljos_3d post"),
+                source: wgpu::ShaderSource::Wgsl(POST_WGSL.into()),
+            },
+        );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ljos_3d post"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -181,31 +183,34 @@ impl Pipes {
                     },
                     alpha: wgpu::BlendComponent::OVER,
                 });
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(entry),
-                    layout: Some(layout),
-                    vertex: wgpu::VertexState {
-                        module,
-                        entry_point: Some("vs_full"),
-                        compilation_options: Default::default(),
-                        buffers: &[],
+                crate::counted::create_render_pipeline(
+                    device,
+                    &wgpu::RenderPipelineDescriptor {
+                        label: Some(entry),
+                        layout: Some(layout),
+                        vertex: wgpu::VertexState {
+                            module,
+                            entry_point: Some("vs_full"),
+                            compilation_options: Default::default(),
+                            buffers: &[],
+                        },
+                        primitive: Default::default(),
+                        depth_stencil: None,
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module,
+                            entry_point: Some(entry),
+                            compilation_options: Default::default(),
+                            targets: &[Some(wgpu::ColorTargetState {
+                                format,
+                                blend,
+                                write_mask: wgpu::ColorWrites::ALL,
+                            })],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
                     },
-                    primitive: Default::default(),
-                    depth_stencil: None,
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module,
-                        entry_point: Some(entry),
-                        compilation_options: Default::default(),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
+                )
             })
     }
 }
@@ -250,20 +255,23 @@ impl Buffers {
 }
 
 fn make(device: &wgpu::Device, size: [u32; 2], format: wgpu::TextureFormat) -> Pooled {
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("ljos_3d post"),
-        size: wgpu::Extent3d {
-            width: size[0],
-            height: size[1],
-            depth_or_array_layers: 1,
+    let texture = crate::counted::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some("ljos_3d post"),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        view_formats: &[],
-    });
+    );
     Pooled {
         view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
         size,
@@ -508,68 +516,75 @@ impl<'a> Chain<'a> {
     ) {
         let mut u = *base;
         u.texel = [1.0 / texel[0] as f32, 1.0 / texel[1] as f32, dir[0], dir[1]];
-        let buffer = self
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        let buffer = crate::counted::create_buffer_init(
+            self.device,
+            &wgpu::util::BufferInitDescriptor {
                 label: Some("ljos_3d post"),
                 contents: bytemuck::bytes_of(&u),
                 usage: wgpu::BufferUsages::UNIFORM,
-            });
+            },
+        );
         let none = self.none();
-        let group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d post"),
-            layout: &self.pipes.layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: buffer.as_entire_binding(),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(p.a),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(p.b.unwrap_or(&none)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(depth.unwrap_or(&none)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::Sampler(&self.pipes.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 5,
-                    resource: wgpu::BindingResource::TextureView(c.unwrap_or(&none)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 6,
-                    resource: wgpu::BindingResource::TextureView(d.unwrap_or(&none)),
-                },
-            ],
-        });
+        let group = crate::counted::create_bind_group(
+            self.device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d post"),
+                layout: &self.pipes.layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: buffer.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(p.a),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(p.b.unwrap_or(&none)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::TextureView(depth.unwrap_or(&none)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 4,
+                        resource: wgpu::BindingResource::Sampler(&self.pipes.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 5,
+                        resource: wgpu::BindingResource::TextureView(c.unwrap_or(&none)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 6,
+                        resource: wgpu::BindingResource::TextureView(d.unwrap_or(&none)),
+                    },
+                ],
+            },
+        );
         let timestamp_writes = self.stamp(p.last);
         let pipeline = self.pipes.pipeline(self.device, p.entry, p.format, p.add);
-        let mut pass = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some(p.entry),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: p.out,
-                resolve_target: None,
-                depth_slice: None,
-                ops: wgpu::Operations {
-                    load: if p.clear || !p.add {
-                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
-                    } else {
-                        wgpu::LoadOp::Load
+        let mut pass = crate::counted::Pass::begin(
+            self.encoder,
+            &wgpu::RenderPassDescriptor {
+                label: Some(p.entry),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: p.out,
+                    resolve_target: None,
+                    depth_slice: None,
+                    ops: wgpu::Operations {
+                        load: if p.clear || !p.add {
+                            wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
+                        store: wgpu::StoreOp::Store,
                     },
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            timestamp_writes,
-            ..Default::default()
-        });
+                })],
+                timestamp_writes,
+                ..Default::default()
+            },
+        );
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &group, &[]);
         pass.draw(0..3, 0..1);
@@ -1135,11 +1150,14 @@ impl<'a> Chain<'a> {
                 ],
             };
             let bytes = programs::block(program, &header, &pass.values);
-            let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("ljos_3d effect"),
-                contents: &bytes,
-                usage: wgpu::BufferUsages::UNIFORM,
-            });
+            let buffer = crate::counted::create_buffer_init(
+                device,
+                &wgpu::util::BufferInitDescriptor {
+                    label: Some("ljos_3d effect"),
+                    contents: &bytes,
+                    usage: wgpu::BufferUsages::UNIFORM,
+                },
+            );
             // Made first, as the group is made from the program's layout.
             self.programs.effect_pipeline(device, program, format);
             let group = self
@@ -1148,20 +1166,23 @@ impl<'a> Chain<'a> {
             // The final pass comes after every effect, so none ends the time.
             let timestamp_writes = self.stamp(false);
             let pipeline = self.programs.effect_pipeline(device, program, format);
-            let mut rp = self.encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ljos_3d effect"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &out_view,
-                    resolve_target: None,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
-                timestamp_writes,
-                ..Default::default()
-            });
+            let mut rp = crate::counted::Pass::begin(
+                self.encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("ljos_3d effect"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &out_view,
+                        resolve_target: None,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    timestamp_writes,
+                    ..Default::default()
+                },
+            );
             rp.set_pipeline(pipeline);
             rp.set_bind_group(0, &group, &[]);
             rp.draw(0..4, 0..1);

@@ -17,7 +17,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
-use wgpu::util::DeviceExt;
 
 use crate::custom::{CustomMaterial, Screen};
 use crate::gbuffer;
@@ -407,20 +406,23 @@ fn attachment(
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
-        label: Some(label),
-        size: wgpu::Extent3d {
-            width: size[0],
-            height: size[1],
-            depth_or_array_layers: 1,
+    crate::counted::create_texture(
+        device,
+        &wgpu::TextureDescriptor {
+            label: Some(label),
+            size: wgpu::Extent3d {
+                width: size[0],
+                height: size[1],
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+            view_formats: &[],
         },
-        mip_level_count: 1,
-        sample_count: samples,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        usage,
-        view_formats: &[],
-    })
+    )
 }
 
 impl Target {
@@ -447,26 +449,32 @@ impl Target {
         );
         let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
         let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-        let blit_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d blit"),
-            layout: &renderer.blit_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&color_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&renderer.blit_sampler),
-                },
-            ],
-        });
-        let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("ljos_3d frame"),
-            size: std::mem::size_of::<FrameUniform>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let blit_group = crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d blit"),
+                layout: &renderer.blit_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&color_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&renderer.blit_sampler),
+                    },
+                ],
+            },
+        );
+        let frame_buffer = crate::counted::create_buffer(
+            device,
+            &wgpu::BufferDescriptor {
+                label: Some("ljos_3d frame"),
+                size: std::mem::size_of::<FrameUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            },
+        );
         let frame_group = frame_group(device, renderer, &frame_buffer, &renderer.no_shadows);
         let model_capacity = 16;
         let instances = Rows::new(device, "ljos_3d copies", wgpu::BufferUsages::VERTEX, 16);
@@ -573,24 +581,32 @@ impl Target {
         let (layer_buffer, layer_group) = match self.shadows.take() {
             Some(s) => (s.layer_buffer, s.layer_group),
             None => {
-                let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-                    label: Some("ljos_3d shadow layers"),
-                    size: shadow::MAX_LAYERS as u64 * renderer.layer_stride,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                });
-                let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("ljos_3d shadow layers"),
-                    layout: &renderer.layer_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                            buffer: &buffer,
-                            offset: 0,
-                            size: wgpu::BufferSize::new(std::mem::size_of::<ShadowLayer>() as u64),
-                        }),
-                    }],
-                });
+                let buffer = crate::counted::create_buffer(
+                    device,
+                    &wgpu::BufferDescriptor {
+                        label: Some("ljos_3d shadow layers"),
+                        size: shadow::MAX_LAYERS as u64 * renderer.layer_stride,
+                        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                        mapped_at_creation: false,
+                    },
+                );
+                let group = crate::counted::create_bind_group(
+                    device,
+                    &wgpu::BindGroupDescriptor {
+                        label: Some("ljos_3d shadow layers"),
+                        layout: &renderer.layer_layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                                buffer: &buffer,
+                                offset: 0,
+                                size: wgpu::BufferSize::new(
+                                    std::mem::size_of::<ShadowLayer>() as u64
+                                ),
+                            }),
+                        }],
+                    },
+                );
                 (buffer, group)
             }
         };
@@ -660,24 +676,27 @@ fn frame_group(
     buffer: &wgpu::Buffer,
     maps: &shadow::Maps,
 ) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("ljos_3d frame"),
-        layout: &renderer.frame_layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: buffer.as_entire_binding(),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::TextureView(&maps.array),
-            },
-            wgpu::BindGroupEntry {
-                binding: 2,
-                resource: wgpu::BindingResource::Sampler(&renderer.shadow_sampler),
-            },
-        ],
-    })
+    crate::counted::create_bind_group(
+        device,
+        &wgpu::BindGroupDescriptor {
+            label: Some("ljos_3d frame"),
+            layout: &renderer.frame_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&maps.array),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(&renderer.shadow_sampler),
+                },
+            ],
+        },
+    )
 }
 
 fn uniform_layout(device: &wgpu::Device, label: &str, dynamic: bool) -> wgpu::BindGroupLayout {
@@ -703,12 +722,15 @@ fn model_slots(
     stride: u64,
     joints: &wgpu::Buffer,
 ) -> (wgpu::Buffer, wgpu::BindGroup) {
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-        label: Some("ljos_3d models"),
-        size: capacity * stride,
-        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        mapped_at_creation: false,
-    });
+    let buffer = crate::counted::create_buffer(
+        device,
+        &wgpu::BufferDescriptor {
+            label: Some("ljos_3d models"),
+            size: capacity * stride,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        },
+    );
     let group = model_group(device, layout, &buffer, joints);
     (buffer, group)
 }
@@ -719,28 +741,31 @@ fn model_group(
     models: &wgpu::Buffer,
     joints: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
-    device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("ljos_3d models"),
-        layout,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: models,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(std::mem::size_of::<ModelUniform>() as u64),
-                }),
-            },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: joints,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(JOINT_SLOT),
-                }),
-            },
-        ],
-    })
+    crate::counted::create_bind_group(
+        device,
+        &wgpu::BindGroupDescriptor {
+            label: Some("ljos_3d models"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: models,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(std::mem::size_of::<ModelUniform>() as u64),
+                    }),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: joints,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(JOINT_SLOT),
+                    }),
+                },
+            ],
+        },
+    )
 }
 
 /// The six planes of what `view_proj` sees, each `(normal, d)` with the
@@ -1064,7 +1089,12 @@ fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[ModelUniform],
         for (k, draw) in draws[start..i].iter().enumerate() {
             staging[k * stride..k * stride + size].copy_from_slice(bytemuck::bytes_of(draw));
         }
-        queue.write_buffer(&target.model_buffer, (start * stride) as u64, staging);
+        crate::counted::write_buffer(
+            queue,
+            &target.model_buffer,
+            (start * stride) as u64,
+            staging,
+        );
     }
     written.clear();
     written.extend_from_slice(draws);
@@ -1196,14 +1226,20 @@ impl Renderer {
         let model_layout = gpu_extra::model_layout(device);
         let maps = Maps::new(device);
         let ibl = Ibl::new(device);
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ljos_3d lit"),
-            source: wgpu::ShaderSource::Wgsl(LIT_WGSL.into()),
-        });
-        let sky_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ljos_3d sky"),
-            source: wgpu::ShaderSource::Wgsl(SKY_WGSL.into()),
-        });
+        let shader = crate::counted::create_shader_module(
+            device,
+            wgpu::ShaderModuleDescriptor {
+                label: Some("ljos_3d lit"),
+                source: wgpu::ShaderSource::Wgsl(LIT_WGSL.into()),
+            },
+        );
+        let sky_shader = crate::counted::create_shader_module(
+            device,
+            wgpu::ShaderModuleDescriptor {
+                label: Some("ljos_3d sky"),
+                source: wgpu::ShaderSource::Wgsl(SKY_WGSL.into()),
+            },
+        );
         // The sky box shares the layout, so that switching to it and back
         // keeps every group bound.
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -1221,10 +1257,13 @@ impl Renderer {
         let model_stride = size.div_ceil(align) * align;
         let size = std::mem::size_of::<ShadowLayer>() as u64;
         let layer_stride = size.div_ceil(align) * align;
-        let shadow_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("ljos_3d shadow"),
-            source: wgpu::ShaderSource::Wgsl(SHADOW_WGSL.into()),
-        });
+        let shadow_shader = crate::counted::create_shader_module(
+            device,
+            wgpu::ShaderModuleDescriptor {
+                label: Some("ljos_3d shadow"),
+                source: wgpu::ShaderSource::Wgsl(SHADOW_WGSL.into()),
+            },
+        );
         let shadow_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ljos_3d shadow"),
             bind_group_layouts: &[Some(&layer_layout), Some(&model_layout)],
@@ -1360,57 +1399,60 @@ impl Renderer {
     fn pipeline(&mut self, device: &wgpu::Device, key: PipelineKey) {
         let (shader, layout) = (&self.shader, &self.pipeline_layout);
         self.pipelines.entry(key).or_insert_with(|| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ljos_3d lit"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some(if key.extra { "vs_extra" } else { "vs_main" }),
-                    compilation_options: Default::default(),
-                    buffers: &[
-                        Some(vertex_layout()),
-                        Some(gpu_extra::instance_layout()),
-                        key.extra.then(gpu_extra::extra_layout),
-                    ],
-                },
-                primitive: wgpu::PrimitiveState {
-                    topology: key.topology.wgpu(),
-                    front_face: wgpu::FrontFace::Ccw,
-                    cull_mode: match key.cull {
-                        CullMode::Back => Some(wgpu::Face::Back),
-                        CullMode::Front => Some(wgpu::Face::Front),
-                        CullMode::None => None,
+            crate::counted::create_render_pipeline(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("ljos_3d lit"),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some(if key.extra { "vs_extra" } else { "vs_main" }),
+                        compilation_options: Default::default(),
+                        buffers: &[
+                            Some(vertex_layout()),
+                            Some(gpu_extra::instance_layout()),
+                            key.extra.then(gpu_extra::extra_layout),
+                        ],
                     },
-                    ..Default::default()
-                },
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(key.depth_write && key.depth_test),
-                    depth_compare: Some(if key.depth_test {
-                        wgpu::CompareFunction::LessEqual
-                    } else {
-                        wgpu::CompareFunction::Always
+                    primitive: wgpu::PrimitiveState {
+                        topology: key.topology.wgpu(),
+                        front_face: wgpu::FrontFace::Ccw,
+                        cull_mode: match key.cull {
+                            CullMode::Back => Some(wgpu::Face::Back),
+                            CullMode::Front => Some(wgpu::Face::Front),
+                            CullMode::None => None,
+                        },
+                        ..Default::default()
+                    },
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(key.depth_write && key.depth_test),
+                        depth_compare: Some(if key.depth_test {
+                            wgpu::CompareFunction::LessEqual
+                        } else {
+                            wgpu::CompareFunction::Always
+                        }),
+                        stencil: Default::default(),
+                        bias: Default::default(),
                     }),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: key.samples,
-                    ..Default::default()
+                    multisample: wgpu::MultisampleState {
+                        count: key.samples,
+                        ..Default::default()
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: key.format,
+                            blend: Some(blend_state(key.blend)),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
                 },
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: key.format,
-                        blend: Some(blend_state(key.blend)),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         });
     }
 
@@ -1422,55 +1464,58 @@ impl Renderer {
         self.shadow_pipelines
             .entry((cull, extra))
             .or_insert_with(|| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some("ljos_3d shadow"),
-                    layout: Some(layout),
-                    vertex: wgpu::VertexState {
-                        module: shader,
-                        entry_point: Some(if extra { "vs_extra" } else { "vs_main" }),
-                        compilation_options: Default::default(),
-                        buffers: &[
-                            Some(wgpu::VertexBufferLayout {
-                                array_stride: std::mem::size_of::<Vertex>() as u64,
-                                step_mode: wgpu::VertexStepMode::Vertex,
-                                attributes: &wgpu::vertex_attr_array![0 => Float32x3],
-                            }),
-                            Some(gpu_extra::instance_layout()),
-                            extra.then(gpu_extra::extra_layout),
-                        ],
-                    },
-                    primitive: wgpu::PrimitiveState {
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: match cull {
-                            CullMode::Back => Some(wgpu::Face::Back),
-                            CullMode::Front => Some(wgpu::Face::Front),
-                            CullMode::None => None,
+                crate::counted::create_render_pipeline(
+                    device,
+                    &wgpu::RenderPipelineDescriptor {
+                        label: Some("ljos_3d shadow"),
+                        layout: Some(layout),
+                        vertex: wgpu::VertexState {
+                            module: shader,
+                            entry_point: Some(if extra { "vs_extra" } else { "vs_main" }),
+                            compilation_options: Default::default(),
+                            buffers: &[
+                                Some(wgpu::VertexBufferLayout {
+                                    array_stride: std::mem::size_of::<Vertex>() as u64,
+                                    step_mode: wgpu::VertexStepMode::Vertex,
+                                    attributes: &wgpu::vertex_attr_array![0 => Float32x3],
+                                }),
+                                Some(gpu_extra::instance_layout()),
+                                extra.then(gpu_extra::extra_layout),
+                            ],
                         },
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: shadow::FORMAT,
-                        depth_write_enabled: Some(true),
-                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                        stencil: Default::default(),
-                        // A surface turned from the light covers more depth per texel of
-                        // the map than any fixed bias clears, the flatter the more.
-                        bias: wgpu::DepthBiasState {
-                            constant: 0,
-                            slope_scale: 1.5,
-                            clamp: 0.0,
+                        primitive: wgpu::PrimitiveState {
+                            front_face: wgpu::FrontFace::Ccw,
+                            cull_mode: match cull {
+                                CullMode::Back => Some(wgpu::Face::Back),
+                                CullMode::Front => Some(wgpu::Face::Front),
+                                CullMode::None => None,
+                            },
+                            ..Default::default()
                         },
-                    }),
-                    multisample: Default::default(),
-                    fragment: Some(wgpu::FragmentState {
-                        module: shader,
-                        entry_point: Some("fs_main"),
-                        compilation_options: Default::default(),
-                        targets: &[],
-                    }),
-                    multiview_mask: None,
-                    cache: None,
-                })
+                        depth_stencil: Some(wgpu::DepthStencilState {
+                            format: shadow::FORMAT,
+                            depth_write_enabled: Some(true),
+                            depth_compare: Some(wgpu::CompareFunction::LessEqual),
+                            stencil: Default::default(),
+                            // A surface turned from the light covers more depth per texel of
+                            // the map than any fixed bias clears, the flatter the more.
+                            bias: wgpu::DepthBiasState {
+                                constant: 0,
+                                slope_scale: 1.5,
+                                clamp: 0.0,
+                            },
+                        }),
+                        multisample: Default::default(),
+                        fragment: Some(wgpu::FragmentState {
+                            module: shader,
+                            entry_point: Some("fs_main"),
+                            compilation_options: Default::default(),
+                            targets: &[],
+                        }),
+                        multiview_mask: None,
+                        cache: None,
+                    },
+                )
             });
     }
 
@@ -1496,42 +1541,45 @@ impl Renderer {
     fn sky(&mut self, device: &wgpu::Device, samples: u32, format: wgpu::TextureFormat) {
         let (shader, layout) = (&self.sky_shader, &self.pipeline_layout);
         self.skies.entry((samples, format)).or_insert_with(|| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ljos_3d sky"),
-                layout: Some(layout),
-                vertex: wgpu::VertexState {
-                    module: shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
+            crate::counted::create_render_pipeline(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("ljos_3d sky"),
+                    layout: Some(layout),
+                    vertex: wgpu::VertexState {
+                        module: shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: Default::default(),
+                    // Behind everything, as it is drawn first and leaves the
+                    // depth as it was cleared.
+                    depth_stencil: Some(wgpu::DepthStencilState {
+                        format: DEPTH_FORMAT,
+                        depth_write_enabled: Some(false),
+                        depth_compare: Some(wgpu::CompareFunction::Always),
+                        stencil: Default::default(),
+                        bias: Default::default(),
+                    }),
+                    multisample: wgpu::MultisampleState {
+                        count: samples,
+                        ..Default::default()
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
                 },
-                primitive: Default::default(),
-                // Behind everything, as it is drawn first and leaves the
-                // depth as it was cleared.
-                depth_stencil: Some(wgpu::DepthStencilState {
-                    format: DEPTH_FORMAT,
-                    depth_write_enabled: Some(false),
-                    depth_compare: Some(wgpu::CompareFunction::Always),
-                    stencil: Default::default(),
-                    bias: Default::default(),
-                }),
-                multisample: wgpu::MultisampleState {
-                    count: samples,
-                    ..Default::default()
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         });
     }
 
@@ -1648,18 +1696,24 @@ fn upload(device: &wgpu::Device, mesh: &Mesh) -> GpuMesh {
         })
         .collect();
     GpuMesh {
-        vertices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ljos_3d vertices"),
-            contents: bytemuck::cast_slice(&vertices),
-            usage: wgpu::BufferUsages::VERTEX,
-        }),
+        vertices: crate::counted::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("ljos_3d vertices"),
+                contents: bytemuck::cast_slice(&vertices),
+                usage: wgpu::BufferUsages::VERTEX,
+            },
+        ),
         extra: gpu_extra::upload_extra(device, mesh),
         has_joints: !mesh.joints.is_empty(),
-        indices: device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ljos_3d indices"),
-            contents: bytemuck::cast_slice(&mesh.indices),
-            usage: wgpu::BufferUsages::INDEX,
-        }),
+        indices: crate::counted::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("ljos_3d indices"),
+                contents: bytemuck::cast_slice(&mesh.indices),
+                usage: wgpu::BufferUsages::INDEX,
+            },
+        ),
         count: mesh.indices.len() as u32,
         topology: mesh.topology,
     }
@@ -1882,6 +1936,7 @@ impl Renderer {
         if target.drawn == Some(scene.revision()) {
             return false;
         }
+        let mut clock = crate::stats::Stopwatch::start();
         if let Some(timer) = &mut target.timer {
             timer.begin(queue);
         }
@@ -2171,6 +2226,7 @@ impl Renderer {
                 if let Some(planes) = &planes
                     && outside(planes, centre, radius)
                 {
+                    crate::stats::count(|c| c.models_culled += 1);
                     if let Some(c) = caster {
                         unseen.push((c, uniform));
                     }
@@ -2274,7 +2330,12 @@ impl Renderer {
         frame.shadow_layers[..plan.layers.len()].copy_from_slice(&plan.layers);
         target.shadows(device, self, &plan);
         if target.frame_written != Some(frame) {
-            queue.write_buffer(&target.frame_buffer, 0, bytemuck::bytes_of(&frame));
+            crate::counted::write_buffer(
+                queue,
+                &target.frame_buffer,
+                0,
+                bytemuck::bytes_of(&frame),
+            );
             target.frame_written = Some(frame);
         }
 
@@ -2401,6 +2462,9 @@ impl Renderer {
             }
         }
         target.custom_slots.truncate(slot);
+        // What is before this is preparing the frame, what is after it
+        // recording its passes; the pipelines the passes need are made
+        // here too, so they are part of preparing.
         let surface_pass =
             processed && post::needs_surfaces(environment) && self.surfaces.available(device);
         let depth_pass = processed && !surface_pass && post::needs_depth(environment);
@@ -2430,6 +2494,7 @@ impl Renderer {
             }
             self.shadow_pipeline(device, caster.cull, caster.extra);
         }
+        let prepared = clock.lap();
         let passes = target.shadow_passes;
         self.draw_shadows(
             queue,
@@ -2501,32 +2566,35 @@ impl Renderer {
                 Some(m) => (&m.color, Some(picture), &m.depth),
                 None => (picture, None, &target.depth_view),
             };
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ljos_3d scene"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    resolve_target: resolve,
-                    depth_slice: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
-                        store: if resolve.is_none() {
-                            wgpu::StoreOp::Store
-                        } else {
-                            wgpu::StoreOp::Discard
+            let mut pass = crate::counted::Pass::begin(
+                encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("ljos_3d scene"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view,
+                        resolve_target: resolve,
+                        depth_slice: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear),
+                            store: if resolve.is_none() {
+                                wgpu::StoreOp::Store
+                            } else {
+                                wgpu::StoreOp::Discard
+                            },
                         },
-                    },
-                })],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: depth,
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Discard,
+                    })],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: depth,
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Discard,
+                        }),
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: target.timer.as_ref().and_then(|t| t.scene_part(true, true)),
-                ..Default::default()
-            });
+                    timestamp_writes: target.timer.as_ref().and_then(|t| t.scene_part(true, true)),
+                    ..Default::default()
+                },
+            );
             pass.set_bind_group(0, &target.frame_group, &[]);
             pass.set_bind_group(3, self.ibl.group(bound), &[]);
             if sky {
@@ -2616,6 +2684,12 @@ impl Renderer {
             timer.end(encoder, shadows_drawn, processed);
         }
         target.drawn_models = draws.len();
+        let encoded = clock.lap();
+        crate::stats::count(|c| {
+            c.models_drawn += draws.len() as u64;
+            c.prepare_seconds += prepared;
+            c.encode_seconds += encoded;
+        });
         crate::stats::record_render(
             (draws.len() + usize::from(sky)) as u32,
             target.shadow_passes,
@@ -2641,42 +2715,51 @@ impl Renderer {
             view_proj: view_proj.0,
             params: [0.0; 4],
         };
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("ljos_3d camera depth"),
-            contents: bytemuck::bytes_of(&layer),
-            usage: wgpu::BufferUsages::UNIFORM,
-        });
-        let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("ljos_3d camera depth"),
-            layout: &self.layer_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(std::mem::size_of::<ShadowLayer>() as u64),
+        let buffer = crate::counted::create_buffer_init(
+            device,
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("ljos_3d camera depth"),
+                contents: bytemuck::bytes_of(&layer),
+                usage: wgpu::BufferUsages::UNIFORM,
+            },
+        );
+        let group = crate::counted::create_bind_group(
+            device,
+            &wgpu::BindGroupDescriptor {
+                label: Some("ljos_3d camera depth"),
+                layout: &self.layer_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &buffer,
+                        offset: 0,
+                        size: wgpu::BufferSize::new(std::mem::size_of::<ShadowLayer>() as u64),
+                    }),
+                }],
+            },
+        );
+        let mut pass = crate::counted::Pass::begin(
+            encoder,
+            &wgpu::RenderPassDescriptor {
+                label: Some("ljos_3d camera depth"),
+                color_attachments: &[],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-            }],
-        });
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("ljos_3d camera depth"),
-            color_attachments: &[],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
-            // The post passes' time starts here, as they read this depth.
-            timestamp_writes: target
-                .timer
-                .as_ref()
-                .filter(|_| timed)
-                .and_then(|t| t.post_pass(true, false)),
-            ..Default::default()
-        });
+                // The post passes' time starts here, as they read this depth.
+                timestamp_writes: target
+                    .timer
+                    .as_ref()
+                    .filter(|_| timed)
+                    .and_then(|t| t.post_pass(true, false)),
+                ..Default::default()
+            },
+        );
         pass.set_bind_group(0, &group, &[0]);
         let mut bound = None;
         for (i, draw) in draws.iter().enumerate() {
@@ -2727,24 +2810,27 @@ impl Renderer {
                 },
             })
         };
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("ljos_3d surfaces"),
-            color_attachments: &[
-                attachment(&normal, gbuffer::EMPTY),
-                attachment(&material, wgpu::Color::TRANSPARENT),
-            ],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &depth,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Store,
+        let mut pass = crate::counted::Pass::begin(
+            encoder,
+            &wgpu::RenderPassDescriptor {
+                label: Some("ljos_3d surfaces"),
+                color_attachments: &[
+                    attachment(&normal, gbuffer::EMPTY),
+                    attachment(&material, wgpu::Color::TRANSPARENT),
+                ],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: &depth,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
                 }),
-                stencil_ops: None,
-            }),
-            // The post passes' time starts here, as they read these.
-            timestamp_writes: target.timer.as_ref().and_then(|t| t.post_pass(true, false)),
-            ..Default::default()
-        });
+                // The post passes' time starts here, as they read these.
+                timestamp_writes: target.timer.as_ref().and_then(|t| t.post_pass(true, false)),
+                ..Default::default()
+            },
+        );
         pass.set_bind_group(0, &target.frame_group, &[]);
         pass.set_bind_group(3, self.ibl.group(bound), &[]);
         for (i, draw) in draws.iter().enumerate() {
@@ -2805,24 +2891,27 @@ impl Renderer {
         for (i, layer) in plan.layers.iter().enumerate() {
             bytes[i * stride..i * stride + size].copy_from_slice(bytemuck::bytes_of(layer));
         }
-        queue.write_buffer(&shadows.layer_buffer, 0, &bytes);
+        crate::counted::write_buffer(queue, &shadows.layer_buffer, 0, &bytes);
         let n = plan.layers.len();
         for (i, layer) in plan.layers.iter().enumerate() {
             let planes = frustum(&Mat4(layer.view_proj));
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("ljos_3d shadow"),
-                color_attachments: &[],
-                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &shadows.maps.views[i],
-                    depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
-                        store: wgpu::StoreOp::Store,
+            let mut pass = crate::counted::Pass::begin(
+                encoder,
+                &wgpu::RenderPassDescriptor {
+                    label: Some("ljos_3d shadow"),
+                    color_attachments: &[],
+                    depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                        view: &shadows.maps.views[i],
+                        depth_ops: Some(wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(1.0),
+                            store: wgpu::StoreOp::Store,
+                        }),
+                        stencil_ops: None,
                     }),
-                    stencil_ops: None,
-                }),
-                timestamp_writes: target.timer.as_ref().and_then(|t| t.shadow_pass(i, n)),
-                ..Default::default()
-            });
+                    timestamp_writes: target.timer.as_ref().and_then(|t| t.shadow_pass(i, n)),
+                    ..Default::default()
+                },
+            );
             let offset = (i as u64 * self.layer_stride) as u32;
             pass.set_bind_group(0, &shadows.layer_group, &[offset]);
             let mut bound = None;
@@ -2851,40 +2940,46 @@ impl Renderer {
     pub fn prepare_blit(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
         let layout = &self.blit_layout;
         self.blits.entry(format).or_insert_with(|| {
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("ljos_3d blit"),
-                source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
-            });
+            let shader = crate::counted::create_shader_module(
+                device,
+                wgpu::ShaderModuleDescriptor {
+                    label: Some("ljos_3d blit"),
+                    source: wgpu::ShaderSource::Wgsl(include_str!("shaders/blit.wgsl").into()),
+                },
+            );
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("ljos_3d blit"),
                 bind_group_layouts: &[Some(layout)],
                 immediate_size: 0,
             });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("ljos_3d blit"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some("vs_main"),
-                    compilation_options: Default::default(),
-                    buffers: &[],
+            crate::counted::create_render_pipeline(
+                device,
+                &wgpu::RenderPipelineDescriptor {
+                    label: Some("ljos_3d blit"),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        compilation_options: Default::default(),
+                        buffers: &[],
+                    },
+                    primitive: Default::default(),
+                    depth_stencil: None,
+                    multisample: Default::default(),
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        compilation_options: Default::default(),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                    }),
+                    multiview_mask: None,
+                    cache: None,
                 },
-                primitive: Default::default(),
-                depth_stencil: None,
-                multisample: Default::default(),
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some("fs_main"),
-                    compilation_options: Default::default(),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: Some(wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                }),
-                multiview_mask: None,
-                cache: None,
-            })
+            )
         });
     }
 
@@ -2900,6 +2995,10 @@ impl Renderer {
         let Some(pipeline) = self.blits.get(&format) else {
             return;
         };
+        // The pass is the host's, so what is set and drawn on it is
+        // counted here.
+        crate::counted::set_on_host_pass(1, 1);
+        crate::counted::drawn(3, 1);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, &target.blit_group, &[]);
         pass.draw(0..3, 0..1);
