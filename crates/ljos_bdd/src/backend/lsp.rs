@@ -40,6 +40,9 @@ pub struct Session {
     pub save: bool,
     /// Asks for the code actions on the whole file.
     pub actions: bool,
+    /// A file open before `file` that the editor closes after opening it,
+    /// without saving what it changed.
+    pub close: Option<String>,
 }
 
 /// How long a session has: one check of a few files, with the start of
@@ -149,16 +152,27 @@ pub fn run(files: &[QmlFile], session: &Session) -> Result<TestReport> {
         published: BTreeMap::new(),
         actions: Vec::new(),
     };
-    if session.save {
-        // The server has read the file as it was before the editor saves
-        // it, as it would have when an editor's save comes later than its
-        // other messages: what it publishes after the save is for the save.
+    // The server has checked the open files before the editor closes one
+    // or saves, as it would have when an editor's close or save comes
+    // later than its other messages: what it publishes after is for that.
+    if session.close.is_some() || session.save {
         send(request(
             4,
             "textDocument/codeAction",
             json!({"textDocument": {"uri": uri}, "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}}, "context": {"diagnostics": []}}),
         ))?;
         heard.until(4, &editor, &flush)?;
+    }
+    if let Some(file) = &session.close {
+        if editor.remove(file).is_none() {
+            return Err(failed(format!("{file:?} is not open to be closed")));
+        }
+        send(notification(
+            "textDocument/didClose",
+            json!({"textDocument": {"uri": url_of(file)}}),
+        ))?;
+    }
+    if session.save {
         // An editor writes the file, then says it saved it.
         if let Some((text, _)) = editor.get(&session.file) {
             std::fs::write(staged.suite.join(&session.file), text)

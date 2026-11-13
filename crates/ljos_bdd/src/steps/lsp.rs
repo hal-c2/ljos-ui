@@ -58,6 +58,15 @@ fn opens_changes_saves(w: &mut LjosWorld, file: String, step: &Step) -> StepResu
     })
 }
 
+#[when(regex = r#"^the language server opens "([^"]+)", then "([^"]+)" is closed$"#)]
+fn opens_closes(w: &mut LjosWorld, file: String, closed: String) -> StepResult {
+    w.language_server(&Session {
+        file,
+        close: Some(closed),
+        ..Session::default()
+    })
+}
+
 #[when(regex = r#"^the language server is asked for the actions on "([^"]+)"$"#)]
 fn asked_actions(w: &mut LjosWorld, file: String) -> StepResult {
     w.language_server(&Session {
