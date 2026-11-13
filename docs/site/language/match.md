@@ -2,7 +2,7 @@
 title: Pattern matching with match and is
 description: Say which of several cases a value is with match, test one pattern with is, and let the checker hold a match to every case of a union.
 section: language
-order: 8
+order: 10
 ---
 
 # Pattern matching with `match` and `is`

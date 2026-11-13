@@ -2,7 +2,7 @@
 title: Step by step with the pipe
 description: Hand a value from step to step with |>, where % is what the step before gave, so a calculation reads in the order it runs.
 section: language
-order: 9
+order: 11
 ---
 
 # Step by step with the pipe
