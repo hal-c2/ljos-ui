@@ -447,11 +447,17 @@ impl<W: Write> Server<W> {
         let (own, others): (Vec<_>, Vec<_>) = rename
             .importers
             .iter()
-            .partition(|importer| importer.key == rename.from);
+            .partition(|importer| importer.path == rename.target);
         let edit = |importer: &Importer| {
-            let document = match open.get(&absolute(&importer.path)) {
+            // The module's own edit is of the name it has before the rename.
+            let at = if importer.path == rename.target {
+                &rename.module
+            } else {
+                &importer.path
+            };
+            let document = match open.get(&absolute(at)) {
                 Some((uri, document)) => json!({"uri": uri, "version": document.version}),
-                None => json!({"uri": url(&importer.path), "version": null}),
+                None => json!({"uri": url(at), "version": null}),
             };
             json!({
                 "textDocument": document,
