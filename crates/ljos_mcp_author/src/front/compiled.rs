@@ -133,13 +133,23 @@ pub(super) fn modules(root: &Path, paths: &[PathBuf]) -> Vec<Diagnostic> {
     if paths.is_empty() {
         return Vec::new();
     }
-    let Ok(project) = Project::load(root, QtTypeOracle) else {
+    let Ok(mut project) = Project::load(root, QtTypeOracle) else {
         return Vec::new();
     };
     let keys: Vec<(String, &PathBuf)> = paths
         .iter()
         .filter_map(|path| Some((module_key(root, path)?, path)))
         .collect();
+    // A module named that the project's walk skips, as one in `build/` or
+    // a directory starting with `.`, is checked all the same: it was asked
+    // for by name.
+    for (key, path) in &keys {
+        if project.script(key).is_none()
+            && let Ok(text) = std::fs::read_to_string(root.join(path))
+        {
+            project.add_script(key, text);
+        }
+    }
     let wanted: Vec<String> = keys.iter().map(|(key, _)| key.clone()).collect();
     let mut checked = ljos_compiler::check_modules(&project, &wanted);
     checked.sort_by(|a, b| a.key.cmp(&b.key));
