@@ -202,8 +202,19 @@ impl LjosWorld {
         self.test_reports = vec![("ljos", report)];
     }
 
+    /// The authoring side, about to act on its own project: from here on a
+    /// file is read from that project, not from what a check before it
+    /// left, which the author's command did not touch.
+    pub fn author_acts(&mut self) -> (&mut crate::author::Slot, &BTreeMap<String, String>) {
+        for (_, report) in &mut self.test_reports {
+            report.files.clear();
+        }
+        self.author()
+    }
+
     /// The text of a project file as the last check left it, when a check
-    /// ran: `None` when none did, so the author's project is read instead.
+    /// ran and nothing of the author's acted after it: `None` otherwise, so
+    /// the author's project is read instead.
     #[must_use]
     pub fn checked_file(&self, name: &str) -> Option<Result<&str, String>> {
         let (_, report) = self

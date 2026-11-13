@@ -88,14 +88,28 @@ mod tests {
     use super::{SOURCES, strip_label};
 
     /// A file of steps left out of `SOURCES` runs, but `features:lint`
-    /// says every step of it has no definition.
+    /// says every step of it has no definition; one read twice in its
+    /// place hides that. Each module is read once, by its name.
     #[test]
-    fn every_file_of_steps_is_read_for_its_patterns() {
-        let mods = include_str!("mod.rs")
+    fn every_file_of_steps_is_read_for_its_patterns_once() {
+        let text = include_str!("mod.rs");
+        let mut mods: Vec<&str> = text
             .lines()
-            .filter(|line| line.starts_with("mod ") && line.ends_with(';'))
-            .count();
-        assert_eq!(SOURCES.len(), mods);
+            .filter_map(|line| line.strip_prefix("mod ")?.strip_suffix(';'))
+            .collect();
+        let sources = &text[text.find("pub const SOURCES").expect("SOURCES is here")..];
+        let mut read: Vec<&str> = sources
+            .split("include_str!(\"")
+            .skip(1)
+            .take(SOURCES.len())
+            .map(|rest| rest.split_once(".rs\")").expect("a file of steps").0)
+            .collect();
+        mods.sort_unstable();
+        read.sort_unstable();
+        let mut once = read.clone();
+        once.dedup();
+        assert_eq!(read, once, "a file of steps is read twice");
+        assert_eq!(read, mods, "each module of steps is read, and only those");
     }
 
     #[test]

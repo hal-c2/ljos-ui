@@ -22,7 +22,7 @@ use crate::backend::inspector::{self, Ask, Seen, Token};
 fn inspector_ask(w: &mut LjosWorld, ask: Ask) -> StepResult {
     // An agent of the authoring tools has no application: it asks the
     // tools, and the same steps read what they answer.
-    let (author, files) = w.author();
+    let (author, files) = w.author_acts();
     if author.connected() {
         return author.ask(files, &ask);
     }

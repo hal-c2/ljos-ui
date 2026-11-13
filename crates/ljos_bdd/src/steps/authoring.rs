@@ -106,7 +106,7 @@ fn author_desktop_setting(
 #[given(regex = r#"^the author has run "([^"]+)"$"#)]
 #[when(regex = r#"^the author runs "([^"]+)"$"#)]
 fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {
-    let (author, files) = w.author();
+    let (author, files) = w.author_acts();
     author.run(files, &line)
 }
 
@@ -114,7 +114,7 @@ fn author_runs(w: &mut LjosWorld, line: String) -> StepResult {
 // the inspector it names on its errors, as a parent process finds it.
 #[when(regex = r#"^the author starts "([^"]+)"$"#)]
 fn author_starts(w: &mut LjosWorld, line: String) -> StepResult {
-    let (author, files) = w.author();
+    let (author, files) = w.author_acts();
     author.start(files, &line)
 }
 
