@@ -211,6 +211,19 @@ fn picture(e: &Engine, root: ObjectId, w: u32, h: u32) -> Vec<u8> {
 /// each test in a process of its own and never meets it; `cargo test` runs
 /// them on threads of one.
 fn gpu_turn() -> Option<std::sync::MutexGuard<'static, ()>> {
+    let turn = gpu_lock();
+    match ljos::item::ljos_3d::offscreen::Offscreen::new() {
+        Ok(_) => Some(turn),
+        Err(e) => {
+            eprintln!("SKIPPED: {e}");
+            None
+        }
+    }
+}
+
+/// The turn [`gpu_turn`] takes, held whether or not a probe finds an
+/// adapter: for a test that draws through the shared device either way.
+fn gpu_lock() -> std::sync::MutexGuard<'static, ()> {
     use std::io::Write as _;
     use std::sync::{Mutex, PoisonError};
     static TURN: Mutex<()> = Mutex::new(());
@@ -223,13 +236,7 @@ fn gpu_turn() -> Option<std::sync::MutexGuard<'static, ()>> {
     let thread = std::thread::current();
     let test = thread.name().unwrap_or("a test");
     let _ = writeln!(std::io::stderr(), "ljos_quick3d: {test} takes the device");
-    match ljos::item::ljos_3d::offscreen::Offscreen::new() {
-        Ok(_) => Some(turn),
-        Err(e) => {
-            eprintln!("SKIPPED: {e}");
-            None
-        }
-    }
+    turn
 }
 
 fn pixel(rgba: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
@@ -990,8 +997,9 @@ fn models_naming_one_file_share_its_meshes() {
                Model {{ source: "file://{path}"; x: 10 }} }}"##
     ));
     // The scene is what is checked, so the test runs without an adapter
-    // too; drawing it still goes through the process's shared device.
-    let _turn = gpu_turn();
+    // too; drawing it still goes through the process's shared device, so
+    // the turn is held even where a probe finds no adapter.
+    let _turn = gpu_lock();
     let _ = ljos::render::Picture::new(40, 40).settle(0).png(&e, root);
     let scene = scene::build(&e, root);
     let mut ids: Vec<_> = scene
