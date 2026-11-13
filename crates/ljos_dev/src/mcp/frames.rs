@@ -135,6 +135,7 @@ pub(super) fn paint_json(p: &PaintReport) -> Value {
         "gpu_3d_us": p.gpu_3d.map(us),
         "gpu_post_us": p.gpu_post.map(us),
         "moved": p.moved,
+        "scene3d": p.scene3d.as_ref().map(super::paint::Scene3dFrame::json),
     })
 }
 

@@ -20,7 +20,7 @@ use ljos_dev::{
     DevSession,
     mcp::{
         Drawn, FIRST_ACT, INBOX_CAPACITY, Inspector, InspectorConfig, InspectorSurface,
-        PaintReport, PainterInfo, StartupStep, TOOLS,
+        PaintReport, PainterInfo, Scene3dFrame, StartupStep, TOOLS,
     },
 };
 use ljos_drive::{DriveState, Driver, RealClock};
@@ -1520,6 +1520,58 @@ fn metrics_say_which_passes_were_presented_and_what_painting_cost() {
             .contains(
                 "2 passes presented (1 in part, 1 moving a scrolled clip), 1 unchanged and not presented"
             ),
+        "{}",
+        reply.text
+    );
+}
+
+#[test]
+fn metrics_say_what_the_last_3d_frame_cost() {
+    let mut app = app();
+    let inspector = app.inspector.as_mut().unwrap();
+    let us = Duration::from_micros;
+    let frame = |draw_calls, encode| Scene3dFrame {
+        draw_calls,
+        pipeline_switches: 4,
+        bind_group_sets: 9,
+        buffer_writes: 3,
+        buffer_write_bytes: 768,
+        texture_uploads: 1,
+        texture_upload_bytes: 16384,
+        pipelines_created: 2,
+        sync: us(100),
+        prepare: us(300),
+        encode: us(encode),
+        submit: us(50),
+        ..Scene3dFrame::default()
+    };
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        scene3d: Some(frame(12, 400)),
+        ..PaintReport::default()
+    });
+    // A pass with no 3D frame since the one before leaves the last as it was.
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        ..PaintReport::default()
+    });
+    inspector.record_paint(&PaintReport {
+        drawn: Drawn::Whole,
+        scene3d: Some(frame(10, 200)),
+        ..PaintReport::default()
+    });
+    let reply = app.call("app_metrics", json!({}));
+    let s = &reply.structured["paint"]["scene3d"];
+    assert_eq!(s["frames"], 2);
+    assert_eq!(s["last"]["draw_calls"], 10);
+    assert_eq!(s["last"]["pipeline_switches"], 4);
+    assert_eq!(s["last"]["texture_upload_bytes"], 16384);
+    assert_eq!(s["encode_us"]["max"], 400);
+    assert_eq!(s["encode_us"]["last"], 200);
+    assert!(
+        reply.text.contains(
+            "3D: 2 frames; the last drew 10 times with 4 pipeline switches and 9 bind groups set"
+        ),
         "{}",
         reply.text
     );

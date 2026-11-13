@@ -116,7 +116,7 @@ pub use ljos_mcp_core::{
 };
 pub use memory::WindowMemory;
 pub use observe::ProcessSource;
-pub use paint::{Drawn, PaintReport, PainterInfo, StartupStep};
+pub use paint::{Drawn, PaintReport, PainterInfo, Scene3dFrame, StartupStep};
 pub use rust_heap::CountingAlloc;
 pub use script::{Cheaper, CheaperForm, ScriptAdvisor, ScriptPlace, set_script_advisor};
 pub use surface::{INBOX_CAPACITY, InspectorSurface, MAX_SNAPSHOT_JOBS};

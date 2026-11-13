@@ -77,8 +77,49 @@ impl Meter {
             gpu_3d: steps.gpu_3d,
             gpu_post: steps.gpu_post,
             moved: steps.moved,
+            scene3d: scene3d_frame(),
         }
     }
+}
+
+/// The last 3D frame ended since the pass before, if one was. The count
+/// is the process's, so with several windows the pass that reports first
+/// shows it.
+#[cfg(feature = "quick3d")]
+fn scene3d_frame() -> Option<ljos_dev::mcp::Scene3dFrame> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+    static SEEN: AtomicU64 = AtomicU64::new(0);
+    let stats = ljos_3d::stats::snapshot();
+    if SEEN.swap(stats.frames, Ordering::Relaxed) == stats.frames {
+        return None;
+    }
+    let f = stats.last;
+    let time = |s: f64| Duration::try_from_secs_f64(s).unwrap_or_default();
+    Some(ljos_dev::mcp::Scene3dFrame {
+        draw_calls: f.draw_calls,
+        vertices: f.vertices,
+        render_passes: f.render_passes,
+        pipeline_switches: f.pipeline_switches,
+        bind_group_sets: f.bind_group_sets,
+        buffer_writes: f.buffer_writes,
+        buffer_write_bytes: f.buffer_write_bytes,
+        texture_uploads: f.texture_uploads,
+        texture_upload_bytes: f.texture_upload_bytes,
+        pipelines_created: f.pipelines_created,
+        shader_modules_created: f.shader_modules_created,
+        models_drawn: f.models_drawn,
+        models_culled: f.models_culled,
+        sync: time(f.sync_seconds),
+        prepare: time(f.prepare_seconds),
+        encode: time(f.encode_seconds),
+        submit: time(f.submit_seconds),
+    })
+}
+
+#[cfg(not(feature = "quick3d"))]
+fn scene3d_frame() -> Option<ljos_dev::mcp::Scene3dFrame> {
+    None
 }
 
 impl<M: Send + 'static> Desktop<M> {
