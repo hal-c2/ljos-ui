@@ -88,6 +88,18 @@ exactly one place: the compat pass and its type table.
   using whatever the API has not taken yet, so the lowering covers what
   exists, never more.
 
+### TC39 proposals considered
+
+A Ljós script takes TC39's syntax and nothing of its own, so a proposal
+that would give an app a short form is weighed here before Ljós invents
+one. Statuses were read from the proposals' repositories on 2026-11-13.
+
+| Proposal | Status | Ljós's position |
+|---|---|---|
+| [Records & Tuples](https://github.com/tc39/proposal-record-tuple) | Withdrawn (TC39, 2025-04-14). [Composites](https://github.com/tc39/proposal-composites), which took its place, reached stage 2 on 2026-09-30. | Not taken. Ljós waits for Composites to reach stage 3 before it adopts value-equal objects, and adds no form of its own meanwhile. |
+| [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) (`using`) | Stage 4 (TC39, 2026-05-19). | Adopted for a resource whose lifetime is a block: `using`, `Symbol.dispose` and `DisposableStack`. A Controller's `attached` and `detached` (§4.20) stay for a lifetime tied to an object. The runtime has all three today. The checker accepts a `using` declaration but types no disposable: it rejects a `[Symbol.dispose]` member and `new DisposableStack()`. Closing that is a follow-up of its own. |
+| [Decorators](https://github.com/tc39/proposal-decorators) | Stage 3. | Not taken. Decorators apply to classes and their members, and a Ljós script has no classes (§5.1). |
+
 ## 2. What the evidence says
 
 `docs/research/tools/dialect_inventory.py` counts the Qt surface over the
@@ -1771,7 +1783,9 @@ readonly property real discountPercent:
 ```
 
 **The design.** The pipe is the Hack-style pipe of TC39's proposal, as
-the proposal specifies it, with `%` as the topic:
+the proposal specifies it at commit
+[`5ac4dfd`](https://github.com/tc39/proposal-pipeline-operator/tree/5ac4dfd624e68b649e6f947885bf5ef67bac19f4)
+(2023-11-30, stage 2), with `%` as the topic:
 
 - `head |> body` evaluates `head`, then `body` with `%` bound to its value.
   The body is any expression, so a step can call a function (`f(%, a)`),
@@ -1876,8 +1890,11 @@ called.
 **Types.** The checker types `%` as the head's type and each step as its
 body's, so `"3" |> Math.max(%, 0)` is `ts-assign-type` at the `%`.
 
-DECISION: the pipe follows TC39's Hack proposal exactly: `%` as the
-topic, the proposal's early errors, and none of its deferred operators. Where the proposal changes, Ljós follows it.
+DECISION: the pipe follows TC39's Hack proposal exactly, as it stands at
+commit `5ac4dfd624e68b649e6f947885bf5ef67bac19f4` (2023-11-30): `%` as
+the topic, the proposal's early errors, and none of its deferred
+operators. Where the proposal changes, Ljós moves the pin and follows it
+(R12).
 
 DECISION: a chain compiles to one arrow with a `const` for each step,
 line for line, not to an arrow for each step and not to temporaries
@@ -1894,7 +1911,8 @@ tier 1 removes it.
 
 **Where it comes from.** Four languages were read for this section, as
 they stand on 2026-11-12: ReScript's `switch`, Elixir's `case` and
-`cond`, TC39's pattern-matching proposal (stage 1; its README as of
+`cond`, TC39's pattern-matching proposal (stage 1, at commit
+[`ba73ffe`](https://github.com/tc39/proposal-pattern-matching/tree/ba73ffe42f30f0cf56ece28bebdc28f955f2a52e),
 2025-10-03), and Go. The syntax is TC39's, exactly, since a Ljós script
 is TypeScript and adds nothing TC39 has not proposed (§1). The others
 decide what the checker holds a `match` to and how it says so:
@@ -2204,8 +2222,10 @@ cast is text the desugar wrote, to which `ts-no-cast` does not apply
 `undefined` in what runs, where JavaScript would throw; `ts-is-binding`
 makes the difference unreachable.
 
-DECISION: `match` and `is` follow the proposal's README as of
-2025-10-03, and the proposal wherever it changes: `when pattern:` arms
+DECISION: `match` and `is` follow the proposal at commit
+`ba73ffe42f30f0cf56ece28bebdc28f955f2a52e` (2025-10-03), its README and
+its spec text, and the proposal wherever it changes, by moving the pin
+(R12): `when pattern:` arms
 ended by `;`, a guard as the pattern `if (condition)` joined by `and`,
 variable patterns that compare or call, the primitive constructors and
 regular expressions as patterns, and bindings in `is` scoped to the
@@ -3698,9 +3718,10 @@ bindings and states without a rule.
   stock `tsc` through a tsconfig that extends `.ljos/tsconfig.base.json`
   (`tsconfig-lts`). The project lead chose
   this over both QML-scripts-only and the syntax in `.ts` modules.
-- DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic.
-- DECISION (§4.18): `match` and `is` follow TC39's README as of
-  2025-10-03: guards are the pattern `and if (…)`, a bare name compares
+- DECISION (§4.17.1): the pipe is Hack-style with `%` as its topic, as
+  TC39's proposal has it at commit `5ac4dfd` (2023-11-30).
+- DECISION (§4.18): `match` and `is` follow TC39's proposal at commit
+  `ba73ffe` (2025-10-03): guards are the pattern `and if (…)`, a bare name compares
   (Elixir's pin), predicates and the primitive constructors are
   patterns, and bindings in `is` are scoped to the block around it.
   Extractors, custom matcher objects and the proposal's future
@@ -3761,9 +3782,14 @@ bindings and states without a rule.
 - **R10: low coverage until `Ljos.Layout` and `Ljos.Controls`.** The
   pass's real complexity shows only when Controls lowers.
 - **R12: TC39 moves.** Both proposals can change: pattern matching is
-  at stage 1, and §4.18 follows its README as of 2025-10-03. Ljós follows them: a change is a desugar change and a
-  `ljos migrate` rewrite of the old form, so files never fork from the
-  proposal.
+  at stage 1 and the pipe at stage 2. Each is pinned to a commit of its
+  repository: pattern matching to
+  `ba73ffe42f30f0cf56ece28bebdc28f955f2a52e` (2025-10-03, §4.18), the
+  pipe to `5ac4dfd624e68b649e6f947885bf5ef67bac19f4` (2023-11-30,
+  §4.17.1). Ljós follows them by moving a pin: a change is a desugar
+  change and a `ljos migrate` rewrite of the old form, so files never
+  fork from the proposal. A pin moves in its own change, which says what
+  the proposal changed between the two commits.
 - **R13: the cost of an arrow per step.** A pipe or a `match` compiled to
   an arrow called at once allocates a closure in tier 2. The budget gate
   (§11) measures it; tier 1 gives the topic a register.
