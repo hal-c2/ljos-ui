@@ -38,7 +38,7 @@ use std::{
 
 use ljos_compiler::{
     Project, Severity, check_modules, compile_file,
-    rename::{LtsPlan, plan_lts_with},
+    rename::{Importer, LtsPlan, plan_lts_with},
 };
 use qml_front::QtTypeOracle;
 use serde_json::{Value, json};
@@ -441,21 +441,30 @@ impl<W: Write> Server<W> {
         let Ok(LtsPlan::Rename(rename)) = plan_lts_with(&self.root, &path, &text, read) else {
             return Vec::new();
         };
-        let mut changes = vec![json!({
-            "kind": "rename",
-            "oldUri": url(&rename.module),
-            "newUri": url(&rename.target),
-        })];
-        for importer in &rename.importers {
+        // A module that imports itself is edited before it is renamed, under
+        // the name the editor has it by: an edit of the old name after the
+        // rename would make that file again.
+        let (own, others): (Vec<_>, Vec<_>) = rename
+            .importers
+            .iter()
+            .partition(|importer| importer.key == rename.from);
+        let edit = |importer: &Importer| {
             let document = match open.get(&absolute(&importer.path)) {
                 Some((uri, document)) => json!({"uri": uri, "version": document.version}),
                 None => json!({"uri": url(&importer.path), "version": null}),
             };
-            changes.push(json!({
+            json!({
                 "textDocument": document,
                 "edits": [{"range": whole(&importer.text), "newText": importer.renamed}],
-            }));
-        }
+            })
+        };
+        let mut changes: Vec<Value> = own.into_iter().map(edit).collect();
+        changes.push(json!({
+            "kind": "rename",
+            "oldUri": url(&rename.module),
+            "newUri": url(&rename.target),
+        }));
+        changes.extend(others.into_iter().map(edit));
         let file = |key: &str| key.rsplit('/').next().unwrap_or(key).to_owned();
         vec![json!({
             "title": format!("Rename {} to {}", file(&rename.from), file(&rename.to)),
@@ -785,6 +794,31 @@ mod tests {
         assert!(said.contains("window/showMessage"), "{said}");
         assert!(said.contains("cannot read the project"), "{said}");
         assert!(!said.contains("publishDiagnostics"), "{said}");
+    }
+
+    /// A module that imports itself is edited before it is renamed, at the
+    /// name the editor has it open under, so the edit does not make a file
+    /// of the old name again.
+    #[test]
+    fn a_module_that_imports_itself_is_edited_before_it_is_renamed() {
+        let dir = tempfile::tempdir().unwrap();
+        let size = dir.path().join("size.ts");
+        let text = "import * as Me from \"./size.ts\"\nexport const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&size, text).unwrap();
+        let mut server = super::Server::new(dir.path().to_owned(), Vec::new());
+        let uri = url(&size);
+        server
+            .handle(&json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {"textDocument": {"uri": uri, "languageId": "typescript", "version": 3, "text": text}}}))
+            .unwrap();
+        let actions = server.actions(&uri);
+        let changes = actions[0]["edit"]["documentChanges"].as_array().unwrap();
+        assert_eq!(changes.len(), 2, "{changes:?}");
+        assert_eq!(
+            changes[0]["textDocument"],
+            json!({"uri": uri, "version": 3}),
+            "{changes:?}"
+        );
+        assert_eq!(changes[1]["kind"], "rename", "{changes:?}");
     }
 
     #[test]
