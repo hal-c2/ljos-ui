@@ -2814,7 +2814,12 @@ impl Engine {
         obj: ObjectId,
         prop: PropIndex,
     ) -> Result<(), EngineError> {
-        if self.inner.eager_bindings.get() && !self.in_deferred_contents(obj) {
+        // A setter that takes a `Cx` may act on what it is given (follow
+        // the object, start work), which Qt does as the binding runs at
+        // creation and on every change. A lazy binding nobody reads would
+        // never hand it its value.
+        let eager = self.inner.eager_bindings.get() || self.has_cx_setter(obj, prop);
+        if eager && !self.in_deferred_contents(obj) {
             let held = match self.inner.eager_hold.borrow_mut().as_mut() {
                 Some(held) => {
                     held.push(Held {
@@ -2832,6 +2837,25 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// Whether `prop` is written through a [`WriteFilter::Cx`] setter.
+    fn has_cx_setter(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let store = self.inner.store.borrow();
+        let Some(h) = store.objects.get(obj) else {
+            return false;
+        };
+        let access = match h.meta.property(prop).map(|p| p.access) {
+            Some(PropertyAccess::Group { meta, leaf, .. }) => meta.property(leaf).map(|p| p.access),
+            access => access,
+        };
+        matches!(
+            access,
+            Some(PropertyAccess::Field {
+                write: Some(WriteFilter::Cx(_)),
+                ..
+            })
+        )
     }
 
     /// Whether Qt evaluates the first binding of `prop` after all others

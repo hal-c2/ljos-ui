@@ -706,11 +706,10 @@ impl Engine {
     }
 
     /// Runs `f` with eager evaluation held back and returns the bindings
-    /// it installed. Nothing is held in lazy mode.
+    /// it installed that run eagerly: all of them in eager mode, else those
+    /// of a property whose setter does more than store
+    /// ([`Engine::binding_installed`]).
     fn hold_eager<R>(&self, f: impl FnOnce() -> R) -> (R, Vec<Held>) {
-        if !self.inner.eager_bindings.get() {
-            return (f(), Vec::new());
-        }
         let outer = self.inner.eager_hold.replace(Some(Vec::new()));
         let guard = HoldGuard {
             engine: self,

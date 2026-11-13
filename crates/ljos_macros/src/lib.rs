@@ -80,7 +80,9 @@
 //! property from inside it is refused with
 //! `EngineError::WriteInOwnSetter`; the value it returns is what is stored.
 //! What it reads is not tracked, so a binding of the property does not come
-//! to depend on it. QML assignments, bindings, animation steps and
+//! to depend on it, and a binding of the property runs as it is put on
+//! and on every change though nothing reads the property, so the setter
+//! sees each value. QML assignments, bindings, animation steps and
 //! `Engine::write_by_name`/`Engine::set` all go through it; `undefined`
 //! taking the property back does not. `Self::name` names a method of the
 //! struct) and `given = path` (a `fn(cx: &Cx, PropIndex)` told each time
