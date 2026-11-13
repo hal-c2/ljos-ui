@@ -72,6 +72,9 @@ pub enum Changed<'a> {
     Style,
     /// What the project's module `uri` has: the files that import it.
     Module(&'a str),
+    /// Whether the directory `dir` (a key) is a module's, which says its
+    /// types instead of its files: the files that import it by path.
+    Dir(&'a str),
     /// The script at `path`: the file whose rows module goes there.
     Script(&'a str),
 }
@@ -185,6 +188,13 @@ impl Lowering {
                 .alone
                 .iter()
                 .filter(|(_, alone)| alone.references.modules.iter().any(|m| m == uri))
+                .map(|(key, _)| key.clone())
+                .collect(),
+            Changed::Dir(dir) => (self.alone.iter())
+                .filter(|(key, alone)| {
+                    let at = key.rsplit_once('/').map_or("", |(d, _)| d);
+                    (alone.references.dirs.iter()).any(|path| group::imported_dir(at, path) == dir)
+                })
                 .map(|(key, _)| key.clone())
                 .collect(),
             Changed::Script(path) => self

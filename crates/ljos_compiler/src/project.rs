@@ -591,7 +591,10 @@ impl<O: TypeOracle> Project<O> {
                 self.add_type(&module.uri, &ty.name, file);
             }
         }
-        self.compat_changed(qml_compat::Changed::Module(&module.uri))
+        let importers = self.compat_changed(qml_compat::Changed::Module(&module.uri));
+        // A file that imports the directory by path read its files as its
+        // types, and may have brought in a name the module now has.
+        self.compat_changed(qml_compat::Changed::Dir(dir)) | importers
     }
 
     /// Every `.qml` file under `root`, and the modules its `qmldir` and

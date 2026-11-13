@@ -364,6 +364,25 @@ fn a_directory_with_a_qmldir_leaves_qt_s_members_to_qt_without_the_tree() {
     assert!(!source.contains("App.platform"), "{source}");
 }
 
+/// A qmldir told after a file that imports its directory by path was
+/// lowered may name the type that file brought in: it is lowered again.
+#[test]
+fn a_file_is_lowered_again_when_a_qmldir_comes_to_the_directory_it_imports() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Site/Application", BUTTON);
+    project.add(
+        "Main",
+        "import QtQuick\nimport \"Site\"\nItem { x: Qt.platform.os.length }\n",
+    );
+    project.set_compat(true);
+    let source = project.source("Main").expect("Main");
+    assert!(source.contains("App.platform"), "{source}");
+
+    project.add_qmldir("Site", "module Site\nApp 1.0 Application.qml\n");
+    let source = project.source("Main").expect("Main");
+    assert!(!source.contains("App.platform"), "{source}");
+}
+
 const LABEL: &str = "import QtQuick\nimport QtQuick.Controls\nLabel { text: \"Ready\" }\n";
 const TILES: &str = "import QtQuick\nItem { Tile { color: \"blue\" } }\n";
 
