@@ -89,6 +89,28 @@ Feature: A native type's setter writes its object's other properties
     And the property "visits" of "b" is 2
     And the log has no warnings
 
+  # Nothing reads rootPath, so only the setter can hand its value on: as
+  # in Qt, the binding runs when the object is made and on every change.
+  # This engine runs every binding eagerly; crates/ljos/tests/setter_unread.rs
+  # checks the same in the engine an application runs, which does not.
+  Scenario: A binding nothing reads still runs the setter, when made and on each change
+    Given the QML:
+      """qml
+      import QtQuick
+      import Fixtures
+      Item {
+        id: root; objectName: "root"
+        property string wanted: "/a"
+        Browser { id: b; rootPath: root.wanted }
+        property int visits: b.visits
+        function follow() { wanted = "/b" }
+      }
+      """
+    Then the property "visits" of "root" is 1
+    When the method "follow" of "root" is called
+    Then the property "visits" of "root" is 2
+    And the log has no warnings
+
   Scenario: Each step of an animation runs the setter
     Given the QML:
       """qml
