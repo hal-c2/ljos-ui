@@ -84,6 +84,22 @@ pub enum LtsPlan {
 /// # Errors
 /// A directory below `base` cannot be read.
 pub fn plan_lts(base: &Path, module: &Path, text: &str) -> std::io::Result<LtsPlan> {
+    plan_lts_with(base, module, text, |path| {
+        std::fs::read_to_string(path).ok()
+    })
+}
+
+/// [`plan_lts`], with each importer's text as `read` gives it: an editor
+/// gives the text it has of a file it has open, which may not be saved.
+///
+/// # Errors
+/// A directory below `base` cannot be read.
+pub fn plan_lts_with(
+    base: &Path,
+    module: &Path,
+    text: &str,
+    read: impl Fn(&Path) -> Option<String>,
+) -> std::io::Result<LtsPlan> {
     if lts_syntax(text).is_none() {
         return Ok(LtsPlan::NoSyntax);
     }
@@ -101,10 +117,20 @@ pub fn plan_lts(base: &Path, module: &Path, text: &str) -> std::io::Result<LtsPl
     crate::files_below(base, imports_modules, &mut below)?;
     let mut importers = Vec::new();
     for path in below {
+        // DECISION: a link is not an importer, as the rename would write
+        // through it to wherever it points, perhaps outside the project.
+        // The file it names is an importer where it is, when that is below
+        // the directory looked in.
+        if path
+            .symlink_metadata()
+            .is_ok_and(|m| m.file_type().is_symlink())
+        {
+            continue;
+        }
         let Some(key) = key_below(base, &path) else {
             continue;
         };
-        let Ok(text) = std::fs::read_to_string(&path) else {
+        let Some(text) = read(&path) else {
             continue;
         };
         if let Some(renamed) = imports(&key, &text, &from, &to) {
@@ -355,6 +381,33 @@ mod tests {
         assert_eq!(imports("Pad.qml", qml, "size.ts", "size.lts"), None);
         let module = "import { half } from \"./size.ts\"\n";
         assert_eq!(imports("lib/line.ts", module, "size.ts", "size.lts"), None);
+    }
+
+    /// A link below the project to a file outside it is not an importer:
+    /// the rename writes each importer, and would write through the link.
+    #[cfg(unix)]
+    #[test]
+    fn a_link_to_a_file_outside_the_project_is_not_an_importer() {
+        let outside = tempfile::tempdir().unwrap();
+        let project = tempfile::tempdir().unwrap();
+        let pad = "import Ljos.Ui\nimport \"size.ts\" as Size\nItem {}\n";
+        std::fs::write(outside.path().join("Pad.qml"), pad).unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("Pad.qml"),
+            project.path().join("Pad.qml"),
+        )
+        .unwrap();
+        let module = project.path().join("size.ts");
+        let text = "export const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        let LtsPlan::Rename(rename) = plan_lts(project.path(), &module, text).unwrap() else {
+            panic!("the module is renamed");
+        };
+        assert!(
+            rename.importers.is_empty(),
+            "{:?}",
+            rename.importers.iter().map(|i| &i.path).collect::<Vec<_>>()
+        );
     }
 
     #[test]

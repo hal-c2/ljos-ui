@@ -28,6 +28,9 @@ pub struct LjosWorld {
     /// Why the application refused what a step asked of it, from each
     /// backend that did.
     refusals: Vec<String>,
+    /// Files the editor of a language server scenario has open before the
+    /// session's own, each with the text it has not saved, if it changed it.
+    editor: Vec<(String, Option<String>)>,
 }
 
 impl LjosWorld {
@@ -40,6 +43,7 @@ impl LjosWorld {
             author: crate::author::Slot::default(),
             web: None,
             refusals: Vec::new(),
+            editor: Vec::new(),
         }
     }
 
@@ -177,9 +181,19 @@ impl LjosWorld {
         session: &crate::backend::lsp::Session,
     ) -> Result<(), String> {
         let files = self.staged()?;
-        let report = crate::backend::lsp::run(&files, session).map_err(|e| e.to_string())?;
+        let session = crate::backend::lsp::Session {
+            before: self.editor.clone(),
+            ..session.clone()
+        };
+        let report = crate::backend::lsp::run(&files, &session).map_err(|e| e.to_string())?;
         self.test_reports = vec![("ljos", report)];
         Ok(())
+    }
+
+    /// The editor of the next language server session has `file` open,
+    /// changed to `text`, which it has not saved, or as it is on disk.
+    pub fn editor_has(&mut self, file: String, text: Option<String>) {
+        self.editor.push((file, text));
     }
 
     /// Keeps what a program of Ljós's own said, as the report the
