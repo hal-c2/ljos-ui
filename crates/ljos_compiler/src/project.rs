@@ -85,6 +85,9 @@ pub struct Project<O> {
     native: BTreeMap<String, Vec<String>>,
     /// Every module told to the front end, with QML types or none.
     described: BTreeSet<String>,
+    /// The directories a `qmldir` or `CMakeLists.txt` describes a module
+    /// in, by key: their types are what that says, not their files.
+    module_dirs: BTreeSet<String>,
     /// Names only the context an instance is made in has at run time. Known
     /// once every file is in.
     dynamic: OnceCell<HashSet<String>>,
@@ -141,6 +144,7 @@ impl<O: TypeOracle> Project<O> {
             oracle,
             native: BTreeMap::new(),
             described: BTreeSet::new(),
+            module_dirs: BTreeSet::new(),
             dynamic: OnceCell::new(),
             callable: RefCell::new(HashMap::new()),
             summarising: Cell::new(false),
@@ -266,6 +270,8 @@ impl<O: TypeOracle> Project<O> {
             paths: &self.paths,
             tree: self.tree.as_ref(),
             described: &self.described,
+            native: &self.native,
+            module_dirs: &self.module_dirs,
             scripts: &self.scripts,
             oracle: &self.oracle,
         }
@@ -281,6 +287,8 @@ impl<O: TypeOracle> Project<O> {
             paths,
             tree,
             described,
+            native,
+            module_dirs,
             scripts,
             oracle,
             ..
@@ -292,6 +300,8 @@ impl<O: TypeOracle> Project<O> {
             paths,
             tree: tree.as_ref(),
             described,
+            native,
+            module_dirs,
             scripts,
             oracle,
         };
@@ -573,6 +583,7 @@ impl<O: TypeOracle> Project<O> {
                 .insert(module.uri.clone(), module.native.clone());
         }
         self.described.insert(module.uri.clone());
+        self.module_dirs.insert(dir.to_string());
         for ty in &module.types {
             let file = join(dir, &ty.path);
             let file = file.strip_suffix(".qml").unwrap_or(&file);
@@ -620,6 +631,8 @@ impl<O: TypeOracle> Project<O> {
         // Every file is in first: a module of one root may name a file
         // another root has.
         for ((dir, _, module), counted) in found.iter().zip(counted(&found, aliases)) {
+            // A module no import sees still describes its directory.
+            project.module_dirs.insert(dir.clone());
             // Compat is off while a project loads, so nothing is lowered
             // again.
             if counted {
@@ -1140,6 +1153,8 @@ pub(crate) struct Around<'p, O> {
     paths: &'p BTreeMap<String, PathBuf>,
     tree: Option<&'p Tree>,
     described: &'p BTreeSet<String>,
+    native: &'p BTreeMap<String, Vec<String>>,
+    module_dirs: &'p BTreeSet<String>,
     scripts: &'p BTreeMap<String, String>,
     oracle: &'p O,
 }
@@ -1296,10 +1311,12 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
         match from {
             qml_compat::Imported::Module(uri) => {
                 // C++ the build compiles into the module may register types
-                // no file of it is.
-                let native = tree.is_some_and(|tree| {
-                    (tree.modules.iter()).any(|(_, m)| m.uri == uri && !m.native.is_empty())
-                });
+                // no file of it is. A project opened has read it into the
+                // tree, perhaps before telling the front end.
+                let native = self.around.native.contains_key(uri)
+                    || tree.is_some_and(|tree| {
+                        (tree.modules.iter()).any(|(_, m)| m.uri == uri && !m.native.is_empty())
+                    });
                 (front.has_module(uri) && !native).then(|| front.module_type(uri, name).is_some())
             }
             qml_compat::Imported::Dir(path) => {
@@ -1308,9 +1325,10 @@ impl<O: TypeOracle> qml_compat::Locals for Locals<'_, O> {
                 // any type; one a `qmldir` describes names its types there,
                 // not by its files.
                 let outside = dir.starts_with("..") || dir.starts_with('/');
-                let known = tree.is_none_or(|tree| {
-                    tree.read.contains(&dir) && !tree.modules.iter().any(|(at, _)| *at == dir)
-                });
+                let described = self.around.module_dirs.contains(&dir)
+                    || tree.is_some_and(|tree| tree.modules.iter().any(|(at, _)| *at == dir));
+                let read = tree.is_none_or(|tree| tree.read.contains(&dir));
+                let known = read && !described;
                 (!outside && known).then(|| {
                     let file = join(&dir, name);
                     front.has(&file)

@@ -345,6 +345,25 @@ fn a_file_that_lowered_qt_to_app_is_lowered_again_when_an_app_qml_comes_and_goes
     assert!(source.contains("App.platform"), "{source}");
 }
 
+/// A project read without its tree (`load_roots`, what `--compat lower`
+/// compiles) does not know which directories a qmldir describes: one may
+/// name an `App` that is no file of it, so `Qt.platform` stays Qt's there,
+/// as `ljos migrate` keeps it.
+#[test]
+fn a_directory_with_a_qmldir_leaves_qt_s_members_to_qt_without_the_tree() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Site/Application", BUTTON);
+    project.add_qmldir("Site", "module Site\nApp 1.0 Application.qml\n");
+    project.add(
+        "Main",
+        "import QtQuick\nimport \"Site\"\nItem { x: Qt.platform.os.length }\n",
+    );
+    project.set_compat(true);
+
+    let source = project.source("Main").expect("Main");
+    assert!(!source.contains("App.platform"), "{source}");
+}
+
 const LABEL: &str = "import QtQuick\nimport QtQuick.Controls\nLabel { text: \"Ready\" }\n";
 const TILES: &str = "import QtQuick\nItem { Tile { color: \"blue\" } }\n";
 
