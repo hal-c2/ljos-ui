@@ -305,6 +305,19 @@ fn where_a_positioner_and_the_arrangement_disagree_the_file_is_kept() {
             "`anchors.fill` on a child",
         ),
         (
+            "Row { Item { anchors.verticalCenter: parent.verticalCenter } }",
+            "`anchors.verticalCenter` places a child across Qt's `Row`, which honours it",
+        ),
+        (
+            "Column { Item { anchors.right: parent.right } }",
+            "places it across with `Layout.alignment`",
+        ),
+        // Along the row an anchor is overridden, as `anchors.fill` is.
+        (
+            "Row { Item { anchors.left: parent.left } }",
+            "`anchors.left` on a child",
+        ),
+        (
             "Row { add: Transition { } }",
             "`add` is a member of Qt's `Row`",
         ),
