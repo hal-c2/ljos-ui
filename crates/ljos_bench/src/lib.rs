@@ -67,6 +67,11 @@ pub struct App {
     /// plain egui, under the same limits and the same input.
     #[serde(default)]
     pub commands: BTreeMap<String, Vec<String>>,
+    /// Whether `qml6` can run it: `false` for an example that needs a
+    /// module this machine's Qt lacks, which is then measured on the
+    /// other runtimes alone.
+    #[serde(default = "yes")]
+    pub qt: bool,
 }
 
 fn yes() -> bool {
@@ -96,6 +101,7 @@ impl App {
             drive: true,
             clicks: Vec::new(),
             commands: BTreeMap::new(),
+            qt: true,
         }
     }
 }
@@ -139,6 +145,7 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
             args.extend(app.ljos_args.iter().map(OsString::from));
             (programs.ljos.clone(), args)
         }
+        "qt" if !app.qt => return None,
         "qt" => {
             env.push(("QT_QPA_PLATFORM".to_owned(), "wayland".to_owned()));
             let mut args = Vec::new();
