@@ -118,6 +118,117 @@ pub struct PaintReport {
     /// The pass moved the pixels of a scrolled clip on screen and drew
     /// only what came into view.
     pub moved: bool,
+    /// What the last 3D frame handed to the device since the pass before
+    /// cost, as the 3D renderer counted it. `None` when none was.
+    pub scene3d: Option<Scene3dFrame>,
+}
+
+/// What one 3D frame cost: every 3D view the host drew before one submit.
+/// Qt's `renderStats` names the same counts where it has them.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Scene3dFrame {
+    pub draw_calls: u64,
+    pub vertices: u64,
+    pub render_passes: u64,
+    /// Pipelines set on a pass.
+    pub pipeline_switches: u64,
+    pub bind_group_sets: u64,
+    pub buffer_writes: u64,
+    pub buffer_write_bytes: u64,
+    pub texture_uploads: u64,
+    pub texture_upload_bytes: u64,
+    pub pipelines_created: u64,
+    pub shader_modules_created: u64,
+    pub models_drawn: u64,
+    pub models_culled: u64,
+    /// Reading the QML scene into the renderer's.
+    pub sync: Duration,
+    /// Walking, culling and sorting the scene and writing its uniforms.
+    pub prepare: Duration,
+    /// Recording the passes.
+    pub encode: Duration,
+    /// Handing them to the device.
+    pub submit: Duration,
+}
+
+impl Scene3dFrame {
+    pub(crate) fn json(&self) -> Value {
+        json!({
+            "draw_calls": self.draw_calls,
+            "vertices": self.vertices,
+            "render_passes": self.render_passes,
+            "pipeline_switches": self.pipeline_switches,
+            "bind_group_sets": self.bind_group_sets,
+            "buffer_writes": self.buffer_writes,
+            "buffer_write_bytes": self.buffer_write_bytes,
+            "texture_uploads": self.texture_uploads,
+            "texture_upload_bytes": self.texture_upload_bytes,
+            "pipelines_created": self.pipelines_created,
+            "shader_modules_created": self.shader_modules_created,
+            "models_drawn": self.models_drawn,
+            "models_culled": self.models_culled,
+            "sync_us": us(self.sync),
+            "prepare_us": us(self.prepare),
+            "encode_us": us(self.encode),
+            "submit_us": us(self.submit),
+        })
+    }
+}
+
+/// The 3D frames of the passes: the last one's counts, and the CPU each
+/// part took over all of them.
+#[derive(Clone, Debug, Default)]
+struct Scene3dStats {
+    frames: u64,
+    last: Scene3dFrame,
+    sync: Cost,
+    prepare: Cost,
+    encode: Cost,
+    submit: Cost,
+}
+
+impl Scene3dStats {
+    fn add(&mut self, f: &Scene3dFrame) {
+        self.frames += 1;
+        self.last = *f;
+        self.sync.add(f.sync);
+        self.prepare.add(f.prepare);
+        self.encode.add(f.encode);
+        self.submit.add(f.submit);
+    }
+
+    fn json(&self) -> Value {
+        json!({
+            "frames": self.frames,
+            "last": self.last.json(),
+            "sync_us": self.sync.json(),
+            "prepare_us": self.prepare.json(),
+            "encode_us": self.encode.json(),
+            "submit_us": self.submit.json(),
+        })
+    }
+
+    fn line(&self) -> String {
+        let f = &self.last;
+        format!(
+            "3D: {} frames; the last drew {} times with {} pipeline switches and {} bind groups set, \
+             wrote {} buffers ({} bytes) and {} textures ({} bytes), made {} pipelines; \
+             reading the scene last {}, preparing {}, recording {}, submitting {}",
+            self.frames,
+            f.draw_calls,
+            f.pipeline_switches,
+            f.bind_group_sets,
+            f.buffer_writes,
+            f.buffer_write_bytes,
+            f.texture_uploads,
+            f.texture_upload_bytes,
+            f.pipelines_created,
+            ms(f.sync),
+            ms(f.prepare),
+            ms(f.encode),
+            ms(f.submit),
+        )
+    }
 }
 
 /// One step of the start-up, timed from when the host started.
@@ -235,6 +346,7 @@ pub(crate) struct PaintStats {
     uploads: u64,
     upload_bytes: u64,
     asked: Option<Cost>,
+    scene3d: Option<Scene3dStats>,
 }
 
 impl PaintStats {
@@ -275,6 +387,11 @@ impl PaintStats {
                 cost.get_or_insert_with(Cost::default).add(t);
             }
         }
+        if let Some(f) = &report.scene3d {
+            self.scene3d
+                .get_or_insert_with(Scene3dStats::default)
+                .add(f);
+        }
         // A pass that presents nothing still hands pictures over.
         self.uploads += report.uploads as u64;
         self.upload_bytes += report.upload_bytes as u64;
@@ -297,6 +414,7 @@ impl PaintStats {
             "uploads": self.uploads,
             "upload_bytes": self.upload_bytes,
             "asked_to_presented_us": self.asked.as_ref().map_or(Value::Null, Cost::json),
+            "scene3d": self.scene3d.as_ref().map_or(Value::Null, Scene3dStats::json),
         })
     }
 
@@ -352,6 +470,9 @@ impl PaintStats {
                 ms(asked.last),
                 ms(asked.max)
             );
+        }
+        if let Some(scene3d) = &self.scene3d {
+            let _ = write!(text, "\n{}", scene3d.line());
         }
         text
     }
