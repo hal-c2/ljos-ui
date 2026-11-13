@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # bench-manifest.sh OUT [ids…]: writes OUT/manifest.json, the apps `ljos bench`
-# measures and `mise run bench:hot` records: bench/*.qml and the runnable
-# corpus examples (all by default), each with its imports and arguments.
+# measures and `mise run bench:hot` records: bench/*.qml and the corpus
+# examples (by default all qml6 can run), each with its imports and
+# arguments. An example named that qml6 cannot run here is measured without
+# it ("qt": false).
 # Needs target/debug/qml-compare (cargo build -p qml_compare).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -17,7 +19,8 @@ overlays="$out/overlay"
 gallery="${GALLERY_DIR:-$target/gallery}/report.json"
 # Where `mise run gallery:drive` left the controls it clicked, per example.
 drive="${GALLERY_DIR:-$target/gallery}/drive"
-rows="$("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json" --runnable)"
+if [[ ${#ids[@]} -eq 0 ]]; then which=(--runnable); else which=("${ids[@]}"); fi
+rows="$("$target/debug/qml-compare" list --manifest "$root/corpus/examples.json" "${which[@]}")"
 while IFS=$'\t' read -r id dir _; do
   [[ -n $id ]] || continue
   rm -rf "${overlays:?}/$id"
@@ -48,8 +51,9 @@ for name in sorted(os.listdir(os.path.join(root, "bench"))):
         app["size"] = f"{w.group(1)}x{h.group(1)}"
     apps.append(app)
 for line in os.environ["ROWS"].splitlines():
-    cid, d, entry, width, height, *_ = line.split("\t")
-    if renders is not None and cid not in renders:
+    cid, d, entry, width, height, _settle, qt, *_ = line.split("\t")
+    # Named examples are measured even where the last gallery run had no picture.
+    if not wanted and renders is not None and cid not in renders:
         continue
     apps.append({
         "id": cid,
@@ -61,6 +65,8 @@ for line in os.environ["ROWS"].splitlines():
         # The example's directory is its project, as for the gallery.
         "ljos_args": ["--project", d, "--example", cid],
     })
+    if qt != "true":
+        apps[-1]["qt"] = False
     # The controls gallery:drive clicked, in its order, are clicked on every runtime; with
     # fewer than three (a game, a snippet of MouseAreas) gallery:drive used a grid, as the
     # bench does.

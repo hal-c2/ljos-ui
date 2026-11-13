@@ -247,6 +247,20 @@ Feature: Measuring an application under a limit
       Then the command exits with status 2
       And the command's output mentions "no runtime \"plain\""
 
+    # A corpus example qml6 cannot load on this machine (a module it lacks)
+    # is still measured on the runtimes that can run it.
+    Scenario: An application Qt cannot run is measured without Qt
+      Given the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "qt": false}, {"id": "other", "file": "Main.qml"}]}
+        """
+      When the author runs "ljos bench --manifest apps.json --runtime ljos,qt --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --qml6 app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the JSON file "out/report.json" has "/runs/0/app" equal to "main"
+      And the JSON file "out/report.json" has "/runs/0/runtime" equal to "ljos"
+      And the JSON file "out/report.json" has "/runs/1/app" equal to "other"
+      And the JSON file "out/report.json" has "/runs/2/runtime" equal to "qt"
+
   Rule: A report compared with an earlier one says what moved by more than runs of one build do
 
     # The margins are the noise docs/BENCHMARKS.md describes: memory may

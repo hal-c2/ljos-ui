@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-#MISE description="Measure QML apps on Ljós (release, or BENCH_PROFILE=dist) and Qt (qml6) inside systemd scopes in the headless sandbox: bench [ids…] [ljos bench options…]; ids are bench/*.qml names and runnable corpus examples (all by default); report in target/bench"
+#MISE description="Measure QML apps on Ljós (release, or BENCH_PROFILE=dist) and Qt (qml6) inside systemd scopes in the headless sandbox: bench [ids…] [ljos bench options…]; ids are bench/*.qml names and corpus examples (by default all qml6 runs; one named that it cannot run is measured without it); report in target/bench"
 #MISE dir="{{config_root}}"
 set -euo pipefail
 # Options after the ids go to `ljos bench` after the defaults and override
