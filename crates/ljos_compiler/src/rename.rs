@@ -199,11 +199,17 @@ impl LtsRename {
     /// Each file that could not be renamed or written, with why; the first
     /// is what failed, the rest what could not be put back.
     pub fn apply(&self) -> Result<(), Vec<(PathBuf, std::io::Error)>> {
-        self.apply_with(|path, text| std::fs::write(path, text))
+        self.apply_with(|path, text| {
+            // Synced through the handle that wrote it: Windows syncs only
+            // through one that may write.
+            let mut file = std::fs::File::create(path)?;
+            std::io::Write::write_all(&mut file, text.as_bytes())?;
+            file.sync_all()
+        })
     }
 
-    /// [`apply`](Self::apply), with the bytes put on disk by `write`, so a
-    /// test can have a write fail part way, as on a full disk.
+    /// [`apply`](Self::apply), with the bytes put on disk, and synced, by
+    /// `write`, so a test can have a write fail part way, as on a full disk.
     fn apply_with(
         &self,
         write: impl Fn(&Path, &str) -> std::io::Result<()>,
@@ -250,7 +256,6 @@ fn replace(
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let staged = path.with_file_name(format!(".{name}.{}.ljos-rename", std::process::id()));
     let done = write(&staged, text)
-        .and_then(|()| std::fs::File::open(&staged)?.sync_all())
         .and_then(|()| std::fs::set_permissions(&staged, permissions))
         .and_then(|()| std::fs::rename(&staged, path));
     if done.is_err() {
@@ -571,6 +576,36 @@ mod tests {
             .collect();
         left.sort();
         assert_eq!(left, ["A.qml", "B.qml", "size.ts"]);
+    }
+
+    /// The staged text is put in place without being opened again: only
+    /// its writer holds it, as on Windows, where syncing a file needs a
+    /// handle that may write it. Here, a file that may be written and not
+    /// read stands in for that.
+    #[cfg(unix)]
+    #[test]
+    fn the_staged_text_is_put_in_place_without_reading_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let project = tempfile::tempdir().unwrap();
+        let module = project.path().join("size.ts");
+        let text = "export const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        let pad = project.path().join("Pad.qml");
+        std::fs::write(&pad, "import \"size.ts\" as Size\nItem {}\n").unwrap();
+        let Ok(LtsPlan::Rename(rename)) = plan_lts(project.path(), &module, text) else {
+            panic!("a rename");
+        };
+        let write_only = |path: &Path, text: &str| {
+            std::fs::write(path, text)?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o200))
+        };
+        // One who may read anything (root) reads it anyway.
+        if rename.apply_with(write_only).is_ok() && std::fs::File::open(&pad).is_ok() {
+            let now = std::fs::read_to_string(&pad).unwrap();
+            assert_eq!(now, "import \"size.lts\" as Size\nItem {}\n");
+            return;
+        }
+        panic!("the rename is refused");
     }
 
     /// A directory that cannot be listed is named, not the directory the
