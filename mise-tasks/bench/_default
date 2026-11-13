@@ -19,15 +19,19 @@ for a in "$@"; do
 done
 
 # The release build is what is measured unless BENCH_PROFILE names
-# another; nothing compiles while it runs.
+# another; nothing compiles while it runs. BENCH_BUILD=0 measures what is
+# already built, when the build was made another way (a shared build
+# queue, another toolchain) or must not be made again.
 profile="${BENCH_PROFILE:-release}"
 case "$profile" in
   release) build="lto thin" ;;
   dist) build="lto fat, one codegen unit" ;;
   *) echo "BENCH_PROFILE is release or dist, not $profile" >&2; exit 2 ;;
 esac
-cargo build --quiet --profile "$profile" -p ljos_cli
-cargo build --quiet -p qml_compare
+if [[ ${BENCH_BUILD:-1} != 0 ]]; then
+  cargo build --quiet --profile "$profile" -p ljos_cli
+  cargo build --quiet -p qml_compare
+fi
 
 manifest="$out/manifest.json"
 "$root/scripts/bench-manifest.sh" "$out" ${ids[@]+"${ids[@]}"}
