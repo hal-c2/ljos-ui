@@ -106,6 +106,12 @@ pub struct Bench {
     /// Do not count the instructions each thread retires while measured.
     #[arg(long)]
     no_instructions: bool,
+    /// Ask each runtime for a line on every 3D frame it draws (Ljós writes
+    /// them where `LJOS_3D_FRAMES` says) and report what they cost: draws,
+    /// pipeline and bind group changes, uploads, and the CPU and GPU time
+    /// of each part of a frame, idle and driven.
+    #[arg(long)]
+    frames3d: bool,
     /// Also search for the least memory each starts in under this profile.
     #[arg(long, value_name = "PROFILE")]
     bisect: Option<String>,
@@ -312,6 +318,7 @@ impl Bench {
                 gesture: self.gesture,
                 detail: true,
                 instructions: !self.no_instructions,
+                frames3d: self.frames3d,
             },
             warm_up: self.warm_up,
             repeat: self.repeat,

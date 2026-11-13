@@ -90,6 +90,9 @@ pub struct Phases {
     /// Count each thread's instructions while it is measured
     /// ([`crate::counters`]).
     pub instructions: bool,
+    /// Ask the runtime for a line on each 3D frame it draws and sum them up
+    /// by span ([`crate::frames3d`]).
+    pub frames3d: bool,
 }
 
 /// What drives an application under load.
@@ -181,6 +184,9 @@ pub struct Frames {
     /// Intervals between frames, when there were two or more.
     pub p50_ms: Option<f64>,
     pub p95_ms: Option<f64>,
+    /// The hitch a person notices: one interval in a hundred is longer.
+    #[serde(default)]
+    pub p99_ms: Option<f64>,
     pub max_ms: Option<f64>,
     /// From each input the bench sent to the first frame shown after it,
     /// when it drove the window: how long a person waits to see a drag or
@@ -318,6 +324,10 @@ pub struct Run {
     #[serde(default)]
     pub gesture: Gesture,
     pub install: Option<Install>,
+    /// What each 3D frame cost, as the runtime counted it, when asked for
+    /// and the runtime wrote it ([`crate::frames3d`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frames3d: Option<crate::frames3d::Frames3d>,
     pub log: String,
 }
 
@@ -907,6 +917,21 @@ fn run_once(
     for (k, v) in &runtime.env {
         command.arg("--env").arg(format!("{k}={v}"));
     }
+    // A file of its own for each run, so no line is another run's.
+    let frames3d = phases.frames3d.then(|| {
+        setup.work.join(format!(
+            "{app}.{}.{}.{}-{n}.frames3d.jsonl",
+            runtime.name,
+            profile.name,
+            std::process::id()
+        ))
+    });
+    if let Some(path) = &frames3d {
+        let _ = std::fs::remove_file(path);
+        command
+            .arg("--env")
+            .arg(format!("{}={}", crate::frames3d::ENV, path.display()));
+    }
     for k in &runtime.unset {
         command.arg("--unset").arg(k);
     }
@@ -968,6 +993,8 @@ fn run_once(
     };
     let cpu0 = w.cg.cpu_usec().unwrap_or(0);
     let t0 = Instant::now();
+    let opened_us = crate::frames3d::now_us();
+    let (mut idle_window, mut load_window) = (None, None);
     gate.open()?;
 
     let deadline = t0 + setup.startup_timeout;
@@ -1018,6 +1045,7 @@ fn run_once(
         quiet_ms: None,
         gesture: phases.gesture,
         install: None,
+        frames3d: None,
         log: log_path.display().to_string(),
     };
 
@@ -1040,6 +1068,7 @@ fn run_once(
             _ => None,
         };
         if !phases.idle.is_zero() {
+            let from_us = crate::frames3d::now_us();
             out.idle = span(
                 setup,
                 &mut w,
@@ -1051,6 +1080,10 @@ fn run_once(
                 rect,
                 phases.instructions,
             );
+            idle_window = Some(crate::frames3d::Window {
+                from_us,
+                to_us: crate::frames3d::now_us(),
+            });
             if w.exited.is_none() {
                 out.idled = Some(memory(&w));
             }
@@ -1062,6 +1095,7 @@ fn run_once(
                 w.sample();
             }
             for round in 0..phases.rounds.max(1) {
+                let from_us = crate::frames3d::now_us();
                 let load = span(
                     setup,
                     &mut w,
@@ -1077,6 +1111,10 @@ fn run_once(
                 // with runs of one round.
                 if round == 0 {
                     out.load = load;
+                    load_window = Some(crate::frames3d::Window {
+                        from_us,
+                        to_us: crate::frames3d::now_us(),
+                    });
                 }
                 if w.exited.is_some() {
                     break;
@@ -1096,6 +1134,9 @@ fn run_once(
     w.sample();
     let ended = w.exited.or_else(|| stop(w.child));
     w.sample();
+    out.frames3d = frames3d
+        .as_deref()
+        .and_then(|p| crate::frames3d::read(p, opened_us, idle_window, load_window));
     if let Some(status) = ended {
         out.exit = Some(describe(status));
         use std::os::unix::process::ExitStatusExt;
@@ -1158,6 +1199,7 @@ pub fn min_memory(
         gesture: Gesture::Click,
         detail: false,
         instructions: false,
+        frames3d: false,
     };
     let mut probes = Vec::new();
     let mut probe = |mib: u64| -> Result<bool, Error> {
