@@ -55,7 +55,9 @@ pub struct LtsRename {
 /// A file that imports the module being renamed.
 #[derive(Debug)]
 pub struct Importer {
-    /// Its key below the directory importers were looked for in.
+    /// Its key below the directory importers were looked for in, and its
+    /// path, once the module is renamed: a module that imports itself is
+    /// its own importer, at its new name.
     pub key: String,
     pub path: PathBuf,
     /// Its text now, and with the new name.
@@ -134,6 +136,11 @@ pub fn plan_lts_with(
             continue;
         };
         if let Some(renamed) = imports(&key, &text, &from, &to) {
+            let (key, path) = if key == from {
+                (to.clone(), target.clone())
+            } else {
+                (key, path)
+            };
             importers.push(Importer {
                 key,
                 path,
@@ -158,11 +165,11 @@ impl LtsRename {
         self.to.rsplit('/').next().unwrap_or(&self.to)
     }
 
-    /// Where `importer` is once the module is renamed: a module that
-    /// imports itself is its own importer, at its new name.
-    fn written_at<'a>(&'a self, importer: &'a Importer) -> &'a Path {
-        if importer.key == self.from {
-            &self.target
+    /// Where a failure to write `importer` leaves it: the module that
+    /// imports itself is put back at its old name.
+    fn left_at<'a>(&'a self, importer: &'a Importer) -> &'a Path {
+        if importer.path == self.target {
+            &self.module
         } else {
             &importer.path
         }
@@ -178,15 +185,13 @@ impl LtsRename {
     pub fn apply(&self) -> Result<(), Vec<(PathBuf, std::io::Error)>> {
         std::fs::rename(&self.module, &self.target).map_err(|e| vec![(self.module.clone(), e)])?;
         for (at, importer) in self.importers.iter().enumerate() {
-            let path = self.written_at(importer);
-            if let Err(e) = std::fs::write(path, &importer.renamed) {
-                let mut failed = vec![(path.to_owned(), e)];
+            if let Err(e) = std::fs::write(&importer.path, &importer.renamed) {
+                let mut failed = vec![(self.left_at(importer).to_owned(), e)];
                 // The one that failed too: a write empties the file before
                 // it writes, so one cut off part way holds neither text.
                 for importer in &self.importers[..=at] {
-                    let path = self.written_at(importer);
-                    if let Err(e) = std::fs::write(path, &importer.text) {
-                        failed.push((path.to_owned(), e));
+                    if let Err(e) = std::fs::write(&importer.path, &importer.text) {
+                        failed.push((self.left_at(importer).to_owned(), e));
                     }
                 }
                 if let Err(e) = std::fs::rename(&self.target, &self.module) {
@@ -410,6 +415,15 @@ mod tests {
         let LtsPlan::Rename(rename) = plan_lts(project.path(), &module, text).unwrap() else {
             panic!("the module is renamed");
         };
+        // What a report of the rename lists: the module at its new name.
+        assert_eq!(
+            rename
+                .importers
+                .iter()
+                .map(|i| (i.key.as_str(), i.path.as_path()))
+                .collect::<Vec<_>>(),
+            [("size.lts", rename.target.as_path())]
+        );
         rename.apply().unwrap();
         assert!(!module.exists(), "nothing is left at the old name");
         assert_eq!(
