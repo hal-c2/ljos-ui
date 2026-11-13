@@ -202,6 +202,36 @@ fn picture(e: &Engine, root: ObjectId, w: u32, h: u32) -> Vec<u8> {
     buf
 }
 
+/// The calling test's turn on the GPU, held for the whole test; `None`,
+/// said, where there is no adapter. Each test probes with a device of its
+/// own and draws on the process's shared one, so tests take turns, as
+/// `ljos_render`'s `tests/view3d` do: bringing up wgpu's Vulkan and GL
+/// backends on a software driver from several threads at once killed
+/// `cargo test` with SIGSEGV on lavapipe and printed nothing. nextest runs
+/// each test in a process of its own and never meets it; `cargo test` runs
+/// them on threads of one.
+fn gpu_turn() -> Option<std::sync::MutexGuard<'static, ()>> {
+    use std::io::Write as _;
+    use std::sync::{Mutex, PoisonError};
+    static TURN: Mutex<()> = Mutex::new(());
+    // A test that failed holding its turn has dropped its devices all the
+    // same; the next one may go.
+    let turn = TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    // A crash inside the driver prints nothing of its own, and the harness
+    // holds back what a test prints until it ends: the last such line
+    // names the test a crash was in.
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("a test");
+    let _ = writeln!(std::io::stderr(), "ljos_quick3d: {test} takes the device");
+    match ljos::item::ljos_3d::offscreen::Offscreen::new() {
+        Ok(_) => Some(turn),
+        Err(e) => {
+            eprintln!("SKIPPED: {e}");
+            None
+        }
+    }
+}
+
 fn pixel(rgba: &[u8], w: u32, x: u32, y: u32) -> [u8; 4] {
     let i = ((y * w + x) * 4) as usize;
     [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]]
@@ -212,8 +242,7 @@ fn a_view_is_drawn_in_the_picture() {
     let (e, root) = load(&format!(
         "Rectangle {{ width: 100; height: 100; color: \"black\"\n{SCENE}\n}}"
     ));
-    let Some(_) = ljos::item::ljos_3d::offscreen::Offscreen::new().ok() else {
-        eprintln!("SKIPPED: no adapter");
+    let Some(_turn) = gpu_turn() else {
         return;
     };
     let rgba = picture(&e, root, 100, 100);
@@ -234,10 +263,9 @@ fn a_destroyed_view_lets_go_of_its_picture() {
                             PerspectiveCamera { z: 300 }
                             Model { source: "#Cube" } } } }"##,
     );
-    if ljos::item::ljos_3d::offscreen::Offscreen::new().is_err() {
-        eprintln!("SKIPPED: no adapter");
+    let Some(_turn) = gpu_turn() else {
         return;
-    }
+    };
     let pic = ljos::render::Picture::new(40, 40).settle(0);
     let mut scene = pic.scene(&e, root).expect("laid out");
     let mut r = VelloCpuReference::new(RasterConfig::default());
@@ -541,10 +569,9 @@ fn a_geometry_reaches_the_scene_once_it_is_updated() {
 #[test]
 fn a_view_is_drawn_again_when_its_geometry_is_updated() {
     use ljos_render::{FrameView, RasterConfig, VelloCpuReference};
-    if ljos::item::ljos_3d::offscreen::Offscreen::new().is_err() {
-        eprintln!("SKIPPED: no adapter");
+    let Some(_turn) = gpu_turn() else {
         return;
-    }
+    };
     let (e, root) = load_square(SQUARE);
     let square = named(&e, root, "square_");
     Square::fill(&e, square, 30.0);
