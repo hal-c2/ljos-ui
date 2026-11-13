@@ -15,7 +15,7 @@ A `PathView` spaces its delegates evenly along a `Path` built from segments (`Pa
 You can shift every row along the path with `offset`. Each delegate can inspect `PathView.view`, `PathView.isCurrentItem`, and `PathView.onPath` (a read-only boolean that is true while the delegate is on the path).
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 PathView {
     width: 500
@@ -25,11 +25,15 @@ PathView {
     delegate: Rectangle {
         width: 20
         height: 10
-        color: PathView.isCurrentItem ? "#ffcc00" : "#dddddd"
+        fill: PathView.isCurrentItem ? "#ffcc00" : "#dddddd"
     }
     path: Path {
-        startX: 0; startY: 50
-        PathLine { x: 400; y: 50 }
+        startX: 0
+        startY: 50
+        PathLine {
+            x: 400
+            y: 50
+        }
     }
 }
 ```

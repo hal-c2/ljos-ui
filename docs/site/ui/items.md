@@ -106,20 +106,30 @@ Every item has `rotation`, `scale`, `transformOrigin` (`Item.TopLeft`, `Top`, `T
 Changing a transform moves where the item is drawn, and pointer clicks land on the transformed position. To convert points between items and the desktop, call `mapToItem`, `mapFromItem`, `mapToGlobal` and `mapFromGlobal`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 Item {
     width: 200
     height: 200
 
     Rectangle {
-        x: 20; y: 20
-        width: 60; height: 30
-        color: "#2060a0"
+        x: 20
+        y: 20
+        width: 60
+        height: 30
+        fill: "#2060a0"
         transform: [
-            Translate { x: 10 },
-            Rotation { angle: 45; origin.x: 30; origin.y: 15 },
-            Scale { xScale: 1.5 }
+            Translate {
+                x: 10
+            },
+            Rotation {
+                angle: 45
+                origin.x: 30
+                origin.y: 15
+            },
+            Scale {
+                xScale: 1.5
+            }
         ]
     }
 }
