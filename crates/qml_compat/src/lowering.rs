@@ -153,16 +153,23 @@ impl Lowering {
     }
 
     /// The files beside `key` that name it, by its type or by a name
-    /// lowering brings in.
+    /// lowering brings in, and the files that import its directory by
+    /// path and bring its name in: it is a type of the directory to them.
     fn naming(&self, key: &str) -> Vec<String> {
         let (dir, name) = key.rsplit_once('/').unwrap_or(("", key));
         self.alone
             .iter()
             .filter(|(other, alone)| {
+                let other_dir = other.rsplit_once('/').map_or("", |(d, _)| d);
+                let brings = alone.references.introduced.iter().any(|t| t == name);
+                let imports = || {
+                    (alone.references.dirs.iter())
+                        .any(|path| group::imported_dir(other_dir, path) == dir)
+                };
                 other.as_str() != key
-                    && other.rsplit_once('/').map_or("", |(d, _)| d) == dir
-                    && (alone.references.types.iter().any(|t| t == name)
-                        || alone.references.introduced.iter().any(|t| t == name))
+                    && ((other_dir == dir
+                        && (brings || alone.references.types.iter().any(|t| t == name)))
+                        || (brings && imports()))
             })
             .map(|(other, _)| other.clone())
             .collect()

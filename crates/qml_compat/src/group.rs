@@ -182,7 +182,7 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
             }
         }
         for imported in &file.references.dirs {
-            let prefix = format!("{}/", normal(&beside(imported.trim_end_matches('/'))));
+            let prefix = format!("{}/", imported_dir(dir, imported));
             for (other, k) in keys.iter().enumerate() {
                 if k.strip_prefix(&prefix)
                     .is_some_and(|rest| !rest.contains('/'))
@@ -252,6 +252,11 @@ fn from_dir_of<'k>(key: &str, other: &'k str) -> &'k str {
         None => Some(other),
     };
     below.unwrap_or_else(|| other.rsplit('/').next().unwrap_or(other))
+}
+
+/// The key of the directory a file in `dir` imports by `path`.
+pub(crate) fn imported_dir(dir: &str, path: &str) -> String {
+    normal(&join(dir, path.trim_end_matches('/')))
 }
 
 fn join(dir: &str, name: &str) -> String {
