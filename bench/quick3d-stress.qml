@@ -7,6 +7,7 @@
 // bench/quick3d/gen-stress.py. Plain QtQuick3D, so qml6 runs it unchanged.
 import QtQuick
 import QtQuick3D
+import QtQuick3D.AssetUtils
 
 Window {
     id: root

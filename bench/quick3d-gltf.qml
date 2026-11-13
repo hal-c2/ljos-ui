@@ -4,6 +4,7 @@
 // to hold, and that a loaded model nothing changes costs nothing.
 import QtQuick
 import QtQuick3D
+import QtQuick3D.AssetUtils
 
 Window {
     width: 640
