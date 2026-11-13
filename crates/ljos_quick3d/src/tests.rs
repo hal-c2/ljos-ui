@@ -989,6 +989,9 @@ fn models_naming_one_file_share_its_meshes() {
                Model {{ source: "file://{path}" }}
                Model {{ source: "file://{path}"; x: 10 }} }}"##
     ));
+    // The scene is what is checked, so the test runs without an adapter
+    // too; drawing it still goes through the process's shared device.
+    let _turn = gpu_turn();
     let _ = ljos::render::Picture::new(40, 40).settle(0).png(&e, root);
     let scene = scene::build(&e, root);
     let mut ids: Vec<_> = scene
