@@ -735,6 +735,11 @@ Row { Rectangle { width: 50; implicitWidth: 80 }            -> 50   (explicit wi
   by it; use `Layout.alignment` or move it out of the Row"). Qt only warns,
   at run time. Overlap (z-stacking, `anchors.fill: parent`, a badge on a
   corner) is what anchors are for, and they stay.
+  Qt's `Row` and `Column` place a child along them only, so an anchor
+  across one (`anchors.verticalCenter` in a `Row`) holds there; the pass
+  keeps such a file and says so, because the lowered child is placed
+  across by `Layout.alignment`, which rounds a centre where the anchor
+  does not.
 - `LayoutItemProxy` (one item shown in two layouts) is not needed: a Box's
   direction is a binding.
 

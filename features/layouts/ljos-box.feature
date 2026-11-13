@@ -318,3 +318,25 @@ Feature: Ljós's one arrangement: Row, Column and Box
         kept ./Main.qml:6:15: `Layout.fillWidth` is ignored by Qt's `Row` and would be honoured by Ljós's
         1 files, 0 lowered, 1 kept
         """
+
+    # Qt's Row honours an anchor across it (top, bottom, verticalCenter, baseline) and overrides one
+    # along it. Measured with qml6: a child 7 high in a Row 50 high, anchored at its vertical centre,
+    # is at y 21; Ljós's Row places one with `Layout.alignment: Align.VCenter` at y 22, so the pass
+    # cannot write the one for the other.
+    @ljos-only @headless
+    Scenario: A Row positioner whose child is anchored across it is kept, as Qt honours the anchor
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Row {
+          height: 50
+          Rectangle { width: 10; height: 10 }
+          Text { text: "Home"; anchors.verticalCenter: parent.verticalCenter }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:5:24: `anchors.verticalCenter` places a child across Qt's `Row`, which honours it; Ljós's `Row` places it across with `Layout.alignment`
+        1 files, 0 lowered, 1 kept
+        """

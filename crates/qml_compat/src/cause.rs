@@ -367,6 +367,13 @@ pub enum Layout {
         qt: &'static str,
         ljos: &'static str,
     },
+    /// A positioner's child's anchor across it, which Qt's positioner
+    /// honours.
+    AnchoredAcross {
+        name: String,
+        qt: &'static str,
+        ljos: &'static str,
+    },
     /// A member Ljós's `ljos` lacks.
     NotYet { name: String, ljos: &'static str },
     /// `rows` or `columns` of a `Grid` that is not a whole number.
@@ -782,6 +789,10 @@ impl fmt::Display for Layout {
             Layout::Anchored { name, qt, ljos } => write!(
                 f,
                 "`{name}` on a child of a `{qt}` is overridden by it, and is an error in Ljós's `{ljos}`"
+            ),
+            Layout::AnchoredAcross { name, qt, ljos } => write!(
+                f,
+                "`{name}` places a child across Qt's `{qt}`, which honours it; Ljós's `{ljos}` places it across with `Layout.alignment`"
             ),
             Layout::NotYet { name, ljos } => write!(f, "`{name}` is not in Ljós's `{ljos}` yet"),
             Layout::GridCount { name } => write!(

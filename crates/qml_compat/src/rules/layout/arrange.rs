@@ -241,6 +241,29 @@ struct Arrange<'s, 't> {
 }
 
 /// The axes, as an index: width, then height.
+/// The anchors that place a child on each axis, by the axis: what a
+/// positioner along the other axis leaves to it.
+const ACROSS: [&[&str]; 2] = [
+    &[
+        "left",
+        "right",
+        "horizontalCenter",
+        "leftMargin",
+        "rightMargin",
+        "horizontalCenterOffset",
+    ],
+    &[
+        "top",
+        "bottom",
+        "verticalCenter",
+        "baseline",
+        "topMargin",
+        "bottomMargin",
+        "verticalCenterOffset",
+        "baselineOffset",
+    ],
+];
+
 const W: usize = 0;
 const H: usize = 1;
 const SIZE: [&str; 2] = ["width", "height"];
@@ -322,7 +345,17 @@ impl Arrange<'_, '_> {
             let name = name.to_owned();
             return Err(self.keep(Layout::Ignored { name, root, qt }, at));
         }
-        if name.starts_with("anchors.") {
+        if let Some(anchor) = name.strip_prefix("anchors.") {
+            // Qt's positioner places a child along it alone: an anchor across
+            // it holds there, where Ljós's places the child by its
+            // alignment, which rounds a centre where Qt's anchor does not.
+            if matches!(self.shape, Shape::Positioner { .. })
+                && ACROSS[1 - self.main()].contains(&anchor)
+            {
+                let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
+                let name = name.to_owned();
+                return Err(self.keep(Layout::AnchoredAcross { name, qt, ljos }, at));
+            }
             return Err(self.anchored(name, at));
         }
         if matches!(self.shape, Shape::Positioner { .. }) && name == cross {
