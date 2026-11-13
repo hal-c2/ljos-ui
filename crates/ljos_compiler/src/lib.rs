@@ -41,7 +41,8 @@ pub use controller::is_generated;
 pub use dump::dump;
 pub use natives::OracleNatives;
 pub use project::{
-    Project, declared_beside, described_in, files_below, resource_dirs, resources, skipped_dir,
+    Project, declared_beside, described_in, files_below, files_below_naming, resource_dirs,
+    resources, skipped_dir,
 };
 pub use reload::{CompileFault, FileSet, ReloadSession, diff, diff_file};
 pub use roots::Roots;

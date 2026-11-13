@@ -1365,14 +1365,33 @@ pub fn files_below(
     wanted: fn(&Path) -> bool,
     out: &mut Vec<PathBuf>,
 ) -> std::io::Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<Result<_, _>>()?;
+    files_below_naming(dir, wanted, out).map_err(|(_, e)| e)
+}
+
+/// [`files_below`], with the place that could not be read: the directory
+/// that could not be listed, or the entry whose kind could not be told.
+///
+/// # Errors
+/// A directory below `dir`, or `dir`, cannot be read, with its path.
+pub fn files_below_naming(
+    dir: &Path,
+    wanted: fn(&Path) -> bool,
+    out: &mut Vec<PathBuf>,
+) -> Result<(), (PathBuf, std::io::Error)> {
+    fn at(path: &Path) -> impl FnOnce(std::io::Error) -> (PathBuf, std::io::Error) {
+        let path = path.to_owned();
+        move |e| (path, e)
+    }
+    let mut entries: Vec<_> = std::fs::read_dir(dir)
+        .and_then(|read| read.collect::<Result<_, _>>())
+        .map_err(at(dir))?;
     entries.sort_by_key(std::fs::DirEntry::file_name);
     for entry in entries {
         let path = entry.path();
-        let kind = entry.file_type()?;
+        let kind = entry.file_type().map_err(at(&path))?;
         if kind.is_dir() {
             if !skipped_dir(&entry.file_name().to_string_lossy()) {
-                files_below(&path, wanted, out)?;
+                files_below_naming(&path, wanted, out)?;
             }
         } else if wanted(&path) && path.is_file() {
             out.push(path);
