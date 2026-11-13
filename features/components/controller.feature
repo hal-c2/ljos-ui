@@ -460,6 +460,41 @@ Feature: Controllers: behaviour an item is given by declaring it
         ljos: 1 errors
         """
 
+    # Ljós's own table describes a `Window` as a `Rectangle`, and Qt's as no item; the
+    # answer is the same with either table.
+    Scenario: The checker reports a gesture declared in a Window, with or without Qt's type table
+      Given the file "Pick.qml":
+        """qml
+        import Ljos.Ui
+        Window {
+          width: 200
+          height: 100
+          Tap {}
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Pick.qml:5:11: error: a `Controller` acts on the item it is declared in, and a `Window` is not an item: declare it in one [controller-host]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: The checker takes a gesture in an ApplicationWindow, which hosts it in its content
+      Given the file "Pick.qml":
+        """qml
+        import Ljos.Ui
+        import Ljos.Controls
+        ApplicationWindow {
+          Tap {}
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
     Scenario: The checker takes a Controller and a gesture in a popup, which hosts them in its content
       Given the file "Pick.qml":
         """qml

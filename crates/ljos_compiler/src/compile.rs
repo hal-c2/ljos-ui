@@ -1500,7 +1500,7 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
             return None;
         }
         let holder = base(parent)?;
-        if derives(holder, item) || derives(holder, controller) {
+        if derives(holder, controller) {
             return None;
         }
         // A popup is not an item, but what is declared in it goes into its
@@ -1508,6 +1508,18 @@ impl<'t, 'a, 'p, O: TypeOracle> Compiler<'t, 'a, 'p, O> {
         if oracle.default_property(holder) == Some("contentData")
             && oracle.property(holder, "contentItem").is_some()
         {
+            return None;
+        }
+        // A window that does not host what is declared in it in a content
+        // item is no item to act on. Ljós's own table describes `Window` as
+        // a `Rectangle`, which Qt's does not, and the checker answers the
+        // same with either.
+        if let Some(window) = oracle.module_type("QtQuick", "Window")
+            && derives(holder, window)
+        {
+            return Some(oracle.name(holder).to_string());
+        }
+        if derives(holder, item) {
             return None;
         }
         Some(oracle.name(holder).to_string())
