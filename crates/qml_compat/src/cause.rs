@@ -231,6 +231,21 @@ pub enum Hider {
     Word,
 }
 
+impl Hider {
+    /// What takes the name, as a keep reason says it after the name.
+    fn which(self) -> &'static str {
+        match self {
+            Hider::Own => "which a property of the file hides",
+            Hider::Member => "which a member of an object's type hides",
+            Hider::Role => "which a role of a delegate could hide",
+            Hider::UnknownType => "which an object of a type the pass does not know could have",
+            Hider::Directory => "which a type of a directory the file imports could be",
+            Hider::Beside => "which a file beside it has",
+            Hider::Word => "which the file names something else",
+        }
+    }
+}
+
 /// Whose a name is, as a keep reason says it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Owner {
@@ -260,8 +275,15 @@ impl Owner {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Font {
-    /// `font.pointSize`, which needs `Screen`.
+    /// `.pointSize` read or written in a script: Ljós's font has only a
+    /// size in pixels.
     PointSize,
+    /// `font.pointSize` beside `font.pixelSize`.
+    PointAndPixelSize,
+    /// `font.pointSize` given by a block.
+    PointSizeBlock,
+    /// `font.pointSize`, whose lowering names `Screen`, which `by` takes.
+    ScreenHidden { by: Hider },
     /// `font.bold` beside `font.weight`.
     BoldAndWeight,
     /// `font.bold` given by a block.
@@ -596,18 +618,7 @@ impl fmt::Display for Cause {
                 write!(f, "`Qt.{member}` has no home in Ljós's API yet")
             }
             Cause::QtHomeHidden { member, name, by } => {
-                let by = match by {
-                    Hider::Own => "which a property of the file hides",
-                    Hider::Member => "which a member of an object's type hides",
-                    Hider::Role => "which a role of a delegate could hide",
-                    Hider::UnknownType => {
-                        "which an object of a type the pass does not know could have"
-                    }
-                    Hider::Directory => "which a type of a directory the file imports could be",
-                    Hider::Beside => "which a file beside it has",
-                    Hider::Word => "which the file names something else",
-                };
-                write!(f, "`Qt.{member}` needs `{name}`, {by}")
+                write!(f, "`Qt.{member}` needs `{name}`, {}", by.which())
             }
             Cause::QtResolvedAgainst => f.write_str(
                 "`Qt.resolvedUrl` given an object to resolve against has no home in Ljós's API yet",
@@ -637,10 +648,18 @@ impl fmt::Display for Cause {
 impl fmt::Display for Font {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Font::PointSize => write!(
-                f,
-                "`font.pointSize` has no Ljós name until `Screen` is in {MODULE}"
+            Font::PointSize => f.write_str(
+                "`.pointSize` of a font is read or written, and Ljós's font has only a `size` in pixels",
             ),
+            Font::PointAndPixelSize => f.write_str(
+                "`font.pointSize` and `font.pixelSize` are both set, and are one `size` in Ljós",
+            ),
+            Font::PointSizeBlock => {
+                f.write_str("`font.pointSize` is given by a block, which is not lowered yet")
+            }
+            Font::ScreenHidden { by } => {
+                write!(f, "`font.pointSize` needs `Screen`, {}", by.which())
+            }
             Font::BoldAndWeight => f.write_str(
                 "`font.bold` and `font.weight` are both set, and are one `weight` in Ljós",
             ),

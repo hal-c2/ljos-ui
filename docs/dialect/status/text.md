@@ -6,6 +6,7 @@ Built:
 
 - `Text`'s `align`, `wrap` and `format`, and a font's `size` and `weight`
   (§4.13).
+- `font.pointSize: n` lowered to `font.size: Screen.points(n)` (§4.13).
 
 Remaining:
 

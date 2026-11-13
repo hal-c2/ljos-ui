@@ -17,6 +17,10 @@ use crate::{Font, Rename, Ty, lookup_rename};
 /// conversion, so neither is a rename.
 pub const FONT_RENAMES: &[(&str, &str)] = &[("pixelSize", "size")];
 
+/// What converts a font's points to its pixels where the file runs, which
+/// the lowered file names: `Screen.points(12)`.
+pub(crate) const SCREEN: &str = "Screen";
+
 /// The rule of Qt's `font` value type.
 pub(crate) struct FontRule;
 
@@ -32,6 +36,7 @@ impl Rule for FontRule {
             // A script's value is not followed, so it cannot be made the
             // weight it means.
             "bold" => Rename::No(Font::BoldRead.into()),
+            // A size in points is no value of a font in Ljós.
             "pointSize" => Rename::No(Font::PointSize.into()),
             _ => lookup_rename(FONT_RENAMES, name).map_or(Rename::Keep, Rename::To),
         })
@@ -52,8 +57,25 @@ pub(crate) fn written(
 ) -> Result<Written, Font> {
     match part {
         // A point is the screen's logical DPI / 72 of a pixel, known only
-        // when the file runs (docs/DIALECT.md §4.13).
-        "pointSize" => Err(Font::PointSize),
+        // when the file runs (docs/DIALECT.md §4.13): the file converts it.
+        // Which of the two sizes wins in Qt depends on the order they are
+        // set in.
+        "pointSize" if beside("pixelSize") => Err(Font::PointAndPixelSize),
+        "pointSize" => {
+            let QmlBindingValue::Expression(expression) = value else {
+                return Err(Font::PointSizeBlock);
+            };
+            let span = expression.span();
+            Ok(Written {
+                name: Some("size".to_owned()),
+                value: Value::Around {
+                    range: span.start as usize..span.end as usize,
+                    before: "Screen.points(",
+                    after: ")",
+                },
+            })
+        }
+        "pixelSize" if beside("pointSize") => Err(Font::PointAndPixelSize),
         // Which one wins in Qt depends on the order they are set in.
         "bold" if beside("weight") => Err(Font::BoldAndWeight),
         "bold" => Ok(Written {

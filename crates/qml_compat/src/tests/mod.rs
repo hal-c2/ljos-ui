@@ -138,13 +138,13 @@ fn corpus_file(path: &str) -> Option<String> {
 /// The corpus button sizes its text in points, which has no Ljós name until
 /// `Screen` is in `Ljos.Ui`; the file is kept, and says where.
 #[test]
-fn the_corpus_button_is_kept_for_its_point_size() {
+fn the_corpus_button_is_kept_for_the_alias_of_its_point_size() {
     let Some(source) = corpus_file("examples/demos/hangman/qml/SimpleButton.qml") else {
         return;
     };
     assert_eq!(
         kept_for(&source),
-        format!("`font.pointSize` has no Ljós name until `Screen` is in {MODULE}")
+        "`.pointSize` of a font is read or written, and Ljós's font has only a `size` in pixels"
     );
 }
 
@@ -282,8 +282,8 @@ fn a_file_is_kept_for_what_its_scripts_read() {
 #[test]
 fn a_file_is_kept_for_its_fonts_loaders_rows_and_layouts() {
     assert_eq!(
-        cause_of("import QtQuick\nText { font.pointSize: 12 }\n"),
-        Cause::Font(Font::PointSize)
+        cause_of("import QtQuick\nText { font.pointSize: 12; font.pixelSize: 9 }\n"),
+        Cause::Font(Font::PointAndPixelSize)
     );
     assert_eq!(
         cause_of("import QtQuick\nLoader { source: \"Pa\" + \"ge.qml\" }\n"),

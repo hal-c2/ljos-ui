@@ -18,6 +18,7 @@ use qml_syntax::{
     ast::{QmlBindingValue, QmlImportSource, QmlMember, QmlObject},
 };
 
+use crate::rules::font::SCREEN;
 use crate::{Cause, Kept, Outcome};
 
 /// What of the project a file may name: the words in it that could be a
@@ -80,7 +81,13 @@ fn object(object: &QmlObject<'_>, found: &mut References) {
     for member in &object.members {
         match member {
             QmlMember::Object(child) => self::object(child, found),
-            QmlMember::Binding(binding) => value(&binding.value, found),
+            QmlMember::Binding(binding) => {
+                // `font.pointSize` is lowered to `Screen.points(…)`.
+                if binding.name.parts.last() == Some(&"pointSize") {
+                    found.introduced.push(SCREEN.to_string());
+                }
+                value(&binding.value, found);
+            }
             QmlMember::Property(property) => {
                 if let Some(type_name) = &property.type_name {
                     // `property Button b`, `property list<Button> bs`.

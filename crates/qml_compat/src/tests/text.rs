@@ -23,6 +23,16 @@ fn a_font_s_pixel_size_is_its_size_wherever_it_is_named() {
 }
 
 #[test]
+fn a_font_s_points_are_a_size_by_the_points_of_its_screen() {
+    let text = lowered(
+        "import QtQuick\nItem {\n    Text { font.pointSize: 12 }\n    Text { font { pointSize: big ? 18 : 9; bold: true } }\n}\n",
+    );
+    assert!(text.contains("font.size: Screen.points(12)"), "{text}");
+    assert!(text.contains("size: Screen.points(big ? 18 : 9)"), "{text}");
+    assert_eq!(text.matches("pointSize").count(), 0, "{text}");
+}
+
+#[test]
 fn a_bold_font_is_a_weight() {
     let text = lowered(
         "import QtQuick\nItem {\n    Text { id: a; font.bold: true }\n    Text { font.bold: false }\n    Text { font.bold: a.wrapMode === Text.Wrap }\n}\n",
@@ -65,10 +75,17 @@ fn a_font_the_names_cannot_say_keeps_the_file() {
             "import QtQuick\nItem { Item { id: someItem } Text { text: someItem.font.bold } }\n",
             "not known",
         ),
-        ("import QtQuick\nText { font.pointSize: 9 }\n", "`Screen`"),
+        (
+            "import QtQuick\nText { font.pointSize: 9; font.pixelSize: 12 }\n",
+            "both set",
+        ),
+        (
+            "import QtQuick\nText { font.pointSize: { return 9 } }\n",
+            "a block",
+        ),
         (
             "import QtQuick\nText { Component.onCompleted: font.pointSize = 9 }\n",
-            "`Screen`",
+            "`.pointSize` of a font",
         ),
         (
             "import QtQuick\nText { font.bold: { return true } }\n",

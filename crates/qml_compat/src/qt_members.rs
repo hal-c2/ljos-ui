@@ -17,15 +17,18 @@
 //! file has no object whose type the pass does not know and no delegate,
 //! whose model's roles would come first. A capitalised name (`App`) is never
 //! a member or a role, but may be a type of a directory the file imports by
-//! path, which the pass cannot see, so under such an import it is not free.
+//! path or of a module of the project it imports: it is free only where the
+//! project knows every type of each and none is called so
+//! ([`Locals::imports_type`](crate::Locals::imports_type)).
 //! A project lowers a file again when a file of a name the pass gives comes
-//! beside it or goes ([`introduced`]).
+//! beside it, or into a directory it imports, or goes ([`introduced`]).
 
 use std::ops::Range;
 
 use qt_types::{Type, ljos_enums};
 
-use crate::{Cause, Hider, Kept};
+use crate::rules::font::SCREEN;
+use crate::{Cause, Font, Hider, Kept};
 
 const APP: &str = "App";
 const COLOR: &str = "Color";
@@ -181,6 +184,9 @@ struct Use {
     at: usize,
     member: String,
     lowered: Result<Lowered, Cause>,
+    /// A font's `pointSize`, lowered to `Screen.points(…)`, not a member of
+    /// `Qt`: what hides `Screen` says so.
+    points: bool,
 }
 
 /// What lowering one member changes, and the name it brings in.
@@ -244,6 +250,7 @@ impl Members {
             at: qt.start,
             member: member.to_owned(),
             lowered,
+            points: false,
         });
     }
 
@@ -398,6 +405,22 @@ impl Members {
             lowered: Err(Cause::QtNoHome {
                 member: String::new(),
             }),
+            points: false,
+        });
+    }
+
+    /// A font's `pointSize` bound at `at`, which the pass writes as
+    /// `size: Screen.points(…)`: `Screen` must be free as a member's home
+    /// must.
+    pub(crate) fn points(&mut self, at: usize) {
+        self.uses.push(Use {
+            at,
+            member: String::new(),
+            lowered: Ok(Lowered {
+                changes: Vec::new(),
+                name: Some(SCREEN),
+            }),
+            points: true,
         });
     }
 
@@ -463,7 +486,11 @@ impl Members {
                 }
             }
             let elsewhere = words(source, name).any(|at| {
-                !changed.iter().any(|c| c.contains(&at))
+                // What a file of Qt reads off `Screen` is the attached
+                // `Screen` Ljos.Ui has as it is.
+                let read_off = name == SCREEN && source[at + name.len()..].starts_with('.');
+                !read_off
+                    && !changed.iter().any(|c| c.contains(&at))
                     && !self.typed.iter().any(|t| t.contains(&at))
             });
             elsewhere.then_some(Hider::Word)
@@ -474,10 +501,13 @@ impl Members {
             let cause = match &u.lowered {
                 Err(cause) => Some(cause.clone()),
                 Ok(lowered) => lowered.name.and_then(|name| {
-                    hider(name).map(|by| Cause::QtHomeHidden {
-                        member: u.member.clone(),
-                        name,
-                        by,
+                    hider(name).map(|by| match u.points {
+                        true => Cause::Font(Font::ScreenHidden { by }),
+                        false => Cause::QtHomeHidden {
+                            member: u.member.clone(),
+                            name,
+                            by,
+                        },
                     })
                 }),
             };
@@ -486,7 +516,8 @@ impl Members {
             }
             if let Ok(lowered) = &u.lowered {
                 changes.extend(lowered.changes.iter().cloned());
-                core |= lowered.name.is_some() && ljos_enums::home(&u.member).is_none();
+                core |=
+                    !u.points && lowered.name.is_some() && ljos_enums::home(&u.member).is_none();
             }
         }
         Ok(Settled { changes, core })
