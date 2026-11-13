@@ -41,29 +41,67 @@ fn docstring(step: &Step) -> Option<String> {
     })
 }
 
-/// The files a scenario gives: each `the file`, and `the QML` as
-/// `Main.qml`.
-fn given(background: &[&Step], scenario: &Scenario) -> Option<Vec<(String, String)>> {
-    if !scenario.examples.is_empty()
-        || scenario
-            .tags
-            .iter()
-            .any(|t| matches!(t.as_str(), "backlog" | "qt-only" | "wip"))
-    {
+fn skipped(tags: &[String]) -> bool {
+    tags.iter()
+        .any(|t| matches!(t.as_str(), "backlog" | "qt-only" | "wip"))
+}
+
+/// Each case of a scenario: the scenario itself, or each row of its
+/// examples as `<name>` to value, with the line of the row.
+fn cases(scenario: &Scenario) -> Vec<(usize, Vec<(String, String)>)> {
+    if scenario.examples.is_empty() {
+        return vec![(scenario.position.line, Vec::new())];
+    }
+    let mut out = Vec::new();
+    for examples in &scenario.examples {
+        if skipped(&examples.tags) {
+            continue;
+        }
+        let Some(table) = &examples.table else {
+            continue;
+        };
+        let Some((header, rows)) = table.rows.split_first() else {
+            continue;
+        };
+        for (n, row) in rows.iter().enumerate() {
+            let values = header
+                .iter()
+                .zip(row)
+                .map(|(name, value)| (format!("<{name}>"), value.clone()))
+                .collect();
+            out.push((table.position.line + 1 + n, values));
+        }
+    }
+    out
+}
+
+/// The files a scenario gives in one of its cases: each `the file`, and
+/// `the QML` as `Main.qml`, with the case's values put in.
+fn given(
+    background: &[&Step],
+    scenario: &Scenario,
+    values: &[(String, String)],
+) -> Option<Vec<(String, String)>> {
+    if skipped(&scenario.tags) {
         return None;
     }
+    let put = |text: &str| {
+        values.iter().fold(text.to_owned(), |text, (name, value)| {
+            text.replace(name, value)
+        })
+    };
     let mut files = Vec::new();
     for step in background.iter().copied().chain(&scenario.steps) {
-        let value = step.value.as_str();
+        let value = put(&step.value);
         if let Some(name) = value
             .strip_prefix("the file \"")
             .and_then(|rest| rest.split_once('"'))
             .filter(|(_, rest)| matches!(*rest, ":" | " without its indentation:"))
             .map(|(name, _)| name)
         {
-            files.push((name.to_owned(), docstring(step)?));
+            files.push((name.to_owned(), put(&docstring(step)?)));
         } else if value == "the QML:" {
-            files.push(("Main.qml".to_owned(), docstring(step)?));
+            files.push(("Main.qml".to_owned(), put(&docstring(step)?)));
         }
     }
     Some(files)
@@ -117,6 +155,8 @@ fn typescript_accepts_every_desugared_file_the_checker_accepts() {
     let root = tempfile::tempdir().unwrap();
     let mut problems = Vec::new();
     let mut seen = 0;
+    // Each candidate's own directory, whether the checker accepts it or not.
+    let mut candidates = 0;
     for path in &paths {
         let shown = path
             .strip_prefix(features())
@@ -137,33 +177,34 @@ fn typescript_accepts_every_desugared_file_the_checker_accepts() {
             scenarios.extend(rule.scenarios.iter().map(|s| (steps.clone(), s)));
         }
         for (background, scenario) in scenarios {
-            let Some(files) = given(&background, scenario) else {
-                continue;
-            };
-            if !desugared(&files) {
-                continue;
-            }
-            let dir = root
-                .path()
-                .join(format!("{}-{}", seen, scenario.position.line));
-            for (name, text) in &files {
-                let file = dir.join(name);
-                fs::create_dir_all(file.parent().unwrap()).unwrap();
-                fs::write(file, text).unwrap();
-            }
-            // Only what the checker accepts: a scenario may show it
-            // refusing a file.
-            let (passed, said) = check(&dir, &[]);
-            if !passed || said.contains(": error: ") {
-                continue;
-            }
-            seen += 1;
-            let (passed, text) = check(&dir, &["--tsc"]);
-            if !passed || text.contains("[TS") {
-                problems.push(format!(
-                    "features/{shown}:{} ({}):\n{text}",
-                    scenario.position.line, scenario.name
-                ));
+            for (line, values) in cases(scenario) {
+                let Some(files) = given(&background, scenario, &values) else {
+                    continue;
+                };
+                if !desugared(&files) {
+                    continue;
+                }
+                candidates += 1;
+                let dir = root.path().join(format!("{candidates}-{line}"));
+                for (name, text) in &files {
+                    let file = dir.join(name);
+                    fs::create_dir_all(file.parent().unwrap()).unwrap();
+                    fs::write(file, text).unwrap();
+                }
+                // Only what the checker accepts: a scenario may show it
+                // refusing a file.
+                let (passed, said) = check(&dir, &[]);
+                if !passed || said.contains(": error: ") {
+                    continue;
+                }
+                seen += 1;
+                let (passed, text) = check(&dir, &["--tsc"]);
+                if !passed || text.contains("[TS") {
+                    problems.push(format!(
+                        "features/{shown}:{line} ({}):\n{text}",
+                        scenario.name
+                    ));
+                }
             }
         }
     }
