@@ -236,10 +236,9 @@ export function next(status: Status): string {
 import Ljos.Ui
 import "access.lts" as Access
 
-Window {
+Rectangle {
     width: 200
     height: 60
-    visible: true
 
     property string action: ""
 

@@ -70,10 +70,9 @@ A step that is an arrow function, a conditional, an assignment or a `yield` is w
 ```qml
 import Ljos.Ui
 
-Window {
+Rectangle {
     width: 200
     height: 60
-    visible: true
 
     property real level: -3
     property real shown: 0
@@ -157,10 +156,9 @@ export async function doubled(size: Promise<number>): Promise<string> {
 import Ljos.Ui
 import "sizes.lts" as Sizes
 
-Window {
+Rectangle {
     width: 200
     height: 60
-    visible: true
 
     property string shown: ""
 
