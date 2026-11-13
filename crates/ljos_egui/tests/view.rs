@@ -15,7 +15,7 @@ use ljos_quick::{Item, MouseArea, Rectangle, Text};
 use ljos_runtime::{Time, VirtualClock};
 
 mod common;
-use common::{geom, make, set};
+use common::{geom, gpu_turn, make, set};
 
 const RED: Color = Color::from_rgba8(255, 0, 0, 255);
 const BLUE: Color = Color::from_rgba8(0, 0, 255, 255);
@@ -244,6 +244,7 @@ fn the_resize_mode_can_change_while_the_view_lives() {
 
 #[test]
 fn renders_the_rectangles() {
+    let _turn = gpu_turn();
     let s = scene();
     let mut h = harness(&s, None);
     h.run();

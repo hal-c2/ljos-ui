@@ -2,9 +2,7 @@
 //! (ARCHITECTURE §8.5): the renderer's image textures and glyph atlas, and
 //! decoded pictures nothing shows. Shown again, it draws the same picture.
 
-use std::io::Write as _;
 use std::rc::Rc;
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use egui::{Pos2, Rect, TextureId, Vec2};
 use egui_kittest::Harness;
@@ -14,29 +12,9 @@ use ljos_quick::{Image, ImageStore, Item, Text};
 use ljos_runtime::MemoryPressure;
 
 mod common;
-use common::{make, set};
+use common::{gpu_turn, make, set};
 
-/// The calling test's turn on the GPU, held until it ends. Two threads that
-/// start the Vulkan loader together can crash it (with the NVIDIA driver
-/// in `vkEnumerateInstanceExtensionProperties`), and two devices alive at
-/// once crash lavapipe: `cargo test` runs this binary's tests on threads of
-/// one process, as the scheduled `qt-types` job does, so a turn only around
-/// making the renderer is not enough.
-fn turn() -> MutexGuard<'static, ()> {
-    static TURN: Mutex<()> = Mutex::new(());
-    // A test that failed holding its turn has dropped its device all the
-    // same; the next one may go.
-    let turn = TURN.lock().unwrap_or_else(PoisonError::into_inner);
-    // A crash inside the driver prints nothing of its own, and the harness
-    // holds back what a test prints until it ends: the last such line
-    // names the test a crash was in.
-    let thread = std::thread::current();
-    let test = thread.name().unwrap_or("a test");
-    let _ = writeln!(std::io::stderr(), "trim: {test} takes the device");
-    turn
-}
-
-/// kittest's renderer, made in the calling test's [`turn`].
+/// kittest's renderer, made in the calling test's turn ([`common::gpu_turn`]).
 fn renderer() -> egui_kittest::wgpu::WgpuTestRenderer {
     egui_kittest::wgpu::WgpuTestRenderer::new()
 }
@@ -135,7 +113,7 @@ fn assert_painted(h: &mut Harness<'_, State>) {
 
 #[test]
 fn a_hidden_view_gives_back_its_caches_and_draws_again_when_shown() {
-    let _turn = turn();
+    let _turn = gpu_turn();
     let (e, mut h) = scene();
     let store = ImageStore::of(&e);
     h.run();
@@ -174,7 +152,7 @@ fn a_hidden_view_gives_back_its_caches_and_draws_again_when_shown() {
 
 #[test]
 fn moderate_pressure_keeps_what_is_on_screen() {
-    let _turn = turn();
+    let _turn = gpu_turn();
     let (_e, mut h) = scene();
     h.run();
     let uploads = h.state().view.backend().texture_uploads();

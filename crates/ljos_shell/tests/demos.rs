@@ -8,9 +8,10 @@
 //! Without wgpu the tests skip the pixels and say so.
 
 use std::cell::Cell;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use egui::{Event, Modifiers, PointerButton, Pos2, Vec2};
 use egui_kittest::Harness;
@@ -30,6 +31,29 @@ const SIZE: Vec2 = Vec2::new(640.0, 480.0);
 /// Both demos anchor a 160×56 button 24 px from the bottom-right corner.
 const BUTTON_CENTRE: Pos2 = Pos2::new(SIZE.x - 24.0 - 80.0, SIZE.y - 24.0 - 28.0);
 
+/// The calling test's turn on the GPU, held until it ends. Two threads that
+/// start the Vulkan loader together can crash it (with the NVIDIA driver
+/// in `vkEnumerateInstanceExtensionProperties`), and two devices alive at
+/// once crash lavapipe: `cargo test` runs this binary's tests on threads of
+/// one process, as the scheduled `qt-types` job does, so a turn only around
+/// making the renderer is not enough.
+///
+/// Taken first in a test, so it is let go of last, after the harness and
+/// its device.
+fn gpu_turn() -> MutexGuard<'static, ()> {
+    static TURN: Mutex<()> = Mutex::new(());
+    // A test that failed holding its turn has dropped its device all the
+    // same; the next one may go.
+    let turn = TURN.lock().unwrap_or_else(PoisonError::into_inner);
+    // A crash inside the driver prints nothing of its own, and the harness
+    // holds back what a test prints until it ends: the last such line
+    // names the test a crash was in.
+    let thread = std::thread::current();
+    let test = thread.name().unwrap_or("a test");
+    let _ = writeln!(std::io::stderr(), "demos: {test} takes the device");
+    turn
+}
+
 /// What draws the pictures: a renderer that samples textures as a window
 /// does. kittest's default filters them in its shader, for pictures that
 /// are the same on every GPU, and that filter is always linear and always
@@ -41,12 +65,8 @@ const BUTTON_CENTRE: Pos2 = Pos2::new(SIZE.x - 24.0 - 80.0, SIZE.y - 24.0 - 28.0
 /// Without a GPU adapter the pictures are skipped: a renderer that says
 /// it cannot draw.
 ///
-/// Renderers are made one test at a time: two threads that start the
-/// Vulkan loader together can crash it (with the NVIDIA driver one calls
-/// into the driver before the other has finished loading it).
+/// Made in the calling test's [`gpu_turn`].
 fn sampling<S>(builder: egui_kittest::HarnessBuilder<S>) -> egui_kittest::HarnessBuilder<S> {
-    static ONE_AT_A_TIME: Mutex<()> = Mutex::new(());
-    let _one = ONE_AT_A_TIME.lock().unwrap_or_else(PoisonError::into_inner);
     let options = egui_wgpu::RendererOptions {
         predictable_texture_filtering: false,
         ..egui_wgpu::RendererOptions::PREDICTABLE
@@ -141,6 +161,7 @@ fn is_red(px: [u8; 4]) -> bool {
 
 #[test]
 fn demo_renders_and_its_button_clicks() {
+    let _turn = gpu_turn();
     let button = Rc::new(Cell::new(None));
     let slot = Rc::clone(&button);
     let mut h = harness(move |s| {
@@ -177,6 +198,7 @@ fn demo_renders_and_its_button_clicks() {
 
 #[test]
 fn demo_qml_renders_and_its_button_clicks() {
+    let _turn = gpu_turn();
     let source = demo_qml::compile(&demo_qml::default_dir()).unwrap();
     let mut h = harness(move |s| {
         let e = s.engine();
@@ -239,6 +261,7 @@ fn centre(e: &ljos_engine::Engine, item: ObjectId) -> Pos2 {
 
 #[test]
 fn demo_qml_opens_its_popups() {
+    let _turn = gpu_turn();
     let source = demo_qml::compile(&demo_qml::default_dir()).unwrap();
     let mut h = harness(move |s| {
         let e = s.engine();
@@ -308,6 +331,7 @@ fn two_halves() -> Vec<u8> {
 
 #[test]
 fn a_tiled_image_is_tiled_in_the_picture_too() {
+    let _turn = gpu_turn();
     use ljos_quick::{Image, ImageStore, add_data};
 
     let mut h = harness(move |s| {
