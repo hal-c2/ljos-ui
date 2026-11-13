@@ -180,3 +180,24 @@ Feature: An editor reads Ljós through `ljos lsp`
       """
       2:29: error: `wide` is a number; this gives it a string [ts-assign-type]
       """
+
+  Scenario: Closing a module unsaved checks again the open files that import it
+    Given the file "width.lts":
+      """ts
+      export const gap: number = 4
+      """
+    And the file "line.ts":
+      """ts
+      import { gap } from "./width.lts"
+      export const wide: number = gap
+      """
+    And the file "tsconfig.json":
+      """json
+      { "extends": "./.ljos/tsconfig.base.json" }
+      """
+    And the editor has "width.lts" open, changed to:
+      """ts
+      export const gap: string = "4"
+      """
+    When the language server opens "line.ts", then "width.lts" is closed
+    Then the language server publishes nothing for "line.ts"

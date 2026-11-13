@@ -249,12 +249,14 @@ impl<W: Write> Server<W> {
                 if let Some(uri) = params["textDocument"]["uri"].as_str() {
                     self.open.remove(uri);
                     self.stale.retain(|stale| stale != uri);
-                    // Its file is read as it is on disk again.
+                    // Its file is read as it is on disk again, so an open
+                    // file that imports it is checked against that.
                     self.project = None;
                     self.notify(
                         "textDocument/publishDiagnostics",
                         json!({"uri": uri, "diagnostics": []}),
                     )?;
+                    self.all_stale();
                 }
             }
             "textDocument/codeAction" => {
