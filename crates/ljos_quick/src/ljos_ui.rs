@@ -16,6 +16,7 @@ use std::sync::OnceLock;
 
 use ljos_engine::{Engine, MetaBuilder, MetaObject, MetaRef, QmlType, Version};
 
+use crate::canvas::Canvas;
 use crate::font_enums::FontEnums;
 use crate::handlers::PointerDevice;
 use crate::shapes::{
@@ -23,11 +24,12 @@ use crate::shapes::{
     PathCurve, PathLine, PathMove, PathMultiline, PathPercent, PathPolyline, PathQuad,
     PathRectangle, PathSvg, RadialGradient, Shape, ShapeGradient, ShapePath,
 };
+use crate::transform::{Rotation, Scale, Translate};
 use crate::{
     Accessible, Animation, Behavior, ColorAnimation, DoubleValidator, Drag, DragHandler, DropArea,
-    Easing, Flickable, FontMetrics, Gradient, GradientStop, HoverHandler, Image, IntValidator,
-    Item, ListView, Loader, MouseArea, NumberAnimation, ParallelAnimation, PauseAnimation,
-    PointHandler, PropertyAction, PropertyAnimation, PropertyChanges, Rectangle,
+    Easing, Flickable, FontMetrics, Gradient, GradientStop, GridView, HoverHandler, Image,
+    IntValidator, Item, ListView, Loader, MouseArea, NumberAnimation, ParallelAnimation, PathView,
+    PauseAnimation, PointHandler, PropertyAction, PropertyAnimation, PropertyChanges, Rectangle,
     RegularExpressionValidator, Repeater, RotationAnimation, ScriptAction, SequentialAnimation,
     SmoothedAnimation, SpringAnimation, State, TapHandler, Text, TextEdit, TextInput, TextMetrics,
     Transition, WheelHandler, focus, keys,
@@ -101,6 +103,20 @@ fn list_view() -> &'static MetaObject {
         MetaBuilder::new("ListView")
             .module(MODULE)
             .face(ListView::static_meta())
+            .face_over(MetaRef::Static(item_view()))
+            .rename("add", "enter")
+            .rename("remove", "exit")
+            .build()
+    })
+}
+
+/// `GridView`, over [`item_view`], as [`list_view`] is.
+fn grid_view() -> &'static MetaObject {
+    static META: OnceLock<MetaObject> = OnceLock::new();
+    META.get_or_init(|| {
+        MetaBuilder::new("GridView")
+            .module(MODULE)
+            .face(GridView::static_meta())
             .face_over(MetaRef::Static(item_view()))
             .rename("add", "enter")
             .rename("remove", "exit")
@@ -192,8 +208,8 @@ fn drag_source() -> &'static MetaObject {
 
 pub(crate) fn register(engine: &Engine) {
     // The types it keeps: what a file names by them is what `QtQuick` has.
-    // What arranges children is `Ljos.Layout`'s (ljos_layout.rs). The views
-    // are Qt's, with what they attach to a delegate (`ListView.isCurrentItem`).
+    // What arranges children is `Ljos.Layout`'s (ljos_layout.rs). A view
+    // attaches to a delegate what Qt's does (`ListView.isCurrentItem`).
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Item, State, PropertyChanges, FontEnums, Repeater, PointerDevice, DropArea,
     ]));
@@ -210,12 +226,15 @@ pub(crate) fn register(engine: &Engine) {
     // What says the one thing it says in Qt Quick, under the same name
     // (docs/DIALECT.md §4.14, "none" in its Lowering column). `Window` is
     // attached only here; `ljos_controls` gives the one that is a root,
-    // and `Screen` with it.
+    // and `Screen` with it. `KeyNavigation` is kept as it is (§4.7), and
+    // so are a `Canvas` and an item's transforms; `PathView` is a view
+    // as Qt's are, with what it attaches to a delegate.
     engine.register_module(ljos_engine::module!("Ljos.Ui" 1.0 => [
         Image, Flickable, focus::Window,
         TextInput, TextEdit, IntValidator, DoubleValidator, RegularExpressionValidator,
         TextMetrics, FontMetrics,
         keys::Keys, keys::KeyEventObject, keys::Shortcut, Accessible,
+        keys::KeyNavigation, Canvas, PathView, Rotation, Scale, Translate,
     ]));
     // Qt's animations, as they are (docs/DIALECT.md §4.9, M1): a `Behavior`,
     // a `Transition` and what they run. An animation's `property` names a
@@ -236,6 +255,7 @@ pub(crate) fn register(engine: &Engine) {
         text,
         pointer_area,
         list_view,
+        grid_view,
         tap,
         hover,
         loader,
@@ -495,6 +515,38 @@ mod tests {
         }
         // What moves a change Ljos.Ui does not have yet is not its own.
         assert!(engine.lookup_type(MODULE, "AnchorAnimation").is_none());
+    }
+
+    #[test]
+    fn grid_view_calls_its_passages_enter_and_exit() {
+        let engine = engine();
+        let face = engine.lookup_type(MODULE, "GridView").expect("registered");
+        let native = GridView::static_meta();
+        assert!(face.inherits(native));
+        assert_eq!(face.property_index("enter"), native.property_index("add"));
+        assert_eq!(face.property_index("exit"), native.property_index("remove"));
+        assert_eq!(face.property_index("add"), None);
+        assert_eq!(
+            face.property_index("cellWidth"),
+            native.property_index("cellWidth")
+        );
+    }
+
+    #[test]
+    fn what_ljos_ui_keeps_of_qt_quick_is_qt_quick_s() {
+        let engine = engine();
+        for (name, native) in [
+            ("PathView", PathView::static_meta()),
+            ("Canvas", Canvas::static_meta()),
+            ("KeyNavigation", keys::KeyNavigation::static_meta()),
+            ("Rotation", Rotation::static_meta()),
+            ("Scale", Scale::static_meta()),
+            ("Translate", Translate::static_meta()),
+        ] {
+            let ours = engine.lookup_type(MODULE, name).expect(name);
+            let qt = engine.lookup_type("QtQuick", name).expect(name);
+            assert!(ours.inherits(native) && qt.inherits(native), "{name}");
+        }
     }
 
     #[test]

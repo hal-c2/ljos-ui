@@ -170,8 +170,8 @@ fn a_type_outside_the_slice_keeps_the_file_whatever_it_is_on() {
 fn what_the_pass_cannot_type_keeps_the_file() {
     assert!(kept_for("import QtQuick\nItem { width: parent.color.r }\n").contains("`.color`"));
     assert!(
-        kept_for("import QtQuick\nItem { PathView { } }\n")
-            .contains("`PathView` is not in Ljos.Ui")
+        kept_for("import QtQuick\nItem { FocusScope { } }\n")
+            .contains("`FocusScope` is not in Ljos.Ui")
     );
     assert!(
         kept_for("import QtQuick\nItem { MyThing { color: \"red\" } }\n")
@@ -244,9 +244,9 @@ fn a_file_is_kept_for_its_imports() {
 #[test]
 fn a_file_is_kept_for_a_type_its_module_lacks() {
     assert_eq!(
-        cause_of("import QtQuick\nItem { PathView { } }\n"),
+        cause_of("import QtQuick\nItem { FocusScope { } }\n"),
         Cause::NotInModule {
-            name: "PathView".into(),
+            name: "FocusScope".into(),
             module: MODULE
         }
     );
@@ -315,7 +315,7 @@ fn a_file_of_a_kept_group_says_which_file_keeps_it() {
         ),
         (
             "app/Main".to_string(),
-            alone("import QtQuick\nPathView { Button { color: \"blue\" } }\n"),
+            alone("import QtQuick\nFocusScope { Button { color: \"blue\" } }\n"),
         ),
     ]);
     let outcomes = group(&files);
@@ -327,7 +327,7 @@ fn a_file_of_a_kept_group_says_which_file_keeps_it() {
         Cause::Group {
             with: "Main".into(),
             cause: Box::new(Cause::NotInModule {
-                name: "PathView".into(),
+                name: "FocusScope".into(),
                 module: MODULE
             })
         }

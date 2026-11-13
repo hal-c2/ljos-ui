@@ -487,9 +487,9 @@ fn a_grid_layout_of_an_import_after_qt_is_the_imports_in_a_script_too() {
 fn a_grid_layout_of_an_import_built_on_what_is_not_lowered_keeps_the_file() {
     let source = "import QtQuick\nimport QtQuick.Layouts\nimport \"parts\"\n\
                   Item { property var f: GridLayout.TopToBottom }\n";
-    match lower(source, &OwnGrid("PathView")) {
+    match lower(source, &OwnGrid("FocusScope")) {
         Outcome::Kept(kept) => {
-            assert!(kept.to_string().contains("PathView"), "{}", kept);
+            assert!(kept.to_string().contains("FocusScope"), "{}", kept);
         }
         other => panic!("not kept: {other:?}"),
     }

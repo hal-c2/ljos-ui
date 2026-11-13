@@ -42,8 +42,8 @@ fn files_that_name_one_another_are_lowered_together() {
         ("app/Button".to_string(), alone(button)),
         (
             "app/Main".to_string(),
-            // Kept: `PathView` is not in Ljos.Ui.
-            alone("import QtQuick\nPathView { Button { color: \"blue\" } }\n"),
+            // Kept: `FocusScope` is not in Ljos.Ui.
+            alone("import QtQuick\nFocusScope { Button { color: \"blue\" } }\n"),
         ),
         ("other/Lone".to_string(), alone(button)),
     ]);
@@ -63,7 +63,7 @@ fn files_that_name_one_another_are_lowered_together() {
 #[test]
 fn a_file_reached_by_address_or_directory_is_of_the_group() {
     let lowers = "import QtQuick\nRectangle { color: \"red\" }\n";
-    let kept = "import QtQuick\nPathView { }\n";
+    let kept = "import QtQuick\nFocusScope { }\n";
     for (main, other) in [
         (
             "import QtQuick\nLoader { source: \"../parts/Part.qml\" }\n",
@@ -284,7 +284,7 @@ fn the_files_a_module_import_brings_are_of_the_group() {
         ("app/Main".to_string(), importer),
         (
             "src/qml/Dial".to_string(),
-            alone("import QtQuick\nPathView { }\n"),
+            alone("import QtQuick\nFocusScope { }\n"),
         ),
     ]);
     let outcomes = group(&files);
