@@ -192,19 +192,29 @@ impl LtsRename {
     /// Renames the module, then writes its importers in the order of their
     /// keys. When one cannot be written, those written get their text back
     /// and the module its name, so a failure leaves the files as they were.
+    /// Each importer's new text is written beside it and put in its place
+    /// only when whole, so one that cannot be written keeps its text.
     ///
     /// # Errors
     /// Each file that could not be renamed or written, with why; the first
     /// is what failed, the rest what could not be put back.
     pub fn apply(&self) -> Result<(), Vec<(PathBuf, std::io::Error)>> {
+        self.apply_with(|path, text| std::fs::write(path, text))
+    }
+
+    /// [`apply`](Self::apply), with the bytes put on disk by `write`, so a
+    /// test can have a write fail part way, as on a full disk.
+    fn apply_with(
+        &self,
+        write: impl Fn(&Path, &str) -> std::io::Result<()>,
+    ) -> Result<(), Vec<(PathBuf, std::io::Error)>> {
         std::fs::rename(&self.module, &self.target).map_err(|e| vec![(self.module.clone(), e)])?;
         for (at, importer) in self.importers.iter().enumerate() {
-            if let Err(e) = std::fs::write(&importer.path, &importer.renamed) {
+            if let Err(e) = replace(&importer.path, &importer.renamed, &write) {
                 let mut failed = vec![(self.left_at(importer).to_owned(), e)];
-                // The one that failed too: a write empties the file before
-                // it writes, so one cut off part way holds neither text.
-                for importer in &self.importers[..=at] {
-                    if let Err(e) = std::fs::write(&importer.path, &importer.text) {
+                // The one that failed was not touched.
+                for importer in &self.importers[..at] {
+                    if let Err(e) = replace(&importer.path, &importer.text, &write) {
                         failed.push((self.left_at(importer).to_owned(), e));
                     }
                 }
@@ -216,6 +226,38 @@ impl LtsRename {
         }
         Ok(())
     }
+}
+
+/// Puts `text` in the file at `path` by writing it to a new file beside it,
+/// with its permissions, and renaming that over it: the file holds its old
+/// text or the new, never part of one, even when the disk fills part way.
+///
+/// DECISION: the file is replaced, not written in place, so a hard link
+/// to it keeps the old text; a file that is not writable is refused, as a
+/// write in place would refuse it, rather than replaced.
+fn replace(
+    path: &Path,
+    text: &str,
+    write: impl Fn(&Path, &str) -> std::io::Result<()>,
+) -> std::io::Result<()> {
+    let permissions = std::fs::metadata(path)?.permissions();
+    if permissions.readonly() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "the file is read-only",
+        ));
+    }
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let staged = path.with_file_name(format!(".{name}.{}.ljos-rename", std::process::id()));
+    let done = write(&staged, text)
+        .and_then(|()| std::fs::File::open(&staged)?.sync_all())
+        .and_then(|()| std::fs::set_permissions(&staged, permissions))
+        .and_then(|()| std::fs::rename(&staged, path));
+    if done.is_err() {
+        // A staged file left behind would be found by the next walk.
+        let _ = std::fs::remove_file(&staged);
+    }
+    done
 }
 
 /// A file that may import a module: a QML file, a script, a module or a
@@ -465,7 +507,9 @@ mod tests {
             renamed: String::new(),
         });
         let failed = rename.apply().unwrap_err();
-        assert_eq!(failed.len(), 2, "{failed:?}");
+        // Only what failed: the module itself was put back.
+        assert_eq!(failed.len(), 1, "{failed:?}");
+        assert_eq!(failed[0].0, project.path().join("z/gone.ts"));
         assert_eq!(std::fs::read_to_string(&module).unwrap(), text);
         assert!(!project.path().join("size.lts").exists());
     }
@@ -488,6 +532,45 @@ mod tests {
         };
         assert_eq!(path, project.path().join("Pad.qml"));
         assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    /// A write that fails part way, as on a full disk, leaves the file it
+    /// was replacing as it was, even when putting it back fails too: the
+    /// new text is written beside it and put in its place only when whole.
+    #[test]
+    fn a_write_that_fails_part_way_leaves_the_importer_as_it_was() {
+        let project = tempfile::tempdir().unwrap();
+        let module = project.path().join("size.ts");
+        let text = "export const k: number = match (1) { default: 2 }\n";
+        std::fs::write(&module, text).unwrap();
+        let qml = "import \"size.ts\" as Size\nItem {}\n";
+        for name in ["A.qml", "B.qml"] {
+            std::fs::write(project.path().join(name), qml).unwrap();
+        }
+        let Ok(LtsPlan::Rename(rename)) = plan_lts(project.path(), &module, text) else {
+            panic!("a rename");
+        };
+        // Every write of B's text empties what it writes to, then fails.
+        let full = |path: &Path, text: &str| {
+            if path.to_string_lossy().contains("B.qml") {
+                std::fs::File::create(path)?;
+                return Err(std::io::Error::from(std::io::ErrorKind::StorageFull));
+            }
+            std::fs::write(path, text)
+        };
+        let failed = rename.apply_with(full).unwrap_err();
+        assert_eq!(failed[0].0, project.path().join("B.qml"));
+        for name in ["A.qml", "B.qml"] {
+            let now = std::fs::read_to_string(project.path().join(name)).unwrap();
+            assert_eq!(now, qml, "{name}");
+        }
+        assert_eq!(std::fs::read_to_string(&module).unwrap(), text);
+        let mut left: Vec<_> = std::fs::read_dir(project.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["A.qml", "B.qml", "size.ts"]);
     }
 
     /// A directory that cannot be listed is named, not the directory the
