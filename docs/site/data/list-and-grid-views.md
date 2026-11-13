@@ -52,7 +52,7 @@ The header sits above the rows, a 15-pixel section label appears before `"fruit"
 A `GridView` fills cells into lines of `cellWidth` by `cellHeight`, placing as many cells on a line as fit before starting the next line. When `flow` is `GridView.FlowLeftToRight`, lines fill horizontally; when `flow` is `GridView.FlowTopToBottom`, it fills columns from top to bottom and scrolls sideways. With right-to-left or bottom-to-top layout, the first cell starts at that edge, and the `header` stays above the first line.
 
 ```qml
-import QtQuick
+import Ljos.Ui
 
 GridView {
     width: 250
@@ -61,12 +61,16 @@ GridView {
     cellHeight: 60
     focus: true
     model: 100
-    highlight: Rectangle { color: "#ffcc00" }
+    highlight: Rectangle {
+        fill: "#ffcc00"
+    }
     delegate: Rectangle {
         width: 70
         height: 50
-        color: GridView.isCurrentItem ? "#ffcc00" : "#dddddd"
-        Text { text: index }
+        fill: GridView.isCurrentItem ? "#ffcc00" : "#dddddd"
+        Text {
+            text: index
+        }
     }
 }
 ```

@@ -22,12 +22,9 @@ controls/styles.md 2 gap:imports
 controls/styles.md 3 gap:imports
 controls/value-inputs.md 1 gap:controls
 data/keyboard-and-focus.md 1 gap:ui-types
-data/keyboard-and-focus.md 2 gap:ui-types
 data/keyboard-and-focus.md 4 gap:ui-types
-data/list-and-grid-views.md 2 gap:ui-types
 data/models.md 6 gap:imports
 data/models.md 8 gap:imports
-data/other-views.md 1 gap:ui-types
 data/other-views.md 2 gap:imports
 data/other-views.md 3 gap:imports
 data/pointer-input.md 5 gap:ui-types
@@ -58,10 +55,7 @@ rust/platforms.md 1 gap:imports
 rust/singletons-and-windows.md 1 gap:host-module
 rust/testing-rust.md 1 gap:imports
 start/testing.md 1 gap:imports
-ui/items.md 3 gap:ui-types
 ui/layouts.md 3 gap:layout
 ui/positioning.md 4 gap:ui-types
 ui/shapes-and-effects.md 2 gap:imports
-ui/shapes-and-effects.md 3 gap:ui-types
 ui/shapes-and-effects.md 4 gap:imports
-ui/text.md 3 gap:ui-types

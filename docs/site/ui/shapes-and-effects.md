@@ -82,13 +82,15 @@ Here the `RectangularShadow` sits behind the gradient-filled `Rectangle`, shifte
 
 ## Canvas and VectorImage
 
-`Canvas` provides a 2D drawing surface driven from script. It paints once automatically when first shown, passing the dirty rectangle (the whole canvas on first paint) to `onPaint`, where you call `getContext("2d")`. After the initial paint, an idle `Canvas` does no work until you call `requestPaint()` (or `markDirty`), and whatever was drawn stays on the canvas—including when the canvas grows—until you draw over it or clear it.
+`Canvas` provides a 2D drawing surface driven from script. It paints once automatically when first shown, passing the dirty rectangle (the whole canvas on first paint) to `onPaint`, where you call `getContext("2d")`. After the initial paint, an idle `Canvas` does no work until you call `requestPaint()` (or `markDirty`), and whatever was drawn stays on the canvas—including when the canvas grows—until you draw over it or clear it. What `getContext` gives has no type yet, so a file that paints on a `Canvas` keeps its scripts JavaScript with `pragma Scripts: JavaScript`.
 
 ```qml
-import QtQuick
+pragma Scripts: JavaScript
+import Ljos.Ui
 
 Canvas {
-    width: 120; height: 80
+    width: 120
+    height: 80
 
     onPaint: {
         var ctx = getContext("2d")

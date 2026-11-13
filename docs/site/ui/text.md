@@ -90,23 +90,46 @@ Watch the difference between text formats when fitting: `StyledText` shrinks jus
 
 When you do not set a font, `Text` uses the application font: family `Sans Serif`, `size: 12` and `weight: 400` (`Font.Normal`). You can configure `font.family`, `font.size` (in logical pixels), `font.weight` (`Font.Thin`, `ExtraLight`, `Light`, `Normal`, `Medium`, `DemiBold`, `Bold`, `ExtraBold`, `Black`), `font.italic`, `font.underline`, `font.strikeout`, `font.letterSpacing`, `font.wordSpacing`, `font.capitalization` and `font.hintingPreference`, as well as `style` (`Text.Normal`, `Outline`, `Raised`, `Sunken`), `styleColor` and `renderType` (`Text.QtRendering`, `NativeRendering`, `CurveRendering`).
 
-- A size in points has no Ljós name until `Screen` is in `Ljos.Ui`, so the example below is still written as `ljos migrate` leaves it, with `font.pixelSize`, `font.bold` and `font.pointSize` (see [Bringing existing QML](../language/porting-from-qt.md)). There, setting both `pixelSize` and `pointSize` lets `pixelSize` win, and a `pointSize` is rounded to the nearest whole pixel size (for example, 10 points is 13 pixels, 11 points is 15 pixels and 12 points is 16 pixels).
+- A size in points is written `font.size: Screen.points(n)`: `Screen.points` gives the pixels for `n` points on the item's screen, at the screen's logical dots per inch over 72, so 12 points are 16 pixels on a screen of 96 to the inch. `font.size` is a whole number of pixels, so a size that falls between two is rounded.
 - Bold text (`font.weight: Font.Bold`, `700`) and positive `letterSpacing` or `wordSpacing` widen the text, whereas `underline` and `strikeout` do not change its size.
 - If a font family is not installed on the machine, the system's font matching substitutes an existing family and measures with that face. Generic family names such as `serif` or `monospace` resolve to the face the system names for them.
 - `FontLoader` loads a font file from `source`, reporting `status` as `FontLoader.Null` (0), `Ready` (1), `Loading` (2) or `Error` (3). Once ready, `name` holds the family name that `Text` can reference. A missing or invalid font file enters `Error` and logs `Cannot load font`.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Column {
     spacing: 6
 
-    Text { text: "Plain text"; font.pixelSize: 16 }
-    Text { text: "Bold text"; font.pixelSize: 16; font.bold: true }
-    Text { text: "Heavy text"; font.pixelSize: 16; font.weight: Font.Black }
-    Text { text: "Spaced out"; font.pixelSize: 16; font.letterSpacing: 2 }
-    Text { text: "Word spacing"; font.pixelSize: 16; font.wordSpacing: 5 }
-    Text { text: "Points"; font.pointSize: 12 }
+    Text {
+        text: "Plain text"
+        font.size: 16
+    }
+    Text {
+        text: "Bold text"
+        font.size: 16
+        font.weight: Font.Bold
+    }
+    Text {
+        text: "Heavy text"
+        font.size: 16
+        font.weight: Font.Black
+    }
+    Text {
+        text: "Spaced out"
+        font.size: 16
+        font.letterSpacing: 2
+    }
+    Text {
+        text: "Word spacing"
+        font.size: 16
+        font.wordSpacing: 5
+    }
+    Text {
+        text: "Points"
+        font.size: Screen.points(12)
+    }
 }
 ```
 

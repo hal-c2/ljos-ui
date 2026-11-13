@@ -45,28 +45,32 @@ Watch out for how visibility, enabling, and window activation affect focus:
 The attached `KeyNavigation` properties (`KeyNavigation.right`, `left`, `up`, `down`, `tab`, and `backtab`) move focus to the target item when the corresponding arrow key, `Tab`, or `Shift+Tab` is pressed.
 
 ```qml
-import QtQuick
+import Ljos.Ui
+import Ljos.Layout
 
 Row {
     Rectangle {
         id: a
-        width: 50; height: 50
-        color: "#fc9"
+        width: 50
+        height: 50
+        fill: "#fc9"
         focus: true
         KeyNavigation.right: b
         KeyNavigation.tab: c
     }
     Rectangle {
         id: b
-        width: 50; height: 50
-        color: "#cde"
+        width: 50
+        height: 50
+        fill: "#cde"
         KeyNavigation.right: c
         KeyNavigation.backtab: a
     }
     Rectangle {
         id: c
-        width: 50; height: 50
-        color: "#dfd"
+        width: 50
+        height: 50
+        fill: "#dfd"
     }
 }
 ```
