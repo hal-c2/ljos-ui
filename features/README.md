@@ -259,6 +259,7 @@ setter tries to write `depth` and logs the error it gets.
 | `When the tests matching "Case::test_x" are run` | only the named test function (`Case::function`), or one of its data rows (`Case::function:tag`) |
 | `When the files are checked` | read every file given with `Given the file` as one project with `ljos check`; nothing is loaded or run (`@ljos-only`: Qt has no program of the kind) |
 | `When the files are migrated and checked` | `ljos migrate --write` over the files given with `Given the file`, then `ljos check` of what it wrote; the report is what each said, in order (`@ljos-only`) |
+| `When the files are checked as a tree of projects` | the same with `--tree`: each directory two below the files is a project of its own, as in a tree of examples (`@ljos-only`) |
 | `Then the migrated file "X" is:` + doc string | the whole text of a file as `When the files are migrated and checked` left it, by its path among the files given, its indentation too: give the files it starts from `without its indentation` (`@ljos-only`) |
 | `When the files are checked with statistics` | the same with `--stats`: the tiers of the expressions, how many would be compiled ahead of time, and where each of the rest is and why it runs dynamically (`@ljos-only`) |
 | `When the files are checked with TypeScript` | the same with `--tsc`: each file in Ljós's API is given to TypeScript as well, against the declarations `ljos types --dts` writes, and TypeScript's errors follow the checker's at their lines of the QML file (`@ljos-only`) |

@@ -2787,8 +2787,12 @@ read it:
     the module is saved, so an editor of the importer sees the change at
     once. A declaration is deleted only when its module's file is no
     longer on disk, never because a check left the module out, so a
-    check of some files never deletes another's. `ljos types` writes the
-    same files.
+    check of some files never deletes another's; once a project's
+    modules are all gone, the next check deletes their declarations.
+    Each project of `ljos check --tree` has its own `.ljos/`, under its
+    own directory. `ljos types` writes the same files, and `ljos migrate
+    --write` writes them with the `tsconfig.json` it fixes, so the base
+    it extends is there.
   - **`--tsc`** gives TypeScript the same declarations, built in memory
     from the text it checks, so it is never stale, and the same
     `rootDirs`. It works in a directory of its own, never the project's:
@@ -2892,6 +2896,7 @@ print. Those the checker builds are marked ✓.
 | ✓ `module-clash` | No `name.ts` and `name.lts` in the same directory: one module name, one file (§4.21). |
 | `lts-export-type` | An `.lts` module's exports carry the types `isolatedDeclarations` asks for, so its declaration is TypeScript's own emit (§4.21). |
 | `tsconfig-lts` | Warning: a project with an `.lts` module has no `tsconfig.json`, or one that does not extend `.ljos/tsconfig.base.json`, or one that sets `rootDirs` without its two entries; `ljos migrate` applies the fix (§4.21). |
+| `lts-generated` | The generated directory, `.ljos/`, cannot be written: said with the cause, after what the check found, which is still reported; or an `.lts` module is outside the project root it is checked with, so it has no place there and nothing is written (§4.21). |
 | ✓ `ts-readonly` | Records and arrays are readonly unless declared mutable. Writing a QML property or a model is allowed (Q6, §14). |
 | ✓ `ts-index-undefined` | Indexing gives `T \| undefined` (`noUncheckedIndexedAccess`). |
 | ✓ `ts-optional-exact` | An optional member is not set to `undefined` explicitly (`exactOptionalPropertyTypes`). |

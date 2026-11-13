@@ -129,6 +129,17 @@ fn files_checked_project(w: &mut LjosWorld, dir: String) -> StepResult {
     })
 }
 
+// `ljos check --tree`: each directory two below the files is a project
+// of its own, as a tree of examples is.
+#[when("the files are checked as a tree of projects")]
+fn files_checked_tree(w: &mut LjosWorld) -> StepResult {
+    w.run_tests(&TestRun {
+        check: true,
+        tree: true,
+        ..TestRun::default()
+    })
+}
+
 // `ljos types` on the files: the declarations of their `.lts` modules,
 // written as `ljos check` writes them; `twice`, what a second run writes.
 #[when(regex = r"^the declarations of the files are written( twice)?$")]

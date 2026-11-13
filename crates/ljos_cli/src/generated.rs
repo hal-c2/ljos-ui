@@ -19,7 +19,8 @@ pub struct Lts {
 
 /// The `.lts` modules below `dirs` (directories, or files whose directory
 /// is meant), and the root: `explicit`, else as [`lts::project_root`]
-/// finds it. None when there is no `.lts` module.
+/// finds it. None when there is no `.lts` module and no declaration of
+/// one: declarations whose modules are all gone are there to be removed.
 pub fn find(explicit: Option<&Path>, dirs: &[PathBuf]) -> anyhow::Result<Option<Lts>> {
     let mut found = Vec::new();
     for dir in dirs {
@@ -38,11 +39,11 @@ pub fn find(explicit: Option<&Path>, dirs: &[PathBuf]) -> anyhow::Result<Option<
         )
         .with_context(|| format!("cannot read {}", dir.display()))?;
     }
-    if found.is_empty() {
-        return Ok(None);
-    }
     let root = lts::project_root(explicit, dirs);
     let root = std::path::absolute(&root).unwrap_or(root);
+    if found.is_empty() && !root.join(lts::DIR).join(lts::TYPES).is_dir() {
+        return Ok(None);
+    }
     let mut modules: Vec<(PathBuf, Option<String>)> = found
         .into_iter()
         .map(|path| {
@@ -75,11 +76,18 @@ impl Lts {
     }
 
     /// Writes `.ljos/` under the root: the base, its `.gitignore`, and the
-    /// declaration of each module that has one.
+    /// declaration of each module that has one. Nothing is written when a
+    /// module is outside the root: it has no place there.
     pub fn write(&self) -> anyhow::Result<lts::Written> {
         let mut declarations = Vec::new();
         for (path, key) in &self.modules {
-            let Some(key) = key else { continue };
+            let Some(key) = key else {
+                anyhow::bail!(
+                    "{} is outside the project root {}, so it can have no declaration there",
+                    path.display(),
+                    self.root.display()
+                );
+            };
             let source = std::fs::read_to_string(path)
                 .with_context(|| format!("cannot read {}", path.display()))?;
             if let Some(text) = lts::declare(key, &source) {
@@ -90,26 +98,33 @@ impl Lts {
             .with_context(|| format!("cannot write {}", self.root.join(lts::DIR).display()))
     }
 
+    /// The directory written, `.ljos/` under the root.
+    pub fn generated_dir(&self) -> PathBuf {
+        self.root.join(lts::DIR)
+    }
+
     pub fn tsconfig(&self) -> PathBuf {
         self.root.join("tsconfig.json")
     }
 
     /// The module a warning names: the first.
-    fn first(&self) -> (&Path, String) {
-        let (path, key) = &self.modules[0];
+    fn first(&self) -> Option<(&Path, String)> {
+        let (path, key) = self.modules.first()?;
         let name = key.clone().unwrap_or_else(|| {
             path.file_name()
                 .map_or_else(String::new, |n| n.to_string_lossy().into_owned())
         });
-        (path, name)
+        Some((path, name))
     }
 
     /// What `ljos check` says of the root's `tsconfig.json` (`tsconfig-lts`),
-    /// each file named as `shown` names it; None when it extends the base.
+    /// each file named as `shown` names it; None when it extends the base,
+    /// when there is no module to import, or when it cannot be read (the
+    /// TypeScript that reads it says why).
     pub fn tsconfig_warning(&self, shown: impl Fn(&Path) -> String) -> Option<String> {
         let path = self.tsconfig();
-        let text = std::fs::read_to_string(&path).ok();
-        let (module, name) = self.first();
+        let (module, name) = self.first()?;
+        let text = read_if_there(&path).ok()?;
         let tsconfig = shown(&path);
         Some(match lts::tsconfig_state(text.as_deref()) {
             Tsconfig::Fine => return None,
@@ -141,7 +156,10 @@ impl Lts {
     /// does: what it did, one line each, or would do when `write` is false.
     pub fn fix_tsconfig(&self, write: bool) -> anyhow::Result<Vec<String>> {
         let path = self.tsconfig();
-        let text = std::fs::read_to_string(&path).ok();
+        // One that is there but cannot be read is not one that is missing:
+        // a new one written over it would lose what it has.
+        let text =
+            read_if_there(&path).with_context(|| format!("cannot read {}", path.display()))?;
         let Some(fix) = lts::fix_tsconfig(text.as_deref(), "tsconfig.json") else {
             return Ok(Vec::new());
         };
@@ -152,6 +170,15 @@ impl Lts {
         } else {
             Ok(fix.said.into_iter().map(|line| would(&line)).collect())
         }
+    }
+}
+
+/// The text of the file at `path`; None when there is none.
+fn read_if_there(path: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e),
     }
 }
 
@@ -192,4 +219,35 @@ fn line_column(text: &str, at: usize) -> (usize, usize) {
     let line = before.matches('\n').count() + 1;
     let start = before.rfind('\n').map_or(0, |i| i + 1);
     (line, before[start..].chars().count() + 1)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Lts;
+
+    /// A `tsconfig.json` that is there but cannot be read is not one that
+    /// is missing: `ljos migrate --write` says so, and writes nothing over it.
+    #[cfg(unix)]
+    #[test]
+    fn a_tsconfig_that_cannot_be_read_is_not_written_over() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let tsconfig = dir.path().join("tsconfig.json");
+        let text = "{ \"compilerOptions\": { \"strict\": true } }\n";
+        std::fs::write(&tsconfig, text).unwrap();
+        // Written to, not read: as a file of another user's can be.
+        std::fs::set_permissions(&tsconfig, std::fs::Permissions::from_mode(0o200)).unwrap();
+        if std::fs::read_to_string(&tsconfig).is_ok() {
+            // Whoever runs this reads any file: there is nothing to show.
+            return;
+        }
+        let lts = Lts {
+            root: dir.path().to_owned(),
+            modules: vec![(dir.path().join("width.lts"), Some("width.lts".to_owned()))],
+        };
+        let fixed = lts.fix_tsconfig(true);
+        std::fs::set_permissions(&tsconfig, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(fixed.is_err(), "{fixed:?}");
+        assert_eq!(std::fs::read_to_string(&tsconfig).unwrap(), text);
+    }
 }

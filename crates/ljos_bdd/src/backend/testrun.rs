@@ -61,6 +61,9 @@ pub struct TestRun {
     /// With `check`: `ljos types` instead of `ljos check`, as many times
     /// as this says, so a scenario sees what a second run writes.
     pub types: usize,
+    /// With `check`: `--tree`, each directory two below the files' a
+    /// project of its own.
+    pub tree: bool,
 }
 
 impl TestRun {
@@ -352,6 +355,7 @@ fn check_ljos(files: &[QmlFile], run: &TestRun) -> Result<TestReport> {
         .arg(run.types.to_string())
         .args(run.stats.then_some("--stats"))
         .args(run.tsc.then_some("--tsc"))
+        .args(run.tree.then_some("--tree"))
         .args(
             run.project
                 .iter()
