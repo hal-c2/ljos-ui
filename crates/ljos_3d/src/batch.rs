@@ -124,22 +124,23 @@ impl Reach {
     }
 }
 
-/// Which run each draw is in: [`groups`] puts together only draws of one
-/// key and one run. A group is drawn where its first draw is, so the draws
-/// it takes in come before those between them, and its rows come in their
-/// declaration order (`order`), which may not be the order they came in.
-/// Where two models that come in one order may meet ([`Reach::meets`]), the
-/// depth test shows the later where they are as deep: a draw that would be
-/// drawn before one it came after and may meet starts a run, as does a draw
-/// with no key, which is drawn alone and may be the one seen where it is.
-pub(crate) fn runs<K: Eq + Hash + Copy>(
+/// The first draw of the group each draw is drawn in: [`groups`] puts
+/// together only draws of one key and one first. A group is drawn where its
+/// first draw is, so the draws it takes in come before those between them,
+/// and its rows come in their declaration order (`order`), which may not be
+/// the order they came in. Where two models that come in one order may meet
+/// ([`Reach::meets`]), the depth test shows the later where they are as
+/// deep: a draw that would be drawn before one it came after and may meet
+/// starts a group of its own key, and the other groups go on. A draw with
+/// no key is drawn alone and may be the one seen where it is, so no group
+/// reaches across it.
+pub(crate) fn firsts<K: Eq + Hash + Copy>(
     keys: &[Option<K>],
     alike: impl Fn(usize, usize) -> bool,
     reach: &[Reach],
     order: &[u32],
-) -> Vec<u32> {
+) -> Vec<usize> {
     let n = keys.len();
-    let mut runs = Vec::with_capacity(n);
     // Cells about one model across, so a model is in a few and a cell
     // holds a few: the median keeps one large floor from setting it.
     let mut extents: Vec<f32> = (0..n)
@@ -153,18 +154,14 @@ pub(crate) fn runs<K: Eq + Hash + Copy>(
         let mid = extents.len() / 2;
         *extents.select_nth_unstable_by(mid, f32::total_cmp).1
     };
-    let mut run = 0u32;
     let mut index = Index::new(cell);
     let mut first_of: HashMap<K, usize> = HashMap::new();
-    // The first draw of the group each draw is in.
     let mut group = vec![0usize; n];
     for i in 0..n {
         let Some(key) = keys[i] else {
-            run += 1;
             index.clear();
             first_of.clear();
             group[i] = i;
-            runs.push(run);
             continue;
         };
         group[i] = i;
@@ -180,10 +177,10 @@ pub(crate) fn runs<K: Eq + Hash + Copy>(
                     };
                     ahead && reach[i].meets(&reach[j])
                 });
+                // Every pair it would turn round is one with a draw before
+                // it, all of which the index holds: one set apart leaves
+                // the others' groups whole.
                 if reordered {
-                    run += 1;
-                    index.clear();
-                    first_of.clear();
                     first_of.insert(key, i);
                 } else {
                     group[i] = f;
@@ -195,12 +192,11 @@ pub(crate) fn runs<K: Eq + Hash + Copy>(
             }
         }
         index.add(i, &reach[i]);
-        runs.push(run);
     }
-    runs
+    group
 }
 
-/// The draws of a run by the cells of space their boxes are in; a box in
+/// The draws since the last drawn alone by the cells of space their boxes are in; a box in
 /// more cells than a few is looked at for every draw.
 struct Index {
     cell: f32,
@@ -338,26 +334,42 @@ mod tests {
     }
 
     #[test]
-    fn a_run_ends_where_a_draw_would_go_before_one_it_meets() {
+    fn a_draw_that_would_go_before_one_it_meets_is_set_apart() {
         let keys = [Some('a'), Some('b'), Some('a')];
         // B and C as deep and side by side, overlapping on the screen;
         // A, alike C, nearer and to one side.
         let reach = [cube(-5.0, 2.0), cube(0.0, 0.0), cube(0.5, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 0, 1]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
         // Apart from B, C joins A.
         let reach = [cube(-5.0, 2.0), cube(0.0, 0.0), cube(5.0, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 0, 0]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 0]);
     }
 
     #[test]
-    fn a_run_ends_where_a_group_s_rows_would_turn_two_that_meet_round() {
+    fn a_draw_set_apart_leaves_the_other_groups_whole() {
+        // C is set apart from A as above; D, apart from all, still joins B.
+        let keys = [Some('a'), Some('b'), Some('a'), Some('b')];
+        let reach = [
+            cube(-5.0, 2.0),
+            cube(0.0, 0.0),
+            cube(0.5, 0.0),
+            cube(9.0, 0.0),
+        ];
+        assert_eq!(
+            firsts(&keys, |_, _| true, &reach, &[0, 1, 2, 3]),
+            [0, 1, 2, 1]
+        );
+    }
+
+    #[test]
+    fn a_draw_is_set_apart_where_a_group_s_rows_would_turn_two_that_meet_round() {
         // Alike, in the depth order 0, 1; declared 1, 0.
         let keys = [Some('a'), Some('a')];
         let reach = [cube(0.0, 0.0), cube(0.5, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[1, 0]), [0, 1]);
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1]), [0, 0]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[1, 0]), [0, 1]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1]), [0, 0]);
         let reach = [cube(0.0, 0.0), cube(5.0, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[1, 0]), [0, 0]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[1, 0]), [0, 0]);
     }
 
     #[test]
@@ -371,8 +383,8 @@ mod tests {
             cube(0.5, 0.0),
         ];
         assert_eq!(
-            runs(&keys, |_, _| true, &reach, &[0, 1, 2, 3]),
-            [0, 0, 0, 0]
+            firsts(&keys, |_, _| true, &reach, &[0, 1, 2, 3]),
+            [0, 1, 0, 1]
         );
     }
 
@@ -388,20 +400,20 @@ mod tests {
         );
         let keys = [Some('a'), Some('b'), Some('a')];
         let reach = [cube(-50.0, 0.0), floor, cube(50.0, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 0, 1]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
         // The floor's group is drawn first: the cubes stay after it.
         let keys = [Some('a'), Some('b'), Some('b')];
         let reach = [floor, cube(-50.0, 0.0), cube(-50.5, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 0, 0]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 1]);
         let keys = [Some('b'), Some('a'), Some('b')];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 0, 1]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
     }
 
     #[test]
-    fn a_draw_without_a_key_starts_a_run() {
+    fn no_group_reaches_across_a_draw_without_a_key() {
         let keys = [Some('a'), None, Some('a')];
         let reach = [cube(0.0, 0.0), cube(9.0, 0.0), cube(-9.0, 0.0)];
-        assert_eq!(runs(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 1]);
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
     }
 
     #[test]

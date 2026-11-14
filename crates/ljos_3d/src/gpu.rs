@@ -1261,11 +1261,11 @@ fn batched<'a>(
     };
     let reach: Vec<batch::Reach> = draws.iter().map(|d| d.reach).collect();
     let order: Vec<u32> = draws.iter().map(|d| d.order).collect();
-    let runs = batch::runs(&keys, alike, &reach, &order);
+    let firsts = batch::firsts(&keys, alike, &reach, &order);
     let keyed = keys
         .iter()
-        .zip(&runs)
-        .map(|(key, &run)| key.map(|key| (key, run)));
+        .zip(&firsts)
+        .map(|(key, &first)| key.map(|key| (key, first)));
     let mut groups = batch::groups(keyed, alike);
     if groups.len() == draws.len() {
         return draws;
@@ -1274,7 +1274,7 @@ fn batched<'a>(
     // scene's declaration order, which a camera that moves changes neither
     // within a batch nor between batches. The rows are then written again
     // only when a model moves or a batch gains or loses one. Two that may
-    // meet and came in the other order are not in one batch (`runs`).
+    // meet and came in the other order are not in one batch (`firsts`).
     let nearest: Vec<usize> = groups.iter().map(|g| g[0]).collect();
     for group in &mut groups {
         group.sort_by_key(|&i| draws[i].order);

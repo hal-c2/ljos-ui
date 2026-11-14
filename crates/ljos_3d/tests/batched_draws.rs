@@ -356,7 +356,8 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
     // Two batches meeting in one place: blue's batch is the nearer, red's
     // the farther, and red in blue's place is declared after it. Drawn
     // apart, red is drawn after blue there and shows; no batch reaches
-    // across the other there.
+    // across the other there. The far green, alike blue and meeting
+    // neither, still joins blue's batch: red set apart ends no other.
     let mut meeting = small(
         &[
             (blue.0, Vec3::new(-120.0, 0.0, 60.0), GREEN, blue.3),
@@ -383,7 +384,7 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
         "red, declared after blue in its place, shows: {r} red, {b} blue"
     );
     assert_within_a_level(&batched, &each, "two batches in one place");
-    assert_eq!(counts.draw_calls, 4, "{counts:?}");
+    assert_eq!(counts.draw_calls, 3, "{counts:?}");
 
     // Two that meet at one depth keep the order drawn apart has, though
     // their centres differ: green, nearer, is alike red; blue, of another
