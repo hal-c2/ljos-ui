@@ -9,6 +9,8 @@
 # a table of one cell that holds "a".
 # The HTML written back is shown with its zero margins left out, its
 # quotes as ' and its line feeds as ~.
+# What Return writes back is verified on Qt 6.12.0, which marks the new
+# empty paragraph where 6.11.2 did not (#298).
 
 @qt-parity @api-QtQuick.TextEdit.textFormat
 Feature: The paragraph after a table in a rich TextEdit
@@ -163,3 +165,5 @@ Feature: The paragraph after a table in a rich TextEdit
       Examples:
         | at | keys      | out |
         | 4  | Backspace | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p></td></tr></table>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
+        | 3  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p></td></tr></table>~<p style='-qt-paragraph-type:empty;'><br /></p>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |
+        | 4  | Return    | <table border='0' cellspacing='2' cellpadding='0'>~<tr>~<td>~<p>a</p></td></tr></table>~<p style='-qt-paragraph-type:empty; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><br /></p>~<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p> |

@@ -4,6 +4,8 @@
 #   https://doc.qt.io/qt-6/qml-qtquick-textedit.html#cursorSelection-prop
 #   https://doc.qt.io/qt-6/qml-qtquick-textselection.html
 # Verified on Qt 6.11.2 (qml6, offscreen; key input over its vnc platform).
+# What Return writes back is verified on Qt 6.12.0, which marks the new
+# empty paragraph where 6.11.2 did not (#298).
 
 @qt-parity
 Feature: Editing rich text in a TextEdit
@@ -113,6 +115,27 @@ Feature: Editing rich text in a TextEdit
       And the method "html" of "root" is called
       Then the property "out" of "root" is "<p>a<span style=' font-weight:700;'>bo</span></p>|<p><span style=' font-weight:700;'>ld</span>c</p>"
       And the property "lineCount" of "edit" is 2
+
+    Scenario Outline: Return <case> writes back both paragraphs with their formats
+      When the property "text" of "edit" is set to "<html>"
+      And the property "cursorPosition" of "edit" is set to <at>
+      And the user presses "Return"
+      And the method "html" of "root" is called
+      Then the property "out" of "root" is "<out>"
+
+      Examples:
+        | case                        | html                                            | at | out |
+        | at the start of a paragraph | <p>ab</p>                                       | 0  | <p style='-qt-paragraph-type:empty; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><br /></p>\|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>ab</p> |
+        | at the end of a paragraph   | <p>ab</p>                                       | 2  | <p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>ab</p>\|<p style='-qt-paragraph-type:empty; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><br /></p> |
+        | in a paragraph marked empty | <p style='-qt-paragraph-type:empty;'><br /></p> | 0  | <p style='-qt-paragraph-type:empty; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><br /></p>\|<p style='-qt-paragraph-type:empty; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><br /></p> |
+
+    Scenario: Return twice makes an empty paragraph between the halves
+      When the property "text" of "edit" is set to "<p>ab</p>"
+      And the property "cursorPosition" of "edit" is set to 1
+      And the user presses "Return"
+      And the user presses "Return"
+      And the method "html" of "root" is called
+      Then the property "out" of "root" is "<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>a</p>|<p style='-qt-paragraph-type:empty; margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'><br /></p>|<p style=' margin-top:12px; margin-bottom:12px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;'>b</p>"
 
     Scenario: Backspace at the start of a paragraph joins it to the one before
       When the property "cursorPosition" of "edit" is set to 3
