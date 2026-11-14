@@ -55,6 +55,8 @@ mod shadow;
 pub mod surface;
 #[cfg(feature = "gpu")]
 mod timing;
+#[cfg(feature = "gpu")]
+mod uniform_slots;
 
 pub use custom::{
     Adjustments, AmbientOcclusion, Blend, BufferFormat, CustomMaterial, DepthDraw, DepthOfField,

@@ -195,7 +195,7 @@ The bar is beating `qml6` running the same QML, on `mise run bench` (docs/BENCHM
 
 Inside Ljós the structure keeps it there:
 - An unchanged view does no scene work: a revision check and one textured triangle.
-- Meshes are uploaded once per primitive or geometry, and a draw uploads only uniforms. From M3, per-node uniforms stay in a retained buffer and only dirty nodes are written.
+- Meshes are uploaded once per primitive or geometry, and a draw uploads only uniforms. From M3, per-node uniforms stay in a retained buffer and only dirty nodes are written. Each model keeps its place in that buffer whatever order it is drawn in, so a camera that moves round still models writes only the frame's uniforms.
 - Pipelines are built once per material kind and target format, never per draw.
 - A view's target is its own size in device pixels. Nothing bigger is kept, and the target is released when the view goes.
 
