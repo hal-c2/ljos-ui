@@ -22,6 +22,7 @@ use std::{collections::BTreeMap, fmt::Write};
 use crate::model::{Class, ImportKind, Modules, Semantics};
 
 pub fn write(modules: &Modules, (major, minor): (u32, u32)) -> String {
+    // qt_types::qt_version reads the version back from this first line.
     let mut out = format!(
         "# The QML types of Qt {major}.{minor}, as its qmldir and qmltypes files describe them.\n\
          # Written by `mise run types` (crates/qmltypes), read by qt_types. Not edited by hand.\n"
