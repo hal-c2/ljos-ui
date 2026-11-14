@@ -5,8 +5,9 @@ logged, one LOGS/<id>.log per scene, into OUT (JSON) and prints a table.
 The first two seconds are left out: they are the window opening and the
 scene's first frames. Each number is the median of the seconds after, for
 the first View3D; frame and CPU times are Qt's, in milliseconds. A GPU time
-of 0 is one Qt did not measure (an adapter without timestamps), so a scene
-whose every second says 0 has none, not a GPU time of 0."""
+of 0 is one Qt did not measure (it times the GPU only under QSG_RHI_PROFILE,
+and only for a frame it drew), so a scene whose every second says 0 has none,
+not a GPU time of 0."""
 import json
 import os
 import statistics
