@@ -657,6 +657,43 @@ mod tests {
         levels
     }
 
+    /// The exact mean of each four number pixels: Σ(c·a) / Σa and Σa / 4,
+    /// rounded half up. A double holds them well enough for that: a mean
+    /// that is not a half lies at least 1/2040 from one.
+    fn halve_exact((w, h, data): &Level) -> Level {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut out = Vec::with_capacity(nw as usize * nh as usize * 4);
+        let half_up = |v: f64| (v + 0.5).floor() as u8;
+        for y in 0..nh {
+            for x in 0..nw {
+                let four = [(0, 0), (1, 0), (0, 1), (1, 1)].map(|(dx, dy)| {
+                    let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
+                    let i = (sy as usize * *w as usize + sx as usize) * 4;
+                    [0, 1, 2, 3].map(|c| f64::from(data[i + c]))
+                });
+                let alpha: f64 = four.iter().map(|p| p[3]).sum();
+                for c in 0..3 {
+                    let sum: f64 = four.iter().map(|p| p[c] * p[3]).sum();
+                    out.push(if alpha > 0.0 { half_up(sum / alpha) } else { 0 });
+                }
+                out.push(half_up(alpha / 4.0));
+            }
+        }
+        (nw, nh, out)
+    }
+
+    #[test]
+    fn whole_number_means_are_the_exact_ones() {
+        for level in levels() {
+            let fast = halve(&level, false);
+            let exact = halve_exact(&level);
+            assert_eq!((fast.0, fast.1), (exact.0, exact.1));
+            for (i, (f, e)) in fast.2.iter().zip(&exact.2).enumerate() {
+                assert_eq!(f, e, "{}x{} byte {i}", fast.0, fast.1);
+            }
+        }
+    }
+
     #[test]
     fn whole_number_means_are_the_floating_point_ones() {
         for level in levels() {
