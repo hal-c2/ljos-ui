@@ -351,6 +351,51 @@ Feature: Ljós's one arrangement: Row, Column and Box
       And 100 milliseconds pass
       Then the property "width" of "c" is 41
 
+    # A Row whose children have no `Layout` is a positioner: it arranges no size, so a child
+    # a layout gave a size keeps it there, also when its content shrinks to nothing, and is
+    # not left out. Qt 6.11's RowLayout then Row: 21 at content 0 and at 30.25, placed after
+    # the other; 31 then 41 back in a RowLayout (qmltestrunner).
+    @ljos-only
+    Scenario: A child moved from a layout to a positioner keeps the size the layout gave it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Item {
+          id: root; objectName: "root"
+          function across() { a.parent = line }
+          function back() { a.parent = second }
+          Row {
+            Item { id: a; objectName: "a"; implicitWidth: 20.5; implicitHeight: 10 }
+            Item { implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+          }
+          Row {
+            id: line; objectName: "line"
+            Item { implicitWidth: 10; implicitHeight: 10 }
+          }
+          Row {
+            id: second
+            Item { implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      And the method "across" of "root" is called
+      And the property "implicitWidth" of "a" is set to 0
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 21
+      And the property "x" of "a" is 10
+      And the property "width" of "line" is 31
+      When the property "implicitWidth" of "a" is set to 30.25
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 21
+      When the method "back" of "root" is called
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 31
+      When the property "implicitWidth" of "a" is set to 40.5
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 41
+
     # The author gives the width the box gave: the same number, but given, so it holds when
     # the content grows.
     @ljos-only

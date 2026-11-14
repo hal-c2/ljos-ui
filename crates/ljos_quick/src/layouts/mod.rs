@@ -620,6 +620,11 @@ pub(super) fn give(e: &Engine, by: ObjectId, c: ObjectId, at: [f64; 2]) {
     }
 }
 
+/// What a box gave `c`: only if it was `by`, when `own`.
+fn given_by(e: &Engine, by: ObjectId, c: ObjectId, own: bool) -> Option<Given> {
+    given_to(e, c).filter(|g| !own || g.by == by)
+}
+
 fn given_at(e: &Engine, c: ObjectId) -> [f64; 2] {
     given_to(e, c).map_or([f64::NAN; 2], |g| g.at)
 }
@@ -925,13 +930,24 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         let mut hidden = state(e, obj, |s| std::mem::take(&mut s.hidden))?;
         let visible = hidden.update(e, obj, &children);
         state(e, obj, |s| s.hidden = hidden)?;
-        let mut left = Vec::new();
-        let shown = children
+        let visible: Vec<ObjectId> = children
             .iter()
             .zip(visible)
             .filter_map(|(c, v)| v.then_some(*c))
+            .collect();
+        // A child left out has no `Layout`, so whether the box is a
+        // positioner is known first. A positioner keeps the size another box
+        // gave a child, and reads only what it gave itself.
+        let lined = kind == Kind::Box
+            && visible
+                .iter()
+                .all(|c| e.existing_attached_object(*c, &attacher()).is_none());
+        let mut left = Vec::new();
+        let shown = visible
+            .into_iter()
             .filter(|c| {
-                let skipped = kind.one_rule() && arrangement::skipped(e, *c, given_at(e, *c));
+                let had = given_by(e, obj, *c, lined).map_or([f64::NAN; 2], |g| g.at);
+                let skipped = kind.one_rule() && arrangement::skipped(e, *c, had);
                 if skipped {
                     left.push(*c);
                 }
@@ -942,7 +958,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         // implicit size: it is given that size, which is 0 along one axis,
         // so that it is not drawn at the size it had where the others now
         // are, and still follows it to come back.
-        let gives = left_out_sizes(e, obj, &left);
+        let gives = left_out_sizes(e, obj, &left, lined);
         e.batch(|| -> Result<(), EngineError> {
             for (c, p, v) in gives {
                 write_given_size(e, c, p, Value::Real(v))?;
@@ -1224,12 +1240,18 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
 }
 
 /// The implicit sizes the box `obj` gives children it leaves out, along
-/// each axis they follow it with a size a box gave them, with what is
-/// recorded of them set to those sizes.
-fn left_out_sizes(e: &Engine, obj: ObjectId, left: &[ObjectId]) -> Vec<(ObjectId, PropIndex, f64)> {
+/// each axis they follow it with a size a box gave them (only `obj`, when
+/// it is a positioner, `lined`), with what is recorded of them set to those
+/// sizes.
+fn left_out_sizes(
+    e: &Engine,
+    obj: ObjectId,
+    left: &[ObjectId],
+    lined: bool,
+) -> Vec<(ObjectId, PropIndex, f64)> {
     let mut gives = Vec::new();
     for c in left {
-        let Some(Given { at: mut had, .. }) = given_to(e, *c) else {
+        let Some(Given { at: mut had, .. }) = given_by(e, obj, *c, lined) else {
             continue;
         };
         for (axis, size, implicit) in [
