@@ -1164,11 +1164,14 @@ fn what_qt_says_of_a_type_ljos_has() {
     }
     differences.sort();
     differences.dedup();
+    let qt = qt_types::qt_version().expect("Qt's table says which Qt it describes");
+    // An entry from a later Qt is not one on this Qt: the same difference
+    // here is new.
     let listed = |subject: &str| {
         NOT_YET.iter().any(|(known, _)| *known == subject)
             || NOT_YET_FROM_QT
                 .iter()
-                .any(|(_, known, _)| *known == subject)
+                .any(|(from, known, _)| qt >= *from && *known == subject)
     };
     let new: Vec<String> = differences
         .iter()
@@ -1183,7 +1186,6 @@ fn what_qt_says_of_a_type_ljos_has() {
         new.len(),
         new.join("\n")
     );
-    let qt = qt_types::qt_version().expect("Qt's table says which Qt it describes");
     let expected = NOT_YET.iter().map(|(subject, _)| *subject).chain(
         NOT_YET_FROM_QT
             .iter()
