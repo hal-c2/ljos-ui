@@ -22,14 +22,26 @@ Status: under active development. The engine, the `QtQuick` and `QtQuick.Control
 
 Ljós is a clean-room implementation: see `CLEAN_ROOM.md`.
 
-## Quick start
+## Getting started
+
+Install [mise](https://mise.jdx.dev/getting-started.html), then:
 
 ```sh
-mise install
-mise run check
-mise run test
-mise run features
+mise run setup      # Rust and tools from mise.toml, submodules, Qt's types if Qt is here; says what it skipped
+mise run dev        # a QML app reloaded on save (bench/feed.qml; or: mise run dev path/to/Main.qml)
 ```
+
+Then:
+
+```sh
+mise run test       # Rust tests
+mise run features   # the Gherkin ledger
+mise run check      # format and clippy
+mise run install    # puts ljos on your PATH (cargo install --path crates/ljos_cli --locked; --root <dir>)
+mise tasks          # every task; mise run <task> --help shows its arguments
+```
+
+Qt 6 is optional. Without it Ljós reads QML against its own types and the Qt comparisons (`features:parity`, `gallery:reference`, `fuzz:qt`) can't run; `mise run setup` says which.
 
 ### QtWebEngine
 
