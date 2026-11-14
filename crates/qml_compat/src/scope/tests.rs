@@ -12,6 +12,7 @@ fn built_on_item() -> Root {
         bindings: Vec::new(),
         properties: Vec::new(),
         declares: vec!["level".to_owned()],
+        kept: false,
     }
 }
 

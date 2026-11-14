@@ -157,10 +157,18 @@ pub enum Cause {
     Animated(Animated),
     Row(Row),
     Layout(Layout),
-    /// A file lowered alone, grouped with `with`, which is kept.
+    /// A file lowered alone that `with`, which is kept, uses.
     Group {
         with: String,
         cause: Box<Cause>,
+    },
+    /// A file a file in Ljós's API, `by`, uses, binding on it `name`: what
+    /// Ljós's `ty`, which the file's root is lowered to, calls `now`.
+    BoundAsQt {
+        by: String,
+        name: String,
+        ty: String,
+        now: String,
     },
     /// A script at the path of the rows module, which is the project's own.
     RowsScript {
@@ -441,13 +449,6 @@ pub enum Layout {
         size: &'static str,
         preferred: &'static str,
     },
-    /// A child's implicit size, which may be a fraction.
-    Fraction {
-        name: String,
-        qt: &'static str,
-        ljos: &'static str,
-        height: bool,
-    },
     /// `Layout.alignment` that is not an expression.
     AlignmentNoExpression,
     /// `Layout.alignment` the pass cannot read.
@@ -606,8 +607,12 @@ impl fmt::Display for Cause {
             Cause::Row(row) => row.fmt(f),
             Cause::Layout(layout) => layout.fmt(f),
             Cause::Group { with, cause } => {
-                write!(f, "it is used with `{with}.qml`, which is kept: {cause}")
+                write!(f, "it is used by `{with}.qml`, which is kept: {cause}")
             }
+            Cause::BoundAsQt { by, name, ty, now } => write!(
+                f,
+                "`{by}.qml`, in Ljós's API, binds `{name}` on it, which Ljós's `{ty}` calls `{now}`: rename it there as this file is lowered"
+            ),
             Cause::RowsScript { path } => write!(
                 f,
                 "`{path}` is a script of the project's, not the module of this file's rows"
@@ -862,8 +867,8 @@ impl fmt::Display for Layout {
             ),
             Layout::Fills { name, qt, ljos } => write!(
                 f,
-                "a `{name}` in a `{qt}` fills it and is bounded by its children, and one in \
-                 Ljós's `{ljos}` is not"
+                "a `{name}` in a `{qt}` grows only where a child of it fills and is bounded by \
+                 its children, and Ljós's `{ljos}` reads what this one is given otherwise"
             ),
             Layout::NotWhole { what, qt, ljos } => write!(
                 f,
@@ -880,21 +885,6 @@ impl fmt::Display for Layout {
                 f,
                 "`{size}` of a `{name}` in a `{qt}` is not its size there, and would be in \
                  Ljós's `{ljos}`; give it `{preferred}`"
-            ),
-            Layout::Fraction {
-                name,
-                qt,
-                ljos,
-                height,
-            } => write!(
-                f,
-                "the {} of a `{name}` may be a fraction, which `{qt}` rounds up and Ljós's \
-                 `{ljos}` does not",
-                if *height {
-                    "implicit height"
-                } else {
-                    "implicit width"
-                }
             ),
             Layout::AlignmentNoExpression => f.write_str("`Layout.alignment` is not an expression"),
             Layout::AlignmentUnread { qt, ljos } => write!(

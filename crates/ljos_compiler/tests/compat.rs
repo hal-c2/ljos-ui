@@ -1,7 +1,7 @@
 //! A project's files in Qt's QML lowered to Ljós's API as they load
-//! (docs/adr/0004-compat-lowering-before-the-ir.md): files that name one
-//! another are lowered together or kept together, and turning the pass off
-//! gives back the files as written.
+//! (docs/adr/0004-compat-lowering-before-the-ir.md): a kept file keeps the
+//! files it uses, a file that uses a kept one keeps Qt's names on its type,
+//! and turning the pass off gives back the files as written.
 
 mod oracle;
 
@@ -92,7 +92,7 @@ fn a_file_changed_while_lowering_is_lowered_with_its_group_again() {
 }
 
 #[test]
-fn a_file_removed_leaves_its_group_and_the_files_that_named_it_lowered_again() {
+fn a_file_removed_leaves_the_files_that_used_it_lowered_again() {
     let mut project = Project::new(Runtime::new());
     project.add("Button", BUTTON);
     project.add(
@@ -103,19 +103,29 @@ fn a_file_removed_leaves_its_group_and_the_files_that_named_it_lowered_again() {
         "Kept",
         "import QtQuick\nRectangle { OpacityAnimator on opacity { } }\n",
     );
-    project.add("Other", "import QtQuick\nItem { Kept { } }\n");
+    const OTHER: &str = "import QtQuick\nItem { Kept { color: \"blue\" } }\n";
+    project.add("Other", OTHER);
     project.set_compat(true);
     assert!(lowered(&project, "Main"));
-    assert!(matches!(project.lowering("Other"), Some(Outcome::Kept(_))));
-
-    // Without its Kept, Other is lowered.
-    project.remove("Kept");
-    assert_eq!(project.lowering("Kept"), None);
+    // Other uses Kept, which stays Qt's: Other is lowered, and the `color`
+    // it sets on a Kept stays Qt's name.
+    assert!(matches!(project.lowering("Kept"), Some(Outcome::Kept(_))));
     assert!(
         lowered(&project, "Other"),
         "{:?}",
         project.lowering("Other")
     );
+    let other = project.source("Other").expect("Other");
+    assert!(other.contains("color: \"blue\""), "{other}");
+
+    // Without Kept, Other is what it is lowered as alone.
+    project.remove("Kept");
+    assert_eq!(project.lowering("Kept"), None);
+    let mut alone = Project::new(Runtime::new());
+    alone.add("Other", OTHER);
+    alone.set_compat(true);
+    assert_eq!(project.lowering("Other"), alone.lowering("Other"));
+    assert_eq!(project.source("Other"), alone.source("Other"));
 
     // Main's `fill` was a Button's: without Button it is what Main was
     // written as again, as it would be had Button never been in.

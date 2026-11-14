@@ -36,7 +36,7 @@ fn a_file_names_the_files_of_the_project_it_may_use() {
 
 /// A kept file that sets `color` on a lowered `Button` would find a `fill`.
 #[test]
-fn files_that_name_one_another_are_lowered_together() {
+fn a_kept_file_keeps_the_files_it_uses() {
     let button = "import QtQuick\nRectangle { color: \"red\" }\n";
     let files = std::collections::BTreeMap::from([
         ("app/Button".to_string(), alone(button)),
@@ -46,6 +46,11 @@ fn files_that_name_one_another_are_lowered_together() {
             alone("import QtQuick\nFocusScope { Button { color: \"blue\" } }\n"),
         ),
         ("other/Lone".to_string(), alone(button)),
+        // Uses the kept file, which keeps nothing it does not use.
+        (
+            "app/Window".to_string(),
+            alone("import QtQuick\nItem { Main { } }\n"),
+        ),
     ]);
     let outcomes = group(&files);
     let Outcome::Kept(kept) = &outcomes["app/Button"] else {
@@ -58,29 +63,171 @@ fn files_that_name_one_another_are_lowered_together() {
     );
     assert!(matches!(outcomes["app/Main"], Outcome::Kept(_)));
     assert!(matches!(outcomes["other/Lone"], Outcome::Lowered(_)));
+    assert!(
+        matches!(outcomes["app/Window"], Outcome::Lowered(_)),
+        "{:?}",
+        outcomes["app/Window"]
+    );
+}
+
+/// What a kept file uses, it keeps however far: a file a kept one uses
+/// keeps the files it uses in turn.
+#[test]
+fn a_kept_file_keeps_what_the_files_it_uses_use() {
+    let files = std::collections::BTreeMap::from([
+        (
+            "app/Main".to_string(),
+            alone("import QtQuick\nFocusScope { Panel { } }\n"),
+        ),
+        (
+            "app/Panel".to_string(),
+            alone("import QtQuick\nItem { Swatch { } }\n"),
+        ),
+        (
+            "app/Swatch".to_string(),
+            alone("import QtQuick\nRectangle { color: \"red\" }\n"),
+        ),
+    ]);
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Swatch"] else {
+        panic!("{:?}", outcomes["app/Swatch"]);
+    };
+    assert!(
+        kept.to_string()
+            .starts_with("it is used by `Main.qml`, which is kept"),
+        "{kept}"
+    );
+}
+
+/// A file left as it is, with no import the pass lowers, goes on in Qt's
+/// names: what a kept file uses through it, it keeps.
+#[test]
+fn a_kept_file_keeps_what_it_uses_through_a_file_left_as_it_is() {
+    let files = std::collections::BTreeMap::from([
+        (
+            "app/Main".to_string(),
+            alone("import QtQuick\nFocusScope { Bridge { } }\n"),
+        ),
+        (
+            "app/Bridge".to_string(),
+            alone("Swatch { color: \"red\" }\n"),
+        ),
+        (
+            "app/Swatch".to_string(),
+            alone("import QtQuick\nRectangle { color: \"red\" }\n"),
+        ),
+    ]);
+    assert!(matches!(files["app/Bridge"].outcome, Outcome::Unchanged));
+    let outcomes = group(&files);
+    assert!(matches!(outcomes["app/Bridge"], Outcome::Unchanged));
+    let Outcome::Kept(kept) = &outcomes["app/Swatch"] else {
+        panic!("{:?}", outcomes["app/Swatch"]);
+    };
+    assert!(
+        kept.to_string()
+            .starts_with("it is used by `Main.qml`, which is kept"),
+        "{kept}"
+    );
+}
+
+/// A file lowered against a kept one binds Qt's names on it: lowering that
+/// one later would rename them under it. What it binds that Ljós calls as
+/// Qt does, and what the file declares, rename nothing.
+#[test]
+fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
+    let dial = "import QtQuick\nRectangle { property real angle: 0 }\n";
+    for (main, held) in [
+        (
+            "Dial { color: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { onColorChanged: {} }",
+            Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
+        ),
+        ("Dial { width: 4; angle: 1 }", None),
+        (
+            "Dial { Behavior on color { ColorAnimation { } } }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { id: dial } PropertyChanges { target: dial; color: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { id: dial } PropertyChanges { dial.color: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { id: dial } Binding { target: dial; property: \"color\"; value: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { id: dial } PropertyChanges { target: dial; angle: 2; explicit: true }",
+            None,
+        ),
+    ] {
+        let main = format!("import Ljos.Ui\nRectangle {{ {main} }}\n");
+        let files = std::collections::BTreeMap::from([
+            ("app/Main".to_string(), alone(&main)),
+            ("app/Dial".to_string(), alone(dial)),
+        ]);
+        assert!(matches!(files["app/Main"].outcome, Outcome::Unchanged));
+        let outcomes = group(&files);
+        match (held, &outcomes["app/Dial"]) {
+            (Some(why), Outcome::Kept(kept)) => assert_eq!(
+                kept.to_string(),
+                format!(
+                    "`Main.qml`, in Ljós's API, {why}: rename it there as this file is lowered"
+                )
+            ),
+            (None, Outcome::Lowered(_)) => {}
+            (_, outcome) => panic!("{main}: {outcome:?}"),
+        }
+    }
+    // Built on the dial, lowered with it, a file renames what the dial
+    // does, and kept, it keeps the dial.
+    let files = std::collections::BTreeMap::from([
+        ("app/Dial".to_string(), alone(dial)),
+        ("app/Big".to_string(), alone("import QtQuick\nDial { }\n")),
+        (
+            "app/Uses".to_string(),
+            alone("import Ljos.Ui\nItem { Big { color: \"red\" } }\n"),
+        ),
+    ]);
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Big"] else {
+        panic!("{:?}", outcomes["app/Big"]);
+    };
+    assert!(
+        kept.to_string()
+            .starts_with("`Uses.qml`, in Ljós's API, binds `color`"),
+        "{kept}"
+    );
+    assert!(matches!(outcomes["app/Dial"], Outcome::Kept(_)));
 }
 
 #[test]
 fn a_file_reached_by_address_or_directory_is_of_the_group() {
     let lowers = "import QtQuick\nRectangle { color: \"red\" }\n";
-    let kept = "import QtQuick\nFocusScope { }\n";
+    // Kept: `FocusScope` is not in Ljos.Ui.
     for (main, other) in [
         (
-            "import QtQuick\nLoader { source: \"../parts/Part.qml\" }\n",
+            "import QtQuick\nFocusScope { Loader { source: \"../parts/Part.qml\" } }\n",
             "parts/Part",
         ),
         (
-            "import QtQuick\nimport \"../parts\"\nItem { }\n",
+            "import QtQuick\nimport \"../parts\"\nFocusScope { }\n",
             "parts/Part",
         ),
     ] {
         let files = std::collections::BTreeMap::from([
             ("app/Main".to_string(), alone(main)),
-            (other.to_string(), alone(kept)),
+            (other.to_string(), alone(lowers)),
             ("app/Swatch".to_string(), alone(lowers)),
         ]);
         let outcomes = group(&files);
-        assert!(matches!(outcomes["app/Main"], Outcome::Kept(_)), "{main}");
+        assert!(matches!(outcomes[other], Outcome::Kept(_)), "{main}");
         // Named by nothing: alone.
         assert!(matches!(outcomes["app/Swatch"], Outcome::Lowered(_)));
     }
@@ -289,26 +436,28 @@ fn a_module_the_project_does_not_have_as_files_keeps_the_file() {
 /// are of the importer's group wherever they are.
 #[test]
 fn the_files_a_module_import_brings_are_of_the_group() {
-    let main = "import QtQuick\nimport Gauges\nItem { Dial { color: \"red\" } }\n";
+    // Kept: `FocusScope` is not in Ljos.Ui.
+    let main = "import QtQuick\nimport Gauges\nFocusScope { Dial { } }\n";
     let importer = Alone {
         outcome: lower(main, &Project),
         references: references(main),
         uses: vec!["src/qml/Dial".to_string()],
     };
-    assert!(matches!(importer.outcome, Outcome::Lowered(_)));
+    assert!(matches!(importer.outcome, Outcome::Kept(_)));
     let files = std::collections::BTreeMap::from([
         ("app/Main".to_string(), importer),
         (
             "src/qml/Dial".to_string(),
-            alone("import QtQuick\nFocusScope { }\n"),
+            alone("import QtQuick\nRectangle { color: \"red\" }\n"),
         ),
     ]);
     let outcomes = group(&files);
-    let Outcome::Kept(kept) = &outcomes["app/Main"] else {
-        panic!("{:?}", outcomes["app/Main"]);
+    let Outcome::Kept(kept) = &outcomes["src/qml/Dial"] else {
+        panic!("{:?}", outcomes["src/qml/Dial"]);
     };
     assert!(
-        kept.to_string().contains("`Dial.qml`, which is kept"),
+        kept.to_string()
+            .contains("used by `Main.qml`, which is kept"),
         "{}",
         kept
     );
