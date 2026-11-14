@@ -1394,6 +1394,9 @@ pub struct QuickScene {
     scale_factor: f32,
     frame: u64,
     snapshot: Option<Arc<FrameSnapshot>>,
+    /// The root `snapshot` was composed with: a picture of a root the
+    /// scene has since replaced finds none of the new one's items.
+    pictured: Option<ObjectId>,
     /// The painted nodes and the item generation the content effects were
     /// last matched to. A frame that changes what nodes paint but not
     /// which leaves them as they are, without a look at every item.
@@ -1516,6 +1519,7 @@ impl QuickScene {
             scale_factor: 1.0,
             frame: 0,
             snapshot: None,
+            pictured: None,
             content_synced: (Vec::new(), 0),
             items_gen: 1,
             content_looked: 0,
@@ -1992,6 +1996,7 @@ impl QuickScene {
             .as_ref()
             .is_some_and(|s| Arc::ptr_eq(s, &snap));
         self.snapshot = Some(Arc::clone(&snap));
+        self.pictured = self.root;
         // Last, so the tree describes the items as this frame left them.
         self.a11y.set_viewport(self.viewport);
         self.a11y.sync(engine, self.root);
@@ -3608,10 +3613,12 @@ impl QuickScene {
         handled
     }
 
-    /// The item that holds the pointer's press, if one does.
-    pub(crate) fn pointer_grab(&self) -> Option<ObjectId> {
+    /// The item that holds the pointer's press, if one does: for a
+    /// TapHandler's grab, the item it is in.
+    pub(crate) fn pointer_grab(&self, engine: &Engine) -> Option<ObjectId> {
         match self.pointer.grab {
-            Some(Grab::Mouse(o) | Grab::Tap(o) | Grab::Item(o)) => Some(o),
+            Some(Grab::Mouse(o) | Grab::Item(o)) => Some(o),
+            Some(Grab::Tap(h)) => crate::input::tap_handler_target(engine, h),
             None => None,
         }
     }
@@ -3752,8 +3759,9 @@ impl QuickScene {
     ) -> bool {
         self.note_input();
         let hits = self.hits(engine, ev.pos);
+        let route = self.watched_wheel_route(engine, &hits);
         let taken = crate::wheel::deliver(engine, &hits, ev, buttons);
-        self.watched_wheel(engine, ev, &hits, taken);
+        self.watched_wheel(engine, ev, &route, taken);
         taken
     }
 
@@ -3792,10 +3800,10 @@ impl QuickScene {
             .collect()
     }
 
-    /// Whether a frame has composed the scene: what hit testing finds
-    /// things in.
+    /// Whether a frame has composed the scene as it is now, with the root
+    /// it shows: what hit testing finds things in.
     pub(crate) fn has_picture(&self) -> bool {
-        self.snapshot.is_some()
+        self.snapshot.is_some() && self.root.is_some() && self.pictured == self.root
     }
 
     /// What was posted to the scene's windows since it last took it.

@@ -304,7 +304,7 @@ impl QuickScene {
             }
             // A press held since before anything watched is the item's
             // that holds the pointer, not the one under it now.
-            _ => self.pointer_grab(),
+            _ => self.pointer_grab(engine),
         };
         // The press goes on until its last button is let go or it is
         // cancelled; the pointer leaving the window does not end it.
@@ -336,25 +336,32 @@ impl QuickScene {
         }
     }
 
-    /// After a wheel event, given the items under it, topmost first.
+    /// Before a wheel event is delivered, given the items under it,
+    /// topmost first: the watched items it is routed into. Decided before
+    /// delivery, so a handler that moves its item leaves it the first
+    /// item's.
+    pub(crate) fn watched_wheel_route(&self, engine: &Engine, hits: &[ObjectId]) -> Vec<ObjectId> {
+        let watchers = engine.extension::<Watchers>();
+        match hits.first() {
+            Some(&top) if !watchers.is_empty() => watchers.items_holding(engine, top),
+            _ => Vec::new(),
+        }
+    }
+
+    /// After a wheel event: the watchers of the items it was routed into
+    /// ([`QuickScene::watched_wheel_route`]).
     pub(crate) fn watched_wheel(
         &self,
         engine: &Engine,
         ev: &WheelEvent,
-        hits: &[ObjectId],
+        items: &[ObjectId],
         taken: bool,
     ) {
-        let watchers = engine.extension::<Watchers>();
-        if watchers.is_empty() {
-            return;
-        }
-        let Some(&top) = hits.first() else {
-            return;
-        };
-        let items = watchers.items_holding(engine, top);
         if !items.is_empty() {
             let input = Input::Wheel(*ev);
-            watchers.tell(engine, &items, &input, self.watch.origin, taken);
+            engine
+                .extension::<Watchers>()
+                .tell(engine, items, &input, self.watch.origin, taken);
         }
     }
 
@@ -370,6 +377,20 @@ impl QuickScene {
         crate::focus::tree::settle(engine);
         crate::focus::tree::active_focus_item(engine, root)
             .map_or_else(Vec::new, |f| watchers.items_holding(engine, f))
+    }
+
+    /// As a key is handed to `item`: the watched items holding it join
+    /// `route`, those already in it once.
+    pub(crate) fn key_reaches(&self, engine: &Engine, item: ObjectId, route: &mut Vec<ObjectId>) {
+        let watchers = engine.extension::<Watchers>();
+        if watchers.is_empty() {
+            return;
+        }
+        for w in watchers.items_holding(engine, item) {
+            if !route.contains(&w) {
+                route.push(w);
+            }
+        }
     }
 
     /// After a key event: the watchers of the items it was routed into

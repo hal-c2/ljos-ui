@@ -450,3 +450,116 @@ Item {
     assert_eq!(*seen_a.borrow(), [("key", User)]);
     assert!(seen_b.borrow().is_empty(), "{:?}", seen_b.borrow());
 }
+
+#[test]
+fn a_key_a_shortcut_override_hands_on_is_the_new_items_too() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item {
+        objectName: "a"
+        focus: true
+        Keys.onShortcutOverride: (event) => b.forceActiveFocus()
+    }
+    Item {
+        id: b
+        objectName: "b"
+        Keys.onPressed: (event) => event.accepted = true
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let (seen_a, _) = watch(&e, find(&e, root, "a"));
+    let (seen_b, _) = watch(&e, find(&e, root, "b"));
+
+    assert!(s.key_event(&e, &KeyEvent::press(key::A).with_text("a")));
+    assert_eq!(s.active_focus_item(&e), Some(find(&e, root, "b")));
+
+    use InputOrigin::User;
+    assert_eq!(*seen_a.borrow(), [("key", User)]);
+    assert_eq!(*seen_b.borrow(), [("key", User)]);
+}
+
+#[test]
+fn input_posted_to_a_new_root_waits_for_its_picture() {
+    let (e, _, mut s) = world();
+    let other = load(&e, MAIN);
+    s.set_root(&e, other).unwrap();
+    // The old root's picture finds none of the new root's items.
+    for input in click(50.0, 50.0) {
+        post_input(&e, other, input).unwrap();
+    }
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, other, "clicks"), 1.0);
+}
+
+#[test]
+fn a_press_a_tap_handler_holds_is_its_items() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item {
+        objectName: "button"
+        anchors.fill: parent
+        TapHandler { gesturePolicy: TapHandler.WithinBounds }
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    s.pointer_event(&e, &PointerEvent::press(50.0, 50.0, Time::ZERO));
+    let (seen, _) = watch(&e, find(&e, root, "button"));
+    s.pointer_event(&e, &PointerEvent::release(50.0, 50.0, Time::ZERO));
+
+    use InputOrigin::User;
+    assert_eq!(*seen.borrow(), [("release", User)]);
+}
+
+#[test]
+fn a_wheel_whose_handler_moves_its_item_is_still_where_it_came() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item {
+        objectName: "a"
+        anchors.fill: parent
+        MouseArea {
+            objectName: "area"
+            anchors.fill: parent
+            onWheel: (wheel) => { parent = b; wheel.accepted = true }
+        }
+    }
+    // Beside `a`, so the wheel comes to the area in `a` only.
+    Item { id: b; objectName: "b"; x: 100; width: 100; height: 100 }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let b = find(&e, root, "b");
+    let (seen_a, _) = watch(&e, find(&e, root, "a"));
+    let (seen_b, _) = watch(&e, b);
+
+    s.wheel_event(&e, &WheelEvent::notches(50.0, 50.0, 0.0, 1.0, Time::ZERO));
+    assert_eq!(e.visual_parent(find(&e, root, "area")), Some(b));
+
+    use InputOrigin::User;
+    assert_eq!(*seen_a.borrow(), [("wheel", User)]);
+    assert!(seen_b.borrow().is_empty(), "{:?}", seen_b.borrow());
+}
