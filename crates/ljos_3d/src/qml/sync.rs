@@ -1438,6 +1438,31 @@ mod tests {
     }
 
     #[test]
+    fn a_grid_added_and_taken_keeps_every_member_and_its_id() {
+        let mut f = fixture();
+        let mut kept = first(&f);
+        let env = f.g.add(T::SceneEnvironment);
+        let grid = f.g.add(T::InfiniteGrid);
+        f.g.append(env, grid);
+        f.g.set(f.view, "environment", MapValue::Object(env));
+        synced(&f, &mut kept, &[Piece::Environment]);
+        let ids = kept.ids().clone();
+        let count = |kept: &SceneSync<usize>| kept.scene().walk().len();
+        let one = count(&kept);
+        // The grids come after the view's members, which keep their ids.
+        let second = f.g.add(T::InfiniteGrid);
+        f.g.append(env, second);
+        let s = synced(&f, &mut kept, &[Piece::Environment]);
+        assert_eq!(s.read, 1);
+        assert_eq!(count(&kept), one + 3, "a grid is three line models");
+        assert_eq!(kept.ids(), &ids);
+        f.g.set(env, "data", MapValue::Objects(vec![grid]));
+        synced(&f, &mut kept, &[Piece::Environment]);
+        assert_eq!(count(&kept), one);
+        assert_eq!(kept.ids(), &ids);
+    }
+
+    #[test]
     fn many_changes_in_one_sync_end_where_a_build_does() {
         let mut f = fixture();
         let mut kept = first(&f);

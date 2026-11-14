@@ -2,8 +2,10 @@
 //! shape of the web's object graph, and what the mapping is tested with.
 
 use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
 
-use super::{Prop3d, SceneSource, Type3d};
+use super::{GridLines, Prop3d, SceneSource, Type3d};
+use crate::geometry::CustomGeometry;
 use crate::math::{Quat, Vec3};
 
 /// A member's value in a [`MapGraph`].
@@ -141,6 +143,19 @@ impl SceneSource for MapGraph {
 
     fn authored(&self, o: usize, p: Prop3d) -> bool {
         self.get(o, p).is_some()
+    }
+
+    /// Every grid's lines are one empty mesh: what matters to a graph of
+    /// members is how many grids there are, not what they draw.
+    fn infinite_grid(&self, grid: usize) -> Option<GridLines> {
+        static LINES: OnceLock<Arc<CustomGeometry>> = OnceLock::new();
+        let lines = LINES.get_or_init(|| Arc::new(CustomGeometry::new()));
+        self.is(grid, Type3d::InfiniteGrid).then(|| GridLines {
+            grid: lines.clone(),
+            x_axis: lines.clone(),
+            z_axis: lines.clone(),
+            axes: false,
+        })
     }
 }
 
