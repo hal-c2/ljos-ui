@@ -7,7 +7,9 @@ struct Layer {
     params: vec4<f32>,
 };
 
-// lit.wgsl's, up to the field read here.
+// lit.wgsl's, whole: declared up to a field only, it goes stale when a
+// field before that one grows, and `maps.w` (is the mesh skinned) was
+// read from inside the UV transforms.
 struct Model {
     world: mat4x4<f32>,
     normal: mat4x4<f32>,
@@ -15,8 +17,19 @@ struct Model {
     emissive: vec4<f32>,
     params: vec4<f32>,
     params2: vec4<f32>,
-    uv: array<vec4<f32>, 18>,
+    uv: array<vec4<f32>, 24>,
     maps: vec4<u32>,
+    map_params: vec4<f32>,
+    shine: vec4<f32>,
+    edge: vec4<f32>,
+    coat_edge: vec4<f32>,
+    tint: vec4<f32>,
+    flags: vec4<u32>,
+    ambient: vec4<f32>,
+    probe: vec4<f32>,
+    mirror_at: vec4<f32>,
+    mirror_min: vec4<f32>,
+    mirror_max: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> layer: Layer;

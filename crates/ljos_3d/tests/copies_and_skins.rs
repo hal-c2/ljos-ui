@@ -247,7 +247,9 @@ fn strip() -> CustomGeometry {
     g
 }
 
-fn skinned(turn: f32, shadows: bool) -> Scene {
+/// The strip bent `turn` degrees at its knee; with a sun turned `sun`, it
+/// casts a shadow.
+fn skinned(turn: f32, sun: Option<Quat>) -> Scene {
     let mut s = ortho();
     let hip = s.add(None, Node::new(NodeKind::Group));
     let knee = s.add(
@@ -271,16 +273,22 @@ fn skinned(turn: f32, shadows: bool) -> Scene {
             Mat4::from_trs(Vec3::new(0.0, -50.0, 0.0), Quat::IDENTITY, Vec3::ONE),
         ],
     });
-    node.casts_shadows = shadows;
+    node.casts_shadows = sun.is_some();
     s.add(None, node);
-    if shadows {
+    if let Some(turned) = sun {
         let mut sun = Node::new(NodeKind::Light(Light::Directional {
             color: Color::WHITE,
             ambient_color: Color::BLACK,
             brightness: 1.0,
         }));
         sun.shadow = Some(Shadow::default());
-        s.add(None, sun);
+        s.add(
+            None,
+            sun.with_transform(Transform {
+                rotation: turned,
+                ..Transform::default()
+            }),
+        );
     }
     s
 }
@@ -288,13 +296,13 @@ fn skinned(turn: f32, shadows: bool) -> Scene {
 #[test]
 fn a_skinned_mesh_follows_its_joints() {
     let Some(mut gpu) = offscreen() else { return };
-    let p = gpu.render(&skinned(0.0, false), SIDE, SIDE).unwrap();
+    let p = gpu.render(&skinned(0.0, None), SIDE, SIDE).unwrap();
     save("skin-bind-pose.png", &p);
     assert_pixel(&p, 100, 25, [255, 0, 0]);
     assert_pixel(&p, 100, 75, [255, 0, 0]);
     assert_pixel(&p, 160, 75, CLEAR);
 
-    let p = gpu.render(&skinned(90.0, false), SIDE, SIDE).unwrap();
+    let p = gpu.render(&skinned(90.0, None), SIDE, SIDE).unwrap();
     save("skin-knee-turned.png", &p);
     assert_pixel(&p, 100, 75, [255, 0, 0]);
     assert_pixel(&p, 100, 15, CLEAR);
@@ -304,11 +312,45 @@ fn a_skinned_mesh_follows_its_joints() {
 #[test]
 fn a_skinned_mesh_casts_its_shadow_bent() {
     let Some(mut gpu) = offscreen() else { return };
-    // The shadow pass bends the mesh with the same joints; unlit, the
-    // strip looks as it does without one.
-    let p = gpu.render(&skinned(90.0, true), SIDE, SIDE).unwrap();
+    // Unlit, the strip looks as it does without a shadow. The sun is a
+    // little off the camera's way, so that the shadow is not all hidden
+    // behind the strip; a lit floor is behind it.
+    let mut scene = skinned(
+        90.0,
+        Some(Quat::from_euler_degrees(Vec3::new(0.0, 15.0, 0.0))),
+    );
+    let mut floor = Node::new(NodeKind::Model(Model {
+        mesh: MeshSource::Primitive(Primitive::Rectangle),
+        material: Material::Default(DefaultMaterial::default()),
+    }))
+    .with_transform(Transform {
+        position: Vec3::new(0.0, 0.0, -100.0),
+        scale: Vec3::new(4.0, 4.0, 1.0),
+        ..Transform::default()
+    });
+    floor.receives_shadows = true;
+    scene.add(None, floor);
+    let p = gpu.render(&scene, SIDE, SIDE).unwrap();
+    save("skin-shadow-bent.png", &p);
     assert_pixel(&p, 60, 50, [255, 0, 0]);
-    assert_pixel(&p, 100, 15, CLEAR);
+    let lit = p.pixel(190, 190);
+    assert!(lit[0] > 100, "the floor is lit: {lit:?}");
+    let shaded = |x: u32, y: u32| {
+        let got = p.pixel(x, y);
+        got != [255, 0, 0, 255] && u16::from(got[0]) * 10 < u16::from(lit[0]) * 8
+    };
+    // The bent half's shadow comes out from under the strip beside it...
+    assert!(
+        (0..SIDE).any(|x| shaded(x, 45)),
+        "the bent half shades the floor beside it"
+    );
+    // ...and no shadow is where the strip would be unbent: the shadow pass
+    // bends the mesh with the same joints.
+    for y in 5..35 {
+        for x in 0..SIDE {
+            assert!(!shaded(x, y), "at {x},{y}: a shadow of the strip unbent");
+        }
+    }
 }
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
