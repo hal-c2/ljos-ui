@@ -373,3 +373,80 @@ Item {
         [("move", User), ("press", User), ("release", User)]
     );
 }
+
+#[test]
+fn a_watcher_added_during_a_press_hears_the_rest_of_it() {
+    let (e, root, mut s) = world();
+    let right = find(&e, root, "right");
+    let left = find(&e, root, "left");
+    // Something is watched already, though not where the press lands.
+    let (seen_right, _) = watch(&e, right);
+    s.pointer_event(&e, &PointerEvent::press(50.0, 50.0, Time::ZERO));
+    let (seen_left, _) = watch(&e, left);
+    s.pointer_event(
+        &e,
+        &PointerEvent::moved(150.0, 50.0, MouseButtons::LEFT, Time::ZERO),
+    );
+    s.pointer_event(&e, &PointerEvent::release(150.0, 50.0, Time::ZERO));
+
+    use InputOrigin::User;
+    assert_eq!(*seen_left.borrow(), [("move", User), ("release", User)]);
+    assert!(seen_right.borrow().is_empty(), "{:?}", seen_right.borrow());
+}
+
+#[test]
+fn a_press_held_in_a_tree_the_scene_left_is_not_the_new_trees() {
+    let (e, root, mut s) = world();
+    let (seen_old, _) = watch(&e, find(&e, root, "left"));
+    s.pointer_event(&e, &PointerEvent::press(50.0, 50.0, Time::ZERO));
+
+    let other = load(&e, MAIN);
+    s.set_root(&e, other).unwrap();
+    frame(&mut s, &e);
+    let (seen_new, _) = watch(&e, find(&e, other, "left"));
+    s.pointer_event(&e, &PointerEvent::press(60.0, 50.0, Time::ZERO));
+    s.pointer_event(&e, &PointerEvent::release(60.0, 50.0, Time::ZERO));
+
+    use InputOrigin::User;
+    assert_eq!(*seen_old.borrow(), [("move", User), ("press", User)]);
+    assert_eq!(
+        *seen_new.borrow(),
+        [("move", User), ("press", User), ("release", User)]
+    );
+}
+
+#[test]
+fn a_key_whose_handler_moves_its_item_is_still_where_it_came() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    Item {
+        id: a
+        objectName: "a"
+        Item {
+            objectName: "f"
+            focus: true
+            Keys.onPressed: (event) => { parent = b; event.accepted = true }
+        }
+    }
+    Item { id: b; objectName: "b" }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let b = find(&e, root, "b");
+    let (seen_a, _) = watch(&e, find(&e, root, "a"));
+    let (seen_b, _) = watch(&e, b);
+
+    s.key_event(&e, &KeyEvent::press(key::A).with_text("a"));
+    assert_eq!(e.visual_parent(find(&e, root, "f")), Some(b));
+
+    use InputOrigin::User;
+    assert_eq!(*seen_a.borrow(), [("key", User)]);
+    assert!(seen_b.borrow().is_empty(), "{:?}", seen_b.borrow());
+}

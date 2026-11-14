@@ -204,7 +204,15 @@ pub(crate) fn is_in(engine: &Engine, obj: ObjectId, ancestor: ObjectId) -> bool 
 #[derive(Debug, Default)]
 pub(crate) struct SceneWatch {
     pub(crate) origin: InputOrigin,
-    pressed_in: Option<Vec<ObjectId>>,
+    /// While a press is held, the topmost item it came to, if any: whose
+    /// watchers, the ones there now, hear the rest of it.
+    held: Option<Option<ObjectId>>,
+}
+
+impl SceneWatch {
+    pub(crate) fn forget_press(&mut self) {
+        self.held = None;
+    }
 }
 
 impl QuickScene {
@@ -278,27 +286,25 @@ impl QuickScene {
     }
 
     /// Before a pointer event is delivered: the watched items it is
-    /// routed into. Those of the item under it or, while a press is held,
-    /// of the items the press began in.
+    /// routed into. Those holding the item under it or, while a press is
+    /// held, the item the press came to.
     pub(crate) fn watched_route(&mut self, engine: &Engine, ev: &PointerEvent) -> Vec<ObjectId> {
         let watchers = engine.extension::<Watchers>();
         if watchers.is_empty() {
-            self.watch.pressed_in = None;
+            self.watch.held = None;
             return Vec::new();
         }
-        let held = self.watch.pressed_in.take();
+        let held = self.watch.held.take();
         let had_press = held.is_some();
-        let items = match (ev.kind, held) {
-            (_, Some(held)) => held,
-            (PointerKind::Press, None) => self.watched_under(engine, &watchers, ev.pos),
+        let on = match (ev.kind, held) {
+            (_, Some(Some(on))) => Some(on),
+            (PointerKind::Press, _) => self.hits(engine, ev.pos).first().copied(),
             (PointerKind::Move, None) if ev.buttons.is_empty() => {
-                self.watched_under(engine, &watchers, ev.pos)
+                self.hits(engine, ev.pos).first().copied()
             }
             // A press held since before anything watched is the item's
             // that holds the pointer, not the one under it now.
-            (_, None) => self
-                .pointer_grab()
-                .map_or_else(Vec::new, |g| watchers.items_holding(engine, g)),
+            _ => self.pointer_grab(),
         };
         // The press goes on until its last button is let go or it is
         // cancelled; the pointer leaving the window does not end it.
@@ -308,9 +314,9 @@ impl QuickScene {
             _ => !ev.buttons.is_empty(),
         };
         if goes_on {
-            self.watch.pressed_in = Some(items.clone());
+            self.watch.held = Some(on);
         }
-        items
+        on.map_or_else(Vec::new, |o| watchers.items_holding(engine, o))
     }
 
     /// After a pointer event: the watchers of the items it was routed
@@ -352,39 +358,34 @@ impl QuickScene {
         }
     }
 
-    /// After a key event, given the item that had active focus as it came.
+    /// Before a key event is delivered: the watched items holding the
+    /// item with active focus, which is where it goes.
+    pub(crate) fn watched_key_route(&self, engine: &Engine, root: ObjectId) -> Vec<ObjectId> {
+        let watchers = engine.extension::<Watchers>();
+        if watchers.is_empty() {
+            return Vec::new();
+        }
+        // Focus asked for since the last key counts from now, as delivery
+        // settles it, so the item read is the one the key reaches.
+        crate::focus::tree::settle(engine);
+        crate::focus::tree::active_focus_item(engine, root)
+            .map_or_else(Vec::new, |f| watchers.items_holding(engine, f))
+    }
+
+    /// After a key event: the watchers of the items it was routed into
+    /// ([`QuickScene::watched_key_route`]).
     pub(crate) fn watched_key(
         &self,
         engine: &Engine,
         ev: &KeyEvent,
-        focus: Option<ObjectId>,
+        items: &[ObjectId],
         taken: bool,
     ) {
-        let watchers = engine.extension::<Watchers>();
-        let Some(focus) = focus.filter(|_| !watchers.is_empty()) else {
-            return;
-        };
-        let items = watchers.items_holding(engine, focus);
         if !items.is_empty() {
             let input = Input::Key(ev.clone());
-            watchers.tell(engine, &items, &input, self.watch.origin, taken);
+            engine
+                .extension::<Watchers>()
+                .tell(engine, items, &input, self.watch.origin, taken);
         }
-    }
-
-    /// Whether anything watches input: when nothing does, a scene asks
-    /// nothing more of an event than delivering it.
-    pub(crate) fn watching_input(&self, engine: &Engine) -> bool {
-        !engine.extension::<Watchers>().is_empty()
-    }
-
-    fn watched_under(
-        &self,
-        engine: &Engine,
-        watchers: &Watchers,
-        pos: kurbo::Point,
-    ) -> Vec<ObjectId> {
-        self.hits(engine, pos)
-            .first()
-            .map_or_else(Vec::new, |&top| watchers.items_holding(engine, top))
     }
 }

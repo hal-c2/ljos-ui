@@ -1636,6 +1636,8 @@ impl QuickScene {
         self.unadopt(engine, old, true);
         crate::focus::tree::remove_window(engine, old);
         crate::keys::reset_shortcuts(engine, old);
+        // A press held in the old tree is not the new tree's.
+        self.watch.forget_press();
     }
 
     /// [`QuickScene::set_root`] for a host that destroys the old root

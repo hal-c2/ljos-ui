@@ -464,19 +464,12 @@ impl QuickScene {
         let Some(root) = self.root() else {
             return false;
         };
-        // Where the key goes is where it was focused as it came: a key
-        // that moves the focus (Tab) is still the first item's. Focus
-        // asked for since the last key is settled first, as delivery
-        // settles it, so the watched item is the one the key reaches.
-        if self.watching_input(engine) {
-            focus::settle(engine);
-        }
-        let focus = self
-            .watching_input(engine)
-            .then(|| focus::active_focus_item(engine, root))
-            .flatten();
+        // Who watches the key is decided before it is delivered: a key
+        // that moves the focus (Tab), or a handler that moves its item,
+        // leaves it the first item's.
+        let route = self.watched_key_route(engine, root);
         let taken = deliver_key(engine, root, ev);
-        self.watched_key(engine, ev, focus, taken);
+        self.watched_key(engine, ev, &route, taken);
         taken
     }
 
