@@ -154,9 +154,9 @@ ApplicationWindow {
 Never distinguish control states (such as online/offline or checked/unchecked) by hue or tint alone. Pair colour changes with a label, icon, or shape change so users with colour-vision deficiency or greyscale displays can tell the states apart by at least 3:1:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 320
@@ -166,20 +166,22 @@ ApplicationWindow {
 
     property bool online: true
 
-    RowLayout {
+    Row {
         anchors.centerIn: parent
         spacing: 8
 
         Rectangle {
+            Layout.alignment: Align.VCenter
             width: 10
             height: 10
             radius: 5
-            color: online ? "seagreen" : "transparent"
+            fill: online ? "seagreen" : "transparent"
             border.color: palette.windowText
             border.width: 2
         }
 
         Label {
+            Layout.alignment: Align.VCenter
             text: online ? qsTr("Online") : qsTr("Offline")
         }
     }
@@ -234,9 +236,9 @@ ApplicationWindow {
 - **`color-accent-weight`:** Keep the accent colour under `limits::hue::ACCENT_MAX_SHARE` (about 10 % of the window) and highlight at most one primary button (`limits::hue::PRIMARY_BUTTONS_MAX`) per surface:
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
@@ -244,21 +246,24 @@ ApplicationWindow {
     visible: true
     title: qsTr("Publish post")
 
-    RowLayout {
+    Row {
         anchors.centerIn: parent
         spacing: 8
 
         Button {
+            Layout.alignment: Align.VCenter
             text: qsTr("Delete draft")
             palette.button: "#c01c28"
             palette.buttonText: "white"
         }
 
         Button {
+            Layout.alignment: Align.VCenter
             text: qsTr("Save draft")
         }
 
         Button {
+            Layout.alignment: Align.VCenter
             text: qsTr("Publish post")
             highlighted: true
         }

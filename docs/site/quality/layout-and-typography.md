@@ -15,7 +15,7 @@ A layout works only when it holds at every window size and font scale a user cho
 
 ### Core layout principles
 
-- **Use `QtQuick.Layouts` (`RowLayout`, `ColumnLayout`, `GridLayout`):** Layouts respect each child's `implicitWidth`, `implicitHeight`, and minimum sizes as text grows. Fixed `x`/`y` coordinates and manual anchors break when strings are translated or scaled.
+- **Use `Ljos.Layout` (`Row`, `Column`, `Grid`):** A box respects each child's `implicitWidth`, `implicitHeight`, and minimum sizes as text grows, and gives spare room to a child with `Layout.fillWidth` or `Layout.fillHeight`. A file still in Qt's QML uses `QtQuick.Layouts` (`RowLayout`, `ColumnLayout`, `GridLayout`), which the audit checks the same way. Fixed `x`/`y` coordinates and manual anchors break when strings are translated or scaled.
 - **Size surfaces from content:** Let popups, cards, and dialogs take their size from `implicitWidth` and `implicitHeight` up to a maximum, scrolling when content exceeds the available space.
 - **Follow the 4 px spacing scale (`layout-spacing-scale`):** Keep every `spacing`, `margins`, and `padding` value a multiple of `limits::SPACING_UNIT_PX` (`4`, `8`, `12`, `16`, `24`, `32`).
 - **Match nested corner radii (`layout-nested-radius`):** When a `Rectangle` fills another with a margin (`anchors.margins: 2`), make the inner `radius` equal to the outer `radius` minus the gap, never larger.
@@ -24,10 +24,10 @@ A layout works only when it holds at every window size and font scale a user cho
 
 | Rule code | Severity | What it checks and how to fix it |
 |---|---|---|
-| `layout-offscreen` | Error (runtime) | An operable control lies partly or wholly outside the window at some window size or font scale with no `ScrollView` to reach it. Put long content inside a `ScrollView` and keep action buttons pinned in a `ColumnLayout`. |
+| `layout-offscreen` | Error (runtime) | An operable control lies partly or wholly outside the window at some window size or font scale with no `ScrollView` to reach it. Put long content inside a `ScrollView` and keep action buttons pinned in a `Column`. |
 | `layout-occluded` | Error (runtime) | An operable control is covered by another item drawn above it, such as a banner or toast anchored over a footer button. Give the notice its own row in the layout. |
-| `layout-anchors-in-layout` | Error (static) | A direct child of a `RowLayout`, `ColumnLayout`, or `GridLayout` sets `anchors.*`. Remove the anchors and use `Layout.fillWidth`, `Layout.alignment`, or a spacer `Item` instead. |
-| `layout-overlap` | Warning (runtime) | Two sibling labels or controls cross each other by more than 1 px because anchors ignore growing text. Place them in a `RowLayout` with `Layout.fillWidth: true` and `elide: Text.ElideRight`. |
+| `layout-anchors-in-layout` | Error (static) | A direct child of a `Row`, `Column`, or `Grid` (or of Qt's `RowLayout`, `ColumnLayout`, or `GridLayout`) sets `anchors.*`. Remove the anchors and use `Layout.fillWidth`, `Layout.alignment`, or a spacer `Item` instead. |
+| `layout-overlap` | Warning (runtime) | Two sibling labels or controls cross each other by more than 1 px because anchors ignore growing text. Place them in a `Row` with `Layout.fillWidth: true` and `elide: Text.ElideRight`. |
 | `layout-under-minimum` | Warning (runtime) | An item is laid out smaller than its `Layout.minimumWidth` or `implicitWidth`. Set the window's `minimumWidth` and `minimumHeight` to at least the sum of its panes' minimums. |
 | `layout-popup-fit` | Warning (runtime) | A popup or dialog is much larger than its content (filling less than `limits::POPUP_MIN_FILL`) or too small to show it. Omit fixed dimensions so the dialog sizes to its content. |
 | `layout-fixed-size` | Warning (static) | A popup, dialog, or pane with dynamic content sets a literal `width` and `height`. Bind `width: Math.min(implicitWidth, 400)` and wrap the text. |
@@ -36,16 +36,17 @@ A layout works only when it holds at every window size and font scale a user cho
 | `layout-resize-handle` | Warning (runtime) | A `SplitView` handle draws nothing at rest. Give the handle a visible `Rectangle` that changes colour on `SplitHandle.hovered` and `SplitHandle.pressed`. |
 | `layout-window-controls` | Warning (runtime) | A frameless window (`Qt.FramelessWindowHint`) lacks a visible close button at the top corner within `limits::WINDOW_CONTROLS_MAX_INSET_PX`. Add a `ToolButton` named `Close` in the header `ToolBar`. |
 | `layout-reflow` | Warning (runtime) | At `limits::REFLOW_WIDTH_PX` (`320 px` wide), a `ScrollView` or `Flickable` containing reading text scrolls both horizontally and vertically. Bind the label's `width` to `view.availableWidth` with `wrapMode: Text.Wrap`. |
-| `layout-misaligned` | Hint (runtime) | Stacked controls in a column have left edges differing by 1 to `limits::MISALIGN_MAX_PX`, or form fields of the same kind have inconsistent widths. Align them in a `GridLayout` with `Layout.fillWidth: true`. |
+| `layout-misaligned` | Hint (runtime) | Stacked controls in a column have left edges differing by 1 to `limits::MISALIGN_MAX_PX`, or form fields of the same kind have inconsistent widths. Align them in a `Grid` with `Layout.fillWidth: true`. |
 | `layout-spacing-scale` | Hint (static) | A `spacing`, `margins`, or `padding` literal is not a multiple of 4 px (for example, `7` or `13`). Round to the 4 px grid (`8` or `12`). |
 | `layout-wrap-separator` | Hint (runtime) | A wrapped `Flow` starts or ends a line with a standalone separator (`·`, `|`, `ToolSeparator`). Attach the separator prefix to each item after index 0 instead. |
 | `layout-menu-ungrouped` | Hint (static, runtime) | A `Menu` has more than `limits::MENU_MAX_UNGROUPED` (`10`) items without a `MenuSeparator` or submenu. Group related actions with `MenuSeparator {}`. |
 | `layout-nested-radius` | Hint (static) | An inner `Rectangle` filling a parent `Rectangle` has a larger literal `radius` than the outer one. Set the inner radius to the outer radius minus the margin. |
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+pragma Scripts: JavaScript
+import Ljos.Ui
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 480
@@ -57,7 +58,7 @@ ApplicationWindow {
 
     property string errorMessage: ""
 
-    ColumnLayout {
+    Column {
         anchors.fill: parent
         anchors.margins: 16
         spacing: 12
@@ -67,24 +68,28 @@ ApplicationWindow {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
-            GridLayout {
+            Grid {
                 width: formScroll.availableWidth
                 columns: 2
                 columnSpacing: 12
                 rowSpacing: 8
 
                 Label {
+                    Layout.alignment: Align.VCenter
                     text: qsTr("Display name")
                 }
                 TextField {
+                    Layout.alignment: Align.VCenter
                     Layout.fillWidth: true
                     Accessible.name: qsTr("Display name")
                 }
 
                 Label {
+                    Layout.alignment: Align.VCenter
                     text: qsTr("Email address")
                 }
                 TextField {
+                    Layout.alignment: Align.VCenter
                     Layout.fillWidth: true
                     Accessible.name: qsTr("Email address")
                 }
@@ -99,15 +104,17 @@ ApplicationWindow {
             wrapMode: Text.Wrap
         }
 
-        RowLayout {
+        Row {
             Layout.fillWidth: true
             spacing: 8
 
             Item {
+                Layout.alignment: Align.VCenter
                 Layout.fillWidth: true
             }
 
             Button {
+                Layout.alignment: Align.VCenter
                 text: qsTr("Save preferences")
                 highlighted: true
             }
@@ -205,9 +212,9 @@ Words are the first part of an interface a user reads.
 - **`content-menu-ellipsis` (Hint, static):** End a `MenuItem` or `Action` label with `…` (`Rename…`) when its handler opens a `Dialog`, `FileDialog`, or `Popup` for further input.
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 400
@@ -219,7 +226,7 @@ ApplicationWindow {
     property string query: "invoice"
     property bool canPublish: false
 
-    ColumnLayout {
+    Column {
         anchors.fill: parent
         anchors.margins: 16
         spacing: 12
@@ -242,15 +249,17 @@ ApplicationWindow {
             }
         }
 
-        RowLayout {
+        Row {
             spacing: 8
 
             Button {
+                Layout.alignment: Align.VCenter
                 text: qsTr("Publish report")
                 enabled: canPublish
             }
 
             Label {
+                Layout.alignment: Align.VCenter
                 visible: !canPublish
                 text: qsTr("Select at least one result to publish")
                 color: palette.placeholderText

@@ -28,9 +28,9 @@ Every interactive element, meaningful image, dialog, and input field needs an un
 - **`a11y-name-mismatch` (Warning, static and runtime):** When you override `Accessible.name` on a control that shows visible text, start the accessible name with the visible words in the same order so voice-control users can say what they see (for example, `text: qsTr("Send")` with `Accessible.name: qsTr("Send message")`).
 
 ```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
@@ -38,11 +38,12 @@ ApplicationWindow {
     visible: true
     title: qsTr("Toolbar example")
 
-    RowLayout {
+    Row {
         anchors.centerIn: parent
         spacing: 8
 
         ToolButton {
+            Layout.alignment: Align.VCenter
             text: qsTr("Delete selected rows")
             display: AbstractButton.IconOnly
             icon.name: "edit-delete"
@@ -52,6 +53,7 @@ ApplicationWindow {
         }
 
         Button {
+            Layout.alignment: Align.VCenter
             text: qsTr("Send")
             Accessible.name: qsTr("Send message")
         }
@@ -171,10 +173,11 @@ ApplicationWindow {
 - **`a11y-set-size` (Warning, runtime):** Use `ListView` rather than a hand-rolled `Repeater` inside a `Flickable` so virtualised delegates automatically report their position and total count (for example, "3 of 120").
 - **`a11y-current-unmarked` (Warning, runtime):** Bind `highlighted: ListView.isCurrentItem` on list delegates so the active row is exposed to assistive technologies and stands out visually by at least 3:1 (`limits::NONTEXT_CONTRAST`).
 
-```qml
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+```qml group=files
+import Ljos.Ui
+import "Main.rows.ts" as Rows
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
@@ -185,28 +188,40 @@ ApplicationWindow {
     ListView {
         anchors.fill: parent
         currentIndex: 0
-        model: ListModel {
-            ListElement { name: "README.md" }
-            ListElement { name: "Cargo.toml" }
-        }
+        readonly property list<Rows.Row> rows: [
+            { name: "README.md" },
+            { name: "Cargo.toml" }
+        ]
+        model: rows
 
-        delegate: RowLayout {
+        delegate: Row {
             required property string name
             required property int index
             width: ListView.view.width
             spacing: 4
 
             ItemDelegate {
+                Layout.alignment: Align.VCenter
                 Layout.fillWidth: true
                 text: name
                 highlighted: ListView.isCurrentItem
             }
 
             Button {
+                Layout.alignment: Align.VCenter
                 text: qsTr("Delete %1").arg(name)
             }
         }
     }
+}
+```
+
+The type of a row is `Main.rows.ts`, beside `Main.qml`:
+
+```ts file=Main.rows.ts group=files
+// The rows of the constant ListModels of Main.qml (docs/DIALECT.md §4.8).
+export interface Row {
+  readonly name: string;
 }
 ```
 

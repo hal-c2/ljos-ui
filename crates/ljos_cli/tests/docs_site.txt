@@ -34,17 +34,10 @@ language/modules-and-imports.md 1 gap:imports
 language/properties-and-bindings.md 1 gap:imports
 language/properties-and-bindings.md 6 gap:imports
 language/states-and-transitions.md 3 gap:ui-types
-quality/accessibility.md 1 gap:layout
 quality/accessibility.md 3 gap:layout
-quality/accessibility.md 4 gap:layout
 quality/accessibility.md 5 gap:ui-types
-quality/color.md 4 gap:layout
-quality/color.md 6 gap:layout
 quality/design-guardrails.md 3 gap:layout shows-findings
-quality/design-guardrails.md 4 gap:layout
-quality/layout-and-typography.md 1 gap:layout
 quality/layout-and-typography.md 2 gap:layout
-quality/layout-and-typography.md 3 gap:layout
 quality/motion.md 2 gap:ui-types
 quality/performance.md 1 gap:layout
 rust/multimedia.md 1 gap:imports
