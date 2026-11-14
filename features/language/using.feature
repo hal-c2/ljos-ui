@@ -15,7 +15,9 @@ Feature: Disposing of a resource when its block ends, with using
   `[Symbol.asyncDispose]()`. A `DisposableStack` holds several, and hands
   them on with `move()`. In a file written in Ljós's API, the checker
   holds what a `using` declaration is given to be disposable, or
-  `undefined`.
+  `undefined`, and that nothing assigns to it. Tier 1 and compiled code
+  run a declaration whose value leaves nothing to dispose of, and hand
+  any other to JavaScript.
 
   Rule: A value a using declaration names is disposed of when its block ends
 
@@ -144,6 +146,67 @@ Feature: Disposing of a resource when its block ends, with using
       When 10 milliseconds pass
       Then the property "said" of "root" is "body sync async deferred"
 
+  Rule: Tier 1 and compiled code run a using declaration that holds nothing to dispose of
+
+    Scenario: The check counts a binding with a using declaration of undefined in tier 1 and compiled code
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        Item {
+            property real count: 2
+            property real half: { using held = undefined; return count / 2 }
+            property real third: { using held = null; return count / 3 }
+        }
+        """
+      When the files are checked with statistics
+      Then the check reports the lines:
+        """
+        all        2 of 2 tier 1 (100.0%)
+        compiled ahead of time  1 of 2 (50.0%)
+        """
+      And the check reports the lines:
+        """
+        Main.qml:5:34: runs dynamically: null
+        """
+
+    Scenario: Tier 1 runs a using declaration of undefined, and hands a disposable to JavaScript
+      Given the tier 1 cross-check is on
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property real count: 2
+          property var held: undefined
+          property string said: ""
+          property real half: { using h = held; return count / 2 }
+          function hold() { held = { [Symbol.dispose]() { root.said = root.said + "disposed"; } }; }
+        }
+        """
+      When the property "count" of "root" is set to 4
+      Then the property "half" of "root" is 2
+      And the property "said" of "root" is ""
+      When the method "hold" of "root" is called
+      Then the property "said" of "root" is "disposed"
+      And the log has no warning matching "tier 1 and tier 2 differ"
+
+    Scenario: Compiled code runs a using declaration of undefined
+      Given the files are compiled ahead of time
+      And the compiled code cross-check is on
+      And the QML:
+        """qml
+        import QtQuick
+        Item {
+          objectName: "root"
+          property real count: 2
+          property real half: { using held = undefined; return count / 2 }
+        }
+        """
+      When the property "count" of "root" is set to 6
+      Then the property "half" of "root" is 3
+      And the file "Scenario.qml" ran compiled code
+      And the log has no warning matching "compiled code and the dynamic tiers differ"
+
   Rule: In Ljós's API, what a using declaration is given is disposable
 
     Scenario: A disposable object, a DisposableStack and their asynchronous forms are typed
@@ -162,6 +225,7 @@ Feature: Disposing of a resource when its block ends, with using
           const count = stack.adopt(2, (n: number): void => { opened.push(String(n)); });
           stack.defer((): void => { opened.push("deferred"); });
           const moved: DisposableStack = stack.move();
+          for (using each of [open("d"), open("e")]) { opened.push(each.name); }
           return first.name.length + second.name.length + count + (moved.disposed ? 1 : 0);
         }
         export async function later(): Promise<void> {
@@ -231,6 +295,33 @@ Feature: Disposing of a resource when its block ends, with using
         Pool.qml:6:15: error: `Symbol.dispose` is not in Ljós's API: it is only the key of a method in an object literal, as in `{ [Symbol.dispose](): void { … } }` [ts-forbidden]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
+        """
+
+    Scenario: Nothing assigns to a constant or to what a using declaration names
+      Given the file "Pool.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function work(): number {
+            const size = 2;
+            using held = undefined;
+            let n = size;
+            size = 3;
+            held = undefined;
+            size++;
+            n = n + 1;
+            return n;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Pool.qml:7:13: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
+        Pool.qml:8:13: error: `held` is declared with `using`, which disposes of the value it is given when its block ends: it is not assigned; declare another name [ts-readonly]
+        Pool.qml:9:13: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
+        1 files, 3 errors, 0 warnings
+        ljos: 3 errors
         """
 
     Scenario: A using declaration with no value is a syntax error

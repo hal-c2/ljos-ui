@@ -222,6 +222,35 @@ fn a_handler_may_end_with_one_write() {
 }
 
 #[test]
+fn a_using_declaration_holds_its_value_to_nothing_to_dispose_of() {
+    let file = compile(
+        "property var o: { using held = a > 1 ? undefined : null; return held }\n\
+         onAChanged: { using held = s; b = a }",
+    );
+    let read = program(&file, BindingKind::Property, 0);
+    assert_eq!(count(&read, |op| matches!(op, Op::Nullish { .. })), 1);
+    // The value is held before the write, so a run that gives it back to
+    // JavaScript has made no effect.
+    let handler = program(&file, BindingKind::Handler, 0);
+    let held = handler
+        .code
+        .iter()
+        .position(|op| matches!(op, Op::Nullish { .. }))
+        .expect("the hold");
+    let set = handler
+        .code
+        .iter()
+        .position(|op| matches!(op, Op::Set { .. }))
+        .expect("the write");
+    assert!(held < set, "{:?}", handler.code);
+    let after = compile("onAChanged: { b = a; using held = s }");
+    assert_eq!(
+        reason(&after, BindingKind::Handler, 0),
+        "more than one effect"
+    );
+}
+
+#[test]
 fn what_is_outside_the_subset_says_why() {
     let file = compile(
         "property var o: console.log(a)\n\

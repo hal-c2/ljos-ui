@@ -97,6 +97,14 @@ pub enum Stmt {
     /// Out of the `switch` around it.
     Break,
     Block(Vec<Stmt>),
+    // Last, so that the variants before it keep their serialised index
+    // and the code compiled for them keeps its key.
+    /// `using`, one name: a constant whose value is disposed of when its
+    /// block ends.
+    Using {
+        name: String,
+        init: Expr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
