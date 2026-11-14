@@ -32,7 +32,7 @@ They can be read in three places.
 - `lastCompletedGpuTime` is the GPU time;
 - `pipelineCount` is the number of pipelines made so far.
 
-Both read the frame, not one view: where a window has several views, the counts and times are of all of them together, where Qt's `renderStats` is its view's own.
+Both read the frame, not one view. Where a window has several views, the counts and the CPU times cover all of them together, but Qt's `renderStats` covers only its own view. The GPU time (`gpu_ms` and `lastCompletedGpuTime`) is the last scene's, as in the table above.
 
 **Over MCP.** `app_metrics` and the paint report carry `scene3d`: how many 3D frames there have been, what the last one cost, and the largest and latest CPU parts.
 
