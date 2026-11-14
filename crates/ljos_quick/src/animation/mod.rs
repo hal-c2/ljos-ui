@@ -45,7 +45,8 @@ use crate::item::is_a;
 
 pub use behavior::{Behavior, BehaviorTarget};
 pub use controller::AnimationController;
-pub use frame::FrameAnimation;
+pub use driver::frames_only_while;
+pub use frame::{FrameAnimation, frame_time_due};
 pub use timeline::{between, curve_of};
 pub use transition::{
     Passage, Transition, run_passage, run_passage_beside, run_transition, run_transition_to,
