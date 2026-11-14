@@ -208,6 +208,11 @@ impl ParticleSystem3D {
                         let _ = e.set_internal(me, ParticleSystem3D::TIME, 0);
                     }
                 }
+                // A clock that rode along without frames has run since its
+                // last one: that time is the system's before the clock stops.
+                if !(running && !paused) {
+                    bank(e, me, clock);
+                }
                 // A write of `paused` above comes back here with it false.
                 let _ = e.write(
                     clock,
@@ -237,6 +242,22 @@ fn tick(e: &Engine, me: ObjectId) {
     if !e.is_observed(me, ParticleSystem3D::TIME.index) {
         let _ = e.make_on_read_by(me, ParticleSystem3D::TIME.index, made_time);
     }
+}
+
+/// Adds to the system's time what its clock has run since its last frame.
+/// Nought unless the clock runs.
+fn bank(e: &Engine, me: ObjectId, clock: ObjectId) {
+    let due = frame_time_due(e, clock) * 1000.0;
+    if due <= 0.0 {
+        return;
+    }
+    let Ok(gone) = e.with_mut(me, |s: &mut ParticleSystem3D| {
+        s.gone += due;
+        s.gone
+    }) else {
+        return;
+    };
+    let _ = e.set_internal(me, ParticleSystem3D::TIME, gone.floor() as i32);
 }
 
 /// The time of a system whose clock rides along without asking for frames:
