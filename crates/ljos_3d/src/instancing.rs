@@ -129,9 +129,10 @@ impl Instancing {
 
     /// What is left of `world` inside `global` (this instancing's
     /// [`global`](Self::global)): `global⁻¹ * world`. Where the model is
-    /// its own root, or the root's child, that is the model's own transform,
-    /// read off the node as it is rather than worked out, so that it stays
-    /// the same to the bit while what is above the model moves.
+    /// its own root, that is the model's own transform; where the instancing
+    /// names no root, the model's own turn and scale. Either is read off the
+    /// node as it is rather than worked out, so that it stays the same to
+    /// the bit while what is above the model moves.
     pub fn local(&self, scene: &Scene, model: NodeId, world: &Mat4, global: &Mat4) -> Mat4 {
         let node = scene.node(model);
         let worked_out = || global.inverse().unwrap_or(Mat4::IDENTITY) * *world;

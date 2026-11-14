@@ -2137,6 +2137,7 @@ impl Renderer {
                     Some(instancing) => {
                         let first = rows.len();
                         transparent |= instancing.transparent;
+                        let opaque = !(transparent || model.material.blends());
                         let global = instancing.global(scene, *id, world);
                         let local = instancing.local(scene, *id, world, &global);
                         // The spheres in the table's space: the mesh's
@@ -2161,7 +2162,10 @@ impl Renderer {
                                 global,
                                 spheres: &in_table,
                                 origin: local.translation(),
-                                opaque: !(transparent || model.material.blends()),
+                                opaque,
+                                depth_decides: opaque
+                                    && model.material.depth_draw().writes(false)
+                                    && environment.depth_test,
                                 view: instancing.depth_sort.then_some(&view),
                             },
                             &mut rows,
