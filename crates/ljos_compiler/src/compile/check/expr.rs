@@ -7,11 +7,12 @@ use qml_syntax::{
     GetSpan, Span,
     js::{
         Argument, ArrayExpressionElement, ArrowFunctionBody, AssignmentOperator, AssignmentTarget,
-        BinaryOperator, BindingPattern, CallExpression, ChainElement, Expression, FormalParameters,
-        Function, IdentifierReference, LogicalOperator, ObjectPropertyKind, PropertyKey,
-        SimpleAssignmentTarget, SpreadElement, Statement, StaticMemberExpression, TSLiteral,
-        TSSignature, TSType, TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator,
-        TSTypePredicateName, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
+        AssignmentTargetMaybeDefault, AssignmentTargetProperty, BinaryOperator, BindingPattern,
+        CallExpression, ChainElement, Expression, FormalParameters, Function, IdentifierReference,
+        LogicalOperator, ObjectPropertyKind, PropertyKey, SimpleAssignmentTarget, SpreadElement,
+        Statement, StaticMemberExpression, TSLiteral, TSSignature, TSType, TSTypeAnnotation,
+        TSTypeName, TSTypeOperatorOperator, TSTypePredicateName, UnaryOperator,
+        VariableDeclaration, VariableDeclarationKind,
     },
 };
 
@@ -1855,6 +1856,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 given
             }
             Expression::AssignmentExpression(assignment) => {
+                if let AssignmentTarget::AssignmentTargetIdentifier(id) = &assignment.left
+                    && self.constant_write(id)
+                {
+                    self.expr(&assignment.right, None);
+                    return self.name(id);
+                }
                 let place = match &assignment.left {
                     AssignmentTarget::AssignmentTargetIdentifier(id) => self.place_name(id),
                     AssignmentTarget::StaticMemberExpression(m) => {
@@ -1889,7 +1896,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             exact: None,
                         })
                     }
-                    _ => None,
+                    // JavaScript evaluates the value before the target's
+                    // defaults, so what it reads is narrowed as before them.
+                    target => {
+                        let given = self.expr(&assignment.right, None);
+                        self.constant_writes(target);
+                        return given;
+                    }
                 };
                 let Some(place) = place else {
                     return self.expr(&assignment.right, None);
@@ -2129,7 +2142,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             Expression::UpdateExpression(update) => {
                 let ty = match &update.argument {
-                    SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => self.name(id),
+                    SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
+                        self.constant_write(id);
+                        self.name(id)
+                    }
                     target => match target.as_member_expression() {
                         Some(member) => {
                             let object = self.expr(member.object(), None);
@@ -3191,6 +3207,109 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.arena.or(list, Ty::UNDEFINED)
     }
 
+    /// The names a destructuring assignment writes, `[size] = …` or
+    /// `({ held } = …)`, each held to `constant_write`.
+    fn constant_writes(&mut self, target: &AssignmentTarget<'a>) {
+        match target {
+            AssignmentTarget::AssignmentTargetIdentifier(id) => {
+                self.constant_write(id);
+            }
+            AssignmentTarget::ArrayAssignmentTarget(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.constant_writes_maybe_default(element);
+                }
+                if let Some(rest) = &array.rest {
+                    self.constant_writes(&rest.target);
+                }
+            }
+            AssignmentTarget::ObjectAssignmentTarget(object) => {
+                for property in &object.properties {
+                    match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(it) => {
+                            self.constant_write(&it.binding);
+                            if let Some(init) = &it.init {
+                                self.default_value(init);
+                            }
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(it) => {
+                            self.constant_writes_maybe_default(&it.binding);
+                        }
+                    }
+                }
+                if let Some(rest) = &object.rest {
+                    self.constant_writes(&rest.target);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// A destructuring default, which runs only where the value it stands
+    /// in for is `undefined`: after it, a name it assigns is what it was
+    /// before or anything the default gave it. Every assignment in the
+    /// default joins, since one in a branch of `?:` may be the one that ran.
+    fn default_value(&mut self, init: &Expression<'a>) {
+        let assigned = self.assigned.len();
+        let facts = self.facts.len();
+        self.expr(init, None);
+        let given: Vec<Fact<'a>> = self.assigned[assigned..].to_vec();
+        let after = self.facts.split_off(facts);
+        let mut joined: Vec<Fact<'a>> = Vec::new();
+        for fact in given {
+            match joined
+                .iter_mut()
+                .find(|j| j.key == fact.key && j.local == fact.local)
+            {
+                Some(j) => j.ty = self.arena.or(j.ty, fact.ty),
+                None => {
+                    let before = self.fact(fact.key, fact.local).unwrap_or(fact.base);
+                    let ty = self.arena.or(before, fact.ty);
+                    joined.push(Fact { ty, ..fact });
+                }
+            }
+        }
+        self.facts.extend(after);
+        self.facts.extend(joined);
+    }
+
+    fn constant_writes_maybe_default(&mut self, target: &AssignmentTargetMaybeDefault<'a>) {
+        match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(it) => {
+                self.constant_writes(&it.binding);
+                self.default_value(&it.init);
+            }
+            target => {
+                if let Some(target) = target.as_assignment_target() {
+                    self.constant_writes(target);
+                }
+            }
+        }
+    }
+
+    /// `name = …` or `name++`, where `name` is a constant, which
+    /// JavaScript refuses with a `TypeError` where it runs. Whether it is
+    /// one, reported.
+    fn constant_write(&mut self, id: &IdentifierReference<'a>) -> bool {
+        if self.desugared(id.span.start) {
+            return false;
+        }
+        let name = id.name.as_str();
+        let message = match self.local(name).map(|local| local.binding) {
+            Some(Binding::Const) => format!(
+                "`{name}` is a constant, and keeps the value it is declared with: declare it with `let` to assign it"
+            ),
+            Some(Binding::Import) => format!(
+                "`{name}` is imported, and only the module that exports it changes it: declare a `let` with its value to change it here"
+            ),
+            Some(Binding::Using) => format!(
+                "`{name}` is declared with `using`, which disposes of the value it is given when its block ends: it is not assigned; declare another name"
+            ),
+            _ => return false,
+        };
+        self.report(Code::TsReadonly, message, id.span);
+        true
+    }
+
     /// Whether `call` is the desugar's call of `name`: `$is`, `$extract` or
     /// `$nomatch`.
     fn is_sugar(&self, call: &CallExpression<'a>, name: &str) -> bool {
@@ -3857,9 +3976,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
                 Binding::Let
             }
-            VariableDeclarationKind::Const
-            | VariableDeclarationKind::Using
-            | VariableDeclarationKind::AwaitUsing => Binding::Const,
+            VariableDeclarationKind::Const => Binding::Const,
+            VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => Binding::Using,
             VariableDeclarationKind::Let => Binding::Let,
         };
         let using = match declaration.kind {
@@ -4336,9 +4454,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
             }
             let binding = match declaration.kind {
-                VariableDeclarationKind::Const
-                | VariableDeclarationKind::Using
-                | VariableDeclarationKind::AwaitUsing => Binding::Const,
+                VariableDeclarationKind::Const => Binding::Const,
+                VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => {
+                    Binding::Using
+                }
                 VariableDeclarationKind::Var | VariableDeclarationKind::Let => Binding::Let,
             };
             // Each item a `for (using x of …)` takes is disposed of at the

@@ -563,15 +563,15 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         match specifier {
             ImportDeclarationSpecifier::ImportNamespaceSpecifier(it) => {
                 let ty = from.map_or(Ty::ERROR, |index| self.module_value(index));
-                self.bind(it.local.name.as_str(), ty, Binding::Const);
+                self.bind(it.local.name.as_str(), ty, Binding::Import);
             }
             ImportDeclarationSpecifier::ImportDefaultSpecifier(it) => {
-                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Const);
+                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Import);
             }
             ImportDeclarationSpecifier::ImportSpecifier(it) => {
                 let local = it.local.name.as_str();
                 let Some(from) = from else {
-                    self.bind(local, Ty::ERROR, Binding::Const);
+                    self.bind(local, Ty::ERROR, Binding::Import);
                     return;
                 };
                 let imported = it.imported.name();
@@ -583,7 +583,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                     self.bind(local, ty, Binding::Type);
                 }
                 if !types_only && it.import_kind != ImportOrExportKind::Type {
-                    self.bind(local, value.unwrap_or(Ty::ERROR), Binding::Const);
+                    self.bind(local, value.unwrap_or(Ty::ERROR), Binding::Import);
                 }
             }
         }
@@ -615,15 +615,15 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
         match specifier {
             ImportDeclarationSpecifier::ImportNamespaceSpecifier(it) => {
                 let ty = self.arena.intern(Kind::Script(script.into()));
-                self.bind(it.local.name.as_str(), ty, Binding::Const);
+                self.bind(it.local.name.as_str(), ty, Binding::Import);
             }
             ImportDeclarationSpecifier::ImportDefaultSpecifier(it) => {
                 self.boundary(script, "default", it.local.span);
-                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Const);
+                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Import);
             }
             ImportDeclarationSpecifier::ImportSpecifier(it) => {
                 self.boundary(script, it.imported.name().as_str(), it.imported.span());
-                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Const);
+                self.bind(it.local.name.as_str(), Ty::ERROR, Binding::Import);
             }
         }
     }

@@ -248,6 +248,15 @@ pub enum Op {
         base: Reg,
         count: u8,
     },
+    // Last, so that the variants before it keep their serialised index
+    // and the code compiled for them keeps its key.
+    /// `using name = src`: `src` must be `null` or `undefined`, which leave
+    /// nothing to dispose of. No other value a program holds has a
+    /// `[Symbol.dispose]()` method it could call, so for any other the run
+    /// ends, before an effect, and JavaScript disposes of it or throws.
+    Nullish {
+        src: Reg,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

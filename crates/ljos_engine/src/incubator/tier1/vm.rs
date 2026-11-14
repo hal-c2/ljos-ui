@@ -184,6 +184,11 @@ impl Run<'_> {
                         return None;
                     }
                 }
+                Op::Nullish { src } => {
+                    if !r[usize::from(src)].is_nullish() {
+                        return None;
+                    }
+                }
                 Op::Guard { obj, name, expr } => {
                     let Value::Object(o) = r[usize::from(obj)] else {
                         return None;

@@ -860,9 +860,12 @@ impl<'p, 'a> Gen<'p, 'a> {
                 return Err(Reason::with("statement", "var in a block"));
             }
             VariableDeclarationKind::Var | VariableDeclarationKind::Let => false,
-            VariableDeclarationKind::Const => true,
-            _ => return Err(Reason::with("statement", "using")),
+            VariableDeclarationKind::Const | VariableDeclarationKind::Using => true,
+            VariableDeclarationKind::AwaitUsing => {
+                return Err(Reason::with("statement", "await using"));
+            }
         };
+        let using = it.kind == VariableDeclarationKind::Using;
         for declarator in &it.declarations {
             let BindingPattern::BindingIdentifier(id) = &declarator.id else {
                 return Err(Reason::new("destructuring"));
@@ -874,7 +877,10 @@ impl<'p, 'a> Gen<'p, 'a> {
             let reg = self.alloc()?;
             match &declarator.init {
                 Some(init) => {
-                    self.expr(init, Some(reg))?;
+                    let at = self.expr(init, Some(reg))?;
+                    if using {
+                        self.emit(Op::Nullish { src: at })?;
+                    }
                 }
                 None => self.constant(reg, Const::Undefined)?,
             }
