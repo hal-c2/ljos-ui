@@ -3032,6 +3032,33 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             );
             return Ty::ERROR;
         }
+        // A primitive is no list either, even a string, which is iterable:
+        // the extractor reads only an object's iterator.
+        let primitive = self.arena.filter(list, |arena, part| {
+            matches!(
+                arena.kind(part),
+                Kind::Number
+                    | Kind::String
+                    | Kind::Color
+                    | Kind::Num(_)
+                    | Kind::Str(_)
+                    | Kind::Null
+                    | Kind::Undefined
+                    | Kind::Void
+            )
+        });
+        if primitive != Ty::NEVER {
+            let written = self.as_written(pattern.span());
+            let word = self.word(primitive);
+            self.report(
+                Code::TsAssignType,
+                format!(
+                    "`{written}` gives {word} where it matches, not a list to take apart: give an array or another iterable object"
+                ),
+                pattern.span(),
+            );
+            return Ty::ERROR;
+        }
         self.arena.or(list, Ty::UNDEFINED)
     }
 
