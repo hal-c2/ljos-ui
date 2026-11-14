@@ -67,6 +67,26 @@ impl SceneSlot {
         scene
     }
 
+    /// Offers a scene that was patched rather than built anew
+    /// ([`SceneSync`](crate::qml::SceneSync)), which knows whether it
+    /// changed: the held scene stays held when the offered one is it or has
+    /// its revision, with no compare of the two. Another replaces it and
+    /// tells the listener as [`offer`](Self::offer) does.
+    pub fn offer_shared(&mut self, scene: Arc<Scene>) -> Arc<Scene> {
+        if let Some(held) = &self.current
+            && (Arc::ptr_eq(held, &scene) || held.revision() == scene.revision())
+        {
+            return held.clone();
+        }
+        self.current = Some(scene.clone());
+        if !self.told.replace(true)
+            && let Some(listener) = &self.listener
+        {
+            listener();
+        }
+        scene
+    }
+
     /// The scene held, the change taken: the next change tells the
     /// listener again.
     pub fn current(&self) -> Option<Arc<Scene>> {
