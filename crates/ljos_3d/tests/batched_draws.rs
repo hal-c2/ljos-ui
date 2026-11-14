@@ -5,8 +5,10 @@
 //! is the nearer, writes none of their rows; a model that moves writes its
 //! own. A model no longer alike, or with a depth bias, is drawn on its own;
 //! of two alike in one place the later declared shows, as drawn apart;
-//! one that writes no depth stays between the models alike around it; and
-//! a batched model's colour draws no shadow map again.
+//! one that writes no depth, or a biased one, stays between the models
+//! alike around it, and two batches meeting in one place keep the order
+//! drawn apart has there; and a batched model's colour draws no shadow map
+//! again.
 //!
 //! One test, in a process of its own: the counts are the process's, and a
 //! second test drawing beside it would add to them.
@@ -328,6 +330,61 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
     assert!(r > b, "red, declared later, shows: {r} red, {b} blue");
     assert_within_a_level(&batched, &each, "a tie in one place");
 
+    // A biased model is drawn alone where its bias sorts it, and no batch
+    // reaches across it: red is alike the green one nearer, blue in red's
+    // place is biased nearer than red but farther than green, so red, drawn
+    // after blue, shows, batched or not.
+    let mut decal = small(
+        &[
+            (blue.0, Vec3::new(-120.0, 0.0, 60.0), GREEN, blue.3),
+            red,
+            blue,
+        ],
+        None,
+    );
+    let biased = models_of(&decal)[2];
+    decal.node_mut(biased).unwrap().depth_bias = -5.0;
+    let (counts, batched, each) = both(&gpu, &decal);
+    let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(
+        r > b,
+        "red, drawn after the biased blue, shows: {r} red, {b} blue"
+    );
+    assert_within_a_level(&batched, &each, "a biased model between two alike");
+    assert_eq!(counts.draw_calls, 3, "{counts:?}");
+
+    // Two batches meeting in one place: blue's batch is the nearer, red's
+    // the farther, and red in blue's place is declared after it. Drawn
+    // apart, red is drawn after blue there and shows; no batch reaches
+    // across the other there.
+    let mut meeting = small(
+        &[
+            (blue.0, Vec3::new(-120.0, 0.0, 60.0), GREEN, blue.3),
+            blue,
+            red,
+            (blue.0, Vec3::new(120.0, 0.0, -60.0), GREEN, blue.3),
+        ],
+        None,
+    );
+    for &i in &[1, 3] {
+        let id = models_of(&meeting)[i];
+        match &mut meeting.node_mut(id).unwrap().kind {
+            NodeKind::Model(Model {
+                material: Material::Default(m),
+                ..
+            }) => m.specular_roughness = 0.5,
+            _ => unreachable!("models"),
+        }
+    }
+    let (counts, batched, each) = both(&gpu, &meeting);
+    let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(
+        r > b,
+        "red, declared after blue in its place, shows: {r} red, {b} blue"
+    );
+    assert_within_a_level(&batched, &each, "two batches in one place");
+    assert_eq!(counts.draw_calls, 4, "{counts:?}");
+
     // A batched model's colour is not its shadow's: changing it draws no
     // shadow map again.
     let shadowed = |color: Color| {
@@ -403,6 +460,28 @@ fn small(models: &[(Primitive, Vec3, Color, DepthDraw)], shadow: Option<Shadow>)
         );
     }
     scene
+}
+
+/// The models of `scene`, in declaration order.
+fn models_of(scene: &Scene) -> Vec<NodeId> {
+    scene
+        .walk()
+        .into_iter()
+        .filter(|(_, node, _)| matches!(node.kind, NodeKind::Model(_)))
+        .map(|(id, _, _)| id)
+        .collect()
+}
+
+/// `scene` drawn batched and drawn each on its own, each into a target of
+/// its own: the batched frame's counts and both pictures.
+fn both(gpu: &Gpu, scene: &Scene) -> (stats::FrameCounters, Rgba, Rgba) {
+    let mut target = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let (counts, batched) = frame(gpu, &mut target, scene);
+    gpu.renderer().set_batching(false);
+    let mut target = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let each = frame(gpu, &mut target, scene).1;
+    gpu.renderer().set_batching(true);
+    (counts, batched, each)
 }
 
 fn assert_within_a_level(a: &Rgba, b: &Rgba, what: &str) {
