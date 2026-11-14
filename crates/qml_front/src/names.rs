@@ -321,7 +321,7 @@ pub fn global(name: &str) -> Option<Global> {
 /// What the text `match` and `is` are lowered to calls (docs/DIALECT.md
 /// §4.21): the runtime defines them, and nothing a person writes names
 /// them.
-pub const SUGAR_GLOBALS: &[&str] = &["$is", "$nomatch"];
+pub const SUGAR_GLOBALS: &[&str] = &["$is", "$extract", "$nomatch"];
 
 /// What QML puts in every script's scope, whatever is imported.
 pub const QML_GLOBALS: &[&str] = &[

@@ -134,6 +134,8 @@ pub fn check_project(
         if let Some(back) = Back::new(text, &desugared.text, desugared.map) {
             backs.push((key.to_owned(), back));
             declare_sugar(&mut desugared.text);
+        } else {
+            declare_matcher(&mut desugared.text);
         }
         if crate::script::module::is_lts(key) {
             let declaration = crate::lts::declaration_key(key);
@@ -310,19 +312,47 @@ pub fn check_project(
     })
 }
 
+/// `Symbol.customMatcher`, which TypeScript's libraries do not declare yet
+/// (docs/DIALECT.md §4.18): a module that names it declares it, after its
+/// last line. Declared again in another module, it merges.
+pub const MATCHER: &str = "export {};\n\
+declare global { interface SymbolConstructor { readonly customMatcher: unique symbol; } }\n";
+
 /// What the desugar's calls are declared as to TypeScript (docs/DIALECT.md
 /// §4.18): the runtime defines them, so a file that calls them declares
-/// them, after its last line, which leaves its lines where they are.
-pub const SUGAR: &str = "declare function $is<T>(s: unknown, p: (v: unknown) => v is T): s is T;\n\
+/// them, after its last line, which leaves its lines where they are. A
+/// custom matcher's `$is` narrows nothing, and an extractor's list is what
+/// its matcher gives but `true` and `false`.
+pub const SUGAR: &str = "declare function $is(s: unknown, p: { [Symbol.customMatcher](...args: never[]): unknown }): boolean;\n\
+declare function $is<T>(s: unknown, p: (v: unknown) => v is T): s is T;\n\
 declare function $is<T>(s: unknown, p: T): s is T;\n\
+declare function $extract(s: unknown, p: StringConstructor, n: number, reads: number): [string] | undefined;\n\
+declare function $extract(s: unknown, p: NumberConstructor, n: number, reads: number): [number] | undefined;\n\
+declare function $extract(s: unknown, p: BooleanConstructor, n: number, reads: number): [boolean] | undefined;\n\
+declare function $extract<R>(s: unknown, p: { [Symbol.customMatcher](...args: never[]): R }, n: number, reads: number): Exclude<R, boolean> | undefined;\n\
+declare function $extract<R>(s: unknown, p: (...args: never[]) => R, n: number, reads: number): Exclude<R, boolean> | undefined;\n\
 declare function $nomatch(x: never): never;\n";
 
-/// Declares [`SUGAR`] at the end of the desugared `text`.
+/// Declares [`MATCHER`] and [`SUGAR`] at the end of the desugared `text`.
 pub fn declare_sugar(text: &mut String) {
+    end_line(text);
+    text.push_str(MATCHER);
+    text.push_str(SUGAR);
+}
+
+/// Declares [`MATCHER`] at the end of `text`, a file the desugar left as it
+/// was, where it names `Symbol.customMatcher`.
+pub fn declare_matcher(text: &mut String) {
+    if text.contains("Symbol.customMatcher") {
+        end_line(text);
+        text.push_str(MATCHER);
+    }
+}
+
+fn end_line(text: &mut String) {
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(SUGAR);
 }
 
 /// Writes `text` to `path`, with the directories it is in.

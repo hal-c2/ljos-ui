@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn what_the_proposal_leaves_out_is_an_error_at_it() {
         for (text, at) in [
-            ("x = match (v) { when Some(let y): y; default: 0; }", "Some"),
+            ("x = match (v) { when Some(let y: y; default: 0; }", ":"),
             ("x = match (v) { when < 3: 1; default: 0; }", "<"),
             ("x = match (v) { when 1 and 2 or 3: 1; default: 0; }", "or"),
             ("x = match (v) { when /a/g: 1; default: 0; }", "/a/g"),
@@ -423,6 +423,36 @@ mod tests {
                 "{text}: {first:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_extractor_reads_its_list_into_a_temporary_declared_in_the_arrow() {
+        assert_eq!(
+            lowered("x = match (v) { when Some(let y): y; default: 0; }\n"),
+            "x = (() => { let $x0; { if ((($x0 = $extract(v, Some, 1, 0)), true) && $x0 !== undefined) { const y = $x0[0]; return y; } } return 0;})()\n"
+        );
+    }
+
+    #[test]
+    fn an_is_with_an_extractor_declares_the_temporary_with_the_names() {
+        assert_eq!(
+            lowered("if (v is P(let a, ...)) use(a)\n"),
+            "let a; let $x0; if (((($x0 = $extract(v, P, 1, 1)), true) && $x0 !== undefined && ((a = $x0[0]), true))) use(a)\n"
+        );
+        // Without a name to declare at the statement, the temporary is the
+        // arrow's own.
+        assert_eq!(
+            lowered("ok = v is P(1)\n"),
+            "ok = (() => { let $x0; return (($x0 = $extract(v, P, 1, 0)), true) && $x0 !== undefined && $x0[0] === 1})()\n"
+        );
+    }
+
+    #[test]
+    fn an_extractor_s_list_may_start_on_the_next_line_as_a_call_s_may() {
+        assert_eq!(
+            lowered("x = match (v) { when P\n(1): 1; default: 0; }\n"),
+            "x = (() => { let $x0; if ((($x0 = $extract(v, P, 1, 0)), true) && $x0 !== undefined\n && $x0[0] === 1) return 1; return 0;})()\n"
+        );
     }
 
     #[test]

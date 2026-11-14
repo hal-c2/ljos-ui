@@ -31,8 +31,13 @@
 //! bindings are `let`s (a `var` pattern's, `var`s) declared at the start of
 //! the statement that holds it, assigned where the test reaches them; in a
 //! `switch`'s clauses, which a jump enters at any of them, at the start of
-//! the statement that holds the `switch`. `$is`
-//! and `$nomatch` are the runtime's (see DIALECT.md §4.18).
+//! the statement that holds the `switch`. An extractor, `P(a, b)`, keeps the
+//! list `$extract` gives in a name the desugar declares, `let $x0`, at the
+//! start of the `match`'s arrow, with an `is`'s bindings, or, for an `is`
+//! that binds nothing, in an arrow of its own; it is assigned where the test
+//! reaches it, `(($x0 = $extract(s, P, 2, 0)), true) && $x0 !== undefined`,
+//! and its items are read off it. `$is`, `$extract` and `$nomatch` are the
+//! runtime's (see DIALECT.md §4.18).
 
 use std::fmt::Write as _;
 
@@ -121,6 +126,11 @@ pub(crate) struct Sugar {
     /// any name the file writes starts with, so it never declares a name
     /// the code in it reads (see [`dollars`]).
     pub dollars: usize,
+    /// The names the extractors read so far keep their lists in: the
+    /// `match` or `is` around one declares them, and takes its own off the
+    /// end. How many the file has had numbers the next.
+    pub temps: Vec<String>,
+    pub temp_count: usize,
 }
 
 impl Sugar {
@@ -197,6 +207,9 @@ enum Pat {
     Bind { keyword: Span, var: bool, name: Span },
     Array { span: Span, items: Vec<Pat>, rest: Rest },
     Object { span: Span, props: Vec<Prop> },
+    /// `callee(items)`: what `callee`'s custom matcher gives for the hint
+    /// `"list"`, kept in `temp`, matched as a list.
+    Extract { callee: Span, span: Span, items: Vec<Pat>, rest: Rest, temp: String },
     And(Vec<Pat>),
     Or(Vec<Pat>),
     Not(Box<Pat>, Span),
@@ -246,6 +259,7 @@ impl Pat {
             | Self::Regex(span)
             | Self::Array { span, .. }
             | Self::Object { span, .. }
+            | Self::Extract { span, .. }
             | Self::Not(_, span)
             | Self::Guard(span)
             | Self::Never(span) => *span,
@@ -259,7 +273,7 @@ impl Pat {
     fn binds(&self) -> bool {
         match self {
             Self::Bind { .. } => true,
-            Self::Array { items, rest, .. } => {
+            Self::Array { items, rest, .. } | Self::Extract { items, rest, .. } => {
                 items.iter().any(Self::binds) || matches!(rest, Rest::Bind(_))
             }
             Self::Object { props, .. } => props.iter().any(|p| p.pat.as_ref().is_some_and(Self::binds)),
@@ -430,6 +444,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             vec![text(self.sugar.name("s"), keyword)]
         };
 
+        let temps_from = self.sugar.temps.len();
         let mut body = Vec::new();
         let mut has_default = false;
         while !self.at(Kind::RCurly) && !self.has_fatal_error() {
@@ -465,6 +480,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         let close = self.cur_token().span();
         self.expect(Kind::RCurly);
         let span = self.end_span(start);
+        let temps = self.sugar.temps.split_off(temps_from.min(self.sugar.temps.len()));
 
         let Some((open_text, close_text)) = self.sugar_function(span, YIELDS) else {
             self.sugar_unlowered(span, keyword);
@@ -485,6 +501,7 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
             pieces.push(Piece::Copy(subject_span));
             pieces.push(text(";", open));
         }
+        pieces.extend(sugar_temps(&temps, keyword));
         pieces.extend(body);
         if !has_default {
             pieces.push(text(" return $nomatch(", keyword));
@@ -506,7 +523,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
     pub(crate) fn parse_sugar_is(&mut self, lhs_start: u32, lhs: Expression<'a>) -> Expression<'a> {
         let keyword = self.cur_token().span();
         self.bump_any(); // `is`
+        let temps_from = self.sugar.temps.len();
         let pat = self.parse_sugar_pattern();
+        let temps = self.sugar.temps.split_off(temps_from.min(self.sugar.temps.len()));
         let span = self.end_span(lhs_start);
         let bare = matches!(lhs, Expression::Identifier(_));
         let path = if bare { vec![Piece::Copy(lhs.span())] } else { vec![text(self.sugar.name("s"), keyword)] };
@@ -552,7 +571,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         if self.sugar.item == Some(lhs_start) {
             pieces.push(text(";", Span::empty(lhs_start)));
         }
-        if bare {
+        // An extractor's list is declared with what the `is` binds; one
+        // that binds nothing has nowhere to declare it but an arrow.
+        if bare && (temps.is_empty() || !names.is_empty()) {
             pieces.push(text("(", keyword));
             pieces.extend(test);
             pieces.push(text(")", keyword));
@@ -564,9 +585,13 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 return Expression::new_parenthesized_expression(span, lhs, self);
             };
             pieces.push(text(open_text, keyword));
-            pieces.push(text(format!(" const {} = ", self.sugar.name("s")), keyword));
-            pieces.push(Piece::Copy(lhs.span()));
-            pieces.push(text("; return ", keyword));
+            if !bare {
+                pieces.push(text(format!(" const {} = ", self.sugar.name("s")), keyword));
+                pieces.push(Piece::Copy(lhs.span()));
+                pieces.push(text(";", keyword));
+            }
+            pieces.extend(sugar_temps(&temps, keyword));
+            pieces.push(text(" return ", keyword));
             pieces.extend(test);
             pieces.push(text(close_text, keyword));
         }
@@ -621,6 +646,9 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 let declared: Vec<_> =
                     list.iter().map(|(name, _)| (depth, (*name).to_string())).collect();
                 self.sugar.declared.extend(declared);
+            }
+            if !temps.is_empty() {
+                pieces.push(text(format!("let {}; ", temps.join(", ")), Span::empty(item)));
             }
             if !pieces.is_empty() {
                 let at = Span::empty(item);
@@ -783,16 +811,19 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
     }
 
-    /// Whether `.` or `[` follows the current token, on the same line for `[`.
+    /// Whether `.`, `(` or `[` follows the current token, on the same line
+    /// for `[`: a path or an extractor, as `String(let s)` is.
     fn sugar_path_follows(&mut self) -> bool {
         self.lookahead(|p| {
             p.bump_any();
-            p.at(Kind::Dot) || (p.at(Kind::LBrack) && !p.cur_token().is_on_new_line())
+            p.at(Kind::Dot)
+                || p.at(Kind::LParen)
+                || (p.at(Kind::LBrack) && !p.cur_token().is_on_new_line())
         })
     }
 
     /// A variable pattern: `name`, `a.b`, `a[b]`. One followed by `(` is an
-    /// extractor, which Ljós leaves out.
+    /// extractor, whose items are a list pattern's.
     fn parse_sugar_path(&mut self) -> Pat {
         let start = self.cur_start();
         if self.at(Kind::This) {
@@ -812,42 +843,31 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 break;
             }
         }
-        let span = self.end_span(start);
-        if self.at(Kind::LParen) {
-            self.sugar_error(
-                "an extractor is not in Ljós's `match`: test the value with a predicate, as in `when let x and isSome:`",
-                span,
-            );
-            self.sugar_skip_group();
-            return Pat::Never(self.end_span(start));
+        let callee = self.end_span(start);
+        if !self.at(Kind::LParen) {
+            return Pat::Is(callee);
         }
-        Pat::Is(span)
-    }
-
-    /// Past a bracketed group whose contents are not read: an extractor's
-    /// arguments, after its error.
-    fn sugar_skip_group(&mut self) {
-        let mut depth = 0u32;
-        loop {
-            match self.cur_kind() {
-                Kind::LParen | Kind::LBrack | Kind::LCurly => depth += 1,
-                Kind::RParen | Kind::RBrack | Kind::RCurly => depth = depth.saturating_sub(1),
-                Kind::Eof => return,
-                _ => {}
-            }
-            self.bump_any();
-            if depth == 0 {
-                return;
-            }
-        }
+        let temp = self.sugar.name(format!("x{}", self.sugar.temp_count));
+        self.sugar.temp_count += 1;
+        self.sugar.temps.push(temp.clone());
+        self.bump_any(); // `(`
+        let (items, rest) = self.parse_sugar_items(Kind::RParen);
+        Pat::Extract { callee, span: self.end_span(start), items, rest, temp }
     }
 
     fn parse_sugar_array(&mut self) -> Pat {
         let start = self.cur_start();
         self.bump_any(); // `[`
+        let (items, rest) = self.parse_sugar_items(Kind::RBrack);
+        Pat::Array { span: self.end_span(start), items, rest }
+    }
+
+    /// The items of a list pattern, an array's or an extractor's, after its
+    /// opening bracket and through `close`.
+    fn parse_sugar_items(&mut self, close: Kind) -> (Vec<Pat>, Rest) {
         let mut items = Vec::new();
         let mut rest = Rest::None;
-        while !self.at(Kind::RBrack) && !self.has_fatal_error() {
+        while !self.at(close) && !self.has_fatal_error() {
             if self.at(Kind::Dot3) {
                 self.bump_any();
                 rest = if matches!(self.cur_kind(), Kind::Let | Kind::Const | Kind::Var) {
@@ -863,8 +883,8 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 break;
             }
         }
-        self.expect(Kind::RBrack);
-        Pat::Array { span: self.end_span(start), items, rest }
+        self.expect(close);
+        (items, rest)
     }
 
     fn parse_sugar_object(&mut self) -> Pat {
@@ -983,6 +1003,20 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                     self.sugar_steps(bind, &at, out);
                 }
             }
+            Pat::Extract { callee, span, items, rest, temp } => {
+                out.push(Step::Test(sugar_extract(path, *callee, *span, items.len(), rest, temp)));
+                let list = [text(temp.clone(), *span)];
+                for (i, item) in items.iter().enumerate() {
+                    let mut at = list.to_vec();
+                    at.push(text(format!("[{i}]"), item.span()));
+                    self.sugar_steps(item, &at, out);
+                }
+                if let Rest::Bind(bind) = rest {
+                    let mut at = list.to_vec();
+                    at.push(text(format!(".slice({})", items.len()), bind.span()));
+                    self.sugar_steps(bind, &at, out);
+                }
+            }
             Pat::Object { span, props } => {
                 out.push(Step::Test(sugar_object_shape(path, *span)));
                 for prop in props {
@@ -1056,7 +1090,11 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
                 }
                 out.push(text(")", span));
             }
-            Pat::And(_) | Pat::Array { .. } | Pat::Object { .. } | Pat::Bind { .. } => {
+            Pat::And(_)
+            | Pat::Array { .. }
+            | Pat::Object { .. }
+            | Pat::Extract { .. }
+            | Pat::Bind { .. } => {
                 // A pattern under `or` or `not` binds nothing (that is an
                 // error), so its steps are all tests.
                 let span = pat.span();
@@ -1077,6 +1115,29 @@ impl<'a, C: ParserConfig> ParserImpl<'a, C> {
         }
         out
     }
+}
+
+/// The test that `callee`'s matcher gives a list for `path` that `len`
+/// items and `rest` match the length of, kept in `temp`. How far the list
+/// is read is the proposal's: one past the items, to know there is no
+/// more; only the items for `...`; all of it for `...let r`.
+fn sugar_extract(path: &[Piece], callee: Span, span: Span, len: usize, rest: &Rest, temp: &str) -> Vec<Piece> {
+    let reads = match rest {
+        Rest::None => 0,
+        Rest::Any => 1,
+        Rest::Bind(_) => 2,
+    };
+    let mut out = vec![text(format!("(({temp} = $extract("), span)];
+    out.extend(path.iter().cloned());
+    out.push(text(", ", callee));
+    out.push(Piece::Copy(callee));
+    out.push(text(format!(", {len}, {reads})), true) && {temp} !== undefined"), span));
+    out
+}
+
+/// `let a, b;`, of the names extractors keep their lists in.
+fn sugar_temps(temps: &[String], at: Span) -> Option<Piece> {
+    (!temps.is_empty()).then(|| text(format!(" let {};", temps.join(", ")), at))
 }
 
 fn sugar_object_shape(path: &[Piece], span: Span) -> Vec<Piece> {
