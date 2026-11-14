@@ -3016,7 +3016,8 @@ export function rows(path: string): number {
 ```
 
 **What the checker holds.** In a file written in Ljós's API, what a
-`using` declaration is given is disposable, `null` or `undefined`
+`using` declaration is given, each item a `for (using x of …)` takes
+among it, is disposable, `null` or `undefined`
 (`ts-assign-type`, at the value):
 
 - an object whose `[Symbol.dispose]` member is a method that takes no

@@ -3027,7 +3027,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     fn stack_hold(&mut self, class: Web, name: &str, call: &CallExpression<'a>) -> Ty {
         let asynchronous = class == Web::AsyncDisposableStack;
         let Some(value) = call.arguments.first().and_then(|a| a.as_expression()) else {
-            return self.loose_args(&call.arguments);
+            // No value, or a spread: the method's own signature still says
+            // what is missing.
+            let Some(sig) = web::method_sig(&mut self.arena, class, name) else {
+                return self.loose_args(&call.arguments);
+            };
+            let f = self.arena.function(sig);
+            return self.apply(f, &call.arguments, call.span);
         };
         self.quiet += 1;
         let ty = self.expr(value, None);
@@ -4080,7 +4086,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     Kind::String | Kind::Str(_) => Ty::STRING,
                     _ => Ty::ERROR,
                 };
-                self.each(&statement.left, elem, &statement.body);
+                self.each(
+                    &statement.left,
+                    elem,
+                    statement.right.span(),
+                    &statement.body,
+                );
                 true
             }
             Statement::ForInStatement(statement) => {
@@ -4091,7 +4102,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     Span::new(start, start + 3),
                 );
                 self.expr(&statement.right, None);
-                self.each(&statement.left, Ty::STRING, &statement.body);
+                self.each(
+                    &statement.left,
+                    Ty::STRING,
+                    statement.right.span(),
+                    &statement.body,
+                );
                 true
             }
             Statement::ReturnStatement(statement) => {
@@ -4305,6 +4321,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         &mut self,
         left: &qml_syntax::js::ForStatementLeft<'a>,
         elem: Ty,
+        right: Span,
         body: &Statement<'a>,
     ) {
         let locals = self.locals.len();
@@ -4318,11 +4335,25 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     Span::new(start, start + 3),
                 );
             }
-            let binding = if declaration.kind == VariableDeclarationKind::Const {
-                Binding::Const
-            } else {
-                Binding::Let
+            let binding = match declaration.kind {
+                VariableDeclarationKind::Const
+                | VariableDeclarationKind::Using
+                | VariableDeclarationKind::AwaitUsing => Binding::Const,
+                VariableDeclarationKind::Var | VariableDeclarationKind::Let => Binding::Let,
             };
+            // Each item a `for (using x of …)` takes is disposed of at the
+            // end of its pass, so each must be disposable.
+            let asynchronous = declaration.kind == VariableDeclarationKind::AwaitUsing;
+            if (asynchronous || declaration.kind == VariableDeclarationKind::Using)
+                && elem != Ty::ERROR
+            {
+                let who = if asynchronous {
+                    "`for (await using …)`"
+                } else {
+                    "`for (using …)`"
+                };
+                self.disposable(elem, asynchronous, who, right);
+            }
             for declarator in &declaration.declarations {
                 self.bind_pattern(&declarator.id, elem, binding);
             }
