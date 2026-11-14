@@ -182,7 +182,7 @@ Feature: Disposing of a resource when its block ends, with using
         1 files, 0 errors, 0 warnings
         """
 
-    Scenario: A using declaration given what has no dispose method is an error at the value
+    Scenario: What using, a for of with using or a stack's use is given needs a dispose method, and adopt a value
       Given the file "Pool.qml":
         """qml
         import Ljos.Ui
@@ -193,6 +193,8 @@ Feature: Disposing of a resource when its block ends, with using
             using later = { async [Symbol.asyncDispose](): Promise<void> {} };
             const stack = new DisposableStack();
             stack.use({ name: "x" });
+            for (using each of [1, 2]) {}
+            stack.adopt();
           }
         }
         """
@@ -203,8 +205,10 @@ Feature: Disposing of a resource when its block ends, with using
         Pool.qml:5:27: error: `using` disposes of what it is given, and this is an object with no `[Symbol.dispose]()` method: give an object with one, or `undefined` [ts-assign-type]
         Pool.qml:6:27: error: `using` disposes of what it is given at once, and this is an object disposed of asynchronously: write `await using`, or give it a `[Symbol.dispose]()` method [ts-assign-type]
         Pool.qml:8:23: error: `use` disposes of what it is given, and this is an object with no `[Symbol.dispose]()` method: give an object with one, or `undefined` [ts-assign-type]
-        1 files, 4 errors, 0 warnings
-        ljos: 4 errors
+        Pool.qml:9:32: error: `for (using …)` disposes of what it is given, and this is a number with no `[Symbol.dispose]()` method: give an object with one, or `undefined` [ts-assign-type]
+        Pool.qml:10:13: error: this call needs 2 arguments, and is given 0 [ts-assign-type]
+        1 files, 6 errors, 0 warnings
+        ljos: 6 errors
         """
 
     Scenario: Symbol.dispose is the key of a method in an object literal and nothing else
