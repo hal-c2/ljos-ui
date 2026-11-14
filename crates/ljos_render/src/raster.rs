@@ -332,6 +332,7 @@ impl VelloCpuReference {
         for _ in pushed.drain(..) {
             ctx.pop_clip();
         }
+        self.views3d.frame_drawn();
         // A part of the picture may leave a view out that is still shown.
         if !cull {
             self.views3d.end_frame();

@@ -92,7 +92,10 @@ impl Offscreen {
         })
     }
 
-    /// Draws `scene` at `width` by `height` pixels and reads it back.
+    /// Draws `scene` at `width` by `height` pixels and reads it back. The
+    /// 3D frame stays open: the host ends it with
+    /// [`stats::frame_end`](crate::stats::frame_end) once it has drawn
+    /// all its views, so a frame of several views is one frame.
     pub fn render(
         &mut self,
         scene: &Scene,
@@ -107,7 +110,8 @@ impl Offscreen {
             .render(&self.device, &self.queue, &mut encoder, scene, &mut target);
         let submit = crate::stats::Stopwatch::start();
         self.queue.submit([encoder.finish()]);
-        crate::stats::frame_end(submit.seconds());
+        let seconds = submit.seconds();
+        crate::stats::count(|c| c.submit_seconds += seconds);
         read_back(&self.device, &self.queue, target.texture())
     }
 }

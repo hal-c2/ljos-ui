@@ -2574,6 +2574,7 @@ impl RenderBackend for EpaintBackend {
         // No successor took these over in this frame.
         self.textures.retain(|_, t| t.owner.is_alive());
         self.shapes.forget_orphans();
+        self.views3d.frame_drawn();
         self.views3d.end_frame();
         stats.shapes = sink.shapes.len() as u32;
         self.warnings = stats.warnings;
