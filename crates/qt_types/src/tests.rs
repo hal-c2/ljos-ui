@@ -1264,3 +1264,12 @@ fn every_rename_of_a_face_is_what_the_face_has() {
     }
     assert!(renames > 0, "no face of Ljos.Ui says what it renames");
 }
+
+#[test]
+fn a_table_says_the_qt_it_describes() {
+    let header = "# The QML types of Qt 6.12, as its qmldir and qmltypes files describe them.\n\
+                  module QtQuick\n";
+    assert_eq!(version_of(header), Some((6, 12)));
+    assert_eq!(version_of(""), None);
+    assert_eq!(version_of("module QtQuick\n"), None);
+}

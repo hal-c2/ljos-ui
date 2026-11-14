@@ -239,6 +239,26 @@ pub fn test_has_qt_table(test: &str) -> bool {
 /// Qt's table as it was compiled in, empty without one.
 const TEXT: &str = include_str!(concat!(env!("OUT_DIR"), "/types.txt"));
 
+/// The Qt (major, minor) Qt's table describes, as its first line says;
+/// none without a table. Qt's description of its own types changes between
+/// releases, so a test that compares Ljós's types with it says which
+/// differences it expects of which Qt.
+pub fn qt_version() -> Option<(u32, u32)> {
+    version_of(TEXT)
+}
+
+/// The version `crates/qmltypes` writes on a table's first line:
+/// `# The QML types of Qt 6.12, …`.
+fn version_of(text: &str) -> Option<(u32, u32)> {
+    let rest = text
+        .lines()
+        .next()?
+        .strip_prefix("# The QML types of Qt ")?;
+    let version = rest.split([',', ' ']).next()?;
+    let (major, minor) = version.split_once('.')?;
+    Some((major.parse().ok()?, minor.parse().ok()?))
+}
+
 /// The module `uri` is imported as, when the table has it.
 pub fn module(uri: &str) -> Option<&'static Module> {
     table().modules.get(uri)
