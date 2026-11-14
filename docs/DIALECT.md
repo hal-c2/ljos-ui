@@ -3376,8 +3376,11 @@ type a name its lowering renames, or that name's handler: in a binding, a
 whose `target` is an id of the file, one that names it by an id
 (`dial.color: "red"`, `dial { color: "red" }`), or a handler of a
 `Connections` whose `target` is such an id, or that has none and is in an
-object of the type. Each inline component is an id scope of its own, as
-in Qt. The pass follows
+object of the type (among its members or in a value it is given, as in
+`data: [Connections { … }]`). Each inline component is an id scope of its own, as
+in Qt, and has its base's properties: `LocalDial { color: "red" }` binds
+`color` on the `Dial` that `component LocalDial: Dial {}` is built on,
+unless the component declares `color` itself. The pass follows
 the file's root through the project's files it is built on, while they are
 lowered too, to the Qt type whose renames say so, and a property the file
 declares renames nothing. The reason names the file, the name and what
