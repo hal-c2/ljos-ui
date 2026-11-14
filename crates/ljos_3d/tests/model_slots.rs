@@ -141,13 +141,20 @@ fn a_moving_camera_uploads_its_frame_and_leaves_still_models_where_they_are() {
     );
     assert_eq!(picture(&target), fresh(&scene), "with a cube more");
 
-    // Past the buffer's room (16 models), it is made anew with them all.
+    // Past the buffer's room (16 models), it is made anew with them all:
+    // every model's uniforms are written to it, the newcomers' and those
+    // of the models that were there, in one run.
     for i in MODELS + 1..MODELS + 6 {
         scene.add(None, cube(i));
     }
-    look(&mut scene, camera, true);
     let grew = frame(&gpu, &mut target, &scene);
     assert_eq!(grew.models_drawn, MODELS as u64 + 6, "{grew:?}");
+    assert_eq!(grew.buffer_writes, 1, "{grew:?}");
+    assert!(
+        grew.buffer_write_bytes >= (MODELS as u64 + 6) * came.buffer_write_bytes,
+        "all {} models' uniforms: {grew:?}",
+        MODELS + 6
+    );
     assert_eq!(picture(&target), fresh(&scene), "with the buffer made anew");
 
     // One that leaves takes nothing else with it: no model is moved into
