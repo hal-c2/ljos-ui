@@ -1172,3 +1172,22 @@ pub(crate) fn write_placed(
     };
     engine.write_internal(obj, p, v, how)
 }
+
+/// [`write_placed`] for a size a box gives a child that follows its
+/// implicit size. The value written is then marked as the toolkit's
+/// ([`Provenance::Host`](ljos_engine::Provenance::Host)): an author's write
+/// over it, even of the same value, reads as assigned, and ends the
+/// following ([`crate::layouts`]'s `follows`). Nothing is marked when
+/// nothing is written: an equal value there may be the author's.
+pub(crate) fn write_given_size(
+    engine: &Engine,
+    obj: ObjectId,
+    p: PropIndex,
+    v: Value,
+) -> Result<(), EngineError> {
+    if engine.untrack(|| engine.read(obj, p)).change_equals(&v) {
+        return Ok(());
+    }
+    write_placed(engine, obj, p, v.clone())?;
+    engine.write_internal(obj, p, v, WriteKind::Host)
+}

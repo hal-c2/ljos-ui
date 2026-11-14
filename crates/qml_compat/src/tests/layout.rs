@@ -36,6 +36,61 @@ fn a_column_layout_counts_an_empty_child_and_keeps_its_spacing() {
     );
 }
 
+/// A size from a child's content is rounded up by Qt's layouts and by
+/// Ljós's box once a child has a `Layout`: a `ColumnLayout`'s child is
+/// given one where none says anything through it.
+#[test]
+fn a_size_from_the_content_is_rounded_by_both() {
+    for (body, out) in [
+        (
+            "Item { RowLayout { Text { text: \"a\" } Item { implicitWidth: 2.5; implicitHeight: 3 } } }",
+            "Item { Row { spacing: 5; Text { Layout.alignment: Align.VCenter; text: \"a\" } \
+             Item { Layout.alignment: Align.VCenter; implicitWidth: 2.5; implicitHeight: 3 } } }\n",
+        ),
+        (
+            "Item { ColumnLayout { Text { text: \"a\" } Rectangle { width: 4; height: 4 } } }",
+            "Item { Column { spacing: 5; Text { Layout.fillWidth: false; text: \"a\" } \
+             Rectangle { width: 4; height: 4 } } }\n",
+        ),
+    ] {
+        let text = lowered(&format!("{LAYOUTS}{body}\n"));
+        assert!(text.ends_with(out), "{body}: {text}");
+    }
+}
+
+/// A `RowLayout` or `ColumnLayout` in a layout grows where a child of it
+/// fills, and the pass says so; Ljós's box holds it to its children's
+/// minimum, as Qt's does.
+#[test]
+fn a_layout_in_a_layout_is_told_to_fill_where_it_grows() {
+    for (body, out) in [
+        (
+            "Item { ColumnLayout { RowLayout { Item { implicitWidth: 4; implicitHeight: 4; Layout.fillWidth: true } } } }",
+            "Item { Column { spacing: 5; Row { Layout.fillWidth: true; spacing: 5; \
+             Item { Layout.alignment: Align.VCenter; implicitWidth: 4; implicitHeight: 4; Layout.fillWidth: true } } } }\n",
+        ),
+        (
+            "Item { RowLayout { ColumnLayout { Item { implicitWidth: 4; Layout.fillHeight: true } } } }",
+            "Item { Row { spacing: 5; Column { Layout.fillHeight: true; Layout.alignment: Align.VCenter; spacing: 5; \
+             Item { implicitWidth: 4; Layout.fillHeight: true } } } }\n",
+        ),
+        (
+            "Item { ColumnLayout { RowLayout { Item { implicitWidth: 4; implicitHeight: 4 } } } }",
+            "Item { Column { spacing: 5; Row { spacing: 5; \
+             Item { Layout.alignment: Align.VCenter; implicitWidth: 4; implicitHeight: 4 } } } }\n",
+        ),
+        // A hidden child that fills grows nothing.
+        (
+            "Item { ColumnLayout { RowLayout { Item { visible: false; implicitWidth: 4; Layout.fillWidth: true } } } }",
+            "Item { Column { spacing: 5; Row { spacing: 5; \
+             Item { Layout.alignment: Align.VCenter; visible: false; implicitWidth: 4; Layout.fillWidth: true } } } }\n",
+        ),
+    ] {
+        let text = lowered(&format!("{LAYOUTS}{body}\n"));
+        assert!(text.ends_with(out), "{body}: {text}");
+    }
+}
+
 /// A `GridLayout` is a `Grid` with Qt's gaps written out, and each child
 /// centred in its row; a name of it in a script is `Grid`'s.
 #[test]
@@ -120,7 +175,7 @@ fn where_a_grid_layout_or_stack_layout_disagrees_the_file_is_kept() {
         ),
         (
             "RowLayout { Item { Layout.fillWidth: true } StackLayout { } }",
-            "fills it and is bounded by its children",
+            "grows only where a child of it fills and is bounded by its children",
         ),
         (
             "StackLayout { Item { visible: StackLayout.isCurrentItem } }",
@@ -159,12 +214,8 @@ fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
             "`width` of a `Item`",
         ),
         (
-            "RowLayout { Text { text: \"a\" } }",
-            "implicit width of a `Text` may be a fraction",
-        ),
-        (
-            "RowLayout { Item { implicitWidth: 2.5 } }",
-            "`implicitWidth` is not a whole number",
+            "RowLayout { Item { Layout.preferredWidth: 2.5 } }",
+            "`Layout.preferredWidth` is not a whole number",
         ),
         (
             "RowLayout { width: 100; Item { implicitWidth: 8 } }",
@@ -175,8 +226,20 @@ fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
             "give a child `Layout.fillHeight: true`",
         ),
         (
-            "ColumnLayout { RowLayout { } }",
-            "a `RowLayout` in a `ColumnLayout` fills it",
+            "ColumnLayout { Item { Layout.fillHeight: true } RowLayout { width: 50 } }",
+            "a `RowLayout` in a `ColumnLayout` grows only where a child of it fills",
+        ),
+        (
+            "Item { ColumnLayout { RowLayout { Layout.fillWidth: true; Item { } } } }",
+            "a `RowLayout` in a `ColumnLayout` grows only where",
+        ),
+        (
+            "Item { property bool on; ColumnLayout { RowLayout { Item { visible: on; Layout.fillWidth: true } } } }",
+            "a `RowLayout` in a `ColumnLayout` grows only where",
+        ),
+        (
+            "Item { ColumnLayout { RowLayout { Item { Layout.fillWidth: true; Layout.maximumWidth: 9 } } } }",
+            "a `RowLayout` in a `ColumnLayout` grows only where",
         ),
         (
             "RowLayout { Item { anchors.top: parent.top } }",

@@ -18,16 +18,26 @@
 //! room it has, as RowLayout does: they stay at its start, as in a
 //! positioner. Where room is shared out (a child grows or is squeezed),
 //! it is shared in whole pixels, and a child centred or pushed to the far
-//! side lands on one, as in Qt's layouts; nothing else is rounded.
+//! side lands on one, as in Qt's layouts.
+//!
+//! A box any of whose children has a `Layout` is a layout, and a size a
+//! child takes from its content (its implicit size, where its file gives
+//! it no width or height) is rounded up to a whole pixel, so no seam falls
+//! between two pixels. A box none of whose children has a `Layout` is a
+//! positioner, and places each child at the size it has. A size the
+//! author gives is never rounded.
 
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, QmlObject, Value};
+use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, Provenance, QmlObject, Value};
 
 use super::distribute::{Total, Track, distribute, edges};
 use super::{Attached, H, Hint, Layout, Plan, V, show_own_minimum, state};
 use crate::enums::{EnumTable, align, layout_direction};
-use crate::item::{Item, is_a, is_unset, num, write_computed, write_placed};
+use crate::item::{
+    Item, is_a, is_unset, num, size_follows_implicit, write_computed, write_given_size,
+    write_placed,
+};
 use crate::mirroring::mirrored;
 use crate::positioners::flow;
 
@@ -246,11 +256,45 @@ pub(super) fn managed(a: &Attached, axis: usize) -> bool {
         || a.max[axis].is_some()
 }
 
+/// An implicit size as a box that is a layout takes it: up to a whole
+/// pixel.
+// Qt 6.11: RowLayout and ColumnLayout round a child's implicit size up (a
+// Text of implicit width 67.734375 is 68 wide in one, and the next child is
+// at 68); Row and Column, the positioners, place it at the fraction.
+pub(super) fn whole(implicit: f64) -> f64 {
+    implicit.ceil()
+}
+
+/// Whether a child's width (`H`) or height is its implicit size: it
+/// follows it, or holds the size the box `gave` it for following it, as
+/// the box wrote it ([`write_given_size`]). The author's write of the same
+/// value is a size given, not one followed.
+pub(super) fn follows(e: &Engine, c: ObjectId, axis: usize, gave: f64) -> bool {
+    let size = if axis == H {
+        Item::WIDTH.index
+    } else {
+        Item::HEIGHT.index
+    };
+    size_follows_implicit(e, c, axis == H)
+        || (!gave.is_nan()
+            && num(e, c, size) == gave
+            && e.provenance(c, size) == Some(Provenance::Host))
+}
+
 /// What one child asks for along one axis: the one size rule.
 ///
 /// `current` is its width or height now, `told` the one its file gave it
 /// when the box first saw it (`NaN` when it followed its implicit size).
-pub(super) fn hint(a: &Attached, axis: usize, current: f64, told: f64, implicit: f64) -> Hint {
+/// `least` is a nested layout's smallest size, its children's: its own
+/// unless it is told one.
+pub(super) fn hint(
+    a: &Attached,
+    axis: usize,
+    current: f64,
+    told: f64,
+    implicit: f64,
+    least: Option<f64>,
+) -> Hint {
     if !managed(a, axis) {
         return Hint {
             min: current,
@@ -261,7 +305,7 @@ pub(super) fn hint(a: &Attached, axis: usize, current: f64, told: f64, implicit:
     }
     let asked = a.pref[axis].unwrap_or(if told.is_nan() { implicit } else { told });
     let max = a.max[axis].unwrap_or(f64::INFINITY);
-    let min = a.min[axis].unwrap_or(0.0).min(max);
+    let min = a.min[axis].or(least).unwrap_or(0.0).min(max);
     let pref = asked.clamp(min, max);
     if a.fill[axis] == Some(true) {
         Hint {
@@ -448,10 +492,21 @@ pub(super) fn compute(plan: &Plan, width: f64, height: f64) -> Vec<(ObjectId, [f
 }
 
 /// Whether a child of a box is left out: one with no width or height, as
-/// a positioner leaves it, unless it asks the box for a size.
-pub(super) fn skipped(e: &Engine, c: ObjectId) -> bool {
-    let empty = num(e, c, crate::item::Item::WIDTH.index) == 0.0
-        || num(e, c, crate::item::Item::HEIGHT.index) == 0.0;
+/// a positioner leaves it, unless it asks the box for a size. A size the
+/// box `gave` it for following its implicit size is that implicit size
+/// now: given 0 once, it is back once its content grows.
+pub(super) fn skipped(e: &Engine, c: ObjectId, gave: [f64; 2]) -> bool {
+    let empty = [(H, Item::WIDTH.index), (V, Item::HEIGHT.index)]
+        .into_iter()
+        .zip([Item::IMPLICIT_WIDTH.index, Item::IMPLICIT_HEIGHT.index])
+        .any(|((axis, size), implicit)| {
+            let p = if follows(e, c, axis, gave[axis]) {
+                implicit
+            } else {
+                size
+            };
+            num(e, c, p) == 0.0
+        });
     empty && e.existing_attached_object(c, &super::attacher()).is_none()
 }
 
@@ -475,7 +530,36 @@ pub(super) fn line(
         && ((num(e, obj, Arrangement::LAYOUT_DIRECTION.index) as i32
             == layout_direction::RIGHT_TO_LEFT)
             != mirrored(e, obj));
-    let size = |c: ObjectId| [num(e, c, Item::WIDTH.index), num(e, c, Item::HEIGHT.index)];
+    // A child the box gave a size while it was a layout holds it: while it
+    // still follows its implicit size, it is given that again, unrounded.
+    let mut gave = state(e, obj, |s| std::mem::take(&mut s.gave))?;
+    gave.retain(|c, _| children.contains(c));
+    let (sizes, given): (Vec<[f64; 2]>, Vec<[bool; 2]>) = shown
+        .iter()
+        .map(|c| {
+            let had = gave.remove(c).unwrap_or([f64::NAN; 2]);
+            let mut own = [
+                num(e, *c, Item::WIDTH.index),
+                num(e, *c, Item::HEIGHT.index),
+            ];
+            let mut gives = [f64::NAN; 2];
+            for (axis, p) in [
+                (H, Item::IMPLICIT_WIDTH.index),
+                (V, Item::IMPLICIT_HEIGHT.index),
+            ] {
+                if !had[axis].is_nan() && follows(e, *c, axis, had[axis]) {
+                    own[axis] = num(e, *c, p);
+                    gives[axis] = own[axis];
+                }
+            }
+            if gives.iter().any(|v| !v.is_nan()) {
+                gave.insert(*c, gives);
+            }
+            (own, gives.map(|v| !v.is_nan()))
+        })
+        .unzip();
+    let gave_back = state(e, obj, |s| s.gave = gave);
+    gave_back?;
     let room = (num(e, obj, Item::WIDTH.index) - pad[0] - pad[2]).max(0.0);
     // Everything the children's places follow from. The box's own width
     // only counts from the right: from the left it is set after the
@@ -490,11 +574,10 @@ pub(super) fn line(
     }
     let mut along = 0.0;
     let mut widest: f64 = 0.0;
-    for (i, c) in shown.iter().enumerate() {
+    for (i, (c, s)) in shown.iter().zip(&sizes).enumerate() {
         if i > 0 {
             along += spacing;
         }
-        let s = size(*c);
         (c, s[0].to_bits(), s[1].to_bits()).hash(&mut inputs);
         along += s[main];
         widest = widest.max(s[cross]);
@@ -548,17 +631,27 @@ pub(super) fn line(
         Value::Real(hints[V].pref),
     )?;
     show_own_minimum(e, obj, &hints)?;
-    let props = [Item::X.index, Item::Y.index];
+    let props = [
+        Item::X.index,
+        Item::Y.index,
+        Item::WIDTH.index,
+        Item::HEIGHT.index,
+    ];
     e.batch(|| -> Result<(), EngineError> {
         let mut at = 0.0;
-        for c in shown {
-            let s = size(*c);
+        for ((c, s), given) in shown.iter().zip(&sizes).zip(&given) {
             let mut p = [0.0; 2];
             p[main] = if rtl { room - at - s[main] } else { at } + lead[main];
             p[cross] = lead[cross];
             at += s[main] + spacing;
-            for (prop, v) in props.into_iter().zip(p) {
-                write_placed(e, *c, prop, Value::Real(v))?;
+            // A size equal to the child's own is not written.
+            let given = [false, false, given[H], given[V]];
+            for ((prop, v), given) in props.into_iter().zip([p[0], p[1], s[0], s[1]]).zip(given) {
+                if given {
+                    write_given_size(e, *c, prop, Value::Real(v))?;
+                } else {
+                    write_placed(e, *c, prop, Value::Real(v))?;
+                }
             }
         }
         Ok(())
