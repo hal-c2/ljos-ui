@@ -233,12 +233,23 @@ pub fn add_sync_seconds(seconds: f64) {
 
 /// The host has submitted its frame, which took `submit_seconds`. When a
 /// scene was drawn in it on this thread, what the frame cost becomes the
-/// record's last frame (and a line of `LJOS_3D_FRAMES`); otherwise the
-/// tally waits for a frame that draws one. Returns the frame ended.
+/// record's last frame (and a line of `LJOS_3D_FRAMES`). Otherwise what
+/// was drawn is let go, since it was the host showing a picture it already
+/// had while its 2D repainted, and what was made or uploaded waits for a
+/// frame that draws a scene: it is that scene's cost. Returns the frame
+/// ended.
 pub fn frame_end(submit_seconds: f64) -> Option<FrameCounters> {
     let mut frame = TALLY.with(|t| {
         let mut t = t.borrow_mut();
-        (t.views > 0).then(|| std::mem::replace(&mut *t, FrameCounters::ZERO))
+        if t.views == 0 {
+            t.draw_calls = 0;
+            t.vertices = 0;
+            t.render_passes = 0;
+            t.pipeline_switches = 0;
+            t.bind_group_sets = 0;
+            return None;
+        }
+        Some(std::mem::replace(&mut *t, FrameCounters::ZERO))
     })?;
     frame.submit_seconds = submit_seconds;
     let (index, gpu) = {
@@ -403,6 +414,35 @@ mod sink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_a_frame_with_no_scene_drew_is_not_the_next_ones() {
+        std::thread::spawn(|| {
+            // A host showing last frame's picture again: a draw, a pipeline
+            // and a bind group on its pass, and a pipeline made for it.
+            count(|c| {
+                c.draw_calls += 1;
+                c.vertices += 3;
+                c.render_passes += 1;
+                c.pipeline_switches += 1;
+                c.bind_group_sets += 1;
+                c.pipelines_created += 1;
+            });
+            assert_eq!(frame_end(0.0), None);
+            count(|c| c.draw_calls += 5);
+            record_render(5, 0);
+            let frame = frame_end(0.0).expect("a scene was drawn");
+            assert_eq!(
+                (frame.draw_calls, frame.vertices, frame.render_passes),
+                (5, 0, 0)
+            );
+            assert_eq!((frame.pipeline_switches, frame.bind_group_sets), (0, 0));
+            // Made is made: the first scene's frame pays for it.
+            assert_eq!(frame.pipelines_created, 1);
+        })
+        .join()
+        .unwrap();
+    }
 
     #[test]
     fn a_frame_with_no_scene_drawn_is_not_a_frame() {
