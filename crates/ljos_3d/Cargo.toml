@@ -82,6 +82,10 @@ name = "batched_draws"
 required-features = ["gpu"]
 
 [[test]]
+name = "draw_lists"
+required-features = ["gpu"]
+
+[[test]]
 name = "copies_and_skins"
 required-features = ["gpu"]
 
