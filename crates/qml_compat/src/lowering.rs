@@ -321,10 +321,81 @@ impl Lowering {
     /// two files write is the one settled first's.
     pub fn settle(&mut self, project: &dyn Project) -> Vec<ScriptEdit> {
         self.lower(project);
-        let files: Vec<(String, Outcome)> = group(&self.alone).into_iter().collect();
+        let mut files = group(&self.alone);
+        // A file that uses one is lowered knowing whether that one is kept
+        // ([`Root::kept`]). Lowered with what the last settle said, it is
+        // lowered again where that changed, until nothing does. A round
+        // after the first goes on only when a file lowered again turned,
+        // kept or lowered, and a file that turns twice is held kept as it
+        // last was: lowered against a file it uses it was kept, which kept
+        // that file, against which it was lowered, which let that file be
+        // lowered again. So there are at most twice as many rounds as files.
+        let mut turns: BTreeMap<String, Turns> = BTreeMap::new();
+        let mut settled = false;
+        for _ in 0..=2 * self.files.len() {
+            let turned: Vec<&String> = files
+                .iter()
+                .filter(|(key, outcome)| is_kept(Some(outcome)) != is_kept(self.lowered.get(*key)))
+                .map(|(key, _)| key)
+                .collect();
+            if turned.is_empty() {
+                settled = true;
+                break;
+            }
+            let users = self.users_of(&turned);
+            for (key, outcome) in &files {
+                self.lowered.insert(key.clone(), outcome.clone());
+            }
+            if users.is_empty() {
+                settled = true;
+                break;
+            }
+            let was: Vec<(String, Option<Outcome>)> = users
+                .iter()
+                .map(|key| {
+                    let kept = self
+                        .alone
+                        .get(key)
+                        .map(|alone| &alone.outcome)
+                        .filter(|outcome| is_kept(Some(outcome)))
+                        .cloned();
+                    (key.clone(), kept)
+                })
+                .collect();
+            self.stale.extend(users);
+            self.lower(project);
+            for (key, was) in was {
+                if let Some(alone) = self.alone.get_mut(&key) {
+                    turns.entry(key).or_default().see(was, &mut alone.outcome);
+                }
+            }
+            files = group(&self.alone);
+        }
+        debug_assert!(settled, "a settle that did not settle");
+        let files: Vec<(String, Outcome)> = files.into_iter().collect();
         let scripts = self.settle_modules(project, &files);
         self.lowered.extend(files);
         scripts
+    }
+
+    /// The files that use any of `keys`, as [`group`] reads it, or use a
+    /// file that does: one built on a file built on a kept one reads the
+    /// kept one's names through it, whether or not that file turned.
+    fn users_of(&self, keys: &[&String]) -> BTreeSet<String> {
+        let uses = group::uses(&self.alone);
+        let all: Vec<&String> = self.alone.keys().collect();
+        let mut found = BTreeSet::new();
+        let mut next: Vec<usize> = (0..all.len())
+            .filter(|&at| keys.contains(&all[at]))
+            .collect();
+        while let Some(at) = next.pop() {
+            for (user, used) in uses.iter().enumerate() {
+                if used.contains(&at) && found.insert(all[user].clone()) {
+                    next.push(user);
+                }
+            }
+        }
+        found
     }
 
     /// The edits to the rows modules of `files`, lowered as given, in order.
@@ -453,7 +524,10 @@ impl Held for Lowering {
         let root = roots
             .entry(key.to_string())
             .or_insert_with(|| crate::root(&file.text));
-        Some(root.clone())
+        // A file is kept as the last settle has it; one not settled yet is
+        // taken to be lowered, and its users are lowered again if it is not.
+        let kept = is_kept(self.lowered.get(key));
+        Some(root.clone().map(|root| Root { kept, ..root }))
     }
 }
 
@@ -497,6 +571,42 @@ fn modules_beside(key: &str, outcome: &Outcome) -> Vec<(String, String)> {
             .collect(),
         Outcome::Unchanged | Outcome::Kept(_) => Vec::new(),
     }
+}
+
+/// Whether a file lowered to `outcome` stays in Qt's QML.
+/// How often a file lowered again in one [`Lowering::settle`] turned, kept
+/// or lowered, and the last of its outcomes that was kept.
+#[derive(Default)]
+struct Turns {
+    count: u8,
+    kept: Option<Outcome>,
+}
+
+impl Turns {
+    /// Takes the file's outcome lowered again, `now`, after it was `was`
+    /// (its outcome when that was kept). A file that turned twice is held
+    /// kept: `now` becomes the last outcome that was.
+    fn see(&mut self, was: Option<Outcome>, now: &mut Outcome) {
+        let turned = is_kept(Some(now)) != was.is_some();
+        if was.is_some() {
+            self.kept = was;
+        }
+        if turned && self.count < 2 {
+            self.count += 1;
+            if is_kept(Some(now)) {
+                self.kept = Some(now.clone());
+            }
+        }
+        if self.count >= 2
+            && let Some(kept) = &self.kept
+        {
+            *now = kept.clone();
+        }
+    }
+}
+
+fn is_kept(outcome: Option<&Outcome>) -> bool {
+    matches!(outcome, Some(Outcome::Kept(_)))
 }
 
 /// The path of the module of the file `key`'s rows, keyed as the files are.

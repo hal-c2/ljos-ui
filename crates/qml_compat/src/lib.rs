@@ -158,6 +158,10 @@ pub struct Root {
     /// The properties, functions and signals it declares: names in sight
     /// of a file built on it.
     pub declares: Vec<String>,
+    /// Whether its file is kept in Qt's QML. A lowered file that uses its
+    /// type binds Qt's names on it, as written: the type is Qt's, and Ljós
+    /// reads its names as its file declares them.
+    pub kept: bool,
 }
 
 /// What the pass needs to know of the project the file is in: for a type a
@@ -492,6 +496,7 @@ impl Root {
                     _ => None,
                 })
                 .collect(),
+            kept: false,
         }
     }
 }
@@ -517,6 +522,10 @@ enum Ty {
     /// Of the program's own type, exactly when the flag says so, else of
     /// it or one derived from it.
     Native(Native, bool),
+    /// Of a type of a file of the project kept in Qt's QML
+    /// ([`Root::kept`]), or one built on it: each name on it, and on what
+    /// it holds, is Qt's and stays as written.
+    Kept,
 }
 
 struct Pass<'s> {
@@ -924,7 +933,7 @@ impl<'s> Pass<'s> {
             }
             // What the program's type has is in its description, not in
             // Qt's table.
-            Ty::Unknown | Ty::Native(..) => self.members.object_type(None),
+            Ty::Unknown | Ty::Native(..) | Ty::Kept => self.members.object_type(None),
             Ty::Plain | Ty::Font => {}
         }
         // A `Component` a view is given by id is its delegate as if it
@@ -1536,7 +1545,7 @@ impl<'s> Pass<'s> {
             return Rename::Keep;
         }
         match on {
-            Ty::Plain | Ty::Font => Rename::Keep,
+            Ty::Plain | Ty::Font | Ty::Kept => Rename::Keep,
             Ty::Unknown => Rename::Unknown,
             Ty::Exact(ty) | Ty::Derived(ty) => match renames_of(ty) {
                 Some(renames) => match lookup_rename(renames, name) {
@@ -1675,7 +1684,7 @@ impl<'s> Pass<'s> {
                             .and_then(|n| self.type_declares(n, name, 0))
                     }
                 }
-                Ty::Derived(_) | Ty::Unknown => object
+                Ty::Derived(_) | Ty::Unknown | Ty::Kept => object
                     .type_name
                     .as_simple()
                     .and_then(|n| self.type_declares(n, name, 0)),
@@ -2091,7 +2100,7 @@ fn renames_of(ty: &'static Type) -> Option<&'static [(&'static str, &'static str
 fn renames_on(on: Ty) -> Option<&'static [(&'static str, &'static str)]> {
     match on {
         Ty::Exact(ty) | Ty::Derived(ty) => renames_of(ty),
-        Ty::Plain | Ty::Font | Ty::Unknown | Ty::Native(..) => None,
+        Ty::Plain | Ty::Font | Ty::Unknown | Ty::Native(..) | Ty::Kept => None,
     }
 }
 
@@ -2647,7 +2656,7 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                     },
                     it.property.span.start,
                 ),
-                Ty::Unknown => self.keep(
+                Ty::Unknown | Ty::Kept => self.keep(
                     Cause::AttachedOffUnknown {
                         name: name.to_owned(),
                     },
@@ -2809,6 +2818,19 @@ impl<'a> Visit<'a> for Script<'_, '_> {
         // An unqualified member: the scope object's, else the root's.
         let on = match self.pass.member(name, self.scope) {
             Rename::Keep if self.member_ty(self.scope, name).is_known() => return,
+            // What a kept type has is not known: the name may be its own,
+            // Qt's and kept as written, or the root's, which Ljós renames.
+            Rename::Keep if matches!(self.scope, Ty::Kept) => {
+                if !matches!(self.pass.member(name, self.root), Rename::Keep) {
+                    self.keep(
+                        Cause::MaybeMember {
+                            name: name.to_owned(),
+                        },
+                        it.span.start,
+                    );
+                }
+                return;
+            }
             Rename::Keep => self.root,
             _ => self.scope,
         };

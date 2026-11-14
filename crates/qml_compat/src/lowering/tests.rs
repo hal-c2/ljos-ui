@@ -121,22 +121,151 @@ fn a_script_of_the_projects_where_the_rows_module_goes_keeps_the_file() {
     );
 }
 
+/// A file kept is Qt's: one that uses it is lowered binding Qt's names on
+/// it, as a Ljós file reads them on a kept type.
 #[test]
-fn a_file_read_and_not_named_is_kept_with_the_files_that_name_it() {
+fn a_file_that_uses_one_kept_keeps_qts_names_on_it() {
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    lowering.put(
+        "app/Main",
+        "import QtQuick\nItem { Swatch { color: \"red\"; border.color: \"blue\" } }\n".to_string(),
+    );
+    lowering.put_read_only("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.settle(&project);
+    assert!(cause(&lowering, "app/Swatch").contains("it is not named"));
+    let main = text(&lowering, "app/Main");
+    assert!(
+        main.contains("Swatch { color: \"red\"; border.color: \"blue\" }"),
+        "{main}"
+    );
+}
+
+/// A name a script reads unqualified in a kept type's object is that
+/// object's if its type has it, else the root's: what the kept type has is
+/// not known, so a name the root renames keeps the file.
+#[test]
+fn a_name_read_in_a_kept_types_object_that_the_root_renames_keeps_the_file() {
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    lowering.put(
+        "app/Main",
+        "import QtQuick\nRectangle { Swatch { Component.onCompleted: console.log(color, opacity) } }\n"
+            .to_string(),
+    );
+    lowering.put_read_only("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.settle(&project);
+    let main = cause(&lowering, "app/Main");
+    assert!(main.contains("`color`"), "{main}");
+}
+
+/// A file built on one built on a kept file binds the kept file's names
+/// through it: it is lowered again when that file turns, though the file
+/// between turns neither way.
+#[test]
+fn a_file_is_lowered_again_when_one_it_uses_through_another_turns() {
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    lowering.put(
+        "app/Main",
+        "import QtQuick\nItem { Wrapper { color: \"red\" } }\n".to_string(),
+    );
+    lowering.put("app/Wrapper", "import QtQuick\nSwatch { }\n".to_string());
+    lowering.put("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.settle(&project);
+    assert!(text(&lowering, "app/Main").contains("fill: \"red\""));
+
+    let kept = "import QtQuick\nRectangle { function f() { Qt.createQmlObject(\"\", this) } }\n";
+    lowering.put("app/Swatch", kept.to_string());
+    lowering.settle(&project);
+    cause(&lowering, "app/Swatch");
+    text(&lowering, "app/Wrapper");
+    let main = text(&lowering, "app/Main");
+    assert!(main.contains("color: \"red\""), "{main}");
+
+    lowering.put("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.settle(&project);
+    let main = text(&lowering, "app/Main");
+    assert!(main.contains("fill: \"red\""), "{main}");
+}
+
+#[test]
+fn a_file_read_and_not_named_keeps_the_files_it_uses() {
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    lowering.put_read_only(
+        "app/Main",
+        "import QtQuick\nItem { Swatch { color: \"red\" } }\n".to_string(),
+    );
+    lowering.put("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.settle(&project);
+    assert_eq!(
+        cause(&lowering, "app/Swatch"),
+        "it is used by `Main.qml`, which is kept: it is not named: name it too"
+    );
+}
+
+/// A file that turns kept is Qt's to the files that use it, which are
+/// lowered again, and turned back to lowered, Ljós's again.
+#[test]
+fn a_file_is_lowered_again_when_one_it_uses_is_kept_or_lowered() {
     let project = Files::default();
     let mut lowering = Lowering::new();
     lowering.put(
         "app/Main",
         "import QtQuick\nItem { Swatch { color: \"red\" } }\n".to_string(),
     );
-    lowering.put_read_only("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.put("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
     lowering.settle(&project);
-    assert!(cause(&lowering, "app/Swatch").contains("it is not named"));
+    assert!(text_of(&lowering).contains("fill: \"red\""));
+
+    let kept = "import QtQuick\nRectangle { function f() { Qt.createQmlObject(\"\", this) } }\n";
+    lowering.put("app/Swatch", kept.to_string());
+    lowering.settle(&project);
+    cause(&lowering, "app/Swatch");
     assert!(
-        cause(&lowering, "app/Main").contains("`Swatch.qml`, which is kept"),
+        text_of(&lowering).contains("color: \"red\""),
+        "{}",
+        text_of(&lowering)
+    );
+
+    lowering.put("app/Swatch", "import QtQuick\nRectangle { }\n".to_string());
+    lowering.settle(&project);
+    assert!(
+        text_of(&lowering).contains("fill: \"red\""),
+        "{}",
+        text_of(&lowering)
+    );
+}
+
+#[test]
+fn two_files_that_would_turn_each_other_over_are_both_kept() {
+    // Against a lowered `Swatch`, an `Item`, Main's `color` may be one
+    // Ljós renames, and Main is kept; that keeps Swatch, against which
+    // Main is lowered with Qt's names, which leaves Swatch lowered again.
+    // Neither is lowered while the other is, so both are kept.
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    lowering.put(
+        "app/Main",
+        "import QtQuick\nItem { Swatch { color: \"red\" } }\n".to_string(),
+    );
+    lowering.put("app/Swatch", "import QtQuick\nItem { }\n".to_string());
+    lowering.settle(&project);
+    assert!(
+        cause(&lowering, "app/Main").contains("`color`"),
         "{}",
         cause(&lowering, "app/Main")
     );
+    assert!(
+        cause(&lowering, "app/Swatch").contains("`Main.qml`, which is kept"),
+        "{}",
+        cause(&lowering, "app/Swatch")
+    );
+    // Settled again with nothing changed, it says the same.
+    lowering.settle(&project);
+    assert!(cause(&lowering, "app/Main").contains("`color`"));
+    assert!(cause(&lowering, "app/Swatch").contains("`Main.qml`, which is kept"));
 }
 
 #[test]

@@ -185,11 +185,12 @@ Feature: Qt's QML lowered to Ljós's API
       And the author runs "ljos render app --out lowered.png --settle 0 --compat lower"
       Then the pictures "kept.png" and "lowered.png" have the same pixels
 
-    # A file named alone is lowered against the files around it, and a file of its group that was
-    # not named would stay Qt's while the named one is renamed to match it lowered: none of the group
-    # is written, and the command says which file to name too.
+    # A file named alone is lowered against the files around it. One it uses that was not named stays
+    # Qt's, and the named file keeps Qt's names on that one's type, so it is written: a Ljós file reads
+    # a kept type's names as its file declares them. That one, named later, stays Qt's while a file in
+    # Ljós's API binds on it a name its lowering renames, and the command says which and to what.
     @ljos-only @headless
-    Scenario: A file named alone is not written without the files it is lowered with
+    Scenario: A file named alone is lowered against a file it uses that stays Qt's
       Given the file "app/Gauges/qmldir":
         """
         module Gauges
@@ -206,29 +207,27 @@ Feature: Qt's QML lowered to Ljós's API
         import Gauges
         Rectangle { width: 200; height: 100; Dial { color: "#c03030" } }
         """
-      When the author runs "ljos migrate --write app/Main.qml"
+      When the author runs "ljos render app --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos migrate --write app/Main.qml"
       Then the command prints:
         """
-        kept app/Main.qml:1:1: it is used with `Gauges/Dial.qml`, which is kept: it is not named: name it too
-        1 files, 0 lowered, 1 kept
+        lowered app/Main.qml (1 edits)
+        1 files, 1 lowered, 0 kept
         """
       And the file "app/Main.qml" is:
         """qml
-        import QtQuick
+        import Ljos.Ui
         import Gauges
         Rectangle { width: 200; height: 100; Dial { color: "#c03030" } }
         """
-      When the author runs "ljos migrate app/Main.qml app/Gauges/Dial.qml"
-      Then the command prints:
-        """
-        would lower app/Gauges/Dial.qml (2 edits)
-        would lower app/Main.qml (2 edits)
-        2 files, 2 lowered, 0 kept
-        """
+      When the author runs "ljos check app"
+      Then the command exits with status 0
+      When the author runs "ljos render app --out migrated.png --settle 0 --compat keep"
+      Then the pictures "kept.png" and "migrated.png" have the same pixels
       When the author runs "ljos migrate --write app/Gauges/Dial.qml"
       Then the command prints:
         """
-        kept app/Gauges/Dial.qml:1:1: it is used with `Main.qml`, which is kept: it is not named: name it too
+        kept app/Gauges/Dial.qml:1:1: `Main.qml`, in Ljós's API, binds `color` on it, which Ljós's `Rectangle` calls `fill`: rename it there as this file is lowered
         1 files, 0 lowered, 1 kept
         """
       And the file "app/Gauges/Dial.qml" is:
@@ -236,6 +235,94 @@ Feature: Qt's QML lowered to Ljós's API
         import QtQuick
         Rectangle { width: 60; height: 60; color: "#203040" }
         """
+
+    # A file in Ljós's API that binds on a Qt file's type only names Ljós calls as Qt does holds nothing
+    # back: that file is lowered under it.
+    @ljos-only @headless
+    Scenario: A file in Ljós's API lets the Qt file it uses be lowered
+      Given the file "app/Gauges/qmldir":
+        """
+        module Gauges
+        Dial 1.0 Dial.qml
+        """
+      And the file "app/Gauges/Dial.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 60; height: 60; color: "#203040" }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import Ljos.Ui
+        import Gauges
+        Rectangle { width: 200; height: 100; Dial { width: 80 } }
+        """
+      When the author runs "ljos render app --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos migrate --write app/Gauges/Dial.qml"
+      Then the command prints:
+        """
+        lowered app/Gauges/Dial.qml (2 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      And the file "app/Gauges/Dial.qml" is:
+        """qml
+        import Ljos.Ui
+        Rectangle { width: 60; height: 60; fill: "#203040" }
+        """
+      When the author runs "ljos check app"
+      Then the command exits with status 0
+      When the author runs "ljos render app --out migrated.png --settle 0 --compat keep"
+      Then the pictures "kept.png" and "migrated.png" have the same pixels
+
+    # A file the pass cannot lower keeps the files it uses, and only those: the application that uses
+    # it is lowered around it, so an application is migrated a file at a time.
+    @ljos-only @headless
+    Scenario: A kept component keeps the files it uses, not the application that uses it
+      Given the file "app/Gauges/qmldir":
+        """
+        module Gauges
+        Dial 1.0 Dial.qml
+        Needle 1.0 Needle.qml
+        """
+      And the file "app/Gauges/Needle.qml":
+        """qml
+        import QtQuick
+        Rectangle { width: 4; height: 24; color: "#e0e0e0" }
+        """
+      And the file "app/Gauges/Dial.qml":
+        """qml
+        import QtQuick
+        Rectangle {
+          width: 60; height: 60; color: "#203040"
+          function copy() { return Qt.createQmlObject("import QtQuick; Item {}", this) }
+          Needle { x: 28; y: 6 }
+        }
+        """
+      And the file "app/Main.qml":
+        """qml
+        import QtQuick
+        import Gauges
+        Rectangle {
+          width: 200; height: 100; color: "white"
+          Dial { x: 20; y: 20; color: "#c03030" }
+          Rectangle { x: 120; y: 20; width: 60; height: 60; color: "#30a050" }
+        }
+        """
+      When the author runs "ljos migrate app"
+      Then the command prints:
+        """
+        kept app/Gauges/Dial.qml:4:31: it makes objects from QML text, which is not lowered yet
+        kept app/Gauges/Needle.qml:1:1: it is used by `Dial.qml`, which is kept: it makes objects from QML text, which is not lowered yet
+        would lower app/Main.qml (3 edits)
+        3 files, 1 lowered, 2 kept
+        """
+      When the author runs "ljos render app --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render app --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+      When the author runs "ljos migrate --write app"
+      And the author runs "ljos check app"
+      Then the command exits with status 0
+      When the author runs "ljos render app --out migrated.png --settle 0 --compat keep"
+      Then the pictures "kept.png" and "migrated.png" have the same pixels
 
     # A directory imported by its path has no qmldir to say where it is imported from: the file that
     # imports it is found below the directory the command runs in.
@@ -255,7 +342,7 @@ Feature: Qt's QML lowered to Ljós's API
       When the author runs "ljos migrate --write app/parts/Dial.qml"
       Then the command prints:
         """
-        kept app/parts/Dial.qml:1:1: it is used with `Main.qml`, which is kept: it is not named: name it too
+        kept app/parts/Dial.qml:1:1: it is used by `Main.qml`, which is kept: it is not named: name it too
         1 files, 0 lowered, 1 kept
         """
       And the file "app/parts/Dial.qml" is:

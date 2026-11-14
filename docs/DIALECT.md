@@ -43,9 +43,9 @@ exactly one place: the compat pass and its type table.
    Ljós's terms.
 2. **Qt's QML keeps running, unchanged and at the same cost.** A file
    written for Qt Quick runs as it does today. Lowering it is a load-time
-   text edit that is all-or-nothing per group of files. A file that cannot
-   be lowered runs as written, on the same runtime. It must cost nothing at
-   run time (§11).
+   text edit that is all-or-nothing per file, and a kept file keeps the
+   files it uses. A file that cannot be lowered runs as written, on the
+   same runtime. It must cost nothing at run time (§11).
 3. **Typed scripts.** Handlers, functions and bindings in a Ljós file are
    strict TypeScript (note 11's H1), with two additions that compile away,
    `match` and the pipe (§4.17.1, §4.18). Every program the checker
@@ -3327,10 +3327,10 @@ one object its file makes, of its root's type and of no type built on it.
 
 ### 6.2 By group
 
-Files that name one another are lowered together or kept together.
-Otherwise a kept `Main.qml` would set `color` on a lowered `Button` that
-now has `fill` only, which the sweep found in snippet-components-application
-before grouping. `qml_compat::references` collects what a file may name:
+A file kept keeps the files it uses. Otherwise a kept `Main.qml` would set
+`color` on a lowered `Button` that now has `fill` only, which the sweep
+found in snippet-components-application before grouping.
+`qml_compat::references` collects what a file may name:
 
 - type names;
 - property types;
@@ -3343,14 +3343,55 @@ before grouping. `qml_compat::references` collects what a file may name:
   path finds it, ties every file below it to the group;
 - capitalised identifiers, such as an enum's owner.
 
-`qml_compat::group` joins files with union-find. A group is lowered only
-when every file in it lowered or had nothing to lower. Otherwise each file
-that would have lowered is kept with the reason "it is used with
-`Main.qml`, which is kept: …".
+`qml_compat::group` follows those names from each kept file: every file a
+kept file uses, and every file that one uses, is kept with the reason "it
+is used by `Main.qml`, which is kept: …". A file left as it is, with no
+import the pass lowers, goes on in Qt's names, so the files it uses are
+reached through it, and it stays as it is.
+
+The other way does not keep: a lowered file may use a kept one. The pass
+reads the kept file's root as Qt's (`Root::kept`) and binds each name on
+it as written, `color` on a kept `Rectangle` and on what it holds, since
+a Ljós file reads a kept type's names as its file declares them. What
+the kept type has is not known, so a name a script reads unqualified in an
+object of it may be that object's or the root's: where the root's lowering
+renames it, the file is kept. A kept
+`QtQuick3D` scene keeps the files it uses, not the application around it,
+so an application is migrated a file at a time. `Lowering::settle`
+lowers again the users of a file whose kept-ness changed, and their users
+in turn, until nothing does. Two files can turn each other over: `Main.qml` sets `color` on a
+`Swatch` whose root is an `Item`, so against a lowered `Swatch` it is kept,
+which keeps `Swatch`, against which `Main.qml` is lowered with Qt's names,
+which lets `Swatch` be lowered again. A file that turns twice in one settle
+is held kept as it last was, and both are kept.
+
+A file lowered that way still binds Qt's names on the kept type: `Main.qml`
+in Ljós's API holds `Dial { color: "#c03030" }`. Lowering `Dial.qml` later
+would rename `color` to `fill` under it, so a file in Qt's QML stays kept
+while a file in Ljós's API (one that imports a `Ljos` module) binds on its
+type a name its lowering renames, or that name's handler: in a binding, a
+`Behavior on color`, a grouped property, or a `PropertyChanges` or `Binding`
+whose `target` is an id of the file. The pass follows
+the file's root through the project's files it is built on, while they are
+lowered too, to the Qt type whose renames say so, and a property the file
+declares renames nothing. The reason names the file, the name and what
+Ljós calls it: "`Main.qml`, in Ljós's API, binds `color` on it, which
+Ljós's `Rectangle` calls `fill`: rename it there as this file is lowered".
+What that file's scripts set on the type is not read, nor a `target` that
+is no id of the file; `ljos check` says it once the type is lowered.
 
 DECISION: grouping is conservative. A name that might be a sibling ties
 the two, even when it is a coincidence. The cost of a false tie is a file
 run as written, and the cost of a missed tie is a wrong program.
+
+DECISION: a lowered file may use a type defined by a kept file of its
+project (G5). `ljos check`, the compiler and the runtime read a kept
+type's names as its Qt file declares them, in a Ljós file too.
+
+DECISION: lowering a kept file never renames what a file in Ljós's API
+binds on it. The pass lowers a file at a time and leaves the dialect file
+as its author has it, so the kept file waits for the rename by hand: the
+reason says which and to what.
 
 ### 6.3 What keeps a file
 
@@ -3360,6 +3401,7 @@ run as written, and the cost of a missed tie is a wrong program.
 | `import QtQuick.Controls` in a program that starts with a style other than Basic | Lowered once Ljós has that style's controls (M6) |
 | A module of the project whose types are native (C++ with no QML file here) | Kept while its types are not described to the pass |
 | A module of the project imported under a name (`import Gauges as G`) | Kept until the pass follows a qualified type |
+| A file in Ljós's API binds on the file's type a name lowering renames (`color` on a `Rectangle`) | Lowered with that binding renamed to Ljós's name (`fill`) by hand, as the reason says |
 | `Qt.createQmlObject` (QML as text) | Kept. The text is lowered only if the pass runs at that call too (M5) |
 | A name built at run time (`obj[name]`, `"col" + "or"`) | Kept for good. A static analysis cannot follow it |
 | `.bold` of a font read or written by a script, `font.bold` with `font.weight` (in any form), `.pointSize` read or written by a script, `font.pointSize` with `font.pixelSize`, or a font member read off a `font`, `var` or `alias` whose type is not known (§4.13) | Kept until the pass knows more types (M4) |
@@ -3488,10 +3530,11 @@ kept qml/Main.qml:12:5: `Column` is not in Ljos.Ui yet
   module of the project and a directory imported by path are files to the
   files that import them. A file named alone is of the project of its
   directory (a bare `Main.qml`, of the directory the command runs in).
-  When its group holds a file that was not named, none of the group is
-  written: the named file is kept, saying which file to name too
-  (``it is used with `Gauges/Dial.qml`, which is kept: it is not named:
-  name it too``), so a file is never renamed to match one that stays Qt's.
+  A file that was not named is kept, and so is each named file it uses,
+  saying which file to name too (``it is used by `Main.qml`, which is
+  kept: it is not named: name it too``), so a file is never renamed to
+  match one that stays Qt's. A named file that uses one not named is
+  lowered, keeping Qt's names on that one's type (§6.2).
   Give it an application's directory, not a tree of several:
   the group's directory rule (§6.2) ties one application's module to
   another's directory of the same name.
@@ -3636,7 +3679,7 @@ files, so that one merging does not put the others in conflict:
 | Run time, compat file | **0** vs today: same IR, same natives, same indices | A face shares the native's indices. A renamed member is linked by name once at compile time |
 | Run time, Ljós file | ≤ compat, and less where types let tier 1 specialise | equal (no specialisation yet) |
 | Load time, `--compat keep` (default) | **0** | the pass does not run |
-| Load time, `--compat lower` | one parse and one walk per file, plus union-find over the project. Under 5 % of today's compile of the file | `ljos migrate corpus/qtdoc` (524 files, the same per-file pass, `references`, and `group`) takes 0.26 s in a **debug** build, about 0.5 ms per file. It is not a gate yet (M1) |
+| Load time, `--compat lower` | one parse and one walk per file, plus a walk of what the kept files use. Under 5 % of today's compile of the file | `ljos migrate corpus/qtdoc` (524 files, the same per-file pass, `references`, and `group`) takes 0.26 s in a **debug** build, about 0.5 ms per file. It is not a gate yet (M1) |
 | Ahead-of-time build | 0 at run time: a shipped bundle holds the lowered IR | n/a |
 | Memory | no second copy of the IR. The written text is kept only in a development project, for reload and migrate | as built |
 
@@ -3831,8 +3874,8 @@ bindings and states without a rule.
   file did (PR #184 review). Migrate does not refuse a file the checker
   would reject, nor rewrite `==` to `===`: either would change what runs or
   how much migrates, and typing is a person's step.
-- DECISION: a file is lowered all-or-nothing, and so is a group of files
-  that name one another. Grouping is conservative.
+- DECISION: a file is lowered all-or-nothing, and a kept file keeps the
+  files it uses. Grouping is conservative.
 - DECISION: `Qt.createQmlObject` keeps its file until M5.
 - DECISION: phase 1 exposes compat on `ljos render --compat keep|lower` and
   `ljos migrate`. `ljos run --compat` is M1 (built without `--watch`). The

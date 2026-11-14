@@ -234,7 +234,7 @@ fn a_kept_file_keeps_the_files_it_names_and_says_where() {
     let lines: Vec<&str> = out.lines().collect();
     assert!(
         lines.contains(
-            &"kept app/Button.qml:1:1: it is used with `Main.qml`, which is kept: `FocusScope` is not in Ljos.Ui yet"
+            &"kept app/Button.qml:1:1: it is used by `Main.qml`, which is kept: `FocusScope` is not in Ljos.Ui yet"
         ),
         "{out}"
     );
@@ -533,7 +533,7 @@ fn an_importer_below_the_root_is_read_with_the_root_s_project() {
     let (status, out, err) = ljos(dir.path(), &["migrate", "--write", "app/Gauges/Dial.qml"]);
     assert_eq!(status, 0, "{out}{err}");
     assert!(out.starts_with("kept app/Gauges/Dial.qml:1:1: "), "{out}");
-    assert!(out.contains("it is used with `Page.qml`"), "{out}");
+    assert!(out.contains("it is used by `Page.qml`"), "{out}");
     assert_eq!(read(dir.path(), "app/Gauges/Dial.qml"), BUTTON);
     assert_eq!(read(dir.path(), "app/views/Page.qml"), page);
 }

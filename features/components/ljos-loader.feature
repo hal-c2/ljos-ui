@@ -268,6 +268,6 @@ Feature: A Loader shows a component, named as a type
       Then the command prints:
         """
         kept ./Main.qml:4:24: a `Loader`'s `source` is read or set as well as written
-        kept ./Page.qml:1:1: it is used with `Main.qml`, which is kept: a `Loader`'s `source` is read or set as well as written
+        kept ./Page.qml:1:1: it is used by `Main.qml`, which is kept: a `Loader`'s `source` is read or set as well as written
         2 files, 0 lowered, 2 kept
         """

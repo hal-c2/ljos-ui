@@ -199,7 +199,7 @@ pub(crate) fn rules_of(on: Ty) -> impl Iterator<Item = &'static dyn Rule> {
     let (font, mut ty) = match on {
         Ty::Font => (owner("font"), None),
         Ty::Exact(ty) | Ty::Derived(ty) => (None, Some(ty)),
-        Ty::Plain | Ty::Unknown | Ty::Native(..) => (None, None),
+        Ty::Plain | Ty::Unknown | Ty::Native(..) | Ty::Kept => (None, None),
     };
     let built_on = std::iter::from_fn(move || {
         let at = ty?;

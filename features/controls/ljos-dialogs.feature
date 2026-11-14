@@ -244,7 +244,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Bas
       When the author runs "ljos migrate ."
       Then the command prints:
         """
-        kept ./Button.qml:1:1: it is used with `Main.qml`, which is kept: `Button` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `Button` that would be found first
+        kept ./Button.qml:1:1: it is used by `Main.qml`, which is kept: `Button` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `Button` that would be found first
         kept ./Main.qml:4:3: `Button` is a file of the project, and Ljos.Controls.Basic, which the lowered file imports, has a `Button` that would be found first
         2 files, 0 lowered, 2 kept
         """
@@ -318,7 +318,7 @@ Feature: Ljós's file and folder dialogs, in Ljos.Controls and Ljos.Controls.Bas
       When the author runs "ljos migrate app"
       Then the command prints:
         """
-        kept app/Gauges/Label.qml:1:1: it is used with `Main.qml`, which is kept: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls.Basic takes, would be found first
+        kept app/Gauges/Label.qml:1:1: it is used by `Main.qml`, which is kept: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls.Basic takes, would be found first
         kept app/Main.qml:6:3: `Label` is Qt's, but in the lowered file the project's `Label`, imported after the line Ljos.Controls.Basic takes, would be found first
         2 files, 0 lowered, 2 kept
         """

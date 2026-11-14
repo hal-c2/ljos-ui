@@ -374,6 +374,9 @@ impl<'s> Scope<'s> {
             self.beside
                 .borrow_mut()
                 .extend(root.declares.iter().cloned());
+            if root.kept {
+                return Ok(Ty::Kept);
+            }
         }
         match root.map(|root| root.type_name) {
             Some(root) if root != name => match self.ty(&root, at, depth + 1)? {
