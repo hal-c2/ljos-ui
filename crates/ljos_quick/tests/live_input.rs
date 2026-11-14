@@ -251,6 +251,22 @@ fn input_posted_before_the_first_picture_waits_for_it() {
 }
 
 #[test]
+fn input_posted_to_a_root_that_goes_before_its_picture_is_dropped() {
+    let e = engine();
+    let root = load(&e, MAIN);
+    let mut s = scene(&e, root, 200.0, 100.0);
+    for input in click(50.0, 50.0) {
+        post_input(&e, root, input).unwrap();
+    }
+    e.destroy_now(root);
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    // A scene that shows nothing has nowhere to hand it, and asks for no
+    // frame for it.
+    assert!(!s.needs_frame());
+}
+
+#[test]
 fn input_posted_to_a_tree_the_scene_no_longer_shows_is_dropped() {
     let (e, root, mut s) = world();
     for input in click(50.0, 50.0) {

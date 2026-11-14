@@ -224,6 +224,12 @@ impl QuickScene {
         engine: &Engine,
         now: ljos_runtime::Time,
     ) -> bool {
+        // A scene that shows nothing has nowhere to hand it; kept, it
+        // would ask for a frame after every frame.
+        let Some(root) = self.root().filter(|r| engine.is_alive(*r)) else {
+            self.take_posted();
+            return false;
+        };
         // Before the first picture nothing is found under a point: what
         // was posted waits for the frame after it, which it asks for.
         if !self.has_picture() {
@@ -233,9 +239,6 @@ impl QuickScene {
         if posted.is_empty() {
             return false;
         }
-        let Some(root) = self.root() else {
-            return false;
-        };
         self.with_input_origin(InputOrigin::Synthetic, |scene| {
             let mut taken = false;
             for (window, input) in posted {
