@@ -563,6 +563,13 @@ impl ObjectHeader {
         self.ext.as_ref().is_some_and(|x| x.made_on_read.has(prop))
     }
 
+    /// Whether someone else keeps `prop` ([`Engine::keep_on_read`]).
+    pub(crate) fn kept(&self, prop: PropIndex) -> bool {
+        self.ext
+            .as_ref()
+            .is_some_and(|x| x.made_on_read.keeps(prop).is_some())
+    }
+
     /// Whether `prop` is still to be bound on its next read
     /// ([`Engine::bind_on_read`]).
     pub(crate) fn binds_on_read(&self, prop: PropIndex) -> bool {

@@ -78,7 +78,7 @@ mod loader;
 mod log;
 mod lookups;
 mod made_on_read;
-pub use made_on_read::{BindOnRead, MakeOnRead};
+pub use made_on_read::{BindOnRead, KeepOnRead, Kept, MakeOnRead};
 mod journal;
 mod keyed;
 pub use keyed::{Keyed, KeyedRows, KeyedSource};
