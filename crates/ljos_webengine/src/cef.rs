@@ -31,7 +31,9 @@ use crate::backend::{
     self, Browser as Page, Event as Ev, Key as PageKey, LoadStatus, Mouse as PageMouse, MouseKind,
     Navigation, Sink, Start,
 };
-use crate::types::{DEFERRED, DOCUMENT_CREATION, DOCUMENT_READY, ProfileSpec, Script};
+use crate::types::{
+    DEFERRED, DOCUMENT_CREATION, DOCUMENT_READY, ProfileSpec, Script, permissions_policy,
+};
 
 /// The name of the helper executable CEF starts its other processes from.
 pub const HELPER: &str = if cfg!(windows) {
@@ -286,11 +288,27 @@ fn loading() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a view waits for CEF to finish making its profile. CEF does
+/// that work on its own threads and does not ask for the UI thread's turn
+/// when it is done, so the pump keeps turning until the browser is made.
+fn awaiting_profile() -> bool {
+    GLOBAL
+        .try_with(|g| match g.try_borrow().as_deref() {
+            Ok(Some(Ok(global))) => global
+                .browsers
+                .iter()
+                .any(|shared| Shared::lock(&shared.browser).is_none() && shared.open_or_opening()),
+            _ => false,
+        })
+        .unwrap_or(false)
+}
+
 /// After a turn: a follow-up, unless the browser has been quiet long
 /// enough.
 fn follow_up(pump: &Pump) {
+    let waiting = awaiting_profile();
     let mut st = pump.state.lock().unwrap_or_else(PoisonError::into_inner);
-    if std::mem::take(&mut st.asked) {
+    if std::mem::take(&mut st.asked) || waiting {
         st.quiet = 0;
     } else {
         st.quiet += 1;
@@ -395,7 +413,16 @@ fn pump_into(e: &Engine) {
 
 struct Global {
     root: PathBuf,
-    contexts: HashMap<String, RequestContext>,
+    contexts: HashMap<String, (RequestContext, Ready)>,
+    /// Answers a profile keeps only while the application runs, forgotten
+    /// as CEF shuts down: what was asked, by whom, in which profile.
+    this_run: Vec<(RequestContext, String, i32)>,
+    /// Answers Chromium has for a profile that keeps none: the view that
+    /// asked keeps them for its pages, and they go before the profile's
+    /// next browser is made, and as CEF shuts down. Chromium asks only
+    /// while it has no answer, and forgetting one as the page is given it
+    /// takes it from the page too.
+    every_time: Vec<(RequestContext, String, i32)>,
     pages: Vec<std::rc::Weak<CefPage>>,
     /// Every browser made, until CEF says it has closed: a page whose
     /// engine has gone still has one, closing, that [`shutdown`] waits for.
@@ -432,26 +459,27 @@ fn path_string(p: &Path) -> CefString {
     CefString::from(p.to_string_lossy().as_ref())
 }
 
-/// Where profiles keep what they keep. One running copy of an app holds
+/// Where a profile on disk was told to keep what it keeps, when it was.
+fn named_storage(spec: &ProfileSpec) -> Option<&Path> {
+    let path = Path::new(&spec.storage_path);
+    (!spec.off_the_record && path.is_absolute()).then_some(path)
+}
+
+/// Where profiles keep what they keep. CEF keeps every profile of a
+/// process under one directory, chosen as it starts: the place the first
+/// profile on disk names is that directory, so an application that names
+/// where its profile goes has it there. One running copy of an app holds
 /// it; a second runs from a directory of its own and keeps nothing.
-fn root_cache_path(e: &Engine) -> PathBuf {
-    if let Some(root) = std::env::var_os("LJOS_WEBENGINE_ROOT") {
+fn root_cache_path(e: &Engine, first: &ProfileSpec) -> PathBuf {
+    let root = if let Some(named) = named_storage(first) {
+        named.to_path_buf()
+    } else if let Some(root) = std::env::var_os("LJOS_WEBENGINE_ROOT") {
         return PathBuf::from(root);
-    }
-    let app = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| "ljos".to_owned());
-    let data = if cfg!(windows) {
-        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
     } else {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-    }
-    .unwrap_or_else(std::env::temp_dir);
-    let root = data.join(&app).join("ljos-webengine");
+        default_root()
+    };
     if held_by_another_process(&root) {
+        let app = app_name();
         let own = std::env::temp_dir().join(format!("ljos-webengine-{app}-{}", std::process::id()));
         e.log(
             LogLevel::Warning,
@@ -465,6 +493,26 @@ fn root_cache_path(e: &Engine) -> PathBuf {
         return own;
     }
     root
+}
+
+fn app_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|p| p.file_stem().map(|s| s.to_string_lossy().into_owned()))
+        .unwrap_or_else(|| "ljos".to_owned())
+}
+
+/// The application's own data directory, as the platform names it.
+fn default_root() -> PathBuf {
+    let data = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+    }
+    .unwrap_or_else(std::env::temp_dir);
+    data.join(app_name()).join("ljos-webengine")
 }
 
 /// Chromium marks the directory it runs from with a link to
@@ -523,7 +571,7 @@ fn ozone_platform(words: &[String]) -> Option<&'static str> {
     })
 }
 
-fn initialize_cef(e: &Engine) -> Result<Global, String> {
+fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     let layout = layout().as_ref().map_err(Clone::clone)?;
     #[cfg(target_os = "macos")]
     load_framework()?;
@@ -543,6 +591,14 @@ fn initialize_cef(e: &Engine) -> Result<Global, String> {
     }
     if let Some(platform) = ozone_platform(&words) {
         words.push(format!("--ozone-platform={platform}"));
+    }
+    // Chromium has one place for the HTTP caches of a process, given as
+    // it starts: the one the first profile on disk names.
+    if !first.off_the_record
+        && Path::new(&first.cache_path).is_absolute()
+        && !words.iter().any(|w| w.starts_with("--disk-cache-dir"))
+    {
+        words.push(format!("--disk-cache-dir={}", first.cache_path));
     }
     // Chromium tries a page that failed again by itself, later and later,
     // for as long as it is shown. A view's load fails once and stays
@@ -566,7 +622,7 @@ fn initialize_cef(e: &Engine) -> Result<Global, String> {
     };
 
     short_temp_dir();
-    let root = root_cache_path(e);
+    let root = root_cache_path(e, first);
     let _ = std::fs::create_dir_all(&root);
     let settings = Settings {
         no_sandbox: 1,
@@ -610,16 +666,23 @@ fn initialize_cef(e: &Engine) -> Result<Global, String> {
     Ok(Global {
         root,
         contexts: HashMap::new(),
+        this_run: Vec::new(),
+        every_time: Vec::new(),
         pages: Vec::new(),
         browsers: Vec::new(),
     })
 }
 
-/// CEF, started the first time a view needs it.
-fn with_global<R>(e: &Engine, f: impl FnOnce(&mut Global) -> R) -> Result<R, String> {
+/// CEF, started the first time a view needs it, for the profile of that
+/// view.
+fn with_global<R>(
+    e: &Engine,
+    first: &ProfileSpec,
+    f: impl FnOnce(&mut Global) -> R,
+) -> Result<R, String> {
     GLOBAL.with(|g| {
         let mut g = g.borrow_mut();
-        let g = g.get_or_insert_with(|| initialize_cef(e));
+        let g = g.get_or_insert_with(|| initialize_cef(e, first));
         match g {
             Ok(g) => Ok(f(g)),
             Err(why) => Err(why.clone()),
@@ -630,7 +693,7 @@ fn with_global<R>(e: &Engine, f: impl FnOnce(&mut Global) -> R) -> Result<R, Str
 /// The request context of a profile: one per storage name, so views of
 /// one profile share cookies and caches. One kept off the record is in
 /// memory only.
-fn context_for(g: &mut Global, spec: &ProfileSpec) -> Option<RequestContext> {
+fn context_for(e: &Engine, g: &mut Global, spec: &ProfileSpec) -> Option<(RequestContext, Ready)> {
     let key = if spec.off_the_record {
         format!("\0otr:{}", spec.storage_name)
     } else {
@@ -642,12 +705,27 @@ fn context_for(g: &mut Global, spec: &ProfileSpec) -> Option<RequestContext> {
     let cache = if spec.off_the_record {
         String::new()
     } else {
-        // CEF keeps a profile only under its root.
-        let wanted = Path::new(&spec.storage_path);
-        let path = if !spec.storage_path.is_empty() && wanted.starts_with(&g.root) {
-            wanted.to_path_buf()
-        } else {
-            g.root.join(&spec.storage_name)
+        // CEF keeps a profile only under its root, which is where the
+        // first profile asked to be.
+        let path = match named_storage(spec) {
+            Some(wanted) if wanted.starts_with(&g.root) => wanted.to_path_buf(),
+            named => {
+                let own = g.root.join(&spec.storage_name);
+                if let Some(wanted) = named {
+                    e.log(
+                        LogLevel::Warning,
+                        crate::CATEGORY,
+                        format!(
+                            "profile {:?} keeps its pages' data in {}, not {}: the web engine keeps every profile of a process under {}, where the first one is",
+                            spec.storage_name,
+                            own.display(),
+                            wanted.display(),
+                            g.root.display()
+                        ),
+                    );
+                }
+                own
+            }
         };
         path.to_string_lossy().into_owned()
     };
@@ -657,9 +735,60 @@ fn context_for(g: &mut Global, spec: &ProfileSpec) -> Option<RequestContext> {
         accept_language_list: cef_string(&spec.accept_language),
         ..Default::default()
     };
-    let c = request_context_create_context(Some(&settings), None)?;
-    g.contexts.insert(key, c.clone());
-    Some(c)
+    let ready = Ready::default();
+    let mut handler = ContextReady::new(ready.clone());
+    let c = request_context_create_context(Some(&settings), Some(&mut handler))?;
+    g.contexts.insert(key, (c.clone(), ready.clone()));
+    Some((c, ready))
+}
+
+/// Whether a request context is ready for browsers yet, and the views
+/// whose browser waits for it. CEF makes a profile on disk after it gives
+/// its context back, and makes no browser in it until then.
+#[derive(Clone, Default)]
+struct Ready(Arc<Mutex<Readiness>>);
+
+#[derive(Default)]
+struct Readiness {
+    ready: bool,
+    waiting: Vec<(std::sync::Weak<Shared>, Start)>,
+}
+
+impl Ready {
+    /// Whether `shared`'s browser waits for the context, to be made as
+    /// `start` says once it is ready.
+    fn wait(&self, shared: &Arc<Shared>, start: &Start) -> bool {
+        let mut r = Shared::lock(&self.0);
+        if !r.ready {
+            r.waiting.push((Arc::downgrade(shared), start.clone()));
+        }
+        !r.ready
+    }
+}
+
+wrap_request_context_handler! {
+    struct ContextReady { ready: Ready }
+    impl RequestContextHandler {
+        fn on_request_context_initialized(&self, context: Option<&mut RequestContext>) {
+            let waiting = {
+                let mut r = Shared::lock(&self.ready.0);
+                r.ready = true;
+                std::mem::take(&mut r.waiting)
+            };
+            let context = context.map(|c| c.clone());
+            for (shared, start) in waiting {
+                let Some(shared) = shared.upgrade() else {
+                    continue;
+                };
+                if shared.closing.load(Ordering::Relaxed) {
+                    continue;
+                }
+                if let Err(why) = open(&shared, &start, context.clone()) {
+                    shared.unopened(&why);
+                }
+            }
+        }
+    }
 }
 
 // --- one view's browser -----------------------------------------------------
@@ -691,6 +820,8 @@ enum Pending {
     Boot,
     /// The blank page is out of the history.
     Forgot,
+    /// The page of this origin heard whether it may show notifications.
+    Heard(String),
     Ignore,
 }
 
@@ -754,7 +885,36 @@ struct Frames {
     spare: Option<(ImageHandle, Vec<PixelRect>)>,
 }
 
+/// How long the profile of a view keeps what the view answered a page
+/// (`WebEngineProfile.persistentPermissionsPolicy`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Keep {
+    /// The profile keeps nothing: only the view answered remembers, while
+    /// it lives, so its pages are not asked again and another view's are.
+    Never,
+    /// Until the application ends, of a profile on disk.
+    ThisRun,
+    /// As long as the profile does: on disk, or in memory for one off the
+    /// record, which ends with the application anyway.
+    Always,
+}
+
+impl Keep {
+    fn of(spec: &ProfileSpec) -> Self {
+        match spec.permissions_policy {
+            permissions_policy::ASK_EVERY_TIME => Keep::Never,
+            permissions_policy::STORE_IN_MEMORY if !spec.off_the_record => Keep::ThisRun,
+            _ => Keep::Always,
+        }
+    }
+}
+
 struct Shared {
+    /// What the profile keeps of the view's answers.
+    keep: Keep,
+    /// What the view answered, by origin and permission type, when the
+    /// profile keeps nothing ([`Keep::Never`]).
+    answered: Mutex<HashMap<(String, i32), bool>>,
     sink: Sink,
     geometry: Mutex<Geometry>,
     zoom: Mutex<f64>,
@@ -778,6 +938,20 @@ struct Shared {
     /// the view answers with.
     asked: Mutex<HashMap<u64, Asked>>,
     boot: Mutex<Boot>,
+    /// What the view told the browser before there was one.
+    before: Mutex<Before>,
+}
+
+/// What a view tells its browser before CEF made it, which it is told
+/// once made: CEF makes a profile's first browser once the profile is.
+#[derive(Default)]
+struct Before {
+    /// The browser was made: nothing more waits here.
+    made: bool,
+    hidden: bool,
+    muted: bool,
+    focus: Option<bool>,
+    dev: Vec<Vec<u8>>,
 }
 
 /// The blank page a browser starts on. What every page gets (the
@@ -813,6 +987,10 @@ enum Asked {
     Prompt {
         prompt: u64,
         callback: PermissionPromptCallback,
+        /// Who asked, and the `WebEnginePermission.PermissionType` of
+        /// what: what the profile keeps of the answer.
+        origin: String,
+        kind: i32,
     },
     Media {
         callback: MediaAccessCallback,
@@ -834,14 +1012,65 @@ enum Asked {
 }
 
 impl Asked {
+    /// Who asks, for what; a camera or microphone is asked each time.
+    fn key(&self) -> Option<(String, i32)> {
+        match self {
+            Asked::Prompt { origin, kind, .. } => Some((origin.clone(), *kind)),
+            Asked::Notifications { origin, .. } => Some((origin.clone(), NOTIFICATIONS_KIND)),
+            Asked::Media { .. } => None,
+        }
+    }
+
+    /// The question goes to the view, or is answered as the view answered
+    /// it before, if it is to be.
+    fn ask(self, shared: &Shared, id: u64) {
+        let before = self
+            .key()
+            .and_then(|key| Shared::lock(&shared.answered).get(&key).copied());
+        if let Some(allow) = before {
+            self.answer(allow, shared);
+            return;
+        }
+        let event = match &self {
+            Asked::Prompt { origin, kind, .. } => Ev::Permission {
+                id,
+                origin: origin.clone(),
+                kind: *kind,
+            },
+            Asked::Notifications { origin, .. } => Ev::Permission {
+                id,
+                origin: origin.clone(),
+                kind: NOTIFICATIONS_KIND,
+            },
+            Asked::Media { .. } => return,
+        };
+        Shared::lock(&shared.asked).insert(id, self);
+        shared.sink.send(event);
+    }
+
     fn answer(self, allow: bool, shared: &Shared) {
         told_work();
+        if shared.keep == Keep::Never
+            && let Some(key) = self.key()
+        {
+            Shared::lock(&shared.answered).insert(key, allow);
+        }
         match self {
-            Asked::Prompt { callback, .. } => callback.cont(if allow {
-                PermissionRequestResult::ACCEPT
-            } else {
-                PermissionRequestResult::DENY
-            }),
+            Asked::Prompt {
+                callback,
+                origin,
+                kind,
+                ..
+            } => {
+                // Chromium keeps the answer as the origin's; what the
+                // profile is not to keep goes once the page has it.
+                callback.cont(if allow {
+                    PermissionRequestResult::ACCEPT
+                } else {
+                    PermissionRequestResult::DENY
+                });
+                kept(shared, &origin, kind);
+            }
             Asked::Media {
                 callback, flags, ..
             } if allow => callback.cont(flags),
@@ -869,22 +1098,64 @@ impl Asked {
                         },
                     );
                 }
-                // The page asks Chromium now, which says what the view did.
-                pass_to_chromium(shared, context, number);
+                // The page asks Chromium now, which says what the view
+                // did; what the profile is not to keep goes once it has.
+                let then = if shared.keep == Keep::Always || origin.starts_with("file:") {
+                    Pending::Ignore
+                } else {
+                    Pending::Heard(origin)
+                };
+                pass_to_chromium(shared, context, number, then);
             }
         }
     }
 }
 
-/// The page's question `number` in `context` goes on to Chromium.
-fn pass_to_chromium(shared: &Shared, context: i64, number: u64) {
+/// The page has the view's answer to `origin` asking for `kind`: the
+/// profile keeps it as long as it is to.
+fn kept(shared: &Shared, origin: &str, kind: i32) {
+    if shared.keep == Keep::Always {
+        return;
+    }
+    let Some(context) = shared.host().and_then(|h| h.request_context()) else {
+        return;
+    };
+    GLOBAL.with(|g| {
+        if let Some(Ok(g)) = &mut *g.borrow_mut() {
+            let kept = (context, origin.to_owned(), kind);
+            match shared.keep {
+                Keep::Never => g.every_time.push(kept),
+                _ => g.this_run.push(kept),
+            }
+        }
+    });
+}
+
+/// The profile of `context` forgets what `origin` was answered asking for
+/// `kind`: the page is asked again.
+fn forget_answer(context: &RequestContext, origin: &str, kind: i32) {
+    let origin = cef_string(origin);
+    for setting in content_settings(kind) {
+        context.set_content_setting(
+            Some(&origin),
+            Some(&origin),
+            *setting,
+            ContentSettingValues::DEFAULT,
+        );
+    }
+}
+
+/// The page's question `number` in `context` goes on to Chromium; `then`
+/// is done once the page has Chromium's answer.
+fn pass_to_chromium(shared: &Shared, context: i64, number: u64, then: Pending) {
     let out = vec![Shared::lock(&shared.dev).call(
         "Runtime.evaluate",
         json!({
             "expression": format!("globalThis.{ANSWERED}({number})"),
             "contextId": context,
+            "awaitPromise": true,
         }),
-        Pending::Ignore,
+        then,
     )];
     shared.send_dev(out);
 }
@@ -897,30 +1168,48 @@ const ANSWERED: &str = "__ljosAnswered";
 /// Every document's `Notification.requestPermission`, which asks the view
 /// first while the page has no answer yet, with the question's number. The
 /// binding is looked for when the page asks: it may come to a new document
-/// after this script does.
-const NOTIFICATIONS: &str = r#"(() => {
+/// after this script does. `EVERY_TIME` is whether the view is asked even
+/// then, as a profile that keeps no answer is: Chromium has the last one
+/// until the view's forgetting reaches it, which a page asking again at
+/// once comes before.
+const NOTIFICATIONS: &str = r#"((EVERY_TIME) => {
   const N = globalThis.Notification;
   if (!N || typeof N.requestPermission !== "function") return;
   const ask = N.requestPermission.bind(N);
   const waiting = new Map();
   let next = 0;
+  // Settles once the page has Chromium's answer.
   Object.defineProperty(globalThis, "__ljosAnswered", {
-    value: number => { const go = waiting.get(number); waiting.delete(number); if (go) go(); }
+    value: number => {
+      const question = waiting.get(number);
+      waiting.delete(number);
+      if (!question) return;
+      question.go();
+      return question.answer.then(() => true, () => false);
+    }
   });
   N.requestPermission = function requestPermission(callback) {
     const asking = globalThis.__ljosPermission;
-    const asked = N.permission !== "default" || typeof asking !== "function"
+    const question = {};
+    const asked = (!EVERY_TIME && N.permission !== "default") || typeof asking !== "function"
       ? Promise.resolve()
       : new Promise(go => {
           const number = ++next;
-          waiting.set(number, go);
+          question.go = go;
+          waiting.set(number, question);
           asking(String(number));
         });
     const answer = asked.then(() => ask());
+    question.answer = answer;
     if (typeof callback === "function") answer.then(callback);
     return answer;
   };
-})();"#;
+})"#;
+
+/// [`NOTIFICATIONS`] for a profile that keeps answers as `keep` says.
+fn notifications_script(keep: Keep) -> String {
+    format!("{NOTIFICATIONS}({});", keep == Keep::Never)
+}
 
 /// The ids of the questions pages ask, unique in the process.
 static QUESTIONS: AtomicU64 = AtomicU64::new(1);
@@ -957,8 +1246,9 @@ impl Shared {
     }
 
     /// A view's side of a browser not made yet: on its blank first page.
-    fn new(sink: Sink, geometry: Geometry, zoom: f64) -> Self {
+    fn new(keep: Keep, sink: Sink, geometry: Geometry, zoom: f64) -> Self {
         Self {
+            keep,
             sink,
             geometry: Mutex::new(geometry),
             zoom: Mutex::new(zoom),
@@ -978,16 +1268,59 @@ impl Shared {
             typed: Mutex::default(),
             rejected: Mutex::default(),
             asked: Mutex::default(),
+            answered: Mutex::default(),
             boot: Mutex::new(Boot {
                 behind: true,
                 ..Boot::default()
             }),
+            before: Mutex::default(),
         }
+    }
+
+    /// Whether the browser is open, or still to be made for a view that
+    /// has not gone.
+    fn open_or_opening(&self) -> bool {
+        Self::lock(&self.browser).is_some()
+            || !(Self::lock(&self.before).made || self.closing.load(Ordering::Relaxed))
+    }
+
+    /// The browser could not be made: the view's first page fails, and
+    /// says why.
+    fn unopened(self: &Arc<Self>, why: &str) {
+        // Nothing waits for this browser any more.
+        Self::lock(&self.before).made = true;
+        self.closing.store(true, Ordering::Relaxed);
+        let url = Self::lock(&self.boot).url.take();
+        let Some(url) = url else {
+            return;
+        };
+        if let Some(e) = engine_of(self) {
+            e.log(
+                LogLevel::Warning,
+                crate::CATEGORY,
+                format!("WebEngineView cannot show {url}: {why}"),
+            );
+        }
+        let code = -2;
+        self.ended(
+            url,
+            LoadStatus::Failed,
+            code,
+            crate::errors::name(code),
+            crate::errors::domain(code),
+        );
     }
 
     fn send_dev(&self, messages: Vec<Vec<u8>>) {
         if messages.is_empty() {
             return;
+        }
+        {
+            let mut before = Self::lock(&self.before);
+            if !before.made {
+                before.dev.extend(messages);
+                return;
+            }
         }
         if let Some(host) = self.host() {
             for m in messages {
@@ -1001,7 +1334,7 @@ impl Shared {
         !Self::lock(&self.boot).done()
     }
 
-    /// One more of what the blank page waits for came; once both have,
+    /// One more of what the blank page waits for came; once all have,
     /// the view's first page loads.
     fn boot_step(&self, step: impl FnOnce(&mut Boot)) {
         let next = {
@@ -1798,18 +2131,13 @@ wrap_permission_handler! {
                 return 1;
             };
             let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
-            Shared::lock(&self.shared.asked).insert(
-                id,
-                Asked::Prompt {
-                    prompt: prompt_id,
-                    callback: callback.clone(),
-                },
-            );
-            self.shared.sink.send(Ev::Permission {
-                id,
+            Asked::Prompt {
+                prompt: prompt_id,
+                callback: callback.clone(),
                 origin: string_of(requesting_origin),
                 kind,
-            });
+            }
+            .ask(&self.shared, id);
             1
         }
 
@@ -2028,6 +2356,7 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     // Scripts whose result goes to the view once the lock is let go.
     let mut answered = Vec::new();
     let mut booted = false;
+    let mut heard = None;
     {
         let mut dev = Shared::lock(&shared.dev);
         match dev.pending.remove(&id) {
@@ -2066,6 +2395,7 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
             }
             // Asked again when the next page is in.
             Some(Pending::Forgot) => Shared::lock(&shared.boot).forgetting = false,
+            Some(Pending::Heard(origin)) => heard = Some(origin),
             Some(Pending::Ignore) | None => {}
         }
     }
@@ -2075,6 +2405,9 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     shared.send_dev(out);
     if booted {
         shared.boot_step(|b| b.told = true);
+    }
+    if let Some(origin) = heard {
+        kept(shared, &origin, NOTIFICATIONS_KIND);
     }
 }
 
@@ -2131,25 +2464,18 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
             // A page with no origin of its own (a sandboxed frame, data:)
             // has nothing to be allowed: Chromium refuses it.
             if origin.is_empty() || origin == "null" {
-                pass_to_chromium(shared, context, number);
+                pass_to_chromium(shared, context, number, Pending::Ignore);
                 return;
             }
             // As a URL, the way a view is told an origin.
             let origin = format!("{origin}/");
             let id = QUESTIONS.fetch_add(1, Ordering::Relaxed);
-            Shared::lock(&shared.asked).insert(
-                id,
-                Asked::Notifications {
-                    context,
-                    number,
-                    origin: origin.clone(),
-                },
-            );
-            shared.sink.send(Ev::Permission {
-                id,
+            Asked::Notifications {
+                context,
+                number,
                 origin,
-                kind: NOTIFICATIONS_KIND,
-            });
+            }
+            .ask(shared, id);
         }
         _ => {}
     }
@@ -2303,8 +2629,11 @@ fn mouse_event(m: &PageMouse) -> MouseEvent {
 
 pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<dyn Page>, String> {
     pump_into(e);
-    let context = with_global(e, |g| context_for(g, &start.profile))?;
+    // A profile CEF did not make leaves the view on CEF's own.
+    let (context, ready) =
+        with_global(e, &start.profile, |g| context_for(e, g, &start.profile))?.unzip();
     let shared = Arc::new(Shared::new(
+        Keep::of(&start.profile),
         sink,
         Geometry {
             width: start.width,
@@ -2313,11 +2642,51 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         },
         start.zoom,
     ));
+    {
+        let mut before = Shared::lock(&shared.before);
+        before.hidden = start.hidden;
+        before.muted = start.muted;
+    }
+    if !start.url.is_empty() {
+        shared.started(&start.url);
+        Shared::lock(&shared.boot).url = Some(start.url.clone());
+    }
     ENGINES.with(|engines| {
         let mut engines = engines.borrow_mut();
         engines.retain(|(s, _)| s.strong_count() > 0);
         engines.push((Arc::downgrade(&shared), e.downgrade()));
     });
+    let page = std::rc::Rc::new(CefPage { shared });
+    with_global(e, &ProfileSpec::default(), |g| {
+        g.pages.retain(|p| p.strong_count() > 0);
+        g.pages.push(std::rc::Rc::downgrade(&page));
+        g.browsers.retain(|b| b.open_or_opening());
+        // A browser waiting for its profile is work that ends.
+        g.browsers.push(page.shared.clone());
+    })?;
+    // A profile CEF has not finished making has no browsers yet: the
+    // view waits for it, the pump turning meanwhile, and its browser is
+    // told what the view told it once made.
+    if ready.is_some_and(|r| r.wait(&page.shared, &start)) {
+        told_work();
+    } else {
+        open(&page.shared, &start, context)?;
+    }
+    Ok(page)
+}
+
+/// CEF makes `shared`'s browser in `context`, as `start` says, on its
+/// blank first page.
+fn open(
+    shared: &Arc<Shared>,
+    start: &Start,
+    mut context: Option<RequestContext>,
+) -> Result<(), String> {
+    // A browser made as CEF shuts down would keep it from shutting down.
+    let running = GLOBAL.with(|g| matches!(g.try_borrow().as_deref(), Ok(Some(Ok(_)))));
+    if !running {
+        return Err("the web engine has shut down".to_owned());
+    }
     let window = WindowInfo::default().set_as_windowless(Default::default());
     let [r, g, b, a] = start.background;
     let state = |on: bool| {
@@ -2334,7 +2703,6 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         ..Default::default()
     };
     let mut client = PageClient::new(shared.clone());
-    let mut context = context;
     let browser = browser_host_create_browser_sync(
         Some(&window),
         Some(&mut client),
@@ -2364,7 +2732,7 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         ));
         out.push(dev.call(
             "Page.addScriptToEvaluateOnNewDocument",
-            json!({ "source": NOTIFICATIONS }),
+            json!({ "source": notifications_script(shared.keep) }),
             Pending::Ignore,
         ));
         let p = &start.profile;
@@ -2385,32 +2753,50 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
             json!({ "expression": "0" }),
             Pending::Boot,
         ));
-        if !start.url.is_empty() {
-            shared.started(&start.url);
-            Shared::lock(&shared.boot).url = Some(start.url.clone());
-        }
         out.push(dev.call(
             "Page.navigate",
             json!({ "url": "about:blank" }),
             Pending::Ignore,
         ));
     }
+    let before = {
+        let mut before = Shared::lock(&shared.before);
+        let told = Before {
+            hidden: before.hidden,
+            muted: before.muted,
+            focus: before.focus,
+            dev: std::mem::take(&mut before.dev),
+            made: true,
+        };
+        before.made = true;
+        told
+    };
     // Told before the first page is asked for: the effect that tells a
     // view's browser it is hidden ran before there was one.
-    if start.hidden {
+    if before.hidden {
         host.was_hidden(1);
     }
     told_work();
     shared.send_dev(out);
-    host.set_audio_muted(start.muted as c_int);
-    let page = std::rc::Rc::new(CefPage { shared });
-    with_global(e, |g| {
-        g.pages.retain(|p| p.strong_count() > 0);
-        g.pages.push(std::rc::Rc::downgrade(&page));
-        g.browsers.retain(|b| Shared::lock(&b.browser).is_some());
-        g.browsers.push(page.shared.clone());
-    })?;
-    Ok(page)
+    shared.send_dev(before.dev);
+    host.set_audio_muted(before.muted as c_int);
+    if let Some(focus) = before.focus {
+        host.set_focus(focus as c_int);
+    }
+    let mut profile = host.request_context();
+    GLOBAL.with(|g| {
+        if let Ok(Some(Ok(g))) = g.try_borrow_mut().as_deref_mut() {
+            // A new view of a profile that keeps no answer is asked again.
+            g.every_time.retain(|(context, origin, kind)| {
+                let same = context.is_same(profile.as_mut()) == 1;
+                if same {
+                    forget_answer(context, origin, *kind);
+                }
+                !same
+            });
+        }
+    });
+    Ok(())
 }
 
 impl CefPage {
@@ -2433,7 +2819,9 @@ impl CefPage {
 
 impl Page for CefPage {
     fn navigate(&self, url: &str) {
-        if self.browser().is_none() {
+        // A browser CEF has not made yet goes there once it is.
+        let made = Shared::lock(&self.shared.before).made;
+        if self.shared.closing.load(Ordering::Relaxed) || (made && self.browser().is_none()) {
             return;
         }
         self.shared.started(url);
@@ -2516,18 +2904,21 @@ impl Page for CefPage {
     }
 
     fn set_hidden(&self, hidden: bool) {
+        Shared::lock(&self.shared.before).hidden = hidden;
         if let Some(host) = self.host() {
             host.was_hidden(hidden as c_int);
         }
     }
 
     fn set_focus(&self, focus: bool) {
+        Shared::lock(&self.shared.before).focus = Some(focus);
         if let Some(host) = self.host() {
             host.set_focus(focus as c_int);
         }
     }
 
     fn set_muted(&self, muted: bool) {
+        Shared::lock(&self.shared.before).muted = muted;
         if let Some(host) = self.host() {
             host.set_audio_muted(muted as c_int);
         }
@@ -2690,17 +3081,9 @@ impl Page for CefPage {
     }
 
     fn forget_permission(&self, origin: &str, kind: i32) {
-        let Some(context) = self.host().and_then(|h| h.request_context()) else {
-            return;
-        };
-        let origin = cef_string(origin);
-        for setting in content_settings(kind) {
-            context.set_content_setting(
-                Some(&origin),
-                Some(&origin),
-                *setting,
-                ContentSettingValues::DEFAULT,
-            );
+        Shared::lock(&self.shared.answered).remove(&(origin.to_owned(), kind));
+        if let Some(context) = self.host().and_then(|h| h.request_context()) {
+            forget_answer(&context, origin, kind);
         }
     }
 
@@ -2776,10 +3159,17 @@ pub(crate) fn shutdown() -> bool {
     let _ = AWAKE.try_with(|a| *a.borrow_mut() = (None, None));
     let Global {
         contexts,
+        this_run,
+        every_time,
         pages,
         browsers,
         ..
     } = global;
+    for (context, origin, kind) in this_run.iter().chain(&every_time) {
+        forget_answer(context, origin, *kind);
+    }
+    drop(this_run);
+    drop(every_time);
     for shared in &browsers {
         shared.closing.store(true, Ordering::Relaxed);
         let host = Shared::lock(&shared.browser)
@@ -2848,6 +3238,13 @@ mod tests {
     fn the_notifications_script_calls_the_names_the_view_uses() {
         assert!(NOTIFICATIONS.contains(&format!("globalThis.{ASKING};")));
         assert!(NOTIFICATIONS.contains(&format!("\"{ANSWERED}\"")));
+    }
+
+    #[test]
+    fn a_profile_that_keeps_no_answer_has_the_view_asked_every_time() {
+        assert!(notifications_script(Keep::Never).ends_with("(true);"));
+        assert!(notifications_script(Keep::ThisRun).ends_with("(false);"));
+        assert!(notifications_script(Keep::Always).ends_with("(false);"));
     }
 
     #[test]
@@ -2934,7 +3331,7 @@ mod tests {
         };
         let sink = Sink::new(&engine, ObjectId::default());
         let page = CefPage {
-            shared: Arc::new(Shared::new(sink, geometry, 1.0)),
+            shared: Arc::new(Shared::new(Keep::Always, sink, geometry, 1.0)),
         };
         // The view tells the browser something: its work is waited on.
         page.send_dev(Vec::new());
@@ -2944,8 +3341,8 @@ mod tests {
         let later = told + Duration::from_millis(20);
         // A page that keeps asking: what Chromium is told of it, on the
         // browser's own account, keeps no step waiting longer.
-        pass_to_chromium(&page.shared, 1, 7);
-        pass_to_chromium(&page.shared, 1, 8);
+        pass_to_chromium(&page.shared, 1, 7, Pending::Ignore);
+        pass_to_chromium(&page.shared, 1, 8, Pending::Ignore);
         assert_eq!(busy_since(&platform), Some(told));
         // The view telling it more is waited on afresh.
         page.send_dev(Vec::new());
