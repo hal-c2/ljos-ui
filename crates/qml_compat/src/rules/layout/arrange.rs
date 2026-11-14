@@ -842,6 +842,7 @@ impl Arrange<'_, '_> {
             changes: Vec::new(),
         };
         let mut grows = false;
+        let maybe_none = inner.maybe_none(nested);
         for child in inner.laid_out(nested)? {
             // A hidden child takes no room in Qt's layout or in Ljós's box,
             // so it grows neither; one shown and hidden as the file runs
@@ -850,6 +851,8 @@ impl Arrange<'_, '_> {
             if shown == Some(Some(false)) {
                 continue;
             }
+            // A delegate grows it only while its model has an entry.
+            let some = !maybe_none.iter().any(|d| std::ptr::eq(*d, child));
             let child_name = child.type_name.to_string();
             let can = match inner.line_layout(&child_name) {
                 Some(line) => inner.nested_fills(child, line, axis)?,
@@ -862,7 +865,7 @@ impl Arrange<'_, '_> {
                     _ => false,
                 },
             };
-            if can && shown == Some(None) {
+            if can && (shown == Some(None) || !some) {
                 return Err(fills(self));
             }
             grows |= can;
@@ -1010,6 +1013,35 @@ impl Arrange<'_, '_> {
             }
         }
         Ok(out)
+    }
+
+    /// The delegates of the Repeaters among `object`'s children whose model
+    /// the file does not show to have an entry: a number of at least one,
+    /// or an array that holds one. Such a Repeater may make none of them.
+    fn maybe_none<'o, 'a>(&self, object: &'o QmlObject<'a>) -> Vec<&'o QmlObject<'a>> {
+        object
+            .members
+            .iter()
+            .filter_map(|member| match member {
+                QmlMember::Object(child)
+                    if !is_group(child)
+                        && self
+                            .types
+                            .qt_type(&child.type_name.to_string())
+                            .is_some_and(|ty| ty.name == "Repeater") =>
+                {
+                    let some = match bound(child, "model") {
+                        Some(QmlBindingValue::Expression(Expression::ArrayExpression(a))) => {
+                            !a.elements.is_empty()
+                        }
+                        Some(model) => number(model).is_some_and(|n| n >= 1.0),
+                        None => false,
+                    };
+                    (!some).then(|| self.delegate(child).ok()).flatten()
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn delegate<'o, 'a>(&self, repeater: &'o QmlObject<'a>) -> Result<&'o QmlObject<'a>, Kept> {
