@@ -340,9 +340,8 @@ pub(super) fn material_of<S: SceneSource>(
     m: Option<S::Object>,
 ) -> Option<Material> {
     match m {
-        // Snippets that make no program leave the model out, as Qt does.
-        Some(m) if s.is(m, T::CustomMaterial) => s.custom_material(view, m).map(Material::Custom),
-        _ => Some(m.and_then(|m| material(s, view, m)).unwrap_or_default()),
+        Some(m) => s.material(view, m),
+        None => Some(Material::default()),
     }
 }
 
@@ -369,7 +368,20 @@ pub(super) fn mesh_file<S: SceneSource>(
     s.mesh_file(view, obj)
 }
 
-fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Material> {
+/// What the material `obj` draws a mesh part with in `view`, read now: a
+/// `CustomMaterial`'s program, a `DefaultMaterial` or `PrincipledMaterial`
+/// as it is, and the default for another kind. `None` leaves the part out:
+/// snippets that make no program, as Qt does.
+pub fn material<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Material> {
+    if s.is(obj, T::CustomMaterial) {
+        return s.custom_material(view, obj).map(Material::Custom);
+    }
+    Some(built_in(s, view, obj).unwrap_or_default())
+}
+
+/// The `DefaultMaterial` or `PrincipledMaterial` `obj`; `None` for another
+/// kind of material.
+fn built_in<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Material> {
     let map = |p| s.object(obj, p).and_then(|t| texture(s, view, t));
     let depth_draw = || DepthDraw::from_index(i64::from(int(s, obj, P::DepthDrawMode, 0)));
     let blend_mode = |default| match int(s, obj, P::BlendMode, default) {

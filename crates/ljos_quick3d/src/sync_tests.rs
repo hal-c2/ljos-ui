@@ -534,3 +534,134 @@ fn the_arrivals_of_objects_gone_are_disposed() {
     assert!(nodes.iter().all(|n| !e.graph().is_alive(*n)));
     assert!(arrival::node(&e, next).is_some());
 }
+
+const SHARED: &str = r##"
+Item {
+    width: 100; height: 100
+    property QtObject view_: view
+    property QtObject cube_: cube
+    property QtObject twin_: twin
+    property QtObject plain_: plain
+    property QtObject shiny_: shiny
+    property QtObject lone_: lone
+    View3D {
+        id: view
+        anchors.fill: parent
+        PerspectiveCamera { z: 300 }
+        DirectionalLight {}
+        Model {
+            id: cube; source: "#Cube"
+            materials: DefaultMaterial { id: plain; diffuseColor: "red" }
+        }
+        Model { id: twin; source: "#Sphere"; x: 20; materials: plain }
+        Model {
+            source: "#Cone"; x: -20
+            materials: PrincipledMaterial { id: shiny; baseColor: "blue"; opacity: 0.5 }
+        }
+        Model {
+            source: "#Rectangle"; y: 20
+            materials: DefaultMaterial { id: lone; diffuseColor: "white" }
+        }
+    }
+}
+"##;
+
+fn shared() -> (Engine, ObjectId, ObjectId) {
+    let (e, _, root) = make(SHARED, false);
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    (e, root, view)
+}
+
+/// How many of the material reads `f` makes are the view's own: those of
+/// its pieces, not of the build a test or the drift check makes.
+fn material_reads<R>(f: impl FnOnce() -> R) -> (R, usize) {
+    source::counts::MATERIAL_READS.with(|c| c.set(0));
+    let r = f();
+    (r, source::counts::MATERIAL_READS.with(Cell::get))
+}
+
+#[test]
+fn a_moved_model_does_not_read_its_material_again() {
+    let (e, root, view) = shared();
+    let cube = named(&e, root, "cube_");
+    for x in [10.0, 20.0, 30.0] {
+        write(&e, cube, "x", x);
+        let (read, materials) = material_reads(|| synced(&e, view));
+        assert_eq!((read, materials), (1, 0));
+    }
+}
+
+#[test]
+fn a_material_two_models_share_is_read_once_for_both() {
+    let (e, root, view) = shared();
+    let ((), alone) = material_reads(|| {
+        write(&e, named(&e, root, "lone_"), "diffuseColor", "black");
+        assert_eq!(synced(&e, view), 1);
+    });
+    let ((), shared) = material_reads(|| {
+        write(&e, named(&e, root, "plain_"), "diffuseColor", "green");
+        // Both its models are drawn with the new colour.
+        assert_eq!(synced(&e, view), 2);
+    });
+    assert!(alone > 0);
+    assert_eq!(shared, alone, "read for each model that draws with it");
+}
+
+#[test]
+fn a_material_no_model_draws_with_is_let_go() {
+    let (e, root, view) = shared();
+    assert_eq!(view::materials_kept(&e, view), 3);
+    let shiny = named(&e, root, "shiny_");
+    write(&e, named(&e, root, "cube_"), "materials", shiny);
+    write(&e, named(&e, root, "twin_"), "materials", shiny);
+    synced(&e, view);
+    assert_eq!(view::materials_kept(&e, view), 2);
+    // And it is not read again when it changes.
+    let ((), reads) = material_reads(|| {
+        write(&e, named(&e, root, "plain_"), "diffuseColor", "green");
+        assert_eq!(synced(&e, view), 0);
+    });
+    assert_eq!(reads, 0);
+}
+
+#[test]
+fn a_moved_model_does_not_read_its_custom_material_again() {
+    let (e, _, root) = make(
+        r##"
+Item {
+    width: 100; height: 100
+    property QtObject view_: view
+    property QtObject model_: model
+    property QtObject tinted_: tinted
+    View3D {
+        id: view
+        anchors.fill: parent
+        PerspectiveCamera { z: 300 }
+        Model {
+            id: model; source: "#Cube"
+            materials: CustomMaterial {
+                id: tinted; shadingMode: CustomMaterial.Unshaded
+                property color tint: "red"
+            }
+        }
+    }
+}
+"##,
+        false,
+    );
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    let custom_reads = |f: &dyn Fn() -> usize| {
+        source::counts::CUSTOM_READS.with(|c| c.set(0));
+        let read = f();
+        (read, source::counts::CUSTOM_READS.with(Cell::get))
+    };
+    let model = named(&e, root, "model_");
+    for x in [10.0, 20.0] {
+        write(&e, model, "x", x);
+        assert_eq!(custom_reads(&|| synced(&e, view)), (1, 0));
+    }
+    write(&e, named(&e, root, "tinted_"), "tint", "blue");
+    assert_eq!(custom_reads(&|| synced(&e, view)), (1, 1));
+}
