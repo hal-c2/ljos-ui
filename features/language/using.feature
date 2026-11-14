@@ -328,7 +328,7 @@ Feature: Disposing of a resource when its block ends, with using
         ljos: 5 errors
         """
 
-    Scenario: What a destructuring default assigns may not have happened after it
+    Scenario: After a destructuring default, a name it assigns is what it was or what the default gave
       Given the file "Pool.qml":
         """qml
         import Ljos.Ui
@@ -338,14 +338,16 @@ Feature: Disposing of a resource when its block ends, with using
             value = 1;
             let n = 1;
             [n = (value = 2)] = [value.toFixed().length];
-            return value.toFixed();
+            let other: number | undefined = undefined;
+            [n = (other = 2)] = [n];
+            return value.toFixed() + other.toFixed();
           }
         }
         """
       When the files are checked
       Then the check reports:
         """
-        Pool.qml:8:20: error: `value` may be undefined: compare it with `undefined` first [ts-assign-type]
+        Pool.qml:10:38: error: `other` may be undefined: compare it with `undefined` first [ts-assign-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """

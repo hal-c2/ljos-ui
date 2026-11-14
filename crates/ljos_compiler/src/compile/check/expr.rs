@@ -3245,12 +3245,23 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     /// A destructuring default, which runs only where the value it stands
-    /// in for is `undefined`: what it assigns may not have happened after
-    /// it.
+    /// in for is `undefined`: after it, a name it assigns is what it was
+    /// before or what the default gave it.
     fn default_value(&mut self, init: &Expression<'a>) {
         let assigned = self.assigned.len();
+        let facts = self.facts.len();
         self.expr(init, None);
-        self.forget_assigned(assigned);
+        let given: Vec<Fact<'a>> = self.assigned[assigned..].to_vec();
+        let after = self.facts.split_off(facts);
+        let before: Vec<Ty> = given
+            .iter()
+            .map(|fact| self.fact(fact.key, fact.local).unwrap_or(fact.base))
+            .collect();
+        self.facts.extend(after);
+        for (fact, before) in given.into_iter().zip(before) {
+            let ty = self.arena.or(before, fact.ty);
+            self.facts.push(Fact { ty, ..fact });
+        }
     }
 
     fn constant_writes_maybe_default(&mut self, target: &AssignmentTargetMaybeDefault<'a>) {
