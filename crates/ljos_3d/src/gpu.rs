@@ -1148,8 +1148,8 @@ struct Draw<'a> {
     /// How far in front of the camera: blended models are drawn from the
     /// farthest.
     depth: f32,
-    /// Where its bounds' centre is in the scene, as far for two in one place.
-    centre: Vec3,
+    /// The box it takes in the scene: where it may meet another.
+    reach: batch::Reach,
     /// The material's own light probe, bound for it in place of the scene's.
     probe: Option<Bound>,
     /// Whether a depth bias orders it: drawn last of those at one depth,
@@ -1250,44 +1250,18 @@ fn batched<'a>(
     uniforms: &mut Vec<(u32, ModelUniform)>,
 ) -> Vec<Draw<'a>> {
     // A batch is drawn where its nearest is, before what is drawn between
-    // its models, and the depth test lets the one drawn last show where two
-    // are as deep. So no batch reaches across a draw drawn alone, which may
-    // be the one seen there (a depth bias says so without moving it, a draw
-    // that writes no depth is seen by its order), nor across one in the
-    // place of a model not alike it: of two in one place the later in the
-    // depth order shows, batched or not. Two in one place are as far, so
-    // they are next to each other in the depth order.
+    // its models, and its rows are in their declaration order; the depth
+    // test lets the one drawn last show where two are as deep. So no batch
+    // reaches across a draw drawn alone, which may be the one seen there (a
+    // depth bias says so without moving it, a draw that writes no depth is
+    // seen by its order), nor turns round two models that may meet.
     let keys: Vec<Option<BatchKey>> = draws.iter().map(batch_key).collect();
     let alike = |a: usize, b: usize| {
         keys[a] == keys[b] && shared(&draws[a].uniform) == shared(&draws[b].uniform)
     };
-    // `+ 0.0` makes a -0 the 0 it is as a place.
-    let place = |i: usize| {
-        let c = draws[i].centre;
-        [c.x, c.y, c.z].map(|c| (c + 0.0).to_bits())
-    };
-    let mut run = 0u32;
-    let (mut depth, mut from) = (f32::NAN, 0);
-    let mut last_in: HashMap<[u32; 3], usize> = HashMap::new();
-    let mut runs = Vec::with_capacity(draws.len());
-    for (i, draw) in draws.iter().enumerate() {
-        let mut crossed = keys[i].is_none();
-        if draw.depth != depth {
-            (depth, from) = (draw.depth, i);
-            last_in.clear();
-        } else {
-            if i == from + 1 {
-                last_in.insert(place(from), from);
-            }
-            if let Some(j) = last_in.insert(place(i), i) {
-                crossed |= !alike(i, j);
-            }
-        }
-        if crossed {
-            run += 1;
-        }
-        runs.push(run);
-    }
+    let reach: Vec<batch::Reach> = draws.iter().map(|d| d.reach).collect();
+    let order: Vec<u32> = draws.iter().map(|d| d.order).collect();
+    let runs = batch::runs(&keys, alike, &reach, &order);
     let keyed = keys
         .iter()
         .zip(&runs)
@@ -1299,9 +1273,8 @@ fn batched<'a>(
     // A group is drawn where its nearest is; its rows are laid out in the
     // scene's declaration order, which a camera that moves changes neither
     // within a batch nor between batches. The rows are then written again
-    // only when a model moves or a batch gains or loses one. It is also the
-    // order the depth sort leaves models at one depth in, so of two alike in
-    // one place the later declared is drawn last and shows, batched or not.
+    // only when a model moves or a batch gains or loses one. Two that may
+    // meet and came in the other order are not in one batch (`runs`).
     let nearest: Vec<usize> = groups.iter().map(|g| g[0]).collect();
     for group in &mut groups {
         group.sort_by_key(|&i| draws[i].order);
@@ -2329,6 +2302,16 @@ impl Renderer {
                     Some(p) if !p.is_empty() => p.iter().map(sphere).collect(),
                     _ => vec![sphere(&placed)],
                 };
+                // Of the shapes, all but the rectangle are closed round
+                // what their box holds.
+                let reach = match &palette {
+                    Some(p) if !p.is_empty() => batch::Reach::round(spheres.iter().copied()),
+                    _ => batch::Reach::placed(
+                        &placed,
+                        model.mesh.bounding_box(),
+                        matches!(model.mesh, MeshSource::Primitive(p) if p != Primitive::Rectangle),
+                    ),
+                };
                 let mut copies = Copies::ONE;
                 let mut places = (Mat4::IDENTITY, Mat4::IDENTITY);
                 // A custom material's shader writes its own alpha, so it has
@@ -2505,7 +2488,7 @@ impl Renderer {
                     // Qt counts a bias times itself, and below nothing as nearer.
                     depth: -transform_point(&view, centre).z
                         + node.depth_bias.signum() * node.depth_bias * node.depth_bias,
-                    centre,
+                    reach,
                     probe: own_probe,
                     biased: node.depth_bias != 0.0,
                     order: (opaque.len() + blended.len()) as u32,

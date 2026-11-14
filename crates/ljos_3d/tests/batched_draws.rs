@@ -6,8 +6,8 @@
 //! own. A model no longer alike, or with a depth bias, is drawn on its own;
 //! of two alike in one place the later declared shows, as drawn apart;
 //! one that writes no depth, or a biased one, stays between the models
-//! alike around it, and two batches meeting in one place keep the order
-//! drawn apart has there; and a batched model's colour draws no shadow map
+//! alike around it, and two batches meeting in one place, or two models
+//! whose faces meet at one depth, keep the order drawn apart has there; and a batched model's colour draws no shadow map
 //! again.
 //!
 //! One test, in a process of its own: the counts are the process's, and a
@@ -384,6 +384,56 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
     );
     assert_within_a_level(&batched, &each, "two batches in one place");
     assert_eq!(counts.draw_calls, 4, "{counts:?}");
+
+    // Two that meet at one depth keep the order drawn apart has, though
+    // their centres differ: green, nearer, is alike red; blue, of another
+    // material, is declared before red, and their front faces meet. Drawn
+    // apart, red is drawn after blue and shows where they meet.
+    let mut offset = small(
+        &[
+            (blue.0, Vec3::new(-120.0, 0.0, 60.0), GREEN, blue.3),
+            blue,
+            (blue.0, Vec3::new(20.0, 0.0, 0.0), RED, blue.3),
+        ],
+        None,
+    );
+    let id = models_of(&offset)[1];
+    match &mut offset.node_mut(id).unwrap().kind {
+        NodeKind::Model(Model {
+            material: Material::Default(m),
+            ..
+        }) => m.specular_roughness = 0.5,
+        _ => unreachable!("models"),
+    }
+    let (counts, batched, each) = both(&gpu, &offset);
+    let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(
+        r > b,
+        "red, declared after blue where they meet, shows: {r} red, {b} blue"
+    );
+    assert_within_a_level(&batched, &each, "two that meet with centres apart");
+    assert_eq!(counts.draw_calls, 3, "{counts:?}");
+
+    // Of two alike whose faces meet at one depth, the nearer by its centre
+    // declared later: drawn apart, the farther is drawn after it and shows;
+    // one batch would lay their rows the other way round.
+    let mut turned = small(
+        &[
+            (blue.0, Vec3::new(0.0, 0.0, -50.0), RED, blue.3),
+            (blue.0, Vec3::new(0.0, 0.0, 0.0), BLUE, blue.3),
+        ],
+        None,
+    );
+    let big = models_of(&turned)[0];
+    turned.node_mut(big).unwrap().transform.scale = Vec3::new(2.0, 2.0, 2.0);
+    let (counts, batched, each) = both(&gpu, &turned);
+    let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(
+        r > b,
+        "red, farther and drawn after blue, shows: {r} red, {b} blue"
+    );
+    assert_within_a_level(&batched, &each, "two alike declared farther first");
+    assert_eq!(counts.draw_calls, 2, "{counts:?}");
 
     // A batched model's colour is not its shadow's: changing it draws no
     // shadow map again.
