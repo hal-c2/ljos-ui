@@ -341,6 +341,7 @@ Feature: Disposing of a resource when its block ends, with using
             let other: number | undefined = undefined;
             [n = (other = 2)] = [n];
             let either: number | undefined = 1;
+            either = 1;
             [n = (n > 0 ? (either = undefined) : (either = 2), 0)] = [n];
             return value.toFixed() + other.toFixed() + either.toFixed();
           }
@@ -349,8 +350,8 @@ Feature: Disposing of a resource when its block ends, with using
       When the files are checked
       Then the check reports:
         """
-        Pool.qml:12:38: error: `other` may be undefined: compare it with `undefined` first [ts-assign-type]
-        Pool.qml:12:56: error: `either` may be undefined: compare it with `undefined` first [ts-assign-type]
+        Pool.qml:13:38: error: `other` may be undefined: compare it with `undefined` first [ts-assign-type]
+        Pool.qml:13:56: error: `either` may be undefined: compare it with `undefined` first [ts-assign-type]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
         """
