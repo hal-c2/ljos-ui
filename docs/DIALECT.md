@@ -3372,8 +3372,12 @@ in Ljós's API holds `Dial { color: "#c03030" }`. Lowering `Dial.qml` later
 would rename `color` to `fill` under it, so a file in Qt's QML stays kept
 while a file in Ljós's API (one that imports a `Ljos` module) binds on its
 type a name its lowering renames, or that name's handler: in a binding, a
-`Behavior on color`, a grouped property, or a `PropertyChanges` or `Binding`
-whose `target` is an id of the file. The pass follows
+`Behavior on color`, a grouped property, a `PropertyChanges` or `Binding`
+whose `target` is an id of the file, one that names it by an id
+(`dial.color: "red"`, `dial { color: "red" }`), or a handler of a
+`Connections` whose `target` is such an id, or that has none and is in an
+object of the type. Each inline component is an id scope of its own, as
+in Qt. The pass follows
 the file's root through the project's files it is built on, while they are
 lowered too, to the Qt type whose renames say so, and a property the file
 declares renames nothing. The reason names the file, the name and what
