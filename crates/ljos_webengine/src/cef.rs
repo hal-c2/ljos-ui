@@ -520,12 +520,14 @@ fn root_profile(e: &Engine, starting: &ProfileSpec) -> ProfileSpec {
     if named_storage(starting).is_some() {
         return starting.clone();
     }
+    // Objects are kept in no order of their making.
     e.object_ids()
         .into_iter()
         .filter(|&id| e.is::<WebEngineProfile>(id))
-        .map(|id| WebEngineProfile::spec(e, id))
-        .find(|spec| named_storage(spec).is_some())
-        .unwrap_or_else(|| starting.clone())
+        .map(|id| (WebEngineProfile::made(e, id), WebEngineProfile::spec(e, id)))
+        .filter(|(_, spec)| named_storage(spec).is_some())
+        .min_by_key(|(made, _)| *made)
+        .map_or_else(|| starting.clone(), |(_, spec)| spec)
 }
 
 /// Where profiles keep what they keep. CEF keeps every profile of a
@@ -1265,12 +1267,34 @@ fn kept(shared: &Shared, origin: &str, kind: i32) {
     GLOBAL.with(|g| {
         if let Some(Ok(g)) = &mut *g.borrow_mut() {
             let kept = (context, origin.to_owned(), kind);
-            match shared.keep {
-                Keep::Never => g.every_time.push(kept),
-                _ => g.this_run.push(kept),
-            }
+            let list = match shared.keep {
+                Keep::Never => &mut g.every_time,
+                _ => &mut g.this_run,
+            };
+            push_once(list, kept, same_context);
         }
     });
+}
+
+fn same_context(a: &RequestContext, b: &RequestContext) -> bool {
+    a.is_same(Some(&mut b.clone())) == 1
+}
+
+/// A page that asks again, as one that keeps asking for notifications
+/// does, is answered again: what its profile is to forget is listed once.
+/// Whether it was new.
+fn push_once<C>(
+    list: &mut Vec<(C, String, i32)>,
+    kept: (C, String, i32),
+    same: impl Fn(&C, &C) -> bool,
+) -> bool {
+    let listed = list
+        .iter()
+        .any(|(c, origin, kind)| *kind == kept.2 && *origin == kept.1 && same(c, &kept.0));
+    if !listed {
+        list.push(kept);
+    }
+    !listed
 }
 
 /// The file in a profile's directory listing the answers Chromium keeps
@@ -1290,12 +1314,18 @@ fn write_down(shared: &Shared, origin: &str, kind: i32) {
     let Some(mut context) = shared.host().and_then(|h| h.request_context()) else {
         return;
     };
+    // One already listed is in the journal since it was first given.
     let journal = GLOBAL.with(|g| match g.try_borrow().as_deref() {
-        Ok(Some(Ok(g))) => g
-            .journals
-            .iter()
-            .find(|(c, _)| c.is_same(Some(&mut context)) == 1)
-            .map(|(_, path)| path.clone()),
+        Ok(Some(Ok(g)))
+            if !g.this_run.iter().chain(&g.every_time).any(|(c, o, k)| {
+                *k == kind && o == origin && c.is_same(Some(&mut context)) == 1
+            }) =>
+        {
+            g.journals
+                .iter()
+                .find(|(c, _)| c.is_same(Some(&mut context)) == 1)
+                .map(|(_, path)| path.clone())
+        }
         _ => None,
     });
     if let Some(journal) = journal {
@@ -3509,6 +3539,38 @@ mod tests {
                 ("http://127.0.0.1:8080".to_owned(), 8)
             ]
         );
+    }
+
+    #[test]
+    fn an_answer_given_again_is_listed_once() {
+        let mut list = Vec::new();
+        let same = |a: &u8, b: &u8| a == b;
+        assert!(push_once(
+            &mut list,
+            (1, "https://a.example".into(), 8),
+            same
+        ));
+        assert!(!push_once(
+            &mut list,
+            (1, "https://a.example".into(), 8),
+            same
+        ));
+        assert!(push_once(
+            &mut list,
+            (1, "https://a.example".into(), 7),
+            same
+        ));
+        assert!(push_once(
+            &mut list,
+            (2, "https://a.example".into(), 8),
+            same
+        ));
+        assert!(push_once(
+            &mut list,
+            (1, "https://b.example".into(), 8),
+            same
+        ));
+        assert_eq!(list.len(), 4);
     }
 
     #[test]
