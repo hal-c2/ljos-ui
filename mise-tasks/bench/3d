@@ -11,10 +11,13 @@ set -euo pipefail
 # measure on the GPU; without, both draw on llvmpipe. The corpus apps whose
 # build downloads assets need `mise run gallery:assets <id>` first.
 # BENCH_3D_PROBE_SECONDS (default 10) is how long the probe runs a scene;
-# 0 leaves the probe out.
+# 0 leaves the probe out. BENCH_QT (default: dice and the FX showroom, which
+# qml6 6.12 runs with their stand-ins although corpus/examples.json says it
+# cannot) names corpus apps to measure on qml6 all the same.
 root="$(pwd)"
 target="${CARGO_TARGET_DIR:-$root/target}"
-out="${BENCH_DIR:-$target/bench3d}"
+# Absolute: the probe runs each scene where the bench ran it.
+out="$(realpath -m "${BENCH_DIR:-$target/bench3d}")"
 
 ids=()
 opts=()
@@ -29,7 +32,7 @@ fi
 # The desktop profile and no memory bisection: what is measured here is
 # frames, on the machine as it is (`--profile pi-zero` after the ids adds
 # the small board).
-BENCH_DIR="$out" BENCH_DEFAULTS="${BENCH_DEFAULTS---warm-up --repeat 3 --profile desktop}" \
+BENCH_QT="${BENCH_QT-dice fx-material-showroom}" BENCH_DIR="$out" BENCH_DEFAULTS="${BENCH_DEFAULTS---warm-up --repeat 3 --profile desktop}" \
   "$root/mise-tasks/bench/_default" "${ids[@]}" --frames3d ${opts[@]+"${opts[@]}"}
 
 seconds="${BENCH_3D_PROBE_SECONDS:-10}"
@@ -42,17 +45,18 @@ mkdir -p "$logs"
 python3 - "$out/manifest.json" <<'PY' |
 import json, sys
 for app in json.load(open(sys.argv[1]))["apps"]:
-    print("\t".join([app["id"], app["file"], *app.get("imports", [])]))
+    print("\t".join([app["id"], app["file"], app.get("dir") or ".", *app.get("imports", [])]))
 PY
-  while IFS=$'\t' read -r id file imports; do
+  while IFS=$'\t' read -r id file dir imports; do
     args=()
-    for dir in $imports; do args+=(-I "$dir"); done
+    for i in $imports; do args+=(-I "$i"); done
     echo "bench:3d: qml6 renderStats of $id for ${seconds}s" >&2
     # qml6 logs to the journal unless told otherwise; the probe's lines are
     # wanted, and a scene that fails to load says so in them.
-    "$root/scripts/cua-sandbox.sh" exec env WAYLAND_DISPLAY="$wayland" QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=wayland \
+    # Where the bench ran it: an example reads its downloaded assets from there.
+    (cd "$dir" && "$root/scripts/cua-sandbox.sh" exec env WAYLAND_DISPLAY="$wayland" QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=wayland \
       QT_QUICK_CONTROLS_STYLE=Basic timeout "$seconds" qml6 ${args[@]+"${args[@]}"} \
-      "$root/bench/quick3d/renderstats-probe.qml" -- "$file" > "$logs/$id.log" 2>&1 < /dev/null || true
+      "$root/bench/quick3d/renderstats-probe.qml" -- "$file" > "$logs/$id.log" 2>&1 < /dev/null) || true
   done
 
 python3 "$root/bench/quick3d/renderstats-summary.py" "$logs" "$out/qml6-renderstats.json"

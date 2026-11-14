@@ -68,7 +68,9 @@ for line in os.environ["ROWS"].splitlines():
         # The example's directory is its project, as for the gallery.
         "ljos_args": ["--project", d, "--example", cid],
     })
-    if qt != "true":
+    # BENCH_QT names examples to measure on qml6 although corpus/examples.json says it cannot
+    # run them: a newer Qt than the one that was written against may have the modules.
+    if qt != "true" and cid not in os.environ.get("BENCH_QT", "").split():
         apps[-1]["qt"] = False
     # As `mise run gallery:run` starts it: corpus/standins/<id> holds QML for the C++ of the
     # example's own build, each module answering the import of its name (qml6 finds them by
