@@ -1206,6 +1206,7 @@ fn what_qt_says_of_a_type_ljos_has() {
 /// Whether Qt's table has the module a [`NOT_YET`] subject is of. The local
 /// Qt may have been installed without an add-on (QtMultimedia, QtQuick3D,
 /// QtSensors), and a difference in a module the table lacks is not seen.
+/// Panics on a subject that names no module.
 fn in_qt_table(subject: &str) -> bool {
     let of_qt = |uri: &str| qt_types::module(uri).is_some_and(|module| !module.is_own);
     if let Some((uri, _)) = subject.split_once(": ") {
@@ -1220,7 +1221,9 @@ fn in_qt_table(subject: &str) -> bool {
             return of_qt(&subject[..end]);
         }
     }
-    false
+    // A subject that names no module at all is a typo, and it would sit in
+    // the list unnoticed: the list is only to get shorter.
+    panic!("{subject} names no module Ljós or Qt has")
 }
 
 /// Where Ljós's types and Qt's table disagree today, and why each is still
