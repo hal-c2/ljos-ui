@@ -180,6 +180,7 @@ The bar is beating `qml6` running the same QML, on `mise run bench` (docs/BENCHM
 | `quick3d-spin.qml` | the same cube turned by a `NumberAnimation`: frame interval, CPU per frame |
 | `quick3d-shadows.qml` | a cube turning over a floor under a shadowed sun, spot and point light: every map drawn again each frame |
 | `quick3d-grid.qml` | a `Repeater3D` of 1 000 models, 4 lights, one moving: per-model cost, uniform upload |
+| `quick3d-repeater.qml` | a `Repeater3D` over a `ListModel` that gains a delegate every 16 ms, 500 to 1 000 and back: what a change of what the scene is made of costs |
 | `quick3d-gltf.qml` (M6) | a glTF model through `RuntimeLoader`: load time, memory |
 | `quick3d-instances.qml` (M10) | 10 000 `#Cube` copies from a `RandomInstancing`, their parent turning: one instanced draw, the table written once |
 | `quick3d-post.qml` | a turning cube in an `ExtendedSceneEnvironment` with glow, depth of field, ambient occlusion and FXAA: post-processing on the GPU |

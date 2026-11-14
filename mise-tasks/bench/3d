@@ -29,7 +29,7 @@ for a in "$@"; do
   if [[ $a == -* || ${#opts[@]} -gt 0 ]]; then opts+=("$a"); else ids+=("$a"); fi
 done
 if [[ ${#ids[@]} -eq 0 ]]; then
-  ids=(quick3d-cube quick3d-gltf quick3d-grid quick3d-instances quick3d-post quick3d-shadows
+  ids=(quick3d-cube quick3d-gltf quick3d-grid quick3d-instances quick3d-post quick3d-repeater quick3d-shadows
     quick3d-spin quick3d-stress dice robotarm toycustomizer car-configurator fx-material-showroom)
 fi
 
