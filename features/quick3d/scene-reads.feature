@@ -64,3 +64,32 @@ Feature: A View3D reads again only what changed
       Then the property "objectsRead" of "stats" is 1
       And the pixel at 150, 100 of the window is within 8 of "#000000"
       And the log has no warnings
+
+  Rule: A node that leaves the view leaves the picture it patches
+
+    Scenario: A model moved to a node outside the view is no longer drawn
+      # The view's own lists say nothing when one leaves them, as Qt's
+      # have no change signal; the model's parent does. The cube fills
+      # the middle of the window until it is moved out.
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          objectName: "root"; width: 100; height: 100; color: "black"
+          Node { id: away }
+          View3D {
+            anchors.fill: parent
+            PerspectiveCamera { z: 300 }
+            Model {
+              id: cube; source: "#Cube"
+              materials: DefaultMaterial { diffuseColor: "red"; lighting: DefaultMaterial.NoLighting }
+            }
+          }
+          function moveCubeAway() { cube.parent = away }
+        }
+        """
+      Then the pixel at 50, 50 of the window is within 2 of "#ff0000"
+      When the method "moveCubeAway" of "root" is called
+      Then the pixel at 50, 50 of the window is within 2 of "#000000"
+      And the log has no warnings
