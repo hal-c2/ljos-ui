@@ -6,10 +6,11 @@
 @ljos-only
 Feature: A ShellLoader shows a user's shell, or the application's own when the user's does not work
   An application that lets its users replace its whole shell loads theirs
-  with a `ShellLoader`. When the user's file does not compile, or throws
-  while it is made, the loader shows the application's own shell instead
-  and `error` says what went wrong and where. Mending the file while the
-  application runs under `--watch` brings the user's shell back.
+  with a `ShellLoader`. When the user's file is not there, does not
+  compile, or throws while it is made, the loader shows the application's
+  own shell instead and `error` says what went wrong and where. Mending
+  the file while the application runs under `--watch` brings the user's
+  shell back.
 
   Background:
     Given the file "Default.qml":
@@ -129,6 +130,37 @@ Feature: A ShellLoader shows a user's shell, or the application's own when the u
           objectName: "root"
           ShellLoader { id: loader; objectName: "loader"; source: "Shell.qml"; fallback: "Default.qml" }
           property bool both: /Shell\.qml:2.*NoSuchThing[^]*Default\.qml:2.*AlsoMissing/.test(loader.error)
+        }
+        """
+      Then the property "both" of "root" is true
+      And the property "status" of "loader" is 3
+      And the property "item" of "loader" is null
+
+    Scenario: A shell whose file is not there falls back and names the file
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          objectName: "root"
+          ShellLoader { id: loader; objectName: "loader"; source: "NotWritten.qml"; fallback: "Default.qml" }
+          property bool named: /NotWritten\.qml: No such file or directory/.test(loader.error)
+        }
+        """
+      Then the object "loader/default-shell" exists
+      And the property "named" of "root" is true
+      And the property "status" of "loader" is 2
+      And the log has a warning matching "NotWritten\.qml: No such file or directory"
+
+    Scenario: A shell and a fallback that are both not there leave nothing shown and name both
+      Given the QML:
+        """qml
+        import QtQuick
+        import Ljos.Blocks
+        Item {
+          objectName: "root"
+          ShellLoader { id: loader; objectName: "loader"; source: "NotWritten.qml"; fallback: "AlsoNotWritten.qml" }
+          property bool both: /NotWritten\.qml: No such file or directory\nfallback: .*AlsoNotWritten\.qml: No such file or directory/.test(loader.error)
         }
         """
       Then the property "both" of "root" is true
