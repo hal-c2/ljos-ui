@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+#MISE description="Install the ljos CLI from this checkout (cargo install --path crates/ljos_cli --locked) into cargo's bin directory, or <dir>/bin with --root"
+#MISE dir="{{config_root}}"
+#USAGE flag "--root <dir>" help="Install into <dir>/bin instead of cargo's (CARGO_INSTALL_ROOT, else ~/.cargo/bin)"
+set -euo pipefail
+# Without QtWebEngine: CEF's runtime has to sit beside the binary, which
+# cargo install does not put there (mise run webengine:build makes that one).
+args=(--path crates/ljos_cli --bin ljos --locked)
+if [ -n "${usage_root:-}" ]; then
+  # Meant from where it was typed; the task runs from the repository root.
+  case "$usage_root" in
+    /*) args+=(--root "$usage_root") ;;
+    *) args+=(--root "${MISE_ORIGINAL_CWD:-$PWD}/$usage_root") ;;
+  esac
+fi
+cargo install "${args[@]}"
