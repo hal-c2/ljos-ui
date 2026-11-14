@@ -36,8 +36,7 @@ use ljos_engine::{
 
 use crate::enums::{EnumTable, align, layout_direction};
 use crate::item::{
-    Item, is_a, is_unset, is_unset_tracked, num, size_follows_implicit, write_computed,
-    write_placed,
+    Item, is_a, is_unset, is_unset_tracked, num, write_computed, write_given_size, write_placed,
 };
 use crate::mirroring::mirrored;
 use crate::positioners::{self, Hidden, flow};
@@ -550,6 +549,11 @@ struct State {
     /// its preferred size while it has no implicit one. Qt reads the size
     /// once too, as the layout then owns it.
     seen: HashMap<ObjectId, [f64; 2]>,
+    /// The size a box last gave a child along each axis the child said
+    /// nothing about, while it followed its implicit size (`NaN` where it
+    /// gave none): giving it ends the following, and the size stays the
+    /// child's implicit one while it holds ([`arrangement::follows`]).
+    gave: HashMap<ObjectId, [f64; 2]>,
     plan: Option<Rc<Plan>>,
     /// What a box that last placed its children as a positioner, with no
     /// plan, placed them from ([`arrangement::line`]): the same again is
@@ -868,13 +872,21 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     } else {
         let mut hidden = state(e, obj, |s| std::mem::take(&mut s.hidden))?;
         let visible = hidden.update(e, obj, &children);
-        state(e, obj, |s| s.hidden = hidden)?;
-        children
+        let gave = state(e, obj, |s| {
+            s.hidden = hidden;
+            std::mem::take(&mut s.gave)
+        })?;
+        let shown = children
             .iter()
             .zip(visible)
             .filter_map(|(c, v)| v.then_some(*c))
-            .filter(|c| !kind.one_rule() || !arrangement::skipped(e, *c))
-            .collect()
+            .filter(|c| {
+                let had = gave.get(c).copied().unwrap_or([f64::NAN; 2]);
+                !kind.one_rule() || !arrangement::skipped(e, *c, had)
+            })
+            .collect();
+        state(e, obj, |s| s.gave = gave)?;
+        shown
     };
     if kind == Kind::Box
         && shown
@@ -883,26 +895,36 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     {
         return arrangement::line(e, obj, &children, &shown);
     }
-    let mut seen = state(e, obj, |s| std::mem::take(&mut s.seen))?;
+    let (mut seen, mut gave) = state(e, obj, |s| {
+        (std::mem::take(&mut s.seen), std::mem::take(&mut s.gave))
+    })?;
     seen.retain(|c, _| children.contains(c));
+    gave.retain(|c, _| children.contains(c));
+    // A box that measures is a layout: it rounds an implicit size up as
+    // Qt's layouts do. One whose children have no `Layout` was a positioner,
+    // and placed them at their sizes ([`arrangement::line`]).
+    let round = kind.one_rule()
+        && shown
+            .iter()
+            .any(|c| e.existing_attached_object(*c, &attacher()).is_some());
 
     let set = settings(e, obj, kind);
     let mut cells = Vec::with_capacity(shown.len());
     let mut wants = Vec::with_capacity(shown.len());
     for c in &shown {
+        let had = gave.remove(c).unwrap_or([f64::NAN; 2]);
+        let follows =
+            [H, V].map(|axis| kind.one_rule() && arrangement::follows(e, *c, axis, had[axis]));
         let first = *seen.entry(*c).or_insert_with(|| {
-            let size = |p: PropIndex, horizontal: bool| {
-                // A box remembers only a size the child's file gave it.
-                if kind.one_rule() && size_follows_implicit(e, *c, horizontal) {
+            // A box remembers only a size the child's file gave it.
+            let size = |p: PropIndex, axis: usize| {
+                if follows[axis] {
                     f64::NAN
                 } else {
                     num(e, *c, p)
                 }
             };
-            [
-                size(Item::WIDTH.index, true),
-                size(Item::HEIGHT.index, false),
-            ]
+            [size(Item::WIDTH.index, H), size(Item::HEIGHT.index, V)]
         });
         let child_kind = self::kind(e, *c);
         let own = match child_kind {
@@ -935,14 +957,38 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
                 column_span: 1,
             },
             hint: if kind.one_rule() {
-                let current = [
-                    num(e, *c, Item::WIDTH.index),
-                    num(e, *c, Item::HEIGHT.index),
-                ];
-                [
-                    arrangement::hint(&a, H, current[H], first[H], implicit[H]),
-                    arrangement::hint(&a, V, current[V], first[V], implicit[V]),
-                ]
+                let implicit = if round {
+                    implicit.map(arrangement::whole)
+                } else {
+                    implicit
+                };
+                let current = [(H, Item::WIDTH.index), (V, Item::HEIGHT.index)].map(|(axis, p)| {
+                    if follows[axis] {
+                        implicit[axis]
+                    } else {
+                        num(e, *c, p)
+                    }
+                });
+                let gives = [H, V].map(|axis| {
+                    if follows[axis] && !arrangement::managed(&a, axis) {
+                        current[axis]
+                    } else {
+                        f64::NAN
+                    }
+                });
+                if gives.iter().any(|v| !v.is_nan()) {
+                    gave.insert(*c, gives);
+                }
+                [H, V].map(|axis| {
+                    arrangement::hint(
+                        &a,
+                        axis,
+                        current[axis],
+                        first[axis],
+                        implicit[axis],
+                        own.map(|t| t[axis].min),
+                    )
+                })
             } else {
                 [
                     hint(&a, H, implicit[H], first[H], own.map(|t| t[H])),
@@ -960,7 +1006,10 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
             column_span: a.column_span,
         });
     }
-    state(e, obj, |s| s.seen = seen)?;
+    state(e, obj, |s| {
+        s.seen = seen;
+        s.gave = gave;
+    })?;
 
     match kind {
         Kind::Row => {
@@ -1158,8 +1207,16 @@ fn arrange(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
                 Item::WIDTH.index,
                 Item::HEIGHT.index,
             ];
-            for (p, v) in props.into_iter().zip(g) {
-                write_placed(e, *c, p, Value::Real(*v))?;
+            // A size given a child that follows its implicit size.
+            let gives = state(e, obj, |s| s.gave.get(c).copied())?
+                .map_or([false; 2], |g| g.map(|v| !v.is_nan()));
+            let given = [false, false, gives[H], gives[V]];
+            for ((p, v), given) in props.into_iter().zip(g).zip(given) {
+                if given {
+                    write_given_size(e, *c, p, Value::Real(*v))?;
+                } else {
+                    write_placed(e, *c, p, Value::Real(*v))?;
+                }
             }
             proxy::sync_placed_proxy(e, *c, g[2], g[3])?;
         }

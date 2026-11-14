@@ -14,16 +14,24 @@
 //!
 //! - a child with a width and an implicit width: `RowLayout` takes the
 //!   implicit one, Ljós's `Row` the one the file gives;
-//! - an implicit size that may be a fraction (a `Text`'s): `RowLayout`
-//!   rounds it up, Ljós's `Row` does not;
+//! - a size the file gives that is not a whole number: `RowLayout` rounds
+//!   it up, Ljós's `Row` does not;
 //! - a layout with nothing to fill it that may be sized along its line:
 //!   `RowLayout` spreads the room, Ljós's `Row` leaves it at the end. The
 //!   file may size it, or, for the root of the file, of an inline component
 //!   or of a `Component`, or an object given as a value, whatever uses or
 //!   holds it may, which the file does not show;
-//! - a layout in a layout: Qt's fills its cell and is bounded by its
-//!   children, Ljós's is a child like any other;
+//! - a layout in a layout that is sized, bounded or told to fill where
+//!   none of its children can grow;
 //! - an anchored child, and `uniformCellSizes`.
+//!
+//! An implicit size that may be a fraction (a `Text`'s) is rounded up by
+//! both, as Ljós's box is a layout when a child has a `Layout`; the pass
+//! gives a child of a `ColumnLayout` one where none says anything through
+//! it. A `RowLayout` or `ColumnLayout` in a layout grows along an axis
+//! where one of its children fills with no maximum, as Ljós's box does
+//! when it is told to fill, and is held to its children's minimum, as
+//! Ljós's is; the pass writes the fill out.
 //!
 //! A `GridLayout` is a `Grid` held to the same on both axes, with Qt's
 //! `columnSpacing` and `rowSpacing` of 5 written out. It is kept where Qt's
@@ -671,7 +679,12 @@ impl Arrange<'_, '_> {
         let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
         let mut fills = Some(false);
         for child in children {
-            match bound(child, FILL[axis]).map(boolean) {
+            let name = child.type_name.to_string();
+            let told = match self.line_layout(&name) {
+                Some(line) => Some(Some(self.nested_fills(child, line, axis)?)),
+                None => bound(child, FILL[axis]).map(boolean),
+            };
+            match told {
                 Some(Some(true)) => fills = fills.map(|_| true),
                 Some(None) => fills = None,
                 _ => {}
@@ -713,24 +726,38 @@ impl Arrange<'_, '_> {
                 return Err(self.keep(Layout::Cell { name: n.clone() }, b.span.start as usize));
             }
         }
-        // Qt's layouts fill a layout's cell and bound it by its children.
-        if self
+        let says_layout = own.iter().any(|(n, _)| n.starts_with("Layout."));
+        // Whether Ljós's box may leave the child out, or keep a size from its
+        // content as it is: one whose children have no `Layout` does both.
+        let mut needs_layout = false;
+        if let Some(line) = self.line_layout(&name) {
+            for axis in [W, H] {
+                if self.nested_fills(child, line, axis)?
+                    && bound(child, FILL[axis]).is_none()
+                    && let Some(at) = after_brace(self.source, child)
+                {
+                    self.insert(at, format!(" {}: true;", FILL[axis]));
+                }
+            }
+        } else if self
             .types
             .qt_type(&name)
             .is_some_and(|t| t.module == "QtQuick.Layouts" && t.name != "Layout")
         {
+            // A `GridLayout` or `StackLayout` fills its cell and is bounded by
+            // its children otherwise.
             return Err(self.keep(Layout::Fills { name, qt, ljos }, at));
+        } else {
+            let zero =
+                ZERO_IMPLICIT.contains(&name.as_str()) && self.types.qt_type(&name).is_some();
+            for axis in [W, H] {
+                match self.request(&own, &name, zero, axis)? {
+                    Ask::Size(size) => needs_layout |= size == 0.0,
+                    Ask::Content => needs_layout = true,
+                    Ask::Given => {}
+                }
+            }
         }
-        let zero = ZERO_IMPLICIT.contains(&name.as_str()) && self.types.qt_type(&name).is_some();
-        let mut empty = false;
-        for axis in [W, H] {
-            let size = match self.request(child, &own, &name, zero, axis)? {
-                Some(size) => size,
-                None => continue,
-            };
-            empty |= size == 0.0;
-        }
-        let says_layout = own.iter().any(|(n, _)| n.starts_with("Layout."));
         if !self.shape.vertical() {
             // Qt's `RowLayout` and `GridLayout` centre a child across its row
             // unless it says otherwise; Ljós's `Row` and `Grid` put it at the
@@ -746,28 +773,116 @@ impl Arrange<'_, '_> {
                     }
                 }
             }
-        } else if empty
+        } else if needs_layout
             && !says_layout
             && let Some(at) = after_brace(self.source, child)
         {
-            // Qt's layout counts an empty child, Ljós's (as a positioner)
-            // leaves it out unless it is given a `Layout`.
+            // Qt's layout counts an empty child and rounds a size from its
+            // content up; Ljós's box does both once a child has a `Layout`.
             self.insert(at, " Layout.fillWidth: false;");
         }
         Ok(())
     }
 
-    /// The size `child` asks for along `axis`, when the pass can tell, or
-    /// why the file is kept. `None` when it fills or is bounded and asks for
-    /// no size of its own the two disagree on.
+    /// Whether `name` is a `RowLayout` or `ColumnLayout`, and which.
+    fn line_layout(&self, name: &str) -> Option<Shape> {
+        let t = self.types.qt_type(name)?;
+        if t.module != "QtQuick.Layouts" {
+            return None;
+        }
+        match t.name {
+            "RowLayout" => Some(Shape::Layout { vertical: false }),
+            "ColumnLayout" => Some(Shape::Layout { vertical: true }),
+            _ => None,
+        }
+    }
+
+    /// Whether a `RowLayout` or `ColumnLayout` (`shape`) in a layout grows
+    /// along `axis` in Qt's: where one of its children fills with no
+    /// maximum. Keeps the file where Ljós's box would read it otherwise:
+    /// one sized or bounded by the file, with a child that fills up to a
+    /// maximum, or told to fill where none of its children can grow.
+    fn nested_fills(
+        &self,
+        nested: &QmlObject<'_>,
+        shape: Shape,
+        axis: usize,
+    ) -> Result<bool, Kept> {
+        let (qt, ljos) = (self.shape.qt(), self.shape.ljos());
+        let name = nested.type_name.to_string();
+        let fills = |kept: &Self| {
+            kept.keep(
+                Layout::Fills {
+                    name: name.clone(),
+                    qt,
+                    ljos,
+                },
+                nested.type_name.span.start as usize,
+            )
+        };
+        let own = bindings(nested);
+        let sizes = [
+            SIZE[axis],
+            IMPLICIT[axis],
+            PREFERRED[axis],
+            MINIMUM[axis],
+            MAXIMUM[axis],
+        ];
+        if own
+            .iter()
+            .any(|(n, _)| sizes.contains(&n.as_str()) || n.starts_with("anchors."))
+        {
+            return Err(fills(self));
+        }
+        let inner = Arrange {
+            source: self.source,
+            shape,
+            a_root: false,
+            types: self.types,
+            changes: Vec::new(),
+        };
+        let mut grows = false;
+        for child in inner.laid_out(nested)? {
+            // A hidden child takes no room in Qt's layout or in Ljós's box,
+            // so it grows neither; one shown and hidden as the file runs
+            // grows it only while shown, which no binding says.
+            let shown = bound(child, "visible").map(boolean);
+            if shown == Some(Some(false)) {
+                continue;
+            }
+            let child_name = child.type_name.to_string();
+            let can = match inner.line_layout(&child_name) {
+                Some(line) => inner.nested_fills(child, line, axis)?,
+                // One that fills up to a maximum lets Qt's layout grow
+                // only that far, which a Ljós box that fills does not
+                // stop at.
+                None => match bound(child, FILL[axis]).map(boolean) {
+                    Some(Some(true)) if bound(child, MAXIMUM[axis]).is_none() => true,
+                    Some(Some(true)) | Some(None) => return Err(fills(self)),
+                    _ => false,
+                },
+            };
+            if can && shown == Some(None) {
+                return Err(fills(self));
+            }
+            grows |= can;
+        }
+        match bound(nested, FILL[axis]).map(boolean) {
+            Some(Some(true)) if !grows => Err(fills(self)),
+            Some(Some(told)) => Ok(told && grows),
+            Some(None) => Err(fills(self)),
+            None => Ok(grows),
+        }
+    }
+
+    /// The size `child` asks for along `axis`, or why the file is kept.
     fn request(
         &self,
-        child: &QmlObject<'_>,
         own: &[(String, &QmlBinding<'_>)],
         name: &str,
         zero: bool,
         axis: usize,
-    ) -> Result<Option<f64>, Kept> {
+    ) -> Result<Ask, Kept> {
         let qt = self.shape.qt();
         let ljos = self.shape.ljos();
         let whole = |b: &QmlBinding<'_>, what: &str| -> Result<f64, Kept> {
@@ -790,7 +905,7 @@ impl Arrange<'_, '_> {
             }
         }
         if let Some(b) = find(PREFERRED[axis]) {
-            return whole(b, PREFERRED[axis]).map(Some);
+            return whole(b, PREFERRED[axis]).map(|_| Ask::Given);
         }
         let implicit = find(IMPLICIT[axis]);
         if let Some(b) = find(SIZE[axis]) {
@@ -810,21 +925,15 @@ impl Arrange<'_, '_> {
                     b.span.start as usize,
                 ));
             }
-            return whole(b, SIZE[axis]).map(Some);
+            return whole(b, SIZE[axis]).map(Ask::Size);
         }
-        match implicit {
-            Some(b) => whole(b, IMPLICIT[axis]).map(Some),
-            None if zero => Ok(Some(0.0)),
-            None => Err(self.keep(
-                Layout::Fraction {
-                    name: name.to_owned(),
-                    qt,
-                    ljos,
-                    height: axis == H,
-                },
-                child.type_name.span.start as usize,
-            )),
-        }
+        // Both round a size from the content up.
+        Ok(match implicit.and_then(|b| number(&b.value)) {
+            Some(n) if n.fract() == 0.0 => Ask::Size(n),
+            Some(_) => Ask::Content,
+            None if implicit.is_none() && zero => Ask::Size(0.0),
+            None => Ask::Content,
+        })
     }
 
     /// A `RowLayout` child's own `Layout.alignment`, made to say it is
@@ -928,6 +1037,16 @@ impl Arrange<'_, '_> {
             )
         })
     }
+}
+
+/// What a layout's child asks for along one axis.
+enum Ask {
+    /// A size the file gives it, or the pass can read.
+    Size(f64),
+    /// One that fills or is given: Ljós's box sizes it as Qt's does.
+    Given,
+    /// A size from its content, which may be a fraction, or nothing.
+    Content,
 }
 
 /// How many children a positioner places, as far as the pass can tell.

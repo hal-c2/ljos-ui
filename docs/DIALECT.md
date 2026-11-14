@@ -727,6 +727,19 @@ Row { Rectangle { width: 50; implicitWidth: 80 }            -> 50   (explicit wi
   Then `fill`, `minimum` and `maximum` work as Qt's Layouts' do. A Box whose
   children are all fixed or implicit and none fills is a positioner, so the
   two families merge with no case lost.
+- **Whole pixels.** A Box any of whose children has a `Layout` is a layout,
+  and a size a child takes from its content (its implicit size, where its
+  file gives it no width or height) is rounded up to a whole logical pixel,
+  so no seam falls between two pixels: a `Text` of implicit width 67.73 is
+  68 wide, and the next child is at 68, as in Qt's `RowLayout`. A size the
+  author gives (`width`, `Layout.preferredWidth`) is never rounded. A Box
+  none of whose children has a `Layout` is a positioner and places each
+  child at the size it has, fraction and all, as Qt's `Row` does.
+- **A Box in a Box** reports its children's least size as its own
+  `Layout.minimumWidth`/`Height`: along its axis the sum, with spacing and
+  padding, and across it the largest. A `Row` of children of least width
+  60 and 30 with spacing 4 and padding 2 in a `Column` 50 wide is 98 wide,
+  not 50.
 - `spacing` and `padding` (with sides) are on the container. A child's
   `Layout.margins` are its own.
 - **Anchors are for a free parent only:** an `Item`, a `Rectangle`, or any
@@ -776,7 +789,24 @@ measures both with budget cases.
 - `RowLayout`/`ColumnLayout` → `Row`/`Column`, unless a child sets an
   explicit size with no `preferred*` and an implicit size not statically 0.
   That child is the case where the rules differ, and its file is kept, with
-  that reason.
+  that reason. A child whose size comes from its content (a `Text`, an
+  implicit size the pass cannot read or that is a fraction) is lowered: the
+  `Row` or `Column` rounds it up as `RowLayout` does. In a `ColumnLayout`
+  such a child that says no `Layout` gets `Layout.fillWidth: false`, so the
+  `Column` is a layout and rounds; in a `RowLayout` the `Layout.alignment`
+  the pass writes does that. An explicit, preferred, least or largest size
+  that is not a whole number keeps the file.
+- A `RowLayout` nested in a `ColumnLayout` grows across the column where a
+  child of it fills with no maximum, and otherwise keeps its own width; the
+  pass writes `Layout.fillWidth: true` on the lowered `Row` there, and
+  `Layout.fillHeight: true` on a `Column` in a `Row`. A nested layout with
+  a size, an implicit, preferred, least or largest size, anchors, a fill
+  the pass cannot read, a child that fills up to a maximum (Qt's grows to
+  it, a `Row` that fills does not stop there), or a `fill*: true` where
+  nothing in it grows keeps the file, as does a nested `GridLayout` or
+  `StackLayout`. A child with `visible: false` grows nothing, as neither
+  layout gives it room, and one that fills and is shown by a binding keeps
+  the file.
 - `GridLayout` → `Grid`, kept when a child sets an explicit size with no
   `preferred*` and an implicit size not statically 0, as `RowLayout` is.
   The pass writes out Qt's `columnSpacing: 5` and `rowSpacing: 5`, and

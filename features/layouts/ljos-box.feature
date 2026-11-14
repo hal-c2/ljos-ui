@@ -197,6 +197,227 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Then the property "width" of "filler" is 280
       And the property "implicitWidth" of "row" is 70
 
+  Rule: A box that is a layout takes a size from its child's content in whole pixels
+
+    # Qt's RowLayout rounds a child's implicit size up: an Item of implicit size 20.5 x 10.25 is
+    # 21 x 11 in one, and the next child is at 21 (qml6). Its Row, a positioner, places it at
+    # 20.5. Ljós's box is a layout when any of its children has a `Layout`, and rounds the same
+    # way, so no seam falls between two pixels.
+    @qt-parity
+    Scenario: A RowLayout rounds a child's implicit size up
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        RowLayout {
+          objectName: "row"
+          spacing: 0
+          Item { objectName: "a"; implicitWidth: 20.5; implicitHeight: 10.25 }
+          Item { objectName: "b"; implicitWidth: 10; implicitHeight: 10 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "width" of "a" is 21
+      And the property "height" of "a" is 11
+      And the property "x" of "b" is 21
+      And the property "implicitWidth" of "row" is 31
+      And the property "implicitHeight" of "row" is 11
+
+    @ljos-only
+    Scenario: A Ljós Row whose children have a Layout rounds a child's implicit size up
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          Item { objectName: "a"; implicitWidth: 20.5; implicitHeight: 10.25; Layout.alignment: Align.Top }
+          Item { objectName: "b"; implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "width" of "a" is 21
+      And the property "height" of "a" is 11
+      And the property "x" of "b" is 21
+      And the property "implicitWidth" of "row" is 31
+      And the property "implicitHeight" of "row" is 11
+
+    @ljos-only
+    Scenario: A Text in a Ljós Column whose children have a Layout is a whole number of pixels wide
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Column {
+          objectName: "column"
+          property bool whole: label.width === Math.ceil(label.implicitWidth) && label.width % 1 === 0
+          Text { id: label; text: "Hello wor"; Layout.alignment: Align.Left }
+          Rectangle { implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Left }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "whole" of "column" is true
+
+    @ljos-only
+    Scenario: A child whose content changes is given its new size, rounded up
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          Item { objectName: "a"; implicitWidth: 20.5; implicitHeight: 10; Layout.alignment: Align.Top }
+          Item { objectName: "b"; implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+        }
+        """
+      When 100 milliseconds pass
+      And the property "implicitWidth" of "a" is set to 30.25
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 31
+      And the property "x" of "b" is 31
+      And the property "implicitWidth" of "row" is 41
+
+    # A child with no Layout of its own, in a box where a sibling has one, is sized by the box.
+    # Given 0 when its content is empty, it is left out, and back once its content grows.
+    @ljos-only
+    Scenario: A child the box gave no width comes back when its content grows
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          Item { objectName: "a"; implicitWidth: 20.5; implicitHeight: 10 }
+          Item { objectName: "b"; implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+        }
+        """
+      When 100 milliseconds pass
+      And the property "implicitWidth" of "a" is set to 0
+      And 100 milliseconds pass
+      And the property "implicitWidth" of "a" is set to 30.25
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 31
+      And the property "x" of "b" is 31
+      And the property "implicitWidth" of "row" is 41
+
+    # The author gives the width the box gave: the same number, but given, so it holds when
+    # the content grows.
+    @ljos-only
+    Scenario: A child given the size the box gave it keeps that size when its content grows
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          Item { objectName: "a"; implicitWidth: 20.5; implicitHeight: 10; Layout.alignment: Align.Top }
+          Item { objectName: "b"; implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+        }
+        """
+      When 100 milliseconds pass
+      And the property "width" of "a" is set to 21
+      And the property "implicitWidth" of "a" is set to 30.25
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 21
+      And the property "x" of "b" is 21
+      And the property "implicitWidth" of "row" is 31
+
+    # Qt's RowLayout leaves an Item it was given a width of 20.5 at 20.5 but places the next one
+    # at 21 (qml6). Ljós's box never rounds a size the author gives.
+    @ljos-only @qt-diverges
+    Scenario: A size the author gives is not rounded
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          Item { objectName: "a"; width: 20.5; height: 10; Layout.alignment: Align.Top }
+          Item { objectName: "b"; Layout.preferredWidth: 7.5; implicitHeight: 10 }
+          Item { objectName: "c"; implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "width" of "a" is 20.5
+      And the property "x" of "b" is 20.5
+      And the property "width" of "b" is 7.5
+      And the property "x" of "c" is 28
+      And the property "implicitWidth" of "row" is 38
+
+    @ljos-only
+    Scenario: A box whose children have no Layout places a size from their content as it is, as a positioner does
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          Item { objectName: "a"; implicitWidth: 20.5; implicitHeight: 10.25 }
+          Item { objectName: "b"; implicitWidth: 10; implicitHeight: 10 }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "width" of "a" is 20.5
+      And the property "x" of "b" is 20.5
+      And the property "implicitWidth" of "row" is 30.5
+      And the property "implicitHeight" of "row" is 10.25
+
+  Rule: A box in a box is as small as its children let it be
+
+    # Measured with qml6: a RowLayout that fills a ColumnLayout 50 wide, whose two children fill and
+    # take at least 60 and 30, reads a `Layout.minimumWidth` of 90 and is 90 wide. Ljós's boxes
+    # agree.
+    @ljos-only
+    Scenario: A Row in a Column reads its children's minimum along it, and is held to it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Column {
+          objectName: "column"
+          width: 50
+          property real innerMinimum: inner.Layout.minimumWidth
+          Row {
+            id: inner
+            objectName: "inner"
+            spacing: 4
+            padding: 2
+            Layout.fillWidth: true
+            Rectangle { Layout.minimumWidth: 60; Layout.fillWidth: true; implicitHeight: 10 }
+            Rectangle { Layout.minimumWidth: 30; Layout.fillWidth: true; implicitHeight: 10 }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "innerMinimum" of "column" is 98
+      And the property "width" of "inner" is 98
+
+    # Measured with qml6: a ColumnLayout that fills a RowLayout, of children at least 40 and 70
+    # wide, reads a `Layout.minimumWidth` of 70, and the RowLayout's is 70 too.
+    @ljos-only
+    Scenario: A Column in a Row reads the largest of its children's minimum across it
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Row {
+          objectName: "row"
+          height: 50
+          property real innerMinimum: inner.Layout.minimumWidth
+          Column {
+            id: inner
+            objectName: "inner"
+            Layout.fillHeight: true
+            Rectangle { Layout.minimumWidth: 40; implicitHeight: 10; Layout.fillHeight: true }
+            Rectangle { Layout.minimumWidth: 70; implicitHeight: 10 }
+          }
+        }
+        """
+      When 100 milliseconds pass
+      Then the property "innerMinimum" of "row" is 70
+      And the property "width" of "inner" is 70
+      And the property "implicitWidth" of "row" is 70
+
   Rule: A Box turns
 
     @ljos-only
@@ -338,5 +559,102 @@ Feature: Ljós's one arrangement: Row, Column and Box
       Then the command prints:
         """
         kept ./Main.qml:5:24: `anchors.verticalCenter` places a child across Qt's `Row`, which honours it; Ljós's `Row` places it across with `Layout.alignment`
+        1 files, 0 lowered, 1 kept
+        """
+
+    # A Text's implicit width is a fraction of a pixel. Qt's RowLayout and ColumnLayout round it up,
+    # and so does a Ljós Row or Column that is a layout, so the lowered file places each child where
+    # the written one did.
+    @ljos-only @headless
+    Scenario: A RowLayout and a ColumnLayout of Texts are lowered, and their Texts keep their places
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Rectangle {
+          width: 320; height: 120; color: "white"
+          RowLayout {
+            x: 10; y: 10; spacing: 3
+            Text { text: "Name"; font.pixelSize: 13 }
+            Text { text: "Surname"; font.pixelSize: 13 }
+            Rectangle { implicitWidth: 7; implicitHeight: 7; color: "#c03030" }
+          }
+          ColumnLayout {
+            x: 10; y: 40; spacing: 1
+            Text { text: "Hello world"; font.pixelSize: 11 }
+            Rectangle { implicitWidth: 7; implicitHeight: 7; color: "#30a050" }
+            Text { text: "Small"; font.pixelSize: 9 }
+          }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        would lower ./Main.qml (16 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+
+    # Measured with qml6: a RowLayout in a ColumnLayout 200 wide grows across it only where a child of
+    # it fills with no maximum. The lowered Row is told to fill there, and the Column in a Row is told
+    # to fill its height.
+    @ljos-only @headless
+    Scenario: A layout in a layout is lowered with a fill where it grows
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        Rectangle {
+          width: 320; height: 160; color: "white"
+          ColumnLayout {
+            x: 10; y: 10; width: 200
+            RowLayout {
+              Rectangle { implicitWidth: 30; implicitHeight: 20; color: "#c03030" }
+              Rectangle { Layout.fillWidth: true; implicitHeight: 20; color: "#30a050" }
+            }
+            RowLayout {
+              Rectangle { implicitWidth: 30; implicitHeight: 20; color: "#3030c0" }
+            }
+          }
+          RowLayout {
+            x: 220; y: 10; height: 140
+            ColumnLayout {
+              Rectangle { implicitWidth: 20; Layout.fillHeight: true; color: "#c0c030" }
+            }
+          }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        would lower ./Main.qml (23 edits)
+        1 files, 1 lowered, 0 kept
+        """
+      When the author runs "ljos render . --out kept.png --settle 0 --compat keep"
+      And the author runs "ljos render . --out lowered.png --settle 0 --compat lower"
+      Then the pictures "kept.png" and "lowered.png" have the same pixels
+
+    # Measured with qml6: told to fill, a RowLayout whose children neither fill nor grow stays as wide
+    # as they are, where Ljós's Row told to fill would take the column's width.
+    @ljos-only @headless
+    Scenario: A layout in a layout told to fill where nothing in it grows is kept
+      Given the file "Main.qml":
+        """qml
+        import QtQuick
+        import QtQuick.Layouts
+        ColumnLayout {
+          width: 200
+          RowLayout {
+            Layout.fillWidth: true
+            Rectangle { implicitWidth: 30; implicitHeight: 20 }
+          }
+        }
+        """
+      When the author runs "ljos migrate ."
+      Then the command prints:
+        """
+        kept ./Main.qml:5:3: a `RowLayout` in a `ColumnLayout` grows only where a child of it fills and is bounded by its children, and Ljós's `Column` reads what this one is given otherwise
         1 files, 0 lowered, 1 kept
         """
