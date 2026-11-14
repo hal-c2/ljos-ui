@@ -838,7 +838,10 @@ Column {{
 /// the scene resolved its palette again: a theme bound on a menu bar cost
 /// each switch milliseconds. The controls that took the colour read it as
 /// they resolved and run again on their own; only a colour that was not
-/// the author's before is news to the rest.
+/// the author's before is news to the rest. The label's colour also
+/// guards the colour a watch brings up to date as it is put on: the
+/// pane's bound text colour is written then, and reaches the label only
+/// as it is heard after (`inherit::group_written`).
 #[test]
 fn a_bound_colour_that_changes_costs_what_is_below_it() {
     let (few, button, text) = switched_beside(10);
