@@ -16,6 +16,7 @@ use ljos::ljos_engine::Provenance;
 use ljos::prelude::*;
 
 use crate::helpers::ExtendedSceneEnvironment as X;
+use crate::view::Reading;
 use crate::{
     Camera, CustomMaterial, DefaultMaterial, DirectionalLight, Effect, Fog, Geometry, Instancing,
     Joint, Light, Material, Model, MorphTarget, Node, Object3D, OrthographicCamera,
@@ -29,6 +30,9 @@ use crate::{
 #[derive(Clone, Copy)]
 pub struct EngineSource<'e> {
     pub e: &'e Engine,
+    /// The view's piece being read, whose materials are read through what
+    /// the view kept of them; `None` reads them anew.
+    reading: Option<Reading<'e>>,
 }
 
 impl std::fmt::Debug for EngineSource<'_> {
@@ -39,10 +43,20 @@ impl std::fmt::Debug for EngineSource<'_> {
 
 impl<'e> EngineSource<'e> {
     pub fn new(e: &'e Engine) -> Self {
-        EngineSource { e }
+        EngineSource { e, reading: None }
+    }
+
+    /// For the view's piece `reading`.
+    pub(crate) fn reading(e: &'e Engine, reading: Reading<'e>) -> Self {
+        EngineSource {
+            e,
+            reading: Some(reading),
+        }
     }
 
     fn first<T: QmlValue>(&self, o: ObjectId, props: &[Prop<T>]) -> Option<T> {
+        #[cfg(test)]
+        counts::read(self.e, o);
         props.iter().find_map(|&p| self.e.get_if(o, p))
     }
 
@@ -220,6 +234,13 @@ impl SceneSource for EngineSource<'_> {
         }
     }
 
+    fn material(&self, view: ObjectId, m: ObjectId) -> Option<ljos_3d::Material> {
+        match self.reading {
+            Some(r) => r.material(self.e, view, m),
+            None => ljos_3d::qml::material(self, view, m),
+        }
+    }
+
     fn texture_image(&self, view: ObjectId, texture: ObjectId) -> Option<ljos_3d::TextureImage> {
         crate::texture::image_of(self.e, view, texture)
     }
@@ -239,6 +260,10 @@ impl SceneSource for EngineSource<'_> {
     }
 
     fn custom_material(&self, view: ObjectId, m: ObjectId) -> Option<ljos_3d::CustomMaterial> {
+        #[cfg(test)]
+        if counts::VIEW_READING.with(std::cell::Cell::get) {
+            counts::CUSTOM_READS.with(|c| c.set(c.get() + 1));
+        }
         crate::custom::material(self.e, view, m)
     }
 
@@ -573,5 +598,28 @@ fn objects(p: Prop3d) -> &'static [Prop<Option<ObjectId>>] {
         P::LensFlareLensDirtTexture => &[X::LENS_FLARE_LENS_DIRT_TEXTURE],
         P::LensFlareLensStarburstTexture => &[X::LENS_FLARE_LENS_STARBURST_TEXTURE],
         _ => &[],
+    }
+}
+
+/// What the tests count of the reads.
+#[cfg(test)]
+pub(crate) mod counts {
+    use std::cell::Cell;
+
+    use ljos::prelude::*;
+
+    thread_local! {
+        /// Reads of a material's members while a view reads its pieces.
+        pub(crate) static MATERIAL_READS: Cell<usize> = const { Cell::new(0) };
+        /// Reads of a `CustomMaterial` while a view reads its pieces.
+        pub(crate) static CUSTOM_READS: Cell<usize> = const { Cell::new(0) };
+        /// Whether a view is reading its pieces.
+        pub(crate) static VIEW_READING: Cell<bool> = const { Cell::new(false) };
+    }
+
+    pub(crate) fn read(e: &Engine, o: ObjectId) {
+        if VIEW_READING.with(Cell::get) && e.is::<crate::Material>(o) {
+            MATERIAL_READS.with(|c| c.set(c.get() + 1));
+        }
     }
 }

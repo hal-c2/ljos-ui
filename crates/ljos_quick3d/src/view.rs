@@ -1,14 +1,14 @@
 //! `View3D`: the item a scene is shown in.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use ljos::item::kurbo::{Point, Rect, Size};
-use ljos::item::ljos_3d::SceneSlot;
 use ljos::item::ljos_3d::qml::{self, Piece, Read, SceneSync, Synced};
+use ljos::item::ljos_3d::{Material, SceneSlot};
 use ljos::item::scene3d::View3dOp;
 use ljos::item::{DisplayListBuilder, ItemPaint, TextEngine};
 use ljos::ljos_engine::NodeId as Effect;
@@ -82,6 +82,8 @@ struct Kept {
     syncing: Cell<bool>,
     /// A paint was asked for and has not come yet.
     asked: Cell<bool>,
+    /// What the pieces' materials read.
+    materials: Materials,
     /// Run after each piece is read: a test's stand-in for a read that
     /// writes what another piece reads.
     #[cfg(test)]
@@ -93,11 +95,187 @@ impl fmt::Debug for Kept {
         f.debug_struct("Kept")
             .field("pieces", &self.effects.borrow().len())
             .field("dirty", &self.dirty.borrow().len())
+            .field("materials", &self.materials.effects.borrow().len())
             .finish()
     }
 }
 
+/// Each material a view's pieces draw with, read once and kept until a
+/// read of it changes. A model is read again with its materials when it
+/// moves; these have not changed, and a material is some forty reads.
+#[derive(Default)]
+struct Materials {
+    /// What each material read: `None` for a kind drawn as the default.
+    got: RefCell<HashMap<ObjectId, Option<Material>>>,
+    /// Each material's reads, told rather than run when they change.
+    effects: RefCell<HashMap<ObjectId, Effect>>,
+    /// The pieces that read each material, read again when it changes.
+    users: RefCell<HashMap<ObjectId, HashSet<Piece<ObjectId>>>>,
+    /// The materials each piece read the last time it was read.
+    uses: RefCell<HashMap<Piece<ObjectId>, Vec<ObjectId>>>,
+    /// The material whose reads a lookup is running: a run of another's
+    /// is the graph's own.
+    looking: Cell<Option<ObjectId>>,
+    /// The reads of materials no piece reads any more, to be disposed
+    /// once the paint is not in the middle of a read.
+    unused: RefCell<Vec<Effect>>,
+}
+
+impl Materials {
+    fn used(&self, m: ObjectId, piece: Piece<ObjectId>) {
+        self.users.borrow_mut().entry(m).or_default().insert(piece);
+        let mut uses = self.uses.borrow_mut();
+        let of = uses.entry(piece).or_default();
+        if !of.contains(&m) {
+            of.push(m);
+        }
+    }
+
+    /// `piece` no longer reads the materials of `before` it has not read
+    /// again; one nobody reads is let go.
+    fn unused_by(&self, piece: Piece<ObjectId>, before: Vec<ObjectId>) {
+        // Most pieces (cameras, lights, nodes) read no material.
+        if before.is_empty() {
+            return;
+        }
+        let uses = self.uses.borrow();
+        let now = uses.get(&piece).map(Vec::as_slice).unwrap_or_default();
+        let mut users = self.users.borrow_mut();
+        for m in before.into_iter().filter(|m| !now.contains(m)) {
+            let Some(of) = users.get_mut(&m) else {
+                continue;
+            };
+            of.remove(&piece);
+            if of.is_empty() {
+                users.remove(&m);
+                self.got.borrow_mut().remove(&m);
+                if let Some(n) = self.effects.borrow_mut().remove(&m) {
+                    self.unused.borrow_mut().push(n);
+                }
+            }
+        }
+    }
+}
+
+/// A piece of a view being read: what [`EngineSource`] reads its materials
+/// through.
+#[derive(Clone, Copy)]
+pub(crate) struct Reading<'k> {
+    kept: &'k Rc<Kept>,
+    piece: Piece<ObjectId>,
+}
+
+impl Reading<'_> {
+    /// The material `m` as the view's piece draws it: what it read last
+    /// time, unless a read of it changed since.
+    pub(crate) fn material(self, e: &Engine, view: ObjectId, m: ObjectId) -> Option<Material> {
+        let kept = self.kept;
+        let ms = &kept.materials;
+        ms.used(m, self.piece);
+        if let Some(got) = ms.got.borrow().get(&m) {
+            return got.clone();
+        }
+        let was = ms.looking.replace(Some(m));
+        let known = ms.effects.borrow().get(&m).copied();
+        match known.filter(|n| e.graph().is_alive(*n)) {
+            Some(n) => e.graph().run_effect_now(n),
+            None => {
+                let run = Rc::downgrade(kept);
+                let told = Rc::downgrade(kept);
+                let weak = e.downgrade();
+                // In the view's scope, as the pieces' are: a material that
+                // goes is a source that went, and its read runs again.
+                let made = e.effect_told_in(
+                    view,
+                    move |e| {
+                        let Some(kept) = run.upgrade() else {
+                            return;
+                        };
+                        let got = qml::material(&EngineSource::new(e), view, m);
+                        let ms = &kept.materials;
+                        ms.got.borrow_mut().insert(m, got);
+                        // Run by the graph itself: what its pieces drew
+                        // with is not this.
+                        if ms.looking.get() != Some(m) {
+                            kept.stale(e, view, m);
+                        }
+                    },
+                    move || {
+                        if let (Some(kept), Some(e)) = (told.upgrade(), weak.upgrade()) {
+                            kept.materials.got.borrow_mut().remove(&m);
+                            kept.stale(&e, view, m);
+                        }
+                    },
+                );
+                if let Ok(n) = made {
+                    ms.effects.borrow_mut().insert(m, n);
+                    // Run at once only when the graph was idle.
+                    if !ms.got.borrow().contains_key(&m) {
+                        e.graph().run_effect_now(n);
+                    }
+                }
+            }
+        }
+        ms.looking.set(was);
+        let got = ms.got.borrow().get(&m).cloned();
+        got.unwrap_or_else(|| e.untrack(|| qml::material(&EngineSource::new(e), view, m)))
+    }
+}
+
 impl Kept {
+    /// The pieces that drew with the material `m` read it again: what they
+    /// drew it with is stale.
+    fn stale(&self, e: &Engine, view: ObjectId, m: ObjectId) {
+        let users: Vec<_> = self
+            .materials
+            .users
+            .borrow()
+            .get(&m)
+            .map(|u| u.iter().copied().collect())
+            .unwrap_or_default();
+        if users.is_empty() {
+            return;
+        }
+        let mut fresh = self.fresh.borrow_mut();
+        for piece in &users {
+            fresh.remove(piece);
+        }
+        drop(fresh);
+        self.dirty.borrow_mut().extend(users);
+        if !self.syncing.get() {
+            self.ask(e, view);
+        }
+    }
+
+    /// `piece` read now, its materials through what the view kept of them.
+    fn read_piece(
+        self: &Rc<Self>,
+        e: &Engine,
+        view: ObjectId,
+        piece: Piece<ObjectId>,
+    ) -> Read<ObjectId> {
+        let before = self
+            .materials
+            .uses
+            .borrow_mut()
+            .remove(&piece)
+            .unwrap_or_default();
+        #[cfg(test)]
+        let was = crate::source::counts::VIEW_READING.replace(true);
+        let source = EngineSource::reading(e, Reading { kept: self, piece });
+        let r = qml::read(&source, view, piece);
+        #[cfg(test)]
+        crate::source::counts::VIEW_READING.set(was);
+        self.materials.unused_by(piece, before);
+        r
+    }
+
+    /// Disposes the reads of materials no piece reads any more.
+    fn let_go(&self, e: &Engine) {
+        let unused = std::mem::take(&mut *self.materials.unused.borrow_mut());
+        e.graph().dispose_all(&unused);
+    }
+
     /// Has the view painted again, once until it is.
     fn ask(&self, e: &Engine, view: ObjectId) {
         if !self.asked.replace(true) {
@@ -117,6 +295,10 @@ impl Kept {
             fresh.remove(piece);
         }
         drop(fresh);
+        for &piece in gone {
+            let before = self.materials.uses.borrow_mut().remove(&piece);
+            self.materials.unused_by(piece, before.unwrap_or_default());
+        }
         let mut effects = self.effects.borrow_mut();
         let gone: Vec<Effect> = gone.iter().filter_map(|p| effects.remove(p)).collect();
         drop(effects);
@@ -156,7 +338,7 @@ impl Kept {
                         let Some(kept) = run.upgrade() else {
                             return;
                         };
-                        let r = qml::read(&EngineSource::new(e), view, piece);
+                        let r = kept.read_piece(e, view, piece);
                         kept.fresh.borrow_mut().insert(piece, r);
                         // Run by the graph itself (a scope thawed, a
                         // source went): the paint takes it.
@@ -192,7 +374,7 @@ impl Kept {
         self.fresh
             .borrow_mut()
             .remove(&piece)
-            .unwrap_or_else(|| e.untrack(|| qml::read(&EngineSource::new(e), view, piece)))
+            .unwrap_or_else(|| e.untrack(|| self.read_piece(e, view, piece)))
     }
 }
 
@@ -267,6 +449,7 @@ pub(crate) fn sync(e: &Engine, me: ObjectId) -> Synced<ObjectId> {
         synced.scene = more.scene;
     }
     kept.syncing.set(false);
+    kept.let_go(e);
     let quiet = kept.dirty.borrow().is_empty() && kept.fresh.borrow().is_empty();
     if !quiet {
         kept.asked.set(false);
@@ -309,8 +492,16 @@ pub(crate) fn on_read(e: &Engine, me: ObjectId, hook: Option<ReadHook>) {
 /// runs a piece's tracking by itself.
 #[cfg(test)]
 pub(crate) fn hold_read(e: &Engine, me: ObjectId, piece: Piece<ObjectId>) {
-    let r = e.untrack(|| qml::read(&EngineSource::new(e), me, piece));
-    let _ = e.with(me, |v: &View3D| v.sync.fresh.borrow_mut().insert(piece, r));
+    let kept = e.with(me, |v: &View3D| v.sync.clone()).unwrap_or_default();
+    let r = e.untrack(|| kept.read_piece(e, me, piece));
+    kept.fresh.borrow_mut().insert(piece, r);
+}
+
+/// How many materials the view keeps the reads of.
+#[cfg(test)]
+pub(crate) fn materials_kept(e: &Engine, me: ObjectId) -> usize {
+    e.with(me, |v: &View3D| v.sync.materials.effects.borrow().len())
+        .unwrap_or(0)
 }
 
 /// The view's size in logical pixels: what a point of it is measured in.

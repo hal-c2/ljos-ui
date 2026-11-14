@@ -18,7 +18,7 @@ use crate::geometry::CustomGeometry;
 use crate::instancing::Instancing;
 use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh_file::MeshFile;
-use crate::scene::Node;
+use crate::scene::{Material, Node};
 use crate::texture::TextureImage;
 
 mod build;
@@ -27,7 +27,7 @@ mod map_graph;
 mod names;
 mod sync;
 
-pub use build::{Built, build, camera, srgb8, texture, tiling_mode, uv_transform};
+pub use build::{Built, build, camera, material, srgb8, texture, tiling_mode, uv_transform};
 pub use map_graph::{MapGraph, MapValue};
 pub use names::{Prop3d, Type3d};
 pub use sync::{Piece, Read, SceneSync, Synced, read};
@@ -259,6 +259,21 @@ pub trait SceneSource {
     fn geometry(&self, geometry: Self::Object) -> Option<Arc<CustomGeometry>> {
         let _ = geometry;
         None
+    }
+
+    /// What the material `material` draws a mesh part with in `view`;
+    /// `None` leaves the part out. A host that keeps what each material
+    /// read until one of its reads changes answers from that: a model that
+    /// moves is read again with its materials, which have not changed.
+    /// [`material`] reads it anew, through [`custom_material`] for a
+    /// `CustomMaterial`.
+    ///
+    /// [`custom_material`]: SceneSource::custom_material
+    fn material(&self, view: Self::Object, material: Self::Object) -> Option<Material>
+    where
+        Self: Sized,
+    {
+        build::material(self, view, material)
     }
 
     /// The program the `CustomMaterial` `material` makes of its snippets;
