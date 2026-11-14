@@ -123,6 +123,27 @@ Feature: A world of falling bodies
       When 200 milliseconds pass
       Then the property "last" of "timed" is at least 1
 
+    Scenario: A handler that names no parameter reads the step as timestep
+      Given the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        import QtQuick3D.Physics
+        Item {
+          View3D {
+            id: view
+            PhysicsWorld {
+              objectName: "timed"; scene: view.scene
+              property real last: 0
+              onFrameDone: last = timestep
+            }
+            DynamicRigidBody { collisionShapes: SphereShape {} }
+          }
+        }
+        """
+      When 200 milliseconds pass
+      Then the property "last" of "timed" is at least 1
+
   Rule: Which bodies are in a world
 
     Scenario: A body outside the scene does not fall

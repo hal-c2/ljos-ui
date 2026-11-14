@@ -9515,6 +9515,7 @@ module QtQuick3D
 	Quaternion QtQuick3D.Quaternion
 	QuaternionAnimation QtQuick3D.QuaternionAnimation
 	ReflectionProbe QtQuick3D.ReflectionProbe
+	RenderStats QtQuick3D.RenderStats
 	Repeater3D QtQuick3D.Repeater3D
 	RuntimeLoader QtQuick3D.RuntimeLoader
 	SceneEnvironment QtQuick3D.SceneEnvironment
@@ -10116,6 +10117,31 @@ module QtQuick3D
 		signal boxOffsetChanged
 		signal debugViewChanged
 		signal textureChanged
+	type QtQuick3D.RenderStats RenderStats
+		prototype QtQml.QtObject named
+		is uncreatable
+		prop fps QtQml.int named readonly
+		prop frameTime QtQml.real named readonly
+		prop maxFrameTime QtQml.real named readonly
+		prop renderTime QtQml.real named readonly
+		prop syncTime QtQml.real named readonly
+		prop renderPrepareTime QtQml.real named readonly
+		prop lastCompletedGpuTime QtQml.real named readonly
+		prop drawCallCount QtQml.int named readonly
+		prop drawVertexCount QtQml.int named readonly
+		prop renderPassCount QtQml.int named readonly
+		prop pipelineCount QtQml.int named readonly
+		signal fpsChanged
+		signal frameTimeChanged
+		signal maxFrameTimeChanged
+		signal renderTimeChanged
+		signal syncTimeChanged
+		signal renderPrepareTimeChanged
+		signal lastCompletedGpuTimeChanged
+		signal drawCallCountChanged
+		signal drawVertexCountChanged
+		signal renderPassCountChanged
+		signal pipelineCountChanged
 	type QtQuick3D.Repeater3D Repeater3D
 		prototype QtQuick3D.Node named
 		default delegate
@@ -10303,7 +10329,7 @@ module QtQuick3D
 		prop importScene QtQuick3D.Node named pointer
 		prop scene QtQuick3D.Node named pointer readonly
 		prop renderMode RenderMode
-		prop renderStats QtQuick3D.Helpers.RenderStats named pointer readonly
+		prop renderStats QtQuick3D.RenderStats named pointer readonly
 		signal cameraChanged
 		signal environmentChanged
 		signal importSceneChanged
@@ -10370,7 +10396,6 @@ module QtQuick3D.Helpers
 	ProceduralTextureData QtQuick3D.Helpers.ProceduralTextureData
 	RandomInstancing QtQuick3D.Helpers.RandomInstancing
 	RenderStatistics QtQuick3D.Helpers.RenderStatistics
-	RenderStats QtQuick3D.Helpers.RenderStats
 	SphereGeometry QtQuick3D.Helpers.SphereGeometry
 	TorusGeometry QtQuick3D.Helpers.TorusGeometry
 	WasdController QtQuick3D/Helpers/WasdController.qml
@@ -10865,31 +10890,6 @@ module QtQuick3D.Helpers
 		signal submitTimeChanged
 		signal renderTimeChanged
 		method refresh
-	type QtQuick3D.Helpers.RenderStats RenderStats
-		prototype QtQml.QtObject named
-		is uncreatable
-		prop fps QtQml.int named readonly
-		prop frameTime QtQml.real named readonly
-		prop maxFrameTime QtQml.real named readonly
-		prop renderTime QtQml.real named readonly
-		prop syncTime QtQml.real named readonly
-		prop renderPrepareTime QtQml.real named readonly
-		prop lastCompletedGpuTime QtQml.real named readonly
-		prop drawCallCount QtQml.int named readonly
-		prop drawVertexCount QtQml.int named readonly
-		prop renderPassCount QtQml.int named readonly
-		prop pipelineCount QtQml.int named readonly
-		signal fpsChanged
-		signal frameTimeChanged
-		signal maxFrameTimeChanged
-		signal renderTimeChanged
-		signal syncTimeChanged
-		signal renderPrepareTimeChanged
-		signal lastCompletedGpuTimeChanged
-		signal drawCallCountChanged
-		signal drawVertexCountChanged
-		signal renderPassCountChanged
-		signal pipelineCountChanged
 	type QtQuick3D.Helpers.SphereGeometry SphereGeometry
 		prototype QtQuick3D.Geometry named
 		enum Status Null=0 Loading=1 Ready=2 Error=3
@@ -10988,6 +10988,7 @@ module QtQuick3D.Particles3D
 	Wander3D QtQuick3D.Particles3D.Wander3D
 	type QtQuick3D.Particles3D.Affector3D Affector3D
 		prototype QtQuick3D.Node named
+		is uncreatable
 		prop system QtQuick3D.Particles3D.ParticleSystem3D named pointer
 		prop particles QtQml.var named list
 		prop enabled QtQml.bool named
@@ -11075,6 +11076,7 @@ module QtQuick3D.Particles3D
 		signal emitModeChanged
 	type QtQuick3D.Particles3D.ModelParticle3D ModelParticle3D
 		prototype QtQuick3D.Particles3D.Particle3D named
+		default delegate
 		prop delegate QtQml.Component named pointer
 		prop instanceTable QtQuick3D.Particles3D.ParticleTable named pointer readonly
 		signal delegateChanged
@@ -11546,7 +11548,7 @@ module QtQuick3D.Physics
 		signal numThreadsChanged
 		signal reportKinematicKinematicCollisionsChanged
 		signal reportStaticKinematicCollisionsChanged
-		signal frameDone timeStep:real
+		signal frameDone timestep:real
 	type QtQuick3D.Physics.PlaneShape PlaneShape
 		prototype QtQuick3D.Physics.CollisionShape named
 	type QtQuick3D.Physics.SphereShape SphereShape

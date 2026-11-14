@@ -140,8 +140,10 @@ fn fixed_changed(cx: &Cx<'_>, _: PropIndex) {
 
 #[qml_impl]
 impl PhysicsWorld {
+    // `timestep`, all lower case: the name a handler that declares no
+    // parameters reads on Qt.
     #[qml(signal, name = "frameDone")]
-    fn frame_done(time_step: f64);
+    fn frame_done(timestep: f64);
 
     /// Its clock is a hidden `FrameAnimation`: the application asks for a
     /// frame only while that runs.

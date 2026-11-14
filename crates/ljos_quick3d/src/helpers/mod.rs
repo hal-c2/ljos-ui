@@ -33,8 +33,9 @@ use lod_manager::LodManager;
 use look_at::LookAtNode;
 use procedural_mesh::{ProceduralMesh, ProceduralMeshSubset};
 use procedural_texture::{ProceduralSkyTextureData, ProceduralTextureData};
+use render_statistics::RenderStatistics;
+pub(crate) use render_statistics::RenderStats;
 pub(crate) use render_statistics::bind_render_stats;
-use render_statistics::{RenderStatistics, RenderStats};
 
 use crate::random_instancing::{InstanceRange, RandomInstancing};
 pub use extended_environment::ExtendedSceneEnvironment;
@@ -57,7 +58,6 @@ pub(crate) fn register(engine: &Engine) {
         ProceduralMesh,
         ProceduralMeshSubset,
         RenderStatistics,
-        RenderStats,
         LookAtNode,
         LodManager,
         InstanceModel,
