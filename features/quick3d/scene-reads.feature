@@ -18,9 +18,12 @@ Feature: A View3D reads again only what changed
 
     Scenario: One object that moves is read alone, not the scene it is in
       # objectsRead counts what the view read the last time it was
-      # drawn, which here is when the window's pixels are looked at. The
+      # drawn, which here is when the window's pixels are looked at, so
+      # each count is checked before the pixels are looked at again. The
       # cubes, their materials and the light are not read again for the
-      # one that moved.
+      # one that moved. The sphere is unlit red, about 17 pixels across
+      # its radius: 200 units to the right it is 69 pixels to the right,
+      # clear of where it was and of the cubes.
       Given the QML:
         """qml
         import QtQuick
@@ -42,7 +45,7 @@ Feature: A View3D reads again only what changed
             }
             Model {
               objectName: "mover"; source: "#Sphere"; z: 100
-              materials: DefaultMaterial { diffuseColor: "red" }
+              materials: DefaultMaterial { diffuseColor: "red"; lighting: DefaultMaterial.NoLighting }
             }
           }
           RenderStatistics { id: stats; objectName: "stats" }
@@ -50,12 +53,14 @@ Feature: A View3D reads again only what changed
         }
         """
       When 100 milliseconds pass
-      Then the pixel at 5, 195 of the window is not "#123456"
+      Then the pixel at 150, 100 of the window is within 8 of "#ff0000"
       When 200 milliseconds pass
       Then the property "objectsRead" of "stats" is at least 100
-      When the property "x" of "mover" is set to 40
+      And the pixel at 219, 100 of the window is within 8 of "#000000"
+      When the property "x" of "mover" is set to 200
       And 100 milliseconds pass
-      Then the pixel at 5, 195 of the window is not "#123456"
+      Then the pixel at 219, 100 of the window is within 8 of "#ff0000"
       When 200 milliseconds pass
       Then the property "objectsRead" of "stats" is 1
+      And the pixel at 150, 100 of the window is within 8 of "#000000"
       And the log has no warnings
