@@ -1975,7 +1975,8 @@ Patterns:
 | Pattern | Matches | Example |
 |---|---|---|
 | literal | the same value, by `SameValue` (`NaN` matches `NaN`), except that the pattern `0` matches `-0` too; `+0` and `-0` match only themselves. No coercion: `1` does not match `"1"` | `when "checked":`, `when 0:`, `when true:`, `when undefined:`, `when NaN:` |
-| variable | a name, `a.b` or `a[b]` in scope: a function is called with the subject and matches if it returns `true`; anything else matches the same value (`SameValue`) | `when Permission.Status.Granted:`, `when selected:`, `when isRow:` |
+| variable | a name, `a.b` or `a[b]` in scope: an object with a `[Symbol.customMatcher]` method is asked, with the hint `"boolean"`; a function is called with the subject and matches if it returns `true`; anything else matches the same value (`SameValue`) | `when Permission.Status.Granted:`, `when selected:`, `when isRow:`, `when Even:` |
+| extractor | what a custom matcher or function, called with the hint `"list"`, takes apart: it matches where the call gives a list (not `false`) whose items match the patterns, as an array pattern's do | `when Point(let x, 0):`, `when Option.Some(let v):`, `when String(let s):` |
 | primitive type | a value of that type | `when String:`, `when Number:`, `when Boolean:` |
 | regular expression | a string the expression finds a match in | `` when /^https?:/: `` |
 | binding | anything, and names it | `when let n:`, `when const n:` |
@@ -2004,14 +2005,49 @@ A read of a binding where the checker cannot prove the `is` was `true`
 (in the `else`, or after the `if`) is an error, `ts-is-binding`; in
 JavaScript it would throw a `ReferenceError`.
 
+**Custom matchers and extractors.** An object literal may have a method
+whose key is `Symbol.customMatcher`, the one symbol a script names
+(§5.1). A pattern that names the object asks it, as the proposal's
+`InvokeCustomMatcher` does: it is called with the subject and a hint,
+`"boolean"` where the pattern is the bare name and `"list"` where it is
+an extractor. `false` is no match; for the hint `"list"`, anything else
+must be iterable, or it is a `TypeError`, and its items are matched as
+an array pattern's. A function in place of the object is called the same
+way, so a script's predicate can be an extractor too:
+
+```ts
+const Point = {
+    [Symbol.customMatcher](subject: unknown, hint: string): false | number[] {
+        return match (subject) {
+            when { x: Number and let x, y: Number and let y }: [x, y];
+            default: false;
+        }
+    },
+}
+
+const where = match (p) {
+    when Point(let x, 0): `on the x axis at ${x}`;
+    when Point(...let xy): `at ${xy}`;
+    default: "nowhere";
+}
+```
+
+The checker types an extractor's items by what the matcher returns,
+less `boolean`; one with no custom matcher and that is not a function is
+an error at the pattern, whose message gives the fix. An extractor arm
+removes nothing from its subject's type, as a predicate's does, so a
+`match` with one needs a `default` unless the other arms cover the
+subject (`ts-match-exhaustive`).
+
 What Ljós leaves out of the proposal, and why:
 
-- **Extractors and custom matcher objects** (`when Option.Some(let x)`,
-  an object with a `Symbol.customMatcher`). They need classes and
-  symbols, which the subset forbids (§5.1). A predicate does the test, and
-  a type guard (§4.4) narrows as it does: `when isRow:`, or `when let r
-  and isRow:` to name it too.
-- **A class as a pattern.** There are no classes (`ts-forbidden`).
+- **A class as a pattern**, and a class's custom matcher. There are no
+  classes (`ts-forbidden`); a plain object's matcher does what a class's
+  static one would.
+- **A regular expression as an extractor** (`when /(\d+)/(let n):`), and
+  the matchers the proposal gives `RegExp`, `Array`, `Map`, `Set`,
+  `Promise`, `Error` and the typed arrays. The primitive constructors'
+  are in (`when String(let s):`); the rest are a predicate and a binding.
 - **`var` bindings** (`ts-no-var`) and `null` patterns (`ts-no-null`), as
   everywhere in a script. `let` and `const` bind alike, since a binding
   in a pattern is never written.
@@ -2190,8 +2226,9 @@ shares them.
 - A literal lowers to `===`, which is the proposal's test for every
   literal but `NaN`, `+0` and `-0`; those lower to `Object.is`.
 - A variable pattern lowers to `$is($s, p)`, which does the proposal's
-  test at run time: a function is called with the subject, anything else
-  is compared by `Object.is`. Which it is depends on the value, not the
+  test at run time: a custom matcher is called with the hint
+  `"boolean"`, a function with the subject, and anything else is compared
+  by `Object.is`. Which it is depends on the value, not the
   syntax, and the desugar reads only syntax. The checker knows the type,
   so tier 1 compiles an enum key to `===` and a predicate to a call.
 - `String`, `Number` and `Boolean` lower to `typeof`; a regular
@@ -2202,6 +2239,14 @@ shares them.
 - An object pattern tests each key as the proposal's `HasProperty` does,
   and reads each value once in a `match`, as the proposal's caching has
   it. A binding lowers to a `const` in the arm's block.
+- An extractor lowers to `$extract($s, p, n, reads)`, which calls the
+  matcher with the hint `"list"` and reads what it gives into an array,
+  or gives `undefined` for no match; its items are then tested as an
+  array pattern's, on a temporary `$x0` that the arm's arrow (or, for
+  `is`, the statement) declares. `n` is the count of item patterns and
+  `reads` says how many items the proposal reads: `n + 1` with no rest,
+  to find a list too long; `n` with `...`; all with `...let`. An
+  iterator read short is closed at once.
 - A guard lowers to its condition, after the arm's bindings.
 - Where the subject is a local name, the desugar tests the name itself,
   not a copy, so `tsc` narrows what the arm reads as the checker does.
@@ -2226,7 +2271,14 @@ shares them.
 
 `$is` is declared to `tsc` as a type guard of its subject (`$is<T>(s:
 unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:
-T): s is T` for a value). `$nomatch` throws the proposal's `TypeError`,
+T): s is T` for a value), and as a plain `boolean` for an object with a
+custom matcher. `$extract` is declared as giving the matcher's return
+type less `boolean`, or `undefined`, and `[string]`, `[number]` or
+`[boolean]` for the primitive constructors. TypeScript's lib has no
+`Symbol.customMatcher` yet, so a file that names it, desugared or a
+generated `.lts` declaration, gets `declare global { interface
+SymbolConstructor { readonly customMatcher: unique symbol; } }` after its
+last line, with `export {};` to make it a module. `$nomatch` throws the proposal's `TypeError`,
 which the checker has made unreachable. The desugar writes it as
 `$nomatch($s as never)`, declared `(x: never) => never`: TypeScript's
 narrowing is weaker than the checker's on nested patterns and guards,
@@ -2244,9 +2296,20 @@ its spec text, and the proposal wherever it changes, by moving the pin
 ended by `;`, a guard as the pattern `if (condition)` joined by `and`,
 variable patterns that compare or call, the primitive constructors and
 regular expressions as patterns, and bindings in `is` scoped to the
-block around it. Extractors, custom matcher objects and the proposal's
-possible future enhancements, relational patterns among them, are not
-in it.
+block around it, custom matchers on plain objects and extractors (since
+2026-11-13). Classes' matchers, the built-in matchers but the primitive
+constructors', and the proposal's possible future enhancements,
+relational patterns among them, are not in it.
+
+DECISION: an extractor follows `InvokeCustomMatcher` at the pin, with
+four choices of its own. The list is read into an array before its items
+are tested, as the proposal's caching allows; an iterator read short is
+closed at once. The receiver is the matcher object, and the proposal's
+third argument, the receiver of a member path, is not passed, since a
+script has no `this` to give it. A variable pattern that is neither a
+matcher nor a function keeps `Object.is`, the proposal's `SameValue`.
+The primitive constructors' matchers are the helpers' own, as QuickJS
+has no `Symbol.customMatcher`; the prelude makes the symbol.
 
 DECISION: `cond`-style chains get no form of their own. A guard alone,
 `when if (condition):`, is TC39's own way to say one, `default:` is
@@ -2842,7 +2905,7 @@ read it:
     `./width.lts` has one target, the declaration, under stock `tsc` and
     under `--tsc` alike. Under `deno check`, which has no `rootDirs`, an
     import map in its `deno.json` sends each of those specifiers where
-    `rootDirs` would. The desugar's two helpers, `$is` and `$nomatch`,
+    `rootDirs` would. The desugar's helpers, `$is`, `$extract` and `$nomatch`,
     are declared after the last line of each desugared file, as §4.18
     types them, so no line moves. TypeScript's findings are reported at
     the input's spans, through the span map; one in a declaration is
@@ -3072,6 +3135,8 @@ How it holds the other rules:
 - `ts-forbidden`: `class`, `this` in a `function` of a script's own (in
   QML's scope and its arrows, `this` is the scope object), `prototype`
   and `__proto__`, `delete`, `for…in`, `with`, `eval` and `arguments`.
+  `Symbol` too, but for `Symbol.customMatcher` as the key of a method in
+  an object literal (§4.18).
 
 ## 6. Compat: the lowering pass
 
@@ -3739,8 +3804,9 @@ bindings and states without a rule.
   `ba73ffe` (2025-10-03): guards are the pattern `and if (…)`, a bare name compares
   (Elixir's pin), predicates and the primitive constructors are
   patterns, and bindings in `is` are scoped to the block around it.
-  Extractors, custom matcher objects and the proposal's future
-  enhancements (relational patterns among them) are not in it.
+  Custom matchers on plain objects and extractors are in (2026-11-13);
+  classes' matchers and the proposal's future enhancements (relational
+  patterns among them) are not.
 - DECISION (§4.18): `cond`-style chains get no form of their own: a
   guard alone, `when if (…):`, with `default:` as `cond`'s `true ->`.
 - DECISION (§4.18): exhaustiveness is checked as ReScript checks it, and
