@@ -294,7 +294,9 @@ Feature: Ljós's one arrangement: Row, Column and Box
       When 100 milliseconds pass
       And the property "implicitWidth" of "a" is set to 0
       And 100 milliseconds pass
-      And the property "implicitWidth" of "a" is set to 30.25
+      Then the property "width" of "a" is 0
+      And the property "x" of "b" is 0
+      When the property "implicitWidth" of "a" is set to 30.25
       And 100 milliseconds pass
       Then the property "width" of "a" is 31
       And the property "x" of "b" is 31

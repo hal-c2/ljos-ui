@@ -79,6 +79,12 @@ fn a_layout_in_a_layout_is_told_to_fill_where_it_grows() {
             "Item { Column { spacing: 5; Row { spacing: 5; \
              Item { Layout.alignment: Align.VCenter; implicitWidth: 4; implicitHeight: 4 } } } }\n",
         ),
+        // A Repeater whose model has entries makes delegates that fill.
+        (
+            "Item { ColumnLayout { RowLayout { Repeater { model: 2; Item { implicitHeight: 4; Layout.fillWidth: true } } } } }",
+            "Item { Column { spacing: 5; Row { Layout.fillWidth: true; spacing: 5; Repeater { model: 2; \
+             Item { Layout.alignment: Align.VCenter; implicitHeight: 4; Layout.fillWidth: true } } } } }\n",
+        ),
         // A hidden child that fills grows nothing.
         (
             "Item { ColumnLayout { RowLayout { Item { visible: false; implicitWidth: 4; Layout.fillWidth: true } } } }",
@@ -235,6 +241,15 @@ fn where_a_layout_and_the_arrangement_disagree_the_file_is_kept() {
         ),
         (
             "Item { property bool on; ColumnLayout { RowLayout { Item { visible: on; Layout.fillWidth: true } } } }",
+            "a `RowLayout` in a `ColumnLayout` grows only where",
+        ),
+        (
+            "Item { property var names: []; ColumnLayout { RowLayout { Item { implicitWidth: 4 } \
+             Repeater { model: names; Item { Layout.fillWidth: true } } } } }",
+            "a `RowLayout` in a `ColumnLayout` grows only where",
+        ),
+        (
+            "Item { ColumnLayout { RowLayout { Repeater { model: 0; Item { Layout.fillWidth: true } } } } }",
             "a `RowLayout` in a `ColumnLayout` grows only where",
         ),
         (

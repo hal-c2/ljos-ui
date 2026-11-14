@@ -872,20 +872,36 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     } else {
         let mut hidden = state(e, obj, |s| std::mem::take(&mut s.hidden))?;
         let visible = hidden.update(e, obj, &children);
-        let gave = state(e, obj, |s| {
+        let mut gave = state(e, obj, |s| {
             s.hidden = hidden;
             std::mem::take(&mut s.gave)
         })?;
+        let mut left = Vec::new();
         let shown = children
             .iter()
             .zip(visible)
             .filter_map(|(c, v)| v.then_some(*c))
             .filter(|c| {
                 let had = gave.get(c).copied().unwrap_or([f64::NAN; 2]);
-                !kind.one_rule() || !arrangement::skipped(e, *c, had)
+                let skipped = kind.one_rule() && arrangement::skipped(e, *c, had);
+                if skipped {
+                    left.push(*c);
+                }
+                !skipped
             })
             .collect();
+        // One left out holds no size the box gave it for following its
+        // implicit size: it is given that size, which is 0 along one axis,
+        // so that it is not drawn at the size it had where the others now
+        // are, and still follows it to come back.
+        let gives = left_out_sizes(e, &left, &mut gave);
         state(e, obj, |s| s.gave = gave)?;
+        e.batch(|| -> Result<(), EngineError> {
+            for (c, p, v) in gives {
+                write_given_size(e, c, p, Value::Real(v))?;
+            }
+            Ok(())
+        })?;
         shown
     };
     if kind == Kind::Box
@@ -1166,6 +1182,33 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     )?;
     show_own_minimum(e, obj, &hints)?;
     Ok(changed)
+}
+
+/// The implicit sizes to give children a box leaves out, along each axis
+/// they follow it with a size the box gave them, with what `gave` records
+/// of them set to those sizes.
+fn left_out_sizes(
+    e: &Engine,
+    left: &[ObjectId],
+    gave: &mut HashMap<ObjectId, [f64; 2]>,
+) -> Vec<(ObjectId, PropIndex, f64)> {
+    let mut gives = Vec::new();
+    for c in left {
+        let Some(had) = gave.get_mut(c) else {
+            continue;
+        };
+        for (axis, size, implicit) in [
+            (H, Item::WIDTH.index, Item::IMPLICIT_WIDTH.index),
+            (V, Item::HEIGHT.index, Item::IMPLICIT_HEIGHT.index),
+        ] {
+            if !had[axis].is_nan() && arrangement::follows(e, *c, axis, had[axis]) {
+                let v = num(e, *c, implicit);
+                had[axis] = v;
+                gives.push((*c, size, v));
+            }
+        }
+    }
+    gives
 }
 
 /// Shares the layout's size out and writes the children's geometry, if the

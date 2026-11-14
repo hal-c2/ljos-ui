@@ -806,7 +806,9 @@ measures both with budget cases.
   nothing in it grows keeps the file, as does a nested `GridLayout` or
   `StackLayout`. A child with `visible: false` grows nothing, as neither
   layout gives it room, and one that fills and is shown by a binding keeps
-  the file.
+  the file. So does a delegate that fills, of a `Repeater` whose model the
+  file does not show to have an entry (a number of at least 1, or an array
+  that holds one): with none, Qt's layout does not grow.
 - `GridLayout` → `Grid`, kept when a child sets an explicit size with no
   `preferred*` and an implicit size not statically 0, as `RowLayout` is.
   The pass writes out Qt's `columnSpacing: 5` and `rowSpacing: 5`, and
