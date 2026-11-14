@@ -35,6 +35,7 @@ use crate::scene::{
 };
 use crate::screen::ScreenTexture;
 use crate::shadow::{self, Layer as ShadowLayer, Plan};
+use crate::uniform_slots::UniformSlots;
 
 /// What the picture is kept in: sRGB values written by the shader, so the
 /// same bytes blend in a 2D pass that works in gamma space.
@@ -291,6 +292,8 @@ pub struct Target {
     /// One slot per model, the renderer's stride apart; grown, never
     /// shrunk while the target lives.
     model_buffer: wgpu::Buffer,
+    /// Which model's uniforms are in which of those slots.
+    model_slots: UniformSlots<NodeId>,
     model_group: wgpu::BindGroup,
     model_capacity: u64,
     /// The copies every draw reads a range of; row 0 is the identity, a
@@ -385,7 +388,7 @@ struct Caster {
     centre: Vec3,
     radius: f32,
     /// Its uniforms' slot.
-    slot: usize,
+    slot: u32,
 }
 
 impl std::fmt::Debug for Target {
@@ -502,6 +505,7 @@ impl Target {
             instances,
             joints,
             frame_written: None,
+            model_slots: UniformSlots::default(),
             slots_written: Vec::new(),
             staging: Vec::new(),
             drawn: None,
@@ -1068,26 +1072,26 @@ fn pick_samples(counts: &[u32], wanted: u32) -> u32 {
 
 /// Writes the slots whose uniforms differ from what the buffer holds, a
 /// run of neighbours in one write.
-fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[ModelUniform], stride: u64) {
+fn write_slots(queue: &wgpu::Queue, target: &mut Target, uniforms: &[ModelUniform], stride: u64) {
     let size = std::mem::size_of::<ModelUniform>();
     let stride = stride as usize;
     let written = &mut target.slots_written;
-    let changed = |i: usize, written: &[ModelUniform]| written.get(i) != Some(&draws[i]);
+    let changed = |i: usize, written: &[ModelUniform]| written.get(i) != Some(&uniforms[i]);
     let mut i = 0;
-    while i < draws.len() {
+    while i < uniforms.len() {
         if !changed(i, written) {
             i += 1;
             continue;
         }
         let start = i;
-        while i < draws.len() && changed(i, written) {
+        while i < uniforms.len() && changed(i, written) {
             i += 1;
         }
         let staging = &mut target.staging;
         staging.clear();
         staging.resize((i - start - 1) * stride + size, 0);
-        for (k, draw) in draws[start..i].iter().enumerate() {
-            staging[k * stride..k * stride + size].copy_from_slice(bytemuck::bytes_of(draw));
+        for (k, uniform) in uniforms[start..i].iter().enumerate() {
+            staging[k * stride..k * stride + size].copy_from_slice(bytemuck::bytes_of(uniform));
         }
         crate::counted::write_buffer(
             queue,
@@ -1097,7 +1101,7 @@ fn write_slots(queue: &wgpu::Queue, target: &mut Target, draws: &[ModelUniform],
         );
     }
     written.clear();
-    written.extend_from_slice(draws);
+    written.extend_from_slice(uniforms);
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -1114,12 +1118,12 @@ struct Draw<'a> {
     maps: GroupKey,
     key: PipelineKey,
     uniform: ModelUniform,
+    /// Where its uniforms are in the target's buffer.
+    slot: u32,
     copies: Copies,
     /// How far in front of the camera: blended models are drawn from the
     /// farthest.
     depth: f32,
-    /// Its entry among the shadow casters.
-    caster: Option<usize>,
     /// The material's own light probe, bound for it in place of the scene's.
     probe: Option<Bound>,
 }
@@ -2072,9 +2076,10 @@ impl Renderer {
         let mut opaque = Vec::new();
         let mut blended = Vec::new();
         // Models the camera leaves out still cast shadows into what it
-        // sees; their uniforms go after the drawn models'.
+        // sees, so every model's uniforms are kept, drawn or not, by slot.
         let mut casters: Vec<Caster> = Vec::new();
-        let mut unseen = Vec::new();
+        let mut uniforms: Vec<(u32, ModelUniform)> = Vec::new();
+        target.model_slots.begin();
         let mut bounds = Vec::new();
         let shadows = !shadowing.is_empty();
         // Row 0 and joint slot 0 are what a plain model reads.
@@ -2205,9 +2210,11 @@ impl Renderer {
                     joint_slots.push(gpu_extra::joint_slot(palette));
                     uniform.maps[3] = 1;
                 }
+                let slot = target.model_slots.slot(*id);
+                uniforms.push((slot, uniform));
                 // A segment or a point has no volume to shadow with.
                 let casts = node.casts_shadows && self.topology_of(key) == Topology::Triangles;
-                let caster = (shadows && casts).then(|| {
+                if shadows && casts {
                     casters.push(Caster {
                         mesh: key,
                         cull: model.material.cull_mode(),
@@ -2216,10 +2223,9 @@ impl Renderer {
                         world: placed,
                         centre,
                         radius,
-                        slot: 0,
+                        slot,
                     });
-                    casters.len() - 1
-                });
+                }
                 if shadows && (node.casts_shadows || node.receives_shadows) {
                     bounds.push((centre, radius));
                 }
@@ -2227,9 +2233,6 @@ impl Renderer {
                     && outside(planes, centre, radius)
                 {
                     crate::stats::count(|c| c.models_culled += 1);
-                    if let Some(c) = caster {
-                        unseen.push((c, uniform));
-                    }
                     continue;
                 }
                 let blends = model.material.blends() || transparent;
@@ -2277,11 +2280,11 @@ impl Renderer {
                         depth_test: environment.depth_test,
                     },
                     uniform,
+                    slot,
                     copies,
                     // Qt counts a bias times itself, and below nothing as nearer.
                     depth: -transform_point(&view, centre).z
                         + node.depth_bias.signum() * node.depth_bias * node.depth_bias,
-                    caster,
                     probe: own_probe,
                 };
                 if blends {
@@ -2358,16 +2361,6 @@ impl Renderer {
         draws.append(&mut reading);
         draws.append(&mut blended);
 
-        for (i, draw) in draws.iter().enumerate() {
-            if let Some(c) = draw.caster {
-                casters[c].slot = i;
-            }
-        }
-        let mut uniforms: Vec<ModelUniform> = draws.iter().map(|d| d.uniform).collect();
-        for (c, uniform) in unseen {
-            casters[c].slot = uniforms.len();
-            uniforms.push(uniform);
-        }
         target.instances.write(device, queue, &rows);
         if target.joints.write(device, queue, &joint_slots) {
             target.model_group = model_group(
@@ -2377,8 +2370,9 @@ impl Renderer {
                 &target.joints.buffer,
             );
         }
-        if uniforms.len() as u64 > target.model_capacity {
-            target.model_capacity = (uniforms.len() as u64).next_power_of_two();
+        let slots = target.model_slots.len();
+        if slots as u64 > target.model_capacity {
+            target.model_capacity = (slots as u64).next_power_of_two();
             (target.model_buffer, target.model_group) = model_slots(
                 device,
                 &self.model_layout,
@@ -2389,7 +2383,20 @@ impl Renderer {
             // A new buffer holds nothing yet.
             target.slots_written.clear();
         }
-        write_slots(queue, target, &uniforms, self.model_stride);
+        // A slot no model has this frame keeps what it holds.
+        let mut by_slot: Vec<ModelUniform> = (0..slots)
+            .map(|i| {
+                target
+                    .slots_written
+                    .get(i)
+                    .copied()
+                    .unwrap_or_else(ModelUniform::zeroed)
+            })
+            .collect();
+        for (slot, uniform) in uniforms {
+            by_slot[slot as usize] = uniform;
+        }
+        write_slots(queue, target, &by_slot, self.model_stride);
         let (near, far) = camera.map_or((0.0, 1.0), |(c, _)| clip_planes(&c));
         let inverse_projection = proj.inverse().unwrap_or(Mat4::IDENTITY);
         // Materials read it while they draw, so it is drawn before the scene;
@@ -2609,7 +2616,7 @@ impl Renderer {
             let mut bound_probe = scene_probe;
             let mut bound = None;
             let mut bound_maps = None;
-            for (i, draw) in draws.iter().enumerate() {
+            for draw in &draws {
                 let probe = draw.probe.unwrap_or(scene_probe);
                 if probe != bound_probe {
                     pass.set_bind_group(3, self.ibl.group(probe), &[]);
@@ -2634,7 +2641,7 @@ impl Renderer {
                     }
                 }
                 let mesh = self.gpu_mesh(draw.mesh);
-                let offset = (i as u64 * self.model_stride) as u32;
+                let offset = (u64::from(draw.slot) * self.model_stride) as u32;
                 let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
                 pass.set_bind_group(1, &target.model_group, &[offset, joints]);
                 bind_mesh(&mut pass, mesh, &target.instances.buffer, draw.copies);
@@ -2762,7 +2769,7 @@ impl Renderer {
         );
         pass.set_bind_group(0, &group, &[0]);
         let mut bound = None;
-        for (i, draw) in draws.iter().enumerate() {
+        for draw in draws {
             if !writes_camera_depth(draw) {
                 continue;
             }
@@ -2772,7 +2779,7 @@ impl Renderer {
                 bound = Some(pipeline);
             }
             let mesh = self.gpu_mesh(draw.mesh);
-            let offset = (i as u64 * self.model_stride) as u32;
+            let offset = (u64::from(draw.slot) * self.model_stride) as u32;
             let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
             pass.set_bind_group(1, &target.model_group, &[offset, joints]);
             bind_mesh(&mut pass, mesh, &target.instances.buffer, draw.copies);
@@ -2833,7 +2840,7 @@ impl Renderer {
         );
         pass.set_bind_group(0, &target.frame_group, &[]);
         pass.set_bind_group(3, self.ibl.group(bound), &[]);
-        for (i, draw) in draws.iter().enumerate() {
+        for draw in draws {
             if !writes_camera_depth(draw) {
                 continue;
             }
@@ -2845,7 +2852,7 @@ impl Renderer {
             };
             pass.set_bind_group(2, self.maps.group(maps), &[]);
             let mesh = self.gpu_mesh(draw.mesh);
-            let offset = (i as u64 * self.model_stride) as u32;
+            let offset = (u64::from(draw.slot) * self.model_stride) as u32;
             let joints = (u64::from(draw.copies.joints) * JOINT_SLOT) as u32;
             pass.set_bind_group(1, &target.model_group, &[offset, joints]);
             bind_mesh(&mut pass, mesh, &target.instances.buffer, draw.copies);
@@ -2924,7 +2931,7 @@ impl Renderer {
                     bound = Some((c.cull, c.extra));
                 }
                 let mesh = self.gpu_mesh(c.mesh);
-                let offset = (c.slot as u64 * self.model_stride) as u32;
+                let offset = (u64::from(c.slot) * self.model_stride) as u32;
                 let joints = (u64::from(c.copies.joints) * JOINT_SLOT) as u32;
                 pass.set_bind_group(1, &target.model_group, &[offset, joints]);
                 bind_mesh(&mut pass, mesh, &target.instances.buffer, c.copies);
