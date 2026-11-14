@@ -66,6 +66,24 @@ Feature: An editor reads Ljós through `ljos lsp`
       7:14: error: `gap` is exported from an `.lts` module, so its value needs a declared type for the module's declaration [lts-export-type]
       """
 
+  Scenario: An `.lts` module with a custom matcher and an extractor has nothing to publish
+    Given the file "shape.lts":
+      """ts
+      export function name(v: unknown): string {
+        const Point = {
+          [Symbol.customMatcher](subject: unknown, hint: string): false | number[] {
+            return typeof subject === "number" ? [subject, 0] : false;
+          }
+        };
+        return match (v) {
+          when Point(Number, 0): "on the axis";
+          default: "other";
+        };
+      }
+      """
+    When the language server opens "shape.lts"
+    Then the language server publishes nothing for "shape.lts"
+
   Scenario: A change is checked as the editor has it, not as it is on disk
     Given the file "width.lts":
       """ts

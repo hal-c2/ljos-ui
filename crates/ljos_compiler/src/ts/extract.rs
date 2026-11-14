@@ -256,6 +256,8 @@ pub fn extract(
     }
     if back.is_some() {
         super::declare_sugar(&mut writer.out.text);
+    } else {
+        super::declare_matcher(&mut writer.out.text);
     }
     writer.out.back = back;
     Some(writer.out)

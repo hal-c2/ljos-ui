@@ -41,6 +41,13 @@ struct Place<'a> {
     exact: Option<Ty>,
 }
 
+/// The name a record of the checker's gives an object literal's
+/// `[Symbol.customMatcher]` member, which no name written can be.
+pub(super) const MATCHER: &str = "[Symbol.customMatcher]";
+
+/// What a script may do with a symbol (DIALECT.md §5.1).
+const ONE_SYMBOL: &str = "the one symbol a script names is `Symbol.customMatcher`, as the key of a method in an object literal";
+
 impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     // Functions.
 
@@ -393,6 +400,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             "undefined" => return Ty::UNDEFINED,
             "NaN" | "Infinity" => return Ty::NUMBER,
             "eval" => return self.forbidden(name, "write the code it would run", id.span),
+            "Symbol" => return self.forbidden(name, ONE_SYMBOL, id.span),
             "XMLHttpRequest" => return self.forbidden(name, "use `fetch`", id.span),
             "arguments" => {
                 return self.forbidden(
@@ -1110,6 +1118,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// `object.name`: the object's type, and the member's.
     fn static_member(&mut self, m: &StaticMemberExpression<'a>, short: &mut bool) -> (Ty, Ty) {
+        if let Some(name) = self.symbol_member(&m.object, &m.property) {
+            self.forbid_symbol(name, m.span);
+            return (Ty::ERROR, Ty::ERROR);
+        }
         let object = self.link(&m.object, short);
         let object = self.optional(object, m.optional, short);
         let object = self.defined(object, m.object.span());
@@ -1194,6 +1206,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
         if self.is_sugar(call, "$nomatch") {
             return self.no_match(call);
+        }
+        if self.is_sugar(call, "$extract") {
+            return self.extract(call);
         }
         let (receiver, callee) = match &call.callee {
             Expression::StaticMemberExpression(m) => {
@@ -1625,6 +1640,20 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     let name = match &property.key {
                         PropertyKey::StaticIdentifier(id) => id.name.as_str(),
                         PropertyKey::StringLiteral(s) => s.value.as_str(),
+                        PropertyKey::StaticMemberExpression(m)
+                            if property.computed
+                                && let Some(name) = self.symbol_member(&m.object, &m.property) =>
+                        {
+                            if name != "customMatcher" {
+                                self.expr(&property.value, None);
+                                return self.forbidden(
+                                    &format!("Symbol.{name}"),
+                                    ONE_SYMBOL,
+                                    m.span,
+                                );
+                            }
+                            MATCHER
+                        }
                         _ => {
                             self.expr(&property.value, None);
                             let key = self.text(property.key.span());
@@ -2820,6 +2849,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     return;
                 };
                 let (subject, pattern) = (subject.to_expression(), pattern.to_expression());
+                // A custom matcher says what it matches only at run time.
+                if self.matcher_of(pattern).is_some() {
+                    return;
+                }
                 if let Some((guard, _)) = self.guard_of_callee(pattern) {
                     // An arm whose predicate failed may still have been the
                     // case: a predicate removes nothing.
@@ -2879,7 +2912,118 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
-    /// Whether `call` is the desugar's call of `name`: `$is` or `$nomatch`.
+    /// `Symbol.name`'s name, where `Symbol` is the global.
+    fn symbol_member(
+        &self,
+        object: &Expression<'a>,
+        property: &qml_syntax::js::IdentifierName<'a>,
+    ) -> Option<&'a str> {
+        match object.without_parentheses() {
+            Expression::Identifier(id) if id.name == "Symbol" && self.local("Symbol").is_none() => {
+                Some(property.name.as_str())
+            }
+            _ => None,
+        }
+    }
+
+    fn forbid_symbol(&mut self, name: &str, span: Span) {
+        let fix = if name == "customMatcher" {
+            "it is only the key of a method in an object literal, as in `{ [Symbol.customMatcher](subject: unknown, hint: string): boolean { … } }`"
+        } else {
+            ONE_SYMBOL
+        };
+        self.forbidden(&format!("Symbol.{name}"), fix, span);
+    }
+
+    /// The custom matcher of `pattern`'s object, quietly: its
+    /// `[Symbol.customMatcher]` method's signature.
+    fn matcher_of(&mut self, pattern: &Expression<'a>) -> Option<Ty> {
+        self.quiet += 1;
+        let ty = self.expr(pattern, None);
+        self.quiet -= 1;
+        let Kind::Record(fields) = self.arena.kind(ty) else {
+            return None;
+        };
+        fields
+            .iter()
+            .find(|field| &*field.name == MATCHER)
+            .map(|field| field.ty)
+    }
+
+    /// `$extract(s, p, n, reads)`, of the extractor `p(…)`: the list `p`'s
+    /// matcher gives, without the `false` (or `true`) it gives where it does
+    /// not match, or `undefined`. A primitive constructor's is its one
+    /// value.
+    fn extract(&mut self, call: &CallExpression<'a>) -> Ty {
+        let [
+            subject,
+            pattern,
+            Argument::NumericLiteral(_),
+            Argument::NumericLiteral(_),
+        ] = call.arguments.as_slice()
+        else {
+            self.loose_args(&call.arguments);
+            return Ty::ERROR;
+        };
+        if matches!(subject, Argument::SpreadElement(_))
+            || matches!(pattern, Argument::SpreadElement(_))
+        {
+            self.loose_args(&call.arguments);
+            return Ty::ERROR;
+        }
+        self.expr(subject.to_expression(), None);
+        let pattern = pattern.to_expression();
+        if let Expression::Identifier(id) = pattern.without_parentheses()
+            && self.local(id.name.as_str()).is_none()
+        {
+            let item = match id.name.as_str() {
+                "String" => Some(Ty::STRING),
+                "Number" => Some(Ty::NUMBER),
+                "Boolean" => Some(Ty::BOOLEAN),
+                _ => None,
+            };
+            if let Some(item) = item {
+                let list = self.arena.array(item, true);
+                return self.arena.or(list, Ty::UNDEFINED);
+            }
+        }
+        let function = match self.matcher_of(pattern) {
+            Some(method) => Some(method),
+            None => {
+                if let Expression::Identifier(id) = pattern.without_parentheses() {
+                    self.pattern_name = Some(id.span);
+                }
+                let ty = self.expr(pattern, None);
+                self.pattern_name = None;
+                if ty == Ty::ERROR {
+                    return Ty::ERROR;
+                }
+                Some(ty)
+            }
+        };
+        let ret = function.and_then(|ty| match self.arena.kind(ty) {
+            Kind::Function(sig) => Some(sig.ret),
+            _ => None,
+        });
+        let Some(ret) = ret else {
+            let written = self.as_written(pattern.span());
+            self.report(
+                Code::TsAssignType,
+                format!(
+                    "`{written}` has no custom matcher to take apart what it matches: give it a `[Symbol.customMatcher]` method, or write a function"
+                ),
+                pattern.span(),
+            );
+            return Ty::ERROR;
+        };
+        let list = self.arena.filter(ret, |arena, part| {
+            !matches!(arena.kind(part), Kind::Boolean | Kind::Bool(_))
+        });
+        self.arena.or(list, Ty::UNDEFINED)
+    }
+
+    /// Whether `call` is the desugar's call of `name`: `$is`, `$extract` or
+    /// `$nomatch`.
     fn is_sugar(&self, call: &CallExpression<'a>, name: &str) -> bool {
         matches!(&call.callee, Expression::Identifier(id)
             if id.name == name && self.desugared(id.span.start))

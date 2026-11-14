@@ -1,6 +1,8 @@
 # Sources:
 #   docs/DIALECT.md (§4.18 `match` and `is`, §4.21 the desugar, §5.1 `ts-match-exhaustive` and `ts-is-binding`)
-#   https://github.com/tc39/proposal-pattern-matching (its README as of 2025-10-03)
+#   https://github.com/tc39/proposal-pattern-matching at commit ba73ffe42f30f0cf56ece28bebdc28f955f2a52e
+#     (2025-10-03): its README and spec.emu (InvokeCustomMatcher, ListPatternMatches, FinishListMatch,
+#     Function.prototype[%Symbol.customMatcher%], String[%Symbol.customMatcher%])
 # `match` and `is` are TC39's pattern matching, which Qt's QML does not have: there is no oracle.
 # A reported column counts the characters of the line as it is in the file, and a file given here is
 # written with the eight spaces it is indented by: the first visible column is 9.
@@ -11,8 +13,10 @@ Feature: Choosing a value with match, and testing one with is
   in order, and the first whose pattern matches the subject gives the
   value. A pattern is a literal, a name to compare with or call, `String`,
   `Number` or `Boolean`, a regular expression, a binding (`let x`), an
-  array, an object, or `and`, `or` and `not` of those, and `if (c)` is a
-  pattern that holds where `c` does. `x is pattern` is the same test as a
+  array, an object, an extractor (`Option.Some(let x)`), or `and`, `or`
+  and `not` of those, and `if (c)` is a pattern that holds where `c` does.
+  An object with a `Symbol.customMatcher` decides for itself what it
+  matches, and what an extractor takes apart. `x is pattern` is the same test as a
   boolean. In a file written in Ljós's API, a `match` with no `default`
   must cover every case of its subject, and the checker shows a case it
   leaves out.
@@ -357,6 +361,123 @@ Feature: Choosing a value with match, and testing one with is
         """
       Then the property "said" of "root" is "type error"
 
+  Rule: An object's custom matcher decides what it matches, and an extractor takes apart the list it gives
+
+    Scenario: A custom matcher is asked with the hint "boolean", and what it gives is read as true or false
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          Component.onCompleted: {
+            const hints = [];
+            const Even = { [Symbol.customMatcher](s, hint) { hints.push(hint); return s % 2 === 0 ? 1 : 0; } };
+            const isSmall = (s, hint) => { hints.push(hint); return s < 3; };
+            const a = match (4) { when Even: "even"; default: "odd"; };
+            const b = 3 is Even;
+            const c = match (2) { when isSmall: "small"; default: "big"; };
+            said = a + " " + b + " " + c + " " + hints.join(",");
+          }
+        }
+        """
+      Then the property "said" of "root" is "even false small boolean,boolean,boolean"
+
+    Scenario: An extractor matches the list its matcher gives with the hint "list", item by item
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          Component.onCompleted: {
+            const hints = [];
+            const Point = { [Symbol.customMatcher](s, hint) { hints.push(hint);
+              return typeof s === "object" && s !== null && "x" in s ? [s.x, s.y] : false; } };
+            const Option = { Some: { [Symbol.customMatcher](s) { return s.tag === "some" ? [s.value] : false; } } };
+            const pair = (s) => Array.isArray(s) && s.length === 2 ? s : false;
+            const show = (v) => match (v) {
+              when Point(let only): "one " + only;
+              when Point(let x, 0): "on the x axis at " + x;
+              when Point(let x, let y): "at " + x + "," + y;
+              when Option.Some(String(let s)): "some text " + s;
+              when Option.Some(let n): "some " + n;
+              when pair(1, ...let rest): "pair from 1 to " + rest[0];
+              when pair(...): "a pair";
+              default: "nothing";
+            };
+            said = [show({ x: 2, y: 0 }), show({ x: 1, y: 5 }), show({ tag: "some", value: "a" }),
+                    show({ tag: "some", value: 7 }), show([1, 9]), show([2, 9]), show({ tag: "none" })].join("; ")
+                 + " / " + hints[0];
+          }
+        }
+        """
+      Then the property "said" of "root" is "on the x axis at 2; at 1,5; some text a; some 7; pair from 1 to 9; a pair; nothing / list"
+
+    Scenario: is takes apart what a function gives, and binds what it names in the block around it
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property var reply: ({ tag: "some", value: 42 })
+          function some(s) { return s.tag === "some" ? [s.value] : false; }
+          readonly property bool number: reply is some(Number)
+          readonly property bool text: reply is some(String) or { tag: "none" }
+          property string said: ""
+          Component.onCompleted: {
+            const r = reply;
+            if (r is some(let n) and if (n > 40)) said = "big " + n;
+          }
+        }
+        """
+      Then the property "number" of "root" is true
+      And the property "text" of "root" is false
+      And the property "said" of "root" is "big 42"
+
+    Scenario: An extractor reads its list one item past its patterns, or only as far as a rest needs
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          Component.onCompleted: {
+            let reads = 0;
+            const Count = { [Symbol.customMatcher](s) {
+              return (function* () { for (let i = 0; i < 100; i++) { reads++; yield i; } })();
+            } };
+            const exact = match (0) { when Count(0, 1): "two"; default: "more"; };
+            const r1 = reads;
+            reads = 0;
+            const least = match (0) { when Count(0, ...): "at least one"; default: "none"; };
+            said = exact + " " + r1 + " " + least + " " + reads;
+          }
+        }
+        """
+      Then the property "said" of "root" is "more 3 at least one 1"
+
+    Scenario: A matcher that gives a value that is not a list, or a pattern with no matcher, throws a TypeError
+      Given the QML:
+        """qml
+        import QtQuick
+        Item {
+          id: root; objectName: "root"
+          property string said: ""
+          function attempt(f) {
+            try { return f(); } catch (e) { return e instanceof TypeError ? "type error" : "other"; }
+          }
+          Component.onCompleted: {
+            const Yes = { [Symbol.customMatcher]() { return true; } };
+            const plain = { value: 1 };
+            said = [attempt(() => match (1) { when Yes(let x): x; default: 0; }),
+                    attempt(() => match (1) { when plain(let x): x; default: 0; }),
+                    attempt(() => match (1) { when Yes: "yes"; default: "no"; })].join(", ");
+          }
+        }
+        """
+      Then the property "said" of "root" is "type error, type error, yes"
+
   Rule: A match in Ljós's API covers its subject, or has a default
 
     Scenario: A match that covers every case of a union, an enum or a tagged union has nothing to report
@@ -441,6 +562,89 @@ Feature: Choosing a value with match, and testing one with is
         Gauge.qml:6:39: error: `match` on `string` needs a `default:` [ts-match-exhaustive]
         1 files, 2 errors, 0 warnings
         ljos: 2 errors
+        """
+
+    Scenario: A custom matcher in Ljós's API types what its extractor binds
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function name(v: unknown): string {
+            const Even = {
+              [Symbol.customMatcher](subject: unknown, hint: string): boolean {
+                return typeof subject === "number" && subject % 2 === 0;
+              }
+            };
+            const Point = {
+              [Symbol.customMatcher](subject: unknown, hint: string): false | number[] {
+                return typeof subject === "number" ? [subject, 0] : false;
+              }
+            };
+            return match (v) {
+              when Even: "even";
+              when Point(let x, 0): "on the axis at " + x.toFixed(1);
+              when Point(let x, let y): "at " + (x + y);
+              default: "other";
+            };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: An extractor arm removes nothing, so a match of extractors alone needs a default
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function area(s: { kind: "circle"; r: number } | { kind: "square"; side: number }): number {
+            const Circle = {
+              [Symbol.customMatcher](subject: unknown, hint: string): false | number[] {
+                return match (subject) { when { kind: "circle", r: Number and let r }: [r]; default: false; };
+              }
+            };
+            return match (s) {
+              when Circle(let r): 3 * r * r;
+              when { kind: "square", let side }: side * side;
+            };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:9:20: error: `match` does not cover every case of `s`; for example, this case is not handled: `when { kind: "circle" }:` [ts-match-exhaustive]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: Symbol.customMatcher is the one symbol a script names, and only as a key of an object literal
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function f(): number {
+            const Even = { [Symbol.customMatcher](subject: unknown, hint: string): boolean { return subject === 2; } };
+            const it = { [Symbol.iterator](): number { return 1; } };
+            const key = Symbol.customMatcher;
+            const s = Symbol("x");
+            class A {}
+            return 2 is Even ? 1 : 0;
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:5:27: error: `Symbol.iterator` is not in Ljós's API: the one symbol a script names is `Symbol.customMatcher`, as the key of a method in an object literal [ts-forbidden]
+        Gauge.qml:6:25: error: `Symbol.customMatcher` is not in Ljós's API: it is only the key of a method in an object literal, as in `{ [Symbol.customMatcher](subject: unknown, hint: string): boolean { … } }` [ts-forbidden]
+        Gauge.qml:7:23: error: `Symbol` is not in Ljós's API: the one symbol a script names is `Symbol.customMatcher`, as the key of a method in an object literal [ts-forbidden]
+        Gauge.qml:8:13: error: `class` is not in Ljós's API: write a function, or a component [ts-forbidden]
+        1 files, 4 errors, 0 warnings
+        ljos: 4 errors
         """
 
     Scenario: An arm narrows its subject, and is narrows what it tests
@@ -833,7 +1037,7 @@ Feature: Choosing a value with match, and testing one with is
 
   Rule: What the proposal leaves out is an error that says so
 
-    Scenario: A name that is not in scope, an extractor and a relational pattern are errors
+    Scenario: A name that is not in scope, an extractor of one and a relational pattern are errors
       Given the file "Gauge.qml":
         """qml
         import Ljos.Ui
@@ -848,12 +1052,29 @@ Feature: Choosing a value with match, and testing one with is
       When the files are checked
       Then the check reports:
         """
-        Gauge.qml:5:57: error: an extractor is not in Ljós's `match`: test the value with a predicate, as in `when let x and isSome:` [syntax]
         Gauge.qml:6:57: error: a relational pattern is not in the proposal: write a guard, as in `when let n and if (n < 10):` [syntax]
         Gauge.qml:7:44: error: a regular expression with the `g` or `y` flag keeps its place between tests: leave the flag out [syntax]
         Gauge.qml:4:57: error: `picked` is not defined; to bind the value, write `let picked` [ts-no-any]
+        Gauge.qml:5:57: error: `Some` is not defined; to bind the value, write `let Some` [ts-no-any]
         1 files, 4 errors, 0 warnings
         ljos: 4 errors
+        """
+
+    Scenario: An extractor's list that is not closed is a syntax error
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          property real level: 0
+          readonly property int a: match (level) { when Point(let x: 1; default: 0; }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:4:68: error: Expected `)` but found `:` [syntax]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
         """
 
     Scenario: A new.target in a match that yields is an error, as the generator it is lowered to has its own
