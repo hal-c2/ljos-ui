@@ -103,10 +103,10 @@ Feature: A web page in a WebEngineView
     Then the property "title" of "one" is "Fixture Page"
     And the property "seen" of "two" is "Second Page yes"
 
-  # The view is hidden, and asked for a script, as its first page starts:
-  # before its new profile is ready, so before its browser is made.
-  @api-QtWebEngine.WebEngineView.runJavaScript @api-QtQuick.Item.visible
-  Scenario: A view hidden while its new profile is made shows its page hidden, and a script asked before has no page to run in
+  # The view is hidden as its first page starts: before its new profile is
+  # ready, so before its browser is made.
+  @api-QtQuick.Item.visible
+  Scenario: A view hidden while its new profile is made shows its page hidden
     Given the QML:
       """qml
       import QtQuick
@@ -117,15 +117,13 @@ Feature: A web page in a WebEngineView
           id: box; anchors.fill: parent
           WebEngineView {
             objectName: "view"; anchors.fill: parent
-            property string early: ""
             property string seen: ""
             profile: WebEngineProfile { storageName: "Hidden"; offTheRecord: false }
             url: Qt.resolvedUrl("page.html")
             onLoadingChanged: info => {
-              if (info.status === WebEngineView.LoadStartedStatus) {
-                runJavaScript("1", r => early = String(r))
+              if (info.status === WebEngineView.LoadStartedStatus)
                 box.visible = false
-              } else if (info.status === WebEngineView.LoadSucceededStatus)
+              else if (info.status === WebEngineView.LoadSucceededStatus)
                 runJavaScript("document.visibilityState", r => seen = r)
             }
           }
@@ -133,8 +131,29 @@ Feature: A web page in a WebEngineView
       }
       """
     When 2 seconds pass
+    Then the property "seen" of "view" is "hidden"
+
+  # A browser made already would run it on its blank page, and hand back 1.
+  @api-QtWebEngine.WebEngineView.runJavaScript
+  Scenario: A script asked of a view while its new profile is made has no page to run in
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        objectName: "view"; width: 200; height: 100
+        property string early: ""
+        profile: WebEngineProfile { storageName: "Early"; offTheRecord: false }
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => {
+          if (info.status === WebEngineView.LoadStartedStatus)
+            runJavaScript("1", r => early = String(r))
+        }
+      }
+      """
+    When 2 seconds pass
     Then the property "early" of "view" is "undefined"
-    And the property "seen" of "view" is "hidden"
+    And the property "title" of "view" is "Fixture Page"
 
   @api-QtWebEngine.WebEngineView.url
   Scenario: A page is drawn where the view is
