@@ -407,7 +407,7 @@ Feature: What happens to particles over time
       Rectangle {
         objectName: "root"
         width: 200; height: 200
-        property bool hasDelegate: kind.delegate !== null
+        property bool hasDelegate: kind.delegate != null
         View3D {
           anchors.fill: parent
           environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
