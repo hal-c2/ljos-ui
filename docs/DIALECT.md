@@ -97,7 +97,7 @@ one. Statuses were read from the proposals' repositories on 2026-11-13.
 | Proposal | Status | Ljós's position |
 |---|---|---|
 | [Records & Tuples](https://github.com/tc39/proposal-record-tuple) | Withdrawn (TC39, 2025-04-14). [Composites](https://github.com/tc39/proposal-composites), which took its place, reached stage 2 on 2026-09-30. | Not taken. Ljós waits for Composites to reach stage 3 before it adopts value-equal objects, and adds no form of its own meanwhile. |
-| [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) (`using`) | Stage 4 (TC39, 2026-05-19). | Adopted for a resource whose lifetime is a block: `using`, `Symbol.dispose` and `DisposableStack`. A Controller's `attached` and `detached` (§4.20) stay for a lifetime tied to an object. Today only tier 2 (QuickJS) runs them: tier 1 and AOT refuse a `using` declaration, so a binding that uses one stays in tier 2. The checker accepts a `using` declaration but types no disposable: it rejects a `[Symbol.dispose]` member and `new DisposableStack()`, and it does not check that the initializer is disposable, `null` or `undefined`, so `using x = 1` passes it. Closing these gaps, tier 1 and AOT among them, is a follow-up of its own (#442). |
+| [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) (`using`) | Stage 4 (TC39, 2026-05-19). | Adopted for a resource whose lifetime is a block: `using`, `Symbol.dispose` and `DisposableStack`. A Controller's `attached` and `detached` (§4.20) stay for a lifetime tied to an object. The checker types the disposables, `DisposableStack` and `AsyncDisposableStack`, and holds what a `using` declaration is given to be disposable, `null` or `undefined` (§4.22). Only tier 2 (QuickJS) runs them: tier 1 and AOT refuse a `using` declaration, as they refuse `try`, so a binding that uses one stays in tier 2. |
 | [Decorators](https://github.com/tc39/proposal-decorators) | Stage 3. | Not taken. Decorators apply to classes and their members, and a Ljós script has no classes (§5.1). |
 
 ## 2. What the evidence says
@@ -2006,8 +2006,8 @@ A read of a binding where the checker cannot prove the `is` was `true`
 JavaScript it would throw a `ReferenceError`.
 
 **Custom matchers and extractors.** An object literal may have a method
-whose key is `Symbol.customMatcher`, the one symbol a script names
-(§5.1). A pattern that names the object asks it, as the proposal's
+whose key is `Symbol.customMatcher`, one of the three symbols a script
+names (§5.1). A pattern that names the object asks it, as the proposal's
 `InvokeCustomMatcher` does: it is called with the subject and a hint,
 `"boolean"` where the pattern is the bare name and `"list"` where it is
 an extractor. `false` is no match; for the hint `"list"`, anything else
@@ -2993,6 +2993,71 @@ desugar, valid TypeScript with the same meaning.**
   reads, and each Qt member given a home has a row in `ledger/` naming the
   home.
 
+### 4.22 Resources: `using`
+
+A `using` declaration is Explicit Resource Management's, stage 4 (§1),
+unchanged: what it names is disposed of when the block around it ends,
+however it ends, the last declared first. `await using` awaits
+`[Symbol.asyncDispose]()`, or calls `[Symbol.dispose]()` where there is
+no asynchronous one. A `DisposableStack` holds several resources and
+hands them on with `move()`; an `AsyncDisposableStack` is its
+asynchronous form. An error while disposing is kept with the one it
+follows as a `SuppressedError`. Nothing is compiled away: the desugar
+leaves a `using` declaration as it is, and tier 2 runs it.
+
+```ts
+export function rows(path: string): number {
+  using file = open(path);
+  using stack = new DisposableStack();
+  const cursor = stack.use(file.cursor());
+  stack.defer((): void => log("closed " + path));
+  return cursor.count();
+}
+```
+
+**What the checker holds.** In a file written in Ljós's API, what a
+`using` declaration is given is disposable, `null` or `undefined`
+(`ts-assign-type`, at the value):
+
+- an object whose `[Symbol.dispose]` member is a method that takes no
+  argument it must be given;
+- for `await using`, that, or an object with an `[Symbol.asyncDispose]`
+  method;
+- a `DisposableStack`; for `await using`, an `AsyncDisposableStack` too.
+
+What is disposed of only asynchronously, given to `using`, is an error
+whose fix is `await using`.
+
+The key of a method in an object literal may be `Symbol.dispose` or
+`Symbol.asyncDispose`, as it may be `Symbol.customMatcher` (§4.18);
+`Symbol` is named nowhere else (`ts-forbidden`, §5.1).
+`DisposableStack` and `AsyncDisposableStack` are built-in classes, as
+`AbortController` is: `new` takes no argument, `disposed` is a
+`boolean`, `defer(f)` takes a function of no argument, `move()` gives the
+same class, `dispose()` gives `void` and `disposeAsync()` a
+`Promise<void>`. `use(value)` and `adopt(value, onDispose)` are typed at
+the call: each gives the type of `value`, `onDispose` takes it, and what
+`use` is given must be disposable as a `using` declaration's value must.
+
+**`--tsc` and `.lts` declarations.** TypeScript checks with the library
+`esnext.disposable` beside `es2022`, which declares `Symbol.dispose`,
+the stacks and `SuppressedError`. A project's own `tsconfig.json` names
+its `lib`: one that reads a module with `using` adds
+`"esnext.disposable"`. A generated declaration keeps a
+`[Symbol.dispose]()` member as written.
+
+DECISION: `.ljos/tsconfig.base.json` does not set `lib`. A project that
+sets its own `lib` replaces the base's, and one that sets none would be
+given a library it did not choose; the library is the project's choice.
+
+DECISION: `use` and `adopt` are generic at the call rather than declared
+with a type parameter: the checker has no generic methods on its
+built-in classes, and the call is where the type is known.
+
+DECISION: tier 1 and AOT refuse a `using` declaration, as they refuse
+`try` and `throw`: disposal is a `finally` with an error kept aside. A
+binding or handler that uses one runs in tier 2.
+
 ## 5. The checker
 
 ### 5.1 Rules
@@ -3142,8 +3207,9 @@ How it holds the other rules:
 - `ts-forbidden`: `class`, `this` in a `function` of a script's own (in
   QML's scope and its arrows, `this` is the scope object), `prototype`
   and `__proto__`, `delete`, `for…in`, `with`, `eval` and `arguments`.
-  `Symbol` too, but for `Symbol.customMatcher` as the key of a method in
-  an object literal (§4.18).
+  `Symbol` too, but for `Symbol.customMatcher`, `Symbol.dispose` and
+  `Symbol.asyncDispose`, each as the key of a method in an object literal
+  (§4.18, §4.22).
 
 ## 6. Compat: the lowering pass
 
