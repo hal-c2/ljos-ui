@@ -479,6 +479,106 @@ fn an_endless_animation_of_a_hidden_item_asks_for_nothing() {
     assert_eq!(rig.run_until(ms(120_000)), 0);
 }
 
+/// Animations of properties of their own that nothing follows, as a
+/// design tool writes for a phase it means to bind later: `spin` goes on
+/// for ever, `once` for 100 ms.
+const UNWATCHED: &str = r#"import QtQuick
+Item {
+  id: root; objectName: "root"
+  property string log
+  property real seen: -1
+  property int heard: 0
+  NumberAnimation {
+    id: spin; objectName: "spin"; target: spin; property: "phase"
+    property real phase: 0
+    from: 0; to: 360; duration: 1000; loops: Animation.Infinite
+  }
+  NumberAnimation {
+    id: once; objectName: "once"; target: once; property: "phase"
+    property real phase: 0
+    from: 0; to: 100; duration: 100
+    onFinished: root.log += "finished "
+  }
+  function follow() { root.seen = Qt.binding(function() { return spin.phase }) }
+  function listen() { spin.phaseChanged.connect(function() { root.heard++ }) }
+}
+"#;
+
+/// `got` is `want`, but for how a step's arithmetic rounds.
+#[track_caller]
+fn near(got: f64, want: f64) {
+    assert!((got - want).abs() < 1e-9, "{got} is not {want}");
+}
+
+#[test]
+fn an_endless_animation_nobody_watches_asks_for_no_frames() {
+    let mut rig = Rig::new(UNWATCHED);
+    rig.call("spin", "start");
+    assert!(rig.run_until(ms(10_000)) <= 1, "at most its first frame");
+    assert!(rig.idle(), "no frame and no wake, however long it runs");
+    assert!(rig.flag("spin", "running"));
+}
+
+#[test]
+fn an_animation_nobody_watches_has_the_value_of_its_time_when_read() {
+    let mut rig = Rig::new(UNWATCHED);
+    rig.call("spin", "start");
+    rig.run_until(ms(10_250));
+    // A quarter into the eleventh pass.
+    near(rig.num("spin", "phase"), 90.0);
+    rig.run_until(ms(10_500));
+    near(rig.num("spin", "phase"), 180.0);
+    assert!(rig.idle(), "a read asks for nothing it does not need");
+}
+
+#[test]
+fn a_binding_that_comes_to_an_unwatched_animation_catches_it_up_and_keeps_it_going() {
+    let mut rig = Rig::new(UNWATCHED);
+    rig.call("spin", "start");
+    rig.run_until(ms(10_250));
+    rig.call("root", "follow");
+    // The binding reads it when it is first read itself.
+    near(rig.num("root", "seen"), 90.0);
+    assert!(!rig.idle(), "followed, it asks for frames again");
+    assert!(rig.frames_now() >= 1);
+    assert_eq!(rig.run_until(ms(10_300)), 5);
+    near(rig.num("root", "seen"), 108.0);
+}
+
+#[test]
+fn a_change_handler_keeps_an_animation_going_frame_by_frame() {
+    let mut rig = Rig::new(UNWATCHED);
+    rig.call("spin", "start");
+    rig.run_until(ms(250));
+    rig.call("root", "listen");
+    rig.frames_now();
+    let before = rig.num("root", "heard");
+    assert_eq!(rig.run_until(ms(350)), 10);
+    assert_eq!(
+        rig.num("root", "heard") - before,
+        10.0,
+        "told of every frame's"
+    );
+    near(rig.num("spin", "phase"), 126.0);
+}
+
+#[test]
+fn a_finite_animation_nobody_watches_finishes_on_time_with_one_wake() {
+    let mut rig = Rig::new(UNWATCHED);
+    rig.call("once", "start");
+    assert!(
+        rig.run_until(ms(99)) <= 1,
+        "nothing between its start and end"
+    );
+    assert_eq!(rig.text("root", "log"), "");
+    assert!(rig.flag("once", "running"));
+    assert_eq!(rig.run_until(ms(100)), 1, "one wake, at its end");
+    assert_eq!(rig.text("root", "log"), "finished ");
+    assert!(!rig.flag("once", "running"));
+    assert_eq!(rig.num("once", "phase"), 100.0);
+    assert!(rig.idle());
+}
+
 /// What qml6 showed, tick for tick; the format is described where the
 /// motion itself is tested (`animation/smooth.rs`).
 const SMOOTHED_QT: &str = include_str!("../src/animation/fixtures/smoothed_qt.txt");

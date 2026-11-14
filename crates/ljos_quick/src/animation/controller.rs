@@ -105,6 +105,7 @@ fn seek(engine: &Engine, me: ObjectId) {
         engine,
         cancelled: &cancelled,
         scripts: false,
+        quiet: false,
     };
     engine.batch(|| timeline.seek(ms.saturating_mul(1000), &cx));
     let _ = engine.with_mut::<AnimationController, _>(me, |c| {

@@ -16,8 +16,8 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos_engine::{
-    Atom, Color, Engine, LogLevel, NumberSlot, ObjectId, Point, PropIndex, Rect, Size, TypeTag,
-    Value,
+    Atom, Color, Engine, LogLevel, NumberSlot, ObjectId, Point, PropIndex, PropertyAccess, Rect,
+    Size, TypeTag, Value,
 };
 use ljos_reactive::WriteKind;
 
@@ -126,6 +126,10 @@ pub(crate) struct Ctx<'a> {
     /// False while an `AnimationController` seeks: showing a moment of an
     /// animation does not run its scripts.
     pub scripts: bool,
+    /// The run is brought up to date for a read of a property nothing
+    /// observes: its values are given without a change notification
+    /// ([`Engine::give_unobserved`]), where nothing would hear one.
+    pub quiet: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -606,6 +610,30 @@ impl Slot {
             || engine
                 .untrack(|| engine.read(self.obj, Item::VISIBLE.index))
                 .to_boolean()
+    }
+
+    /// Gives `v` without telling anyone, or where something follows the
+    /// property after all, writes it.
+    fn give(&self, engine: &Engine, v: Value) {
+        if !matches!(v, Value::Real(_)) || !engine.give_unobserved(self.obj, self.prop, v.clone()) {
+            self.write(engine, v);
+        }
+    }
+
+    /// Whether nobody would see a write of it but those who read it:
+    /// a number of the animation's own kind declared in QML, with no
+    /// alias or hook between, and nothing that observes or binds it.
+    fn unwatched(&self, engine: &Engine) -> bool {
+        let plain = self.ty == TypeTag::Real
+            && engine.meta_of(self.obj).is_some_and(|m| {
+                m.property(self.prop).is_some_and(|p| {
+                    matches!(p.access, PropertyAccess::Dynamic { .. })
+                        && !p.is_alias()
+                        && p.given.is_none()
+                        && p.change.is_none()
+                })
+            });
+        plain && !engine.is_observed(self.obj, self.prop) && !engine.is_bound(self.obj, self.prop)
     }
 
     fn write(&self, engine: &Engine, v: Value) {
@@ -1726,6 +1754,7 @@ impl Timed {
                             held[i] = Some(n);
                             shown::show(cx.engine, slot.obj, slot.prop, Some(n));
                         }
+                        None if cx.quiet => slot.give(cx.engine, v),
                         None => slot.write(cx.engine, v),
                     }
                 }
@@ -1826,6 +1855,44 @@ impl Timed {
                 .any(|(slot, track)| track.is_some() && slot.shown(engine)),
             Node::Seq(c) | Node::Par(c) => c.iter().any(|c| c.wants_frames(engine)),
             _ => false,
+        }
+    }
+
+    /// Whether it may rest while nobody watches what it moves: it only
+    /// moves numbers along a set course (no Animator, smoothing, spring,
+    /// script or action), so what it shows at a moment is worked out from
+    /// that moment alone.
+    pub(crate) fn may_rest(&self) -> bool {
+        match &self.node {
+            Node::Prop(p) => p.held.is_none() && matches!(p.kind, Kind::Number | Kind::Rotation(_)),
+            Node::Pause => true,
+            Node::Seq(c) | Node::Par(c) => c.iter().all(Timed::may_rest),
+            _ => false,
+        }
+    }
+
+    /// Whether nothing but a read sees what it moves: every property it
+    /// moves is [`Slot::unwatched`].
+    pub(crate) fn unwatched(&self, engine: &Engine) -> bool {
+        match &self.node {
+            Node::Prop(p) => p.slots.iter().all(|s| s.unwatched(engine)),
+            Node::Seq(c) | Node::Par(c) => c.iter().all(|c| c.unwatched(engine)),
+            _ => true,
+        }
+    }
+
+    /// Every property it moves, once each.
+    pub(crate) fn slots(&self, out: &mut Vec<(ObjectId, PropIndex)>) {
+        match &self.node {
+            Node::Prop(p) => {
+                for s in &p.slots {
+                    if !out.contains(&(s.obj, s.prop)) {
+                        out.push((s.obj, s.prop));
+                    }
+                }
+            }
+            Node::Seq(c) | Node::Par(c) => c.iter().for_each(|c| c.slots(out)),
+            _ => {}
         }
     }
 
