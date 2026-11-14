@@ -99,6 +99,8 @@ pub(crate) struct Maps {
     samplers: HashMap<Sampling, wgpu::Sampler>,
     groups: HashMap<GroupKey, wgpu::BindGroup>,
     max_side: u32,
+    /// What this renderer's maps upload, among other renderers'.
+    reader: crate::uploads::Reader,
 }
 
 impl Maps {
@@ -140,6 +142,7 @@ impl Maps {
             samplers: HashMap::new(),
             groups: HashMap::new(),
             max_side: device.limits().max_texture_dimension_2d,
+            reader: crate::uploads::Reader::new(crate::uploads::Kind::Maps),
         }
     }
 
@@ -153,7 +156,10 @@ impl Maps {
     ) -> GroupKey {
         self.white(device, queue);
         let mut key: GroupKey = [None; MAPS];
-        for (slot, map) in key.iter_mut().zip(slots(material)) {
+        // Let go once the material's maps are up: it may read one image two
+        // ways, as a colour and as numbers, each an upload of its own.
+        let mut up: [Option<&Texture>; MAPS] = [None; MAPS];
+        for ((slot, map), up) in key.iter_mut().zip(slots(material)).zip(&mut up) {
             let Some((texture, srgb)) = map else {
                 continue;
             };
@@ -167,12 +173,14 @@ impl Maps {
                     continue;
                 };
                 self.textures.insert(k, uploaded);
+                *up = Some(texture);
             }
             self.samplers
                 .entry(texture.sampling)
                 .or_insert_with(|| sampler(device, texture.sampling));
             *slot = Some((k, texture.sampling));
         }
+        crate::uploads::uploaded(&self.reader, up.iter().flatten().map(|t| &t.image));
         if !self.groups.contains_key(&key) {
             let group = self.make_group(device, &key);
             self.groups.insert(key, group);
@@ -198,6 +206,7 @@ impl Maps {
         if !self.textures.contains_key(&k) {
             let uploaded = self.upload(device, queue, texture, k)?;
             self.textures.insert(k, uploaded);
+            crate::uploads::uploaded(&self.reader, [&texture.image]);
         }
         let sampler = self
             .samplers
@@ -318,7 +327,6 @@ impl Maps {
         }
         let bytes = levels.iter().map(|l| l.2.len() as u64).sum();
         let view = upload(device, queue, "ljos_3d map", key.srgb, &levels);
-        image.uploaded();
         Some(Uploaded {
             image: Arc::downgrade(&image.0),
             view,

@@ -98,6 +98,8 @@ pub(crate) struct Ibl {
     probes: HashMap<u64, Probe>,
     params_stride: u64,
     max_side: u32,
+    /// What this renderer's probes upload, among other renderers'.
+    reader: crate::uploads::Reader,
 }
 
 fn cube_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
@@ -309,6 +311,7 @@ impl Ibl {
             probes: HashMap::new(),
             params_stride: size.div_ceil(align) * align,
             max_side: device.limits().max_texture_dimension_2d,
+            reader: crate::uploads::Reader::new(crate::uploads::Kind::Probes),
         }
     }
 
@@ -428,7 +431,7 @@ impl Ibl {
                 bytes,
             },
         );
-        image.uploaded();
+        crate::uploads::uploaded(&self.reader, [image]);
         Bound::Probe(id)
     }
 
