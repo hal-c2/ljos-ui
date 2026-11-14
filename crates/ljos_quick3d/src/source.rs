@@ -67,7 +67,15 @@ impl<'e> EngineSource<'e> {
     fn list(&self, o: ObjectId, p: Prop3d, holes: bool) -> Vec<Option<ObjectId>> {
         let e = self.e;
         if p == Prop3d::Data && e.is::<View3D>(o) {
-            let mut nodes: Vec<_> = item::resources(e, o).into_iter().map(Some).collect();
+            let resources = item::resources(e, o);
+            // A view's lists tell nobody of a change, as Qt's do not. A
+            // node that leaves the view writes its `parent`, which does.
+            for &r in &resources {
+                if e.is::<Object3D>(r) {
+                    e.read(r, Object3D::PARENT.index);
+                }
+            }
+            let mut nodes: Vec<_> = resources.into_iter().map(Some).collect();
             // The root holds only what is made into it at run time. Until
             // then it is no node of the walk, which still hears of the first.
             let root = e.read(o, View3D::SCENE.index).as_object();
