@@ -167,9 +167,9 @@ To fix these findings, bind surfaces and text to `palette` roles (or `Ljos.Desig
 
 ```qml
 // Good: passes both ljos check and ljos audit across the full matrix
-import QtQuick
-import QtQuick.Controls
-import QtQuick.Layouts
+import Ljos.Ui
+import Ljos.Controls.Basic
+import Ljos.Layout
 
 ApplicationWindow {
     width: 360
@@ -183,18 +183,19 @@ ApplicationWindow {
         anchors.fill: parent
         padding: 12
 
-        RowLayout {
+        Row {
             anchors.fill: parent
             spacing: 8
 
             Label {
+                Layout.alignment: Align.VCenter
                 id: folderLabel
                 Layout.fillWidth: true
                 text: folderName
                 color: palette.text
                 elide: Text.ElideRight
 
-                HoverHandler {
+                Hover {
                     id: labelHover
                 }
 
@@ -203,6 +204,7 @@ ApplicationWindow {
             }
 
             ToolButton {
+                Layout.alignment: Align.VCenter
                 text: qsTr("Refresh folder")
                 display: AbstractButton.IconOnly
                 icon.name: "view-refresh"
