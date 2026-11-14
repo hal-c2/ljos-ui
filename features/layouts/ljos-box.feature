@@ -302,6 +302,55 @@ Feature: Ljós's one arrangement: Row, Column and Box
       And the property "x" of "b" is 31
       And the property "implicitWidth" of "row" is 41
 
+    # What a box gave a child for following its implicit size goes with the child. Moved to
+    # another box that is a layout, it still follows it; moved to an item that arranges
+    # nothing, it keeps the size, and follows again in a box. Qt 6.11's RowLayout: 21, then 31
+    # once the content is 30.25; in a plain Item 21 still, and 31 then 41 in a RowLayout
+    # (qmltestrunner).
+    @ljos-only
+    Scenario: A child moved from one box to another still follows its content
+      Given the QML:
+        """qml
+        import Ljos.Ui
+        import Ljos.Layout
+        Item {
+          id: root; objectName: "root"
+          function across() { a.parent = second }
+          function out() { c.parent = plain }
+          function back() { c.parent = second }
+          Row {
+            Item { id: a; objectName: "a"; implicitWidth: 20.5; implicitHeight: 10 }
+            Item { implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+          }
+          Row {
+            id: second
+            Item { implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+          }
+          Row {
+            Item { id: c; objectName: "c"; implicitWidth: 20.5; implicitHeight: 10 }
+            Item { implicitWidth: 10; implicitHeight: 10; Layout.alignment: Align.Top }
+          }
+          Item { id: plain }
+        }
+        """
+      When 100 milliseconds pass
+      And the method "across" of "root" is called
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 21
+      When the property "implicitWidth" of "a" is set to 30.25
+      And 100 milliseconds pass
+      Then the property "width" of "a" is 31
+      When the method "out" of "root" is called
+      And the property "implicitWidth" of "c" is set to 30.25
+      And 100 milliseconds pass
+      Then the property "width" of "c" is 21
+      When the method "back" of "root" is called
+      And 100 milliseconds pass
+      Then the property "width" of "c" is 31
+      When the property "implicitWidth" of "c" is set to 40.5
+      And 100 milliseconds pass
+      Then the property "width" of "c" is 41
+
     # The author gives the width the box gave: the same number, but given, so it holds when
     # the content grows.
     @ljos-only

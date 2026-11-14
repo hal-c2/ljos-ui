@@ -32,7 +32,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use ljos_engine::{Engine, EngineError, ObjectId, PropIndex, Provenance, QmlObject, Value};
 
 use super::distribute::{Total, Track, distribute, edges};
-use super::{Attached, H, Hint, Layout, Plan, V, show_own_minimum, state};
+use super::{Attached, H, Hint, Layout, Plan, V, give, given_to, show_own_minimum, state};
 use crate::enums::{EnumTable, align, layout_direction};
 use crate::item::{
     Item, is_a, is_unset, num, size_follows_implicit, write_computed, write_given_size,
@@ -530,14 +530,16 @@ pub(super) fn line(
         && ((num(e, obj, Arrangement::LAYOUT_DIRECTION.index) as i32
             == layout_direction::RIGHT_TO_LEFT)
             != mirrored(e, obj));
-    // A child the box gave a size while it was a layout holds it: while it
+    // A child this box gave a size while it was a layout holds it: while it
     // still follows its implicit size, it is given that again, unrounded.
-    let mut gave = state(e, obj, |s| std::mem::take(&mut s.gave))?;
-    gave.retain(|c, _| children.contains(c));
+    // One another box gave a size keeps it here, as a positioner keeps a
+    // size, and what that box gave is kept for a layout it moves to.
     let (sizes, given): (Vec<[f64; 2]>, Vec<[bool; 2]>) = shown
         .iter()
         .map(|c| {
-            let had = gave.remove(c).unwrap_or([f64::NAN; 2]);
+            let record = given_to(e, *c);
+            let mine = record.is_none_or(|g| g.by == obj);
+            let had = record.filter(|_| mine).map_or([f64::NAN; 2], |g| g.at);
             let mut own = [
                 num(e, *c, Item::WIDTH.index),
                 num(e, *c, Item::HEIGHT.index),
@@ -552,14 +554,12 @@ pub(super) fn line(
                     gives[axis] = own[axis];
                 }
             }
-            if gives.iter().any(|v| !v.is_nan()) {
-                gave.insert(*c, gives);
+            if mine {
+                give(e, obj, *c, gives);
             }
             (own, gives.map(|v| !v.is_nan()))
         })
         .unzip();
-    let gave_back = state(e, obj, |s| s.gave = gave);
-    gave_back?;
     let room = (num(e, obj, Item::WIDTH.index) - pad[0] - pad[2]).max(0.0);
     // Everything the children's places follow from. The box's own width
     // only counts from the right: from the left it is set after the
