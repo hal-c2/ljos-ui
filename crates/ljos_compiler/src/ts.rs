@@ -323,9 +323,10 @@ declare global { interface SymbolConstructor { readonly customMatcher: unique sy
 /// them, after its last line, which leaves its lines where they are. A
 /// custom matcher's `$is` narrows nothing, and an extractor's list is what
 /// its matcher gives but `true` and `false`, as the array `$extract` reads
-/// it into: an array or tuple as it is, another iterable as an array of
-/// its items.
-pub const SUGAR: &str = "type $List<R> = R extends readonly unknown[] ? R : R extends Iterable<infer E> ? E[] : never;\n\
+/// it into: an array or tuple as it is, another iterable object as an
+/// array of its items. A string is iterable but no object, and `$extract`
+/// throws for it, so it gives no list.
+pub const SUGAR: &str = "type $List<R> = R extends readonly unknown[] ? R : R extends object & Iterable<infer E> ? E[] : never;\n\
 declare function $is(s: unknown, p: { [Symbol.customMatcher](...args: never[]): unknown }): boolean;\n\
 declare function $is<T>(s: unknown, p: (v: unknown) => v is T): s is T;\n\
 declare function $is<T>(s: unknown, p: T): s is T;\n\

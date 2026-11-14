@@ -2275,8 +2275,9 @@ unknown, p: (v: unknown) => v is T): s is T`, and `$is<T>(s: unknown, p:
 T): s is T` for a value), and as a plain `boolean` for an object with a
 custom matcher. `$extract` is declared as giving the matcher's return
 type less `boolean`, read as the array it is made into (an array or a
-tuple as it is, another iterable as an array of its items), or
-`undefined`, and `[string]`, `[number]` or
+tuple as it is, another iterable object as an array of its items, and
+nothing for a primitive, which the checker refuses as no list even where
+it is iterable, as a string is), or `undefined`, and `[string]`, `[number]` or
 `[boolean]` for the primitive constructors. TypeScript's lib has no
 `Symbol.customMatcher` yet, so a file that names it, desugared or a
 generated `.lts` declaration, gets `declare global { interface

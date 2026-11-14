@@ -595,6 +595,80 @@ Feature: Choosing a value with match, and testing one with is
         1 files, 0 errors, 0 warnings
         """
 
+    Scenario: A custom matcher that gives a Set is taken apart as an array of its items
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function name(v: unknown, seen: Set<number>): string {
+            const Seen = {
+              [Symbol.customMatcher](subject: unknown, hint: string): false | Set<number> {
+                return subject === "seen" ? seen : false;
+              }
+            };
+            return match (v) {
+              when Seen(let x, ...): "first seen " + x.toFixed(1);
+              default: "other";
+            };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A custom matcher that gives a tuple binds each item as the type at its place
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function name(v: unknown): string {
+            const Pair = {
+              [Symbol.customMatcher](subject: unknown, hint: string): false | [number, string] {
+                return typeof subject === "number" ? [subject, "units"] : false;
+              }
+            };
+            return match (v) {
+              when Pair(let x, let unit): x.toFixed(1) + " " + unit.toUpperCase();
+              default: "other";
+            };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
+    Scenario: A custom matcher that gives a string has no list, though a string is iterable
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function name(v: unknown): string {
+            const Word = {
+              [Symbol.customMatcher](subject: unknown, hint: string): false | string {
+                return typeof subject === "string" ? subject : false;
+              }
+            };
+            return match (v) {
+              when Word(let c): "starts with " + c;
+              default: "other";
+            };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:10:20: error: `Word` gives a string where it matches, not a list to take apart: give an array or another iterable object [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: A module that names Symbol.customMatcher with spaces in it is read as one that names it
       Given the file "even.lts":
         """ts
