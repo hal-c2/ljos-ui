@@ -2267,6 +2267,42 @@ impl<V: Clone + 'static> Graph<V> {
         Ok(true)
     }
 
+    /// An animation's step to a property nothing observes, given without
+    /// marking or running anything: what [`Graph::write_animated`] would
+    /// leave behind when no edge leads out of `n`, for a read in the middle
+    /// of another node's run. Only for a property with no observer,
+    /// binding, override or hold, while nothing is journaled; otherwise this
+    /// returns `false`, nothing is changed, and the caller writes the usual
+    /// way.
+    pub fn give_animated_quietly(&self, n: NodeId, v: V) -> Result<bool, ReactiveError> {
+        let old = {
+            let mut g = self.inner.borrow_mut();
+            let i = &mut *g;
+            if i.journal.is_some() {
+                return Ok(false);
+            }
+            let node = i.nodes.get_mut(n).ok_or(ReactiveError::DeadNode(n))?;
+            let Kind::Property(p) = &mut node.kind else {
+                return Err(ReactiveError::NotAProperty(n));
+            };
+            let quiet = node.observers.is_empty()
+                && p.overrides.is_empty()
+                && !p.is_bound()
+                && node.state == NodeState::Clean
+                && !node.flags.has(Flags::HELD)
+                && !node.flags.has(Flags::ASKED_IF_SET);
+            if !quiet {
+                return Ok(false);
+            }
+            p.animated = true;
+            p.host = false;
+            node.value.replace(v)
+        };
+        // Outside the borrow: dropping a value may run the embedder's code.
+        drop(old);
+        Ok(true)
+    }
+
     /// Installs a binding (`x = Qt.binding(...)`), replacing what was on the
     /// layer an imperative write would use. A cover stays active; an
     /// uncovered property becomes dirty and its observers re-check.
