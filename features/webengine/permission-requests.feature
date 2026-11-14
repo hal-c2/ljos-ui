@@ -284,14 +284,15 @@ Feature: A view answers what a page asks permission for
         Loader {
           id: later; x: 100; active: false
           sourceComponent: WebEngineView {
-            width: 100; height: 100; profile: shared; url: "$SERVER/policy.html"
+            objectName: "second"; width: 100; height: 100; profile: shared; url: "$SERVER/policy.html"
             onPermissionRequested: permission => root.ask("b", permission)
           }
         }
       }
       """
     When 8 seconds pass
-    Then the property "asked" of "root" is "<asked>"
+    Then the property "title" of "second" is "asked twice"
+    And the property "asked" of "root" is "<asked>"
 
     Examples:
       | name    | policy        | asked       |

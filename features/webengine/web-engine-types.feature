@@ -146,6 +146,29 @@ Feature: The types of QtWebEngine
     And the property "asks" of "root" is 0
     And the property "places" of "root" is "/data/app/browser /cache/app/browser"
 
+  # Qt reads back at most StoreInMemory while a profile is off the record,
+  # and what it was given again once it is on disk (qml6 6.12).
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy @api-QtWebEngine.WebEngineProfile.offTheRecord
+  Scenario: A profile off the record keeps no answer on disk, whatever it is given
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        WebEngineProfile { id: anon; persistentPermissionsPolicy: WebEngineProfile.StoreOnDisk }
+        WebEngineProfile { id: moving; storageName: "Moving"; offTheRecord: false }
+        property string seen: ""
+        function note(p) { seen += (seen ? " " : "") + p.persistentPermissionsPolicy }
+        Component.onCompleted: {
+          note(WebEngine.defaultProfile); note(anon); note(moving)
+          moving.offTheRecord = true; note(moving)
+          moving.offTheRecord = false; note(moving)
+        }
+      }
+      """
+    Then the property "seen" of "root" is "1 1 2 1 2"
+
   @api-QtWebEngine.WebEngine.script
   Scenario: A script made by the singleton holds what it was given
     Given the QML:
