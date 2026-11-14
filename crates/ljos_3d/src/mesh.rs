@@ -1,5 +1,8 @@
 //! Geometry on the CPU: what a renderer uploads once per mesh.
 
+use std::sync::OnceLock;
+
+use crate::math::Vec3;
 use crate::scene::Primitive;
 
 /// How a mesh's indices make shapes once decoded.
@@ -33,6 +36,35 @@ pub struct Mesh {
     /// has none.
     pub colors: Vec<[f32; 4]>,
     pub topology: Topology,
+}
+
+/// The box that holds a primitive's mesh in model space, least corner
+/// then most: its positions', found once.
+pub(crate) fn primitive_box(p: Primitive) -> (Vec3, Vec3) {
+    static BOXES: OnceLock<[(Vec3, Vec3); 5]> = OnceLock::new();
+    let all = [
+        Primitive::Cube,
+        Primitive::Rectangle,
+        Primitive::Sphere,
+        Primitive::Cylinder,
+        Primitive::Cone,
+    ];
+    let boxes = BOXES.get_or_init(|| {
+        all.map(|p| {
+            let found = Mesh::primitive(p).positions.iter().fold(
+                ([f32::MAX; 3], [f32::MIN; 3]),
+                |(lo, hi), v| {
+                    (
+                        [lo[0].min(v[0]), lo[1].min(v[1]), lo[2].min(v[2])],
+                        [hi[0].max(v[0]), hi[1].max(v[1]), hi[2].max(v[2])],
+                    )
+                },
+            );
+            let ([a, b, c], [d, e, f]) = found;
+            (Vec3::new(a, b, c), Vec3::new(d, e, f))
+        })
+    });
+    boxes[all.iter().position(|q| *q == p).unwrap_or(0)]
 }
 
 impl Mesh {
@@ -444,6 +476,26 @@ mod tests {
         assert_eq!(m.indices.len() / 3, 78);
         winds_outwards(&m, [0.0, 25.0, 0.0]);
         assert_eq!(extent(&m, 1), (GROUND, POINT));
+    }
+
+    #[test]
+    fn every_primitive_box_is_its_mesh_s() {
+        for p in [
+            Primitive::Cube,
+            Primitive::Rectangle,
+            Primitive::Sphere,
+            Primitive::Cylinder,
+            Primitive::Cone,
+        ] {
+            let (min, max) = primitive_box(p);
+            let m = Mesh::primitive(p);
+            assert_eq!(extent(&m, 0), (min.x, max.x), "{p:?}");
+            assert_eq!(extent(&m, 1), (min.y, max.y), "{p:?}");
+            assert_eq!(extent(&m, 2), (min.z, max.z), "{p:?}");
+        }
+        // A rectangle is flat: no deeper than its plane.
+        let (min, max) = primitive_box(Primitive::Rectangle);
+        assert_eq!((min.z, max.z), (0.0, 0.0));
     }
 
     #[test]
