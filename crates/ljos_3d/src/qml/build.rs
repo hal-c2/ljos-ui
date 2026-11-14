@@ -7,13 +7,14 @@ use super::enums::{
     alpha, antialiasing, background, blend, channel, cull, filter, fov_orientation, lighting,
     shadow_map, soft_shadow, tiling, tonemap,
 };
+use super::sync::{self, SceneSync};
 use super::{GridLines, Prop3d as P, SceneSource, Type3d as T, defaults as d};
 use crate::custom::{
     Adjustments, AmbientOcclusion, DepthDraw, DepthOfField, Glow, GlowBlend, Illumination,
     LensFlare, Lut, PostProcess, Reflections, Vignette,
 };
 use crate::geometry::CustomGeometry;
-use crate::instancing::{MAX_JOINTS, Skin};
+use crate::instancing::MAX_JOINTS;
 use crate::math::{Quat, Vec3};
 use crate::mesh_file::MeshFile;
 use crate::scene::{
@@ -39,47 +40,13 @@ pub struct Built<O> {
 
 /// The scene of the View3D `view`, read now from `src`.
 pub fn build<S: SceneSource>(src: &S, view: S::Object) -> Built<S::Object> {
-    let mut walk = Walk {
-        s: src,
-        view,
-        scene: Scene::new(),
-        ids: HashMap::new(),
-        loaded: Vec::new(),
-        later: Vec::new(),
-        scoped: Vec::new(),
-    };
-    for o in src.objects(view, P::Data) {
-        walk.node(None, o);
-    }
-    if let Some(imported) = src.object(view, P::ImportScene) {
-        walk.node(None, imported);
-    }
-    walk.finish();
-    let env_object = src.object(view, P::Environment);
-    if let Some(env) = env_object.filter(|&env| src.is(env, T::SceneEnvironment)) {
-        // Declared among the environment's data, drawn in the scene.
-        for grid in src.objects(env, P::Data) {
-            if let Some(lines) = src.infinite_grid(grid) {
-                walk.infinite_grid(&lines);
-            }
-        }
-    }
-    let env = env_object.map_or_else(Environment::default, |env| environment(src, view, env));
-    walk.scene.set_environment(env);
-    // A camera that is not in the scene leaves the choice to the scene:
-    // its first camera.
-    let camera = src
-        .object(view, P::Camera)
-        .and_then(|c| walk.ids.get(&c).copied());
-    walk.scene.set_camera(camera);
-    Built {
-        scene: walk.scene,
-        ids: walk.ids,
-        loaded: walk.loaded,
-    }
+    // One walk, kept nowhere: what a kept scene is patched to be.
+    let mut kept = SceneSync::new();
+    kept.sync([], |piece| sync::read(src, view, piece));
+    kept.into_built()
 }
 
-fn num<S: SceneSource>(s: &S, o: S::Object, p: P, default: f64) -> f32 {
+pub(super) fn num<S: SceneSource>(s: &S, o: S::Object, p: P, default: f64) -> f32 {
     s.number(o, p).unwrap_or(default) as f32
 }
 
@@ -87,7 +54,7 @@ fn int<S: SceneSource>(s: &S, o: S::Object, p: P, default: i32) -> i32 {
     s.int(o, p).unwrap_or(default)
 }
 
-fn on<S: SceneSource>(s: &S, o: S::Object, p: P, default: bool) -> bool {
+pub(super) fn on<S: SceneSource>(s: &S, o: S::Object, p: P, default: bool) -> bool {
     s.boolean(o, p).unwrap_or(default)
 }
 
@@ -170,201 +137,35 @@ pub fn camera<S: SceneSource>(s: &S, obj: S::Object) -> Option<Camera> {
     None
 }
 
-struct Walk<'s, S: SceneSource> {
-    s: &'s S,
-    /// Painted again when a texture it asked for is ready.
-    view: S::Object,
-    scene: Scene,
-    ids: HashMap<S::Object, NodeId>,
-    loaded: Vec<(NodeId, S::Object)>,
-    /// Models whose instance root or joints are other nodes, which may
-    /// come later in the walk: given once every node has its place.
-    later: Vec<(S::Object, NodeId)>,
-    /// The lights, whose scope may be a node that comes later in the walk.
-    scoped: Vec<(S::Object, NodeId)>,
-}
-
-impl<S: SceneSource> Walk<'_, S> {
-    /// The lines of an `InfiniteGrid` in the environment: the grid in
-    /// grey and, with `gridAxes`, the X axis in red and the Z axis in blue.
-    fn infinite_grid(&mut self, lines: &GridLines) {
-        let line = |mesh: &Arc<CustomGeometry>, rgb: [f32; 3]| {
-            Node::new(NodeKind::Model(Model {
-                mesh: MeshSource::Custom(mesh.clone()),
-                material: Material::Default(DefaultMaterial {
-                    diffuse_color: Color::rgb(rgb[0], rgb[1], rgb[2]),
-                    lighting: Lighting::None,
-                    cull_mode: CullMode::None,
-                    ..DefaultMaterial::default()
-                }),
-            }))
-        };
-        self.scene.add(None, line(&lines.grid, [0.5, 0.5, 0.5]));
-        let (x, z) = if lines.axes {
-            ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
-        } else {
-            ([0.5; 3], [0.5; 3])
-        };
-        self.scene.add(None, line(&lines.x_axis, x));
-        self.scene.add(None, line(&lines.z_axis, z));
-    }
-
-    fn node(&mut self, parent: Option<NodeId>, obj: S::Object) {
-        let s = self.s;
-        // Materials, environments and anything else declared among the
-        // nodes are not drawn by themselves.
-        if !s.is(obj, T::Node) || self.ids.contains_key(&obj) {
-            return;
-        }
-        let mut n = Node::new(kind(s, self.view, obj)).with_transform(transform(s, obj));
-        n.visible = on(s, obj, P::Visible, d::node::VISIBLE);
-        n.opacity = num(s, obj, P::Opacity, d::node::OPACITY);
-        let is_model = s.is(obj, T::Model);
-        if is_model {
-            n.casts_shadows = on(s, obj, P::CastsShadows, d::model::CASTS_SHADOWS);
-            n.receives_shadows = on(s, obj, P::ReceivesShadows, d::model::RECEIVES_SHADOWS);
-            n.instancing = s.object(obj, P::Instancing).and_then(|t| s.instancing(t));
-            n.depth_bias = num(s, obj, P::DepthBias, d::model::DEPTH_BIAS);
-            n.casts_reflections = on(s, obj, P::CastsReflections, true);
-            n.receives_reflections = on(s, obj, P::ReceivesReflections, false);
-        }
-        n.shadow = shadow(s, obj);
-        let id = self.scene.add(parent, n);
-        self.ids.insert(obj, id);
-        if is_model {
-            self.later.push((obj, id));
-        }
-        if s.is(obj, T::Light) {
-            self.scoped.push((obj, id));
-        }
-        if is_model && let Some(file) = mesh_file(s, self.view, obj) {
-            self.mesh_file(obj, id, &file);
-        }
-        if is_model && let Some(g) = given(s, obj) {
-            self.parts(obj, id, g.parts().iter().cloned().enumerate());
-        }
-        // A loaded model's nodes are the loader's first children. Each
-        // mesh is named by the Model the loader made for it.
-        #[cfg(feature = "gltf")]
-        if let Some(loaded) = s.loaded(obj) {
-            self.loaded(obj, id, &loaded);
-        }
-        for child in s.objects(obj, P::Data) {
-            self.node(Some(id), child);
-        }
-        // Its items, as one picture; the pick finds them by their holder.
-        if let Some((quad, holder)) = s.items_quad(self.view, obj) {
-            let q = self.scene.add(Some(id), quad);
-            self.ids.insert(holder, q);
-        }
-    }
-
-    /// Gives the models their instance roots and skins.
-    fn finish(&mut self) {
-        let s = self.s;
-        // After the walk: a scope may be declared after its light.
-        for (obj, id) in std::mem::take(&mut self.scoped) {
-            let scope = s
-                .object(obj, P::Scope)
-                .and_then(|o| self.ids.get(&o).copied());
-            if let Some(node) = self.scene.node_mut(id) {
-                node.scope = scope;
-            }
-        }
-        for (obj, id) in std::mem::take(&mut self.later) {
-            let root = s
-                .object(obj, P::InstanceRoot)
-                .and_then(|r| self.ids.get(&r).copied());
-            let skin = skin(s, obj, &self.ids);
-            if let Some(node) = self.scene.node_mut(id) {
-                if let Some(instancing) = node.instancing.as_mut() {
-                    instancing.root = root;
-                }
-                node.skin = skin;
-            }
-        }
-    }
-
-    /// Adds the sub-meshes of the model `obj`'s file under its node `id`, a
-    /// scene node each, as a `RuntimeLoader` adds a file's primitives: each is
-    /// culled, sorted and drawn with its own material, and the model's own
-    /// settings hold for all of them. The shared geometries are one upload.
-    fn mesh_file(&mut self, obj: S::Object, id: NodeId, file: &MeshFile) {
-        let s = self.s;
-        let weights: Vec<f32> = s
-            .objects(obj, P::MorphTargets)
-            .into_iter()
-            .map(|t| num(s, t, P::Weight, d::morph_target::WEIGHT))
-            .collect();
-        let parts = file.parts.iter().enumerate();
-        let parts = parts.filter(|(_, part)| !part.empty);
-        self.parts(obj, id, parts.map(|(i, _)| (i, file.morphed(i, &weights))));
-    }
-
-    /// Adds what a model's mesh is made of under its node `id`, each with
-    /// the material of its place.
-    fn parts(
-        &mut self,
-        obj: S::Object,
-        id: NodeId,
-        parts: impl Iterator<Item = (usize, Arc<CustomGeometry>)>,
-    ) {
-        let s = self.s;
-        let materials = s.objects(obj, P::Materials);
-        let (casts, receives, instancing) = match self.scene.node_mut(id) {
-            Some(n) => (n.casts_shadows, n.receives_shadows, n.instancing.clone()),
-            None => return,
-        };
-        for (i, mesh) in parts {
-            // "If the number of materials is less than the sub-meshes, the
-            // last material in the list is used for subsequent sub-meshes."
-            let m = materials.get(i).or(materials.last()).copied();
-            let Some(material) = material_of(s, self.view, m) else {
-                continue;
-            };
-            let mut n = Node::new(NodeKind::Model(Model {
-                mesh: MeshSource::Custom(mesh),
-                material,
-            }));
-            n.casts_shadows = casts;
-            n.receives_shadows = receives;
-            n.instancing.clone_from(&instancing);
-            let child = self.scene.add(Some(id), n);
-            self.loaded.push((child, obj));
-            self.later.push((obj, child));
-        }
-    }
-
-    /// Adds the loader `obj`'s file under its node `id`. The loader's
-    /// table, if it has one, copies the whole file: each mesh is copied
-    /// in the loader's space.
-    #[cfg(feature = "gltf")]
-    fn loaded(&mut self, obj: S::Object, id: NodeId, loaded: &super::Loaded<S::Object>) {
-        let s = self.s;
-        let placed = loaded.asset.add_to(&mut self.scene, id);
-        let instancing = s
-            .object(obj, P::Instancing)
-            .and_then(|t| s.instancing(t))
-            .map(|i| crate::instancing::Instancing {
-                root: Some(id),
-                ..i
-            });
-        for (index, model) in placed.models {
-            if let Some(i) = &instancing
-                && let Some(node) = self.scene.node_mut(model)
-            {
-                node.instancing = Some(i.clone());
-            }
-            if let Some((_, m)) = loaded.models.iter().find(|(n, _)| *n == index) {
-                self.loaded.push((model, *m));
-            }
-        }
-    }
+/// The lines of an `InfiniteGrid` in the environment: the grid in grey
+/// and, with `gridAxes`, the X axis in red and the Z axis in blue.
+pub(super) fn grid_lines(lines: &GridLines) -> [Node; 3] {
+    let line = |mesh: &Arc<CustomGeometry>, rgb: [f32; 3]| {
+        Node::new(NodeKind::Model(Model {
+            mesh: MeshSource::Custom(mesh.clone()),
+            material: Material::Default(DefaultMaterial {
+                diffuse_color: Color::rgb(rgb[0], rgb[1], rgb[2]),
+                lighting: Lighting::None,
+                cull_mode: CullMode::None,
+                ..DefaultMaterial::default()
+            }),
+        }))
+    };
+    let (x, z) = if lines.axes {
+        ([1.0, 0.0, 0.0], [0.0, 0.0, 1.0])
+    } else {
+        ([0.5; 3], [0.5; 3])
+    };
+    [
+        line(&lines.grid, [0.5, 0.5, 0.5]),
+        line(&lines.x_axis, x),
+        line(&lines.z_axis, z),
+    ]
 }
 
 /// A node's place. `position` and `rotation` are what Qt keeps; a graph
 /// that holds only `x`, `y`, `z` or `eulerRotation` is read through those.
-fn transform<S: SceneSource>(s: &S, obj: S::Object) -> Transform {
+pub(super) fn transform<S: SceneSource>(s: &S, obj: S::Object) -> Transform {
     let position = s.vector3d(obj, P::Position).unwrap_or_else(|| {
         let [x, y, z] = d::node::POSITION;
         Vec3::new(
@@ -390,7 +191,7 @@ fn transform<S: SceneSource>(s: &S, obj: S::Object) -> Transform {
 
 /// What the light `obj` casts shadows with, if it is a light that casts
 /// them.
-fn shadow<S: SceneSource>(s: &S, obj: S::Object) -> Option<Shadow> {
+pub(super) fn shadow<S: SceneSource>(s: &S, obj: S::Object) -> Option<Shadow> {
     use d::light as l;
     if !s.is(obj, T::Light) || !on(s, obj, P::CastsShadow, l::CASTS_SHADOW) {
         return None;
@@ -431,7 +232,7 @@ fn shadow<S: SceneSource>(s: &S, obj: S::Object) -> Option<Shadow> {
     })
 }
 
-fn kind<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> NodeKind {
+pub(super) fn kind<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> NodeKind {
     if s.is(obj, T::Model) {
         return model(s, view, obj).map_or(NodeKind::Group, NodeKind::Model);
     }
@@ -533,7 +334,11 @@ fn model<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Model
 
 /// What a mesh part is drawn with: `m`, or the default without one. `None`
 /// leaves the part out.
-fn material_of<S: SceneSource>(s: &S, view: S::Object, m: Option<S::Object>) -> Option<Material> {
+pub(super) fn material_of<S: SceneSource>(
+    s: &S,
+    view: S::Object,
+    m: Option<S::Object>,
+) -> Option<Material> {
     match m {
         // Snippets that make no program leave the model out, as Qt does.
         Some(m) if s.is(m, T::CustomMaterial) => s.custom_material(view, m).map(Material::Custom),
@@ -542,7 +347,7 @@ fn material_of<S: SceneSource>(s: &S, view: S::Object, m: Option<S::Object>) -> 
 }
 
 /// The geometry the model `obj` was given.
-fn given<S: SceneSource>(s: &S, obj: S::Object) -> Option<Arc<CustomGeometry>> {
+pub(super) fn given<S: SceneSource>(s: &S, obj: S::Object) -> Option<Arc<CustomGeometry>> {
     s.object(obj, P::Geometry)
         .filter(|g| s.is(*g, T::Geometry))
         .and_then(|g| s.geometry(g))
@@ -550,7 +355,11 @@ fn given<S: SceneSource>(s: &S, obj: S::Object) -> Option<Arc<CustomGeometry>> {
 
 /// The file the model `obj` draws: not one whose `geometry` wins, nor a
 /// built-in mesh, which is named by its fragment.
-fn mesh_file<S: SceneSource>(s: &S, view: S::Object, obj: S::Object) -> Option<Arc<MeshFile>> {
+pub(super) fn mesh_file<S: SceneSource>(
+    s: &S,
+    view: S::Object,
+    obj: S::Object,
+) -> Option<Arc<MeshFile>> {
     if s.object(obj, P::Geometry)
         .is_some_and(|g| s.is(g, T::Geometry))
         || s.url(obj, P::Source)?.contains('#')
@@ -794,36 +603,12 @@ pub fn uv_transform<S: SceneSource>(s: &S, obj: S::Object) -> UvTransform {
     }
 }
 
-/// The joints a model's vertices follow: its `skin`'s, else its
-/// `skeleton`'s. `None` while a joint is not in the scene.
-fn skin<S: SceneSource>(s: &S, obj: S::Object, ids: &HashMap<S::Object, NodeId>) -> Option<Skin> {
-    let (joints, inverse_bind) = if let Some(sk) = s.object(obj, P::Skin)
-        && s.is(sk, T::Skin)
-    {
-        (
-            s.object_slots(sk, P::Joints),
-            s.matrices(sk, P::InverseBindPoses),
-        )
-    } else if let Some(sk) = s.object(obj, P::Skeleton)
-        && s.is(sk, T::Skeleton)
-    {
-        (skeleton_joints(s, sk), s.matrices(obj, P::InverseBindPoses))
-    } else {
-        return None;
-    };
-    let joints = joints
-        .into_iter()
-        .map(|j| ids.get(&j?).copied())
-        .collect::<Option<Vec<_>>>()?;
-    Some(Skin {
-        joints,
-        inverse_bind,
-    })
-}
-
 /// The `Joint`s under `skeleton`, at their indices; a joint whose
 /// `skeletonRoot` is another skeleton is that one's.
-fn skeleton_joints<S: SceneSource>(s: &S, skeleton: S::Object) -> Vec<Option<S::Object>> {
+pub(super) fn skeleton_joints<S: SceneSource>(
+    s: &S,
+    skeleton: S::Object,
+) -> Vec<Option<S::Object>> {
     let mut found = Vec::new();
     let mut stack = vec![skeleton];
     while let Some(n) = stack.pop() {
@@ -851,7 +636,7 @@ fn skeleton_joints<S: SceneSource>(s: &S, skeleton: S::Object) -> Vec<Option<S::
     joints
 }
 
-fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object) -> Environment {
+pub(super) fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object) -> Environment {
     use d::scene_environment as se;
     if !s.is(env, T::SceneEnvironment) {
         return Environment::default();
