@@ -59,7 +59,12 @@ elif [ -s "$types" ]; then
   did+=("Qt's type table: kept $types (mise run types -- --qt $qt_qml regenerates it)")
 else
   echo "setup: Qt's type table from $qt_qml" >&2
-  mise run types -- --qt "$qt_qml"
+  if [ -n "${QML_IMPORT_PATH:-}" ]; then
+    # qmltypes reads every root of QML_IMPORT_PATH, then Qt's own, itself.
+    mise run types
+  else
+    mise run types -- --qt "$qt_qml"
+  fi
   did+=("Qt's type table from $qt_qml into $types (git-ignored)")
 fi
 

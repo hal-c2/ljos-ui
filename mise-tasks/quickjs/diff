@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Diff the vendored rquickjs-sys and rquickjs-core forks against the crates.io releases they are based on"
-#USAGE arg "[args]..." var=#true help="Options for diff (e.g. --stat, -q)"
+#USAGE arg "[args]..." var=#true help="Options for diff (e.g. --brief, -u)"
 set -euo pipefail
 # What vendor/QUICKJS.md says the patch is, checked against what it really is.
 # The fork keeps only the files its build reads (vendor/QUICKJS.md), so what

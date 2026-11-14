@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run a QML file on ljos from this checkout with ljos run --watch, so a save shows at once and keeps the app's state: dev [file.qml] [ljos run args…] (bench/feed.qml by default)"
 #USAGE arg "[file]" default="bench/feed.qml" help="QML file to run, relative to where mise was started"
-#USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file (--mcp=inspect,input, --top, -- then the app's own arguments)"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file (--mcp=inspect,input, --top); the app's own arguments go after -- --, as mise takes the first --"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # Read from the raw arguments, as mise's own parsing drops a `--` that
