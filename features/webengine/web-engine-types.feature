@@ -120,8 +120,22 @@ Feature: The types of QtWebEngine
     And the property "storageName" of "root" is ""
     And the property "same" of "root" is true
 
-  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy @api-QtWebEngine.WebEngineProfile.persistentStoragePath @api-QtWebEngine.WebEngineProfile.cachePath
-  Scenario: A profile on disk keeps answers on disk, and the places it is given
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy
+  Scenario: The permissions policies are numbered as Qt numbers them
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        property string policies: [WebEngineProfile.AskEveryTime, WebEngineProfile.StoreInMemory,
+          WebEngineProfile.StoreOnDisk].join(" ")
+      }
+      """
+    Then the property "policies" of "root" is "0 1 2"
+
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy
+  Scenario: A profile on disk keeps answers on disk unless told otherwise
     Given the QML:
       """qml
       import QtQuick
@@ -129,22 +143,50 @@ Feature: The types of QtWebEngine
       Item {
         objectName: "root"
         WebEngineProfile { id: disk; storageName: "Kept"; offTheRecord: false }
-        WebEngineProfile {
-          id: asking; storageName: "Asking"; offTheRecord: false
-          persistentStoragePath: "/data/app/browser"; cachePath: "/cache/app/browser"
-          persistentPermissionsPolicy: WebEngineProfile.AskEveryTime
-        }
-        property string policies: [WebEngineProfile.AskEveryTime, WebEngineProfile.StoreInMemory,
-          WebEngineProfile.StoreOnDisk].join(" ")
-        property int kept: disk.persistentPermissionsPolicy
-        property int asks: asking.persistentPermissionsPolicy
-        property string places: asking.persistentStoragePath + " " + asking.cachePath
+        property int policy: disk.persistentPermissionsPolicy
       }
       """
-    Then the property "policies" of "root" is "0 1 2"
-    And the property "kept" of "root" is 2
-    And the property "asks" of "root" is 0
-    And the property "places" of "root" is "/data/app/browser /cache/app/browser"
+    Then the property "policy" of "root" is 2
+
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy
+  Scenario Outline: A profile on disk keeps answers as its policy says
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        WebEngineProfile {
+          id: disk; storageName: "Told"; offTheRecord: false
+          persistentPermissionsPolicy: WebEngineProfile.<policy>
+        }
+        property int policy: disk.persistentPermissionsPolicy
+      }
+      """
+    Then the property "policy" of "root" is <number>
+
+    Examples:
+      | policy        | number |
+      | AskEveryTime  | 0      |
+      | StoreInMemory | 1      |
+      | StoreOnDisk   | 2      |
+
+  @api-QtWebEngine.WebEngineProfile.persistentStoragePath @api-QtWebEngine.WebEngineProfile.cachePath
+  Scenario: A profile on disk holds the places it is given
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        WebEngineProfile {
+          id: placed; storageName: "Placed"; offTheRecord: false
+          persistentStoragePath: "/data/app/browser"; cachePath: "/cache/app/browser"
+        }
+        property string places: placed.persistentStoragePath + " " + placed.cachePath
+      }
+      """
+    Then the property "places" of "root" is "/data/app/browser /cache/app/browser"
 
   # Qt reads back at most StoreInMemory while a profile is off the record,
   # and what it was given again once it is on disk (qml6 6.12).

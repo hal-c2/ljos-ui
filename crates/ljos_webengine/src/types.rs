@@ -419,6 +419,18 @@ pub struct WebEngineProfile {
     /// on disk.
     #[qml(skip)]
     asked_policy: Cell<i32>,
+    /// The policy is being made to follow the profile going on or off the
+    /// record: that write passes the setter too, and is not one asked for.
+    #[qml(skip)]
+    following: Cell<bool>,
+    /// When it was made among the profiles of this thread: the first one
+    /// on disk is where the web engine keeps them all.
+    #[qml(skip)]
+    made: u64,
+}
+
+thread_local! {
+    static PROFILES_MADE: Cell<u64> = const { Cell::new(0) };
 }
 
 impl Default for WebEngineProfile {
@@ -439,6 +451,11 @@ impl Default for WebEngineProfile {
             download_path: String::new(),
             spell_check_enabled: false,
             asked_policy: Cell::new(permissions_policy::STORE_ON_DISK),
+            following: Cell::new(false),
+            made: PROFILES_MADE.with(|n| {
+                n.set(n.get() + 1);
+                n.get()
+            }),
         }
     }
 }
@@ -488,6 +505,9 @@ impl WebEngineProfile {
 
     fn take_policy(cx: &Cx, asked: i32) -> Option<i32> {
         cx.with(|p: &Self| {
+            if p.following.get() {
+                return asked;
+            }
             p.asked_policy.set(asked);
             p.kept_policy()
         })
@@ -503,10 +523,17 @@ impl WebEngineProfile {
             return;
         };
         if now != kept {
+            let _ = cx.with(|p: &Self| p.following.set(true));
             let _ = cx
                 .engine
                 .set_internal(cx.this, Self::PERSISTENT_PERMISSIONS_POLICY, kept);
+            let _ = cx.with(|p: &Self| p.following.set(false));
         }
+    }
+
+    /// Which of the profiles made on this thread it is, the first one 1.
+    pub(crate) fn made(e: &Engine, me: ObjectId) -> u64 {
+        e.with::<Self, _>(me, |p| p.made).unwrap_or(u64::MAX)
     }
 
     pub(crate) fn spec(e: &Engine, me: ObjectId) -> ProfileSpec {
