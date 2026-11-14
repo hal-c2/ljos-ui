@@ -35,8 +35,8 @@ pub(crate) fn wait(e: &Engine, view: ObjectId, obj: ObjectId) {
             };
             // Swept when the map has doubled: each object costs its entry
             // once, not a walk of all the others.
+            let mut gone = Vec::new();
             if reg.nodes.borrow().len() >= reg.swept.get().max(32) * 2 {
-                let mut gone = Vec::new();
                 reg.nodes.borrow_mut().retain(|o, n| {
                     let keep = e.is_alive(*o) && e.graph().is_alive(*n);
                     // One in the view's scope outlives its object.
@@ -45,12 +45,13 @@ pub(crate) fn wait(e: &Engine, view: ObjectId, obj: ObjectId) {
                     }
                     keep
                 });
-                // Not while the map is borrowed: a dispose may run reads
-                // that wait again.
-                e.graph().dispose_all(&gone);
                 reg.swept.set(reg.nodes.borrow().len());
             }
             reg.nodes.borrow_mut().insert(obj, n);
+            // Not while the map is borrowed, and once `obj`'s node is in
+            // it: a dispose may run reads that wait again, on `obj` too,
+            // and they must find this node rather than put in their own.
+            e.graph().dispose_all(&gone);
             n
         }
     };
