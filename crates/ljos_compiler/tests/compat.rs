@@ -381,6 +381,31 @@ fn a_qmldir_with_no_module_line_leaves_qt_s_members_to_qt() {
     assert!(!source.contains("App.platform"), "{source}");
 }
 
+/// A project opened reads its directories as they are reached
+/// (`ljos run --compat lower`): a qmldir with no `module` line names its
+/// directory's types there too.
+#[test]
+fn a_project_opened_reads_a_qmldir_with_no_module_line_as_its_directory_s_types() {
+    let root = tempfile::tempdir().unwrap();
+    let write = |path: &str, text: &str| {
+        let path = root.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, text).unwrap();
+    };
+    write("Site/Application.qml", BUTTON);
+    write("Site/qmldir", "App 1.0 Application.qml\n");
+    write(
+        "Main.qml",
+        "import QtQuick\nimport \"Site\"\nItem { x: Qt.platform.os.length }\n",
+    );
+    let mut project = Project::open(root.path(), Runtime::new()).expect("readable");
+    project.set_compat(true);
+    project.reach("Main");
+
+    let source = project.source("Main").expect("Main");
+    assert!(!source.contains("App.platform"), "{source}");
+}
+
 /// A qmldir told after a file that imports its directory by path was
 /// lowered may name the type that file brought in: it is lowered again.
 #[test]
