@@ -310,6 +310,8 @@ fn a_file_binding_on_an_inline_component_of_another_keeps_it() {
     ] {
         let files = std::collections::BTreeMap::from([
             ("app/Gauge".to_string(), alone(gauge)),
+            // A file named as the component is not what `Kit.Dial` names.
+            ("app/Dial".to_string(), alone(gauge)),
             (
                 "app/Kit".to_string(),
                 alone(&format!("import QtQuick\n{kit}\n")),
@@ -335,6 +337,11 @@ fn a_file_binding_on_an_inline_component_of_another_keeps_it() {
             (None, Outcome::Lowered(_)) => {}
             (_, outcome) => panic!("{kit} / {main}: {outcome:?}"),
         }
+        assert!(
+            matches!(outcomes["app/Dial"], Outcome::Lowered(_)),
+            "{main}: {:?}",
+            outcomes["app/Dial"]
+        );
     }
 }
 
@@ -632,4 +639,44 @@ fn a_type_of_the_project_imported_after_the_controls_is_the_projects() {
         "import QtQuick\nimport Gauges\nimport QtQuick.Controls\nItem { Label { color: \"red\" } }\n",
     );
     assert!(text.contains("Label { color: \"red\" }"), "{text}");
+}
+
+/// A type qualified by a namespace the file imports is that module's, by
+/// its last name; one qualified by another name is an inline component of
+/// the file of that name.
+#[test]
+fn a_namespace_qualifies_a_modules_type_and_a_file_name_its_component() {
+    let found = crate::group::references(
+        "import QtQuick as QQ\nimport QtQuick.Controls as C\n\
+         QQ.Item { component Dial: QQ.Rectangle {} C.Button { text: \"a\" } Kit.Dial { color: \"red\" } }\n",
+    );
+    assert_eq!(found.components[0].base, "Rectangle");
+    for bound in [("Button", "text"), ("Kit.Dial", "color")] {
+        assert!(
+            found
+                .bound
+                .contains(&(bound.0.to_string(), bound.1.to_string())),
+            "{:?}",
+            found.bound
+        );
+    }
+    assert!(
+        !found.bound.iter().any(|(on, _)| on == "Dial"),
+        "{:?}",
+        found.bound
+    );
+    for ty in ["Button", "Item", "Kit"] {
+        assert!(
+            found.types.iter().any(|t| t == ty),
+            "{ty}: {:?}",
+            found.types
+        );
+    }
+    for ty in ["C", "QQ", "Dial"] {
+        assert!(
+            !found.types.iter().any(|t| t == ty),
+            "{ty}: {:?}",
+            found.types
+        );
+    }
 }
