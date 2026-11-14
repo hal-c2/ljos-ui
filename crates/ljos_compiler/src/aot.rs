@@ -138,8 +138,10 @@ fn statement(s: &Statement<'_>, outermost: bool) -> Result<Option<Stmt>, Refused
                     return Err(refused("statement", "var in a block"));
                 }
                 VariableDeclarationKind::Var | VariableDeclarationKind::Let => false,
-                VariableDeclarationKind::Const => true,
-                _ => return Err(refused("statement", "using")),
+                VariableDeclarationKind::Const | VariableDeclarationKind::Using => true,
+                VariableDeclarationKind::AwaitUsing => {
+                    return Err(refused("statement", "await using"));
+                }
             };
             let [declarator] = &it.declarations[..] else {
                 return Err(refused("statement", "more than one name declared at once"));
@@ -147,6 +149,15 @@ fn statement(s: &Statement<'_>, outermost: bool) -> Result<Option<Stmt>, Refused
             let BindingPattern::BindingIdentifier(id) = &declarator.id else {
                 return Err(refused("destructuring", ""));
             };
+            if it.kind == VariableDeclarationKind::Using {
+                let Some(init) = &declarator.init else {
+                    return Err(refused("statement", "using without a value"));
+                };
+                return Ok(Some(Stmt::Using {
+                    name: id.name.to_string(),
+                    init: expr(init)?,
+                }));
+            }
             return Ok(Some(Stmt::Let {
                 name: id.name.to_string(),
                 constant,

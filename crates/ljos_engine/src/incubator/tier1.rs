@@ -365,7 +365,7 @@ impl Program {
                 Op::Call {
                     dst, base, count, ..
                 } => reg(dst) && span(base, usize::from(count)),
-                Op::Check { src, .. } => reg(src),
+                Op::Check { src, .. } | Op::Nullish { src } => reg(src),
                 Op::Guard { obj, name: n, expr } => reg(obj) && name(n) && expr.index() < exprs,
                 Op::Target {
                     dst,

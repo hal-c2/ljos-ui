@@ -97,7 +97,7 @@ one. Statuses were read from the proposals' repositories on 2026-11-13.
 | Proposal | Status | Ljós's position |
 |---|---|---|
 | [Records & Tuples](https://github.com/tc39/proposal-record-tuple) | Withdrawn (TC39, 2025-04-14). [Composites](https://github.com/tc39/proposal-composites), which took its place, reached stage 2 on 2026-09-30. | Not taken. Ljós waits for Composites to reach stage 3 before it adopts value-equal objects, and adds no form of its own meanwhile. |
-| [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) (`using`) | Stage 4 (TC39, 2026-05-19). | Adopted for a resource whose lifetime is a block: `using`, `Symbol.dispose` and `DisposableStack`. A Controller's `attached` and `detached` (§4.20) stay for a lifetime tied to an object. The checker types the disposables, `DisposableStack` and `AsyncDisposableStack`, and holds what a `using` declaration is given to be disposable, `null` or `undefined` (§4.22). Only tier 2 (QuickJS) runs them: tier 1 and AOT refuse a `using` declaration, as they refuse `try`, so a binding that uses one stays in tier 2. |
+| [Explicit Resource Management](https://github.com/tc39/proposal-explicit-resource-management) (`using`) | Stage 4 (TC39, 2026-05-19). | Adopted for a resource whose lifetime is a block: `using`, `Symbol.dispose` and `DisposableStack`. A Controller's `attached` and `detached` (§4.20) stay for a lifetime tied to an object. The checker types the disposables, `DisposableStack` and `AsyncDisposableStack`, and holds what a `using` declaration is given to be disposable, `null` or `undefined` (§4.22). Tier 2 (QuickJS) runs them all. Tier 1 runs a `using` declaration whose value is `null` or `undefined` and hands any other to tier 2; AOT runs one whose value is typed `undefined`. Both refuse `await using`. |
 | [Decorators](https://github.com/tc39/proposal-decorators) | Stage 3. | Not taken. Decorators apply to classes and their members, and a Ljós script has no classes (§5.1). |
 
 ## 2. What the evidence says
@@ -2011,10 +2011,12 @@ names (§5.1). A pattern that names the object asks it, as the proposal's
 `InvokeCustomMatcher` does: it is called with the subject and a hint,
 `"boolean"` where the pattern is the bare name and `"list"` where it is
 an extractor. `false` is no match; for the hint `"list"`, anything else
-must be iterable, or it is a `TypeError`, and its items are matched as
-an array pattern's. As an extractor, a function in place of the object
-is called with the subject and `"list"`, so a script's predicate can be
-one too; as a bare name it is called with the subject alone:
+must be an iterable object (an array, a `Set`, a generator, or a
+function with an iterator), or it is a `TypeError`, even a string, which
+is iterable but no object; its items are matched as an array
+pattern's. As an extractor, a function in place of the object is called
+with the subject and `"list"`, so a script's predicate can be one too;
+as a bare name it is called with the subject alone:
 
 ```ts
 const Point = {
@@ -3055,9 +3057,19 @@ DECISION: `use` and `adopt` are generic at the call rather than declared
 with a type parameter: the checker has no generic methods on its
 built-in classes, and the call is where the type is known.
 
-DECISION: tier 1 and AOT refuse a `using` declaration, as they refuse
-`try` and `throw`: disposal is a `finally` with an error kept aside. A
-binding or handler that uses one runs in tier 2.
+DECISION: tier 1 and AOT run a `using` declaration only where its value
+leaves nothing to dispose of. No value tier 1 holds has a
+`[Symbol.dispose]()` method, so it runs one whose value is `null` or
+`undefined`, checked before the binding's effect, and hands any other
+value to tier 2, which disposes of it or throws. AOT has no type for
+`null`, so it compiles one whose value is typed `undefined` and refuses
+the rest. Disposing of a value is a `finally` with an error kept aside,
+which neither runs, so both refuse `await using` as they refuse `try`.
+
+Nothing assigns to a `const`, to what a `using` declaration names, or to
+what a module imports: `size = 3`, `size++`, `[n, size] = …`,
+`[n = (size = 3)] = [n]` or `held = undefined` is `ts-readonly`, with the
+reason the name keeps its value.
 
 ## 5. The checker
 
@@ -3194,6 +3206,8 @@ How it holds the other rules:
   readonly member does not go where that member may be written, which
   TypeScript lets by. A QML property, a `list<T>` property given a new
   array, and a model stay writable (Q6).
+  A name declared with `const` or `using`, or imported, is not assigned
+  or updated, by itself or in a destructuring assignment (§4.22).
 - `ts-index-undefined`: `xs[i]` is `T | undefined`. Where it goes to a
   place that takes `T` only, or a member of it is read or it is called,
   the error says it may be past the end. Reading a member of, or calling,

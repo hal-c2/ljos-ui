@@ -586,6 +586,31 @@ impl<'p> Gen<'p> {
                 }
                 Ok(Flow::Continues)
             }
+            // Only `undefined` has a type here and nothing to dispose of:
+            // a number, a bool or a string is a `TypeError` where it is
+            // declared, which the dynamic tiers throw.
+            Stmt::Using { name, init } => {
+                if self.visible(name) {
+                    return Err(no("statement", "a variable that shadows a name"));
+                }
+                let init = self.expr(init, Want::Value)?;
+                if init.ty != Ty::Void {
+                    return Err(no(
+                        "type",
+                        format!("{} disposed of by using {name}", init.ty.name()),
+                    ));
+                }
+                let _ = writeln!(out, "let () = {};", init.code);
+                let local = Local {
+                    rust: "()".into(),
+                    ty: Ty::Void,
+                    constant: true,
+                };
+                if let Some(scope) = self.frame().scopes.last_mut() {
+                    scope.insert(name.clone(), local);
+                }
+                Ok(Flow::Continues)
+            }
             Stmt::If {
                 test,
                 then,
@@ -634,10 +659,10 @@ impl<'p> Gen<'p> {
         // A case's variable belongs to the whole switch and is seen by the
         // cases after it, but each case is its own Rust block; hoisting it
         // would lose the error a read before its declaration throws.
-        if cases
-            .iter()
-            .any(|(_, body)| body.iter().any(|s| matches!(s, Stmt::Let { .. })))
-        {
+        if cases.iter().any(|(_, body)| {
+            body.iter()
+                .any(|s| matches!(s, Stmt::Let { .. } | Stmt::Using { .. }))
+        }) {
             return Err(no("statement", "a variable declared in a switch case"));
         }
         let on = self.expr(on, Want::Value)?;
