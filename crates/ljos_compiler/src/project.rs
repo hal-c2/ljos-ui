@@ -85,8 +85,9 @@ pub struct Project<O> {
     native: BTreeMap<String, Vec<String>>,
     /// Every module told to the front end, with QML types or none.
     described: BTreeSet<String>,
-    /// The directories a `qmldir` or `CMakeLists.txt` describes a module
-    /// in, by key: their types are what that says, not their files.
+    /// The directories a `qmldir` (with a `module` line or not) or a
+    /// `CMakeLists.txt` describes, by key: their types are what that says,
+    /// not their files.
     module_dirs: BTreeSet<String>,
     /// Names only the context an instance is made in has at run time. Known
     /// once every file is in.
@@ -545,13 +546,15 @@ impl<O: TypeOracle> Project<O> {
     }
 
     /// What the `qmldir` file of the directory `dir` (a key, empty for the
-    /// root) says: the types of the module it names. One that names no
-    /// module says nothing a file needs to be told, as the files of a
-    /// directory are its types already. Add the files it names first.
+    /// root) says: the types of the module it names. Add the files it names
+    /// first.
     pub fn add_qmldir(&mut self, dir: &str, text: &str) {
-        if let Some(module) = discover::qmldir(text)
-            && self.add_module(dir, &module)
-        {
+        // A directory import needs no `module` line: a qmldir without one
+        // still names the directory's types, which are no longer its files.
+        let described = self.module_dirs.insert(dir.to_string())
+            && self.compat_changed(qml_compat::Changed::Dir(dir));
+        let module = discover::qmldir(text).is_some_and(|module| self.add_module(dir, &module));
+        if described || module {
             self.settle_compat();
         }
     }
@@ -760,6 +763,11 @@ impl<O: TypeOracle> Project<O> {
             let Some(dir_key) = key(dir) else {
                 continue;
             };
+            // A qmldir names the directory's types, with a `module` line
+            // or without one.
+            if names.iter().any(|name| name == "qmldir") {
+                self.module_dirs.insert(dir_key.clone());
+            }
             for module in described(dir, names).0 {
                 found.push((dir_key.clone(), dir.clone(), module));
             }
