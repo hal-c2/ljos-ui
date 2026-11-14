@@ -160,6 +160,10 @@ fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
             Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
         ),
         (
+            "Dial { id: dial } Binding { target: (dial); property: \"color\"; value: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
             "Dial { id: dial } Binding { dial.color: \"red\" }",
             Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
         ),
@@ -679,4 +683,95 @@ fn a_namespace_qualifies_a_modules_type_and_a_file_name_its_component() {
             found.types
         );
     }
+}
+
+/// A file left as it is that is built on a lowered one has its names: what
+/// a file binds on it is bound on the lowered one, through any number of
+/// such files, unless one declares the name itself.
+#[test]
+fn a_file_binding_on_a_wrapper_left_as_it_is_keeps_what_it_is_built_on() {
+    for (wrappers, main, held) in [
+        (
+            vec![("Bridge", "Swatch { }")],
+            "Bridge { color: \"red\" }",
+            true,
+        ),
+        (
+            vec![("Mid", "Swatch { }"), ("Bridge", "Mid { }")],
+            "Bridge { onColorChanged: {} }",
+            true,
+        ),
+        (vec![("Bridge", "Swatch { }")], "Bridge { width: 4 }", false),
+        (
+            vec![("Bridge", "Swatch { property color color }")],
+            "Bridge { color: \"red\" }",
+            false,
+        ),
+    ] {
+        let mut files = std::collections::BTreeMap::from([
+            (
+                "app/Swatch".to_string(),
+                alone("import QtQuick\nRectangle { }\n"),
+            ),
+            (
+                "app/Main".to_string(),
+                alone(&format!("import Ljos.Ui\nItem {{ {main} }}\n")),
+            ),
+        ]);
+        for (name, source) in &wrappers {
+            files.insert(format!("app/{name}"), alone(&format!("{source}\n")));
+            assert!(
+                matches!(files[&format!("app/{name}")].outcome, Outcome::Unchanged),
+                "{source}"
+            );
+        }
+        let outcomes = group(&files);
+        match (held, &outcomes["app/Swatch"]) {
+            (true, Outcome::Kept(kept)) => assert!(
+                kept.to_string()
+                    .starts_with("`Main.qml` is left as it is and binds `"),
+                "{main}: {kept}"
+            ),
+            (false, Outcome::Lowered(_)) => {}
+            (_, outcome) => panic!("{wrappers:?} / {main}: {outcome:?}"),
+        }
+    }
+}
+
+/// Where two files beside one may be its root, as two imported
+/// directories have a file of that name, what either renames counts.
+#[test]
+fn a_root_two_files_may_be_is_read_through_either() {
+    let files = std::collections::BTreeMap::from([
+        (
+            "app/a/Dial".to_string(),
+            alone("import QtQuick\nItem { }\n"),
+        ),
+        (
+            "app/b/Dial".to_string(),
+            alone("import QtQuick\nRectangle { }\n"),
+        ),
+        (
+            "app/Wrapper".to_string(),
+            alone("import QtQuick\nimport \"a\"\nimport \"b\"\nDial { }\n"),
+        ),
+        (
+            "app/Main".to_string(),
+            alone("import Ljos.Ui\nItem { Wrapper { color: \"red\" } }\n"),
+        ),
+    ]);
+    assert!(
+        matches!(files["app/Wrapper"].outcome, Outcome::Lowered(_)),
+        "{:?}",
+        files["app/Wrapper"].outcome
+    );
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Wrapper"] else {
+        panic!("{:?}", outcomes["app/Wrapper"]);
+    };
+    assert!(
+        kept.to_string()
+            .starts_with("`Main.qml` is left as it is and binds `color` on it"),
+        "{kept}"
+    );
 }

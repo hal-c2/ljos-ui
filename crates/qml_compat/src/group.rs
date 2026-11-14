@@ -331,8 +331,16 @@ impl<'f, 's> Walk<'f, 's> {
 
     /// The type of the object `target` names by its id.
     fn target(&self, value: &QmlBindingValue<'_>) -> Option<&'f str> {
-        match value {
-            QmlBindingValue::Expression(Expression::Identifier(id)) => self.of(&id.name),
+        let QmlBindingValue::Expression(expression) = value else {
+            return None;
+        };
+        let mut expression = expression;
+        // `target: (dial)` is the parser's parenthesized expression.
+        while let Expression::ParenthesizedExpression(inner) = expression {
+            expression = &inner.expression;
+        }
+        match expression {
+            Expression::Identifier(id) => self.of(&id.name),
             _ => None,
         }
     }
@@ -632,7 +640,8 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
 /// imports no Qt module the pass lowers): that one binds on it a name its lowering
 /// renames (`color` on a `Dial` whose root is a `Rectangle`, which Ljós's
 /// calls `fill`), in a binding, a `Behavior on color`, a grouped property,
-/// or a `PropertyChanges` or `Binding` whose `target` is the `Dial`'s id.
+/// or a `PropertyChanges` or `Binding` whose `target` is the `Dial`'s id;
+/// also on a file left as it is that is built on it, through such files.
 /// What a script of that file sets is not read, nor a target that is no id
 /// of the file: `ljos check` says it once the file is lowered.
 fn bound_as_qt(
@@ -641,27 +650,98 @@ fn bound_as_qt(
     uses: &[BTreeSet<usize>],
     at: usize,
 ) -> Option<Cause> {
-    let ty = keys[at].rsplit('/').next().unwrap_or(keys[at]);
+    let wrappers = wrappers(files, keys, uses, at);
     files.values().enumerate().find_map(|(by, user)| {
-        if !matches!(user.outcome, Outcome::Unchanged) || !uses[by].contains(&at) {
+        if !matches!(user.outcome, Outcome::Unchanged) {
             return None;
         }
-        user.references.bound.iter().find_map(|(on, name)| {
-            let depth = keys.len();
-            let (qt, now) = if on == ty {
-                renamed(files, keys, uses, at, name, depth)?
-            } else {
-                let component = on.strip_prefix(ty)?.strip_prefix('.')?;
-                component_renamed(files, keys, uses, at, component, name, depth)?
-            };
-            Some(Cause::BoundAsQt {
-                by: from_dir_of(keys[at], keys[by]).to_owned(),
-                name: name.clone(),
-                ty: crate::rules::new_name(qt).unwrap_or(qt).to_owned(),
-                now,
+        // What `by` binds on the file, or on a file left as it is that is
+        // built on it (`Bridge.qml`, `Swatch {}`), which has its names.
+        let (qt, (name, now)) = wrappers.iter().find_map(|(wrapper, between)| {
+            if !uses[by].contains(wrapper) {
+                return None;
+            }
+            let ty = file_name(keys[*wrapper]);
+            user.references.bound.iter().find_map(|(on, name)| {
+                let depth = keys.len();
+                let declares = |w: &usize| {
+                    let declares = &files[keys[*w]].references.declares;
+                    declared(name, |n| declares.iter().any(|d| d == n))
+                };
+                if between.iter().any(declares) {
+                    return None;
+                }
+                let found = if on == ty {
+                    renamed(files, keys, uses, at, name, depth)
+                } else if *wrapper == at {
+                    let component = on.strip_prefix(ty)?.strip_prefix('.')?;
+                    component_renamed(files, keys, uses, at, component, name, depth)
+                } else {
+                    None
+                };
+                found.map(|(qt, now)| (qt, (name, now)))
             })
+        })?;
+        Some(Cause::BoundAsQt {
+            by: from_dir_of(keys[at], keys[by]).to_owned(),
+            name: name.clone(),
+            ty: crate::rules::new_name(qt).unwrap_or(qt).to_owned(),
+            now,
         })
     })
+}
+
+/// A file's name, which is its type's (`Dial` of `app/Dial`).
+fn file_name(key: &str) -> &str {
+    key.rsplit('/').next().unwrap_or(key)
+}
+
+/// The files of `uses[at]` the type `root` may be: each beside it of that
+/// name, as the imports that pick one are not followed.
+fn files_named<'u>(
+    keys: &'u [&String],
+    uses: &'u [BTreeSet<usize>],
+    at: usize,
+    root: &'u str,
+) -> impl Iterator<Item = usize> + 'u {
+    uses[at]
+        .iter()
+        .copied()
+        .filter(move |&other| file_name(keys[other]) == root)
+}
+
+/// The file at `at`, and each file left as it is built on it through
+/// files left as it is (`Bridge.qml`, `Swatch {}`, of `Swatch.qml`): a file
+/// that uses one binds on it the names of `at`. With each, the files left
+/// as they are between them, any of which may declare a name itself.
+fn wrappers(
+    files: &BTreeMap<String, Alone>,
+    keys: &[&String],
+    uses: &[BTreeSet<usize>],
+    at: usize,
+) -> Vec<(usize, Vec<usize>)> {
+    let mut found: Vec<(usize, Vec<usize>)> = vec![(at, Vec::new())];
+    let mut seen = BTreeSet::from([at]);
+    let mut next = 0;
+    while next < found.len() {
+        let (on, between) = found[next].clone();
+        next += 1;
+        for (wrapper, file) in files.values().enumerate() {
+            if seen.contains(&wrapper) || !matches!(file.outcome, Outcome::Unchanged) {
+                continue;
+            }
+            let Some(root) = file.references.root.as_deref() else {
+                continue;
+            };
+            if files_named(keys, uses, wrapper, root).any(|f| f == on) {
+                seen.insert(wrapper);
+                let mut between = between.clone();
+                between.push(wrapper);
+                found.push((wrapper, between));
+            }
+        }
+    }
+    found
 }
 
 /// [`renamed`] for the inline component `component` of the file at `at`
@@ -724,14 +804,14 @@ fn renamed_on<'f>(
     name: &str,
     depth: usize,
 ) -> Option<(&'f str, String)> {
-    let base = uses[at]
-        .iter()
-        .find(|&&other| keys[other].rsplit('/').next() == Some(root));
-    if let Some(&base) = base {
-        return match files[keys[base]].outcome {
+    // Where two files beside it may be the root, what either renames
+    // counts: keeping the file is safe, lowering it under the wrong one not.
+    let mut bases = files_named(keys, uses, at, root).peekable();
+    if bases.peek().is_some() {
+        return bases.find_map(|base| match files[keys[base]].outcome {
             Outcome::Lowered(_) => renamed(files, keys, uses, base, name, depth - 1),
             _ => None,
-        };
+        });
     }
     let (_, renames) = crate::rules::member_renames().find(|(ty, _)| *ty == root)?;
     renames.iter().find_map(|(old, new)| {
