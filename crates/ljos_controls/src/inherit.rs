@@ -1230,6 +1230,7 @@ fn group_written(engine: &Engine, obj: ObjectId) {
     let holds = state.as_ref().is_some_and(|s| s.holds.get());
     let given_then = state.map_or(0, |s| s.given_at_completion.get());
     let palette = (kind != Kind::Item).then(|| roles_of(kind));
+    let mut missed = Vec::new();
     for p in groups_of(kind)
         .iter()
         .flatten()
@@ -1250,7 +1251,7 @@ fn group_written(engine: &Engine, obj: ObjectId) {
         } else {
             author_set(engine, obj, p)
         });
-        let watched = engine.watch(obj, p, move |e, v| {
+        let hear = Rc::new(move |e: &Engine, v: &Value| {
             let given = match e.provenance(obj, p) {
                 Some(Provenance::Assigned) => true,
                 Some(Provenance::Bound) if !role => true,
@@ -1281,7 +1282,25 @@ fn group_written(engine: &Engine, obj: ObjectId) {
                 was.set(false);
             }
         });
+        // A watch brings its colour up to date as it is put on: a bound
+        // colour that changed with the one being written, and whose
+        // binding runs as it changes (its setter acts on it), is written
+        // then, before the watch could hear it, so it is heard after.
+        let node = engine.property_node(obj, p).ok();
+        let held = node.and_then(|n| engine.graph().peek(n));
+        let watched = engine.watch(obj, p, {
+            let hear = hear.clone();
+            move |e, v| hear(e, v)
+        });
         check(engine, "palette", watched.map(|_| ()));
+        if let Some(now) = node.and_then(|n| engine.graph().peek(n))
+            && Some(&now) != held.as_ref()
+        {
+            missed.push((hear, now));
+        }
+    }
+    for (hear, v) in missed {
+        engine.untrack(|| hear(engine, &v));
     }
 }
 
