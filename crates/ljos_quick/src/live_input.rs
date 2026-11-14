@@ -153,13 +153,16 @@ impl Watchers {
         origin: InputOrigin,
         taken: bool,
     ) {
-        let called: Vec<(ObjectId, Watcher)> = self
-            .all
-            .borrow()
-            .iter()
-            .filter(|(_, item, _)| items.contains(item))
-            .map(|(_, item, f)| (*item, Rc::clone(f)))
-            .collect();
+        // A held press keeps the items it began in, which may have gone
+        // since: their watchers went with them.
+        let called: Vec<(ObjectId, Watcher)> = {
+            let mut all = self.all.borrow_mut();
+            all.retain(|(_, item, _)| engine.is_alive(*item));
+            all.iter()
+                .filter(|(_, item, _)| items.contains(item))
+                .map(|(_, item, f)| (*item, Rc::clone(f)))
+                .collect()
+        };
         for (item, f) in called {
             f(
                 engine,
@@ -174,14 +177,22 @@ impl Watchers {
     }
 }
 
-/// Whether `obj` is `ancestor` or lies inside it.
+/// Whether `obj` is `ancestor` or lies inside it. An item in a layer (a
+/// popup's) lies inside the item the layer hangs from, though the layer
+/// is no child of it.
 pub(crate) fn is_in(engine: &Engine, obj: ObjectId, ancestor: ObjectId) -> bool {
     let mut cur = Some(obj);
     // Bounded so a corrupt parent cycle cannot hang.
     for _ in 0..4096 {
         match cur {
             Some(o) if o == ancestor => return true,
-            Some(o) => cur = engine.untrack(|| engine.visual_parent(o)),
+            Some(o) => {
+                cur = engine.untrack(|| {
+                    engine
+                        .visual_parent(o)
+                        .or_else(|| crate::layer::layer_host(engine, o))
+                });
+            }
             None => return false,
         }
     }
@@ -205,22 +216,34 @@ impl QuickScene {
         engine: &Engine,
         now: ljos_runtime::Time,
     ) -> bool {
+        // Before the first picture nothing is found under a point: what
+        // was posted waits for the frame after it, which it asks for.
+        if !self.has_picture() {
+            return false;
+        }
         let posted = self.take_posted();
         if posted.is_empty() {
             return false;
         }
-        let root = self.root();
+        let Some(root) = self.root() else {
+            return false;
+        };
         self.with_input_origin(InputOrigin::Synthetic, |scene| {
             let mut taken = false;
             for (window, input) in posted {
-                if !engine.is_alive(window) {
+                // Posted to a tree the scene has stopped showing since:
+                // it is not this scene's to hand on.
+                if !engine.is_alive(window) || !is_in(engine, window, root) {
                     continue;
                 }
                 // A window inside the scene (one host showing them all)
                 // is where it is now, not where it was at the post.
-                let place = |p: kurbo::Point| match root {
-                    Some(r) if r == window => p,
-                    _ => crate::item::map_to_scene(engine, window, p),
+                let place = |p: kurbo::Point| {
+                    if window == root {
+                        p
+                    } else {
+                        crate::item::map_to_scene(engine, window, p)
+                    }
                 };
                 taken |= match input {
                     Input::Pointer(mut ev) => {
@@ -254,33 +277,56 @@ impl QuickScene {
         r
     }
 
-    /// After a pointer event: its watchers, those of the item under it or,
-    /// while a press is held, of the items it began in.
-    pub(crate) fn watched_pointer(&mut self, engine: &Engine, ev: &PointerEvent, taken: bool) {
+    /// Before a pointer event is delivered: the watched items it is
+    /// routed into. Those of the item under it or, while a press is held,
+    /// of the items the press began in.
+    pub(crate) fn watched_route(&mut self, engine: &Engine, ev: &PointerEvent) -> Vec<ObjectId> {
         let watchers = engine.extension::<Watchers>();
         if watchers.is_empty() {
             self.watch.pressed_in = None;
-            return;
+            return Vec::new();
         }
-        let items = match (ev.kind, self.watch.pressed_in.take()) {
-            (PointerKind::Press, Some(held)) => held,
-            (PointerKind::Press, None) => self.watched_under(engine, &watchers, ev.pos),
+        let held = self.watch.pressed_in.take();
+        let had_press = held.is_some();
+        let items = match (ev.kind, held) {
             (_, Some(held)) => held,
-            (PointerKind::Move, None) => self.watched_under(engine, &watchers, ev.pos),
-            (_, None) => Vec::new(),
+            (PointerKind::Press, None) => self.watched_under(engine, &watchers, ev.pos),
+            (PointerKind::Move, None) if ev.buttons.is_empty() => {
+                self.watched_under(engine, &watchers, ev.pos)
+            }
+            // A press held since before anything watched is the item's
+            // that holds the pointer, not the one under it now.
+            (_, None) => self
+                .pointer_grab()
+                .map_or_else(Vec::new, |g| watchers.items_holding(engine, g)),
         };
-        // The press goes on while a button is held; it ends with the last.
-        if !ev.buttons.is_empty()
-            && matches!(
-                ev.kind,
-                PointerKind::Press | PointerKind::Move | PointerKind::Release
-            )
-        {
+        // The press goes on until its last button is let go or it is
+        // cancelled; the pointer leaving the window does not end it.
+        let goes_on = match ev.kind {
+            PointerKind::Cancel => false,
+            PointerKind::Leave => had_press,
+            _ => !ev.buttons.is_empty(),
+        };
+        if goes_on {
             self.watch.pressed_in = Some(items.clone());
         }
+        items
+    }
+
+    /// After a pointer event: the watchers of the items it was routed
+    /// into ([`QuickScene::watched_route`]).
+    pub(crate) fn watched_pointer(
+        &self,
+        engine: &Engine,
+        ev: &PointerEvent,
+        items: &[ObjectId],
+        taken: bool,
+    ) {
         if !items.is_empty() {
             let input = Input::Pointer(*ev);
-            watchers.tell(engine, &items, &input, self.watch.origin, taken);
+            engine
+                .extension::<Watchers>()
+                .tell(engine, items, &input, self.watch.origin, taken);
         }
     }
 

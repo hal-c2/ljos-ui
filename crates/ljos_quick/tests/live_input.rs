@@ -11,8 +11,8 @@ use common::*;
 use ljos_engine::{Engine, ObjectId};
 use ljos_quick::keys::key;
 use ljos_quick::{
-    Input, InputOrigin, KeyEvent, MouseButtons, PointerEvent, PointerKind, PostInputError,
-    QuickScene, WheelEvent, post_input, unwatch_input, watch_input,
+    Input, InputOrigin, Item, KeyEvent, MouseArea, MouseButtons, PointerEvent, PointerKind,
+    PostInputError, QuickScene, WheelEvent, post_input, set_layer, unwatch_input, watch_input,
 };
 use ljos_runtime::Time;
 
@@ -68,6 +68,7 @@ fn watch(e: &Engine, item: ObjectId) -> (Seen, ljos_quick::InputWatch) {
                 PointerKind::Press => "press",
                 PointerKind::Release => "release",
                 PointerKind::Move => "move",
+                PointerKind::Leave => "leave",
                 _ => "pointer",
             },
             Input::Key(_) => "key",
@@ -232,4 +233,143 @@ fn a_watcher_sees_only_what_is_routed_into_its_item() {
     assert!(!unwatch_input(&e, w));
     s.key_event(&e, &KeyEvent::press(key::A).with_text("a"));
     assert_eq!(seen.borrow().len(), 5);
+}
+
+#[test]
+fn input_posted_before_the_first_picture_waits_for_it() {
+    let e = engine();
+    let root = load(&e, MAIN);
+    let mut s = scene(&e, root, 200.0, 100.0);
+    for input in click(50.0, 50.0) {
+        post_input(&e, root, input).unwrap();
+    }
+    // Nothing is under a point until a frame has composed the scene.
+    frame(&mut s, &e);
+    assert!(s.needs_frame(), "what waits asks for the next frame");
+    frame(&mut s, &e);
+    assert_eq!(num(&e, root, "clicks"), 1.0);
+}
+
+#[test]
+fn input_posted_to_a_tree_the_scene_no_longer_shows_is_dropped() {
+    let (e, root, mut s) = world();
+    for input in click(50.0, 50.0) {
+        post_input(&e, root, input).unwrap();
+    }
+    let other = load(&e, MAIN);
+    s.set_root(&e, other).unwrap();
+    frame(&mut s, &e);
+    frame(&mut s, &e);
+    assert_eq!(num(&e, root, "clicks"), 0.0);
+    assert_eq!(num(&e, other, "clicks"), 0.0);
+}
+
+#[test]
+fn an_item_in_a_layer_is_in_the_window_it_hangs_from() {
+    let e = engine();
+    let root = load(&e, MAIN);
+    // A popup's layer: no child of the root, though shown over it.
+    let layer = make::<Item>(&e, None);
+    geom(&e, layer, 0.0, 0.0, 200.0, 100.0);
+    let over = make::<MouseArea>(&e, Some(layer));
+    geom(&e, over, 150.0, 0.0, 50.0, 50.0);
+    set_layer(&e, root, layer);
+    let mut s = scene(&e, root, 200.0, 100.0);
+    frame(&mut s, &e);
+    let (seen, _) = watch(&e, root);
+
+    // (10, 10) in `over` is (160, 10) in the scene.
+    post_input(
+        &e,
+        over,
+        Input::Pointer(PointerEvent::press(10.0, 10.0, Time::ZERO)),
+    )
+    .unwrap();
+    frame(&mut s, &e);
+    assert!(get(&e, over, "pressed").to_boolean());
+    use InputOrigin::Synthetic;
+    assert_eq!(*seen.borrow(), [("move", Synthetic), ("press", Synthetic)]);
+}
+
+#[test]
+fn a_held_press_stays_its_items_when_the_pointer_leaves_and_comes_back() {
+    let (e, root, mut s) = world();
+    let right = find(&e, root, "right");
+    let left = find(&e, root, "left");
+    let (seen_right, _) = watch(&e, right);
+    let (seen_left, _) = watch(&e, left);
+
+    s.pointer_event(&e, &PointerEvent::press(150.0, 50.0, Time::ZERO));
+    s.pointer_event(&e, &PointerEvent::leave(Time::ZERO));
+    s.pointer_event(
+        &e,
+        &PointerEvent::moved(20.0, 50.0, MouseButtons::LEFT, Time::ZERO),
+    );
+    s.pointer_event(&e, &PointerEvent::release(20.0, 50.0, Time::ZERO));
+
+    use InputOrigin::User;
+    assert_eq!(
+        *seen_right.borrow(),
+        [
+            ("move", User),
+            ("press", User),
+            ("leave", User),
+            ("move", User),
+            ("release", User),
+        ]
+    );
+    assert!(seen_left.borrow().is_empty(), "{:?}", seen_left.borrow());
+}
+
+#[test]
+fn a_press_held_before_anything_watched_is_the_grabbers() {
+    let (e, root, mut s) = world();
+    let right = find(&e, root, "right");
+    let left = find(&e, root, "left");
+    // The area on the left takes the press, and with it the pointer.
+    s.pointer_event(&e, &PointerEvent::press(50.0, 50.0, Time::ZERO));
+    let (seen_left, _) = watch(&e, left);
+    let (seen_right, _) = watch(&e, right);
+    s.pointer_event(
+        &e,
+        &PointerEvent::moved(150.0, 50.0, MouseButtons::LEFT, Time::ZERO),
+    );
+    s.pointer_event(&e, &PointerEvent::release(150.0, 50.0, Time::ZERO));
+
+    use InputOrigin::User;
+    assert_eq!(*seen_left.borrow(), [("move", User), ("release", User)]);
+    assert!(seen_right.borrow().is_empty(), "{:?}", seen_right.borrow());
+}
+
+#[test]
+fn a_press_that_hides_its_item_is_still_that_items() {
+    let e = engine();
+    let root = load(
+        &e,
+        r#"
+import QtQuick
+Item {
+    width: 100; height: 100
+    MouseArea {
+        objectName: "area"
+        anchors.fill: parent
+        onPressed: visible = false
+    }
+}
+"#,
+    );
+    let mut s = scene(&e, root, 100.0, 100.0);
+    frame(&mut s, &e);
+    let area = find(&e, root, "area");
+    let (seen, _) = watch(&e, area);
+
+    s.pointer_event(&e, &PointerEvent::press(50.0, 50.0, Time::ZERO));
+    s.pointer_event(&e, &PointerEvent::release(50.0, 50.0, Time::ZERO));
+    assert!(!get(&e, area, "visible").to_boolean());
+
+    use InputOrigin::User;
+    assert_eq!(
+        *seen.borrow(),
+        [("move", User), ("press", User), ("release", User)]
+    );
 }

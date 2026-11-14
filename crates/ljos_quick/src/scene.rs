@@ -3580,6 +3580,9 @@ impl QuickScene {
     /// a press that is not the pointer, such as an assistive technology's.
     pub(crate) fn deliver_pointer(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
+        // Who watches it is decided before delivery: a handler may hide
+        // or move what the press came to.
+        let route = self.watched_route(engine, ev);
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
             PointerKind::Press | PointerKind::Move | PointerKind::Release => ev.buttons,
@@ -3599,8 +3602,16 @@ impl QuickScene {
             self.pointer.portal = None;
         }
         self.pointer.cursor = self.cursor_for(engine, ev);
-        self.watched_pointer(engine, ev, handled);
+        self.watched_pointer(engine, ev, &route, handled);
         handled
+    }
+
+    /// The item that holds the pointer's press, if one does.
+    pub(crate) fn pointer_grab(&self) -> Option<ObjectId> {
+        match self.pointer.grab {
+            Some(Grab::Mouse(o) | Grab::Tap(o) | Grab::Item(o)) => Some(o),
+            None => None,
+        }
     }
 
     /// `ev` where the portal that took its press shows the item that holds
@@ -3779,11 +3790,18 @@ impl QuickScene {
             .collect()
     }
 
-    /// Items under `pos`, topmost first.
+    /// Whether a frame has composed the scene: what hit testing finds
+    /// things in.
+    pub(crate) fn has_picture(&self) -> bool {
+        self.snapshot.is_some()
+    }
+
+    /// What was posted to the scene's windows since it last took it.
     pub(crate) fn take_posted(&mut self) -> Vec<(ObjectId, crate::live_input::Input)> {
         std::mem::take(&mut self.shared.borrow_mut().posted)
     }
 
+    /// Items under `pos`, topmost first.
     pub(crate) fn hits(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
         let Some(snap) = &self.snapshot else {
             return Vec::new();
