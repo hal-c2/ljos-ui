@@ -74,6 +74,23 @@ Feature: A hidden particle system
     And 300 milliseconds pass
     Then the property "seen" of "root" is at least 350
 
+  Scenario: What starts reading the time of a hidden system that has gone quiet keeps it going
+    When 100 milliseconds pass
+    And the property "visible" of "system" is set to false
+    And 200 milliseconds pass
+    Then the application has nothing scheduled
+    When the property "reads" of "root" is set to true
+    And 300 milliseconds pass
+    Then the property "seen" of "root" is at least 550
+
+  Scenario: A stopped system keeps the time it was given when it is hidden
+    When 100 milliseconds pass
+    And the property "running" of "system" is set to false
+    And the property "time" of "system" is set to 1000
+    And the property "visible" of "system" is set to false
+    And 100 milliseconds pass
+    Then the property "time" of "system" is 1000
+
   Scenario: A script that reads the time of a hidden system sees it go on
     When 100 milliseconds pass
     And the property "visible" of "system" is set to false

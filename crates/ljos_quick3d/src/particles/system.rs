@@ -333,6 +333,17 @@ fn leave(e: &Engine, system: ObjectId, me: ObjectId, member: Member) {
     let _ = e.notify(system, ParticleSystem3D::LOGGING_DATA.index);
 }
 
+/// Whether its clock runs, so that its time is the clock's. Untracked: a
+/// clock that starts again while the system is hidden has `tick` make the
+/// time from its first frame on.
+fn ticking(e: &Engine, me: ObjectId) -> bool {
+    let Some(clock) = e.with(me, |s: &ParticleSystem3D| s.clock).ok().flatten() else {
+        return false;
+    };
+    e.untrack(|| e.get(clock, FrameAnimation::RUNNING))
+        .unwrap_or(false)
+}
+
 /// Whether the system and each node it is in are visible. Tracked: shown
 /// again, the step runs.
 fn shown(e: &Engine, me: ObjectId) -> bool {
@@ -402,9 +413,12 @@ fn step(e: &Engine, me: ObjectId) {
     let logging = e.get(me, ParticleSystem3D::LOGGING).unwrap_or(false);
     // Hidden, it shows nothing: what it would have done by its time is
     // worked out once it is shown. Its time, unread, asks for no frames,
-    // and is worked out when something reads it.
+    // and is worked out when something reads it. Only a clock that runs
+    // owns the time: a stopped or paused system keeps what it was given.
     if !logging && !shown(e, me) {
-        let _ = e.make_on_read_by(me, ParticleSystem3D::TIME.index, made_time);
+        if ticking(e, me) {
+            let _ = e.make_on_read_by(me, ParticleSystem3D::TIME.index, made_time);
+        }
         return;
     }
     // Told when what is in the system changes.
