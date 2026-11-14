@@ -1463,112 +1463,81 @@ const NOT_YET: &[(&str, &str)] = &[
         "QtQuick.Controls.Fusion.impl: BusyIndicatorImpl",
         "a part of Qt's Fusion; Ljós's Fusion draws its ring in BusyIndicator itself, and has the name in QtQuick.Controls.Basic.impl alone",
     ),
-];
-
-/// Differences first seen with the Qt the tuple names, and with add-ons CI's
-/// Qt (6.11, with QtMultimedia alone) is installed without, so whether an
-/// older Qt has them is not known: listed for any Qt, missed only from that
-/// one on. Each says what it would take, as in [`NOT_YET`].
-const NOT_YET_FROM_QT: &[((u32, u32), &str, &str)] = &[
-    (
-        (6, 12),
-        "QtQml.Models.ItemSelectionModel.selectedIndexes",
-        "a QModelIndexList, which Qt 6.12's table does not mark a list (6.11's does); a list of indexes here",
-    ),
     // Byte arrays to Qt, which a script sees as an ArrayBuffer; Ljós has
     // no such value, so each is text (as `QtMultimedia.AudioDevice.id`).
     (
-        (6, 12),
         "QtQuick3D.Buffer.name",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtQuick3D.BufferInput.sampler",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtQuick3D.SetUniformValue.target",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Accelerometer.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Accelerometer.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.AmbientLightSensor.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.AmbientLightSensor.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Compass.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Compass.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Gyroscope.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Gyroscope.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Magnetometer.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Magnetometer.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.OrientationSensor.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.OrientationSensor.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.PressureSensor.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.PressureSensor.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Sensor.identifier",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
     (
-        (6, 12),
         "QtSensors.Sensor.type",
         "a byte array to Qt; text here, as Ljós has no byte array value",
     ),
@@ -1577,157 +1546,136 @@ const NOT_YET_FROM_QT: &[((u32, u32), &str, &str)] = &[
     // each is the Node or Effect it is built on. No file writes an object in
     // one.
     (
-        (6, 12),
         "QtQuick3D.Effects.ColorMaster",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Effects.HDRBloomTonemap",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.AxisHelper",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.DebugView",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.ExtendedSceneEnvironment",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.LodManager",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.OrbitCameraController",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.WasdController",
         "a QML file Qt's table does not describe, which so gives it no default property",
     ),
     (
-        (6, 12),
         "QtQuick3D.Fog",
         "a QObject to Qt, with no default property; an Object3D here, whose `data` takes what a file writes inside",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.InfiniteGrid",
         "a QObject to Qt, with no default property; an Object3D here, whose `data` takes what a file writes inside",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.InstanceModel",
         "a QObject to Qt, with no default property; an Object3D here, whose `data` takes what a file writes inside",
     ),
     (
-        (6, 12),
         "QtQuick3D.Command",
         "creatable to Qt, though one does nothing; only the commands built on it can be written here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Geometry",
         "uncreatable to Qt, where an application's C++ subclass gives the data; a file can write one here and give it from a script",
     ),
     (
-        (6, 12),
         "QtQuick3D.TextureData",
         "uncreatable to Qt, where an application's C++ subclass gives the data; a file can write one here and give it from a script",
     ),
     // Lists of values to Qt; here a `var` that holds an array, which a
     // file writes the same way (`[…]`).
     (
-        (6, 12),
         "QtQuick3D.Helpers.ProceduralMesh.binormals",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.ProceduralMesh.colors",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.ProceduralMesh.indexes",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.ProceduralMesh.normals",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.ProceduralMesh.positions",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers.ProceduralMesh.tangents",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Model.inverseBindPoses",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Skin.inverseBindPoses",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Physics.DynamicRigidBody.inertiaMatrix",
         "a list of values to Qt; a var holding an array here",
     ),
     (
-        (6, 12),
         "QtQuick3D.Particles3D.ParticleSceneShape3D.excludedNodes",
         "a QList<QQuick3DNode*> that Qt 6.12's table does not mark a list; a list of nodes here, as the documentation's list<Node> says",
     ),
     // Bases and values that are anonymous to Qt, named here so that the
     // table can describe what a property holds.
     (
-        (6, 12),
         "QtQuick3D.Particles3D: Direction3D",
         "anonymous to Qt; named here so that the table can describe it",
     ),
     (
-        (6, 12),
         "QtQuick3D.Particles3D: ParticleAbstractShape3D",
         "anonymous to Qt; named here so that the table can describe it",
     ),
     (
-        (6, 12),
         "QtQuick3D.Particles3D: ParticleSystem3DLogging",
         "anonymous to Qt; named here so that the table can describe it",
     ),
     (
-        (6, 12),
         "QtQuick3D.Particles3D: ParticleTable",
         "anonymous to Qt; named here so that the table can describe it",
     ),
     (
-        (6, 12),
         "QtQuick3D.Helpers: RenderStatistics",
         "Ljós's own, what its DebugView shows the renderer's numbers from; Qt 6.12's QtQuick3D.Helpers has no such type",
     ),
     (
-        (6, 12),
         "QtQuick3D: RuntimeLoader",
         "Qt's is in QtQuick3D.AssetUtils, which stands in here; Ljós builds it in QtQuick3D",
     ),
 ];
+
+/// Differences that come with a Qt release: listed, and missed, only from
+/// the Qt the tuple names on. Each says what it would take, as in
+/// [`NOT_YET`].
+const NOT_YET_FROM_QT: &[((u32, u32), &str, &str)] = &[(
+    (6, 12),
+    "QtQml.Models.ItemSelectionModel.selectedIndexes",
+    "a QModelIndexList, which Qt 6.12's table does not mark a list (6.11's does); a list of indexes here",
+)];
