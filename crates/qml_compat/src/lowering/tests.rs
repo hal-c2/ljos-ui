@@ -298,3 +298,32 @@ fn a_module_two_files_wrote_and_neither_writes_now_is_dropped_once() {
     assert_eq!(scripts, [ScriptEdit::Drop(M.to_string())]);
     assert!(owners(&lowering).is_empty());
 }
+
+/// What a directory a file imports holds may change its lowering: the
+/// file is lowered again. A URL is the project's to resolve, against the
+/// places it reads, so a file that imports one may import any directory.
+#[test]
+fn a_file_that_imports_a_directory_is_lowered_again_when_it_is_described() {
+    let project = Files::default();
+    let mut lowering = Lowering::new();
+    lowering.put(
+        "app/Main",
+        "import QtQuick\nimport \"../site\"\nItem { }\n".to_string(),
+    );
+    lowering.put(
+        "app/Url",
+        "import QtQuick\nimport \"file:///home/me/app/site\"\nItem { }\n".to_string(),
+    );
+    lowering.put("app/Plain", "import QtQuick\nItem { }\n".to_string());
+    lowering.settle(&project);
+
+    assert!(lowering.changed(Changed::Dir("site")));
+    assert_eq!(
+        lowering
+            .stale
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["app/Main", "app/Url"]
+    );
+}
