@@ -4,7 +4,7 @@ How to see what Ljós spends on each frame of a `View3D`, and how to compare it 
 
 ## The counters
 
-Every frame that draws a scene counts what it did. The renderer adds to a tally on the thread that draws, which costs an add and takes no lock. The host folds the tally into one record once it has submitted (`ljos_3d::stats::frame_end`). A frame that draws no scene counts nothing and writes nothing, so a still window stays at 0 % CPU.
+Every frame that draws a scene counts what it did. The renderer adds to a tally on the thread that draws, which costs an add and takes no lock. The host folds the tally into one record once it has submitted (`ljos_3d::stats::frame_end`). Where views are drawn off-screen and read back as pictures, each view's submit adds to the tally, and the host ends the frame once it has drawn them all, so a frame of several views is one record. A frame that draws no scene counts nothing and writes nothing, so a still window stays at 0 % CPU.
 
 | Counter | What it is |
 |---|---|
@@ -27,10 +27,12 @@ They can be read in three places.
 
 **In QML.** `RenderStatistics` (QtQuick3D.Helpers) has the last frame's counts as properties: `drawCallCount`, `drawVertexCount`, `renderPassCount`, `pipelineSwitches`, `bindGroupSets`, `bufferWrites`, `bufferWriteBytes`, `textureUploads`, `textureUploadBytes`, `pipelinesCreated`, `modelsDrawn`, `modelsCulled`, `syncTime`, `renderPrepareTime`, `encodeTime`, `submitTime`, `renderTime`.
 
-`View3D.renderStats` takes Qt's names and meanings:
-- `renderTime` is recording plus submitting;
+`View3D.renderStats` takes Qt's names:
+- `renderTime` is recording plus submitting. Qt's is not split there (its documentation counts preparing and recording in it, and on this machine it includes the swap wait), so compare the sums of the parts, not `renderTime` alone;
 - `lastCompletedGpuTime` is the GPU time;
 - `pipelineCount` is the number of pipelines made so far.
+
+Both read the frame, not one view: where a window has several views, the counts and times are of all of them together, where Qt's `renderStats` is its view's own.
 
 **Over MCP.** `app_metrics` and the paint report carry `scene3d`: how many 3D frames there have been, what the last one cost, and the largest and latest CPU parts.
 
@@ -58,7 +60,7 @@ Each corpus demo runs as `mise run gallery:run` runs it:
 - with its stand-ins (`corpus/standins/<id>`, the QML for the C++ of its own build);
 - in the directory its downloaded assets are read from. Run `mise run gallery:assets <id>` first.
 
-A corpus demo that `qml6` cannot run on this machine (corpus/examples.json says why) is measured on Ljós alone, and the probe below still tries it on Qt. `BENCH_QT` names demos to measure on qml6 anyway. Its default, dice and the FX showroom, are the two that qml6 6.12 runs with their stand-ins.
+A corpus demo that `qml6` cannot run on this machine (corpus/examples.json says why) is measured on Ljós alone, and the probe below leaves it out too. `BENCH_QT` names demos to measure on qml6 anyway. Its default, dice and the FX showroom, are the two that qml6 6.12 runs with their stand-ins.
 
 **Qt's side.** A qml6 frame cannot be counted from outside the process. The bench measures what it can see from outside, for both runtimes:
 - startup to the window mapped;
@@ -98,9 +100,9 @@ The corpus demos, at a median load of 14 (osmbuildings and car-configurator need
 | demo | first frame ms, Ljós / Qt | PSS MiB, Ljós / Qt | idle CPU %, Ljós / Qt | notes |
 |---|---|---|---|---|
 | dice | 161 / 382 | 146 / 219 | 0 / 70 | once the dice settle, Ljós rests and qml6 keeps its main thread busy |
-| fx-material-showroom | **616** / 204 | **229** / 128 | **8.4** / 4.2 | no 3D frame at rest; Ljós's main thread spends 16× Qt's |
+| fx-material-showroom | **616** / 204 | **229** / 128 | **8.4** / 4.2 | no 3D frame at rest; Ljós's main thread spends 16× Qt's. Its `floor.frag` CustomMaterial fails to compile on Ljós, so the two do not draw the same picture yet |
 | osmbuildings | 111 / – | 358 / – | 60 / – | **9.5 fps**, p99 585 ms; sync 12 ms for 177 models, plus JS while tiles arrive |
-| car-configurator | 600 / – | 366 / – | **75** / – | the 3D frame is cheap at rest, so the main thread's cost lies elsewhere |
+| car-configurator | 600 / – | 366 / – | **75** / – | the 3D frame is cheap at rest, so the main thread's cost lies elsewhere. Its three `WallEffect` ShaderEffects fail shader preparation on Ljós, so it draws less than the demo does |
 
 Ljós reaches its first frame two to five times sooner than qml6 on every scene but the FX showroom, and it uses less memory once a scene is large.
 - On small animated scenes, Ljós spends more CPU per frame than Qt.

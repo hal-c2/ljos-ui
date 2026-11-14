@@ -185,7 +185,7 @@ The bar is beating `qml6` running the same QML, on `mise run bench` (docs/BENCHM
 | `quick3d-post.qml` | a turning cube in an `ExtendedSceneEnvironment` with glow, depth of field, ambient occlusion and FXAA: post-processing on the GPU |
 | `quick3d-stress.qml` | 480 models, twelve lights (four casting shadows), large textures and blended materials under an orbiting camera |
 
-`mise run bench:3d` runs these and the corpus's 3D demos on both runtimes and adds what each 3D frame cost: draw calls, pipeline switches, uploads, the CPU parts and the GPU time. docs/quick3d-perf.md describes the counters and the measurements.
+`mise run bench:3d` runs these and the corpus's 3D demos and adds what each of Ljós's 3D frames cost: draw calls, pipeline switches, uploads, the CPU parts and the GPU time. qml6 runs the same scenes, except the demos it cannot run here, which are measured on Ljós alone. Qt's own counts cannot be read per frame from outside: a probe samples its `renderStats` once a second, which has no uploads or pipeline switches. docs/quick3d-perf.md describes the counters and the measurements.
 
 **Budget.** Each row must be at or below `qml6`:
 - time and CPU to the first frame;
