@@ -739,7 +739,7 @@ Feature: Choosing a value with match, and testing one with is
         ljos: 1 errors
         """
 
-    Scenario: Symbol.customMatcher is the one symbol a script names, and only as a key of an object literal
+    Scenario: Symbol.customMatcher is named only as the key of a method in an object literal
       Given the file "Gauge.qml":
         """qml
         import Ljos.Ui
@@ -757,9 +757,9 @@ Feature: Choosing a value with match, and testing one with is
       When the files are checked
       Then the check reports:
         """
-        Gauge.qml:5:27: error: `Symbol.iterator` is not in Ljós's API: the one symbol a script names is `Symbol.customMatcher`, as the key of a method in an object literal [ts-forbidden]
+        Gauge.qml:5:27: error: `Symbol.iterator` is not in Ljós's API: a script names only `Symbol.customMatcher`, `Symbol.dispose` and `Symbol.asyncDispose`, each as the key of a method in an object literal [ts-forbidden]
         Gauge.qml:6:25: error: `Symbol.customMatcher` is not in Ljós's API: it is only the key of a method in an object literal, as in `{ [Symbol.customMatcher](subject: unknown, hint: string): boolean { … } }` [ts-forbidden]
-        Gauge.qml:7:23: error: `Symbol` is not in Ljós's API: the one symbol a script names is `Symbol.customMatcher`, as the key of a method in an object literal [ts-forbidden]
+        Gauge.qml:7:23: error: `Symbol` is not in Ljós's API: a script names only `Symbol.customMatcher`, `Symbol.dispose` and `Symbol.asyncDispose`, each as the key of a method in an object literal [ts-forbidden]
         Gauge.qml:8:13: error: `class` is not in Ljós's API: write a function, or a component [ts-forbidden]
         1 files, 4 errors, 0 warnings
         ljos: 4 errors

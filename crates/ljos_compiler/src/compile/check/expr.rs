@@ -45,8 +45,30 @@ struct Place<'a> {
 /// `[Symbol.customMatcher]` member, which no name written can be.
 pub(super) const MATCHER: &str = "[Symbol.customMatcher]";
 
+/// The names a record gives an object literal's `[Symbol.dispose]` and
+/// `[Symbol.asyncDispose]` members (DIALECT.md §4.22).
+pub(super) const DISPOSE: &str = "[Symbol.dispose]";
+pub(super) const ASYNC_DISPOSE: &str = "[Symbol.asyncDispose]";
+
+/// The symbols a script names, each only as the key of a method in an
+/// object literal, with the member's name in a record and a method written
+/// with it.
+const SYMBOLS: [(&str, &str, &str); 3] = [
+    (
+        "customMatcher",
+        MATCHER,
+        "{ [Symbol.customMatcher](subject: unknown, hint: string): boolean { … } }",
+    ),
+    ("dispose", DISPOSE, "{ [Symbol.dispose](): void { … } }"),
+    (
+        "asyncDispose",
+        ASYNC_DISPOSE,
+        "{ async [Symbol.asyncDispose](): Promise<void> { … } }",
+    ),
+];
+
 /// What a script may do with a symbol (DIALECT.md §5.1).
-const ONE_SYMBOL: &str = "the one symbol a script names is `Symbol.customMatcher`, as the key of a method in an object literal";
+const SYMBOL_RULE: &str = "a script names only `Symbol.customMatcher`, `Symbol.dispose` and `Symbol.asyncDispose`, each as the key of a method in an object literal";
 
 impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     // Functions.
@@ -400,7 +422,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             "undefined" => return Ty::UNDEFINED,
             "NaN" | "Infinity" => return Ty::NUMBER,
             "eval" => return self.forbidden(name, "write the code it would run", id.span),
-            "Symbol" => return self.forbidden(name, ONE_SYMBOL, id.span),
+            "Symbol" => return self.forbidden(name, SYMBOL_RULE, id.span),
             "XMLHttpRequest" => return self.forbidden(name, "use `fetch`", id.span),
             "arguments" => {
                 return self.forbidden(
@@ -1230,6 +1252,13 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             Kind::Method(receiver, Method::Promise(name)) => {
                 self.promise_call(receiver, name, call)
             }
+            Kind::Method(
+                _,
+                Method::Web(
+                    class @ (Web::DisposableStack | Web::AsyncDisposableStack),
+                    name @ ("use" | "adopt"),
+                ),
+            ) => self.stack_hold(class, name, call),
             Kind::Method(receiver, method) => {
                 match builtins::method_sig(&mut self.arena, receiver, method) {
                     Some(sig) => {
@@ -1644,15 +1673,17 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             if property.computed
                                 && let Some(name) = self.symbol_member(&m.object, &m.property) =>
                         {
-                            if name != "customMatcher" {
+                            let Some((_, field, _)) =
+                                SYMBOLS.iter().find(|(symbol, ..)| *symbol == name)
+                            else {
                                 self.expr(&property.value, None);
                                 return self.forbidden(
                                     &format!("Symbol.{name}"),
-                                    ONE_SYMBOL,
+                                    SYMBOL_RULE,
                                     m.span,
                                 );
-                            }
-                            MATCHER
+                            };
+                            field
                         }
                         _ => {
                             self.expr(&property.value, None);
@@ -2012,7 +2043,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 let callee = self.text(new.callee.span());
                 self.untyped(
                     callee,
-                    "`new` makes only a `Map<K, V>()`, an `Error(message)`, a `Request`, `Headers`, an `AbortController` or a `Uint8Array` in Ljós's API",
+                    "`new` makes only a `Map<K, V>()`, an `Error(message)`, a `Request`, `Headers`, an `AbortController`, a `Uint8Array`, a `DisposableStack` or an `AsyncDisposableStack` in Ljós's API",
                     new.span,
                 )
             }
@@ -2927,12 +2958,104 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     }
 
     fn forbid_symbol(&mut self, name: &str, span: Span) {
-        let fix = if name == "customMatcher" {
-            "it is only the key of a method in an object literal, as in `{ [Symbol.customMatcher](subject: unknown, hint: string): boolean { … } }`"
-        } else {
-            ONE_SYMBOL
+        let fix = match SYMBOLS.iter().find(|(symbol, ..)| *symbol == name) {
+            Some((_, _, example)) => {
+                format!("it is only the key of a method in an object literal, as in `{example}`")
+            }
+            None => SYMBOL_RULE.to_owned(),
         };
-        self.forbidden(&format!("Symbol.{name}"), fix, span);
+        self.forbidden(&format!("Symbol.{name}"), &fix, span);
+    }
+
+    /// Holds `ty`, what `using` (`await using` where `asynchronous`) or a
+    /// stack's `use` is given, to be disposable, as the proposal's
+    /// `GetDisposeMethod` has it: `undefined` (or `null`), a stack, or an
+    /// object whose `[Symbol.dispose]` (or, asynchronously, first
+    /// `[Symbol.asyncDispose]`) member is a method that needs no argument.
+    pub(super) fn disposable(&mut self, ty: Ty, asynchronous: bool, who: &str, span: Span) {
+        let parts = self.arena.members(ty);
+        let fits = parts.iter().all(|&part| {
+            if part == Ty::UNDEFINED || part == Ty::NULL || part == Ty::ERROR {
+                return true;
+            }
+            match self.arena.kind(part) {
+                Kind::Web(Web::DisposableStack) => true,
+                Kind::Web(Web::AsyncDisposableStack) => asynchronous,
+                Kind::Record(fields) => fields.iter().any(|field| {
+                    (&*field.name == DISPOSE || (asynchronous && &*field.name == ASYNC_DISPOSE))
+                        && !field.optional
+                        && matches!(
+                            self.arena.kind(field.ty),
+                            Kind::Function(sig) if sig.params.iter().all(|p| p.optional)
+                        )
+                }),
+                _ => false,
+            }
+        });
+        if fits {
+            return;
+        }
+        // A resource disposed of only asynchronously, given to a
+        // synchronous `using`, is told to await rather than to grow a
+        // method it has the asynchronous form of.
+        let only_async = !asynchronous
+            && parts.iter().any(|&part| match self.arena.kind(part) {
+                Kind::Web(Web::AsyncDisposableStack) => true,
+                Kind::Record(fields) => fields.iter().any(|f| &*f.name == ASYNC_DISPOSE),
+                _ => false,
+            });
+        let word = self.word(ty);
+        let message = if only_async {
+            format!(
+                "{who} disposes of what it is given at once, and this is {word} disposed of asynchronously: write `await using`, or give it a `[Symbol.dispose]()` method"
+            )
+        } else if asynchronous {
+            format!(
+                "{who} disposes of what it is given, and this is {word} with no `[Symbol.asyncDispose]()` or `[Symbol.dispose]()` method: give an object with one, or `undefined`"
+            )
+        } else {
+            format!(
+                "{who} disposes of what it is given, and this is {word} with no `[Symbol.dispose]()` method: give an object with one, or `undefined`"
+            )
+        };
+        self.report(Code::TsAssignType, message, span);
+    }
+
+    /// `stack.use(value)` and `stack.adopt(value, onDispose)`, which give
+    /// `value` as they were given it: `use` holds it to be disposable, and
+    /// `adopt` calls `onDispose` with it.
+    fn stack_hold(&mut self, class: Web, name: &str, call: &CallExpression<'a>) -> Ty {
+        let asynchronous = class == Web::AsyncDisposableStack;
+        let Some(value) = call.arguments.first().and_then(|a| a.as_expression()) else {
+            return self.loose_args(&call.arguments);
+        };
+        self.quiet += 1;
+        let ty = self.expr(value, None);
+        self.quiet -= 1;
+        let param = |name: &str, ty: Ty| Param {
+            name: name.into(),
+            ty,
+            optional: false,
+            written: None,
+        };
+        let mut params = vec![param("value", ty)];
+        if name == "adopt" {
+            params.push(param(
+                "onDispose",
+                web::on_dispose(&mut self.arena, class, ty),
+            ));
+        }
+        let f = self.arena.function(Sig {
+            params: params.into_boxed_slice(),
+            rest: None,
+            ret: ty,
+            guard: None,
+        });
+        let ret = self.apply(f, &call.arguments, call.span);
+        if name == "use" {
+            self.disposable(ty, asynchronous, &format!("`{name}`"), value.span());
+        }
+        ret
     }
 
     /// The custom matcher of `pattern`'s object, quietly: its
@@ -3728,8 +3851,15 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
                 Binding::Let
             }
-            VariableDeclarationKind::Const => Binding::Const,
-            _ => Binding::Let,
+            VariableDeclarationKind::Const
+            | VariableDeclarationKind::Using
+            | VariableDeclarationKind::AwaitUsing => Binding::Const,
+            VariableDeclarationKind::Let => Binding::Let,
+        };
+        let using = match declaration.kind {
+            VariableDeclarationKind::Using => Some(false),
+            VariableDeclarationKind::AwaitUsing => Some(true),
+            _ => None,
         };
         for declarator in &declaration.declarations {
             let written = declarator
@@ -3739,6 +3869,18 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             let ty = match &declarator.init {
                 Some(init) => {
                     let given = self.expr(init, written);
+                    if let Some(asynchronous) = using {
+                        self.disposable(
+                            given,
+                            asynchronous,
+                            if asynchronous {
+                                "`await using`"
+                            } else {
+                                "`using`"
+                            },
+                            init.span(),
+                        );
+                    }
                     match written {
                         Some(written) => {
                             let name = pattern_name(&declarator.id);

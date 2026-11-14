@@ -59,9 +59,9 @@ pub(crate) enum Global {
     Class(Web),
 }
 
-/// A class of the web's that every script has, with the names and
-/// meanings WHATWG gives it: what `fetch` takes and gives
-/// (docs/DIALECT.md §4.19).
+/// A class that every script has, with the names and meanings its standard
+/// gives it: WHATWG's, for what `fetch` takes and gives (docs/DIALECT.md
+/// §4.19), and ECMAScript's stacks of disposables (§4.22).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum Web {
     Response,
@@ -72,10 +72,12 @@ pub(crate) enum Web {
     DOMException,
     ArrayBuffer,
     Uint8Array,
+    DisposableStack,
+    AsyncDisposableStack,
 }
 
 impl Web {
-    pub(crate) const ALL: [Web; 8] = [
+    pub(crate) const ALL: [Web; 10] = [
         Web::Response,
         Web::Request,
         Web::Headers,
@@ -84,6 +86,8 @@ impl Web {
         Web::DOMException,
         Web::ArrayBuffer,
         Web::Uint8Array,
+        Web::DisposableStack,
+        Web::AsyncDisposableStack,
     ];
 
     pub(crate) fn name(self) -> &'static str {
@@ -96,6 +100,8 @@ impl Web {
             Self::DOMException => "DOMException",
             Self::ArrayBuffer => "ArrayBuffer",
             Self::Uint8Array => "Uint8Array",
+            Self::DisposableStack => "DisposableStack",
+            Self::AsyncDisposableStack => "AsyncDisposableStack",
         }
     }
 

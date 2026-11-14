@@ -399,6 +399,9 @@ pub const JS_GLOBALS: &[&str] = &[
     "Intl",
     "URL",
     "URLSearchParams",
+    "DisposableStack",
+    "AsyncDisposableStack",
+    "SuppressedError",
 ];
 
 /// What Ljós gives every script beside JavaScript's own, as a web page has
