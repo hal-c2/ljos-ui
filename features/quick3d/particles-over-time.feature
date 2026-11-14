@@ -398,6 +398,34 @@ Feature: What happens to particles over time
     Then the pixel at 100, 50 of the window is within 4 of "#ff0000"
     And the pixel at 100, 100 of the window is within 4 of "#000000"
 
+  Scenario: A model written in a model particle is its delegate
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtQuick3D
+      import QtQuick3D.Particles3D
+      Rectangle {
+        width: 200; height: 200
+        View3D {
+          anchors.fill: parent
+          environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
+          OrthographicCamera { z: 600 }
+          DirectionalLight { brightness: 0 }
+          ParticleSystem3D {
+            objectName: "system"
+            running: false
+            useRandomSeed: false
+            ModelParticle3D { id: kind; color: "#ff0000"; fadeInEffect: Particle3D.FadeNone; fadeOutEffect: Particle3D.FadeNone
+              Model { source: "#Rectangle"; scale: Qt.vector3d(0.4, 0.4, 1); materials: DefaultMaterial { lighting: DefaultMaterial.NoLighting; diffuseColor: "white" } } }
+            ParticleEmitter3D { particle: kind; lifeSpan: 100000; velocity: VectorDirection3D { direction: Qt.vector3d(0, 100, 0) }  EmitBurst3D { amount: 1 } }
+          }
+        }
+      }
+      """
+    When the property "time" of "system" is set to 500
+    Then the pixel at 100, 50 of the window is within 4 of "#ff0000"
+    And the pixel at 100, 100 of the window is within 4 of "#000000"
+
   Scenario: A model anywhere shows the table of the kind
     Given the QML:
       """qml

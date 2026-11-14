@@ -145,7 +145,12 @@ impl Particle3D {
 /// `ModelParticle3D`: a model for each particle: the one `delegate` makes, and
 /// any other whose `instancing` is `instanceTable`.
 #[derive(Debug, Default, QmlObject)]
-#[qml(module = "QtQuick3D.Particles3D", name = "ModelParticle3D", extends = Particle3D)]
+#[qml(
+    module = "QtQuick3D.Particles3D",
+    name = "ModelParticle3D",
+    extends = Particle3D,
+    default = "delegate"
+)]
 pub struct ModelParticle3D {
     #[qml(base)]
     pub particle: Particle3D,

@@ -192,6 +192,7 @@ pub fn register(engine: &Engine) {
         SetUniformValue,
         Texture,
         View3D,
+        helpers::RenderStats,
         PickResult,
         Repeater3D,
         RuntimeLoader,

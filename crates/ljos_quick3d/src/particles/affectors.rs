@@ -16,7 +16,12 @@ use crate::space;
 /// An application's own affector is a type that extends this one and hands
 /// what it does to [`Affector3D::set_custom`].
 #[derive(Debug, QmlObject)]
-#[qml(module = "QtQuick3D.Particles3D", name = "Affector3D", extends = Node)]
+#[qml(
+    module = "QtQuick3D.Particles3D",
+    name = "Affector3D",
+    extends = Node,
+    uncreatable
+)]
 pub struct Affector3D {
     #[qml(base)]
     pub node: Node,
