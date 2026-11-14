@@ -227,7 +227,7 @@ Feature: Qt's QML lowered to Ljós's API
       When the author runs "ljos migrate --write app/Gauges/Dial.qml"
       Then the command prints:
         """
-        kept app/Gauges/Dial.qml:1:1: `Main.qml`, in Ljós's API, binds `color` on it, which Ljós's `Rectangle` calls `fill`: rename it there as this file is lowered
+        kept app/Gauges/Dial.qml:1:1: `Main.qml` is left as it is and binds `color` on it, which Ljós's `Rectangle` calls `fill`: rename it there as this file is lowered
         1 files, 0 lowered, 1 kept
         """
       And the file "app/Gauges/Dial.qml" is:

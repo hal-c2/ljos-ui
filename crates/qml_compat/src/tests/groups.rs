@@ -108,10 +108,7 @@ fn a_kept_file_keeps_what_it_uses_through_a_file_left_as_it_is() {
             "app/Main".to_string(),
             alone("import QtQuick\nFocusScope { Bridge { } }\n"),
         ),
-        (
-            "app/Bridge".to_string(),
-            alone("Swatch { color: \"red\" }\n"),
-        ),
+        ("app/Bridge".to_string(), alone("Swatch { width: 4 }\n")),
         (
             "app/Swatch".to_string(),
             alone("import QtQuick\nRectangle { color: \"red\" }\n"),
@@ -223,7 +220,7 @@ fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
             (Some(why), Outcome::Kept(kept)) => assert_eq!(
                 kept.to_string(),
                 format!(
-                    "`Main.qml`, in Ljós's API, {why}: rename it there as this file is lowered"
+                    "`Main.qml` is left as it is and {why}: rename it there as this file is lowered"
                 )
             ),
             (None, Outcome::Lowered(_)) => {}
@@ -246,10 +243,99 @@ fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
     };
     assert!(
         kept.to_string()
-            .starts_with("`Uses.qml`, in Ljós's API, binds `color`"),
+            .starts_with("`Uses.qml` is left as it is and binds `color`"),
         "{kept}"
     );
     assert!(matches!(outcomes["app/Dial"], Outcome::Kept(_)));
+}
+
+/// A file that imports no Qt module is left as it is too, and binds Qt's
+/// names on what it uses as one in Ljós's API does.
+#[test]
+fn a_file_left_as_it_is_without_imports_keeps_the_file_it_binds_qts_names_on() {
+    let files = std::collections::BTreeMap::from([
+        (
+            "app/Swatch".to_string(),
+            alone("import QtQuick\nRectangle { }\n"),
+        ),
+        (
+            "app/Bridge".to_string(),
+            alone("Swatch { color: \"red\" }\n"),
+        ),
+    ]);
+    assert!(matches!(files["app/Bridge"].outcome, Outcome::Unchanged));
+    let outcomes = group(&files);
+    let Outcome::Kept(kept) = &outcomes["app/Swatch"] else {
+        panic!("{:?}", outcomes["app/Swatch"]);
+    };
+    assert_eq!(
+        kept.to_string(),
+        "`Bridge.qml` is left as it is and binds `color` on it, which Ljós's `Rectangle` \
+         calls `fill`: rename it there as this file is lowered"
+    );
+}
+
+/// An inline component of another file, named qualified by it
+/// (`Kit.Dial`), is that file's: what is bound on it keeps the file, read
+/// through the components it is built on to the type they end on.
+#[test]
+fn a_file_binding_on_an_inline_component_of_another_keeps_it() {
+    let gauge = "import QtQuick\nRectangle { }\n";
+    for (kit, main, held) in [
+        (
+            "Item { component Dial: Rectangle {} }",
+            "Kit.Dial { color: \"red\" }",
+            Some("`color`"),
+        ),
+        (
+            "Item { component Dial: Rectangle {} }",
+            "Kit.Dial { width: 4 }",
+            None,
+        ),
+        (
+            "Item { component Base: Rectangle {} component Dial: Base {} }",
+            "Kit.Dial { onColorChanged: {} }",
+            Some("`onColorChanged`"),
+        ),
+        (
+            "Item { component Dial: Gauge {} }",
+            "Kit.Dial { color: \"red\" }",
+            Some("`color`"),
+        ),
+        (
+            "Item { component Dial: Rectangle {} }",
+            "Kit.Dial { id: dial } Binding { target: dial; property: \"color\"; value: \"red\" }",
+            Some("`color`"),
+        ),
+    ] {
+        let files = std::collections::BTreeMap::from([
+            ("app/Gauge".to_string(), alone(gauge)),
+            (
+                "app/Kit".to_string(),
+                alone(&format!("import QtQuick\n{kit}\n")),
+            ),
+            (
+                "app/Main".to_string(),
+                alone(&format!("import Ljos.Ui\nItem {{ {main} }}\n")),
+            ),
+        ]);
+        assert!(
+            matches!(files["app/Kit"].outcome, Outcome::Lowered(_)),
+            "{kit}: {:?}",
+            files["app/Kit"].outcome
+        );
+        let outcomes = group(&files);
+        match (held, &outcomes["app/Kit"]) {
+            (Some(name), Outcome::Kept(kept)) => assert!(
+                kept.to_string().starts_with(&format!(
+                    "`Main.qml` is left as it is and binds {name} on it"
+                )),
+                "{main}: {kept}"
+            ),
+            (None, Outcome::Lowered(_)) => {}
+            (_, outcome) => panic!("{kit} / {main}: {outcome:?}"),
+        }
+    }
 }
 
 #[test]

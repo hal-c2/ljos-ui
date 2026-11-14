@@ -162,8 +162,9 @@ pub enum Cause {
         with: String,
         cause: Box<Cause>,
     },
-    /// A file a file in Ljós's API, `by`, uses, binding on it `name`: what
-    /// Ljós's `ty`, which the file's root is lowered to, calls `now`.
+    /// A file that a file the pass leaves as it is, `by`, uses, binding on
+    /// it `name`: what Ljós's `ty`, which the file's root is lowered to,
+    /// calls `now`.
     BoundAsQt {
         by: String,
         name: String,
@@ -611,7 +612,7 @@ impl fmt::Display for Cause {
             }
             Cause::BoundAsQt { by, name, ty, now } => write!(
                 f,
-                "`{by}.qml`, in Ljós's API, binds `{name}` on it, which Ljós's `{ty}` calls `{now}`: rename it there as this file is lowered"
+                "`{by}.qml` is left as it is and binds `{name}` on it, which Ljós's `{ty}` calls `{now}`: rename it there as this file is lowered"
             ),
             Cause::RowsScript { path } => write!(
                 f,
