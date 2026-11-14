@@ -315,3 +315,48 @@ fn items_in_a_node_reach_the_kept_scene() {
     assert_eq!(quads, 2);
     assert_eq!(synced(&e, root), 0);
 }
+
+#[test]
+fn a_repeater_given_a_new_array_reaches_the_kept_scene() {
+    // A spawner that gives its repeater a new array when its count
+    // changes, as well as through the binding, and delegates that place
+    // themselves once made, each drawing a mesh file: the file the old
+    // delegates held goes with them, and the new ones read it again.
+    const SPAWNER: &str = r##"
+Item {
+    id: root
+    width: 100; height: 100
+    property QtObject view_: view
+    property QtObject spawner_: spawner
+    View3D {
+        id: view
+        anchors.fill: parent
+        PerspectiveCamera { z: 300 }
+        Node {
+            id: spawner
+            property int count: 0
+            onCountChanged: rep.model = new Array(spawner.count).fill({ "ts": 1 })
+            Repeater3D {
+                id: rep
+                model: new Array(spawner.count).fill({ "ts": 1 })
+                delegate: Node {
+                    required property int index
+                    Component.onCompleted: { position.x = index * 3; position.y = index }
+                    Node { Model { source: "MESH" } }
+                }
+            }
+        }
+    }
+}
+"##;
+    let (e, mut w, root) = show(&SPAWNER.replace("MESH", &model_path("two-squares.mesh")));
+    let view = named(&e, root, "view_");
+    let spawner = named(&e, root, "spawner_");
+    for count in [3, 5, 2, 5] {
+        write(&e, spawner, "count", count);
+        w.advance(100).expect("advanced");
+        assert_eq!(synced(&e, view), 0);
+        // Two squares each.
+        assert_eq!(custom_meshes(&kept(&e, view)), 2 * count as usize);
+    }
+}

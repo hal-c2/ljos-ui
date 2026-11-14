@@ -209,10 +209,14 @@ fn arrived(e: &Engine, url: &str, got: Result<Arc<MeshFile>, String>) {
             told.push((model, view));
         }
     }
-    for (model, view) in told {
-        crate::arrival::tell(e, model);
-        item::repaint(e, view);
-    }
+    // Told together: a view reads again only the models it is told of, so
+    // a paint the first tell ran at once would leave the rest unread.
+    e.batch(|| {
+        for (model, view) in told {
+            crate::arrival::tell(e, model);
+            item::repaint(e, view);
+        }
+    });
     for answer in answers {
         answer(e, got.clone());
     }
