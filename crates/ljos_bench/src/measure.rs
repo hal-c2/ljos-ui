@@ -397,6 +397,8 @@ impl Watch<'_> {
 /// Measures a window of time: CPU, wakeups and, when the compositor can
 /// be asked, frames; `drive` is the window `gesture` drives meanwhile,
 /// clicked at `points` (fractions of it) instead of a grid when given.
+/// `None` when the CPU cannot be read, which is found before the window
+/// starts.
 #[allow(clippy::too_many_arguments)]
 fn span(
     setup: &Setup,
@@ -1080,7 +1082,6 @@ fn run_once(
             _ => None,
         };
         if !phases.idle.is_zero() {
-            let from_us = crate::frames3d::now_us();
             out.idle = span(
                 setup,
                 &mut w,
@@ -1092,16 +1093,10 @@ fn run_once(
                 rect,
                 phases.instructions,
             );
-            // The span's own time where it measured one; around it where
-            // it could not read the CPU, so the 3D frames are still summed.
-            idle_window =
-                out.idle
-                    .as_ref()
-                    .and_then(|s| s.window)
-                    .or(Some(crate::frames3d::Window {
-                        from_us,
-                        to_us: crate::frames3d::now_us(),
-                    }));
+            // The span's own time. A span that could not read the CPU
+            // returned before the phase ran, so there are no frames of it
+            // to sum.
+            idle_window = out.idle.as_ref().and_then(|s| s.window);
             if w.exited.is_none() {
                 out.idled = Some(memory(&w));
             }
@@ -1113,7 +1108,6 @@ fn run_once(
                 w.sample();
             }
             for round in 0..phases.rounds.max(1) {
-                let from_us = crate::frames3d::now_us();
                 let load = span(
                     setup,
                     &mut w,
@@ -1128,13 +1122,7 @@ fn run_once(
                 // The first span is the one every run has, comparable
                 // with runs of one round.
                 if round == 0 {
-                    load_window =
-                        load.as_ref()
-                            .and_then(|s| s.window)
-                            .or(Some(crate::frames3d::Window {
-                                from_us,
-                                to_us: crate::frames3d::now_us(),
-                            }));
+                    load_window = load.as_ref().and_then(|s| s.window);
                     out.load = load;
                 }
                 if w.exited.is_some() {

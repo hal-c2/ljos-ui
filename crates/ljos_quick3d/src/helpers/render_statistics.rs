@@ -211,8 +211,9 @@ pub struct RenderStats {
     #[qml(notify, readonly)]
     max_frame_time: f64,
     /// Milliseconds the CPU spent rendering the last frame after preparing
-    /// it: recording its passes and submitting them, as Qt has it; -1
-    /// before a frame is drawn.
+    /// it: recording its passes and submitting them; -1 before a frame is
+    /// drawn. Qt's `renderTime` is not split there, so compare the sum of
+    /// the parts.
     #[qml(notify, readonly)]
     render_time: f64,
     /// Milliseconds spent reading the QML scene into the renderer's for
