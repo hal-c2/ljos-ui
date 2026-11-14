@@ -461,8 +461,18 @@ impl QuickScene {
     /// stay as the last event left them.
     pub fn key_event_from_text(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
         self.note_input();
-        self.root()
-            .is_some_and(|root| deliver_key(engine, root, ev))
+        let Some(root) = self.root() else {
+            return false;
+        };
+        // Where the key goes is where it was focused as it came: a key
+        // that moves the focus (Tab) is still the first item's.
+        let focus = self
+            .watching_input(engine)
+            .then(|| focus::active_focus_item(engine, root))
+            .flatten();
+        let taken = deliver_key(engine, root, ev);
+        self.watched_key(engine, ev, focus, taken);
+        taken
     }
 
     /// Tells the scene whether its window has the keyboard. Active focus

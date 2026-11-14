@@ -77,7 +77,7 @@ use std::sync::Arc;
 use ljos_a11y::{AccessibleNode, NodeKey};
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::{
-    KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent,
+    InputOrigin, KeyEvent, Modifiers, MouseButtons, PointerEvent, PointerId, QuickScene, WheelEvent,
 };
 use ljos_render::kurbo::{self, Point};
 use ljos_render::{FrameView, RasterConfig, RgbaImage, VelloCpuReference};
@@ -271,19 +271,29 @@ impl<'a> Driver<'a> {
     /// Hands the scene one pointer event and nothing more. Whether an item
     /// or a handler took it.
     pub fn send_pointer(&mut self, ev: &PointerEvent) -> bool {
-        self.scene.pointer_event(self.engine, ev)
+        let engine = self.engine;
+        self.scene
+            .with_input_origin(InputOrigin::Synthetic, |scene| {
+                scene.pointer_event(engine, ev)
+            })
     }
 
     /// Hands the scene one key event and nothing more. Whether an item
     /// took it.
     pub fn send_key(&mut self, ev: &KeyEvent) -> bool {
-        self.scene.key_event(self.engine, ev)
+        let engine = self.engine;
+        self.scene
+            .with_input_origin(InputOrigin::Synthetic, |scene| scene.key_event(engine, ev))
     }
 
     /// Hands the scene one wheel event and nothing more. Whether an item
     /// used it.
     pub fn send_wheel(&mut self, ev: &WheelEvent) -> bool {
-        self.scene.wheel_event(self.engine, ev)
+        let engine = self.engine;
+        self.scene
+            .with_input_origin(InputOrigin::Synthetic, |scene| {
+                scene.wheel_event(engine, ev)
+            })
     }
 
     /// The input method is composing `text` (`cursor` in UTF-16 units of

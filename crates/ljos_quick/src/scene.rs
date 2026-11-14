@@ -435,6 +435,9 @@ struct Shared {
     /// A ShaderEffectSource inside its own source took a picture that
     /// differs from the last, so the next frame takes another.
     pictures: bool,
+    /// Input posted to a window the scene shows ([`crate::post_input`]),
+    /// for the next frame to hand it.
+    posted: Vec<(ObjectId, crate::live_input::Input)>,
     /// Set from the first mark until the frame that drains it.
     dirty: bool,
     waker: Option<Rc<dyn Fn()>>,
@@ -446,6 +449,7 @@ impl Shared {
             || !self.placed.is_empty()
             || !self.dead.is_empty()
             || self.pictures
+            || !self.posted.is_empty()
     }
 
     /// Sets the mark `what` of `obj`, after `f` gave it its value.
@@ -540,7 +544,7 @@ type SharedRc = Rc<RefCell<Shared>>;
 /// they read ([`moved`], [`reshaped`]). A scene that goes is let go. The
 /// pending records hold inherited state before a root's first scene exists.
 #[derive(Default)]
-struct Scenes {
+pub(crate) struct Scenes {
     all: RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>,
     pending: RefCell<Option<SharedRc>>,
     /// The root each scene shows: the windows there are. Read without
@@ -599,6 +603,26 @@ impl Scenes {
         if let Some(engine) = engine {
             crate::grab::settle_unshown(&engine, showed);
         }
+    }
+
+    /// Queues `input` in the scene that shows `window`, which wakes its
+    /// host. Whether one does.
+    pub(crate) fn post(
+        &self,
+        engine: &Engine,
+        window: ObjectId,
+        input: crate::live_input::Input,
+    ) -> bool {
+        let shared = self.roots.borrow().iter().find_map(|(w, root)| {
+            crate::live_input::is_in(engine, window, *root)
+                .then(|| w.upgrade())
+                .flatten()
+        });
+        let Some(shared) = shared else {
+            return false;
+        };
+        mark(&shared, |s| s.posted.push((window, input)));
+        true
     }
 
     fn pending_for_creation(&self) -> SharedRc {
@@ -1404,6 +1428,8 @@ pub struct QuickScene {
     timers: Option<TimerHook>,
     next_timer: Option<Time>,
     pointer: PointerState,
+    /// For the watchers of input ([`crate::watch_input`]).
+    pub(crate) watch: crate::live_input::SceneWatch,
     pub(crate) touch: crate::touch::Touches,
     /// Creation jobs of asynchronous Loaders, run a slice per frame.
     incubator: Scheduler<()>,
@@ -1507,6 +1533,7 @@ impl QuickScene {
             timers: None,
             next_timer: None,
             pointer: PointerState::default(),
+            watch: crate::live_input::SceneWatch::default(),
             touch: crate::touch::Touches::default(),
             incubator: Scheduler::new(),
             incubation: None,
@@ -1844,6 +1871,9 @@ impl QuickScene {
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
         use crate::frame_times::{FrameTimes, Laps, lap};
         use ljos_engine::{Phase, TurnCause};
+        // Input posted since the last frame comes first, as a host's own
+        // does: every host frames when woken, so each hands it the same.
+        self.deliver_posted_input(engine, now);
         // A frame is a turn: one that never ends is reported while it runs,
         // with the step it is in.
         let _turn = engine.begin_turn(TurnCause::Frame, None);
@@ -3569,6 +3599,7 @@ impl QuickScene {
             self.pointer.portal = None;
         }
         self.pointer.cursor = self.cursor_for(engine, ev);
+        self.watched_pointer(engine, ev, handled);
         handled
     }
 
@@ -3708,7 +3739,9 @@ impl QuickScene {
     ) -> bool {
         self.note_input();
         let hits = self.hits(engine, ev.pos);
-        crate::wheel::deliver(engine, &hits, ev, buttons)
+        let taken = crate::wheel::deliver(engine, &hits, ev, buttons);
+        self.watched_wheel(engine, ev, &hits, taken);
+        taken
     }
 
     /// Offers a pinch the platform recognised (a touchpad's) to the
@@ -3747,6 +3780,10 @@ impl QuickScene {
     }
 
     /// Items under `pos`, topmost first.
+    pub(crate) fn take_posted(&mut self) -> Vec<(ObjectId, crate::live_input::Input)> {
+        std::mem::take(&mut self.shared.borrow_mut().posted)
+    }
+
     pub(crate) fn hits(&self, engine: &Engine, pos: kurbo::Point) -> Vec<ObjectId> {
         let Some(snap) = &self.snapshot else {
             return Vec::new();
