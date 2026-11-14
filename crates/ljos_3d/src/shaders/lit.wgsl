@@ -123,6 +123,12 @@ struct Model {
     mirror_at: vec4<f32>,
     mirror_min: vec4<f32>,
     mirror_max: vec4<f32>,
+    // An instanced model's copies are each placed by their entry inside
+    // these: the instancing's place in front, its inverse behind, so that
+    // the copies' rows stay as the table has them while what holds it
+    // moves. Identities for a model drawn once.
+    copies_global: mat4x4<f32>,
+    copies_back: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -176,8 +182,9 @@ struct VsOut {
     @location(5) color: vec4<f32>,
 };
 
-// One copy of a model: where it is, as the top three rows of a matrix put
-// in front of the model's world transform, and its colour. A model drawn
+// One copy of a model: its entry in the table, as the top three rows of a
+// matrix, and its colour. `copy_place` puts the entry where the model's
+// instancing is, in front of the model's world transform. A model drawn
 // once is drawn as the one copy of an identity entry.
 struct Instance {
     @location(4) row0: vec4<f32>,
@@ -188,6 +195,11 @@ struct Instance {
 
 fn instance_matrix(i: Instance) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(i.row0, i.row1, i.row2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+}
+
+// What a copy puts in front of the model's world transform.
+fn copy_place(i: Instance) -> mat4x4<f32> {
+    return model.copies_global * instance_matrix(i) * model.copies_back;
 }
 
 // What carries a normal through `m`: its inverse transpose up to a
@@ -210,7 +222,7 @@ fn shade_vertex(
     skin: mat4x4<f32>,
 ) -> VsOut {
     var out: VsOut;
-    let place = instance_matrix(copy);
+    let place = copy_place(copy);
     let m = place * model.world * skin;
     let world = m * vec4<f32>(position, 1.0);
     out.clip = frame.view_proj * world;

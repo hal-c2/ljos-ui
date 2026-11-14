@@ -37,6 +37,7 @@ impl InstanceRow {
     };
 
     /// The copy's place as a matrix.
+    #[cfg(test)]
     pub(crate) fn matrix(&self) -> Mat4 {
         let r = &self.rows;
         Mat4([

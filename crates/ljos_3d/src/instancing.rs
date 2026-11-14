@@ -126,6 +126,23 @@ impl Instancing {
         let turn = Mat4::from_trs(Vec3::ZERO, node.transform.rotation, node.transform.scale);
         root_world * turn.inverse().unwrap_or(Mat4::IDENTITY)
     }
+
+    /// What is left of `world` inside `global` (this instancing's
+    /// [`global`](Self::global)): `global⁻¹ * world`. Where the model is
+    /// its own root, or the root's child, that is the model's own transform,
+    /// read off the node as it is rather than worked out, so that it stays
+    /// the same to the bit while what is above the model moves.
+    pub fn local(&self, scene: &Scene, model: NodeId, world: &Mat4, global: &Mat4) -> Mat4 {
+        let node = scene.node(model);
+        let worked_out = || global.inverse().unwrap_or(Mat4::IDENTITY) * *world;
+        match (self.root, node) {
+            (Some(root), Some(node)) if root == model => node.transform.matrix(),
+            (None, Some(node)) => {
+                Mat4::from_trs(Vec3::ZERO, node.transform.rotation, node.transform.scale)
+            }
+            _ => worked_out(),
+        }
+    }
 }
 
 /// Every copy's world transform: `global * entry * global⁻¹ * world`.

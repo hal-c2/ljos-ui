@@ -1372,7 +1372,7 @@ fn material_glue(out: &[Varying], ins: &[Varying], shaded: bool, f: &Functions) 
          fn cm_vertex(position: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>, uv1: vec2<f32>,\n\
          \x20   tangent: vec4<f32>, copy: Instance, data: vec4<f32>, index: u32, joints: vec4<u32>,\n\
          \x20   weights: vec4<f32>, color: vec4<f32>) -> CmVsOut {{\n\
-         \x20   let v = cmv_ljosvertex(position, normal, uv, uv1, tangent, instance_matrix(copy),\n\
+         \x20   let v = cmv_ljosvertex(position, normal, uv, uv1, tangent, copy_place(copy),\n\
          \x20       copy.color, data, i32(index), vec4<i32>(joints), weights, color, model.maps.w != 0u);\n\
          \x20   var out: CmVsOut;\n\
          \x20   out.clip = v.ljosclip;\n\
