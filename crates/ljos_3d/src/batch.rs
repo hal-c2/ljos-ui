@@ -8,36 +8,41 @@
 //! What is drawn together is decided by a key the caller gives each draw:
 //! the same key, the same draw. A draw with no key is drawn on its own.
 
-use std::collections::HashMap;
 use std::hash::Hash;
+
+use rustc_hash::FxHashMap;
 
 use crate::math::{Mat4, Vec3};
 
-/// The draws, by index, as they are to be drawn: each group where its
-/// first draw is, its draws in the order they came. A key may stand for
-/// more than draws alike, as a hash does: a draw is put with the first of
-/// its key's group only where `alike` says the two are, and drawn alone
-/// where not.
-pub(crate) fn groups<K: Eq + Hash>(
-    keys: impl IntoIterator<Item = Option<K>>,
-    alike: impl Fn(usize, usize) -> bool,
-) -> Vec<Vec<usize>> {
-    let mut groups: Vec<Vec<usize>> = Vec::new();
-    let mut by_key: HashMap<K, usize> = HashMap::new();
-    for (i, key) in keys.into_iter().enumerate() {
-        match key {
-            None => groups.push(vec![i]),
-            Some(key) => match by_key.get(&key) {
-                Some(&g) if alike(groups[g][0], i) => groups[g].push(i),
-                Some(_) => groups.push(vec![i]),
-                None => {
-                    by_key.insert(key, groups.len());
-                    groups.push(vec![i]);
-                }
-            },
+/// What a frame's batching works in, kept from one frame to the next: the
+/// lists of a thousand draws are made once, and each frame's in the room
+/// the last one left. A key may stand for more than draws alike, as a hash
+/// does: a draw is put with the first of its key's group only where
+/// `alike` says the two are, and drawn alone where not.
+pub(crate) struct Batching<K> {
+    extents: Vec<f32>,
+    first_of: FxHashMap<K, usize>,
+    index: Index,
+    /// The first draw of the group each draw is drawn in.
+    first: Vec<usize>,
+    /// The draws group by group, the groups where their first draws are
+    /// and each one's draws in the order they came.
+    members: Vec<usize>,
+    /// Where each group begins in `members`, and past the last, its end.
+    starts: Vec<usize>,
+}
+
+impl<K> Default for Batching<K> {
+    fn default() -> Self {
+        Batching {
+            extents: Vec::new(),
+            first_of: FxHashMap::default(),
+            index: Index::new(1.0),
+            first: Vec::new(),
+            members: Vec::new(),
+            starts: Vec::new(),
         }
     }
-    groups
 }
 
 /// The box a model takes in the scene, which none of its points is
@@ -124,85 +129,161 @@ impl Reach {
     }
 }
 
-/// The first draw of the group each draw is drawn in: [`groups`] puts
-/// together only draws of one key and one first. A group is drawn where its
-/// first draw is, so the draws it takes in come before those between them,
-/// and its rows come in their declaration order (`order`), which may not be
-/// the order they came in. Where two models that come in one order may meet
-/// ([`Reach::meets`]), the depth test shows the later where they are as
-/// deep: a draw that would be drawn before one it came after and may meet
-/// starts a group of its own key, and the other groups go on. A draw with
-/// no key is drawn alone and may be the one seen where it is, so no group
-/// reaches across it.
-pub(crate) fn firsts<K: Eq + Hash + Copy>(
-    keys: &[Option<K>],
-    alike: impl Fn(usize, usize) -> bool,
-    reach: &[Reach],
-    order: &[u32],
-) -> Vec<usize> {
-    let n = keys.len();
-    // Cells about one model across, so a model is in a few and a cell
-    // holds a few: the median keeps one large floor from setting it.
-    let mut extents: Vec<f32> = (0..n)
-        .filter(|&i| keys[i].is_some())
-        .map(|i| reach[i].extent())
-        .filter(|e| e.is_finite() && *e > 0.0)
-        .collect();
-    let cell = if extents.is_empty() {
-        1.0
-    } else {
-        let mid = extents.len() / 2;
-        *extents.select_nth_unstable_by(mid, f32::total_cmp).1
-    };
-    let mut index = Index::new(cell);
-    let mut first_of: HashMap<K, usize> = HashMap::new();
-    let mut group = vec![0usize; n];
-    for i in 0..n {
-        let Some(key) = keys[i] else {
-            index.clear();
-            first_of.clear();
-            group[i] = i;
-            continue;
+impl<K: Eq + Hash + Copy> Batching<K> {
+    /// The first draw of the group each draw is drawn in, by index: a draw
+    /// is put with the first of its key's group where `alike` says the two
+    /// are. A group is drawn where its first draw is, so the draws it takes
+    /// in come before those between them, and its rows come in their
+    /// declaration order (`order`), which may not be the order they came
+    /// in. Where two models that come in one order may meet
+    /// ([`Reach::meets`]), the depth test shows the later where they are as
+    /// deep: a draw that would be drawn before one it came after and may
+    /// meet starts a group of its own key, and the other groups go on. A
+    /// draw with no key is drawn alone and may be the one seen where it is,
+    /// so no group reaches across it.
+    pub(crate) fn firsts(
+        &mut self,
+        keys: &[Option<K>],
+        alike: impl Fn(usize, usize) -> bool,
+        reach: &[Reach],
+        order: &[u32],
+    ) -> &[usize] {
+        let n = keys.len();
+        // Cells about one model across, so a model is in a few and a cell
+        // holds a few: the median keeps one large floor from setting it.
+        let extents = &mut self.extents;
+        extents.clear();
+        extents.extend(
+            (0..n)
+                .filter(|&i| keys[i].is_some())
+                .map(|i| reach[i].extent())
+                .filter(|e| e.is_finite() && *e > 0.0),
+        );
+        // A power of two, so a scene that turns or grows a little keeps its
+        // cells, and the room their lists have, from frame to frame: two
+        // boxes that meet share a cell however large.
+        let cell = if extents.is_empty() {
+            1.0
+        } else {
+            let mid = extents.len() / 2;
+            extents
+                .select_nth_unstable_by(mid, f32::total_cmp)
+                .1
+                .log2()
+                .round()
+                .exp2()
         };
-        group[i] = i;
-        match first_of.get(&key).copied() {
-            Some(f) if alike(f, i) => {
-                // What came before it and is drawn after it: one of its
-                // group declared later, or a group drawn after its own.
-                // A draw is in a group no later than its own, so only those
-                // since `f` can be either.
-                let reordered = index.near(&reach[i], f).any(|j| {
-                    let ahead = if group[j] == f {
-                        order[j] > order[i]
+        let index = &mut self.index;
+        index.begin(cell);
+        let first_of = &mut self.first_of;
+        first_of.clear();
+        let group = &mut self.first;
+        group.clear();
+        group.extend(0..n);
+        for i in 0..n {
+            let Some(key) = keys[i] else {
+                // What came before it is looked at no more: each group's
+                // first comes after it, and the index is read from there.
+                first_of.clear();
+                continue;
+            };
+            match first_of.get(&key).copied() {
+                Some(f) if alike(f, i) => {
+                    // What came before it and is drawn after it: one of
+                    // its group declared later, or a group drawn after its
+                    // own. A draw is in a group no later than its own, so
+                    // only those since `f` can be either.
+                    let reordered = index.any_near(&reach[i], f, |j| {
+                        let ahead = if group[j] == f {
+                            order[j] > order[i]
+                        } else {
+                            group[j] > f
+                        };
+                        ahead && reach[i].meets(&reach[j])
+                    });
+                    // Every pair it would turn round is one with a draw
+                    // before it, all of which the index holds: one set
+                    // apart leaves the others' groups whole.
+                    if reordered {
+                        first_of.insert(key, i);
                     } else {
-                        group[j] > f
-                    };
-                    ahead && reach[i].meets(&reach[j])
-                });
-                // Every pair it would turn round is one with a draw before
-                // it, all of which the index holds: one set apart leaves
-                // the others' groups whole.
-                if reordered {
+                        group[i] = f;
+                    }
+                }
+                Some(_) => {}
+                None => {
                     first_of.insert(key, i);
-                } else {
-                    group[i] = f;
                 }
             }
-            Some(_) => {}
-            None => {
-                first_of.insert(key, i);
+            index.add(i, &reach[i]);
+        }
+        group
+    }
+
+    /// Puts the draws in the groups of the firsts [`Batching::firsts`]
+    /// found, for [`Batching::members`]: the groups where their firsts
+    /// are, each one's draws in the order they came.
+    pub(crate) fn group(&mut self) {
+        let n = self.first.len();
+        // Counted at their first, then laid out in the firsts' order: no
+        // list of its own for each group.
+        self.starts.clear();
+        self.starts.resize(n + 1, 0);
+        for &f in &self.first {
+            self.starts[f + 1] += 1;
+        }
+        // Where the group of each first begins; one of a draw that is no
+        // group's first is empty.
+        let mut at = 0;
+        for f in 0..n {
+            let count = self.starts[f + 1];
+            self.starts[f + 1] = at;
+            at += count;
+        }
+        self.members.clear();
+        self.members.resize(n, 0);
+        for (i, &f) in self.first.iter().enumerate() {
+            let next = &mut self.starts[f + 1];
+            self.members[*next] = i;
+            *next += 1;
+        }
+        // `starts[f + 1]` is now where `f`'s group ends; those of the
+        // draws that are no group's first are where the one before ended.
+        let mut kept = 0;
+        for f in 0..n {
+            if self.first[f] == f {
+                self.starts[kept + 1] = self.starts[f + 1];
+                kept += 1;
             }
         }
-        index.add(i, &reach[i]);
+        self.starts.truncate(kept + 1);
     }
-    group
+
+    /// How many groups [`Batching::group`] put the draws in.
+    pub(crate) fn len(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+
+    /// The draws of group `g`, which [`Batching::group`] put in the order
+    /// they came; a caller may put them in another.
+    pub(crate) fn members(&mut self, g: usize) -> &mut [usize] {
+        &mut self.members[self.starts[g]..self.starts[g + 1]]
+    }
 }
 
-/// The draws since the last drawn alone by the cells of space their boxes are in; a box in
-/// more cells than a few is looked at for every draw.
+/// A frame's draws by the cells of space their boxes are in; a box in more
+/// cells than a few is looked at for every draw. The cells are kept from
+/// frame to frame with the room their lists have, and a cell is the
+/// frame's once a draw of it is added: the models of a scene whose camera
+/// moves are in the cells they were in.
 struct Index {
     cell: f32,
-    cells: HashMap<[i64; 3], Vec<usize>>,
+    /// Each cell's draws, and the frame they are of.
+    cells: FxHashMap<[i64; 3], (u64, Vec<usize>)>,
+    /// The frame the draws added are of.
+    frame: u64,
+    /// How many of the cells the frame added draws to.
+    live: usize,
     large: Vec<usize>,
     all: Vec<usize>,
 }
@@ -214,14 +295,29 @@ impl Index {
     fn new(cell: f32) -> Self {
         Index {
             cell,
-            cells: HashMap::new(),
+            cells: FxHashMap::default(),
+            // A cell made is of frame 0: of none.
+            frame: 1,
+            live: 0,
             large: Vec::new(),
             all: Vec::new(),
         }
     }
 
-    fn clear(&mut self) {
-        self.cells.clear();
+    /// Starts a frame's draws, in cells `cell` across: those of the frames
+    /// before are left out.
+    fn begin(&mut self, cell: f32) {
+        if self.cell != cell {
+            self.cells.clear();
+        } else if self.cells.len() > 2 * self.live + 1024 {
+            // Cells no frame adds to any more are let go of once they are
+            // most of those kept: a scene that moves leaves cells behind.
+            let last = self.frame;
+            self.cells.retain(|_, (frame, _)| *frame == last);
+        }
+        self.cell = cell;
+        self.frame += 1;
+        self.live = 0;
         self.large.clear();
         self.all.clear();
     }
@@ -258,7 +354,13 @@ impl Index {
                 for x in lo[0]..=hi[0] {
                     for y in lo[1]..=hi[1] {
                         for z in lo[2]..=hi[2] {
-                            self.cells.entry([x, y, z]).or_default().push(i);
+                            let (frame, list) = self.cells.entry([x, y, z]).or_default();
+                            if *frame != self.frame {
+                                *frame = self.frame;
+                                list.clear();
+                                self.live += 1;
+                            }
+                            list.push(i);
                         }
                     }
                 }
@@ -266,27 +368,35 @@ impl Index {
         }
     }
 
-    /// The draws from `since` on whose boxes may meet `r`'s, some more
-    /// than once. Each list is in the order the draws were added, so it is
-    /// read from its end and left at the first before `since`: what came
-    /// long ago is not looked at again and again.
-    fn near<'a>(&'a self, r: &Reach, since: usize) -> Box<dyn Iterator<Item = usize> + 'a> {
-        let from =
-            move |list: &'a Vec<usize>| list.iter().rev().copied().take_while(move |&j| j >= since);
-        match self.span(r) {
-            None => Box::new(from(&self.all)),
-            Some((lo, hi)) => {
-                let cells = (lo[0]..=hi[0]).flat_map(move |x| {
-                    (lo[1]..=hi[1]).flat_map(move |y| (lo[2]..=hi[2]).map(move |z| [x, y, z]))
-                });
-                Box::new(
-                    cells
-                        .filter_map(|c| self.cells.get(&c))
-                        .flat_map(from)
-                        .chain(from(&self.large)),
-                )
+    /// Whether `found` holds for one of the draws from `since` on whose
+    /// boxes may meet `r`'s, which it is asked of from the last added, some
+    /// more than once. Each list is in the order the draws were added, so
+    /// it is read from its end and left at the first before `since`: what
+    /// came long ago is not looked at again and again.
+    fn any_near(&self, r: &Reach, since: usize, mut found: impl FnMut(usize) -> bool) -> bool {
+        let mut from = |list: &[usize]| {
+            list.iter()
+                .rev()
+                .copied()
+                .take_while(|&j| j >= since)
+                .any(&mut found)
+        };
+        let Some((lo, hi)) = self.span(r) else {
+            return from(&self.all);
+        };
+        for x in lo[0]..=hi[0] {
+            for y in lo[1]..=hi[1] {
+                for z in lo[2]..=hi[2] {
+                    if let Some((frame, list)) = self.cells.get(&[x, y, z])
+                        && *frame == self.frame
+                        && from(list)
+                    {
+                        return true;
+                    }
+                }
             }
         }
+        from(&self.large)
     }
 }
 
@@ -295,21 +405,63 @@ mod tests {
     use super::*;
     use crate::math::Quat;
 
+    fn firsts<K: Eq + Hash + Copy>(
+        keys: &[Option<K>],
+        alike: impl Fn(usize, usize) -> bool,
+        reach: &[Reach],
+        order: &[u32],
+    ) -> Vec<usize> {
+        Batching::default()
+            .firsts(keys, alike, reach, order)
+            .to_vec()
+    }
+
+    /// The groups of draws far apart, which come in their declaration
+    /// order.
+    fn groups<K: Eq + Hash + Copy>(
+        keys: &[Option<K>],
+        alike: impl Fn(usize, usize) -> bool,
+    ) -> Vec<Vec<usize>> {
+        let reach: Vec<Reach> = (0..keys.len()).map(|i| cube(9.0 * i as f32, 0.0)).collect();
+        let order: Vec<u32> = (0..keys.len() as u32).collect();
+        let mut batching = Batching::default();
+        batching.firsts(keys, alike, &reach, &order);
+        batching.group();
+        (0..batching.len())
+            .map(|g| batching.members(g).to_vec())
+            .collect()
+    }
+
     #[test]
     fn draws_with_one_key_are_one_group_where_the_first_of_them_is() {
-        let keys = [
-            Some('a'),
-            Some('b'),
-            Some('a'),
-            None,
-            Some('b'),
-            None,
-            Some('a'),
-        ];
+        let (a, b) = (Some('a'), Some('b'));
         assert_eq!(
-            groups(keys, |_, _| true),
-            [vec![0, 2, 6], vec![1, 4], vec![3], vec![5]]
+            groups(&[a, b, a, b, a], |_, _| true),
+            [vec![0, 2, 4], vec![1, 3]]
         );
+        assert_eq!(
+            groups(&[a, b, a, None, b, None, a], |_, _| true),
+            [vec![0, 2], vec![1], vec![3], vec![4], vec![5], vec![6]]
+        );
+    }
+
+    #[test]
+    fn the_room_a_frame_leaves_finds_the_next_s_groups_as_new_room_does() {
+        // A row of cubes, every other one alike, which a frame later have
+        // moved, some of them against others.
+        let keys: Vec<Option<u8>> = (0..40).map(|i| Some((i % 3) as u8)).collect();
+        let order: Vec<u32> = (0..40).rev().collect();
+        let at = |shift: f32| -> Vec<Reach> {
+            (0..40)
+                .map(|i| cube(3.0 * i as f32 + shift * (i % 5) as f32, (i % 2) as f32))
+                .collect()
+        };
+        let mut kept = Batching::default();
+        for shift in [0.0, 0.7, 1.5, 0.0, 40.0] {
+            let reach = at(shift);
+            let found = kept.firsts(&keys, |_, _| true, &reach, &order).to_vec();
+            assert_eq!(found, firsts(&keys, |_, _| true, &reach, &order), "{shift}");
+        }
     }
 
     fn cube(x: f32, z: f32) -> Reach {
@@ -435,14 +587,18 @@ mod tests {
             let r = if i % 3 == 0 { floor } else { cube(0.0, 0.0) };
             index.add(i, &r);
         }
-        let mut near: Vec<_> = index.near(&cube(0.0, 0.0), 2).collect();
-        near.sort_unstable();
-        near.dedup();
-        assert_eq!(near, [2, 3, 4, 5]);
-        let mut near: Vec<_> = index.near(&floor, 4).collect();
-        near.sort_unstable();
-        near.dedup();
-        assert_eq!(near, [4, 5]);
+        let near = |r: &Reach, since: usize| {
+            let mut near = Vec::new();
+            index.any_near(r, since, |j| {
+                near.push(j);
+                false
+            });
+            near.sort_unstable();
+            near.dedup();
+            near
+        };
+        assert_eq!(near(&cube(0.0, 0.0), 2), [2, 3, 4, 5]);
+        assert_eq!(near(&floor, 4), [4, 5]);
     }
 
     #[test]
@@ -467,12 +623,12 @@ mod tests {
 
     #[test]
     fn a_draw_without_a_key_is_drawn_alone() {
-        assert_eq!(groups([None::<u8>, None], |_, _| true), [vec![0], vec![1]]);
+        assert_eq!(groups(&[None::<u8>, None], |_, _| true), [vec![0], vec![1]]);
     }
 
     #[test]
     fn a_draw_its_key_s_first_is_not_alike_is_drawn_alone() {
         let keys = [Some(1), Some(1), Some(1)];
-        assert_eq!(groups(keys, |a, b| a + b != 1), [vec![0, 2], vec![1]]);
+        assert_eq!(groups(&keys, |a, b| a + b != 1), [vec![0, 2], vec![1]]);
     }
 }

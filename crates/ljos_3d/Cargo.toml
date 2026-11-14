@@ -12,7 +12,7 @@ publish.workspace = true
 default = ["gpu"]
 # The renderer. Without it the crate is the scene alone, which the QML
 # types build without linking wgpu (ARCHITECTURE.md §7.8).
-gpu = ["dep:wgpu", "dep:bytemuck", "dep:pollster", "dep:tracing", "dep:objc2-quartz-core", "dep:objc2-core-graphics"]
+gpu = ["dep:wgpu", "dep:bytemuck", "dep:rustc-hash", "dep:pollster", "dep:tracing", "dep:objc2-quartz-core", "dep:objc2-core-graphics"]
 # glTF and Wavefront OBJ files read into a scene's nodes, meshes and
 # materials, and their images decoded to plain pixels (`gltf`, `obj`). No
 # GPU state: binding textures is the renderer's business.
@@ -22,6 +22,7 @@ gltf = ["dep:gltf", "dep:png", "dep:zune-jpeg"]
 snippets = ["dep:naga"]
 
 [dependencies]
+rustc-hash = { workspace = true, optional = true }
 slotmap.workspace = true
 thiserror.workspace = true
 bytemuck = { workspace = true, optional = true }

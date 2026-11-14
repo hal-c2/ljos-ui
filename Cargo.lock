@@ -3900,6 +3900,7 @@ dependencies = [
  "objc2-quartz-core 0.3.2",
  "png",
  "pollster 1.0.1",
+ "rustc-hash 2.1.3",
  "slotmap",
  "thiserror 2.0.21",
  "tracing",
