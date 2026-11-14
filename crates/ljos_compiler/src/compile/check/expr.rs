@@ -7,11 +7,12 @@ use qml_syntax::{
     GetSpan, Span,
     js::{
         Argument, ArrayExpressionElement, ArrowFunctionBody, AssignmentOperator, AssignmentTarget,
-        BinaryOperator, BindingPattern, CallExpression, ChainElement, Expression, FormalParameters,
-        Function, IdentifierReference, LogicalOperator, ObjectPropertyKind, PropertyKey,
-        SimpleAssignmentTarget, SpreadElement, Statement, StaticMemberExpression, TSLiteral,
-        TSSignature, TSType, TSTypeAnnotation, TSTypeName, TSTypeOperatorOperator,
-        TSTypePredicateName, UnaryOperator, VariableDeclaration, VariableDeclarationKind,
+        AssignmentTargetMaybeDefault, AssignmentTargetProperty, BinaryOperator, BindingPattern,
+        CallExpression, ChainElement, Expression, FormalParameters, Function, IdentifierReference,
+        LogicalOperator, ObjectPropertyKind, PropertyKey, SimpleAssignmentTarget, SpreadElement,
+        Statement, StaticMemberExpression, TSLiteral, TSSignature, TSType, TSTypeAnnotation,
+        TSTypeName, TSTypeOperatorOperator, TSTypePredicateName, UnaryOperator,
+        VariableDeclaration, VariableDeclarationKind,
     },
 };
 
@@ -1895,7 +1896,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             exact: None,
                         })
                     }
-                    _ => None,
+                    target => {
+                        self.constant_writes(target);
+                        None
+                    }
                 };
                 let Some(place) = place else {
                     return self.expr(&assignment.right, None);
@@ -3203,6 +3207,53 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
     /// `name = …` or `name++`, where `name` is a constant, which
     /// JavaScript refuses with a `TypeError` where it runs. Whether it is
     /// one, reported.
+    /// The names a destructuring assignment writes, `[size] = …` or
+    /// `({ held } = …)`, each held to `constant_write`.
+    fn constant_writes(&mut self, target: &AssignmentTarget<'a>) {
+        match target {
+            AssignmentTarget::AssignmentTargetIdentifier(id) => {
+                self.constant_write(id);
+            }
+            AssignmentTarget::ArrayAssignmentTarget(array) => {
+                for element in array.elements.iter().flatten() {
+                    self.constant_writes_maybe_default(element);
+                }
+                if let Some(rest) = &array.rest {
+                    self.constant_writes(&rest.target);
+                }
+            }
+            AssignmentTarget::ObjectAssignmentTarget(object) => {
+                for property in &object.properties {
+                    match property {
+                        AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(it) => {
+                            self.constant_write(&it.binding);
+                        }
+                        AssignmentTargetProperty::AssignmentTargetPropertyProperty(it) => {
+                            self.constant_writes_maybe_default(&it.binding);
+                        }
+                    }
+                }
+                if let Some(rest) = &object.rest {
+                    self.constant_writes(&rest.target);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn constant_writes_maybe_default(&mut self, target: &AssignmentTargetMaybeDefault<'a>) {
+        match target {
+            AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(it) => {
+                self.constant_writes(&it.binding);
+            }
+            target => {
+                if let Some(target) = target.as_assignment_target() {
+                    self.constant_writes(target);
+                }
+            }
+        }
+    }
+
     fn constant_write(&mut self, id: &IdentifierReference<'a>) -> bool {
         if self.desugared(id.span.start) {
             return false;
@@ -3211,6 +3262,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let message = match self.local(name).map(|local| local.binding) {
             Some(Binding::Const) => format!(
                 "`{name}` is a constant, and keeps the value it is declared with: declare it with `let` to assign it"
+            ),
+            Some(Binding::Import) => format!(
+                "`{name}` is imported, and only the module that exports it changes it: declare a `let` with its value to change it here"
             ),
             Some(Binding::Using) => format!(
                 "`{name}` is declared with `using`, which disposes of the value it is given when its block ends: it is not assigned; declare another name"

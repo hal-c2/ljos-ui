@@ -309,6 +309,7 @@ Feature: Disposing of a resource when its block ends, with using
             size = 3;
             held = undefined;
             size++;
+            [n, size] = [n, 4];
             n = n + 1;
             return n;
           }
@@ -320,8 +321,34 @@ Feature: Disposing of a resource when its block ends, with using
         Pool.qml:7:13: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
         Pool.qml:8:13: error: `held` is declared with `using`, which disposes of the value it is given when its block ends: it is not assigned; declare another name [ts-readonly]
         Pool.qml:9:13: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
-        1 files, 3 errors, 0 warnings
-        ljos: 3 errors
+        Pool.qml:10:17: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
+        1 files, 4 errors, 0 warnings
+        ljos: 4 errors
+        """
+
+    Scenario: Nothing assigns to what a module imports
+      Given the file "limits.lts":
+        """ts
+        export const limit: number = 2;
+        """
+      And the file "raise.lts":
+        """ts
+        import { limit } from "./limits.lts";
+        export function raise(): number {
+          limit = 3;
+          return limit;
+        }
+        """
+      And the file "tsconfig.json":
+        """json
+        { "extends": "./.ljos/tsconfig.base.json" }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        raise.lts:3:11: error: `limit` is imported, and only the module that exports it changes it: declare a `let` with its value to change it here [ts-readonly]
+        2 files, 1 errors, 0 warnings
+        ljos: 1 errors
         """
 
     Scenario: A using declaration with no value is a syntax error

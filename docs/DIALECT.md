@@ -3066,9 +3066,10 @@ value to tier 2, which disposes of it or throws. AOT has no type for
 the rest. Disposing of a value is a `finally` with an error kept aside,
 which neither runs, so both refuse `await using` as they refuse `try`.
 
-Nothing assigns to a `const` or to what a `using` declaration names:
-`size = 3`, `size++` or `held = undefined` is `ts-readonly`, with the
-reason the name keeps its value.
+Nothing assigns to a `const`, to what a `using` declaration names, or to
+what a module imports: `size = 3`, `size++`, `[n, size] = …` or
+`held = undefined` is `ts-readonly`, with the reason the name keeps its
+value.
 
 ## 5. The checker
 
@@ -3205,8 +3206,8 @@ How it holds the other rules:
   readonly member does not go where that member may be written, which
   TypeScript lets by. A QML property, a `list<T>` property given a new
   array, and a model stay writable (Q6).
-  A name declared with `const` or `using` is not assigned or updated
-  (§4.22).
+  A name declared with `const` or `using`, or imported, is not assigned
+  or updated, by itself or in a destructuring assignment (§4.22).
 - `ts-index-undefined`: `xs[i]` is `T | undefined`. Where it goes to a
   place that takes `T` only, or a member of it is read or it is called,
   the error says it may be past the end. Reading a member of, or calling,
