@@ -595,6 +595,26 @@ Feature: Choosing a value with match, and testing one with is
         1 files, 0 errors, 0 warnings
         """
 
+    Scenario: A module that names Symbol.customMatcher with spaces in it is read as one that names it
+      Given the file "even.lts":
+        """ts
+        export const Even = {
+          [Symbol
+            .customMatcher](subject: unknown, hint: string): boolean {
+            return typeof subject === "number" && subject % 2 === 0;
+          }
+        };
+        """
+      And the file "tsconfig.json":
+        """json
+        { "extends": "./.ljos/tsconfig.base.json" }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        1 files, 0 errors, 0 warnings
+        """
+
     Scenario: An extractor arm removes nothing, so a match of extractors alone needs a default
       Given the file "Gauge.qml":
         """qml

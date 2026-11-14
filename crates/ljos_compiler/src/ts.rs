@@ -322,15 +322,18 @@ declare global { interface SymbolConstructor { readonly customMatcher: unique sy
 /// §4.18): the runtime defines them, so a file that calls them declares
 /// them, after its last line, which leaves its lines where they are. A
 /// custom matcher's `$is` narrows nothing, and an extractor's list is what
-/// its matcher gives but `true` and `false`.
-pub const SUGAR: &str = "declare function $is(s: unknown, p: { [Symbol.customMatcher](...args: never[]): unknown }): boolean;\n\
+/// its matcher gives but `true` and `false`, as the array `$extract` reads
+/// it into: an array or tuple as it is, another iterable as an array of
+/// its items.
+pub const SUGAR: &str = "type $List<R> = R extends readonly unknown[] ? R : R extends Iterable<infer E> ? E[] : never;\n\
+declare function $is(s: unknown, p: { [Symbol.customMatcher](...args: never[]): unknown }): boolean;\n\
 declare function $is<T>(s: unknown, p: (v: unknown) => v is T): s is T;\n\
 declare function $is<T>(s: unknown, p: T): s is T;\n\
 declare function $extract(s: unknown, p: StringConstructor, n: number, reads: number): [string] | undefined;\n\
 declare function $extract(s: unknown, p: NumberConstructor, n: number, reads: number): [number] | undefined;\n\
 declare function $extract(s: unknown, p: BooleanConstructor, n: number, reads: number): [boolean] | undefined;\n\
-declare function $extract<R>(s: unknown, p: { [Symbol.customMatcher](...args: never[]): R }, n: number, reads: number): Exclude<R, boolean> | undefined;\n\
-declare function $extract<R>(s: unknown, p: (...args: never[]) => R, n: number, reads: number): Exclude<R, boolean> | undefined;\n\
+declare function $extract<R>(s: unknown, p: { [Symbol.customMatcher](...args: never[]): R }, n: number, reads: number): $List<R> | undefined;\n\
+declare function $extract<R>(s: unknown, p: (...args: never[]) => R, n: number, reads: number): $List<R> | undefined;\n\
 declare function $nomatch(x: never): never;\n";
 
 /// Declares [`MATCHER`] and [`SUGAR`] at the end of the desugared `text`.
@@ -341,9 +344,11 @@ pub fn declare_sugar(text: &mut String) {
 }
 
 /// Declares [`MATCHER`] at the end of `text`, a file the desugar left as it
-/// was, where it names `Symbol.customMatcher`.
+/// was, where it names `Symbol.customMatcher`, however it is spaced: the
+/// checker reads `Symbol . customMatcher` as the same member.
 pub fn declare_matcher(text: &mut String) {
-    if text.contains("Symbol.customMatcher") {
+    let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.contains("Symbol.customMatcher") {
         end_line(text);
         text.push_str(MATCHER);
     }
