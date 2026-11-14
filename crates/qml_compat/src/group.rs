@@ -84,9 +84,12 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
         .collect();
     let mut named = BTreeMap::new();
     ids(root, &mut named);
+    let mut inline = BTreeMap::new();
+    inline_components(root, &mut inline);
     Walk {
         found: &mut found,
         ids: &named,
+        inline: &inline,
     }
     .object(root, None);
     found.types.sort();
@@ -129,6 +132,71 @@ fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, &'s str>) {
     }
 }
 
+/// An inline component of the file: the last name of the type it is built
+/// on, and the properties and signals it declares itself.
+struct Inline<'s> {
+    base: &'s str,
+    declares: BTreeSet<&'s str>,
+}
+
+impl Inline<'_> {
+    /// Whether `name` (`color`, or its handler `onColorChanged`) is one the
+    /// component declares, which its base's lowering renames nothing of.
+    fn declares(&self, name: &str) -> bool {
+        let handled = is_handler(name).then(|| {
+            let rest = &name[2..];
+            format!("{}{}", rest[..1].to_ascii_lowercase(), &rest[1..])
+        });
+        let changed = handled
+            .as_deref()
+            .and_then(|h| h.strip_suffix("Changed"))
+            .map(str::to_owned);
+        [Some(name.to_owned()), handled, changed]
+            .iter()
+            .flatten()
+            .any(|n| self.declares.contains(n.as_str()))
+    }
+}
+
+/// Each inline component of the file, wherever it is declared: one is
+/// named in the whole file, in the other inline components too.
+fn inline_components<'s>(object: &QmlObject<'s>, found: &mut BTreeMap<&'s str, Inline<'s>>) {
+    for member in &object.members {
+        match member {
+            QmlMember::InlineComponent(component) => {
+                let root = &component.object;
+                if let Some(base) = root.type_name.parts.last().copied() {
+                    let declares = root
+                        .members
+                        .iter()
+                        .filter_map(|member| match member {
+                            // `required color` declares nothing: it asks for
+                            // the base's `color`.
+                            QmlMember::Property(property) if property.type_name.is_some() => {
+                                Some(property.name.name.as_str())
+                            }
+                            QmlMember::Signal(signal) => Some(signal.name.name.as_str()),
+                            _ => None,
+                        })
+                        .collect();
+                    found.insert(component.name.name.as_str(), Inline { base, declares });
+                }
+                inline_components(root, found);
+            }
+            QmlMember::Object(child) => inline_components(child, found),
+            QmlMember::Binding(binding) => {
+                each_object(&binding.value, |o| inline_components(o, found))
+            }
+            QmlMember::Property(property) => {
+                if let Some(v) = &property.value {
+                    each_object(v, |o| inline_components(o, found));
+                }
+            }
+            QmlMember::Function(_) | QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+        }
+    }
+}
+
 fn each_object<'s>(value: &QmlBindingValue<'s>, mut f: impl FnMut(&QmlObject<'s>)) {
     match value {
         QmlBindingValue::Object(o) => f(o),
@@ -141,10 +209,27 @@ fn each_object<'s>(value: &QmlBindingValue<'s>, mut f: impl FnMut(&QmlObject<'s>
 struct Walk<'f, 's> {
     found: &'f mut References,
     ids: &'f BTreeMap<&'s str, &'s str>,
+    inline: &'f BTreeMap<&'s str, Inline<'s>>,
 }
 
 impl<'s> Walk<'_, 's> {
+    /// `name` bound on an object of type `ty`. An inline component has its
+    /// base's properties, so what it does not declare itself is bound on the
+    /// base (`LocalDial { color: "red" }` binds `color` on the `Dial` that
+    /// `component LocalDial: Dial {}` is built on).
     fn bind(&mut self, ty: &str, name: &str) {
+        let mut ty = ty;
+        // Bounded by the components' count: one cannot be built on itself,
+        // but a file that tries is not followed for ever.
+        for _ in 0..=self.inline.len() {
+            let Some(component) = self.inline.get(ty) else {
+                break;
+            };
+            if component.declares(name) {
+                return;
+            }
+            ty = component.base;
+        }
         self.found.bound.push((ty.to_string(), name.to_string()));
     }
 
@@ -190,7 +275,7 @@ impl<'s> Walk<'_, 's> {
                     if binding.name.parts.last() == Some(&"pointSize") {
                         self.found.introduced.push(SCREEN.to_string());
                     }
-                    self.value(&binding.value);
+                    self.value(&binding.value, ty);
                 }
                 QmlMember::Property(property) => {
                     if let Some(type_name) = &property.type_name {
@@ -201,7 +286,7 @@ impl<'s> Walk<'_, 's> {
                             .push(written.rsplit('.').next().unwrap_or(&written).to_string());
                     }
                     if let Some(v) = &property.value {
-                        self.value(v);
+                        self.value(v, ty);
                     }
                 }
                 QmlMember::Function(function) => {
@@ -213,6 +298,7 @@ impl<'s> Walk<'_, 's> {
                     Walk {
                         found: &mut *self.found,
                         ids: &named,
+                        inline: self.inline,
                     }
                     .object(&component.object, None);
                 }
@@ -305,14 +391,19 @@ impl<'s> Walk<'_, 's> {
         }
     }
 
-    fn value(&mut self, value: &QmlBindingValue<'_>) {
+    /// What a value names. An object it holds is a child of the object of
+    /// type `parent` (its QObject parent, which a `Connections` with no
+    /// `target` connects to), as one declared among its members is.
+    fn value(&mut self, value: &QmlBindingValue<'_>, parent: Option<&str>) {
         match value {
             QmlBindingValue::Expression(expression) => {
                 Strings(self.found).visit_expression(expression);
             }
             QmlBindingValue::Statement(statement) => Strings(self.found).visit_statement(statement),
-            QmlBindingValue::Object(o) => self.object(o, None),
-            QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.object(o, None)),
+            QmlBindingValue::Object(o) => self.object(o, parent),
+            QmlBindingValue::Objects(objects) => {
+                objects.iter().for_each(|o| self.object(o, parent))
+            }
         }
     }
 }

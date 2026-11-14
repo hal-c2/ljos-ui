@@ -178,6 +178,15 @@ fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
             "Dial { Connections { function onColorChanged() {} } }",
             Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
         ),
+        // An object a binding holds is the object's child too.
+        (
+            "Dial { data: [Connections { function onColorChanged() {} }] }",
+            Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
+        ),
+        (
+            "Dial { property QtObject c: Connections { function onColorChanged() {} } }",
+            Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
+        ),
         // An inline component's ids are its own.
         (
             "Dial { id: dial } component Other: Item { Item { id: dial } } \
@@ -186,6 +195,20 @@ fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
         ),
         (
             "Dial { id: dial } PropertyChanges { target: dial; angle: 2; explicit: true }",
+            None,
+        ),
+        // An inline component has its base's properties: what it does not
+        // declare is bound on the dial.
+        (
+            "component LocalDial: Dial {} LocalDial { color: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "component LocalDial: Dial {} component Big: LocalDial {} Big { onColorChanged: {} }",
+            Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
+        ),
+        (
+            "component LocalDial: Dial { property color color } LocalDial { color: \"red\" }",
             None,
         ),
     ] {
