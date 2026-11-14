@@ -110,6 +110,13 @@ impl Kept {
         if gone.is_empty() {
             return;
         }
+        // A read the tracking ran in the pass that took its piece out has
+        // nothing to patch: kept, it would be pending in every pass after.
+        let mut fresh = self.fresh.borrow_mut();
+        for piece in gone {
+            fresh.remove(piece);
+        }
+        drop(fresh);
         let mut effects = self.effects.borrow_mut();
         let gone: Vec<Effect> = gone.iter().filter_map(|p| effects.remove(p)).collect();
         drop(effects);
