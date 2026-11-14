@@ -333,15 +333,14 @@ fn leave(e: &Engine, system: ObjectId, me: ObjectId, member: Member) {
     let _ = e.notify(system, ParticleSystem3D::LOGGING_DATA.index);
 }
 
-/// Whether its clock runs, so that its time is the clock's. Untracked: a
-/// clock that starts again while the system is hidden has `tick` make the
-/// time from its first frame on.
+/// Whether its clock runs, so that its time is the clock's. Tracked: a
+/// clock that starts again while the system is hidden runs the step again,
+/// which makes the time from then on, frames or none.
 fn ticking(e: &Engine, me: ObjectId) -> bool {
     let Some(clock) = e.with(me, |s: &ParticleSystem3D| s.clock).ok().flatten() else {
         return false;
     };
-    e.untrack(|| e.get(clock, FrameAnimation::RUNNING))
-        .unwrap_or(false)
+    e.get(clock, FrameAnimation::RUNNING).unwrap_or(false)
 }
 
 /// Whether the system and each node it is in are visible. Tracked: shown

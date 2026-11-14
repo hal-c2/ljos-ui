@@ -91,6 +91,17 @@ Feature: A hidden particle system
     And 100 milliseconds pass
     Then the property "time" of "system" is 1000
 
+  Scenario: A system paused, hidden and let go on sees its time go on
+    When 100 milliseconds pass
+    And the property "paused" of "system" is set to true
+    And the property "visible" of "system" is set to false
+    And 100 milliseconds pass
+    And the property "paused" of "system" is set to false
+    And 300 milliseconds pass
+    And the method "look" of "root" is called
+    Then the property "looked" of "root" is at least 350
+    And the application has nothing scheduled
+
   Scenario: A script that reads the time of a hidden system sees it go on
     When 100 milliseconds pass
     And the property "visible" of "system" is set to false
