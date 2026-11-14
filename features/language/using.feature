@@ -328,6 +328,27 @@ Feature: Disposing of a resource when its block ends, with using
         ljos: 5 errors
         """
 
+    Scenario: What a destructuring default assigns may not have happened after it
+      Given the file "Pool.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function work(): string {
+            let value: number | undefined = undefined;
+            let n = 1;
+            [n = (value = 2)] = [n];
+            return value.toFixed();
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Pool.qml:7:20: error: `value` may be undefined: compare it with `undefined` first [ts-assign-type]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
     Scenario: Nothing assigns to what a module imports
       Given the file "limits.lts":
         """ts

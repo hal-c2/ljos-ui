@@ -3225,7 +3225,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                         AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(it) => {
                             self.constant_write(&it.binding);
                             if let Some(init) = &it.init {
-                                self.expr(init, None);
+                                self.default_value(init);
                             }
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(it) => {
@@ -3241,11 +3241,20 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
+    /// A destructuring default, which runs only where the value it stands
+    /// in for is `undefined`: what it assigns may not have happened after
+    /// it.
+    fn default_value(&mut self, init: &Expression<'a>) {
+        let assigned = self.assigned.len();
+        self.expr(init, None);
+        self.forget_assigned(assigned);
+    }
+
     fn constant_writes_maybe_default(&mut self, target: &AssignmentTargetMaybeDefault<'a>) {
         match target {
             AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(it) => {
                 self.constant_writes(&it.binding);
-                self.expr(&it.init, None);
+                self.default_value(&it.init);
             }
             target => {
                 if let Some(target) = target.as_assignment_target() {
