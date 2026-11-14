@@ -4,22 +4,23 @@
 #   docs/ARCHITECTURE.md section 2 (0 % CPU when idle)
 # objectsRead is Ljós's own number: Qt has no property for what its scene
 # graph reads again, so only Ljós is held to it.
-# One scene to a file: a window of a Background drawn in the same frame
+# One scene to a file: a Background's window, drawn whenever this one is,
 # would count what this scene read as its own.
 
 @ljos-only
 Feature: A View3D reads again only what changed
   A View3D keeps the scene it drew and patches it where its objects
-  change. A frame after one object changed reads that object, not the
-  others in the scene, and says how many it read as objectsRead.
+  change. After one object's property changes, the view reads that
+  object again, not the others in the scene, and RenderStatistics says
+  how many objects it read as objectsRead.
 
-  Rule: A frame reads again only the objects that changed
+  Rule: A change to one object reads only that object again
 
     Scenario: One object that moves is read alone, not the scene it is in
-      # objectsRead is the last frame's. Here a frame is drawn when the
-      # window's pixels are looked at, and what was read since the frame
-      # before is its. The cubes, their materials and the light are not
-      # read again for the one that moved.
+      # objectsRead counts what the view read the last time it was
+      # drawn, which here is when the window's pixels are looked at. The
+      # cubes, their materials and the light are not read again for the
+      # one that moved.
       Given the QML:
         """qml
         import QtQuick
