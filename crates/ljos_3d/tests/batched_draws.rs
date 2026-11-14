@@ -17,8 +17,9 @@ use ljos_3d::math::{Quat, Vec3};
 use ljos_3d::offscreen::{Rgba, read_back};
 use ljos_3d::pick::{Viewport, pick};
 use ljos_3d::{
-    Background, Camera, Color, DefaultMaterial, DepthDraw, Environment, Gpu, Light, Material,
-    MeshSource, Model, Node, NodeId, NodeKind, Primitive, Scene, Shadow, Target, Transform, stats,
+    Background, Camera, Color, CullMode, DefaultMaterial, DepthDraw, Environment, Gpu, Light,
+    Material, MeshSource, Model, Node, NodeId, NodeKind, Primitive, Scene, Shadow, Target,
+    Transform, stats,
 };
 
 const SIZE: [u32; 2] = [320, 200];
@@ -435,6 +436,52 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
     );
     assert_within_a_level(&batched, &each, "two alike declared farther first");
     assert_eq!(counts.draw_calls, 2, "{counts:?}");
+
+    // A cube whose inside shows, its front faces culled or its place
+    // mirrored, shows the face it has against another: red's inside face
+    // and blue's front where they touch are at one depth. Green, nearer and
+    // alike blue, is declared first; drawn apart, blue is drawn after red
+    // and shows, and a batch of green's would draw it before.
+    let inside = |turn: &dyn Fn(&mut Node)| {
+        let mut scene = small(
+            &[
+                (blue.0, Vec3::new(-120.0, 0.0, 150.0), GREEN, blue.3),
+                (blue.0, Vec3::new(0.0, 0.0, 50.0), RED, blue.3),
+                (blue.0, Vec3::new(0.0, 0.0, -50.0), BLUE, blue.3),
+            ],
+            None,
+        );
+        let id = models_of(&scene)[1];
+        turn(scene.node_mut(id).unwrap());
+        scene
+    };
+    let front_culled = inside(&|node| match &mut node.kind {
+        NodeKind::Model(Model {
+            material: Material::Default(m),
+            ..
+        }) => m.cull_mode = CullMode::Front,
+        _ => unreachable!("models"),
+    });
+    let mirrored = inside(&|node| {
+        node.transform.scale = Vec3::new(1.0, 1.0, -1.0);
+        match &mut node.kind {
+            NodeKind::Model(Model {
+                material: Material::Default(m),
+                ..
+            }) => m.specular_roughness = 0.5,
+            _ => unreachable!("models"),
+        }
+    });
+    for (scene, what) in [(front_culled, "front faces culled"), (mirrored, "mirrored")] {
+        let (counts, batched, each) = both(&gpu, &scene);
+        let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+        assert!(
+            b > r,
+            "{what}: blue, drawn after red's inside, shows: {r} red, {b} blue"
+        );
+        assert_within_a_level(&batched, &each, what);
+        assert_eq!(counts.draw_calls, 3, "{what}: {counts:?}");
+    }
 
     // A batched model's colour is not its shadow's: changing it draws no
     // shadow map again.

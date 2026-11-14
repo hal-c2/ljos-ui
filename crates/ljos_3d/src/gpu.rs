@@ -2303,14 +2303,17 @@ impl Renderer {
                     _ => vec![sphere(&placed)],
                 };
                 // Of the shapes, all but the rectangle are closed round
-                // what their box holds.
+                // what their box holds, and show only their outside where
+                // their back faces are culled. Culling front faces or none
+                // shows the inside, as a mirroring place does by turning
+                // the winding, and an inside face on the box's face is seen
+                // with what touches it there.
+                let solid = matches!(model.mesh, MeshSource::Primitive(p) if p != Primitive::Rectangle)
+                    && model.material.cull_mode() == CullMode::Back
+                    && crate::pick::determinant3(&placed) > 0.0;
                 let reach = match &palette {
                     Some(p) if !p.is_empty() => batch::Reach::round(spheres.iter().copied()),
-                    _ => batch::Reach::placed(
-                        &placed,
-                        model.mesh.bounding_box(),
-                        matches!(model.mesh, MeshSource::Primitive(p) if p != Primitive::Rectangle),
-                    ),
+                    _ => batch::Reach::placed(&placed, model.mesh.bounding_box(), solid),
                 };
                 let mut copies = Copies::ONE;
                 let mut places = (Mat4::IDENTITY, Mat4::IDENTITY);
