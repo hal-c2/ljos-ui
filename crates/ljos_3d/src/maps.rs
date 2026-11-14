@@ -472,6 +472,9 @@ pub(crate) fn srgb_to_linear(c: f32) -> f32 {
     }
 }
 
+// Only the tests' reference mean goes back from light to bytes this way;
+// `halve` uses the edges in `SrgbTables` instead.
+#[cfg(test)]
 pub(crate) fn linear_to_srgb(c: f32) -> f32 {
     if c <= 0.003_130_8 {
         c * 12.92
@@ -483,39 +486,93 @@ pub(crate) fn linear_to_srgb(c: f32) -> f32 {
 /// The next mipmap level: each pixel the mean of up to four. Colours are
 /// averaged in linear light and by their alpha, so that neither a dark
 /// fringe nor a clear pixel's colour bleeds in.
-fn halve((w, h, data): &Level, srgb: bool) -> Level {
+///
+/// It runs on the thread that draws, for every level of every mipmapped
+/// map (two 2048-pixel maps make 2.8 million pixels), so it is written to
+/// be cheap: whole numbers where the colours are numbers, and tables where
+/// they are sRGB, never a power or a rounding call per pixel.
+fn halve(level: &Level, srgb: bool) -> Level {
+    if srgb {
+        let tables = srgb_tables();
+        halve_with(level, |four| srgb_mean(tables, four))
+    } else {
+        halve_with(level, number_mean)
+    }
+}
+
+/// `level` halved, each new pixel what `mean` makes of the four beneath it
+/// (the last row and column repeated where the size is odd).
+fn halve_with(&(w, h, ref data): &Level, mean: impl Fn([[u8; 4]; 4]) -> [u8; 4]) -> Level {
+    let (w, h) = (w as usize, h as usize);
     let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
-    let lut: Vec<f32> = (0..=255u8)
-        .map(|b| {
-            let v = f32::from(b) / 255.0;
-            if srgb { srgb_to_linear(v) } else { v }
-        })
-        .collect();
-    let mut out = vec![0u8; nw as usize * nh as usize * 4];
-    for y in 0..nh {
-        for x in 0..nw {
-            let mut sum = [0.0f32; 3];
-            let (mut alpha, mut n) = (0.0f32, 0.0f32);
-            for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
-                let i = (sy as usize * *w as usize + sx as usize) * 4;
-                let a = f32::from(data[i + 3]) / 255.0;
-                for c in 0..3 {
-                    sum[c] += lut[usize::from(data[i + c])] * a;
-                }
-                alpha += a;
-                n += 1.0;
-            }
-            let o = (y as usize * nw as usize + x as usize) * 4;
-            for c in 0..3 {
-                let v = if alpha > 0.0 { sum[c] / alpha } else { 0.0 };
-                let v = if srgb { linear_to_srgb(v) } else { v };
-                out[o + c] = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-            }
-            out[o + 3] = (alpha / n * 255.0).round() as u8;
+    let (pixels, _) = data.as_chunks::<4>();
+    let row = |y: usize| &pixels[y.min(h - 1) * w..][..w];
+    let mut out = vec![0u8; nw * nh * 4];
+    let (written, _) = out.as_chunks_mut::<4>();
+    for (y, line) in written.chunks_exact_mut(nw).enumerate() {
+        let (top, bottom) = (row(2 * y), row(2 * y + 1));
+        for (x, pixel) in line.iter_mut().enumerate() {
+            let (left, right) = (2 * x, (2 * x + 1).min(w - 1));
+            *pixel = mean([top[left], top[right], bottom[left], bottom[right]]);
         }
     }
-    (nw, nh, out)
+    (nw as u32, nh as u32, out)
+}
+
+/// The mean of four pixels whose colours are numbers, weighted by alpha
+/// and rounded half up, exactly: Σ(c·a) / Σa in whole numbers.
+fn number_mean(four: [[u8; 4]; 4]) -> [u8; 4] {
+    let alpha: u32 = four.iter().map(|p| u32::from(p[3])).sum();
+    let mut out = [0, 0, 0, ((alpha + 2) / 4) as u8];
+    if alpha == 4 * 255 {
+        // Opaque, as most maps are: the weights are all the same.
+        for (c, o) in out[..3].iter_mut().enumerate() {
+            let sum: u32 = four.iter().map(|p| u32::from(p[c])).sum();
+            *o = ((sum + 2) / 4) as u8;
+        }
+    } else if alpha > 0 {
+        for (c, o) in out[..3].iter_mut().enumerate() {
+            let sum: u32 = four.iter().map(|p| u32::from(p[c]) * u32::from(p[3])).sum();
+            // round(sum / alpha), at most 255 since every c is.
+            *o = ((2 * sum + alpha) / (2 * alpha)) as u8;
+        }
+    }
+    out
+}
+
+/// The mean of four sRGB pixels, in linear light and weighted by alpha.
+fn srgb_mean(SrgbTables { linear, edges }: &SrgbTables, four: [[u8; 4]; 4]) -> [u8; 4] {
+    let alpha: u32 = four.iter().map(|p| u32::from(p[3])).sum();
+    let mut out = [0, 0, 0, ((alpha + 2) / 4) as u8];
+    if alpha > 0 {
+        let weight = 1.0 / alpha as f32;
+        for (c, o) in out[..3].iter_mut().enumerate() {
+            let sum: f32 = four
+                .iter()
+                .map(|p| linear[usize::from(p[c])] * f32::from(p[3]))
+                .sum();
+            // The sRGB byte whose span of light holds the mean: as many
+            // as the edges at or below it.
+            *o = edges.partition_point(|&e| e <= sum * weight) as u8;
+        }
+    }
+    out
+}
+
+struct SrgbTables {
+    /// The light each sRGB byte stands for.
+    linear: [f32; 256],
+    /// The light half way between byte k and byte k + 1, where rounding
+    /// to the nearer byte changes from one to the other.
+    edges: [f32; 255],
+}
+
+fn srgb_tables() -> &'static SrgbTables {
+    static TABLES: std::sync::OnceLock<SrgbTables> = std::sync::OnceLock::new();
+    TABLES.get_or_init(|| SrgbTables {
+        linear: std::array::from_fn(|b| srgb_to_linear(b as f32 / 255.0)),
+        edges: std::array::from_fn(|k| srgb_to_linear((k as f32 + 0.5) / 255.0)),
+    })
 }
 
 #[cfg(test)]
@@ -538,6 +595,91 @@ mod tests {
         assert_eq!(px[0], 188);
         let (_, _, data) = halve(&level, false);
         assert_eq!(data[0], 128);
+    }
+
+    /// What `halve` made before it was made cheap, in floating point with
+    /// a power and a rounding per channel: the measure it is held to.
+    fn halve_reference((w, h, data): &Level, srgb: bool) -> Level {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut out = vec![0u8; nw as usize * nh as usize * 4];
+        for y in 0..nh {
+            for x in 0..nw {
+                let mut sum = [0.0f32; 3];
+                let mut alpha = 0.0f32;
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (sx, sy) = ((2 * x + dx).min(w - 1), (2 * y + dy).min(h - 1));
+                    let i = (sy as usize * *w as usize + sx as usize) * 4;
+                    let a = f32::from(data[i + 3]) / 255.0;
+                    for c in 0..3 {
+                        let v = f32::from(data[i + c]) / 255.0;
+                        sum[c] += if srgb { srgb_to_linear(v) } else { v } * a;
+                    }
+                    alpha += a;
+                }
+                let o = (y as usize * nw as usize + x as usize) * 4;
+                for c in 0..3 {
+                    let v = if alpha > 0.0 { sum[c] / alpha } else { 0.0 };
+                    let v = if srgb { linear_to_srgb(v) } else { v };
+                    out[o + c] = (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+                }
+                out[o + 3] = (alpha / 4.0 * 255.0).round() as u8;
+            }
+        }
+        (nw, nh, out)
+    }
+
+    /// Pixels of every kind: noise, opaque and clear runs, and every byte
+    /// beside every other, at sizes even and odd.
+    fn levels() -> Vec<Level> {
+        let mut seed = 0x9e37_79b9u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let mut levels = Vec::new();
+        for (w, h) in [(64, 64), (33, 17), (1, 9), (7, 1), (2, 2)] {
+            let noise = (0..w * h * 4).map(|_| next() as u8).collect();
+            levels.push((w, h, noise));
+            let opaque = (0..w * h * 4)
+                .map(|i| if i % 4 == 3 { 255 } else { next() as u8 })
+                .collect();
+            levels.push((w, h, opaque));
+        }
+        let ramp = (0..256 * 256)
+            .flat_map(|i| {
+                let (a, b) = ((i % 256) as u8, (i / 256) as u8);
+                [a, b, a ^ b, if i % 3 == 0 { 255 } else { b }]
+            })
+            .collect();
+        levels.push((256, 256, ramp));
+        levels
+    }
+
+    #[test]
+    fn whole_number_means_are_the_floating_point_ones() {
+        for level in levels() {
+            let (w, h, fast) = halve(&level, false);
+            let (rw, rh, slow) = halve_reference(&level, false);
+            assert_eq!((w, h), (rw, rh));
+            // The floating point mean can fall a hair short of a half and
+            // round down where the exact one rounds up; nothing else differs.
+            for (i, (f, s)) in fast.iter().zip(&slow).enumerate() {
+                assert!(f.abs_diff(*s) <= 1, "{w}x{h} byte {i}: {f} against {s}");
+            }
+        }
+    }
+
+    #[test]
+    fn table_means_in_linear_light_are_the_powered_ones() {
+        for level in levels() {
+            let (w, h, fast) = halve(&level, true);
+            let (_, _, slow) = halve_reference(&level, true);
+            for (i, (f, s)) in fast.iter().zip(&slow).enumerate() {
+                assert!(f.abs_diff(*s) <= 1, "{w}x{h} byte {i}: {f} against {s}");
+            }
+        }
     }
 
     #[test]

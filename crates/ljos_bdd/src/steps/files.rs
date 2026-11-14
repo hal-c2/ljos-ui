@@ -83,6 +83,22 @@ fn a_quadrants_image_file(
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// A picture of single-pixel squares of two colours ("#000000, #ffffff",
+// the first at the top left), so that a pixel of it drawn smaller tells
+// whether the squares beneath it were averaged.
+#[given(regex = r#"^an? (\d+) by (\d+) image file "([^"]+\.png)" of checkers "([^"]+)"$"#)]
+fn a_checkers_image_file(
+    w: &mut LjosWorld,
+    width: u32,
+    height: u32,
+    name: String,
+    colours: String,
+) -> StepResult {
+    let colours: Vec<String> = colours.split(',').map(|c| c.trim().to_owned()).collect();
+    let bytes = fixture::checkers_png(width, height, &colours)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 // A Radiance HDR picture of linear radiance ("0.5, 0.5, 0.5"), which goes
 // beyond 1 where an ordinary picture cannot: what a light probe is made of.
 #[given(regex = r#"^an? (\d+) by (\d+) Radiance image file "([^"]+)" filled with ([^"]+)$"#)]

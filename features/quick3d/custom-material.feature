@@ -687,3 +687,66 @@ Feature: CustomMaterial runs the author's shader snippets
         }
         """
       Then the pixel at 100, 100 of the window is "#00ff00"
+
+  # Checkers of single pixels, 192 across on a square of 64 pixels: three
+  # image pixels to a screen pixel, so a pixel read without mipmaps lands on
+  # the middle of one square, and one read from a mipmap is the average of
+  # the squares beneath it. A texture a custom material reads holds numbers,
+  # so the average is of the numbers as they are: half way, #808080.
+  # qml6 6.12 drew these same pixels on a GPU in the desktop sandbox; the
+  # Qt oracle here runs Qt Quick's software backend, which draws no 3D.
+  @ljos-only
+  Rule: A mipmapped texture drawn smaller reads the average of what it covers
+
+    Background:
+      Given a 192 by 192 image file "checkers.png" of checkers "#ffffff, #000000"
+      And the text file "uv.vert":
+        """
+        VARYING vec2 uv;
+        void MAIN()
+        {
+            uv = UV0;
+            POSITION = MODELVIEWPROJECTION_MATRIX * vec4(VERTEX, 1.0);
+        }
+        """
+      And the text file "uv.frag":
+        """
+        VARYING vec2 uv;
+        void MAIN()
+        {
+            FRAGCOLOR = texture(picture, uv);
+        }
+        """
+      And the QML:
+        """qml
+        import QtQuick
+        import QtQuick3D
+        Rectangle {
+          width: 200; height: 200; color: "black"
+          View3D {
+            anchors.fill: parent
+            environment: SceneEnvironment { clearColor: "#202020"; backgroundMode: SceneEnvironment.Color }
+            OrthographicCamera { z: 600 }
+            Model {
+              source: "#Rectangle"; scale: Qt.vector3d(0.64, 0.64, 1)
+              materials: CustomMaterial {
+                shadingMode: CustomMaterial.Unshaded
+                vertexShader: "uv.vert"; fragmentShader: "uv.frag"
+                property TextureInput picture: TextureInput {
+                  texture: Texture { objectName: "tex"; source: "checkers.png"; mipFilter: Texture.Linear }
+                }
+              }
+            }
+          }
+        }
+        """
+
+    Scenario: Without mipmaps each pixel shows one square
+      Then the pixel at 100, 100 of the window is within 2 of "#ffffff"
+      And the pixel at 101, 100 of the window is within 2 of "#000000"
+
+    Scenario: With mipmaps each pixel shows the average of its squares
+      When the property "generateMipmaps" of "tex" is set to true
+      Then the pixel at 100, 100 of the window is within 2 of "#808080"
+      And the pixel at 101, 100 of the window is within 2 of "#808080"
+      And the pixel at 70, 130 of the window is within 2 of "#808080"
