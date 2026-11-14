@@ -116,7 +116,9 @@ impl Engine {
     /// [`Engine::make_on_read`] by a function, which costs no allocation:
     /// an item that makes several values on a read from one piece of work
     /// (a text's sizes from its layout) keeps that work itself and hands
-    /// each property its part.
+    /// each property its part. A `make` that gives the property itself
+    /// again makes its value on every read, until a write or a binding: a
+    /// clock nobody observes says where it is when it is asked.
     pub fn make_on_read_by(
         &self,
         obj: ObjectId,
@@ -248,10 +250,26 @@ impl Engine {
     }
 
     /// Takes the maker of `prop` away, if it has one.
-    fn take_maker(&self, obj: ObjectId, prop: PropIndex) -> Option<Maker> {
+    pub(crate) fn take_maker(&self, obj: ObjectId, prop: PropIndex) -> Option<Maker> {
         let mut store = self.inner.store.borrow_mut();
         let x = store.objects.get_mut(obj)?.ext.as_mut()?;
         x.made_on_read.take(prop)
+    }
+
+    /// Gives `prop` the maker `m` again, unless it was given another.
+    pub(crate) fn give_maker_back(&self, obj: ObjectId, prop: PropIndex, m: Maker) {
+        let unused = {
+            let mut store = self.inner.store.borrow_mut();
+            match store.objects.get_mut(obj) {
+                Some(h) if !h.ext.as_ref().is_some_and(|x| x.made_on_read.has(prop)) => {
+                    h.ext_mut().made_on_read.set(prop, m);
+                    None
+                }
+                _ => Some(m),
+            }
+        };
+        // Dropped outside the borrow: dropping a closure may run anything.
+        drop(unused);
     }
 
     /// A write or binding is about to give `prop` its value: what was to be
