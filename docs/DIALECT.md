@@ -3067,9 +3067,9 @@ the rest. Disposing of a value is a `finally` with an error kept aside,
 which neither runs, so both refuse `await using` as they refuse `try`.
 
 Nothing assigns to a `const`, to what a `using` declaration names, or to
-what a module imports: `size = 3`, `size++`, `[n, size] = …` or
-`held = undefined` is `ts-readonly`, with the reason the name keeps its
-value.
+what a module imports: `size = 3`, `size++`, `[n, size] = …`,
+`[n = (size = 3)] = [n]` or `held = undefined` is `ts-readonly`, with the
+reason the name keeps its value.
 
 ## 5. The checker
 

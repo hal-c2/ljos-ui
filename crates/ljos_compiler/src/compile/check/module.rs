@@ -645,11 +645,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                             Ty::ERROR
                         }
                     };
-                    let binding = match declaration.kind {
-                        VariableDeclarationKind::Let | VariableDeclarationKind::Var => Binding::Let,
-                        _ => Binding::Const,
-                    };
-                    self.bind(id.name.as_str(), ty, binding);
+                    self.bind(id.name.as_str(), ty, Binding::Const);
                 }
             }
             Declaration::FunctionDeclaration(function) => {

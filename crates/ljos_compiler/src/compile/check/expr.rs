@@ -3204,9 +3204,6 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.arena.or(list, Ty::UNDEFINED)
     }
 
-    /// `name = …` or `name++`, where `name` is a constant, which
-    /// JavaScript refuses with a `TypeError` where it runs. Whether it is
-    /// one, reported.
     /// The names a destructuring assignment writes, `[size] = …` or
     /// `({ held } = …)`, each held to `constant_write`.
     fn constant_writes(&mut self, target: &AssignmentTarget<'a>) {
@@ -3227,6 +3224,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                     match property {
                         AssignmentTargetProperty::AssignmentTargetPropertyIdentifier(it) => {
                             self.constant_write(&it.binding);
+                            if let Some(init) = &it.init {
+                                self.expr(init, None);
+                            }
                         }
                         AssignmentTargetProperty::AssignmentTargetPropertyProperty(it) => {
                             self.constant_writes_maybe_default(&it.binding);
@@ -3245,6 +3245,7 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         match target {
             AssignmentTargetMaybeDefault::AssignmentTargetWithDefault(it) => {
                 self.constant_writes(&it.binding);
+                self.expr(&it.init, None);
             }
             target => {
                 if let Some(target) = target.as_assignment_target() {
@@ -3254,6 +3255,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
+    /// `name = …` or `name++`, where `name` is a constant, which
+    /// JavaScript refuses with a `TypeError` where it runs. Whether it is
+    /// one, reported.
     fn constant_write(&mut self, id: &IdentifierReference<'a>) -> bool {
         if self.desugared(id.span.start) {
             return false;

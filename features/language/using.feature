@@ -310,6 +310,7 @@ Feature: Disposing of a resource when its block ends, with using
             held = undefined;
             size++;
             [n, size] = [n, 4];
+            [n = (size = 3)] = [n];
             n = n + 1;
             return n;
           }
@@ -322,8 +323,9 @@ Feature: Disposing of a resource when its block ends, with using
         Pool.qml:8:13: error: `held` is declared with `using`, which disposes of the value it is given when its block ends: it is not assigned; declare another name [ts-readonly]
         Pool.qml:9:13: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
         Pool.qml:10:17: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
-        1 files, 4 errors, 0 warnings
-        ljos: 4 errors
+        Pool.qml:11:19: error: `size` is a constant, and keeps the value it is declared with: declare it with `let` to assign it [ts-readonly]
+        1 files, 5 errors, 0 warnings
+        ljos: 5 errors
         """
 
     Scenario: Nothing assigns to what a module imports
