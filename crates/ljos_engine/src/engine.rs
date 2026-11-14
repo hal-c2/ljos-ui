@@ -2418,6 +2418,16 @@ impl Engine {
         Ok(T::from_value(&self.try_read(obj, p.index)?)?)
     }
 
+    /// [`Engine::get`] for a caller that has no use for why there is no
+    /// value: no error is built, so asking every type's handle in turn
+    /// costs only the type check of each.
+    pub fn get_if<T: QmlValue>(&self, obj: ObjectId, p: Prop<T>) -> Option<T> {
+        if !self.inherits(obj, (p.owner)()) {
+            return None;
+        }
+        T::from_value(&self.try_read(obj, p.index).ok()?).ok()
+    }
+
     /// Writes a native property through its typed handle, as QML would.
     pub fn set<T: QmlValue>(&self, obj: ObjectId, p: Prop<T>, v: T) -> Result<(), EngineError> {
         self.check_owner(obj, (p.owner)())?;

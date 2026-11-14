@@ -131,6 +131,11 @@ fn typed_and_dynamic_access() {
         Err(EngineError::WrongType { .. })
     ));
     assert_eq!(e.get(i, Item::WIDTH), Ok(0.0));
+
+    // `get_if` answers nothing for it instead, and what the type has.
+    assert_eq!(e.get_if(i, Rectangle::RADIUS), None);
+    assert_eq!(e.get_if(i, Item::WIDTH), Some(0.0));
+    assert_eq!(e.get_if(r, Rectangle::RADIUS), Some(2.5));
 }
 
 #[test]
