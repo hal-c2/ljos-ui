@@ -2,6 +2,9 @@
 //! build makes anew: after each kind of change, and after what arrives
 //! later than the first frame.
 
+use std::rc::Rc;
+
+use ljos::item::ljos_3d::qml::Piece;
 use ljos::item::ljos_3d::{Material, MeshSource, NodeKind, Scene};
 use ljos::prelude::*;
 use ljos::testing::TestWindow;
@@ -358,3 +361,97 @@ Item {
         assert_eq!(custom_meshes(&kept(&e, view)), 2 * count as usize);
     }
 }
+
+const PAIR: &str = r##"
+Item {
+    id: root
+    width: 100; height: 100
+    property QtObject view_: view
+    property QtObject a_: a
+    property QtObject b_: b
+    View3D {
+        id: view
+        anchors.fill: parent
+        PerspectiveCamera { z: 300 }
+        Node { id: a }
+        Node { id: b }
+    }
+}
+"##;
+
+fn pair() -> (Engine, ObjectId, ObjectId, ObjectId) {
+    let (e, _, root) = make(PAIR, false);
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    let (a, b) = (named(&e, root, "a_"), named(&e, root, "b_"));
+    (e, view, a, b)
+}
+
+fn x(e: &Engine, o: ObjectId) -> f64 {
+    e.read_by_name(o, "x").to_number()
+}
+
+#[test]
+fn what_a_read_changes_is_patched_in_the_same_paint() {
+    let (e, view, a, b) = pair();
+    // Reading a writes b, as a LodManager that follows the camera just
+    // read does: b, not told before the paint, is read in a later pass of
+    // it.
+    view::on_read(
+        &e,
+        view,
+        Some(Rc::new(move |e: &Engine, piece| {
+            if piece == Piece::Node(a) {
+                write(e, b, "x", x(e, a) * 2.0);
+            }
+        })),
+    );
+    write(&e, a, "x", 5.0);
+    assert_eq!(synced(&e, view), 2);
+    assert_eq!(x(&e, b), 10.0);
+    assert!(!view::unsettled(&e, view));
+    assert!(!view::asked(&e, view));
+}
+
+#[test]
+fn reads_that_write_each_other_are_cut_short_and_painted_again() {
+    let (e, view, a, b) = pair();
+    // Each read moves the other: a loop the graph does not see, as each
+    // write is a read's, not a binding's.
+    view::on_read(
+        &e,
+        view,
+        Some(Rc::new(move |e: &Engine, piece| {
+            let (from, to) = if piece == Piece::Node(a) {
+                (a, b)
+            } else {
+                (b, a)
+            };
+            if matches!(piece, Piece::Node(_)) {
+                write(e, to, "x", x(e, from) + 1.0);
+            }
+        })),
+    );
+    write(&e, a, "x", 1.0);
+    // Not checked against a build: the scene is one write behind, and a
+    // paint cut short does not check what it drew.
+    let s = view::sync(&e, view);
+    assert_eq!(s.read, view::PASSES + 1);
+    assert!(view::unsettled(&e, view), "a write left for the next paint");
+    assert!(view::asked(&e, view), "and that paint asked for");
+    // Once the reads stop writing, the next paint ends where a build does.
+    view::on_read(&e, view, None);
+    synced(&e, view);
+    assert!(!view::unsettled(&e, view));
+}
+
+#[test]
+fn a_read_held_from_before_a_change_is_read_again() {
+    let (e, view, a, _) = pair();
+    // Held as the graph holds one it ran by itself, then a's change told:
+    // the paint reads a again rather than draw the read from before.
+    view::hold_read(&e, view, Piece::Node(a));
+    write(&e, a, "x", 40.0);
+    assert_eq!(synced(&e, view), 1);
+}
+
