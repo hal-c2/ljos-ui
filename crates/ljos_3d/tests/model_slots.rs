@@ -94,6 +94,9 @@ fn a_moving_camera_uploads_its_frame_and_leaves_still_models_where_they_are() {
             return;
         }
     };
+    // Each cube drawn on its own: drawn as one, their places would be rows
+    // of the instance buffer rather than slots (batched_draws.rs).
+    gpu.renderer().set_batching(false);
     let mut target = Target::new(gpu.device(), &gpu.renderer(), SIZE);
     let picture = |target: &Target| read_back(gpu.device(), gpu.queue(), target.texture()).unwrap();
     // The picture a view drawing `scene` first makes.
