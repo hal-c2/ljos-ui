@@ -1150,6 +1150,9 @@ struct Draw<'a> {
     depth: f32,
     /// The material's own light probe, bound for it in place of the scene's.
     probe: Option<Bound>,
+    /// Whether a depth bias orders it: drawn last of those at one depth,
+    /// it is the one seen there.
+    biased: bool,
     /// The model drawn, or the first of those drawn with it as one.
     node: NodeId,
     /// How many models it draws.
@@ -1201,15 +1204,18 @@ fn shared(u: &ModelUniform) -> &[u8] {
 
 /// What `draw` is drawn as one with others by, or `None` for a draw drawn
 /// alone. The models of a batch are drawn in one order, so only those whose
-/// order the depth test has the last word on are drawn together; and what
-/// a row cannot carry draws alone: a model's own copies, a skin, morphs or
-/// vertex colours, a light probe of its own, a program reading its own
-/// uniforms.
+/// order the depth test has the last word on are drawn together. It passes
+/// at equal depth, so of two surfaces in one place the one drawn last shows,
+/// and a depth bias is how a scene says which: a biased model draws alone.
+/// What a row cannot carry draws alone too: a model's own copies, a skin,
+/// morphs or vertex colours, a light probe of its own, a program reading
+/// its own uniforms.
 fn batch_key(draw: &Draw<'_>) -> Option<BatchKey> {
     let alone = draw.custom.is_some()
         || draw.copies != Copies::ONE
         || draw.key.extra
         || draw.probe.is_some()
+        || draw.biased
         || !draw.key.depth_write
         || !draw.key.depth_test;
     if alone {
@@ -1238,7 +1244,17 @@ fn batched<'a>(
     slots: &mut UniformSlots<UniformKey>,
     uniforms: &mut Vec<(u32, ModelUniform)>,
 ) -> Vec<Draw<'a>> {
-    let mut groups = batch::groups(draws.iter().map(batch_key), |a, b| {
+    // A draw that writes no depth is seen or covered by the order it is
+    // drawn in, so no batch reaches across it: the farther of two alike,
+    // drawn after it, must still cover it.
+    let mut run = 0u32;
+    let keys = draws.iter().map(|draw| {
+        if !draw.key.depth_write {
+            run += 1;
+        }
+        batch_key(draw).map(|key| (key, run))
+    });
+    let mut groups = batch::groups(keys, |a, b| {
         shared(&draws[a].uniform) == shared(&draws[b].uniform)
     });
     if groups.len() == draws.len() {
@@ -2452,6 +2468,7 @@ impl Renderer {
                     depth: -transform_point(&view, centre).z
                         + node.depth_bias.signum() * node.depth_bias * node.depth_bias,
                     probe: own_probe,
+                    biased: node.depth_bias != 0.0,
                     node: *id,
                     models: 1,
                 };
@@ -2524,6 +2541,9 @@ impl Renderer {
         // What nothing is seen through goes nearest first, as Qt has it: where
         // one does not hide, the farther is drawn over it.
         draws.sort_by(|a, b| a.depth.total_cmp(&b.depth));
+        // The shadow casters read the rows before the batches': a batched
+        // model's colour is no reason to draw a shadow map again.
+        let cast_rows = rows.len();
         if self.batching {
             draws = batched(draws, &mut rows, &mut target.model_slots, &mut uniforms);
         }
@@ -2681,7 +2701,7 @@ impl Renderer {
             target,
             &plan,
             &casters,
-            (&rows, &joint_slots),
+            (&rows[..cast_rows], &joint_slots),
         );
         let shadows_drawn = target.shadow_passes != passes;
         // A geometry no scene holds is dropped with its buffers.

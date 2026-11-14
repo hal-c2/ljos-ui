@@ -2,7 +2,10 @@
 //! are drawn as one: one draw call, the picture of drawing each on its own
 //! to the rounding of their normals, and a click meets the model drawn
 //! where it clicked. A camera that moves, even one that changes which batch
-//! is the nearer, writes none of their rows.
+//! is the nearer, writes none of their rows; a model that moves writes its
+//! own. A model no longer alike, or with a depth bias, is drawn on its own;
+//! one that writes no depth stays between the models alike around it; and
+//! a batched model's colour draws no shadow map again.
 //!
 //! One test, in a process of its own: the counts are the process's, and a
 //! second test drawing beside it would add to them.
@@ -11,8 +14,8 @@ use ljos_3d::math::{Quat, Vec3};
 use ljos_3d::offscreen::{Rgba, read_back};
 use ljos_3d::pick::{Viewport, pick};
 use ljos_3d::{
-    Background, Camera, Color, DefaultMaterial, Environment, Gpu, Light, Material, MeshSource,
-    Model, Node, NodeId, NodeKind, Primitive, Scene, Target, Transform, stats,
+    Background, Camera, Color, DefaultMaterial, DepthDraw, Environment, Gpu, Light, Material,
+    MeshSource, Model, Node, NodeId, NodeKind, Primitive, Scene, Shadow, Target, Transform, stats,
 };
 
 const SIZE: [u32; 2] = [320, 200];
@@ -157,15 +160,7 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
     let (counts, each) = frame(&gpu, &mut alone, &still);
     gpu.renderer().set_batching(true);
     assert_eq!(counts.draw_calls, models, "{counts:?}");
-    let far: Vec<_> = batched
-        .pixels
-        .chunks(4)
-        .zip(each.pixels.chunks(4))
-        .enumerate()
-        .filter(|(_, (a, b))| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 1))
-        .map(|(i, (a, b))| (i % SIZE[0] as usize, i / SIZE[0] as usize, a, b))
-        .collect();
-    assert!(far.is_empty(), "pixels more than a level apart: {far:?}");
+    assert_within_a_level(&batched, &each, "each on its own");
 
     // A click meets the cube drawn where it clicked.
     let viewport = Viewport::of_scene(&still, SIZE[0] as f32, SIZE[1] as f32).unwrap();
@@ -188,4 +183,227 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
             "cube {i} is drawn where a click meets it, at {at:?}"
         );
     }
+
+    // A cube that moves writes its own row, not the others'.
+    frame(&gpu, &mut target, &still);
+    let mut one_moved = scene(front(0.0)).0;
+    one_moved.node_mut(cubes[517]).unwrap().transform.position.y += 7.0;
+    let (moved, after) = frame(&gpu, &mut target, &one_moved);
+    assert_eq!(moved.draw_calls, 2, "{moved:?}");
+    assert!(
+        moved.buffer_write_bytes < 8 * 1024,
+        "only the moved cube's row and the uniforms: {moved:?}"
+    );
+    let mut fresh = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    assert_eq!(
+        after,
+        frame(&gpu, &mut fresh, &one_moved).1,
+        "cube 517 moved"
+    );
+
+    // A cube whose material is no longer the others' leaves the batch, and
+    // is drawn where it is on its own.
+    let mut one_apart = scene(front(0.0)).0;
+    match &mut one_apart.node_mut(cubes[600]).unwrap().kind {
+        NodeKind::Model(Model {
+            material: Material::Default(m),
+            ..
+        }) => m.specular_roughness = 0.5,
+        _ => unreachable!("the cubes are models"),
+    }
+    let (apart, batched) = frame(&gpu, &mut target, &one_apart);
+    assert_eq!(
+        apart.draw_calls, 3,
+        "the cubes, cube 600 and the spheres: {apart:?}"
+    );
+    gpu.renderer().set_batching(false);
+    let mut alone = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let each = frame(&gpu, &mut alone, &one_apart).1;
+    gpu.renderer().set_batching(true);
+    assert_within_a_level(&batched, &each, "cube 600 apart");
+
+    // Of two models in one place, the one whose depth bias puts it farther
+    // is drawn last, and so over the other, batched or not.
+    let biased = two_in_one_place();
+    let mut two = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let (counts, batched) = frame(&gpu, &mut two, &biased);
+    gpu.renderer().set_batching(false);
+    let mut two = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let each = frame(&gpu, &mut two, &biased).1;
+    gpu.renderer().set_batching(true);
+    let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(
+        r > b,
+        "the red cube, biased farther, shows: {r} red, {b} blue"
+    );
+    assert_within_a_level(&batched, &each, "depth bias");
+    assert_eq!(
+        counts.draw_calls, 2,
+        "a biased model is drawn on its own: {counts:?}"
+    );
+
+    // A model that writes no depth between two alike is drawn between
+    // them: the farther, drawn after it, covers it.
+    let between = small(
+        &[
+            (
+                Primitive::Cube,
+                Vec3::new(-150.0, 0.0, 100.0),
+                RED,
+                DepthDraw::OpaqueOnly,
+            ),
+            (
+                Primitive::Sphere,
+                Vec3::new(0.0, 0.0, 0.0),
+                GREEN,
+                DepthDraw::Never,
+            ),
+            (
+                Primitive::Cube,
+                Vec3::new(0.0, 0.0, -100.0),
+                BLUE,
+                DepthDraw::OpaqueOnly,
+            ),
+        ],
+        None,
+    );
+    let mut three = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let (counts, batched) = frame(&gpu, &mut three, &between);
+    gpu.renderer().set_batching(false);
+    let mut three = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let each = frame(&gpu, &mut three, &between).1;
+    gpu.renderer().set_batching(true);
+    let [_, g, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(
+        b > g,
+        "the blue cube, drawn last, covers the sphere: {g} green, {b} blue"
+    );
+    assert_within_a_level(&batched, &each, "a model writing no depth between");
+    assert_eq!(counts.draw_calls, 3, "{counts:?}");
+
+    // A batched model's colour is not its shadow's: changing it draws no
+    // shadow map again.
+    let shadowed = |color: Color| {
+        small(
+            &[
+                (
+                    Primitive::Cube,
+                    Vec3::new(-120.0, 0.0, 0.0),
+                    color,
+                    DepthDraw::OpaqueOnly,
+                ),
+                (
+                    Primitive::Cube,
+                    Vec3::new(120.0, 0.0, 0.0),
+                    RED,
+                    DepthDraw::OpaqueOnly,
+                ),
+            ],
+            Some(Shadow::default()),
+        )
+    };
+    let mut lit = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let (first, _) = frame(&gpu, &mut lit, &shadowed(RED));
+    let (again, _) = frame(&gpu, &mut lit, &shadowed(RED));
+    assert!(
+        first.render_passes > again.render_passes,
+        "the first frame draws the shadow map: {first:?} {again:?}"
+    );
+    let (recoloured, _) = frame(&gpu, &mut lit, &shadowed(BLUE));
+    assert_eq!(recoloured.draw_calls, 1, "{recoloured:?}");
+    assert_eq!(
+        recoloured.render_passes, again.render_passes,
+        "a colour draws no shadow: {recoloured:?}"
+    );
+}
+
+const RED: Color = Color::rgb(1.0, 0.0, 0.0);
+const GREEN: Color = Color::rgb(0.0, 1.0, 0.0);
+const BLUE: Color = Color::rgb(0.0, 0.0, 1.0);
+
+/// A few models seen from 300 in front, under a light casting `shadow`.
+fn small(models: &[(Primitive, Vec3, Color, DepthDraw)], shadow: Option<Shadow>) -> Scene {
+    let mut scene = Scene::new();
+    let camera = scene.add(
+        None,
+        Node::new(NodeKind::Camera(Camera::PERSPECTIVE)).with_transform(Transform {
+            position: Vec3::new(0.0, 0.0, 300.0),
+            ..Transform::default()
+        }),
+    );
+    scene.set_camera(Some(camera));
+    let mut light = Node::new(NodeKind::Light(Light::DIRECTIONAL)).with_transform(Transform {
+        rotation: Quat::from_euler_degrees(Vec3::new(-30.0, -40.0, 0.0)),
+        ..Transform::default()
+    });
+    light.shadow = shadow;
+    scene.add(None, light);
+    for &(primitive, position, diffuse_color, depth_draw) in models {
+        scene.add(
+            None,
+            Node::new(NodeKind::Model(Model {
+                mesh: MeshSource::Primitive(primitive),
+                material: Material::Default(DefaultMaterial {
+                    diffuse_color,
+                    depth_draw,
+                    ..DefaultMaterial::default()
+                }),
+            }))
+            .with_transform(Transform {
+                position,
+                ..Transform::default()
+            }),
+        );
+    }
+    scene
+}
+
+fn assert_within_a_level(a: &Rgba, b: &Rgba, what: &str) {
+    let far: Vec<_> = a
+        .pixels
+        .chunks(4)
+        .zip(b.pixels.chunks(4))
+        .enumerate()
+        .filter(|(_, (a, b))| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 1))
+        .map(|(i, (a, b))| (i % SIZE[0] as usize, i / SIZE[0] as usize, a, b))
+        .take(8)
+        .collect();
+    assert!(
+        far.is_empty(),
+        "{what}: pixels more than a level apart: {far:?}"
+    );
+}
+
+/// Two cubes in one place, red made first and biased to the far side,
+/// blue biased to the near: unbatched, red is drawn after blue and wins
+/// the depth test's tie.
+fn two_in_one_place() -> Scene {
+    let mut scene = Scene::new();
+    let camera = scene.add(
+        None,
+        Node::new(NodeKind::Camera(Camera::PERSPECTIVE)).with_transform(Transform {
+            position: Vec3::new(0.0, 0.0, 300.0),
+            ..Transform::default()
+        }),
+    );
+    scene.set_camera(Some(camera));
+    scene.add(None, Node::new(NodeKind::Light(Light::DIRECTIONAL)));
+    let cube = |scene: &mut Scene, color: Color, bias: f32| {
+        let mut node = Node::new(NodeKind::Model(Model {
+            mesh: MeshSource::Primitive(Primitive::Cube),
+            material: Material::Default(DefaultMaterial {
+                diffuse_color: color,
+                ..DefaultMaterial::default()
+            }),
+        }))
+        .with_transform(Transform {
+            rotation: Quat::from_euler_degrees(Vec3::new(20.0, 30.0, 0.0)),
+            ..Transform::default()
+        });
+        node.depth_bias = bias;
+        scene.add(None, node);
+    };
+    cube(&mut scene, Color::rgb(1.0, 0.0, 0.0), 10.0);
+    cube(&mut scene, Color::rgb(0.0, 0.0, 1.0), -10.0);
+    scene
 }
