@@ -181,6 +181,19 @@ pub(crate) fn put(e: &Engine, obj: ObjectId, entries: Vec<Entry>, instances: Vec
     let _ = e.with_mut(obj, |i: &mut Instancing| i.kept.replace(entries, instances));
 }
 
+/// The table kept for `obj`, an empty one until rows are put: kept as
+/// well, so that every read finds the same table and a scene does not
+/// take each for a new one.
+fn kept_table(e: &Engine, obj: ObjectId) -> Arc<InstanceTable> {
+    let empty = || Arc::new(InstanceTable::new(Vec::new()));
+    e.untrack(|| {
+        e.with_mut(obj, |t: &mut Instancing| {
+            t.kept.table.get_or_insert_with(empty).clone()
+        })
+    })
+    .unwrap_or_else(|_| empty())
+}
+
 /// The table `obj` holds now, as a scene draws it; `None` when `obj` is
 /// not one. Tracked.
 pub(crate) fn table(e: &Engine, obj: ObjectId) -> Option<Arc<InstanceTable>> {
@@ -188,19 +201,11 @@ pub(crate) fn table(e: &Engine, obj: ObjectId) -> Option<Arc<InstanceTable>> {
         list_entries(e, obj)
     } else if e.is::<crate::ParticleTable>(obj) {
         item::prop(e, obj, crate::ParticleTable::INSTANCE_COUNT);
-        return e
-            .with(obj, |t: &Instancing| t.kept.table.clone())
-            .ok()
-            .flatten()
-            .or_else(|| Some(Arc::new(InstanceTable::new(Vec::new()))));
+        return Some(kept_table(e, obj));
     } else if e.is::<FileInstancing>(obj) {
         // Notified when a file arrives; the entries are already kept.
         item::prop(e, obj, FileInstancing::INSTANCE_COUNT);
-        return e
-            .with(obj, |t: &Instancing| t.kept.table.clone())
-            .ok()
-            .flatten()
-            .or_else(|| Some(Arc::new(InstanceTable::new(Vec::new()))));
+        return Some(kept_table(e, obj));
     } else if e.is::<crate::random_instancing::RandomInstancing>(obj) {
         crate::random_instancing::entries(e, obj)?
     } else {
