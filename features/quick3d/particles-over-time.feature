@@ -405,7 +405,9 @@ Feature: What happens to particles over time
       import QtQuick3D
       import QtQuick3D.Particles3D
       Rectangle {
+        objectName: "root"
         width: 200; height: 200
+        property bool hasDelegate: kind.delegate !== null
         View3D {
           anchors.fill: parent
           environment: SceneEnvironment { clearColor: "black"; backgroundMode: SceneEnvironment.Color }
@@ -422,6 +424,7 @@ Feature: What happens to particles over time
         }
       }
       """
+    Then the property "hasDelegate" of "root" is true
     When the property "time" of "system" is set to 500
     Then the pixel at 100, 50 of the window is within 4 of "#ff0000"
     And the pixel at 100, 100 of the window is within 4 of "#000000"
