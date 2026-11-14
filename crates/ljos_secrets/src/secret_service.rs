@@ -1,15 +1,18 @@
 //! The Secret Service (freedesktop.org) on the session bus: GNOME Keyring,
 //! KWallet and KeePassXC all serve it.
 //!
-//! A secret is an item of the default collection, found by the attributes
-//! `service` and `username`: the names other programs (`secret-tool`,
-//! libsecret's users, Rust's `keyring`) find theirs by, so the same secret
-//! can be looked up from a shell.
+//! A secret is an item of the default collection, found by its
+//! attributes. By default they are `service` and `username`: the names
+//! other programs (`secret-tool`, libsecret's users, Rust's `keyring`) find
+//! theirs by, so the same secret can be looked up from a shell.
+//! [`SecretService::with_names`] gives the attributes and the label of
+//! another client's items, so its secrets are read and written as its own.
 //!
 //! Each call opens a connection and a session and closes both when done:
 //! the store keeps no thread and no socket between calls.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use zbus::blocking::fdo::DBusProxy;
@@ -18,6 +21,7 @@ use zbus::message::Type as MessageType;
 use zbus::zvariant::{DynamicDeserialize, DynamicType, OwnedObjectPath, OwnedValue, Value};
 use zbus::{DBusError, MatchRule, Message};
 
+use crate::names::{self, DefaultNames, ItemNames};
 use crate::{Secret, SecretBackend, SecretError};
 
 const BUS_NAME: &str = "org.freedesktop.secrets";
@@ -46,11 +50,14 @@ const REPLY_WAIT: Duration = Duration::from_secs(25);
 /// The Secret Service backend.
 pub struct SecretService {
     connect: Connect,
+    names: Arc<dyn ItemNames>,
 }
 
 impl std::fmt::Debug for SecretService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("SecretService")
+        f.debug_struct("SecretService")
+            .field("names", &self.names)
+            .finish_non_exhaustive()
     }
 }
 
@@ -63,6 +70,7 @@ impl SecretService {
                     .method_timeout(REPLY_WAIT)
                     .build()
             }),
+            names: Arc::new(DefaultNames),
         }
     }
 
@@ -76,7 +84,26 @@ impl SecretService {
                     .method_timeout(REPLY_WAIT)
                     .build()
             }),
+            names: Arc::new(DefaultNames),
         }
+    }
+
+    /// The same service, finding and writing items by `names`'s
+    /// [attributes](ItemNames::secret_service_attributes) and
+    /// [label](ItemNames::secret_service_label).
+    pub fn with_names(self, names: impl ItemNames + 'static) -> Self {
+        Self {
+            names: Arc::new(names),
+            ..self
+        }
+    }
+
+    fn attributes(
+        &self,
+        service: &str,
+        key: &str,
+    ) -> Result<BTreeMap<String, String>, SecretError> {
+        names::secret_service_attributes(&*self.names, service, key)
     }
 
     fn open(&self) -> Result<Session, SecretError> {
@@ -247,23 +274,26 @@ enum Answered {
     Dismissed,
 }
 
-fn attributes<'a>(service: &'a str, key: &'a str) -> HashMap<&'static str, &'a str> {
-    HashMap::from([("service", service), ("username", key)])
+/// The attributes as the bus takes them.
+fn on_the_wire(attributes: &BTreeMap<String, String>) -> HashMap<&str, &str> {
+    attributes
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect()
 }
 
 impl SecretBackend for SecretService {
     fn write(&self, service: &str, key: &str, secret: &[u8]) -> Result<(), SecretError> {
+        let attributes = self.attributes(service, key)?;
+        let label = names::secret_service_label(&*self.names, service, key)?;
         let session = self.open()?;
         let collection = session.default_collection()?;
         session.unlock(std::slice::from_ref(&collection))?;
         let properties = HashMap::from([
-            (
-                "org.freedesktop.Secret.Item.Label",
-                Value::from(format!("{service}: {key}")),
-            ),
+            ("org.freedesktop.Secret.Item.Label", Value::from(label)),
             (
                 "org.freedesktop.Secret.Item.Attributes",
-                Value::from(attributes(service, key)),
+                Value::from(on_the_wire(&attributes)),
             ),
         ]);
         let content_type = if std::str::from_utf8(secret).is_ok() {
@@ -286,8 +316,9 @@ impl SecretBackend for SecretService {
     }
 
     fn read(&self, service: &str, key: &str) -> Result<Option<Secret>, SecretError> {
+        let attributes = self.attributes(service, key)?;
         let session = self.open()?;
-        let Some(item) = session.unlocked_item(&attributes(service, key))? else {
+        let Some(item) = session.unlocked_item(&on_the_wire(&attributes))? else {
             return Ok(None);
         };
         let (_, _, value, _): WireSecret = reply(&call(
@@ -301,8 +332,9 @@ impl SecretBackend for SecretService {
     }
 
     fn remove(&self, service: &str, key: &str) -> Result<bool, SecretError> {
+        let attributes = self.attributes(service, key)?;
         let session = self.open()?;
-        let items = session.unlocked_items(&attributes(service, key))?;
+        let items = session.unlocked_items(&on_the_wire(&attributes))?;
         for item in &items {
             let prompt: OwnedObjectPath =
                 reply(&call(&session.bus, item.as_str(), ITEM, "Delete", &())?)?;
