@@ -1239,6 +1239,7 @@ impl Scene {
 
     /// The nodes in the order they were added, for a scene nothing was
     /// removed from.
+    #[cfg(feature = "gltf")]
     pub(crate) fn added(&self) -> impl Iterator<Item = (NodeId, &Node)> {
         self.nodes.iter().map(|(id, n)| (id, &**n))
     }

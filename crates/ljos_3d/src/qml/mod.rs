@@ -25,10 +25,12 @@ mod build;
 pub mod defaults;
 mod map_graph;
 mod names;
+mod sync;
 
 pub use build::{Built, build, camera, srgb8, texture, tiling_mode, uv_transform};
 pub use map_graph::{MapGraph, MapValue};
 pub use names::{Prop3d, Type3d};
+pub use sync::{Piece, Read, SceneSync, Synced, read};
 
 /// What a member's enumeration numbers are, as QML gives them: the values
 /// of `DefaultMaterial.NoLighting`, `Texture.Repeat` and the rest. A
