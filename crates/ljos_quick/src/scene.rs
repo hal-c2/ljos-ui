@@ -435,6 +435,9 @@ struct Shared {
     /// A ShaderEffectSource inside its own source took a picture that
     /// differs from the last, so the next frame takes another.
     pictures: bool,
+    /// Input posted to a window the scene shows ([`crate::post_input`]),
+    /// for the next frame to hand it.
+    posted: Vec<(ObjectId, crate::live_input::Input)>,
     /// Set from the first mark until the frame that drains it.
     dirty: bool,
     waker: Option<Rc<dyn Fn()>>,
@@ -446,6 +449,7 @@ impl Shared {
             || !self.placed.is_empty()
             || !self.dead.is_empty()
             || self.pictures
+            || !self.posted.is_empty()
     }
 
     /// Sets the mark `what` of `obj`, after `f` gave it its value.
@@ -540,7 +544,7 @@ type SharedRc = Rc<RefCell<Shared>>;
 /// they read ([`moved`], [`reshaped`]). A scene that goes is let go. The
 /// pending records hold inherited state before a root's first scene exists.
 #[derive(Default)]
-struct Scenes {
+pub(crate) struct Scenes {
     all: RefCell<Vec<std::rc::Weak<RefCell<Shared>>>>,
     pending: RefCell<Option<SharedRc>>,
     /// The root each scene shows: the windows there are. Read without
@@ -599,6 +603,26 @@ impl Scenes {
         if let Some(engine) = engine {
             crate::grab::settle_unshown(&engine, showed);
         }
+    }
+
+    /// Queues `input` in the scene that shows `window`, which wakes its
+    /// host. Whether one does.
+    pub(crate) fn post(
+        &self,
+        engine: &Engine,
+        window: ObjectId,
+        input: crate::live_input::Input,
+    ) -> bool {
+        let shared = self.roots.borrow().iter().find_map(|(w, root)| {
+            crate::live_input::is_in(engine, window, *root)
+                .then(|| w.upgrade())
+                .flatten()
+        });
+        let Some(shared) = shared else {
+            return false;
+        };
+        mark(&shared, |s| s.posted.push((window, input)));
+        true
     }
 
     fn pending_for_creation(&self) -> SharedRc {
@@ -1370,6 +1394,9 @@ pub struct QuickScene {
     scale_factor: f32,
     frame: u64,
     snapshot: Option<Arc<FrameSnapshot>>,
+    /// The root `snapshot` was composed with: a picture of a root the
+    /// scene has since replaced finds none of the new one's items.
+    pictured: Option<ObjectId>,
     /// The painted nodes and the item generation the content effects were
     /// last matched to. A frame that changes what nodes paint but not
     /// which leaves them as they are, without a look at every item.
@@ -1404,6 +1431,8 @@ pub struct QuickScene {
     timers: Option<TimerHook>,
     next_timer: Option<Time>,
     pointer: PointerState,
+    /// For the watchers of input ([`crate::watch_input`]).
+    pub(crate) watch: crate::live_input::SceneWatch,
     pub(crate) touch: crate::touch::Touches,
     /// Creation jobs of asynchronous Loaders, run a slice per frame.
     incubator: Scheduler<()>,
@@ -1490,6 +1519,7 @@ impl QuickScene {
             scale_factor: 1.0,
             frame: 0,
             snapshot: None,
+            pictured: None,
             content_synced: (Vec::new(), 0),
             items_gen: 1,
             content_looked: 0,
@@ -1507,6 +1537,7 @@ impl QuickScene {
             timers: None,
             next_timer: None,
             pointer: PointerState::default(),
+            watch: crate::live_input::SceneWatch::default(),
             touch: crate::touch::Touches::default(),
             incubator: Scheduler::new(),
             incubation: None,
@@ -1609,6 +1640,8 @@ impl QuickScene {
         self.unadopt(engine, old, true);
         crate::focus::tree::remove_window(engine, old);
         crate::keys::reset_shortcuts(engine, old);
+        // A press held in the old tree is not the new tree's.
+        self.watch.forget_press();
     }
 
     /// [`QuickScene::set_root`] for a host that destroys the old root
@@ -1844,6 +1877,9 @@ impl QuickScene {
     pub fn frame(&mut self, engine: &Engine, now: Time) -> FrameOutput {
         use crate::frame_times::{FrameTimes, Laps, lap};
         use ljos_engine::{Phase, TurnCause};
+        // Input posted since the last frame comes first, as a host's own
+        // does: every host frames when woken, so each hands it the same.
+        self.deliver_posted_input(engine, now);
         // A frame is a turn: one that never ends is reported while it runs,
         // with the step it is in.
         let _turn = engine.begin_turn(TurnCause::Frame, None);
@@ -1960,6 +1996,7 @@ impl QuickScene {
             .as_ref()
             .is_some_and(|s| Arc::ptr_eq(s, &snap));
         self.snapshot = Some(Arc::clone(&snap));
+        self.pictured = self.root;
         // Last, so the tree describes the items as this frame left them.
         self.a11y.set_viewport(self.viewport);
         self.a11y.sync(engine, self.root);
@@ -3550,6 +3587,9 @@ impl QuickScene {
     /// a press that is not the pointer, such as an assistive technology's.
     pub(crate) fn deliver_pointer(&mut self, engine: &Engine, ev: &PointerEvent) -> bool {
         self.note_input();
+        // Who watches it is decided before delivery: a handler may hide
+        // or move what the press came to.
+        let route = self.watched_route(engine, ev);
         // A wheel event tells the buttons that are held (`wheel.buttons`).
         self.pointer.held = match ev.kind {
             PointerKind::Press | PointerKind::Move | PointerKind::Release => ev.buttons,
@@ -3569,7 +3609,18 @@ impl QuickScene {
             self.pointer.portal = None;
         }
         self.pointer.cursor = self.cursor_for(engine, ev);
+        self.watched_pointer(engine, ev, &route, handled);
         handled
+    }
+
+    /// The item that holds the pointer's press, if one does: for a
+    /// TapHandler's grab, the item it is in.
+    pub(crate) fn pointer_grab(&self, engine: &Engine) -> Option<ObjectId> {
+        match self.pointer.grab {
+            Some(Grab::Mouse(o) | Grab::Item(o)) => Some(o),
+            Some(Grab::Tap(h)) => crate::input::tap_handler_target(engine, h),
+            None => None,
+        }
     }
 
     /// `ev` where the portal that took its press shows the item that holds
@@ -3708,7 +3759,10 @@ impl QuickScene {
     ) -> bool {
         self.note_input();
         let hits = self.hits(engine, ev.pos);
-        crate::wheel::deliver(engine, &hits, ev, buttons)
+        let route = self.watched_wheel_route(engine, &hits);
+        let taken = crate::wheel::deliver(engine, &hits, ev, buttons);
+        self.watched_wheel(engine, ev, &route, taken);
+        taken
     }
 
     /// Offers a pinch the platform recognised (a touchpad's) to the
@@ -3744,6 +3798,17 @@ impl QuickScene {
             .filter_map(|n| self.by_node.get(n).copied())
             .filter(|o| engine.is_alive(*o))
             .collect()
+    }
+
+    /// Whether a frame has composed the scene as it is now, with the root
+    /// it shows: what hit testing finds things in.
+    pub(crate) fn has_picture(&self) -> bool {
+        self.snapshot.is_some() && self.root.is_some() && self.pictured == self.root
+    }
+
+    /// What was posted to the scene's windows since it last took it.
+    pub(crate) fn take_posted(&mut self) -> Vec<(ObjectId, crate::live_input::Input)> {
+        std::mem::take(&mut self.shared.borrow_mut().posted)
     }
 
     /// Items under `pos`, topmost first.
