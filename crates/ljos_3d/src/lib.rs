@@ -30,6 +30,8 @@ pub mod texture;
 pub mod texture_data;
 
 #[cfg(feature = "gpu")]
+mod batch;
+#[cfg(feature = "gpu")]
 mod copies;
 #[cfg(feature = "gpu")]
 mod counted;

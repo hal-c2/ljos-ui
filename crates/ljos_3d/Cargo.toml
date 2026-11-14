@@ -55,10 +55,68 @@ naga = { workspace = true, features = ["wgsl-out"] }
 [lints]
 workspace = true
 
+# What draws needs the renderer: without `gpu` these are not built, so
+# `--no-default-features` tests the scene alone.
 [[example]]
 name = "gltf_load"
 required-features = ["gltf"]
 
+[[example]]
+name = "lit_cube"
+required-features = ["gpu"]
+
+[[example]]
+name = "many_models"
+required-features = ["gpu"]
+
 [[test]]
 name = "programs_and_post"
-required-features = ["snippets"]
+required-features = ["gpu", "snippets"]
+
+[[test]]
+name = "exported_assets"
+required-features = ["gpu", "gltf"]
+
+[[test]]
+name = "batched_draws"
+required-features = ["gpu"]
+
+[[test]]
+name = "copies_and_skins"
+required-features = ["gpu"]
+
+[[test]]
+name = "custom_geometry"
+required-features = ["gpu"]
+
+[[test]]
+name = "frame_counts"
+required-features = ["gpu"]
+
+[[test]]
+name = "instance_rows"
+required-features = ["gpu"]
+
+[[test]]
+name = "lights_and_materials"
+required-features = ["gpu"]
+
+[[test]]
+name = "model_slots"
+required-features = ["gpu"]
+
+[[test]]
+name = "offscreen"
+required-features = ["gpu"]
+
+[[test]]
+name = "shadows"
+required-features = ["gpu"]
+
+[[test]]
+name = "shared_gpu"
+required-features = ["gpu"]
+
+[[test]]
+name = "textures_and_probes"
+required-features = ["gpu"]

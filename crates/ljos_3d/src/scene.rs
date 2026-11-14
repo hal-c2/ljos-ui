@@ -160,6 +160,15 @@ impl MeshSource {
             MeshSource::Custom(g) => g.bounding_sphere(),
         }
     }
+
+    /// The box that holds the mesh in model space, least corner then most:
+    /// what tells two models that may meet from two that cannot.
+    pub fn bounding_box(&self) -> (Vec3, Vec3) {
+        match self {
+            MeshSource::Primitive(p) => crate::mesh::primitive_box(*p),
+            MeshSource::Custom(g) => g.bounding_box(),
+        }
+    }
 }
 
 /// `DefaultMaterial.lighting`.

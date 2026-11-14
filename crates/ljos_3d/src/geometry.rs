@@ -118,8 +118,9 @@ pub struct CustomGeometry {
     primitive: PrimitiveType,
     bounds: Option<(Vec3, Vec3)>,
     subsets: Vec<Subset>,
-    // What culling asks for every frame, found once.
-    sphere: OnceLock<(Vec3, f32)>,
+    // What culling and batching ask for every frame, found once: the box
+    // and the sphere round it.
+    found: OnceLock<((Vec3, Vec3), (Vec3, f32))>,
     // One upload each for as long as this revision lasts.
     parts: OnceLock<Vec<Arc<CustomGeometry>>>,
 }
@@ -136,7 +137,7 @@ impl Default for CustomGeometry {
             primitive: PrimitiveType::default(),
             bounds: None,
             subsets: Vec::new(),
-            sphere: OnceLock::new(),
+            found: OnceLock::new(),
             parts: OnceLock::new(),
         }
     }
@@ -185,7 +186,7 @@ impl CustomGeometry {
 
     pub fn set_vertex_data(&mut self, data: Vec<u8>) {
         self.vertex_data = data;
-        self.sphere = OnceLock::new();
+        self.found = OnceLock::new();
     }
 
     pub fn set_index_data(&mut self, data: Vec<u8>) {
@@ -194,7 +195,7 @@ impl CustomGeometry {
 
     pub fn set_stride(&mut self, stride: usize) {
         self.stride = stride;
-        self.sphere = OnceLock::new();
+        self.found = OnceLock::new();
     }
 
     pub fn add_attribute(&mut self, semantic: Semantic, offset: usize, component: ComponentType) {
@@ -203,7 +204,7 @@ impl CustomGeometry {
             offset,
             component,
         });
-        self.sphere = OnceLock::new();
+        self.found = OnceLock::new();
     }
 
     pub fn set_primitive_type(&mut self, primitive: PrimitiveType) {
@@ -214,7 +215,7 @@ impl CustomGeometry {
     /// positions are searched.
     pub fn set_bounds(&mut self, min: Vec3, max: Vec3) {
         self.bounds = Some((min, max));
-        self.sphere = OnceLock::new();
+        self.found = OnceLock::new();
     }
 
     pub fn add_subset(&mut self, subset: Subset) {
@@ -312,7 +313,17 @@ impl CustomGeometry {
     /// what frustum culling tests. An empty or broken geometry has none
     /// to speak of and is not drawn anyway.
     pub fn bounding_sphere(&self) -> (Vec3, f32) {
-        *self.sphere.get_or_init(|| {
+        self.found().1
+    }
+
+    /// The box that holds the geometry in model space, least corner then
+    /// most: its `bounds`, or its positions'.
+    pub fn bounding_box(&self) -> (Vec3, Vec3) {
+        self.found().0
+    }
+
+    fn found(&self) -> ((Vec3, Vec3), (Vec3, f32)) {
+        *self.found.get_or_init(|| {
             let (min, max) = self
                 .bounds
                 .or_else(|| self.position_box())
@@ -323,7 +334,7 @@ impl CustomGeometry {
                 (min.z + max.z) * 0.5,
             );
             let half = Vec3::new(max.x - centre.x, max.y - centre.y, max.z - centre.z);
-            (centre, half.length())
+            ((min, max), (centre, half.length()))
         })
     }
 
@@ -731,11 +742,16 @@ mod tests {
     }
 
     #[test]
-    fn the_bounding_sphere_holds_the_bounds_or_the_positions() {
+    fn the_bounding_box_and_sphere_hold_the_bounds_or_the_positions() {
         let mut g = quad();
         let (c, r) = g.bounding_sphere();
         assert_eq!((c.x, c.y, c.z), (5.0, 5.0, 0.0));
         assert!((r - 50f32.sqrt()).abs() < 1e-4);
+        let (min, max) = g.bounding_box();
+        assert_eq!(
+            [min.x, min.y, min.z, max.x, max.y, max.z],
+            [0.0, 0.0, 0.0, 10.0, 10.0, 0.0]
+        );
         g.set_bounds(
             Vec3::new(-100.0, -100.0, -100.0),
             Vec3::new(100.0, 100.0, 100.0),
@@ -743,6 +759,8 @@ mod tests {
         let (c, r) = g.bounding_sphere();
         assert_eq!((c.x, c.y, c.z), (0.0, 0.0, 0.0));
         assert!((r - 300f32.sqrt() * 10.0 * 1.0).abs() < 1e-2);
+        let (min, max) = g.bounding_box();
+        assert_eq!((min.x, max.z), (-100.0, 100.0));
     }
 
     #[test]
