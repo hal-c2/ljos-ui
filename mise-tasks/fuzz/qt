@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Differential fuzzing of Ljós against Qt (qml6, offscreen): random programs, shrunk repros, bucketed differences. fuzz:qt [area] [--cases N] [--seed S] [ljos-fuzz options]; exits 1 on a bucket not in crates/ljos_fuzz/known/<area>.txt"
+#USAGE arg "[area]" help="Area to fuzz (e.g. bindings; crates/ljos_fuzz/known/<area>.txt holds its known buckets)"
+#USAGE flag "--cases <n>" help="How many programs to try"
+#USAGE flag "--seed <seed>" help="Seed of the random programs"
+#USAGE arg "[args]..." var=#true help="More ljos-fuzz options"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 target="${CARGO_TARGET_DIR:-$root/target}"

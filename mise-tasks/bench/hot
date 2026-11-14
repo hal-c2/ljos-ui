@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Record which functions of the dist binary QML apps run, into the link order crates/ljos_cli/link/hot.txt: bench:hot [ids…]; ids as for bench (all by default), BENCH_HOT_SECONDS per app (15)"
 #MISE dir="{{config_root}}"
+#USAGE arg "[ids]..." var=#true help="bench/*.qml names and corpus example ids, as for bench (default all)"
 set -euo pipefail
 # The dist build links the functions named in hot.txt first, next to each
 # other, so the pages an app touches hold little it never runs: the binary

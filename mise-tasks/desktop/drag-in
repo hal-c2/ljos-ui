@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Open a window that logs what drags from other applications carry (keys, urls, text, html, every format) and the action each drop is answered with; drag into it by hand. Any desktop; the log is kept in target/drag-in.log"
 #MISE dir="{{config_root}}"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run"
 set -euo pipefail
 root="$(pwd)"
 target="${CARGO_TARGET_DIR:-$root/target}"

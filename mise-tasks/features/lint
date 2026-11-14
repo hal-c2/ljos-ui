@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Lint the ledger, or the directory given: # Sources:, Qt version, doc string size, undefined or ambiguous steps, phrasing sprawl"
+#USAGE arg "[dir]" help="Directory to lint (default: the whole ledger, features/)"
 set -euo pipefail
 exec cargo run --quiet -p ljos_bdd --bin features-lint -- "$@"

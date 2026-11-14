@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Measure bench/feed.qml on Ljós and Qt and the same UI in plain egui (ljos_egui's feed_egui example) inside systemd scopes in the headless sandbox: idle, the spinner alone, drag, scroll, typing and resizing; report in target/bench-egui"
 #MISE dir="{{config_root}}"
+#USAGE arg "[args]..." var=#true help="Options for every ljos bench run (ljos bench --help), after BENCH_DEFAULTS"
 set -euo pipefail
 # Options go to every `ljos bench` run after the defaults; BENCH_DEFAULTS
 # replaces the defaults. See docs/BENCHMARKS.md, "Ljós against egui".

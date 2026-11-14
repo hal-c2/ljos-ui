@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #MISE description="Render the qtdoc corpus on Ljós (R backend, headless), score it against the qml6 pictures, write an HTML report and hold the committed ratchet"
+#USAGE flag "--raise" help="Lift the ratchet (corpus/expected.json) to what scores now; a floor is never lowered"
+#USAGE flag "--top <n>" default="10" help="How many first errors to list"
+#USAGE arg "[ids]..." var=#true help="Corpus example ids to render (default: all)"
 set -euo pipefail
 # Arguments: --raise (lift the ratchet, corpus/expected.json, to what scores
 # now; a floor is never lowered), --top N (how many first errors to list),

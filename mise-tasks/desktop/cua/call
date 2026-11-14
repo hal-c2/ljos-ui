@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Call a cua-driver tool on the desktop:cua sandbox's app: call <tool> [json], with pid, session and foreground delivery filled in"
 #MISE dir="{{config_root}}"
+#USAGE arg "<tool>" help="cua-driver tool name (cua-driver list-tools names them)"
+#USAGE arg "[json]" help="The tool's arguments as a JSON object"
 set -euo pipefail
 exec scripts/cua-sandbox.sh call "$@"

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Diff the vendored oxc_parser fork against the crates.io release it is based on"
+#USAGE arg "[args]..." var=#true help="Options for diff (e.g. --stat, -q)"
 set -euo pipefail
 # What vendor/FORK.md says the patch is, checked against what it really is.
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' vendor/oxc_parser/Cargo.toml | head -n 1)

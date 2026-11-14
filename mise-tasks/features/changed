@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 #MISE description="Run on Ljós only the feature files this branch adds or changes (committed, staged, unstaged or untracked), plus any paths given. Takes features:run's arguments."
+#USAGE flag "--backend <backend>" help="Engine the scenarios run on" { choices "ljos" "qt" "both"; }
+#USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression"
+#USAGE flag "-n --name <regex>" help="Only scenarios whose name matches"
+#USAGE arg "[paths]..." var=#true help="More feature paths to run besides the changed ones (as for features:run)"
 set -euo pipefail
 # A worker's gate is the behaviour it touched; CI runs the whole ledger.
 # The base is where the branch left the shared line, so files others changed are not run.

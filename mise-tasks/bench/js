@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="JavaScript cost on Ljós and qml6 (docs/BENCHMARKS.md, JS1): wall ms of each bench/js1 program, best of 5, and callgrind instructions per round. Takes bench names (all by default)."
 #MISE dir="{{config_root}}"
+#USAGE arg "[benches]..." var=#true help="bench/js1 program names (default: bindings handlers arrays strings json math props model)"
 set -euo pipefail
 # LJOS is the binary measured (a release build); QMLTESTRUNNER is Qt 6's
 # (Qt 5's is the one on PATH on some systems); NO_QT=1 measures Ljós only.

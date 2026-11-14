@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #MISE description="Play a Lottie file in a window: lottie [file.json|file.qml] [--qt] [ljos run args…]; bench/lottie/mid.json by default, --qt plays it on qml6 instead, click to pause"
+#USAGE arg "[file]" help="Lottie .json or a .qml that plays one (default bench/lottie/mid.json)"
+#USAGE flag "--qt" help="Play it on qml6 instead (comes right after the file)"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 target="${CARGO_TARGET_DIR:-$root/target}"

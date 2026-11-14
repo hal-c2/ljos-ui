@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run scenarios on the Ljós engine (compiler, engine, Quick scene, vello_cpu grabs). Takes features:run's arguments."
+#USAGE flag "-t --tags <tagexpr>" help="Only scenarios matching the tag expression"
+#USAGE flag "-n --name <regex>" help="Only scenarios whose name matches"
+#USAGE arg "[globs]..." var=#true help="Paths under features/, as for features:run"
 set -euo pipefail
 exec "$(dirname "$0")/run" --backend ljos "$@"

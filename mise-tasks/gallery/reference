@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Take the qml6 reference pictures of the corpus into corpus/reference/ (offscreen, software, every run under timeout); local only, never committed"
+#USAGE arg "[ids]..." var=#true help="Corpus example ids to take pictures of (default: every runnable one)"
 set -euo pipefail
 # Arguments: example ids to take only those.
 # qml6 is a black box here: it is only run, and its pictures are test input.

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run a QML file with QtWebEngine: webengine:run <file.qml> [ljos run args…] (try examples/webbrowser/Main.qml)"
+#USAGE arg "<file>" help="QML file to run (try examples/webbrowser/Main.qml)"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file"
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 (($#)) || { echo "usage: mise run webengine:run <file.qml> [ljos run args…]" >&2; exit 2; }
