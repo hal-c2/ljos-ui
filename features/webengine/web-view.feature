@@ -70,6 +70,43 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "0:0 2:200"
     And the property "title" of "view" is "Fixture Page"
 
+  @api-QtWebEngine.WebEngineView.userScripts
+  Scenario: What a view of a new profile is asked while the profile is made is kept
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        WebEngineProfile { id: kept; storageName: "Waiting"; offTheRecord: false }
+        WebEngineView {
+          objectName: "one"
+          width: 200; height: 100
+          profile: kept
+          url: Qt.resolvedUrl("page.html")
+        }
+        WebEngineView {
+          objectName: "two"
+          width: 200; height: 100
+          profile: kept
+          property string seen: ""
+          Component.onCompleted: {
+            const s = WebEngine.script()
+            s.name = "mark"
+            s.sourceCode = "window.marked = 'yes'"
+            s.injectionPoint = WebEngineScript.DocumentCreation
+            s.worldId = WebEngineScript.MainWorld
+            userScripts.insert(s)
+            url = Qt.resolvedUrl("second.html")
+          }
+          onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
+            runJavaScript("document.title + ' ' + window.marked", r => seen = r) }
+        }
+      }
+      """
+    When 2 seconds pass
+    Then the property "title" of "one" is "Fixture Page"
+    And the property "seen" of "two" is "Second Page yes"
+
   @api-QtWebEngine.WebEngineView.url
   Scenario: A page is drawn where the view is
     Given the QML:

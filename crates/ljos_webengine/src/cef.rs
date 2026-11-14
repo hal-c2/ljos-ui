@@ -278,7 +278,12 @@ fn loading() -> bool {
     GLOBAL
         .try_with(|g| match g.try_borrow().as_deref() {
             Ok(Some(Ok(global))) => global.browsers.iter().any(|shared| {
-                !shared.closing.load(Ordering::Relaxed)
+                // A view whose browser could not be made boots nothing.
+                let live = Shared::lock(&shared.browser).is_some()
+                    || Shared::lock(&shared.unborn)
+                        .as_ref()
+                        .is_some_and(|u| u.since.is_some());
+                live && !shared.closing.load(Ordering::Relaxed)
                     && (shared.booting() || Shared::lock(&shared.load).url.is_some())
             }),
             _ => false,
@@ -286,18 +291,51 @@ fn loading() -> bool {
         .unwrap_or(false)
 }
 
+/// How long a view waits for its profile's request context before its
+/// page fails: one CEF never readies (storage it cannot set up) would
+/// otherwise keep the pump turning for good.
+const PROFILE_WAIT: Duration = Duration::from_secs(10);
+
 /// Whether a view waits for its profile's request context, which CEF
-/// readies with work it does not announce.
+/// readies with work it does not announce. One that has waited
+/// [`PROFILE_WAIT`] stops waiting, and its page fails.
 fn unborn() -> bool {
-    GLOBAL
+    let now = Instant::now();
+    let (waiting, late) = GLOBAL
         .try_with(|g| match g.try_borrow().as_deref() {
-            Ok(Some(Ok(global))) => global
-                .browsers
-                .iter()
-                .any(|shared| Shared::lock(&shared.unborn).is_some()),
-            _ => false,
+            Ok(Some(Ok(global))) => {
+                let mut waiting = false;
+                let mut late = Vec::new();
+                for shared in &global.browsers {
+                    let mut unborn = Shared::lock(&shared.unborn);
+                    let Some(u) = unborn.as_mut() else {
+                        continue;
+                    };
+                    match u.since {
+                        Some(since) if now.duration_since(since) >= PROFILE_WAIT => {
+                            u.since = None;
+                            late.push(shared.clone());
+                        }
+                        Some(_) => waiting = true,
+                        None => {}
+                    }
+                }
+                (waiting, late)
+            }
+            _ => (false, Vec::new()),
         })
-        .unwrap_or(false)
+        .unwrap_or_default();
+    // Failed with the Global let go: the view hears of it on its own.
+    for shared in late {
+        not_born(
+            &shared,
+            &format!(
+                "its profile's storage was not ready after {} s",
+                PROFILE_WAIT.as_secs()
+            ),
+        );
+    }
+    waiting
 }
 
 /// After a turn: a follow-up, unless the browser has been quiet long
@@ -840,11 +878,16 @@ struct Shared {
     unborn: Mutex<Option<Unborn>>,
 }
 
-/// A browser waiting for its profile (see [`Profile`]).
+/// A browser waiting for its profile (see [`Profile`]), or one that could
+/// not be made, which the view's next page makes again.
 struct Unborn {
     start: Start,
     context: RequestContext,
+    ready: Arc<Mutex<Readiness>>,
     focus: Option<bool>,
+    /// Since when it waits for the profile; `None` once it stopped
+    /// waiting with no browser made.
+    since: Option<Instant>,
 }
 
 /// The blank page a browser starts on. What every page gets (the
@@ -2398,7 +2441,7 @@ pub(crate) fn start(
         !r.ready
     });
     match profile {
-        Some((context, _)) if unready => {
+        Some((context, ready)) if unready => {
             // The first page waits as it does for the blank one.
             if !start.url.is_empty() {
                 shared.started(&start.url);
@@ -2407,7 +2450,9 @@ pub(crate) fn start(
             *Shared::lock(&shared.unborn) = Some(Unborn {
                 start,
                 context,
+                ready,
                 focus: None,
+                since: Some(Instant::now()),
             });
             // CEF readies the context with work it does not announce.
             told_work();
@@ -2425,49 +2470,84 @@ pub(crate) fn start(
     Ok(page)
 }
 
-/// The view's browser is made, now that its profile is ready; one that
-/// cannot be made fails the page it waited to show.
+/// The view's browser is made, now that its profile is ready. One that
+/// cannot be made fails the page it waited to show and stays unborn, not
+/// waiting: the view's next page makes it again, as a view whose browser
+/// could not be started starts it again.
 fn born(shared: &Arc<Shared>) {
-    let Some(Unborn {
-        start,
-        context,
-        focus,
-    }) = Shared::lock(&shared.unborn).take()
-    else {
+    let Some(mut u) = Shared::lock(&shared.unborn).take() else {
         return;
     };
     if shared.closing.load(Ordering::Relaxed) {
         return;
     }
-    match make_browser(shared, &start, Some(context)) {
+    match make_browser(shared, &u.start, Some(u.context.clone())) {
         Ok(()) => {
-            if let (Some(focus), Some(host)) = (focus, shared.host()) {
+            if let (Some(focus), Some(host)) = (u.focus, shared.host()) {
                 host.set_focus(focus as c_int);
             }
         }
         Err(why) => {
-            let url = Shared::lock(&shared.boot).url.take();
-            if let Some(e) = engine_of(shared) {
-                e.log(
-                    LogLevel::Warning,
-                    crate::CATEGORY,
-                    format!(
-                        "WebEngineView cannot show {}: {why}",
-                        url.as_deref().unwrap_or("a page")
-                    ),
-                );
-            }
-            if let Some(url) = url {
-                let code = -2;
-                shared.ended(
-                    url,
-                    LoadStatus::Failed,
-                    code,
-                    crate::errors::name(code),
-                    crate::errors::domain(code),
-                );
-            }
+            u.since = None;
+            *Shared::lock(&shared.unborn) = Some(u);
+            not_born(shared, &why);
         }
+    }
+}
+
+/// A view's browser was not made (`why`): the page it waited to show
+/// fails, once.
+fn not_born(shared: &Arc<Shared>, why: &str) {
+    let url = Shared::lock(&shared.boot).url.take();
+    if let Some(e) = engine_of(shared) {
+        e.log(
+            LogLevel::Warning,
+            crate::CATEGORY,
+            format!(
+                "WebEngineView cannot show {}: {why}",
+                url.as_deref().unwrap_or("a page")
+            ),
+        );
+    }
+    if let Some(url) = url {
+        let code = -2;
+        shared.ended(
+            url,
+            LoadStatus::Failed,
+            code,
+            crate::errors::name(code),
+            crate::errors::domain(code),
+        );
+    }
+}
+
+/// A view with no browser that stopped waiting is asked for a page: its
+/// browser is made again, at once in a profile that is ready by now, or
+/// once it is.
+fn reborn(shared: &Arc<Shared>) {
+    let ready = {
+        let mut unborn = Shared::lock(&shared.unborn);
+        let Some(u) = unborn.as_mut().filter(|u| u.since.is_none()) else {
+            return;
+        };
+        let mut r = Shared::lock(&u.ready);
+        if !r.ready {
+            r.waiting.retain(|w| w.strong_count() > 0);
+            if !r
+                .waiting
+                .iter()
+                .any(|w| std::ptr::eq(w.as_ptr(), Arc::as_ptr(shared)))
+            {
+                r.waiting.push(Arc::downgrade(shared));
+            }
+            u.since = Some(Instant::now());
+        }
+        r.ready
+    };
+    if ready {
+        born(shared);
+    } else {
+        told_work();
     }
 }
 
@@ -2594,6 +2674,8 @@ impl Page for CefPage {
             let mut boot = Shared::lock(&self.shared.boot);
             if !boot.done() {
                 boot.url = Some(url.to_owned());
+                drop(boot);
+                reborn(&self.shared);
                 return;
             }
         }
@@ -2699,8 +2781,8 @@ impl Page for CefPage {
     }
 
     fn run_script(&self, id: u64, source: &str, world: i32) {
-        if Shared::lock(&self.shared.unborn).is_some() {
-            // No page to run in yet.
+        if self.browser().is_none() {
+            // No page to run in: not yet, or a browser that was not made.
             script_result(&self.shared, id, false, &Json::Null);
             return;
         }
