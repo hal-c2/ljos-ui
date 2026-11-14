@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Run the Gherkin ledger (LJOS_BDD_BACKEND=ljos|qt|both; --backlog runs only backlog work)"
+#USAGE flag "--backlog" help="Run only backlog work"
+#USAGE arg "[args]..." var=#true help="Arguments for the cucumber runner (-t tagexpr, -n name-regex, …)"
 set -euo pipefail
 # The default backend is ljos (LJOS_BDD_BACKEND unset). Steps the backend does
 # not support yet report PENDING rather than passing; `features:parity` checks

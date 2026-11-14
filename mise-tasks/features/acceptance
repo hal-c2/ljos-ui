@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 #MISE description="Run an external acceptance suite on Ljós: features:acceptance <suite> [--path DIR] [--raise] [--allow-dirty] [--digest]"
+#USAGE arg "<suite>" help="Suite under acceptance/ (e.g. example)"
+#USAGE flag "--path <dir>" help="The suite's checkout (default: the variable the PIN names)"
+#USAGE flag "--raise" help="Add the scenarios that pass now to RATCHET"
+#USAGE flag "--allow-dirty" help="Accept uncommitted changes in a commit-pinned checkout"
+#USAGE flag "--digest" help="Print the checkout's digest, for a digest PIN"
 set -euo pipefail
 # The suite is somebody else's repository, read in place and never written:
 # acceptance/<suite>/PIN says which revision, features.globs which files,

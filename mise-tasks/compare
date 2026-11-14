@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Compare pictures (qml-compare diff A B) or run a corpus through a renderer (qml-compare run ...)"
+#USAGE arg "[args]..." var=#true help="qml-compare subcommand and its arguments (diff A B, run …, list …; qml-compare --help)"
 set -euo pipefail
 exec cargo run --quiet -p qml_compare --bin qml-compare -- "$@"

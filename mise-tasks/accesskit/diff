@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Diff the vendored AccessKit adapters (accesskit_winit, accesskit_unix, accesskit_atspi_common) against the crates.io releases they are based on"
+#USAGE arg "[args]..." var=#true help="Options for diff (e.g. --stat, -q)"
 set -euo pipefail
 # The patches vendor/ACCESSKIT.md lists, against the published sources: the
 # diff to offer upstream.

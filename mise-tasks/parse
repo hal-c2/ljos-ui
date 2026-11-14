@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Parse every .qml file of corpus/qtdoc (or the paths given) and report passed/total"
+#USAGE arg "[paths]..." var=#true help=".qml files or directories to parse (default corpus/qtdoc)"
 set -euo pipefail
 if [ "$#" -eq 0 ]; then
   git submodule update --init --depth 1 corpus/qtdoc

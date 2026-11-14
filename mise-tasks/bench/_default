@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Measure QML apps on Ljós (release, or BENCH_PROFILE=dist) and Qt (qml6) inside systemd scopes in the headless sandbox: bench [ids…] [ljos bench options…]; ids are bench/*.qml names and corpus examples (by default all qml6 runs; one named that it cannot run is measured without it); report in target/bench"
 #MISE dir="{{config_root}}"
+#USAGE arg "[ids]..." var=#true help="bench/*.qml names and corpus example ids (default: every one qml6 runs), then options for ljos bench (ljos bench --help), which override BENCH_DEFAULTS"
 set -euo pipefail
 # Options after the ids go to `ljos bench` after the defaults and override
 # them; `ljos bench --help` lists them. BENCH_DEFAULTS replaces the defaults

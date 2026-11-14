@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="What CI runs for the change since a revision: ci:changes [base] (default origin/main); prints the jobs' inputs"
+#USAGE arg "[base]" default="origin/main" help="The revision to compare HEAD with"
 set -euo pipefail
-exec python3 scripts/ci_changes.py --mode pr --base "${1:-origin/main}" --head HEAD
+exec python3 scripts/ci_changes.py --mode pr --base "${usage_base:-origin/main}" --head HEAD

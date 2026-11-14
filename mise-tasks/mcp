@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Start the ljos MCP authoring server on stdio for this repository"
+#USAGE arg "[project]" default="." help="Project directory the server authors"
 set -euo pipefail
-exec cargo run --quiet -p ljos_cli -- mcp --project "${1:-.}"
+exec cargo run --quiet -p ljos_cli -- mcp --project "${usage_project:-.}"

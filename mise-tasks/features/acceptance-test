@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Test the acceptance mechanism end to end on the example suite (pass, regression, --raise, wrong commit, empty glob)"
+#USAGE arg "[args]..." var=#true help="Arguments for cargo test (a test name filter, --nocapture, …)"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 dir="$root/acceptance/example"

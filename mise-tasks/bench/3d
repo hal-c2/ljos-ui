@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #MISE description="Measure the QtQuick3D scenes (bench/quick3d-*.qml and the corpus's 3D apps) on Ljós and Qt (qml6) with what each 3D frame cost: bench:3d [ids…] [ljos bench options…]; report in target/bench3d, Qt's renderStats in target/bench3d/qml6-renderstats.json"
 #MISE dir="{{config_root}}"
+#USAGE arg "[ids]..." var=#true help="3D scene ids (bench/quick3d-*.qml names, corpus 3D apps; default all), then options for ljos bench"
 set -euo pipefail
 # `mise run bench` with --frames3d, so Ljós's report has each 3D frame's
 # counts (draw calls, pipeline switches, uploads, the CPU parts, the GPU

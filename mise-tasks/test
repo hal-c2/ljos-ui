@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 #MISE description="Every Rust test in the workspace (features run separately: mise run features)"
+#USAGE arg "[args]..." var=#true help="Arguments for cargo test (--no-fail-fast, a test filter, -- test-binary options)"
 set -euo pipefail
 exec cargo test --workspace "$@"

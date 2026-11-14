@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 #MISE description="Format check, clippy with warnings as errors, and the web build: check [-p pkg…] lints those packages only, without the web build"
+#USAGE arg "[args]..." var=#true help="Packages to lint instead of the workspace (-p pkg …); with any, the web build is skipped"
 set -euo pipefail
 cargo fmt --all --check
 if [ $# -eq 0 ]; then

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 #MISE description="Run one qtdoc corpus example in a Ljós window: gallery:run <id> [ljos run args…]; no id lists the examples (* = rendered in the last gallery run)"
+#USAGE flag "--list" help="List the examples (the same as giving no id)"
+#USAGE arg "[id]" help="Corpus example id; none lists them (* = rendered in the last gallery run)"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run (--watch, --top, --mcp=inspect,input, …)"
 set -euo pipefail
 root="$(cd "$(dirname "$0")/../.." && pwd)"
 manifest="$root/corpus/examples.json"
