@@ -245,7 +245,7 @@ impl Pixels {
                         f32::from_le_bytes(raw)
                     }
                 }
-                _ if self.srgb => from_srgb(f32::from(b[0]) / 255.0),
+                _ if self.srgb => srgb_light()[usize::from(b[0])],
                 _ => f32::from(b[0]) / 255.0,
             }
         };
@@ -315,8 +315,9 @@ impl Face {
         let n = self.side;
         let at = |v: f32| {
             let v = (v * n as f32 - 0.5).clamp(0.0, (n - 1) as f32);
-            let low = v.floor();
-            (low as usize, (low as usize + 1).min(n - 1), v - low)
+            // At or above zero, so cutting off the fraction is its floor.
+            let low = v as usize;
+            (low, (low + 1).min(n - 1), v - low as f32)
         };
         let (x0, x1, fx) = at(s);
         let (y0, y1, fy) = at(t);
@@ -334,10 +335,13 @@ impl Face {
 fn equirectangular(faces: &[Face], width: usize, height: usize) -> Vec<u8> {
     use std::f32::consts::PI;
     let mut data = Vec::with_capacity(width * height * 4);
+    // Every row turns through the same angles: worked out once, not per row.
+    let columns: Vec<(f32, f32)> = (0..width)
+        .map(|x| (((x as f32 + 0.5) / width as f32 - 0.5) * 2.0 * PI).sin_cos())
+        .collect();
     for y in 0..height {
         let (sin_t, cos_t) = ((y as f32 + 0.5) / height as f32 * PI).sin_cos();
-        for x in 0..width {
-            let (sin_p, cos_p) = (((x as f32 + 0.5) / width as f32 - 0.5) * 2.0 * PI).sin_cos();
+        for &(sin_p, cos_p) in &columns {
             let (face, s, t) = cube_face([sin_t * sin_p, cos_t, -sin_t * cos_p]);
             data.extend(rgbe(faces[face].sample(s, t)));
         }
@@ -370,16 +374,28 @@ fn cube_face([x, y, z]: [f32; 3]) -> (usize, f32, f32) {
     (face, (sc / ma + 1.0) / 2.0, (tc / ma + 1.0) / 2.0)
 }
 
+/// The half float `bits` as a float. Every half is exactly a float, so it
+/// is put together from the bits: a cube's faces are millions of them, and
+/// a power per channel was most of the time a file took.
 fn half(bits: u16) -> f32 {
-    let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
-    let exponent = i32::from((bits >> 10) & 0x1f);
-    let fraction = f32::from(bits & 0x3ff);
-    sign * match exponent {
-        0 => fraction * 2f32.powi(-24),
-        31 if fraction == 0.0 => f32::INFINITY,
-        31 => f32::NAN,
-        _ => (1.0 + fraction / 1024.0) * 2f32.powi(exponent - 15),
-    }
+    let sign = u32::from(bits & 0x8000) << 16;
+    let exponent = u32::from((bits >> 10) & 0x1f);
+    let fraction = u32::from(bits & 0x3ff);
+    let magnitude = match exponent {
+        // Below the smallest normal half: fraction · 2⁻²⁴, a normal float.
+        0 => (f32::from(bits & 0x3ff) * (1.0 / 16_777_216.0)).to_bits(),
+        // Infinity, or a NaN that stays one.
+        31 => 0x7f80_0000 | (fraction << 13),
+        // The exponent rebased from 15 to 127, the fraction widened.
+        _ => ((exponent + 112) << 23) | (fraction << 13),
+    };
+    f32::from_bits(sign | magnitude)
+}
+
+/// The light each sRGB byte stands for, worked out once.
+fn srgb_light() -> &'static [f32; 256] {
+    static LIGHT: std::sync::OnceLock<[f32; 256]> = std::sync::OnceLock::new();
+    LIGHT.get_or_init(|| std::array::from_fn(|b| from_srgb(b as f32 / 255.0)))
 }
 
 fn from_srgb(c: f32) -> f32 {
@@ -397,8 +413,11 @@ fn rgbe(c: [f32; 3]) -> [u8; 4] {
         return [0; 4];
     }
     // max = m * 2^e with m in [0.5, 1); each channel keeps 8 bits of m.
-    let e = max.log2().floor() as i32 + 1;
-    let scale = 256.0 / 2f32.powi(e);
+    // At or above 1e-32, max is a normal float, whose bits hold e - 1
+    // over a bias of 127; a logarithm can round up at the top of a binade.
+    let e = ((max.to_bits() >> 23) & 0xff) as i32 - 126;
+    // 2^(8 - e), within a float's normal range for every e that gets here.
+    let scale = f32::from_bits(((127 + 8 - e) as u32) << 23);
     let byte = |c: f32| (c * scale).min(255.0) as u8;
     [byte(r), byte(g), byte(b), (e + 128).clamp(0, 255) as u8]
 }
@@ -544,5 +563,64 @@ mod tests {
         assert_eq!(half(0x3c00), 1.0);
         assert_eq!(half(0xc000), -2.0);
         assert_eq!(half(0x0001), 2f32.powi(-24));
+    }
+
+    /// The half float as it was worked out with powers, before `half` was
+    /// put together from bits: what every half must still read as.
+    fn powered_half(bits: u16) -> f32 {
+        let sign = if bits & 0x8000 == 0 { 1.0 } else { -1.0 };
+        let exponent = i32::from((bits >> 10) & 0x1f);
+        let fraction = f32::from(bits & 0x3ff);
+        sign * match exponent {
+            0 => fraction * 2f32.powi(-24),
+            31 if fraction == 0.0 => f32::INFINITY,
+            31 => f32::NAN,
+            _ => (1.0 + fraction / 1024.0) * 2f32.powi(exponent - 15),
+        }
+    }
+
+    #[test]
+    fn every_half_reads_as_its_powered_value() {
+        for bits in 0..=u16::MAX {
+            let (fast, slow) = (half(bits), powered_half(bits));
+            assert!(
+                fast.to_bits() == slow.to_bits() || (fast.is_nan() && slow.is_nan()),
+                "{bits:#06x}: {fast} against {slow}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_rgbe_exponent_is_the_one_its_light_has() {
+        // Each binade's bottom, middle and top, where a rounded logarithm
+        // can be a whole power off.
+        for e in -100..100 {
+            let bottom = 2f64.powi(e) as f32;
+            for v in [
+                bottom,
+                bottom * 1.5,
+                f32::from_bits(bottom.to_bits() + 0x7f_ffff),
+            ] {
+                if v < 1e-32 {
+                    continue;
+                }
+                let [r, _, _, x] = rgbe([v, 0.0, 0.0]);
+                let exponent = i32::from(x) - 128;
+                // v = m · 2^exponent with m in [0.5, 1).
+                let m = f64::from(v) / 2f64.powi(exponent);
+                assert!((0.5..1.0).contains(&m), "{v}: exponent {exponent}");
+                assert_eq!(r, (m * 256.0) as u8, "{v}");
+            }
+        }
+    }
+
+    #[test]
+    fn an_srgb_byte_is_the_light_it_always_was() {
+        for b in 0..=255u8 {
+            assert_eq!(
+                srgb_light()[usize::from(b)],
+                from_srgb(f32::from(b) / 255.0)
+            );
+        }
     }
 }
