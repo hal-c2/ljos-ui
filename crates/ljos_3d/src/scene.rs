@@ -1054,7 +1054,9 @@ impl Default for Environment {
 
 #[derive(Clone, Debug, Default)]
 pub struct Scene {
-    nodes: SlotMap<NodeId, Node>,
+    // Shared, so a scene that is patched while a renderer still holds the
+    // last one copies a pointer per node and not the nodes.
+    nodes: SlotMap<NodeId, Arc<Node>>,
     roots: Vec<NodeId>,
     environment: Environment,
     camera: Option<NodeId>,
@@ -1116,10 +1118,40 @@ impl Scene {
             && self.environment == other.environment
             && self.camera == other.camera
             && self.nodes.len() == other.nodes.len()
-            && self
-                .nodes
-                .iter()
-                .all(|(id, n)| other.nodes.get(id) == Some(n))
+            && self.nodes.iter().all(|(id, n)| {
+                other
+                    .nodes
+                    .get(id)
+                    .is_some_and(|o| Arc::ptr_eq(o, n) || o == n)
+            })
+    }
+
+    /// What [`same_as`](Self::same_as) finds first that `other` does
+    /// otherwise, said: what a check that two scenes match reports.
+    pub fn difference(&self, other: &Scene) -> Option<String> {
+        if self.roots != other.roots {
+            return Some(format!("roots {:?} and {:?}", self.roots, other.roots));
+        }
+        if self.environment != other.environment {
+            return Some(format!(
+                "environment {:#?} and {:#?}",
+                self.environment, other.environment
+            ));
+        }
+        if self.camera != other.camera {
+            return Some(format!("camera {:?} and {:?}", self.camera, other.camera));
+        }
+        for (id, n) in &self.nodes {
+            match other.nodes.get(id) {
+                None => return Some(format!("{id:?} {n:#?} and none")),
+                Some(o) if !Arc::ptr_eq(o, n) && o != n => {
+                    return Some(format!("{id:?} {n:#?} and {o:#?}"));
+                }
+                Some(_) => {}
+            }
+        }
+        (self.nodes.len() != other.nodes.len())
+            .then(|| format!("{} nodes and {}", self.nodes.len(), other.nodes.len()))
     }
 
     /// Adds `node` as the last child of `parent`, or as a root. A parent
@@ -1128,9 +1160,9 @@ impl Scene {
         let parent = parent.filter(|p| self.nodes.contains_key(*p));
         node.parent = parent;
         node.children.clear();
-        let id = self.nodes.insert(node);
+        let id = self.nodes.insert(Arc::new(node));
         match parent {
-            Some(p) => self.nodes[p].children.push(id),
+            Some(p) => Arc::make_mut(&mut self.nodes[p]).children.push(id),
             None => self.roots.push(id),
         }
         self.touch();
@@ -1143,13 +1175,15 @@ impl Scene {
             return;
         };
         match node.parent {
-            Some(p) => self.nodes[p].children.retain(|c| *c != id),
+            Some(p) => Arc::make_mut(&mut self.nodes[p])
+                .children
+                .retain(|c| *c != id),
             None => self.roots.retain(|c| *c != id),
         }
         let mut stack = vec![id];
         while let Some(n) = stack.pop() {
             if let Some(node) = self.nodes.remove(n) {
-                stack.extend(node.children);
+                stack.extend_from_slice(&node.children);
             }
         }
         if self.camera.is_some_and(|c| !self.nodes.contains_key(c)) {
@@ -1159,7 +1193,7 @@ impl Scene {
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.get(id)
+        self.nodes.get(id).map(|n| &**n)
     }
 
     /// The node to change; the scene counts it as changed.
@@ -1167,7 +1201,46 @@ impl Scene {
         if self.nodes.contains_key(id) {
             self.touch();
         }
-        self.nodes.get_mut(id)
+        self.nodes.get_mut(id).map(Arc::make_mut)
+    }
+
+    /// Puts `node` in the place of `id`, under the same parent and over the
+    /// same children whatever `node` says of those. The scene counts as
+    /// changed only when the node does; returns whether it did.
+    pub fn set_node(&mut self, id: NodeId, mut node: Node) -> bool {
+        let Some(held) = self.nodes.get_mut(id) else {
+            return false;
+        };
+        node.parent = held.parent;
+        node.children.clone_from(&held.children);
+        if **held == node {
+            return false;
+        }
+        *held = Arc::new(node);
+        self.touch();
+        true
+    }
+
+    /// Whether putting `node` in the place of `id` ([`Scene::set_node`])
+    /// would change the scene; `node` takes `id`'s links on the way.
+    pub(crate) fn would_change(&self, id: NodeId, node: &mut Node) -> bool {
+        let Some(held) = self.nodes.get(id) else {
+            return false;
+        };
+        node.parent = held.parent;
+        node.children.clone_from(&held.children);
+        **held != *node
+    }
+
+    /// `View3D.camera`, if it is set and in the scene.
+    pub fn camera(&self) -> Option<NodeId> {
+        self.camera
+    }
+
+    /// The nodes in the order they were added, for a scene nothing was
+    /// removed from.
+    pub(crate) fn added(&self) -> impl Iterator<Item = (NodeId, &Node)> {
+        self.nodes.iter().map(|(id, n)| (id, &**n))
     }
 
     /// `id`'s world transform, whether or not it is visible: what a skin's
@@ -1213,7 +1286,7 @@ impl Scene {
             .map(|r| (*r, Mat4::IDENTITY))
             .collect();
         while let Some((id, parent)) = stack.pop() {
-            let node = &self.nodes[id];
+            let node = &*self.nodes[id];
             if !node.visible {
                 continue;
             }
@@ -1254,7 +1327,7 @@ impl Scene {
         let mut scene = self.clone();
         for node in scene.nodes.values_mut() {
             if !node.casts_reflections && matches!(node.kind, NodeKind::Model(_)) {
-                node.kind = NodeKind::Group;
+                Arc::make_mut(node).kind = NodeKind::Group;
             }
         }
         let environment = &mut scene.environment;
