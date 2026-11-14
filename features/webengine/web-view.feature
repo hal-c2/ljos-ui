@@ -79,16 +79,12 @@ Feature: A web page in a WebEngineView
       Item {
         WebEngineProfile { id: kept; storageName: "Waiting"; offTheRecord: false }
         WebEngineView {
-          objectName: "one"
-          width: 200; height: 100
-          profile: kept
-          url: Qt.resolvedUrl("page.html")
+          objectName: "one"; width: 200; height: 100
+          profile: kept; url: Qt.resolvedUrl("page.html")
         }
         WebEngineView {
-          objectName: "two"
-          width: 200; height: 100
-          profile: kept
-          property string seen: ""
+          objectName: "two"; width: 200; height: 100
+          profile: kept; property string seen: ""
           Component.onCompleted: {
             const s = WebEngine.script()
             s.name = "mark"
@@ -106,6 +102,39 @@ Feature: A web page in a WebEngineView
     When 2 seconds pass
     Then the property "title" of "one" is "Fixture Page"
     And the property "seen" of "two" is "Second Page yes"
+
+  # The view is hidden, and asked for a script, as its first page starts:
+  # before its new profile is ready, so before its browser is made.
+  @api-QtWebEngine.WebEngineView.runJavaScript @api-QtQuick.Item.visible
+  Scenario: A view hidden while its new profile is made shows its page hidden, and a script asked before has no page to run in
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        width: 200; height: 100
+        Item {
+          id: box; anchors.fill: parent
+          WebEngineView {
+            objectName: "view"; anchors.fill: parent
+            property string early: ""
+            property string seen: ""
+            profile: WebEngineProfile { storageName: "Hidden"; offTheRecord: false }
+            url: Qt.resolvedUrl("page.html")
+            onLoadingChanged: info => {
+              if (info.status === WebEngineView.LoadStartedStatus) {
+                runJavaScript("1", r => early = String(r))
+                box.visible = false
+              } else if (info.status === WebEngineView.LoadSucceededStatus)
+                runJavaScript("document.visibilityState", r => seen = r)
+            }
+          }
+        }
+      }
+      """
+    When 2 seconds pass
+    Then the property "early" of "view" is "undefined"
+    And the property "seen" of "view" is "hidden"
 
   @api-QtWebEngine.WebEngineView.url
   Scenario: A page is drawn where the view is
