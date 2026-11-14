@@ -169,7 +169,9 @@ pub(crate) fn firsts<K: Eq + Hash + Copy>(
             Some(f) if alike(f, i) => {
                 // What came before it and is drawn after it: one of its
                 // group declared later, or a group drawn after its own.
-                let reordered = index.near(&reach[i]).any(|j| {
+                // A draw is in a group no later than its own, so only those
+                // since `f` can be either.
+                let reordered = index.near(&reach[i], f).any(|j| {
                     let ahead = if group[j] == f {
                         order[j] > order[i]
                     } else {
@@ -264,10 +266,15 @@ impl Index {
         }
     }
 
-    /// The draws whose boxes may meet `r`'s, some more than once.
-    fn near<'a>(&'a self, r: &Reach) -> Box<dyn Iterator<Item = usize> + 'a> {
+    /// The draws from `since` on whose boxes may meet `r`'s, some more
+    /// than once. Each list is in the order the draws were added, so it is
+    /// read from its end and left at the first before `since`: what came
+    /// long ago is not looked at again and again.
+    fn near<'a>(&'a self, r: &Reach, since: usize) -> Box<dyn Iterator<Item = usize> + 'a> {
+        let from =
+            move |list: &'a Vec<usize>| list.iter().rev().copied().take_while(move |&j| j >= since);
         match self.span(r) {
-            None => Box::new(self.all.iter().copied()),
+            None => Box::new(from(&self.all)),
             Some((lo, hi)) => {
                 let cells = (lo[0]..=hi[0]).flat_map(move |x| {
                     (lo[1]..=hi[1]).flat_map(move |y| (lo[2]..=hi[2]).map(move |z| [x, y, z]))
@@ -275,9 +282,8 @@ impl Index {
                 Box::new(
                     cells
                         .filter_map(|c| self.cells.get(&c))
-                        .flatten()
-                        .copied()
-                        .chain(self.large.iter().copied()),
+                        .flat_map(from)
+                        .chain(from(&self.large)),
                 )
             }
         }
@@ -412,6 +418,31 @@ mod tests {
         assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 1]);
         let keys = [Some('b'), Some('a'), Some('b')];
         assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
+    }
+
+    #[test]
+    fn the_index_leaves_what_came_before_the_group_s_first() {
+        let mut index = Index::new(2.0);
+        let floor = Reach::placed(
+            &Mat4::IDENTITY,
+            (
+                Vec3::new(-100.0, -1.0, -100.0),
+                Vec3::new(100.0, 1.0, 100.0),
+            ),
+            true,
+        );
+        for i in 0..6 {
+            let r = if i % 3 == 0 { floor } else { cube(0.0, 0.0) };
+            index.add(i, &r);
+        }
+        let mut near: Vec<_> = index.near(&cube(0.0, 0.0), 2).collect();
+        near.sort_unstable();
+        near.dedup();
+        assert_eq!(near, [2, 3, 4, 5]);
+        let mut near: Vec<_> = index.near(&floor, 4).collect();
+        near.sort_unstable();
+        near.dedup();
+        assert_eq!(near, [4, 5]);
     }
 
     #[test]
