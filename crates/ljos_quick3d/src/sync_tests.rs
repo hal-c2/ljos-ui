@@ -2,6 +2,7 @@
 //! build makes anew: after each kind of change, and after what arrives
 //! later than the first frame.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use ljos::item::ljos_3d::qml::Piece;
@@ -369,6 +370,9 @@ Item {
     property QtObject view_: view
     property QtObject a_: a
     property QtObject b_: b
+    property QtObject away_: away
+    // Outside the view: a node moved here leaves its scene.
+    Node { id: away }
     View3D {
         id: view
         anchors.fill: parent
@@ -453,6 +457,54 @@ fn a_read_held_from_before_a_change_is_read_again() {
     view::hold_read(&e, view, Piece::Node(a));
     write(&e, a, "x", 40.0);
     assert_eq!(synced(&e, view), 1);
+}
+
+#[test]
+fn a_node_moved_out_of_the_view_leaves_its_scene() {
+    let (e, _, root) = make(PAIR, false);
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    let (b, away) = (named(&e, root, "b_"), named(&e, root, "away_"));
+    // The view's lists tell nobody they changed; b's `parent` does.
+    write(&e, b, "parent", away);
+    let s = view::sync(&e, view);
+    assert!(s.gone.contains(&Piece::Node(b)), "{:?}", s.gone);
+    synced(&e, view);
+}
+
+#[test]
+fn a_read_held_for_a_node_that_leaves_goes_with_it() {
+    let (e, _, root) = make(PAIR, false);
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    let (b, away) = (named(&e, root, "b_"), named(&e, root, "away_"));
+    // b leaves through the view's own piece, whose children no longer
+    // have it. Held while that piece is read, in the pass that takes b
+    // out, as the graph holds b's when it runs b's tracking then; once,
+    // as that tracking is gone after.
+    let held = Rc::new(Cell::new(false));
+    let hold = held.clone();
+    view::on_read(
+        &e,
+        view,
+        Some(Rc::new(move |e: &Engine, piece| {
+            if piece == Piece::View && !hold.replace(true) {
+                view::hold_read(e, view, Piece::Node(b));
+            }
+        })),
+    );
+    write(&e, b, "parent", away);
+    let s = view::sync(&e, view);
+    assert!(held.get(), "the view was read");
+    assert!(s.gone.contains(&Piece::Node(b)), "{:?}", s.gone);
+    assert!(
+        !view::unsettled(&e, view),
+        "b's read is not left pending: {} read",
+        s.read
+    );
+    assert!(!view::asked(&e, view), "nor another paint asked for it");
+    view::on_read(&e, view, None);
+    synced(&e, view);
 }
 
 #[test]
