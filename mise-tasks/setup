@@ -30,23 +30,34 @@ else
   skipped+=("submodules: not a git checkout; fetch third_party/filmcraft and corpus/qtdoc yourself")
 fi
 
-# Where Qt keeps its QML modules, as `mise run types` (qmltypes) looks:
-# QML_IMPORT_PATH first, then what Qt's own tools say, then the usual place.
-qt_qml=""
-candidates=()
+# Where Qt keeps its QML modules, as qmltypes reads them: every root of
+# QML_IMPORT_PATH, then Qt's own (what qtpaths6 or qmake6 says, else the
+# usual place). All of them go to `mise run types` as --qt, in that order.
+roots=()
 if [ -n "${QML_IMPORT_PATH:-}" ]; then
-  IFS=: read -r -a candidates <<< "$QML_IMPORT_PATH"
+  IFS=: read -r -a imports <<< "$QML_IMPORT_PATH"
+  for c in ${imports[@]+"${imports[@]}"}; do
+    [ -n "$c" ] && [ -d "$c" ] && roots+=("$c")
+  done
 fi
+own=()
 for tool in qtpaths6 qtpaths qmake6; do
   if command -v "$tool" > /dev/null; then
     q=$("$tool" --query QT_INSTALL_QML 2> /dev/null || "$tool" -query QT_INSTALL_QML 2> /dev/null || true)
-    [ -n "$q" ] && candidates+=("$q")
+    [ -n "$q" ] && own+=("$q")
   fi
 done
-candidates+=(/usr/lib/qt6/qml /usr/lib64/qt6/qml)
-for c in ${candidates[@]+"${candidates[@]}"}; do
+own+=(/usr/lib/qt6/qml /usr/lib64/qt6/qml)
+for c in "${own[@]}"; do
+  if [ -f "$c/QtQuick/qmldir" ]; then roots+=("$c"); break; fi
+done
+# Qt is here when one of the roots has QtQuick.
+qt_qml=""
+for c in ${roots[@]+"${roots[@]}"}; do
   if [ -f "$c/QtQuick/qmldir" ]; then qt_qml="$c"; break; fi
 done
+qt_args=()
+for c in ${roots[@]+"${roots[@]}"}; do qt_args+=(--qt "$c"); done
 
 types="$root/crates/qt_types/src/types.txt"
 if [ -n "${LJOS_QT_TYPES:-}" ]; then
@@ -54,18 +65,13 @@ if [ -n "${LJOS_QT_TYPES:-}" ]; then
 elif [ -z "$qt_qml" ]; then
   skipped+=("Qt's type table: no Qt 6 QML modules found (QML_IMPORT_PATH, qtpaths6, /usr/lib/qt6/qml). Builds read QML against Ljós's own types, as CI's LJOS_QT_TYPES=none does; install qt6-declarative (or set QML_IMPORT_PATH) and run mise run setup again for Qt's names in diagnostics")
 elif [ "${usage_no_types:-false}" = true ]; then
-  skipped+=("Qt's type table (--no-types): Qt is at $qt_qml; mise run types -- --qt $qt_qml makes it")
+  skipped+=("Qt's type table (--no-types): Qt is at $qt_qml; mise run types -- ${qt_args[*]} makes it")
 elif [ -s "$types" ]; then
-  did+=("Qt's type table: kept $types (mise run types -- --qt $qt_qml regenerates it)")
+  did+=("Qt's type table: kept $types (mise run types -- ${qt_args[*]} regenerates it)")
 else
   echo "setup: Qt's type table from $qt_qml" >&2
-  if [ -n "${QML_IMPORT_PATH:-}" ]; then
-    # qmltypes reads every root of QML_IMPORT_PATH, then Qt's own, itself.
-    mise run types
-  else
-    mise run types -- --qt "$qt_qml"
-  fi
-  did+=("Qt's type table from $qt_qml into $types (git-ignored)")
+  mise run types -- "${qt_args[@]}"
+  did+=("Qt's type table from ${roots[*]} into $types (git-ignored)")
 fi
 
 # What some tasks need besides cargo. Named, not installed.
