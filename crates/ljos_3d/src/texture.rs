@@ -33,7 +33,9 @@ pub trait TexturePixels: Send + Sync + fmt::Debug {
     /// Calls `f` with the pixels, four bytes each; with nothing once they
     /// are let go.
     fn with_pixels(&self, f: &mut dyn FnMut(&[u8]));
-    /// The renderer has its own copy; the pixels may be let go.
+    /// The renderers have their own copies; the pixels may be let go. Where
+    /// several renderers draw, once each has its copy, or a while after the
+    /// first did, maybe on another thread.
     fn uploaded(&self) {}
     /// What a light probe reads when the picture already is its cube, every
     /// level baked: then nothing is blurred.
