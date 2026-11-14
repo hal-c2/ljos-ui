@@ -21,7 +21,7 @@ pub struct Bench {
     files: Vec<PathBuf>,
     /// A JSON manifest of applications: `{"apps": [{"id", "file",
     /// "imports", "size", "ljos_args", "qt_args", "drive", "clicks",
-    /// "commands"}]}`; "clicks" are where to click, as fractions of the
+    /// "commands", "qt", "dir", "env"}]}`; "clicks" are where to click, as fractions of the
     /// window, instead of the grid; "commands" are the same application
     /// written for other toolkits, `{"runtime": [program, args…]}`.
     #[arg(long)]
@@ -150,6 +150,9 @@ pub struct Gate {
     env: Vec<(String, String)>,
     #[arg(long)]
     unset: Vec<String>,
+    /// The directory the application starts in.
+    #[arg(long)]
+    dir: Option<PathBuf>,
     #[arg(last = true, required = true)]
     command: Vec<OsString>,
 }
@@ -157,7 +160,14 @@ pub struct Gate {
 impl Gate {
     pub fn run(self) -> anyhow::Error {
         let (program, args) = self.command.split_first().expect("clap requires a command");
-        let e = ljos_bench::gate::pass(&self.fifo, &self.env, &self.unset, program, args);
+        let e = ljos_bench::gate::pass(
+            &self.fifo,
+            &self.env,
+            &self.unset,
+            self.dir.as_deref(),
+            program,
+            args,
+        );
         anyhow::anyhow!("cannot start {}: {e}", Path::new(program).display())
     }
 }
@@ -243,7 +253,18 @@ impl Bench {
                 .with_context(|| format!("reading {}", path.display()))?;
             let m: Manifest = serde_json::from_str(&text)
                 .with_context(|| format!("{} is not a bench manifest", path.display()))?;
-            apps.extend(m.apps);
+            for mut app in m.apps {
+                // An app started elsewhere still finds what the manifest
+                // names, which is relative to where the bench runs.
+                if let Some(dir) = &app.dir {
+                    app.dir = Some(absolute(dir)?);
+                    app.file = absolute(&app.file)?;
+                    for i in &mut app.imports {
+                        *i = absolute(i)?;
+                    }
+                }
+                apps.push(app);
+            }
         }
         for f in &self.files {
             apps.push(App::file(&absolute(f)?));

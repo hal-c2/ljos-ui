@@ -261,6 +261,51 @@ Feature: Measuring an application under a limit
       And the JSON file "out/report.json" has "/runs/1/app" equal to "other"
       And the JSON file "out/report.json" has "/runs/2/runtime" equal to "qt"
 
+    # A corpus example whose own build unpacks its assets reads them by
+    # paths relative to where it runs (`file:content/…`), so it runs where
+    # they are.
+    Scenario: An application runs in the directory the manifest gives it
+      Given the file "assets/content/README":
+        """
+        what the example's build unpacked
+        """
+      And the file "app.sh":
+        """sh
+        #!/bin/sh
+        ls content > ran-here
+        exec sleep 30
+        """
+      And the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "dir": "assets"}]}
+        """
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the file "assets/ran-here" is:
+        """
+        README
+        """
+
+    # A corpus example's stand-in for its C++ may read the example's files
+    # through XMLHttpRequest, which QML does only when told it may.
+    Scenario: An application gets the environment the manifest gives it
+      Given the file "app.sh":
+        """sh
+        #!/bin/sh
+        echo "$QML_XHR_ALLOW_FILE_READ" > told
+        exec sleep 30
+        """
+      And the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "env": {"QML_XHR_ALLOW_FILE_READ": "1"}}]}
+        """
+      When the author runs "ljos bench --manifest apps.json --runtime ljos --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --ljos app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the file "told" is:
+        """
+        1
+        """
+
   Rule: A report compared with an earlier one says what moved by more than runs of one build do
 
     # The margins are the noise docs/BENCHMARKS.md describes: memory may
