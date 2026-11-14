@@ -77,6 +77,10 @@ pub struct RenderStatistics {
     /// Models left out of it because the camera did not see them.
     #[qml(notify, readonly)]
     models_culled: i32,
+    /// Objects of the scene read again for the last frame: one for an
+    /// object that changed, every one for a scene read whole.
+    #[qml(notify, readonly)]
+    objects_read: i32,
     /// Milliseconds spent reading the scene into the renderer's for the
     /// last frame; -1 before a frame is drawn.
     #[qml(notify, readonly)]
@@ -175,6 +179,7 @@ fn refresh(cx: &Cx) {
     );
     let _ = cx.set(RenderStatistics::MODELS_DRAWN, count(f.models_drawn));
     let _ = cx.set(RenderStatistics::MODELS_CULLED, count(f.models_culled));
+    let _ = cx.set(RenderStatistics::OBJECTS_READ, count(f.objects_read));
     let _ = cx.set(RenderStatistics::SYNC_TIME, ms(f.sync_seconds));
     let _ = cx.set(RenderStatistics::RENDER_PREPARE_TIME, ms(f.prepare_seconds));
     let _ = cx.set(RenderStatistics::ENCODE_TIME, ms(f.encode_seconds));
