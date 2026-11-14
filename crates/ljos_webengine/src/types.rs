@@ -1,7 +1,7 @@
 //! The types around a view: the `WebEngine` singleton, profiles,
 //! settings, scripts and what a load or a new window says.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::sync::Arc;
 
 use ljos_engine::{
@@ -385,9 +385,9 @@ pub mod permissions_policy {
 #[derive(Debug, QmlObject)]
 #[qml(module = "QtWebEngine", name = "WebEngineProfile", enums = profile_enums)]
 pub struct WebEngineProfile {
-    #[qml(notify)]
+    #[qml(notify, change = Self::policy_follows)]
     pub storage_name: String,
-    #[qml(notify)]
+    #[qml(notify, change = Self::policy_follows)]
     pub off_the_record: bool,
     #[qml(notify)]
     pub persistent_storage_path: String,
@@ -403,12 +403,22 @@ pub struct WebEngineProfile {
     pub persistent_cookies_policy: i32,
     #[qml(notify)]
     pub http_cache_maximum_size: i32,
-    #[qml(notify, enumeration = "PersistentPermissionsPolicy")]
+    /// The policy as the profile keeps it: off the record, at most
+    /// StoreInMemory (Qt reads back no more, qml6 6.12).
+    #[qml(
+        notify,
+        enumeration = "PersistentPermissionsPolicy",
+        write = Self::take_policy
+    )]
     pub persistent_permissions_policy: i32,
     #[qml(notify)]
     pub download_path: String,
     #[qml(notify)]
     pub spell_check_enabled: bool,
+    /// The policy the profile was given, which it keeps again once it is
+    /// on disk.
+    #[qml(skip)]
+    asked_policy: Cell<i32>,
 }
 
 impl Default for WebEngineProfile {
@@ -425,9 +435,10 @@ impl Default for WebEngineProfile {
             http_cache_type: 0,
             persistent_cookies_policy: 0,
             http_cache_maximum_size: 0,
-            persistent_permissions_policy: permissions_policy::STORE_ON_DISK,
+            persistent_permissions_policy: permissions_policy::STORE_IN_MEMORY,
             download_path: String::new(),
             spell_check_enabled: false,
+            asked_policy: Cell::new(permissions_policy::STORE_ON_DISK),
         }
     }
 }
@@ -466,6 +477,38 @@ impl Default for ProfileSpec {
 }
 
 impl WebEngineProfile {
+    fn kept_policy(&self) -> i32 {
+        let asked = self.asked_policy.get();
+        if self.off_the_record || self.storage_name.is_empty() {
+            asked.min(permissions_policy::STORE_IN_MEMORY)
+        } else {
+            asked
+        }
+    }
+
+    fn take_policy(cx: &Cx, asked: i32) -> Option<i32> {
+        cx.with(|p: &Self| {
+            p.asked_policy.set(asked);
+            p.kept_policy()
+        })
+        .ok()
+    }
+
+    /// A profile that goes off the record or onto disk keeps what its
+    /// policy can keep there.
+    fn policy_follows(cx: &Cx, _: ljos_engine::PropIndex) {
+        let Ok((now, kept)) =
+            cx.with(|p: &Self| (p.persistent_permissions_policy, p.kept_policy()))
+        else {
+            return;
+        };
+        if now != kept {
+            let _ = cx
+                .engine
+                .set_internal(cx.this, Self::PERSISTENT_PERMISSIONS_POLICY, kept);
+        }
+    }
+
     pub(crate) fn spec(e: &Engine, me: ObjectId) -> ProfileSpec {
         e.with::<Self, _>(me, |p| {
             let off_the_record = p.off_the_record || p.storage_name.is_empty();
@@ -474,12 +517,7 @@ impl WebEngineProfile {
                 off_the_record,
                 storage_path: p.persistent_storage_path.clone(),
                 cache_path: p.cache_path.clone(),
-                permissions_policy: if off_the_record {
-                    p.persistent_permissions_policy
-                        .min(permissions_policy::STORE_IN_MEMORY)
-                } else {
-                    p.persistent_permissions_policy
-                },
+                permissions_policy: p.kept_policy(),
                 user_agent: p.http_user_agent.clone(),
                 accept_language: p.http_accept_language.clone(),
             }

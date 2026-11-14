@@ -32,7 +32,8 @@ use crate::backend::{
     Navigation, Sink, Start,
 };
 use crate::types::{
-    DEFERRED, DOCUMENT_CREATION, DOCUMENT_READY, ProfileSpec, Script, permissions_policy,
+    DEFERRED, DOCUMENT_CREATION, DOCUMENT_READY, ProfileSpec, Script, WebEngineProfile,
+    permissions_policy,
 };
 
 /// The name of the helper executable CEF starts its other processes from.
@@ -450,6 +451,10 @@ fn pump_into(e: &Engine) {
 
 struct Global {
     root: PathBuf,
+    /// Where Chromium keeps the HTTP caches of the process
+    /// (`--disk-cache-dir`), when it was told: empty for beside each
+    /// profile.
+    disk_cache: String,
     contexts: HashMap<String, Profile>,
     /// Answers a profile keeps only while the application runs, forgotten
     /// as CEF shuts down: what was asked, by whom, in which profile.
@@ -460,6 +465,9 @@ struct Global {
     /// while it has no answer, and forgetting one as the page is given it
     /// takes it from the page too.
     every_time: Vec<(RequestContext, String, i32)>,
+    /// Where each profile on disk writes down the answers it is not to
+    /// keep (see [`FORGET_FILE`]).
+    journals: Vec<(RequestContext, PathBuf)>,
     pages: Vec<std::rc::Weak<CefPage>>,
     /// Every browser made, until CEF says it has closed: a page whose
     /// engine has gone still has one, closing, that [`shutdown`] waits for.
@@ -502,11 +510,31 @@ fn named_storage(spec: &ProfileSpec) -> Option<&Path> {
     (!spec.off_the_record && path.is_absolute()).then_some(path)
 }
 
+/// The profile whose place CEF starts from: the starting view's when it
+/// names where it keeps its data, else the first profile alive that names
+/// one. A view kept off the record (or in the engine's own place) may be
+/// the first one shown while the profile the application cares about,
+/// which names a directory, waits behind it; that one still gets its
+/// directory.
+fn root_profile(e: &Engine, starting: &ProfileSpec) -> ProfileSpec {
+    if named_storage(starting).is_some() {
+        return starting.clone();
+    }
+    e.object_ids()
+        .into_iter()
+        .filter(|&id| e.is::<WebEngineProfile>(id))
+        .map(|id| WebEngineProfile::spec(e, id))
+        .find(|spec| named_storage(spec).is_some())
+        .unwrap_or_else(|| starting.clone())
+}
+
 /// Where profiles keep what they keep. CEF keeps every profile of a
 /// process under one directory, chosen as it starts: the place the first
-/// profile on disk names is that directory, so an application that names
-/// where its profile goes has it there. One running copy of an app holds
-/// it; a second runs from a directory of its own and keeps nothing.
+/// profile on disk names is that directory (see [`root_profile`]), so an
+/// application that names where its profile goes has it there. Profiles
+/// made later, naming somewhere else, are kept under it and say so. One
+/// running copy of an app holds it; a second runs from a directory of its
+/// own and keeps nothing.
 fn root_cache_path(e: &Engine, first: &ProfileSpec) -> PathBuf {
     let root = if let Some(named) = named_storage(first) {
         named.to_path_buf()
@@ -632,6 +660,7 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     load_framework()?;
     let _ = api_hash(sys::CEF_API_VERSION_LAST, 0);
     pump_into(e);
+    let first = &root_profile(e, first);
 
     // CEF reads switches from the command line it is given: the
     // executable and what LJOS_WEBENGINE_CHROMIUM_FLAGS asks for, never
@@ -652,12 +681,18 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     }
     // Chromium has one place for the HTTP caches of a process, given as
     // it starts: the one the first profile on disk names.
-    if !first.off_the_record
-        && Path::new(&first.cache_path).is_absolute()
-        && !words.iter().any(|w| w.starts_with("--disk-cache-dir"))
+    let disk_cache = match words
+        .iter()
+        .rev()
+        .find_map(|w| w.strip_prefix("--disk-cache-dir="))
     {
-        words.push(format!("--disk-cache-dir={}", first.cache_path));
-    }
+        Some(asked) => asked.to_owned(),
+        None if !first.off_the_record && Path::new(&first.cache_path).is_absolute() => {
+            words.push(format!("--disk-cache-dir={}", first.cache_path));
+            first.cache_path.clone()
+        }
+        None => String::new(),
+    };
     // Chromium tries a page that failed again by itself, later and later,
     // for as long as it is shown. A view's load fails once and stays
     // failed until the application or the person reloads it, and a
@@ -723,9 +758,11 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     }
     Ok(Global {
         root,
+        disk_cache,
         contexts: HashMap::new(),
         this_run: Vec::new(),
         every_time: Vec::new(),
+        journals: Vec::new(),
         pages: Vec::new(),
         browsers: Vec::new(),
     })
@@ -764,9 +801,17 @@ struct Readiness {
 }
 
 wrap_request_context_handler! {
-    struct ProfileReady { ready: Arc<Mutex<Readiness>> }
+    struct ProfileReady { ready: Arc<Mutex<Readiness>>, journal: Option<PathBuf> }
     impl RequestContextHandler {
-        fn on_request_context_initialized(&self, _context: Option<&mut RequestContext>) {
+        fn on_request_context_initialized(&self, context: Option<&mut RequestContext>) {
+            // What a run that ended without shutting down left the
+            // profile is forgotten before any page of this one is shown.
+            if let (Some(context), Some(journal)) = (context.as_deref(), &self.journal) {
+                for (origin, kind) in read_journal(journal) {
+                    forget_answer(context, &origin, kind);
+                }
+                let _ = std::fs::remove_file(journal);
+            }
             let waiting = {
                 let mut r = Shared::lock(&self.ready);
                 r.ready = true;
@@ -794,6 +839,11 @@ fn context_for(
     };
     if let Some(p) = g.contexts.get(&key) {
         return Some((p.context.clone(), p.ready.clone()));
+    }
+    if !spec.off_the_record {
+        for why in ignored_paths(spec, &g.disk_cache) {
+            e.log(LogLevel::Warning, crate::CATEGORY, why);
+        }
     }
     let cache = if spec.off_the_record {
         String::new()
@@ -829,8 +879,12 @@ fn context_for(
         ..Default::default()
     };
     let ready = Arc::new(Mutex::new(Readiness::default()));
-    let mut handler = ProfileReady::new(ready.clone());
+    let journal = (!cache.is_empty()).then(|| Path::new(&cache).join(FORGET_FILE));
+    let mut handler = ProfileReady::new(ready.clone(), journal.clone());
     let context = request_context_create_context(Some(&settings), Some(&mut handler))?;
+    if let Some(journal) = journal {
+        g.journals.push((context.clone(), journal));
+    }
     g.contexts.insert(
         key,
         Profile {
@@ -839,6 +893,41 @@ fn context_for(
         },
     );
     Some((context, ready))
+}
+
+/// What a profile on disk was told about where to keep things that the
+/// web engine cannot do, each said once as its context is made: a path
+/// must be absolute to mean anywhere, and the process has one HTTP cache
+/// directory, the first profile's.
+fn ignored_paths(spec: &ProfileSpec, disk_cache: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let name = &spec.storage_name;
+    if !spec.storage_path.is_empty() && !Path::new(&spec.storage_path).is_absolute() {
+        out.push(format!(
+            "profile {name:?} ignores its persistentStoragePath {:?}: it is not an absolute path",
+            spec.storage_path
+        ));
+    }
+    if spec.cache_path.is_empty() {
+        return out;
+    }
+    if !Path::new(&spec.cache_path).is_absolute() {
+        out.push(format!(
+            "profile {name:?} ignores its cachePath {:?}: it is not an absolute path",
+            spec.cache_path
+        ));
+    } else if spec.cache_path != disk_cache {
+        let instead = if disk_cache.is_empty() {
+            "beside its data".to_owned()
+        } else {
+            format!("in {disk_cache}")
+        };
+        out.push(format!(
+            "profile {name:?} ignores its cachePath {:?} and caches {instead}: the web engine has one HTTP cache directory per process, named by the first profile on disk",
+            spec.cache_path
+        ));
+    }
+    out
 }
 
 // --- one view's browser -----------------------------------------------------
@@ -1115,6 +1204,7 @@ impl Asked {
             } => {
                 // Chromium keeps the answer as the origin's; what the
                 // profile is not to keep goes once the page has it.
+                write_down(shared, &origin, kind);
                 callback.cont(if allow {
                     PermissionRequestResult::ACCEPT
                 } else {
@@ -1137,6 +1227,7 @@ impl Asked {
                 if !origin.starts_with("file:")
                     && let Some(profile) = shared.host().and_then(|h| h.request_context())
                 {
+                    write_down(shared, &origin, NOTIFICATIONS_KIND);
                     let origin = cef_string(&origin);
                     profile.set_content_setting(
                         Some(&origin),
@@ -1180,6 +1271,58 @@ fn kept(shared: &Shared, origin: &str, kind: i32) {
             }
         }
     });
+}
+
+/// The file in a profile's directory listing the answers Chromium keeps
+/// on disk that the profile is not to keep. Each is written there before
+/// the page has it and forgotten as the application shuts down; an
+/// application that ends without shutting down leaves them listed, and
+/// they are forgotten as the profile is next made.
+const FORGET_FILE: &str = "ljos-forget-answers";
+
+/// `origin` is to be given an answer to asking for `kind` that its profile
+/// on disk is not to keep: it goes in the profile's journal first, so a
+/// run that ends any way at all has it forgotten.
+fn write_down(shared: &Shared, origin: &str, kind: i32) {
+    if shared.keep == Keep::Always {
+        return;
+    }
+    let Some(mut context) = shared.host().and_then(|h| h.request_context()) else {
+        return;
+    };
+    let journal = GLOBAL.with(|g| match g.try_borrow().as_deref() {
+        Ok(Some(Ok(g))) => g
+            .journals
+            .iter()
+            .find(|(c, _)| c.is_same(Some(&mut context)) == 1)
+            .map(|(_, path)| path.clone()),
+        _ => None,
+    });
+    if let Some(journal) = journal {
+        append_journal(&journal, origin, kind);
+    }
+}
+
+fn append_journal(journal: &Path, origin: &str, kind: i32) {
+    use std::io::Write as _;
+    let line = format!("{kind}\t{origin}\n");
+    let _ = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(journal)
+        .and_then(|mut f| f.write_all(line.as_bytes()).and_then(|()| f.sync_data()));
+}
+
+/// The answers a journal lists; a line that is not one is skipped.
+fn read_journal(journal: &Path) -> Vec<(String, i32)> {
+    std::fs::read_to_string(journal)
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| {
+            let (kind, origin) = line.split_once('\t')?;
+            Some((origin.to_owned(), kind.parse().ok()?))
+        })
+        .collect()
 }
 
 /// The profile of `context` forgets what `origin` was answered asking for
@@ -3265,12 +3408,17 @@ pub(crate) fn shutdown() -> bool {
         contexts,
         this_run,
         every_time,
+        journals,
         pages,
         browsers,
         ..
     } = global;
     for (context, origin, kind) in this_run.iter().chain(&every_time) {
         forget_answer(context, origin, *kind);
+    }
+    // Forgotten now, as the profiles close and write what they keep.
+    for (_, journal) in &journals {
+        let _ = std::fs::remove_file(journal);
     }
     drop(this_run);
     drop(every_time);
@@ -3342,6 +3490,47 @@ mod tests {
     fn the_notifications_script_calls_the_names_the_view_uses() {
         assert!(NOTIFICATIONS.contains(&format!("globalThis.{ASKING};")));
         assert!(NOTIFICATIONS.contains(&format!("\"{ANSWERED}\"")));
+    }
+
+    #[test]
+    fn a_journal_lists_the_answers_written_down() {
+        let dir = tempfile::tempdir().expect("a directory");
+        let journal = dir.path().join(FORGET_FILE);
+        assert!(read_journal(&journal).is_empty());
+        append_journal(&journal, "https://a.example", 7);
+        append_journal(&journal, "http://127.0.0.1:8080", 8);
+        let mut text = std::fs::read_to_string(&journal).unwrap();
+        text.push_str("not an answer\n");
+        std::fs::write(&journal, text).unwrap();
+        assert_eq!(
+            read_journal(&journal),
+            [
+                ("https://a.example".to_owned(), 7),
+                ("http://127.0.0.1:8080".to_owned(), 8)
+            ]
+        );
+    }
+
+    #[test]
+    fn a_profile_says_which_of_its_paths_it_cannot_keep() {
+        let spec = |storage: &str, cache: &str| ProfileSpec {
+            storage_name: "p".into(),
+            off_the_record: false,
+            storage_path: storage.into(),
+            cache_path: cache.into(),
+            ..ProfileSpec::default()
+        };
+        assert!(ignored_paths(&spec("", ""), "").is_empty());
+        assert!(ignored_paths(&spec("/data/p", "/cache/p"), "/cache/p").is_empty());
+        let relative = ignored_paths(&spec("data/p", "cache/p"), "");
+        assert_eq!(relative.len(), 2, "{relative:?}");
+        assert!(relative[0].contains("persistentStoragePath \"data/p\""));
+        assert!(relative[1].contains("cachePath \"cache/p\""));
+        let later = ignored_paths(&spec("/data/q", "/cache/q"), "/cache/p");
+        assert_eq!(later.len(), 1, "{later:?}");
+        assert!(later[0].contains("caches in /cache/p"), "{later:?}");
+        let none = ignored_paths(&spec("/data/q", "/cache/q"), "");
+        assert!(none[0].contains("caches beside its data"), "{none:?}");
     }
 
     #[test]
