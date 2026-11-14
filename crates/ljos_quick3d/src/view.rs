@@ -63,6 +63,10 @@ pub struct View3D {
     sync: Rc<Kept>,
 }
 
+/// What a test runs after each piece is read.
+#[cfg(test)]
+pub(crate) type ReadHook = Rc<dyn Fn(&Engine, Piece<ObjectId>)>;
+
 /// A view's scene and the tracking of each of its pieces: an object's
 /// change reads that object again and patches its nodes, not the scene.
 #[derive(Default)]
@@ -78,6 +82,10 @@ struct Kept {
     syncing: Cell<bool>,
     /// A paint was asked for and has not come yet.
     asked: Cell<bool>,
+    /// Run after each piece is read: a test's stand-in for a read that
+    /// writes what another piece reads.
+    #[cfg(test)]
+    reading: RefCell<Option<ReadHook>>,
 }
 
 impl fmt::Debug for Kept {
@@ -111,6 +119,20 @@ impl Kept {
     /// The read of `piece`: the one its tracking ran, or one run now. A
     /// piece seen for the first time is tracked from now on.
     fn read(self: &Rc<Self>, e: &Engine, view: ObjectId, piece: Piece<ObjectId>) -> Read<ObjectId> {
+        let r = self.read_now(e, view, piece);
+        #[cfg(test)]
+        if let Some(hook) = self.reading.borrow().clone() {
+            hook(e, piece);
+        }
+        r
+    }
+
+    fn read_now(
+        self: &Rc<Self>,
+        e: &Engine,
+        view: ObjectId,
+        piece: Piece<ObjectId>,
+    ) -> Read<ObjectId> {
         if let Some(r) = self.fresh.borrow_mut().remove(&piece) {
             return r;
         }
@@ -137,8 +159,15 @@ impl Kept {
                     },
                     move || {
                         if let (Some(kept), Some(e)) = (told.upgrade(), weak.upgrade()) {
+                            // A read the tracking ran before this change
+                            // is stale: the paint runs it again.
+                            kept.fresh.borrow_mut().remove(&piece);
                             kept.dirty.borrow_mut().push(piece);
-                            kept.ask(&e, view);
+                            // Told while the paint reads: its next pass
+                            // takes it, and one cut short asks itself.
+                            if !kept.syncing.get() {
+                                kept.ask(&e, view);
+                            }
                         }
                     },
                 );
@@ -211,8 +240,9 @@ pub(crate) fn sync(e: &Engine, me: ObjectId) -> Synced<ObjectId> {
     // A read can run what was waiting in the graph (a LodManager that
     // follows the camera just read), whose writes tell other pieces while
     // the paint is under way: they are patched in this paint, not left
-    // for one that may show a scene half of which changed. A loop of
-    // reads that keep changing each other is cut short and painted again.
+    // for one that may show a scene half of which changed. A chain of them
+    // longer than the passes is cut short and painted again (a loop the
+    // graph breaks itself).
     for _ in 0..PASSES {
         let changed = pending();
         if changed.is_empty() {
@@ -244,7 +274,37 @@ pub(crate) fn sync(e: &Engine, me: ObjectId) -> Synced<ObjectId> {
 }
 
 /// How many times a paint patches again what its own reads changed.
-const PASSES: usize = 8;
+pub(crate) const PASSES: usize = 8;
+
+/// Whether the view has pieces left to read: what a paint cut short
+/// leaves for the next.
+#[cfg(test)]
+pub(crate) fn unsettled(e: &Engine, me: ObjectId) -> bool {
+    e.with(me, |v: &View3D| {
+        !v.sync.dirty.borrow().is_empty() || !v.sync.fresh.borrow().is_empty()
+    })
+    .unwrap_or(false)
+}
+
+/// Whether the view asked to be painted again and has not been.
+#[cfg(test)]
+pub(crate) fn asked(e: &Engine, me: ObjectId) -> bool {
+    e.with(me, |v: &View3D| v.sync.asked.get()).unwrap_or(false)
+}
+
+/// Runs `hook` after each piece of the view is read, `None` for none.
+#[cfg(test)]
+pub(crate) fn on_read(e: &Engine, me: ObjectId, hook: Option<ReadHook>) {
+    let _ = e.with(me, |v: &View3D| *v.sync.reading.borrow_mut() = hook);
+}
+
+/// Keeps `piece`'s read as of now for the paint, as the graph does when it
+/// runs a piece's tracking by itself.
+#[cfg(test)]
+pub(crate) fn hold_read(e: &Engine, me: ObjectId, piece: Piece<ObjectId>) {
+    let r = e.untrack(|| qml::read(&EngineSource::new(e), me, piece));
+    let _ = e.with(me, |v: &View3D| v.sync.fresh.borrow_mut().insert(piece, r));
+}
 
 /// The view's size in logical pixels: what a point of it is measured in.
 pub(crate) fn size(e: &Engine, view: ObjectId) -> (f32, f32) {
