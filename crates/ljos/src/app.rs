@@ -590,7 +590,8 @@ impl<M> App<M> {
 
     /// As [`run`](App::run), with no window and no display
     /// ([`run_headless`](crate::run_headless)): the root is laid out at
-    /// the builder's size, every `Window` is an item of one scene, and
+    /// the builder's size, or its [`ShellConfig`](crate::ShellConfig)'s
+    /// when it has one ([`shell_config`](App::shell_config)), every `Window` is an item of one scene, and
     /// the run ends when the application quits (`Qt.quit()`). For an
     /// application started where there is no display, driven by an agent
     /// through its inspector, or one that does its work and quits.
