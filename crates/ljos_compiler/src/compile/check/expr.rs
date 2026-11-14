@@ -1855,6 +1855,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 given
             }
             Expression::AssignmentExpression(assignment) => {
+                if let AssignmentTarget::AssignmentTargetIdentifier(id) = &assignment.left
+                    && self.constant_write(id)
+                {
+                    self.expr(&assignment.right, None);
+                    return self.name(id);
+                }
                 let place = match &assignment.left {
                     AssignmentTarget::AssignmentTargetIdentifier(id) => self.place_name(id),
                     AssignmentTarget::StaticMemberExpression(m) => {
@@ -2129,7 +2135,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             }
             Expression::UpdateExpression(update) => {
                 let ty = match &update.argument {
-                    SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => self.name(id),
+                    SimpleAssignmentTarget::AssignmentTargetIdentifier(id) => {
+                        self.constant_write(id);
+                        self.name(id)
+                    }
                     target => match target.as_member_expression() {
                         Some(member) => {
                             let object = self.expr(member.object(), None);
@@ -3191,6 +3200,27 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         self.arena.or(list, Ty::UNDEFINED)
     }
 
+    /// `name = …` or `name++`, where `name` is a constant, which
+    /// JavaScript refuses with a `TypeError` where it runs. Whether it is
+    /// one, reported.
+    fn constant_write(&mut self, id: &IdentifierReference<'a>) -> bool {
+        if self.desugared(id.span.start) {
+            return false;
+        }
+        let name = id.name.as_str();
+        let message = match self.local(name).map(|local| local.binding) {
+            Some(Binding::Const) => format!(
+                "`{name}` is a constant, and keeps the value it is declared with: declare it with `let` to assign it"
+            ),
+            Some(Binding::Using) => format!(
+                "`{name}` is declared with `using`, which disposes of the value it is given when its block ends: it is not assigned; declare another name"
+            ),
+            _ => return false,
+        };
+        self.report(Code::TsReadonly, message, id.span);
+        true
+    }
+
     /// Whether `call` is the desugar's call of `name`: `$is`, `$extract` or
     /// `$nomatch`.
     fn is_sugar(&self, call: &CallExpression<'a>, name: &str) -> bool {
@@ -3857,9 +3887,8 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
                 Binding::Let
             }
-            VariableDeclarationKind::Const
-            | VariableDeclarationKind::Using
-            | VariableDeclarationKind::AwaitUsing => Binding::Const,
+            VariableDeclarationKind::Const => Binding::Const,
+            VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => Binding::Using,
             VariableDeclarationKind::Let => Binding::Let,
         };
         let using = match declaration.kind {
@@ -4336,9 +4365,10 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                 );
             }
             let binding = match declaration.kind {
-                VariableDeclarationKind::Const
-                | VariableDeclarationKind::Using
-                | VariableDeclarationKind::AwaitUsing => Binding::Const,
+                VariableDeclarationKind::Const => Binding::Const,
+                VariableDeclarationKind::Using | VariableDeclarationKind::AwaitUsing => {
+                    Binding::Using
+                }
                 VariableDeclarationKind::Var | VariableDeclarationKind::Let => Binding::Let,
             };
             // Each item a `for (using x of …)` takes is disposed of at the

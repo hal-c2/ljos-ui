@@ -211,6 +211,9 @@ fn string_binding<'a>(object: &QmlObject<'a>, name: &str) -> Option<Option<(&'a 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Binding {
     Const,
+    /// `using` or `await using`: a `const` whose value is disposed of when
+    /// its block ends.
+    Using,
     Let,
     Param,
     Function,
@@ -1379,7 +1382,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
                 let constant = local.is_some_and(|id| {
                     self.locals
                         .iter()
-                        .any(|l| l.id == id && l.binding == Binding::Const)
+                        .any(|l| l.id == id && matches!(l.binding, Binding::Const | Binding::Using))
                 });
                 if !constant {
                     return None;
