@@ -120,6 +120,32 @@ Feature: The types of QtWebEngine
     And the property "storageName" of "root" is ""
     And the property "same" of "root" is true
 
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy @api-QtWebEngine.WebEngineProfile.persistentStoragePath @api-QtWebEngine.WebEngineProfile.cachePath
+  Scenario: A profile on disk keeps answers on disk, and the places it is given
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        objectName: "root"
+        WebEngineProfile { id: disk; storageName: "Kept"; offTheRecord: false }
+        WebEngineProfile {
+          id: asking; storageName: "Asking"; offTheRecord: false
+          persistentStoragePath: "/data/app/browser"; cachePath: "/cache/app/browser"
+          persistentPermissionsPolicy: WebEngineProfile.AskEveryTime
+        }
+        property string policies: [WebEngineProfile.AskEveryTime, WebEngineProfile.StoreInMemory,
+          WebEngineProfile.StoreOnDisk].join(" ")
+        property int kept: disk.persistentPermissionsPolicy
+        property int asks: asking.persistentPermissionsPolicy
+        property string places: asking.persistentStoragePath + " " + asking.cachePath
+      }
+      """
+    Then the property "policies" of "root" is "0 1 2"
+    And the property "kept" of "root" is 2
+    And the property "asks" of "root" is 0
+    And the property "places" of "root" is "/data/app/browser /cache/app/browser"
+
   @api-QtWebEngine.WebEngine.script
   Scenario: A script made by the singleton holds what it was given
     Given the QML:
