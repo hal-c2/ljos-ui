@@ -1,10 +1,11 @@
 //! The QML engine's objects as the shared mapping reads them.
 //!
 //! Each [`Prop3d`] is the typed property of the type that declares it; a
-//! name several types declare (`clipNear`, `lighting`) is tried on each,
-//! and the engine's owner check picks the one the object is. A read the
-//! object's type does not have is `None` and untracked, as `Engine::get`
-//! is.
+//! name several types declare (`clipNear`, `lighting`) is read on the one
+//! the object is. A read the object's type does not have is `None` and
+//! untracked, asked through `Engine::get_if`: an `Engine::get` of a type
+//! the object is not builds an error to say so, which a scene of a
+//! thousand materials did a dozen times each when it was read.
 
 use std::sync::Arc;
 
@@ -42,7 +43,7 @@ impl<'e> EngineSource<'e> {
     }
 
     fn first<T: QmlValue>(&self, o: ObjectId, props: &[Prop<T>]) -> Option<T> {
-        props.iter().find_map(|&p| self.e.get(o, p).ok())
+        props.iter().find_map(|&p| self.e.get_if(o, p))
     }
 
     /// The index of `p` on `o`'s type, for a read by index.
@@ -50,7 +51,7 @@ impl<'e> EngineSource<'e> {
         fn on<T: QmlValue>(e: &Engine, o: ObjectId, props: &[Prop<T>]) -> Option<PropIndex> {
             props
                 .iter()
-                .find(|&&q| e.get(o, q).is_ok())
+                .find(|&&q| e.get_if(o, q).is_some())
                 .map(|q| q.index)
         }
         let e = self.e;
@@ -165,7 +166,7 @@ impl SceneSource for EngineSource<'_> {
 
     fn quaternion(&self, o: ObjectId, p: Prop3d) -> Option<Quat> {
         match p {
-            Prop3d::Rotation => self.e.get(o, Node::ROTATION).ok().map(|q| Quat {
+            Prop3d::Rotation => self.e.get_if(o, Node::ROTATION).map(|q| Quat {
                 x: q.x,
                 y: q.y,
                 z: q.z,
@@ -179,8 +180,7 @@ impl SceneSource for EngineSource<'_> {
         match p {
             Prop3d::Source => self
                 .e
-                .get(o, Model::SOURCE)
-                .ok()
+                .get_if(o, Model::SOURCE)
                 .map(|u| u.0.as_str().to_owned()),
             _ => None,
         }
