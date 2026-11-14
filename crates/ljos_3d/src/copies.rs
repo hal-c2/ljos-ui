@@ -63,6 +63,10 @@ pub(crate) struct Model<'a> {
     pub(crate) origin: Vec3,
     /// A copy's alpha is 1 unless the copies blend.
     pub(crate) opaque: bool,
+    /// Whether the depth test decides which copy shows: copies that do not
+    /// blend, write depth and are tested against it. Their order changes no
+    /// picture, so they are drawn as the table has them.
+    pub(crate) depth_decides: bool,
     /// Where the scene is seen from, for copies drawn from the farthest.
     pub(crate) view: Option<&'a Mat4>,
 }
@@ -100,9 +104,8 @@ impl HeldCopies {
             }
             InstanceRow::new(&e.transform, color, e.custom)
         };
-        // Sorting opaque copies changes no picture: the depth test has the
-        // last word on them.
-        match model.view.filter(|_| !model.opaque) {
+        // Sorting copies the depth test decides between changes no picture.
+        match model.view.filter(|_| !model.depth_decides) {
             Some(view) => {
                 let to_view = *view * model.global;
                 let key = (table, entries.len(), bits4x4(&to_view), bits3(model.origin));
@@ -196,6 +199,7 @@ mod tests {
         spheres: &'a [(Vec3, f32)],
         view: Option<&'a Mat4>,
         opaque: bool,
+        depth_decides: bool,
     ) -> Model<'a> {
         Model {
             id: NodeId::default(),
@@ -204,6 +208,7 @@ mod tests {
             spheres,
             origin: Vec3::ZERO,
             opaque,
+            depth_decides,
             view,
         }
     }
@@ -219,7 +224,10 @@ mod tests {
         let mut rows = |global: Mat4| {
             let mut rows = Vec::new();
             held.begin();
-            let copies = held.push(&model(&instancing, global, &spheres, None, true), &mut rows);
+            let copies = held.push(
+                &model(&instancing, global, &spheres, None, true, true),
+                &mut rows,
+            );
             held.end();
             (rows, copies.unwrap())
         };
@@ -246,7 +254,7 @@ mod tests {
     }
 
     #[test]
-    fn copies_that_blend_are_drawn_from_the_farthest_seen_from_where_the_camera_is() {
+    fn copies_the_depth_test_does_not_decide_are_drawn_from_the_farthest_seen_from_the_camera() {
         let instancing = Instancing::new(Arc::new(InstanceTable::new(vec![
             at(0.0, 10.0, 0.5),
             at(0.0, -10.0, 0.5),
@@ -254,11 +262,18 @@ mod tests {
         ])));
         let spheres = [(Vec3::ZERO, 1.0)];
         let mut held = HeldCopies::default();
-        let mut order = |global: Mat4, view: Mat4, opaque: bool| {
+        let mut order = |global: Mat4, view: Mat4, opaque: bool, depth_decides: bool| {
             let mut rows = Vec::new();
             held.begin();
             held.push(
-                &model(&instancing, global, &spheres, Some(&view), opaque),
+                &model(
+                    &instancing,
+                    global,
+                    &spheres,
+                    Some(&view),
+                    opaque,
+                    depth_decides,
+                ),
                 &mut rows,
             );
             held.end();
@@ -268,15 +283,22 @@ mod tests {
         };
         // A camera at z = 100 looking down -z: the view takes z off it.
         let front = Mat4::from_trs(Vec3::new(0.0, 0.0, -100.0), Quat::IDENTITY, Vec3::ONE);
-        assert_eq!(order(Mat4::IDENTITY, front, false), [-10.0, 0.0, 10.0]);
+        assert_eq!(
+            order(Mat4::IDENTITY, front, false, false),
+            [-10.0, 0.0, 10.0]
+        );
         // Turned half round by what holds them, the far one is the near.
         let half = Mat4::from_trs(
             Vec3::ZERO,
             Quat::from_euler_degrees(Vec3::new(0.0, 180.0, 0.0)),
             Vec3::ONE,
         );
-        assert_eq!(order(half, front, false), [10.0, 0.0, -10.0]);
-        // Opaque copies are drawn as the table has them.
-        assert_eq!(order(half, front, true), [10.0, -10.0, 0.0]);
+        assert_eq!(order(half, front, false, false), [10.0, 0.0, -10.0]);
+        // Opaque copies the depth test decides between are drawn as the
+        // table has them.
+        assert_eq!(order(half, front, true, true), [10.0, -10.0, 0.0]);
+        // Opaque copies that write no depth are painted over by those drawn
+        // after them, as blended ones are: from the farthest.
+        assert_eq!(order(half, front, true, false), [10.0, 0.0, -10.0]);
     }
 }
