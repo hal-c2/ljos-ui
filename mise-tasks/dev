@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#MISE description="Run a QML file on ljos from this checkout with ljos run --watch, so a save shows at once and keeps the app's state: dev [file.qml] [ljos run args…] (bench/feed.qml by default)"
+#USAGE arg "[file]" default="bench/feed.qml" help="QML file to run, relative to where mise was started"
+#USAGE arg "[args]..." var=#true help="Arguments for ljos run after the file (--mcp=inspect,input, --top, -- then the app's own arguments)"
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+# Read from the raw arguments, as mise's own parsing drops a `--` that
+# ljos run needs to tell its options from the app's.
+file="$root/bench/feed.qml"
+if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
+  file="$1"
+  shift
+  # mise runs tasks from the repository root; a path is meant from where it was typed.
+  case "$file" in
+    /*) ;;
+    *) file="${MISE_ORIGINAL_CWD:-$PWD}/$file" ;;
+  esac
+fi
+[ -f "$file" ] || { echo "no such file: $file" >&2; exit 1; }
+exec cargo run --quiet --manifest-path "$root/Cargo.toml" -p ljos_cli --bin ljos -- run --watch "$file" "$@"

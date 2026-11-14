@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+#MISE description="First run after a clone, safe to repeat: tools from mise.toml, the submodules, Qt's type table when Qt is here, CEF only with --webengine; ends with what it did and what it skipped"
+#MISE dir="{{config_root}}"
+#USAGE flag "--webengine" help="Also build ljos with QtWebEngine (mise run webengine:build), which fetches CEF (about 1.5 GB unpacked) into $CEF_PATH"
+#USAGE flag "--no-corpus" help="Leave out the qtdoc corpus submodule (gallery, parse and compile need it)"
+#USAGE flag "--no-types" help="Do not generate Qt's type table (crates/qt_types/src/types.txt) even when Qt is found"
+set -euo pipefail
+# Never installs system packages and never uses sudo: what is missing is
+# named, with what it is needed for, and the run goes on without it.
+root="$(pwd)"
+did=()
+skipped=()
+
+echo "setup: tools pinned in mise.toml" >&2
+mise install --yes
+did+=("tools from mise.toml: $(mise exec -- rustc --version), cargo-nextest")
+
+if git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
+  # The workspace builds FilmCraft's crates by path (QtMultimedia's
+  # decoders): nothing builds without it. Shallow, as CI fetches it.
+  git submodule update --init --depth 1 third_party/filmcraft
+  did+=("submodule third_party/filmcraft (QtMultimedia's decoders; every build needs it)")
+  if [ "${usage_no_corpus:-false}" = true ]; then
+    skipped+=("submodule corpus/qtdoc (--no-corpus): gallery, gallery:run, parse and compile need it")
+  else
+    git submodule update --init --depth 1 corpus/qtdoc
+    did+=("submodule corpus/qtdoc (the examples gallery, parse and compile read)")
+  fi
+else
+  skipped+=("submodules: not a git checkout; fetch third_party/filmcraft and corpus/qtdoc yourself")
+fi
+
+# Where Qt keeps its QML modules, as `mise run types` (qmltypes) looks:
+# QML_IMPORT_PATH first, then what Qt's own tools say, then the usual place.
+qt_qml=""
+candidates=()
+if [ -n "${QML_IMPORT_PATH:-}" ]; then
+  IFS=: read -r -a candidates <<< "$QML_IMPORT_PATH"
+fi
+for tool in qtpaths6 qtpaths qmake6; do
+  if command -v "$tool" > /dev/null; then
+    q=$("$tool" --query QT_INSTALL_QML 2> /dev/null || "$tool" -query QT_INSTALL_QML 2> /dev/null || true)
+    [ -n "$q" ] && candidates+=("$q")
+  fi
+done
+candidates+=(/usr/lib/qt6/qml /usr/lib64/qt6/qml)
+for c in ${candidates[@]+"${candidates[@]}"}; do
+  if [ -f "$c/QtQuick/qmldir" ]; then qt_qml="$c"; break; fi
+done
+
+types="$root/crates/qt_types/src/types.txt"
+if [ -n "${LJOS_QT_TYPES:-}" ]; then
+  did+=("Qt's type table: LJOS_QT_TYPES=$LJOS_QT_TYPES is set, so builds take that (none = Ljós's own types only)")
+elif [ -z "$qt_qml" ]; then
+  skipped+=("Qt's type table: no Qt 6 QML modules found (QML_IMPORT_PATH, qtpaths6, /usr/lib/qt6/qml). Builds read QML against Ljós's own types, as CI's LJOS_QT_TYPES=none does; install qt6-declarative (or set QML_IMPORT_PATH) and run mise run setup again for Qt's names in diagnostics")
+elif [ "${usage_no_types:-false}" = true ]; then
+  skipped+=("Qt's type table (--no-types): Qt is at $qt_qml; mise run types -- --qt $qt_qml makes it")
+elif [ -s "$types" ]; then
+  did+=("Qt's type table: kept $types (mise run types -- --qt $qt_qml regenerates it)")
+else
+  echo "setup: Qt's type table from $qt_qml" >&2
+  mise run types -- --qt "$qt_qml"
+  did+=("Qt's type table from $qt_qml into $types (git-ignored)")
+fi
+
+# What some tasks need besides cargo. Named, not installed.
+need() {
+  local tool="$1" why="$2"
+  command -v "$tool" > /dev/null || skipped+=("$tool not found: $why")
+}
+need python3 "gallery, gallery:*, ci:changes and bench need it"
+need qml6 "features:parity, gallery:reference, fuzz:qt, lottie --qt and bench's Qt side run Qt 6 (qt6-declarative)"
+need qmltestrunner "qttest:parity compares with Qt's QML test runner (qt6-declarative's test tools)"
+need sway "desktop:cua, gallery:drive, gallery:hot and bench run apps off-screen in a headless sway"
+need Xwayland "desktop:cua's sandbox runs X11 apps through Xwayland"
+need cua-driver "desktop:cua:call and gallery:drive click through apps with cua-driver"
+need valgrind "bench:js counts instructions with callgrind"
+
+if [ "${usage_webengine:-false}" = true ]; then
+  echo "setup: ljos with QtWebEngine (CEF)" >&2
+  mise run webengine:build
+  did+=("ljos with QtWebEngine; CEF in ${CEF_PATH:-${CARGO_TARGET_DIR:-$root/target}/cef}")
+else
+  skipped+=("QtWebEngine (CEF, about 1.5 GB): mise run setup --webengine, or mise run webengine:build")
+fi
+
+echo
+echo "setup done:"
+printf '  - %s\n' "${did[@]}"
+if ((${#skipped[@]})); then
+  echo "skipped:"
+  printf '  - %s\n' "${skipped[@]}"
+fi
+echo
+echo "next: mise run dev (a QML app, reloaded on save), mise run test, mise run install (ljos on your PATH)"
