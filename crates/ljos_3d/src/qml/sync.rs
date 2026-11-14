@@ -7,12 +7,14 @@
 //! [`SceneSync`] keeps what each piece read and the scene they made. A
 //! host tracks the reads of each piece apart, as its graph tracks a
 //! binding, and on the next frame hands over the pieces whose reads
-//! changed: a piece that changed its values patches its nodes in place,
-//! and one that changed what the scene is made of (an object added,
-//! removed or moved to another parent, a file loaded into more nodes)
-//! puts the scene together again from the reads kept, reading only the
-//! objects that are new. Either way the scene is the one
-//! [`build`](super::build) would make.
+//! changed. A piece that changed its values patches its nodes in place.
+//! One that changed what the scene is made of (an object added, removed
+//! or moved to another parent, a file loaded into more nodes) changes
+//! only that: each object keeps its nodes and their ids for as long as it
+//! is in the view, the new ones are read and added, the gone ones taken
+//! out, so a delegate added to a `Repeater3D` costs that delegate, not the
+//! view. Either way the scene is the tree [`build`](super::build) would
+//! make, whatever ids each gave its nodes ([`Scene::matching`]).
 
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -84,17 +86,75 @@ struct Part<O> {
     skin: Option<(Vec<Option<O>>, Vec<Mat4>)>,
 }
 
-impl<O: PartialEq> Part<O> {
-    /// Whether `other` makes the same nodes in the same places, so that
-    /// its values can be written over this one's.
-    fn same_shape(&self, other: &Part<O>) -> bool {
+impl<O: Copy + PartialEq> Part<O> {
+    /// Whether `other` makes the same nodes of its own in the same places,
+    /// whatever its children: its values can be written over this one's.
+    fn same_own(&self, other: &Part<O>) -> bool {
         self.nodes.len() == other.nodes.len()
             && self.nodes.iter().zip(&other.nodes).all(|(a, b)| a.0 == b.0)
             && self.later == other.later
             && self.loaded == other.loaded
-            && self.children == other.children
             && self.quad.as_ref().map(|q| &q.1) == other.quad.as_ref().map(|q| &q.1)
             && self.light == other.light
+    }
+
+    /// The objects its nodes name, which give it their nodes' ids.
+    fn names(&self) -> impl Iterator<Item = O> + '_ {
+        let scope = self.scope.filter(|_| self.light);
+        let joints = self
+            .skin
+            .iter()
+            .flat_map(|(j, _)| j.iter().flatten().copied());
+        scope.into_iter().chain(self.instance_root).chain(joints)
+    }
+}
+
+/// How a piece read again differs from its read before.
+enum Shape {
+    /// The same nodes in the same places: its values are written over.
+    Same,
+    /// Its own nodes the same, its children not.
+    Children,
+    /// Other nodes of its own.
+    Other,
+    /// Not a node then or now: nothing of it is drawn.
+    Moot,
+    /// A node now and not before, or the other way round.
+    Walk,
+}
+
+fn shape<O: Copy + PartialEq>(old: &Found<O>, new: &Found<O>) -> Shape {
+    match (old, new) {
+        (
+            Found::View { data, import, .. },
+            Found::View {
+                data: d2,
+                import: i2,
+                ..
+            },
+        ) => {
+            if data == d2 && import == i2 {
+                Shape::Same
+            } else {
+                Shape::Children
+            }
+        }
+        (Found::Environment { grids, .. }, Found::Environment { grids: g2, .. }) => {
+            if grids.len() == g2.len() {
+                Shape::Same
+            } else {
+                Shape::Other
+            }
+        }
+        (Found::Node(Some(a)), Found::Node(Some(b))) => {
+            match (a.same_own(b), a.children == b.children) {
+                (true, true) => Shape::Same,
+                (true, false) => Shape::Children,
+                (false, _) => Shape::Other,
+            }
+        }
+        (Found::Node(None), Found::Node(None)) => Shape::Moot,
+        _ => Shape::Walk,
     }
 }
 
@@ -312,9 +372,11 @@ fn skin_of<S: SceneSource>(s: &S, obj: S::Object) -> Option<(Vec<Option<S::Objec
     }
 }
 
-/// Where an object's nodes are in the scene.
+/// Where an object is in the view: the object it is under, `None` at the
+/// view's root, and its nodes, none for an object that is not a node.
 #[derive(Debug)]
-struct Placed {
+struct Placed<O> {
+    under: Option<O>,
     nodes: Vec<NodeId>,
     quad: Option<NodeId>,
 }
@@ -336,13 +398,19 @@ pub struct Synced<O> {
 #[derive(Debug)]
 pub struct SceneSync<O> {
     reads: HashMap<Piece<O>, Read<O>>,
-    placed: HashMap<O, Placed>,
-    /// The objects reached by the last walk, nodes or not.
-    reached: HashSet<O>,
+    /// Every object the view reaches, nodes or not.
+    placed: HashMap<O, Placed<O>>,
     grids: Vec<NodeId>,
     scene: Arc<Scene>,
     ids: HashMap<O, NodeId>,
-    loaded: Vec<(NodeId, O)>,
+    /// The objects each object's nodes name, and the other way round:
+    /// whose nodes are given again when an object's id comes or goes.
+    naming: HashMap<O, Vec<O>>,
+    named: HashMap<O, HashSet<O>>,
+    /// An object is in more than one list of children: which one has it
+    /// is the walk's order's, so a change of what the scene is made of
+    /// walks the view again.
+    tangled: bool,
     walked: bool,
 }
 
@@ -351,14 +419,22 @@ impl<O> Default for SceneSync<O> {
         SceneSync {
             reads: HashMap::new(),
             placed: HashMap::new(),
-            reached: HashSet::new(),
             grids: Vec::new(),
             scene: Arc::default(),
             ids: HashMap::new(),
-            loaded: Vec::new(),
+            naming: HashMap::new(),
+            named: HashMap::new(),
+            tangled: false,
             walked: false,
         }
     }
+}
+
+/// One step of placing objects: one to place under a node, or the
+/// picture of an object's items, which comes after its children.
+enum Step<O> {
+    Visit(Option<O>, Option<NodeId>, O),
+    Quad(O),
 }
 
 impl<O: Copy + Eq + Hash> SceneSync<O> {
@@ -377,25 +453,60 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
     }
 
     /// The nodes that are part of an object without being its own node
-    /// ([`Built::loaded`](super::Built::loaded)).
-    pub fn loaded(&self) -> &[(NodeId, O)] {
-        &self.loaded
+    /// ([`Built::loaded`](super::Built::loaded)), by node.
+    pub fn loaded(&self) -> Vec<(NodeId, O)> {
+        let mut out = Vec::new();
+        for (o, placed) in &self.placed {
+            if let Some(Found::Node(Some(part))) = self.reads.get(&Piece::Node(*o)).map(|r| &r.0) {
+                out.extend(
+                    part.loaded
+                        .iter()
+                        .filter_map(|&(at, m)| Some((*placed.nodes.get(at)?, m))),
+                );
+            }
+        }
+        out.sort_unstable_by_key(|(id, _)| *id);
+        out
     }
 
     /// What the walk made, as [`build`](super::build) gives it.
     pub(super) fn into_built(self) -> Built<O> {
+        let loaded = self.loaded();
         Built {
             scene: Arc::unwrap_or_clone(self.scene),
             ids: self.ids,
-            loaded: self.loaded,
+            loaded,
         }
     }
 
     /// What the scene has otherwise than the one [`build`](super::build)
     /// makes of `src` now, `None` when nothing: what a host checks a
-    /// patched scene against while it is tested.
-    pub fn drift<S: SceneSource<Object = O>>(&self, src: &S, view: O) -> Option<String> {
-        self.scene.difference(&super::build(src, view).scene)
+    /// patched scene against while it is tested. The two are compared as
+    /// trees, each object's node in one the other's node for it.
+    pub fn drift<S: SceneSource<Object = O>>(&self, src: &S, view: O) -> Option<String>
+    where
+        O: std::fmt::Debug,
+    {
+        let built = super::build(src, view);
+        let map = match self.scene.matching(&built.scene) {
+            Ok(map) => map,
+            Err(said) => return Some(said),
+        };
+        if self.ids.len() != built.ids.len() {
+            return Some(format!(
+                "{} objects with nodes and {}",
+                self.ids.len(),
+                built.ids.len()
+            ));
+        }
+        self.ids.iter().find_map(|(o, id)| {
+            (map.get(id) != built.ids.get(o)).then(|| {
+                format!(
+                    "{o:?} is {id:?}, the built {:?}'s",
+                    built.ids.get(o).copied()
+                )
+            })
+        })
     }
 
     /// Brings the scene up to date with `changed`, the pieces whose reads
@@ -411,6 +522,7 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
         let mut count = 0;
         let mut whole = !self.walked;
         let mut patch = Vec::new();
+        let mut shaped = Vec::new();
         let mut seen = HashSet::new();
         for piece in changed {
             if !self.walked || !seen.insert(piece) {
@@ -418,43 +530,49 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
             }
             // An object no longer in the view: nothing of it is drawn.
             if let Piece::Node(o) = piece
-                && !self.reached.contains(&o)
+                && !self.placed.contains_key(&o)
             {
                 continue;
             }
             let fresh = read(piece);
             count += 1;
-            let old = self.reads.insert(piece, fresh);
+            let Some(old) = self.reads.insert(piece, fresh) else {
+                whole = true;
+                continue;
+            };
             let new = &self.reads[&piece];
-            if old.as_ref() == Some(new) {
+            if old == *new {
                 continue;
             }
-            let same = match (old.as_ref().map(|r| &r.0), &new.0) {
-                (
-                    Some(Found::View { data, import, .. }),
-                    Found::View {
-                        data: d2,
-                        import: i2,
-                        ..
-                    },
-                ) => data == d2 && import == i2,
-                (Some(Found::Environment { grids, .. }), Found::Environment { grids: g2, .. }) => {
-                    grids.len() == g2.len()
+            match shape(&old.0, &new.0) {
+                Shape::Same => patch.push(piece),
+                // Its own nodes kept and written over, its children
+                // changed where they did.
+                Shape::Children => {
+                    patch.push(piece);
+                    shaped.push((piece, old));
                 }
-                (Some(Found::Node(Some(a))), Found::Node(Some(b))) => {
-                    a.same_shape(b) && self.placed.contains_key(&node_of(piece))
-                }
-                // Not a node then or now: it is not drawn either way.
-                (Some(Found::Node(None)), Found::Node(None)) => continue,
-                _ => false,
-            };
-            if same {
-                patch.push(piece);
-            } else {
-                whole = true;
+                Shape::Other => shaped.push((piece, old)),
+                Shape::Moot => {}
+                Shape::Walk => whole = true,
             }
         }
         let mut gone = Vec::new();
+        if !whole && !shaped.is_empty() {
+            whole = self.tangled;
+            if !whole {
+                // Taken, so that a scene nobody else holds is not copied.
+                let mut scene = std::mem::take(&mut self.scene);
+                match self.reshape(Arc::make_mut(&mut scene), &shaped, &mut read, &mut count) {
+                    Some(g) => {
+                        self.scene = scene;
+                        gone = g;
+                    }
+                    // What it changed is left half done: walked anew.
+                    None => whole = true,
+                }
+            }
+        }
         if whole {
             gone = self.walk(&mut read, &mut count);
         } else if !patch.is_empty() {
@@ -485,6 +603,23 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
             .0
     }
 
+    fn part(&self, o: O) -> Option<&Part<O>> {
+        part_in(&self.reads, o)
+    }
+
+    /// The children `under` lists now, the view's own members for `None`.
+    fn list(&self, under: Option<O>) -> Vec<O> {
+        match under {
+            None => match self.reads.get(&Piece::View).map(|r| &r.0) {
+                Some(Found::View { data, import, .. }) => {
+                    data.iter().copied().chain(*import).collect()
+                }
+                _ => Vec::new(),
+            },
+            Some(o) => self.part(o).map(|p| p.children.clone()).unwrap_or_default(),
+        }
+    }
+
     /// Writes the values of `pieces`, each of the same shape as before,
     /// over their nodes.
     fn patch(&mut self, pieces: &[Piece<O>]) {
@@ -492,7 +627,10 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
         let mut environment = None;
         let mut camera = None;
         for &piece in pieces {
-            match &self.reads[&piece].0 {
+            let Some(r) = self.reads.get(&piece) else {
+                continue;
+            };
+            match &r.0 {
                 Found::View { camera: c, .. } => {
                     camera = Some(c.and_then(|c| self.ids.get(&c).copied()));
                 }
@@ -522,75 +660,291 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
         nodes.retain_mut(|(id, node)| self.scene.would_change(*id, node));
         let env_changes = environment.is_some_and(|e| e != self.scene.environment());
         let camera_changes = camera.is_some_and(|c| c != self.scene.camera());
-        if nodes.is_empty() && !env_changes && !camera_changes {
-            return;
+        let changes = !nodes.is_empty() || env_changes || camera_changes;
+        if changes {
+            let scene = Arc::make_mut(&mut self.scene);
+            for (id, node) in nodes {
+                scene.set_node(id, node);
+            }
+            if let Some(env) = environment {
+                scene.set_environment(env.clone());
+            }
+            if let Some(c) = camera {
+                scene.set_camera(c);
+            }
         }
-        let scene = Arc::make_mut(&mut self.scene);
-        for (id, node) in nodes {
-            scene.set_node(id, node);
-        }
-        if let Some(env) = environment {
-            scene.set_environment(env.clone());
-        }
-        if let Some(c) = camera {
-            scene.set_camera(c);
+        // What a patched node names may have changed.
+        for &piece in pieces {
+            if let Piece::Node(o) = piece
+                && self.placed.contains_key(&o)
+            {
+                self.index(o);
+            }
         }
     }
 
-    /// Puts the scene together again from the reads, in the order
-    /// [`build`](super::build) walks the view; returns the pieces no
-    /// longer reached.
-    fn walk(
+    /// Changes in `scene` what the `shaped` pieces changed of what it is
+    /// made of, each with its read before, keeping every other node and
+    /// its id; returns the pieces no longer in the view. `None` when the
+    /// change is one only a walk makes as [`build`](super::build) does
+    /// (an object taken by a list it was not in), the scene left half
+    /// changed.
+    fn reshape(
         &mut self,
+        scene: &mut Scene,
+        shaped: &[(Piece<O>, Read<O>)],
         read: &mut impl FnMut(Piece<O>) -> Read<O>,
         count: &mut usize,
-    ) -> Vec<Piece<O>> {
-        self.walked = true;
-        let mut scene = Scene::new();
-        self.placed.clear();
-        self.reached.clear();
-        self.ids.clear();
-        self.loaded.clear();
-        self.grids.clear();
-        let (data, import, camera) = match self.got(Piece::View, read, count) {
-            Found::View {
-                data,
-                import,
-                camera,
-            } => (data.clone(), *import, *camera),
-            _ => (Vec::new(), None, None),
-        };
-        enum Step<O> {
-            Visit(Option<NodeId>, O),
-            Quad(NodeId, O),
-        }
-        let mut stack: Vec<Step<O>> = import.into_iter().map(|o| Step::Visit(None, o)).collect();
-        stack.extend(data.into_iter().rev().map(|o| Step::Visit(None, o)));
-        let mut finish = Vec::new();
-        while let Some(step) = stack.pop() {
-            let (parent, obj) = match step {
-                Step::Visit(parent, obj) => (parent, obj),
-                Step::Quad(own, obj) => {
-                    if let Some(Found::Node(Some(part))) =
-                        self.reads.get(&Piece::Node(obj)).map(|r| &r.0)
-                        && let Some((quad, holder)) = &part.quad
-                    {
-                        let q = scene.add(Some(own), quad.clone());
-                        self.ids.insert(*holder, q);
-                        if let Some(placed) = self.placed.get_mut(&obj) {
-                            placed.quad = Some(q);
-                        }
+    ) -> Option<Vec<Piece<O>>> {
+        // Each parent whose children may have changed, with its list now.
+        let mut lists: Vec<(Option<O>, Vec<O>)> = Vec::new();
+        // Children their lists no longer have: gone, unless another takes
+        // them.
+        let mut detached: HashSet<O> = HashSet::new();
+        // Objects whose ids went or changed (the new ones are
+        // `placed_now`): what names them is given again.
+        let mut moved: Vec<O> = Vec::new();
+        let mut refinish: Vec<O> = Vec::new();
+        let mut roots = false;
+        for (piece, old) in shaped {
+            let (under, was) = match (piece, &old.0) {
+                (Piece::View, Found::View { data, import, .. }) => {
+                    roots = true;
+                    (
+                        None,
+                        data.iter().copied().chain(*import).collect::<Vec<_>>(),
+                    )
+                }
+                (Piece::Environment, Found::Environment { .. }) => {
+                    for g in self.grids.drain(..) {
+                        scene.remove(g);
                     }
+                    if let Some(Found::Environment { environment, grids }) =
+                        self.reads.get(&Piece::Environment).map(|r| &r.0)
+                    {
+                        for grid in grids {
+                            self.grids.push(scene.add(None, grid.clone()));
+                        }
+                        scene.set_environment((**environment).clone());
+                    }
+                    roots = true;
+                    continue;
+                }
+                (Piece::Node(o), Found::Node(Some(was))) => {
+                    if !self.part(*o)?.same_own(was) {
+                        self.replace_own(scene, *o, was, &mut moved)?;
+                        refinish.push(*o);
+                    }
+                    (Some(*o), was.children.clone())
+                }
+                _ => return None,
+            };
+            let now = self.list(under);
+            let keep: HashSet<O> = now.iter().copied().collect();
+            if keep.len() != now.len() {
+                return None;
+            }
+            for c in was {
+                if !keep.contains(&c) && self.placed.get(&c).is_some_and(|p| p.under == under) {
+                    detached.insert(c);
+                }
+            }
+            lists.push((under, now));
+        }
+        let mut placed_now = Vec::new();
+        for (under, now) in &lists {
+            let parent = match under {
+                None => None,
+                Some(p) => Some(*self.placed.get(p)?.nodes.first()?),
+            };
+            for &c in now {
+                match self.placed.get(&c).map(|p| p.under == *under) {
+                    Some(true) => {}
+                    Some(false) if detached.remove(&c) => {
+                        self.reattach(scene, c, *under, parent)?
+                    }
+                    // Taken from a list that still has it.
+                    Some(false) => return None,
+                    None => self.place(
+                        scene,
+                        Step::Visit(*under, parent, c),
+                        read,
+                        count,
+                        Some(&mut detached),
+                        &mut placed_now,
+                    )?,
+                }
+            }
+        }
+        // Left by every list: gone, with what is under them.
+        let mut forgotten = Vec::new();
+        let mut stack: Vec<O> = detached.into_iter().collect();
+        while let Some(x) = stack.pop() {
+            let Some(placed) = self.placed.remove(&x) else {
+                continue;
+            };
+            if let Some(&own) = placed.nodes.first() {
+                scene.remove(own);
+                self.ids.remove(&x);
+                moved.push(x);
+            }
+            if let Some(part) = part_in(&self.reads, x) {
+                if let Some((_, holder)) = &part.quad {
+                    self.ids.remove(holder);
+                    moved.push(*holder);
+                }
+                stack.extend(
+                    part.children
+                        .iter()
+                        .copied()
+                        .filter(|c| self.placed.get(c).is_some_and(|p| p.under == Some(x))),
+                );
+            }
+            forgotten.push(x);
+        }
+        // The new and the moved were added last: put in their places.
+        for (under, _) in &lists {
+            if under.is_some() {
+                self.reorder(scene, *under)?;
+            }
+        }
+        if roots {
+            self.reorder(scene, None)?;
+        }
+        for &x in &forgotten {
+            self.unindex(x);
+        }
+        let mut finish: HashSet<O> = placed_now.iter().chain(&refinish).copied().collect();
+        for x in moved.iter().chain(&placed_now) {
+            if let Some(namers) = self.named.get(x) {
+                finish.extend(namers.iter().copied());
+            }
+        }
+        for &o in placed_now.iter().chain(&refinish) {
+            if self.placed.contains_key(&o) {
+                self.index(o);
+            }
+        }
+        for o in finish {
+            self.finish(scene, o);
+        }
+        if let Some(Found::View { camera, .. }) = self.reads.get(&Piece::View).map(|r| &r.0) {
+            scene.set_camera(camera.and_then(|c| self.ids.get(&c).copied()));
+        }
+        let gone: Vec<Piece<O>> = forgotten.into_iter().map(Piece::Node).collect();
+        for g in &gone {
+            self.reads.remove(g);
+        }
+        Some(gone)
+    }
+
+    /// Gives the object `o`, whose own nodes are not the ones they were
+    /// (`was`), its new ones: its own node keeps its id and its children,
+    /// what its mesh and loader made and the picture of its items are
+    /// made anew, added last.
+    fn replace_own(
+        &mut self,
+        scene: &mut Scene,
+        o: O,
+        was: &Part<O>,
+        moved: &mut Vec<O>,
+    ) -> Option<()> {
+        let placed = self.placed.get_mut(&o)?;
+        let Some(Found::Node(Some(part))) = self.reads.get(&Piece::Node(o)).map(|r| &r.0) else {
+            return None;
+        };
+        for &id in &placed.nodes[1..] {
+            scene.remove(id);
+        }
+        if let Some(q) = placed.quad.take() {
+            scene.remove(q);
+        }
+        if let Some((_, holder)) = &was.quad {
+            self.ids.remove(holder);
+            moved.push(*holder);
+        }
+        let own = placed.nodes[0];
+        scene.set_node(own, part.nodes[0].1.clone());
+        let mut ids = vec![own];
+        for (at, node) in &part.nodes[1..] {
+            let parent = *ids.get((*at)?)?;
+            ids.push(scene.add(Some(parent), node.clone()));
+        }
+        placed.nodes = ids;
+        if let Some((quad, holder)) = &part.quad {
+            placed.quad = Some(scene.add(Some(own), quad.clone()));
+            self.ids.insert(*holder, placed.quad?);
+            moved.push(*holder);
+        }
+        Some(())
+    }
+
+    /// Moves `c`, left by its list, under `under` (its node `parent`),
+    /// whose list has it now; `None` when that would put it under itself.
+    fn reattach(
+        &mut self,
+        scene: &mut Scene,
+        c: O,
+        under: Option<O>,
+        parent: Option<NodeId>,
+    ) -> Option<()> {
+        let mut at = under;
+        while let Some(a) = at {
+            if a == c {
+                return None;
+            }
+            at = self.placed.get(&a)?.under;
+        }
+        let placed = self.placed.get_mut(&c)?;
+        placed.under = under;
+        if let Some(&own) = placed.nodes.first() {
+            scene.reparent(own, parent);
+        }
+        Some(())
+    }
+
+    /// Places the objects `first` reaches, depth first in the order
+    /// [`build`](super::build) walks them, each read if it was not. An
+    /// object placed already is in two lists: in a walk (`detached`
+    /// `None`) the first keeps it and the view is tangled; in a reshape it
+    /// is moved here if its list left it and `None` is returned if not.
+    fn place(
+        &mut self,
+        scene: &mut Scene,
+        first: Step<O>,
+        read: &mut impl FnMut(Piece<O>) -> Read<O>,
+        count: &mut usize,
+        mut detached: Option<&mut HashSet<O>>,
+        placed_now: &mut Vec<O>,
+    ) -> Option<()> {
+        let mut stack = vec![first];
+        while let Some(step) = stack.pop() {
+            let (under, parent, obj) = match step {
+                Step::Visit(under, parent, obj) => (under, parent, obj),
+                Step::Quad(obj) => {
+                    self.place_quad(scene, obj);
                     continue;
                 }
             };
-            self.reached.insert(obj);
-            if self.ids.contains_key(&obj) {
+            if self.placed.contains_key(&obj) {
+                match detached.as_deref_mut().map(|d| d.remove(&obj)) {
+                    None => self.tangled = true,
+                    Some(true) => self.reattach(scene, obj, under, parent)?,
+                    Some(false) => return None,
+                }
                 continue;
             }
             self.got(Piece::Node(obj), read, count);
             let Some(Found::Node(Some(part))) = self.reads.get(&Piece::Node(obj)).map(|r| &r.0)
             else {
+                self.placed.insert(
+                    obj,
+                    Placed {
+                        under,
+                        nodes: Vec::new(),
+                        quad: None,
+                    },
+                );
                 continue;
             };
             let mut ids = Vec::with_capacity(part.nodes.len());
@@ -603,40 +957,160 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
             }
             let own = ids[0];
             self.ids.insert(obj, own);
-            for &(at, o) in &part.loaded {
-                self.loaded.push((ids[at], o));
-            }
-            if !part.later.is_empty() || part.light || !part.local.is_empty() {
-                finish.push(obj);
-            }
-            stack.push(Step::Quad(own, obj));
+            stack.push(Step::Quad(obj));
             stack.extend(
                 part.children
                     .iter()
                     .rev()
-                    .map(|&c| Step::Visit(Some(own), c)),
+                    .map(|&c| Step::Visit(Some(obj), Some(own), c)),
             );
             self.placed.insert(
                 obj,
                 Placed {
+                    under,
                     nodes: ids,
                     quad: None,
                 },
             );
+            placed_now.push(obj);
         }
-        // Once every node has its place: what a node names may come after it.
-        for obj in finish {
-            let (Some(Found::Node(Some(part))), Some(placed)) = (
-                self.reads.get(&Piece::Node(obj)).map(|r| &r.0),
-                self.placed.get(&obj),
-            ) else {
-                continue;
-            };
-            for (i, &id) in placed.nodes.iter().enumerate() {
-                if let Some(node) = finished(part, i, &placed.nodes, &self.ids) {
-                    scene.set_node(id, node);
+        Some(())
+    }
+
+    /// Adds the picture of `o`'s items, last under its node.
+    fn place_quad(&mut self, scene: &mut Scene, o: O) {
+        let Some(Found::Node(Some(part))) = self.reads.get(&Piece::Node(o)).map(|r| &r.0) else {
+            return;
+        };
+        let (Some((quad, holder)), Some(placed)) = (&part.quad, self.placed.get_mut(&o)) else {
+            return;
+        };
+        let q = scene.add(Some(placed.nodes[0]), quad.clone());
+        placed.quad = Some(q);
+        self.ids.insert(*holder, q);
+    }
+
+    /// Puts the children of `under` in the order [`build`](super::build)
+    /// adds them: what its mesh made, its children's nodes in its list's
+    /// order, the picture of its items; at the root, the view's members
+    /// then the grids.
+    fn reorder(&self, scene: &mut Scene, under: Option<O>) -> Option<()> {
+        let mut order = Vec::new();
+        let own = match under {
+            None => None,
+            Some(p) => {
+                // Gone with a list that left it: nothing to order.
+                let Some(placed) = self.placed.get(&p) else {
+                    return Some(());
+                };
+                let part = self.part(p)?;
+                order.extend(
+                    part.nodes
+                        .iter()
+                        .zip(&placed.nodes)
+                        .filter(|((at, _), _)| *at == Some(0))
+                        .map(|(_, id)| *id),
+                );
+                Some(placed.nodes[0])
+            }
+        };
+        for c in self.list(under) {
+            if let Some(placed) = self.placed.get(&c)
+                && placed.under == under
+                && let Some(&id) = placed.nodes.first()
+            {
+                order.push(id);
+            }
+        }
+        match under {
+            None => order.extend(self.grids.iter().copied()),
+            Some(p) => order.extend(self.placed.get(&p)?.quad),
+        }
+        scene.reorder(own, order).then_some(())
+    }
+
+    /// Gives `o`'s nodes what they name, as of the ids now.
+    fn finish(&self, scene: &mut Scene, o: O) {
+        let (Some(part), Some(placed)) = (self.part(o), self.placed.get(&o)) else {
+            return;
+        };
+        for (i, &id) in placed.nodes.iter().enumerate() {
+            if let Some(node) = finished(part, i, &placed.nodes, &self.ids) {
+                scene.set_node(id, node);
+            }
+        }
+    }
+
+    /// Notes what `o`'s nodes name.
+    fn index(&mut self, o: O) {
+        self.unindex(o);
+        let Some(part) = self.part(o) else {
+            return;
+        };
+        let names: Vec<O> = part.names().collect();
+        if names.is_empty() {
+            return;
+        }
+        for &n in &names {
+            self.named.entry(n).or_default().insert(o);
+        }
+        self.naming.insert(o, names);
+    }
+
+    fn unindex(&mut self, o: O) {
+        for n in self.naming.remove(&o).unwrap_or_default() {
+            if let Some(namers) = self.named.get_mut(&n) {
+                namers.remove(&o);
+                if namers.is_empty() {
+                    self.named.remove(&n);
                 }
             }
+        }
+    }
+
+    /// Puts the scene together again from the reads, in the order
+    /// [`build`](super::build) walks the view; returns the pieces no
+    /// longer reached.
+    fn walk(
+        &mut self,
+        read: &mut impl FnMut(Piece<O>) -> Read<O>,
+        count: &mut usize,
+    ) -> Vec<Piece<O>> {
+        self.walked = true;
+        self.tangled = false;
+        let mut scene = Scene::new();
+        self.placed.clear();
+        self.ids.clear();
+        self.grids.clear();
+        self.naming.clear();
+        self.named.clear();
+        let (roots, camera) = match self.got(Piece::View, read, count) {
+            Found::View {
+                data,
+                import,
+                camera,
+            } => (
+                data.iter().copied().chain(*import).collect::<Vec<_>>(),
+                *camera,
+            ),
+            _ => (Vec::new(), None),
+        };
+        let mut placed_now = Vec::new();
+        for o in roots {
+            // A walk places every object it reaches.
+            let _ = self.place(
+                &mut scene,
+                Step::Visit(None, None, o),
+                read,
+                count,
+                None,
+                &mut placed_now,
+            );
+        }
+        // Once every node has its place: what a node names may come after it.
+        for &o in &placed_now {
+            self.index(o);
+            self.finish(&mut scene, o);
         }
         if let Found::Environment { environment, grids } =
             self.got(Piece::Environment, read, count).clone()
@@ -649,10 +1123,10 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
         // A camera that is not in the scene leaves the choice to the scene:
         // its first camera.
         scene.set_camera(camera.and_then(|c| self.ids.get(&c).copied()));
-        let reached = &self.reached;
+        let placed = &self.placed;
         let mut gone = Vec::new();
         self.reads.retain(|piece, _| match piece {
-            Piece::Node(o) if !reached.contains(o) => {
+            Piece::Node(o) if !placed.contains_key(o) => {
                 gone.push(*piece);
                 false
             }
@@ -660,6 +1134,13 @@ impl<O: Copy + Eq + Hash> SceneSync<O> {
         });
         self.scene = Arc::new(scene);
         gone
+    }
+}
+
+fn part_in<O: Copy + Eq + Hash>(reads: &HashMap<Piece<O>, Read<O>>, o: O) -> Option<&Part<O>> {
+    match reads.get(&Piece::Node(o)).map(|r| &r.0) {
+        Some(Found::Node(Some(part))) => Some(part),
+        _ => None,
     }
 }
 
@@ -784,21 +1265,42 @@ mod tests {
         kept
     }
 
-    /// Syncs `changed` and checks the scene is the one a build makes now,
-    /// with the same nodes for the same objects.
+    /// Syncs `changed` and checks the scene is the tree a build makes now,
+    /// each object's nodes the build's nodes for it.
     fn synced(f: &Fixture, kept: &mut SceneSync<usize>, changed: &[Piece<usize>]) -> Synced<usize> {
         let synced = kept.sync(changed.iter().copied(), |p| read(&f.g, f.view, p));
         let built = build(&f.g, f.view);
-        assert!(
-            built.scene.same_as(kept.scene()),
-            "patched {:#?}\nbuilt {:#?}",
-            kept.scene(),
-            built.scene
-        );
-        assert_eq!(&built.ids, kept.ids());
-        assert_eq!(built.loaded.as_slice(), kept.loaded());
+        let map = kept.scene().matching(&built.scene).unwrap_or_else(|said| {
+            panic!(
+                "{said}\npatched {:#?}\nbuilt {:#?}",
+                kept.scene(),
+                built.scene
+            )
+        });
+        let ids: HashMap<usize, NodeId> = kept.ids().iter().map(|(o, id)| (*o, map[id])).collect();
+        assert_eq!(built.ids, ids);
+        let mut loaded: Vec<(NodeId, usize)> = kept
+            .loaded()
+            .into_iter()
+            .map(|(id, o)| (map[&id], o))
+            .collect();
+        loaded.sort_unstable();
+        let mut want = built.loaded.clone();
+        want.sort_unstable();
+        assert_eq!(want, loaded);
         assert_eq!(kept.drift(&f.g, f.view), None);
         synced
+    }
+
+    /// Whether every node `before` and `after` both have is the same
+    /// node, shared: the objects that did not change kept theirs.
+    fn kept_apart(before: &Scene, after: &Scene, except: &[NodeId]) -> bool {
+        before.added().all(|(id, n)| {
+            except.contains(&id)
+                || after
+                    .node(id)
+                    .is_none_or(|m| std::ptr::eq(n, m) || n.children() != m.children())
+        })
     }
 
     #[test]
@@ -806,6 +1308,7 @@ mod tests {
         let f = fixture();
         let kept = first(&f);
         assert!(build(&f.g, f.view).scene.same_as(kept.scene()));
+        assert_eq!(kept.drift(&f.g, f.view), None);
     }
 
     #[test]
@@ -955,6 +1458,117 @@ mod tests {
                 Piece::Node(f.cubes[1]),
                 Piece::Node(f.cubes[0]),
             ],
+        );
+    }
+
+    #[test]
+    fn an_added_node_keeps_every_other_node_and_its_id() {
+        let mut f = fixture();
+        let mut kept = first(&f);
+        let before = kept.scene().clone();
+        let ids = kept.ids().clone();
+        let cube = f.g.add(T::Model);
+        f.g.set(cube, "source", MapValue::Url("#Sphere".into()));
+        f.g.append(f.parent, cube);
+        synced(&f, &mut kept, &[Piece::Node(f.parent)]);
+        for (o, id) in &ids {
+            assert_eq!(kept.ids().get(o), Some(id), "{o} kept its node");
+        }
+        // Shared, not copied: only the parent, which gained a child, is a
+        // node made anew.
+        let parent = ids[&f.parent];
+        for (id, n) in before.added() {
+            let now = kept.scene().node(id).unwrap();
+            assert_eq!(std::ptr::eq(n, now), id != parent, "{id:?}");
+        }
+        assert_eq!(kept.scene().added().count(), before.added().count() + 1);
+    }
+
+    #[test]
+    fn a_node_added_between_two_is_put_between_them() {
+        let mut f = fixture();
+        let mut kept = first(&f);
+        let cube = f.g.add(T::Model);
+        f.g.set(cube, "source", MapValue::Url("#Sphere".into()));
+        f.g.set(
+            f.parent,
+            "data",
+            MapValue::Objects(vec![f.cubes[0], cube, f.cubes[1]]),
+        );
+        let s = synced(&f, &mut kept, &[Piece::Node(f.parent)]);
+        assert_eq!(s.read, 2);
+    }
+
+    #[test]
+    fn a_removed_node_takes_only_its_own_nodes() {
+        let mut f = fixture();
+        let mut kept = first(&f);
+        let before = kept.scene().clone();
+        let gone = kept.ids()[&f.cubes[0]];
+        f.g.set(f.parent, "data", MapValue::Objects(vec![f.cubes[1]]));
+        synced(&f, &mut kept, &[Piece::Node(f.parent)]);
+        assert!(kept.scene().node(gone).is_none());
+        assert!(kept_apart(&before, kept.scene(), &[]));
+        assert_eq!(kept.scene().added().count(), before.added().count() - 1);
+    }
+
+    #[test]
+    fn a_node_moved_to_another_parent_keeps_its_id() {
+        let mut f = fixture();
+        let mut kept = first(&f);
+        let id = kept.ids()[&f.cubes[1]];
+        f.g.set(f.parent, "data", MapValue::Objects(vec![f.cubes[0]]));
+        f.g.append(f.cubes[0], f.cubes[1]);
+        let s = synced(
+            &f,
+            &mut kept,
+            &[Piece::Node(f.parent), Piece::Node(f.cubes[0])],
+        );
+        assert_eq!(kept.ids()[&f.cubes[1]], id);
+        assert!(s.gone.is_empty());
+    }
+
+    #[test]
+    fn a_node_put_under_what_is_under_it_is_walked_again() {
+        let mut f = fixture();
+        let mut kept = first(&f);
+        // The parent under its own cube: no longer reached from the view.
+        f.g.set(f.view, "data", MapValue::Objects(vec![f.camera, f.light]));
+        f.g.append(f.cubes[0], f.parent);
+        let s = synced(&f, &mut kept, &[Piece::View, Piece::Node(f.cubes[0])]);
+        assert!(s.gone.contains(&Piece::Node(f.parent)));
+    }
+
+    #[test]
+    fn a_node_in_two_lists_is_the_first_ones() {
+        let mut f = fixture();
+        // The second cube in the view's members as well as the parent's.
+        f.g.append(f.view, f.cubes[1]);
+        let mut kept = first(&f);
+        assert_eq!(kept.drift(&f.g, f.view), None);
+        f.g.set(f.parent, "data", MapValue::Objects(vec![f.cubes[0]]));
+        let s = synced(&f, &mut kept, &[Piece::Node(f.parent)]);
+        assert!(s.gone.is_empty(), "still the view's");
+    }
+
+    #[test]
+    fn a_scope_kept_through_its_node_going_and_coming() {
+        let mut f = fixture();
+        f.g.set(f.light, "scope", MapValue::Object(f.cubes[1]));
+        let mut kept = first(&f);
+        f.g.set(f.parent, "data", MapValue::Objects(vec![f.cubes[0]]));
+        synced(&f, &mut kept, &[Piece::Node(f.parent)]);
+        let light = kept.ids()[&f.light];
+        assert_eq!(kept.scene().node(light).unwrap().scope, None);
+        f.g.set(
+            f.parent,
+            "data",
+            MapValue::Objects(vec![f.cubes[0], f.cubes[1]]),
+        );
+        synced(&f, &mut kept, &[Piece::Node(f.parent)]);
+        assert_eq!(
+            kept.scene().node(light).unwrap().scope,
+            Some(kept.ids()[&f.cubes[1]])
         );
     }
 }

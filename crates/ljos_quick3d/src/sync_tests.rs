@@ -46,16 +46,14 @@ fn write(e: &Engine, obj: ObjectId, name: &str, v: impl Into<Value>) {
     e.write_by_name(obj, name, v.into()).expect("written");
 }
 
-/// Syncs the view and checks its kept scene is the one built anew;
+/// Syncs the view and checks its kept scene is the tree built anew;
 /// returns how many pieces were read.
 fn synced(e: &Engine, view: ObjectId) -> usize {
     let s = view::sync(e, view);
     let built = scene::build(e, view);
-    assert!(
-        s.scene.same_as(&built),
-        "patched {:#?}\nbuilt {built:#?}",
-        s.scene
-    );
+    if let Some(said) = s.scene.difference(&built) {
+        panic!("{said}\npatched {:#?}\nbuilt {built:#?}", s.scene);
+    }
     s.read
 }
 

@@ -5,6 +5,7 @@
 //! revision at a size draws nothing again until one of the two changes:
 //! an idle 3D view costs the blit of the picture it already has.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1126,32 +1127,86 @@ impl Scene {
             })
     }
 
-    /// What [`same_as`](Self::same_as) finds first that `other` does
-    /// otherwise, said: what a check that two scenes match reports.
-    pub fn difference(&self, other: &Scene) -> Option<String> {
-        if self.roots != other.roots {
-            return Some(format!("roots {:?} and {:?}", self.roots, other.roots));
+    /// Which node of `other` each of this scene's is, when the two are the
+    /// same tree of the same nodes whatever ids each gave them: the same
+    /// roots and children in the same order, each node naming the other's
+    /// node where this one names its own, the same environment and camera.
+    /// Otherwise what is found first to differ, said: what a check that a
+    /// scene kept and patched is the one built anew reports.
+    pub fn matching(&self, other: &Scene) -> Result<HashMap<NodeId, NodeId>, String> {
+        if self.roots.len() != other.roots.len() {
+            return Err(format!(
+                "{} roots and {}",
+                self.roots.len(),
+                other.roots.len()
+            ));
+        }
+        let mut map = HashMap::with_capacity(self.nodes.len());
+        let mut stack: Vec<(NodeId, NodeId)> = self
+            .roots
+            .iter()
+            .copied()
+            .zip(other.roots.iter().copied())
+            .collect();
+        while let Some((a, b)) = stack.pop() {
+            let (Some(na), Some(nb)) = (self.nodes.get(a), other.nodes.get(b)) else {
+                return Err(format!("{a:?} and {b:?}, one of them not in its scene"));
+            };
+            if na.children.len() != nb.children.len() {
+                return Err(format!(
+                    "{a:?} {na:#?} with {} children and {b:?} {nb:#?} with {}",
+                    na.children.len(),
+                    nb.children.len()
+                ));
+            }
+            map.insert(a, b);
+            stack.extend(na.children.iter().copied().zip(nb.children.iter().copied()));
+        }
+        if map.len() != self.nodes.len() || other.nodes.len() != self.nodes.len() {
+            return Err(format!(
+                "{} nodes and {}, {} of them in the tree",
+                self.nodes.len(),
+                other.nodes.len(),
+                map.len()
+            ));
+        }
+        let at = |id: NodeId| map.get(&id).copied().unwrap_or_default();
+        for (&a, &b) in &map {
+            let mut n = Node::clone(&self.nodes[a]);
+            n.parent = n.parent.map(at);
+            for c in &mut n.children {
+                *c = at(*c);
+            }
+            n.scope = n.scope.map(at);
+            if let Some(t) = n.instancing.as_mut() {
+                t.root = t.root.map(at);
+            }
+            if let Some(skin) = n.skin.as_mut() {
+                for j in &mut skin.joints {
+                    *j = at(*j);
+                }
+            }
+            let o = &*other.nodes[b];
+            if n != *o {
+                return Err(format!("{a:?} {n:#?} and {b:?} {o:#?}"));
+            }
         }
         if self.environment != other.environment {
-            return Some(format!(
+            return Err(format!(
                 "environment {:#?} and {:#?}",
                 self.environment, other.environment
             ));
         }
-        if self.camera != other.camera {
-            return Some(format!("camera {:?} and {:?}", self.camera, other.camera));
+        if self.camera.map(at) != other.camera {
+            return Err(format!("camera {:?} and {:?}", self.camera, other.camera));
         }
-        for (id, n) in &self.nodes {
-            match other.nodes.get(id) {
-                None => return Some(format!("{id:?} {n:#?} and none")),
-                Some(o) if !Arc::ptr_eq(o, n) && o != n => {
-                    return Some(format!("{id:?} {n:#?} and {o:#?}"));
-                }
-                Some(_) => {}
-            }
-        }
-        (self.nodes.len() != other.nodes.len())
-            .then(|| format!("{} nodes and {}", self.nodes.len(), other.nodes.len()))
+        Ok(map)
+    }
+
+    /// What [`matching`](Self::matching) finds first to differ, `None`
+    /// when the two are the same tree whatever their ids.
+    pub fn difference(&self, other: &Scene) -> Option<String> {
+        self.matching(other).err()
     }
 
     /// Adds `node` as the last child of `parent`, or as a root. A parent
@@ -1190,6 +1245,56 @@ impl Scene {
             self.camera = None;
         }
         self.touch();
+    }
+
+    /// Moves `id`, with what is under it, to be the last child of
+    /// `parent`, or a root; a parent not in the scene makes it a root.
+    pub(crate) fn reparent(&mut self, id: NodeId, parent: Option<NodeId>) {
+        let Some(node) = self.nodes.get(id) else {
+            return;
+        };
+        let was = node.parent;
+        let parent = parent.filter(|p| self.nodes.contains_key(*p));
+        match was {
+            Some(p) => Arc::make_mut(&mut self.nodes[p])
+                .children
+                .retain(|c| *c != id),
+            None => self.roots.retain(|c| *c != id),
+        }
+        Arc::make_mut(&mut self.nodes[id]).parent = parent;
+        match parent {
+            Some(p) => Arc::make_mut(&mut self.nodes[p]).children.push(id),
+            None => self.roots.push(id),
+        }
+        self.touch();
+    }
+
+    /// Puts the children of `parent`, or the roots, in `order`. Returns
+    /// false, changing nothing, when `order` is not the same ids.
+    pub(crate) fn reorder(&mut self, parent: Option<NodeId>, order: Vec<NodeId>) -> bool {
+        let held = match parent {
+            None => &self.roots,
+            Some(p) => match self.nodes.get(p) {
+                Some(n) => &n.children,
+                None => return false,
+            },
+        };
+        if *held == order {
+            return true;
+        }
+        let mut a = held.clone();
+        let mut b = order.clone();
+        a.sort_unstable();
+        b.sort_unstable();
+        if a != b {
+            return false;
+        }
+        match parent {
+            None => self.roots = order,
+            Some(p) => Arc::make_mut(&mut self.nodes[p]).children = order,
+        }
+        self.touch();
+        true
     }
 
     pub fn node(&self, id: NodeId) -> Option<&Node> {
@@ -1239,7 +1344,7 @@ impl Scene {
 
     /// The nodes in the order they were added, for a scene nothing was
     /// removed from.
-    #[cfg(feature = "gltf")]
+    #[cfg(any(feature = "gltf", test))]
     pub(crate) fn added(&self) -> impl Iterator<Item = (NodeId, &Node)> {
         self.nodes.iter().map(|(id, n)| (id, &**n))
     }
