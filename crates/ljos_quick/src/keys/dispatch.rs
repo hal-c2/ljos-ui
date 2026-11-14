@@ -357,6 +357,18 @@ fn focus_chain(engine: &Engine, from: ObjectId) -> Vec<ObjectId> {
 /// A window that does not have the keyboard gets no keys. The key
 /// filters ([`super::add_key_filter`]) see the event first.
 pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
+    deliver_key_reaching(engine, root, ev, &mut |_| {})
+}
+
+/// [`deliver_key`], telling `reached` the item the key is handed to
+/// as it is handed: after the shortcut overrides, which may have moved
+/// the focus.
+pub(crate) fn deliver_key_reaching(
+    engine: &Engine,
+    root: ObjectId,
+    ev: &KeyEvent,
+    reached: &mut dyn FnMut(ObjectId),
+) -> bool {
     // Focus asked for while the tree was being made counts from now.
     focus::settle(engine);
     if !focus::is_window_active(engine, root) {
@@ -367,7 +379,10 @@ pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
     }
     let item = focus::active_focus_item(engine, root);
     if ev.kind == KeyKind::Release {
-        return item.is_some_and(|f| bubble(engine, root, f, ev, item_release));
+        return item.is_some_and(|f| {
+            reached(f);
+            bubble(engine, root, f, ev, item_release)
+        });
     }
     // Once a sequence of several chords is under way the next press is
     // the shortcuts' whatever it is.
@@ -378,7 +393,10 @@ pub fn deliver_key(engine: &Engine, root: ObjectId, ev: &KeyEvent) -> bool {
     }
     // A handler above may have moved focus.
     let item = focus::active_focus_item(engine, root);
-    if item.is_some_and(|f| bubble(engine, root, f, ev, item_press)) {
+    if item.is_some_and(|f| {
+        reached(f);
+        bubble(engine, root, f, ev, item_press)
+    }) {
         return true;
     }
     // A key nothing took that asks for a context menu asks the item with
@@ -461,8 +479,19 @@ impl QuickScene {
     /// stay as the last event left them.
     pub fn key_event_from_text(&mut self, engine: &Engine, ev: &KeyEvent) -> bool {
         self.note_input();
-        self.root()
-            .is_some_and(|root| deliver_key(engine, root, ev))
+        let Some(root) = self.root() else {
+            return false;
+        };
+        // Who watches the key is decided before it is delivered: a key
+        // that moves the focus (Tab), or a handler that moves its item,
+        // leaves it the first item's. A shortcut override that moves the
+        // focus hands it on to another item, whose watchers hear it too.
+        let mut route = self.watched_key_route(engine, root);
+        let taken = deliver_key_reaching(engine, root, ev, &mut |f| {
+            self.key_reaches(engine, f, &mut route);
+        });
+        self.watched_key(engine, ev, &route, taken);
+        taken
     }
 
     /// Tells the scene whether its window has the keyboard. Active focus
