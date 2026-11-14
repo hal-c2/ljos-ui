@@ -3059,7 +3059,6 @@ impl QuickScene {
             return;
         }
         let reg = engine.extension::<crate::item_picture::Pictures>();
-        let mut drawn = Vec::new();
         for item in &self.picture_items {
             let Some(node) = self.items.get(*item).map(|e| e.node) else {
                 continue;
@@ -3082,10 +3081,12 @@ impl QuickScene {
             entry.print = Some(print);
             entry.shown = crate::effects::picture_at(&snap, self.scale_factor)
                 .map(|image| crate::item_picture::ItemPicture { image, area: rect });
-            drawn.push(entry.node);
-        }
-        // Unborrowed: a reader may run at once and ask again.
-        for node in drawn {
+            let node = entry.node;
+            // Unborrowed: a reader may run at once and ask again. Told one
+            // by one, each as it is drawn: a reader that runs at the first
+            // tell must not find a second picture new that nothing told it
+            // of.
+            drop(entries);
             let _ = engine.graph().notify(node);
         }
     }
