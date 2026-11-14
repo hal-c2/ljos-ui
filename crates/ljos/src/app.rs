@@ -585,12 +585,37 @@ impl<M> App<M> {
     where
         M: Send + 'static,
     {
+        self.run_root(Launch::Desktop)
+    }
+
+    /// As [`run`](App::run), with no window and no display
+    /// ([`run_headless`](crate::run_headless)): the root is laid out at
+    /// the builder's size, every `Window` is an item of one scene, and
+    /// the run ends when the application quits (`Qt.quit()`). For an
+    /// application started where there is no display, driven by an agent
+    /// through its inspector, or one that does its work and quits.
+    /// `Qt.platform.pluginName` is `offscreen`.
+    #[cfg(feature = "shell")]
+    pub fn run_headless(self) -> Result<(), crate::ShellError>
+    where
+        M: Send + 'static,
+    {
+        self.run_root(Launch::Headless)
+    }
+
+    /// [`run`](App::run) and [`run_headless`](App::run_headless): the
+    /// root the builder names, made in the shell `launch` picks.
+    #[cfg(feature = "shell")]
+    fn run_root(self, launch: Launch) -> Result<(), crate::ShellError>
+    where
+        M: Send + 'static,
+    {
         let Some(root) = self.root.clone() else {
             return Err(crate::ShellError::Setup(
                 "the application names no root component (App::root)".into(),
             ));
         };
-        self.run_with(move |setup| {
+        self.launch(launch, move |setup| {
             // A development build follows every directory `qml_dirs`
             // compiled: a save to any of them is applied as it runs.
             #[cfg(all(feature = "dev", feature = "dev-qml"))]
@@ -624,6 +649,34 @@ impl<M> App<M> {
     where
         M: Send + 'static,
     {
+        self.launch(Launch::Desktop, setup)
+    }
+
+    /// As [`run_with`](App::run_with), with no window and no display, as
+    /// [`run_headless`](App::run_headless) runs.
+    #[cfg(feature = "shell")]
+    pub fn run_headless_with(
+        self,
+        setup: impl FnOnce(&mut crate::Setup<'_, M>) -> Result<ObjectId, crate::SetupError> + 'static,
+    ) -> Result<(), crate::ShellError>
+    where
+        M: Send + 'static,
+    {
+        self.launch(Launch::Headless, setup)
+    }
+
+    /// The builder's part, then `setup`, in the shell `launch` picks:
+    /// both shells take the same setup, so an application runs the same
+    /// with a display or without one.
+    #[cfg(feature = "shell")]
+    fn launch(
+        self,
+        launch: Launch,
+        setup: impl FnOnce(&mut crate::Setup<'_, M>) -> Result<ObjectId, crate::SetupError> + 'static,
+    ) -> Result<(), crate::ShellError>
+    where
+        M: Send + 'static,
+    {
         let Self {
             title,
             size,
@@ -647,7 +700,7 @@ impl<M> App<M> {
         }
         let config = shell_config
             .unwrap_or_else(|| crate::ShellConfig::new(title).with_size(size[0], size[1]));
-        crate::run(config, move |s| {
+        let setup = move |s: &mut crate::Setup<'_, M>| {
             // Before the root is made: what it logs and does is seen.
             #[cfg(feature = "mcp")]
             if let Some(inspector) = &inspector {
@@ -670,8 +723,22 @@ impl<M> App<M> {
                 s.on_message(handler);
             }
             setup(s)
-        })
+        };
+        match launch {
+            Launch::Desktop => crate::run(config, setup),
+            Launch::Headless => crate::run_headless(config, setup),
+        }
     }
+}
+
+/// Which of the shell's loops an [`App`] runs in.
+#[cfg(feature = "shell")]
+#[derive(Clone, Copy, Debug)]
+enum Launch {
+    /// Windows on the desktop ([`crate::run`]).
+    Desktop,
+    /// No window and no display ([`crate::run_headless`]).
+    Headless,
 }
 
 /// What [`App::run_with`] serves: the environment's choice, or else the

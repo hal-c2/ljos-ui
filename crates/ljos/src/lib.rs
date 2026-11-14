@@ -435,6 +435,21 @@ pub fn run<M: Send + 'static>(
     ljos_shell::run(config, setup)
 }
 
+/// Runs the application as [`run`] does, with no window and no display
+/// (`Qt.platform.pluginName` is `offscreen`): the root is laid out at
+/// [`ShellConfig::size`] and every `Window` is an item of one scene.
+/// Timers and animations run on the system's clock and nothing polls
+/// between them. Returns when the application quits (`Qt.quit()`).
+#[cfg(feature = "shell")]
+#[cfg(not(target_arch = "wasm32"))]
+pub fn run_headless<M: Send + 'static>(
+    config: ljos_shell::ShellConfig,
+    setup: impl FnOnce(&mut ljos_shell::Setup<'_, M>) -> Result<ObjectId, ljos_shell::SetupError>
+    + 'static,
+) -> Result<(), ljos_shell::ShellError> {
+    ljos_shell::run_headless(config, setup)
+}
+
 /// The thread-safe handle a worker thread posts messages to the
 /// Engine through: what [`Setup::handle`] hands out. Its `send`
 /// fails fast on a full inbox with a [`SendError`]; `send_blocking`
