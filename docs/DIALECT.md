@@ -3370,8 +3370,10 @@ is held kept as it last was, and both are kept.
 A file lowered that way still binds Qt's names on the kept type: `Main.qml`
 in Ljós's API holds `Dial { color: "#c03030" }`. Lowering `Dial.qml` later
 would rename `color` to `fill` under it, so a file in Qt's QML stays kept
-while a file in Ljós's API (one that imports a `Ljos` module) binds on its
-type a name its lowering renames, or that name's handler: in a binding, a
+while a file the pass leaves as it is (one in Ljós's API, or one that
+imports no Qt module the pass lowers) binds on its type, or on an inline
+component of it named qualified (`Kit.Dial` of `Kit.qml`), a name its
+lowering renames, or that name's handler: in a binding, a
 `Behavior on color`, a grouped property, a `PropertyChanges` or `Binding`
 whose `target` is an id of the file, one that names it by an id
 (`dial.color: "red"`, `dial { color: "red" }`), or a handler of a
@@ -3384,7 +3386,7 @@ unless the component declares `color` itself. The pass follows
 the file's root through the project's files it is built on, while they are
 lowered too, to the Qt type whose renames say so, and a property the file
 declares renames nothing. The reason names the file, the name and what
-Ljós calls it: "`Main.qml`, in Ljós's API, binds `color` on it, which
+Ljós calls it: "`Main.qml` is left as it is and binds `color` on it, which
 Ljós's `Rectangle` calls `fill`: rename it there as this file is lowered".
 What that file's scripts set on the type is not read, nor a `target` that
 is no id of the file; `ljos check` says it once the type is lowered.

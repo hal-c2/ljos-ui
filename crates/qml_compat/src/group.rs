@@ -45,9 +45,63 @@ pub struct References {
     pub root: Option<String>,
     /// The properties the root object declares.
     pub declares: Vec<String>,
-    /// Per object, its type's last name and the first name of each binding
-    /// on it (`Dial`, `color`): what a file binds on the types it uses.
+    /// Per object, its type and the first name of each binding on it
+    /// (`Dial`, `color`): what a file binds on the types it uses. A type
+    /// written qualified is there as written (`Kit.Dial`, an inline
+    /// component of `Kit.qml`) and by its last name (`Dial`, of a module).
     pub bound: Vec<(String, String)>,
+    /// The inline components the file declares, which another file names
+    /// qualified by this one's name (`Kit.Dial`).
+    pub components: Vec<Component>,
+}
+
+/// An inline component a file declares (`component Dial: Rectangle {}`).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Component {
+    pub name: String,
+    /// The type it is built on, as written.
+    pub base: String,
+    /// The properties and signals it declares itself.
+    pub declares: Vec<String>,
+}
+
+impl Component {
+    /// Whether `name` (`color`, or its handler `onColorChanged`) is one the
+    /// component declares, which its base's lowering renames nothing of.
+    fn declares(&self, name: &str) -> bool {
+        declared(name, |n| self.declares.iter().any(|d| d == n))
+    }
+}
+
+/// Whether `name`, or the property or signal its handler is for, is one
+/// `has` says is declared.
+fn declared(name: &str, has: impl Fn(&str) -> bool) -> bool {
+    let handled = is_handler(name).then(|| {
+        let rest = &name[2..];
+        format!("{}{}", rest[..1].to_ascii_lowercase(), &rest[1..])
+    });
+    let changed = handled
+        .as_deref()
+        .and_then(|h| h.strip_suffix("Changed"))
+        .map(str::to_owned);
+    [Some(name.to_owned()), handled, changed]
+        .iter()
+        .flatten()
+        .any(|n| has(n))
+}
+
+/// A type as it is written (`Kit.Dial`).
+fn written(parts: &[&str]) -> Option<String> {
+    (!parts.is_empty()).then(|| parts.join("."))
+}
+
+/// The name of the file a type written qualified may be of (`Kit` of
+/// `Kit.Dial`), as a type's is; a module's qualifier ties nothing.
+fn qualifier<'s>(parts: &[&'s str]) -> Option<&'s str> {
+    match parts {
+        [first, _, ..] if first.starts_with(|c: char| c.is_ascii_uppercase()) => Some(first),
+        _ => None,
+    }
 }
 
 /// What `source` names that may be a file of the project. A file that does
@@ -86,6 +140,18 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
     ids(root, &mut named);
     let mut inline = BTreeMap::new();
     inline_components(root, &mut inline);
+    found.components = inline
+        .iter()
+        .map(|(name, component)| Component {
+            name: (*name).to_string(),
+            base: component.base.clone(),
+            declares: component
+                .declares
+                .iter()
+                .map(|d| (*d).to_string())
+                .collect(),
+        })
+        .collect();
     Walk {
         found: &mut found,
         ids: &named,
@@ -104,17 +170,17 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
 }
 
 /// Each `id` of a component of the file (the file's own, or an inline
-/// one's) and the last name of its object's type. An inline component is
-/// a scope of its own: its ids are not the file's, nor the file's its.
-fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, &'s str>) {
-    let ty = object.type_name.parts.last().copied();
+/// one's) and its object's type as written. An inline component is a scope
+/// of its own: its ids are not the file's, nor the file's its.
+fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, String>) {
+    let ty = written(&object.type_name.parts);
     for member in &object.members {
         match member {
             QmlMember::Binding(binding) if binding.name.as_simple() == Some("id") => {
                 if let (Some(ty), QmlBindingValue::Expression(Expression::Identifier(id))) =
-                    (ty, &binding.value)
+                    (&ty, &binding.value)
                 {
-                    named.insert(id.name.as_str(), ty);
+                    named.insert(id.name.as_str(), ty.clone());
                 }
             }
             QmlMember::Binding(binding) => each_object(&binding.value, |o| ids(o, named)),
@@ -132,10 +198,10 @@ fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, &'s str>) {
     }
 }
 
-/// An inline component of the file: the last name of the type it is built
-/// on, and the properties and signals it declares itself.
+/// An inline component of the file: the type it is built on, as written,
+/// and the properties and signals it declares itself.
 struct Inline<'s> {
-    base: &'s str,
+    base: String,
     declares: BTreeSet<&'s str>,
 }
 
@@ -143,18 +209,7 @@ impl Inline<'_> {
     /// Whether `name` (`color`, or its handler `onColorChanged`) is one the
     /// component declares, which its base's lowering renames nothing of.
     fn declares(&self, name: &str) -> bool {
-        let handled = is_handler(name).then(|| {
-            let rest = &name[2..];
-            format!("{}{}", rest[..1].to_ascii_lowercase(), &rest[1..])
-        });
-        let changed = handled
-            .as_deref()
-            .and_then(|h| h.strip_suffix("Changed"))
-            .map(str::to_owned);
-        [Some(name.to_owned()), handled, changed]
-            .iter()
-            .flatten()
-            .any(|n| self.declares.contains(n.as_str()))
+        declared(name, |n| self.declares.contains(n))
     }
 }
 
@@ -165,7 +220,7 @@ fn inline_components<'s>(object: &QmlObject<'s>, found: &mut BTreeMap<&'s str, I
         match member {
             QmlMember::InlineComponent(component) => {
                 let root = &component.object;
-                if let Some(base) = root.type_name.parts.last().copied() {
+                if let Some(base) = written(&root.type_name.parts) {
                     let declares = root
                         .members
                         .iter()
@@ -208,11 +263,11 @@ fn each_object<'s>(value: &QmlBindingValue<'s>, mut f: impl FnMut(&QmlObject<'s>
 /// The walk of a file that finds its [`References`], knowing its ids.
 struct Walk<'f, 's> {
     found: &'f mut References,
-    ids: &'f BTreeMap<&'s str, &'s str>,
+    ids: &'f BTreeMap<&'s str, String>,
     inline: &'f BTreeMap<&'s str, Inline<'s>>,
 }
 
-impl<'s> Walk<'_, 's> {
+impl<'f, 's> Walk<'f, 's> {
     /// `name` bound on an object of type `ty`. An inline component has its
     /// base's properties, so what it does not declare itself is bound on the
     /// base (`LocalDial { color: "red" }` binds `color` on the `Dial` that
@@ -228,17 +283,24 @@ impl<'s> Walk<'_, 's> {
             if component.declares(name) {
                 return;
             }
-            ty = component.base;
+            ty = &component.base;
         }
         self.found.bound.push((ty.to_string(), name.to_string()));
+        if let Some((_, last)) = ty.rsplit_once('.') {
+            self.found.bound.push((last.to_string(), name.to_string()));
+        }
+    }
+
+    /// The type of the object of the id `id`.
+    fn of(&self, id: &str) -> Option<&'f str> {
+        let ids: &'f BTreeMap<&'s str, String> = self.ids;
+        ids.get(id).map(String::as_str)
     }
 
     /// The type of the object `target` names by its id.
-    fn target(&self, value: &QmlBindingValue<'_>) -> Option<&'s str> {
+    fn target(&self, value: &QmlBindingValue<'_>) -> Option<&'f str> {
         match value {
-            QmlBindingValue::Expression(Expression::Identifier(id)) => {
-                self.ids.get(id.name.as_str()).copied()
-            }
+            QmlBindingValue::Expression(Expression::Identifier(id)) => self.of(&id.name),
             _ => None,
         }
     }
@@ -246,8 +308,10 @@ impl<'s> Walk<'_, 's> {
     /// What `object` names, in the object of type `parent` when it is one's
     /// child.
     fn object(&mut self, object: &QmlObject<'_>, parent: Option<&str>) {
-        let ty = object.type_name.parts.last().copied();
-        if let Some(name) = ty {
+        let parts = &object.type_name.parts;
+        let written = written(parts);
+        let ty = written.as_deref();
+        for name in qualifier(parts).into_iter().chain(parts.last().copied()) {
             self.found.types.push(name.to_string());
         }
         self.sets_on_target(object, parent);
@@ -279,11 +343,13 @@ impl<'s> Walk<'_, 's> {
                 }
                 QmlMember::Property(property) => {
                     if let Some(type_name) = &property.type_name {
-                        // `property Button b`, `property list<Button> bs`.
+                        // `property Button b`, `property list<Button> bs`,
+                        // `property Kit.Dial d`.
                         let written = type_name.name.to_string();
-                        self.found
-                            .types
-                            .push(written.rsplit('.').next().unwrap_or(&written).to_string());
+                        let parts: Vec<&str> = written.split('.').collect();
+                        for name in qualifier(&parts).into_iter().chain(parts.last().copied()) {
+                            self.found.types.push(name.to_string());
+                        }
                     }
                     if let Some(v) = &property.value {
                         self.value(v, ty);
@@ -368,7 +434,7 @@ impl<'s> Walk<'_, 's> {
                     }
                 }
                 [id, name, ..] => {
-                    if let Some(ty) = self.ids.get(*id).copied() {
+                    if let Some(ty) = self.of(id) {
                         self.bind(ty, name);
                     }
                 }
@@ -378,7 +444,7 @@ impl<'s> Walk<'_, 's> {
         for member in &object.members {
             if let QmlMember::Object(group) = member
                 && let [id] = group.type_name.parts.as_slice()
-                && let Some(ty) = self.ids.get(*id).copied()
+                && let Some(ty) = self.of(id)
             {
                 for inner in &group.members {
                     if let QmlMember::Binding(binding) = inner
@@ -464,7 +530,7 @@ pub struct Alone {
 pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
     let uses = uses(files);
     let keys: Vec<&String> = files.keys().collect();
-    // A file in Ljós's API that uses one in Qt's QML binds Qt's names on
+    // A file left as it is that uses one in Qt's QML binds Qt's names on
     // it: lowered, the file would rename what that one binds.
     let alone: Vec<Outcome> = files
         .values()
@@ -528,8 +594,9 @@ pub fn group(files: &BTreeMap<String, Alone>) -> BTreeMap<String, Outcome> {
         .collect()
 }
 
-/// Why the file at `at`, which the pass lowered, is kept for a file in
-/// Ljós's API that uses it: that one binds on it a name its lowering
+/// Why the file at `at`, which the pass lowered, is kept for a file the
+/// pass leaves as it is that uses it (one in Ljós's API, or one that
+/// imports no Qt module the pass lowers): that one binds on it a name its lowering
 /// renames (`color` on a `Dial` whose root is a `Rectangle`, which Ljós's
 /// calls `fill`), in a binding, a `Behavior on color`, a grouped property,
 /// or a `PropertyChanges` or `Binding` whose `target` is the `Dial`'s id.
@@ -543,29 +610,53 @@ fn bound_as_qt(
 ) -> Option<Cause> {
     let ty = keys[at].rsplit('/').next().unwrap_or(keys[at]);
     files.values().enumerate().find_map(|(by, user)| {
-        let in_ljos = matches!(user.outcome, Outcome::Unchanged)
-            && user
-                .references
-                .modules
-                .iter()
-                .any(|m| m == "Ljos" || m.starts_with("Ljos."));
-        if !in_ljos || !uses[by].contains(&at) {
+        if !matches!(user.outcome, Outcome::Unchanged) || !uses[by].contains(&at) {
             return None;
         }
-        user.references
-            .bound
-            .iter()
-            .filter(|(on, _)| on == ty)
-            .find_map(|(_, name)| {
-                let (qt, now) = renamed(files, keys, uses, at, name, keys.len())?;
-                Some(Cause::BoundAsQt {
-                    by: from_dir_of(keys[at], keys[by]).to_owned(),
-                    name: name.clone(),
-                    ty: crate::rules::new_name(qt).unwrap_or(qt).to_owned(),
-                    now,
-                })
+        user.references.bound.iter().find_map(|(on, name)| {
+            let depth = keys.len();
+            let (qt, now) = if on == ty {
+                renamed(files, keys, uses, at, name, depth)?
+            } else {
+                let component = on.strip_prefix(ty)?.strip_prefix('.')?;
+                component_renamed(files, keys, uses, at, component, name, depth)?
+            };
+            Some(Cause::BoundAsQt {
+                by: from_dir_of(keys[at], keys[by]).to_owned(),
+                name: name.clone(),
+                ty: crate::rules::new_name(qt).unwrap_or(qt).to_owned(),
+                now,
             })
+        })
     })
+}
+
+/// [`renamed`] for the inline component `component` of the file at `at`
+/// (`Dial` of `Kit.Dial`): through the components of the file it is built
+/// on, to the type of the project or Qt's they end on.
+fn component_renamed<'f>(
+    files: &'f BTreeMap<String, Alone>,
+    keys: &[&String],
+    uses: &[BTreeSet<usize>],
+    at: usize,
+    component: &str,
+    name: &str,
+    depth: usize,
+) -> Option<(&'f str, String)> {
+    let components = &files[keys[at]].references.components;
+    let of = |ty: &str| components.iter().find(|c| c.name == ty);
+    let mut on = of(component)?;
+    // Bounded by the components' count, as the walk is.
+    for _ in 0..=components.len() {
+        if on.declares(name) {
+            return None;
+        }
+        match of(&on.base) {
+            Some(base) => on = base,
+            None => return renamed_on(files, keys, uses, at, &on.base, name, depth),
+        }
+    }
+    None
 }
 
 /// The Qt type the root of the file at `at` is built on, and what Ljós's
@@ -585,6 +676,21 @@ fn renamed<'f>(
         return None;
     }
     let root = file.references.root.as_deref()?;
+    renamed_on(files, keys, uses, at, root, name, depth)
+}
+
+/// What [`renamed`] finds for `name` on the type `root`, as the file at
+/// `at` names it: a file of the project beside it while it is lowered too,
+/// else Qt's.
+fn renamed_on<'f>(
+    files: &'f BTreeMap<String, Alone>,
+    keys: &[&String],
+    uses: &[BTreeSet<usize>],
+    at: usize,
+    root: &'f str,
+    name: &str,
+    depth: usize,
+) -> Option<(&'f str, String)> {
     let base = uses[at]
         .iter()
         .find(|&&other| keys[other].rsplit('/').next() == Some(root));
