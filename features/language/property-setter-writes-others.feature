@@ -91,8 +91,6 @@ Feature: A native type's setter writes its object's other properties
 
   # Nothing reads rootPath, so only the setter can hand its value on: as
   # in Qt, the binding runs when the object is made and on every change.
-  # This engine runs every binding eagerly; crates/ljos/tests/setter_unread.rs
-  # checks the same in the engine an application runs, which does not.
   Scenario: A binding nothing reads still runs the setter, when made and on each change
     Given the QML:
       """qml
