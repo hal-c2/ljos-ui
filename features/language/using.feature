@@ -335,8 +335,9 @@ Feature: Disposing of a resource when its block ends, with using
         Item {
           function work(): string {
             let value: number | undefined = undefined;
+            value = 1;
             let n = 1;
-            [n = (value = 2)] = [n];
+            [n = (value = 2)] = [value.toFixed().length];
             return value.toFixed();
           }
         }
@@ -344,7 +345,7 @@ Feature: Disposing of a resource when its block ends, with using
       When the files are checked
       Then the check reports:
         """
-        Pool.qml:7:20: error: `value` may be undefined: compare it with `undefined` first [ts-assign-type]
+        Pool.qml:8:20: error: `value` may be undefined: compare it with `undefined` first [ts-assign-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """

@@ -1896,9 +1896,12 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
                             exact: None,
                         })
                     }
+                    // JavaScript evaluates the value before the target's
+                    // defaults, so what it reads is narrowed as before them.
                     target => {
+                        let given = self.expr(&assignment.right, None);
                         self.constant_writes(target);
-                        None
+                        return given;
                     }
                 };
                 let Some(place) = place else {
