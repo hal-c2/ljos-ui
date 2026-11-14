@@ -514,7 +514,11 @@ What the builder does not cover stays reachable: `App::run_with`
 runs the same start and then hands over the shell's full `Setup`
 (the Engine, the `UiHandle` worker threads post through, the
 message handler), and `ljos::run(config, setup)` is that shell loop
-without the builder. `App::build` makes the Engine and root
+without the builder. `App::run_headless` and `App::run_headless_with`
+run the same start with no window and no display, as Qt does on its
+`offscreen` platform (`ljos::run_headless` without the builder): for a
+start where there is no display, or a run an agent drives through the
+inspector. `App::build` makes the Engine and root
 headlessly, which is how an application tests its own start.
 With the facade's `render` feature it can look at the result too:
 `ljos::render::render_png(&engine, root, (width, height), settle_ms)`
