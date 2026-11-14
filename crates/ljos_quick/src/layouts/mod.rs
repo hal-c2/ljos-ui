@@ -549,11 +549,6 @@ struct State {
     /// its preferred size while it has no implicit one. Qt reads the size
     /// once too, as the layout then owns it.
     seen: HashMap<ObjectId, [f64; 2]>,
-    /// The size a box last gave a child along each axis the child said
-    /// nothing about, while it followed its implicit size (`NaN` where it
-    /// gave none): giving it ends the following, and the size stays the
-    /// child's implicit one while it holds ([`arrangement::follows`]).
-    gave: HashMap<ObjectId, [f64; 2]>,
     plan: Option<Rc<Plan>>,
     /// What a box that last placed its children as a positioner, with no
     /// plan, placed them from ([`arrangement::line`]): the same again is
@@ -570,6 +565,63 @@ struct State {
     arranged: Option<(f64, f64)>,
     placed: Vec<(ObjectId, Geometry)>,
     runs: u64,
+}
+
+/// The size a box last gave a child along each axis the child said nothing
+/// about, while it followed its implicit size (`NaN` where it gave none):
+/// giving it ends the following, and the size stays the child's implicit
+/// one while it holds ([`arrangement::follows`]). It is kept with the
+/// child, not the box: moved to another box that is a layout, the child
+/// still follows its implicit size, as in Qt's layouts, even after a while
+/// in an item that arranges nothing.
+#[derive(Clone, Copy)]
+pub(super) struct Given {
+    /// The box that gave it.
+    pub(super) by: ObjectId,
+    pub(super) at: [f64; 2],
+}
+
+#[derive(Default)]
+struct GivenSizes {
+    sizes: std::cell::RefCell<HashMap<ObjectId, Given>>,
+    watched: std::cell::Cell<bool>,
+}
+
+fn given_sizes(e: &Engine) -> Rc<GivenSizes> {
+    let given = e.extension::<GivenSizes>();
+    if !given.watched.replace(true) {
+        e.on_destroyed(|e, gone| {
+            let given = e.extension::<GivenSizes>();
+            let mut sizes = given.sizes.borrow_mut();
+            if !sizes.is_empty() {
+                for o in gone {
+                    sizes.remove(o);
+                }
+            }
+        });
+    }
+    given
+}
+
+/// What a box last gave `c` for following its implicit size.
+pub(super) fn given_to(e: &Engine, c: ObjectId) -> Option<Given> {
+    given_sizes(e).sizes.borrow().get(&c).copied()
+}
+
+/// Records that the box `by` gave `c` the sizes `at` (`NaN` where it gave
+/// none): none at all forgets the child.
+pub(super) fn give(e: &Engine, by: ObjectId, c: ObjectId, at: [f64; 2]) {
+    let given = given_sizes(e);
+    let mut sizes = given.sizes.borrow_mut();
+    if at.iter().any(|v| !v.is_nan()) {
+        sizes.insert(c, Given { by, at });
+    } else {
+        sizes.remove(&c);
+    }
+}
+
+fn given_at(e: &Engine, c: ObjectId) -> [f64; 2] {
+    given_to(e, c).map_or([f64::NAN; 2], |g| g.at)
 }
 
 fn state<R>(
@@ -872,18 +924,14 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     } else {
         let mut hidden = state(e, obj, |s| std::mem::take(&mut s.hidden))?;
         let visible = hidden.update(e, obj, &children);
-        let mut gave = state(e, obj, |s| {
-            s.hidden = hidden;
-            std::mem::take(&mut s.gave)
-        })?;
+        state(e, obj, |s| s.hidden = hidden)?;
         let mut left = Vec::new();
         let shown = children
             .iter()
             .zip(visible)
             .filter_map(|(c, v)| v.then_some(*c))
             .filter(|c| {
-                let had = gave.get(c).copied().unwrap_or([f64::NAN; 2]);
-                let skipped = kind.one_rule() && arrangement::skipped(e, *c, had);
+                let skipped = kind.one_rule() && arrangement::skipped(e, *c, given_at(e, *c));
                 if skipped {
                     left.push(*c);
                 }
@@ -894,8 +942,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
         // implicit size: it is given that size, which is 0 along one axis,
         // so that it is not drawn at the size it had where the others now
         // are, and still follows it to come back.
-        let gives = left_out_sizes(e, &left, &mut gave);
-        state(e, obj, |s| s.gave = gave)?;
+        let gives = left_out_sizes(e, obj, &left);
         e.batch(|| -> Result<(), EngineError> {
             for (c, p, v) in gives {
                 write_given_size(e, c, p, Value::Real(v))?;
@@ -911,11 +958,8 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     {
         return arrangement::line(e, obj, &children, &shown);
     }
-    let (mut seen, mut gave) = state(e, obj, |s| {
-        (std::mem::take(&mut s.seen), std::mem::take(&mut s.gave))
-    })?;
+    let mut seen = state(e, obj, |s| std::mem::take(&mut s.seen))?;
     seen.retain(|c, _| children.contains(c));
-    gave.retain(|c, _| children.contains(c));
     // A box that measures is a layout: it rounds an implicit size up as
     // Qt's layouts do. One whose children have no `Layout` was a positioner,
     // and placed them at their sizes ([`arrangement::line`]).
@@ -928,7 +972,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     let mut cells = Vec::with_capacity(shown.len());
     let mut wants = Vec::with_capacity(shown.len());
     for c in &shown {
-        let had = gave.remove(c).unwrap_or([f64::NAN; 2]);
+        let had = given_at(e, *c);
         let follows =
             [H, V].map(|axis| kind.one_rule() && arrangement::follows(e, *c, axis, had[axis]));
         let first = *seen.entry(*c).or_insert_with(|| {
@@ -992,9 +1036,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
                         f64::NAN
                     }
                 });
-                if gives.iter().any(|v| !v.is_nan()) {
-                    gave.insert(*c, gives);
-                }
+                give(e, obj, *c, gives);
                 [H, V].map(|axis| {
                     arrangement::hint(
                         &a,
@@ -1022,10 +1064,7 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
             column_span: a.column_span,
         });
     }
-    state(e, obj, |s| {
-        s.seen = seen;
-        s.gave = gave;
-    })?;
+    state(e, obj, |s| s.seen = seen)?;
 
     match kind {
         Kind::Row => {
@@ -1184,17 +1223,13 @@ fn measure(e: &Engine, obj: ObjectId, kind: Kind) -> Result<bool, EngineError> {
     Ok(changed)
 }
 
-/// The implicit sizes to give children a box leaves out, along each axis
-/// they follow it with a size the box gave them, with what `gave` records
-/// of them set to those sizes.
-fn left_out_sizes(
-    e: &Engine,
-    left: &[ObjectId],
-    gave: &mut HashMap<ObjectId, [f64; 2]>,
-) -> Vec<(ObjectId, PropIndex, f64)> {
+/// The implicit sizes the box `obj` gives children it leaves out, along
+/// each axis they follow it with a size a box gave them, with what is
+/// recorded of them set to those sizes.
+fn left_out_sizes(e: &Engine, obj: ObjectId, left: &[ObjectId]) -> Vec<(ObjectId, PropIndex, f64)> {
     let mut gives = Vec::new();
     for c in left {
-        let Some(had) = gave.get_mut(c) else {
+        let Some(Given { at: mut had, .. }) = given_to(e, *c) else {
             continue;
         };
         for (axis, size, implicit) in [
@@ -1207,6 +1242,7 @@ fn left_out_sizes(
                 gives.push((*c, size, v));
             }
         }
+        give(e, obj, *c, had);
     }
     gives
 }
@@ -1251,8 +1287,9 @@ fn arrange(e: &Engine, obj: ObjectId) -> Result<(), EngineError> {
                 Item::HEIGHT.index,
             ];
             // A size given a child that follows its implicit size.
-            let gives = state(e, obj, |s| s.gave.get(c).copied())?
-                .map_or([false; 2], |g| g.map(|v| !v.is_nan()));
+            let gives = given_to(e, *c)
+                .filter(|g| g.by == obj)
+                .map_or([false; 2], |g| g.at.map(|v| !v.is_nan()));
             let given = [false, false, gives[H], gives[V]];
             for ((p, v), given) in props.into_iter().zip(g).zip(given) {
                 if given {
