@@ -286,11 +286,26 @@ fn loading() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a view waits for its profile's request context, which CEF
+/// readies with work it does not announce.
+fn unborn() -> bool {
+    GLOBAL
+        .try_with(|g| match g.try_borrow().as_deref() {
+            Ok(Some(Ok(global))) => global
+                .browsers
+                .iter()
+                .any(|shared| Shared::lock(&shared.unborn).is_some()),
+            _ => false,
+        })
+        .unwrap_or(false)
+}
+
 /// After a turn: a follow-up, unless the browser has been quiet long
 /// enough.
 fn follow_up(pump: &Pump) {
+    let waiting = unborn();
     let mut st = pump.state.lock().unwrap_or_else(PoisonError::into_inner);
-    if std::mem::take(&mut st.asked) {
+    if std::mem::take(&mut st.asked) || waiting {
         st.quiet = 0;
     } else {
         st.quiet += 1;
@@ -395,7 +410,7 @@ fn pump_into(e: &Engine) {
 
 struct Global {
     root: PathBuf,
-    contexts: HashMap<String, RequestContext>,
+    contexts: HashMap<String, Profile>,
     pages: Vec<std::rc::Weak<CefPage>>,
     /// Every browser made, until CEF says it has closed: a page whose
     /// engine has gone still has one, closing, that [`shutdown`] waits for.
@@ -627,17 +642,51 @@ fn with_global<R>(e: &Engine, f: impl FnOnce(&mut Global) -> R) -> Result<R, Str
     })
 }
 
+/// A profile's request context. CEF readies one some time after making
+/// it, and makes no browser in it before then: a view of a profile made a
+/// moment ago waits for it (see [`Shared::unborn`]).
+struct Profile {
+    context: RequestContext,
+    ready: Arc<Mutex<Readiness>>,
+}
+
+#[derive(Default)]
+struct Readiness {
+    ready: bool,
+    /// Views whose browser waits for the context.
+    waiting: Vec<std::sync::Weak<Shared>>,
+}
+
+wrap_request_context_handler! {
+    struct ProfileReady { ready: Arc<Mutex<Readiness>> }
+    impl RequestContextHandler {
+        fn on_request_context_initialized(&self, _context: Option<&mut RequestContext>) {
+            let waiting = {
+                let mut r = Shared::lock(&self.ready);
+                r.ready = true;
+                std::mem::take(&mut r.waiting)
+            };
+            for shared in waiting.iter().filter_map(std::sync::Weak::upgrade) {
+                born(&shared);
+            }
+        }
+    }
+}
+
 /// The request context of a profile: one per storage name, so views of
 /// one profile share cookies and caches. One kept off the record is in
 /// memory only.
-fn context_for(g: &mut Global, spec: &ProfileSpec) -> Option<RequestContext> {
+fn context_for(
+    g: &mut Global,
+    spec: &ProfileSpec,
+) -> Option<(RequestContext, Arc<Mutex<Readiness>>)> {
     let key = if spec.off_the_record {
         format!("\0otr:{}", spec.storage_name)
     } else {
         spec.storage_name.clone()
     };
-    if let Some(c) = g.contexts.get(&key) {
-        return Some(c.clone());
+    if let Some(p) = g.contexts.get(&key) {
+        return Some((p.context.clone(), p.ready.clone()));
     }
     let cache = if spec.off_the_record {
         String::new()
@@ -657,9 +706,17 @@ fn context_for(g: &mut Global, spec: &ProfileSpec) -> Option<RequestContext> {
         accept_language_list: cef_string(&spec.accept_language),
         ..Default::default()
     };
-    let c = request_context_create_context(Some(&settings), None)?;
-    g.contexts.insert(key, c.clone());
-    Some(c)
+    let ready = Arc::new(Mutex::new(Readiness::default()));
+    let mut handler = ProfileReady::new(ready.clone());
+    let context = request_context_create_context(Some(&settings), Some(&mut handler))?;
+    g.contexts.insert(
+        key,
+        Profile {
+            context: context.clone(),
+            ready: ready.clone(),
+        },
+    );
+    Some((context, ready))
 }
 
 // --- one view's browser -----------------------------------------------------
@@ -778,6 +835,16 @@ struct Shared {
     /// the view answers with.
     asked: Mutex<HashMap<u64, Asked>>,
     boot: Mutex<Boot>,
+    /// What makes the browser, while its profile's request context is not
+    /// ready yet; what the view asks meanwhile is kept here.
+    unborn: Mutex<Option<Unborn>>,
+}
+
+/// A browser waiting for its profile (see [`Profile`]).
+struct Unborn {
+    start: Start,
+    context: RequestContext,
+    focus: Option<bool>,
 }
 
 /// The blank page a browser starts on. What every page gets (the
@@ -982,6 +1049,7 @@ impl Shared {
                 behind: true,
                 ..Boot::default()
             }),
+            unborn: Mutex::default(),
         }
     }
 
@@ -2301,9 +2369,13 @@ fn mouse_event(m: &PageMouse) -> MouseEvent {
     }
 }
 
-pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<dyn Page>, String> {
+pub(crate) fn start(
+    e: &Engine,
+    sink: Sink,
+    mut start: Start,
+) -> Result<std::rc::Rc<dyn Page>, String> {
     pump_into(e);
-    let context = with_global(e, |g| context_for(g, &start.profile))?;
+    let profile = with_global(e, |g| context_for(g, &start.profile))?;
     let shared = Arc::new(Shared::new(
         sink,
         Geometry {
@@ -2318,6 +2390,94 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
         engines.retain(|(s, _)| s.strong_count() > 0);
         engines.push((Arc::downgrade(&shared), e.downgrade()));
     });
+    let unready = profile.as_ref().is_some_and(|(_, ready)| {
+        let mut r = Shared::lock(ready);
+        if !r.ready {
+            r.waiting.push(Arc::downgrade(&shared));
+        }
+        !r.ready
+    });
+    match profile {
+        Some((context, _)) if unready => {
+            // The first page waits as it does for the blank one.
+            if !start.url.is_empty() {
+                shared.started(&start.url);
+                Shared::lock(&shared.boot).url = Some(std::mem::take(&mut start.url));
+            }
+            *Shared::lock(&shared.unborn) = Some(Unborn {
+                start,
+                context,
+                focus: None,
+            });
+            // CEF readies the context with work it does not announce.
+            told_work();
+        }
+        profile => make_browser(&shared, &start, profile.map(|(c, _)| c))?,
+    }
+    let page = std::rc::Rc::new(CefPage { shared });
+    with_global(e, |g| {
+        g.pages.retain(|p| p.strong_count() > 0);
+        g.pages.push(std::rc::Rc::downgrade(&page));
+        g.browsers
+            .retain(|b| Shared::lock(&b.browser).is_some() || Shared::lock(&b.unborn).is_some());
+        g.browsers.push(page.shared.clone());
+    })?;
+    Ok(page)
+}
+
+/// The view's browser is made, now that its profile is ready; one that
+/// cannot be made fails the page it waited to show.
+fn born(shared: &Arc<Shared>) {
+    let Some(Unborn {
+        start,
+        context,
+        focus,
+    }) = Shared::lock(&shared.unborn).take()
+    else {
+        return;
+    };
+    if shared.closing.load(Ordering::Relaxed) {
+        return;
+    }
+    match make_browser(shared, &start, Some(context)) {
+        Ok(()) => {
+            if let (Some(focus), Some(host)) = (focus, shared.host()) {
+                host.set_focus(focus as c_int);
+            }
+        }
+        Err(why) => {
+            let url = Shared::lock(&shared.boot).url.take();
+            if let Some(e) = engine_of(shared) {
+                e.log(
+                    LogLevel::Warning,
+                    crate::CATEGORY,
+                    format!(
+                        "WebEngineView cannot show {}: {why}",
+                        url.as_deref().unwrap_or("a page")
+                    ),
+                );
+            }
+            if let Some(url) = url {
+                let code = -2;
+                shared.ended(
+                    url,
+                    LoadStatus::Failed,
+                    code,
+                    crate::errors::name(code),
+                    crate::errors::domain(code),
+                );
+            }
+        }
+    }
+}
+
+/// The view's browser, on its blank first page, and what every page of it
+/// gets.
+fn make_browser(
+    shared: &Arc<Shared>,
+    start: &Start,
+    context: Option<RequestContext>,
+) -> Result<(), String> {
     let window = WindowInfo::default().set_as_windowless(Default::default());
     let [r, g, b, a] = start.background;
     let state = |on: bool| {
@@ -2403,14 +2563,7 @@ pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<
     told_work();
     shared.send_dev(out);
     host.set_audio_muted(start.muted as c_int);
-    let page = std::rc::Rc::new(CefPage { shared });
-    with_global(e, |g| {
-        g.pages.retain(|p| p.strong_count() > 0);
-        g.pages.push(std::rc::Rc::downgrade(&page));
-        g.browsers.retain(|b| Shared::lock(&b.browser).is_some());
-        g.browsers.push(page.shared.clone());
-    })?;
-    Ok(page)
+    Ok(())
 }
 
 impl CefPage {
@@ -2433,7 +2586,7 @@ impl CefPage {
 
 impl Page for CefPage {
     fn navigate(&self, url: &str) {
-        if self.browser().is_none() {
+        if self.browser().is_none() && Shared::lock(&self.shared.unborn).is_none() {
             return;
         }
         self.shared.started(url);
@@ -2516,24 +2669,41 @@ impl Page for CefPage {
     }
 
     fn set_hidden(&self, hidden: bool) {
+        if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
+            u.start.hidden = hidden;
+            return;
+        }
         if let Some(host) = self.host() {
             host.was_hidden(hidden as c_int);
         }
     }
 
     fn set_focus(&self, focus: bool) {
+        if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
+            u.focus = Some(focus);
+            return;
+        }
         if let Some(host) = self.host() {
             host.set_focus(focus as c_int);
         }
     }
 
     fn set_muted(&self, muted: bool) {
+        if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
+            u.start.muted = muted;
+            return;
+        }
         if let Some(host) = self.host() {
             host.set_audio_muted(muted as c_int);
         }
     }
 
     fn run_script(&self, id: u64, source: &str, world: i32) {
+        if Shared::lock(&self.shared.unborn).is_some() {
+            // No page to run in yet.
+            script_result(&self.shared, id, false, &Json::Null);
+            return;
+        }
         let mut out = Vec::new();
         {
             let mut dev = Shared::lock(&self.shared.dev);
@@ -2568,6 +2738,10 @@ impl Page for CefPage {
     }
 
     fn set_scripts(&self, scripts: &[Script]) {
+        if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
+            u.start.scripts = scripts.to_vec();
+            return;
+        }
         let mut out = Vec::new();
         install_scripts(
             &mut Shared::lock(&self.shared.dev),
@@ -2722,6 +2896,7 @@ impl Page for CefPage {
             return;
         }
         refuse_asked(&self.shared);
+        Shared::lock(&self.shared.unborn).take();
         if let Some(host) = self.host() {
             host.close_browser(1);
         }
