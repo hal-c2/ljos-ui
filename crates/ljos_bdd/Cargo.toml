@@ -22,6 +22,10 @@ test = false
 name = "webengine_exit"
 required-features = ["webengine"]
 
+[[test]]
+name = "webengine_profile"
+required-features = ["webengine"]
+
 [features]
 # Show web pages (`@chromium` scenarios) through CEF: `CEF_PATH` names
 # the runtime, which is copied beside the runner.
