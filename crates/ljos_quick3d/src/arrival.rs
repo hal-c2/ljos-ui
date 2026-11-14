@@ -33,14 +33,24 @@ pub(crate) fn wait(e: &Engine, view: ObjectId, obj: ObjectId) {
             let Ok(n) = e.graph().property(scope, Value::Int(0)) else {
                 return;
             };
-            let mut nodes = reg.nodes.borrow_mut();
             // Swept when the map has doubled: each object costs its entry
             // once, not a walk of all the others.
-            if nodes.len() >= reg.swept.get().max(32) * 2 {
-                nodes.retain(|o, n| e.is_alive(*o) && e.graph().is_alive(*n));
-                reg.swept.set(nodes.len());
+            if reg.nodes.borrow().len() >= reg.swept.get().max(32) * 2 {
+                let mut gone = Vec::new();
+                reg.nodes.borrow_mut().retain(|o, n| {
+                    let keep = e.is_alive(*o) && e.graph().is_alive(*n);
+                    // One in the view's scope outlives its object.
+                    if !keep && e.graph().is_alive(*n) {
+                        gone.push(*n);
+                    }
+                    keep
+                });
+                // Not while the map is borrowed: a dispose may run reads
+                // that wait again.
+                e.graph().dispose_all(&gone);
+                reg.swept.set(reg.nodes.borrow().len());
             }
-            nodes.insert(obj, n);
+            reg.nodes.borrow_mut().insert(obj, n);
             n
         }
     };
@@ -53,4 +63,10 @@ pub(crate) fn tell(e: &Engine, obj: ObjectId) {
     if let Some(n) = node.filter(|n| e.graph().is_alive(*n)) {
         let _ = e.graph().notify(n);
     }
+}
+
+/// The node the reads that wait on `obj` depend on, if it has one.
+#[cfg(test)]
+pub(crate) fn node(e: &Engine, obj: ObjectId) -> Option<NodeId> {
+    e.extension::<Arrivals>().nodes.borrow().get(&obj).copied()
 }

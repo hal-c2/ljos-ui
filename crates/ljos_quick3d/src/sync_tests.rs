@@ -455,3 +455,30 @@ fn a_read_held_from_before_a_change_is_read_again() {
     assert_eq!(synced(&e, view), 1);
 }
 
+#[test]
+fn the_arrivals_of_objects_gone_are_disposed() {
+    let (e, view, ..) = pair();
+    // Plain objects without a scope of their own: their arrivals are in
+    // the view's, which outlives them.
+    let objects: Vec<ObjectId> = (0..64)
+        .map(|_| e.create_native(Node::default(), None).expect("made"))
+        .collect();
+    let nodes: Vec<_> = objects
+        .iter()
+        .map(|&o| {
+            assert!(e.object_scope(o).is_none());
+            arrival::wait(&e, view, o);
+            arrival::node(&e, o).expect("an arrival")
+        })
+        .collect();
+    for &o in &objects {
+        e.destroy(o);
+    }
+    e.process_deferred_deletes();
+    assert!(nodes.iter().all(|n| e.graph().is_alive(*n)));
+    // The next one sweeps the map, which has doubled.
+    let next = e.create_native(Node::default(), None).expect("made");
+    arrival::wait(&e, view, next);
+    assert!(nodes.iter().all(|n| !e.graph().is_alive(*n)));
+    assert!(arrival::node(&e, next).is_some());
+}
