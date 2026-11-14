@@ -87,6 +87,7 @@
 //! numbers. They are numbered here in the order the documentation lists
 //! them, from 0, and checked against Qt once qml6 has QtQuick3D.
 
+mod arrival;
 mod custom;
 mod effects;
 mod fetch;
@@ -109,6 +110,8 @@ mod texture;
 mod texture_data;
 mod view;
 
+#[cfg(test)]
+mod sync_tests;
 #[cfg(test)]
 mod tests;
 

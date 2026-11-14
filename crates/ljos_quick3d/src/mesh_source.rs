@@ -64,6 +64,8 @@ pub(crate) fn file_of(e: &Engine, view: ObjectId, obj: ObjectId) -> Option<Arc<M
     // A source a file wrote is relative to that file, as an Image's.
     let url = e.resolve_url(obj, source.0.as_str());
     let files = e.extension::<MeshFiles>();
+    // The file may come later than this read.
+    crate::arrival::wait(e, view, obj);
     let found = e
         .with(obj, |m: &Model| {
             let mut loaded = m.mesh.borrow_mut();
@@ -187,6 +189,9 @@ fn arrived(e: &Engine, url: &str, got: Result<Arc<MeshFile>, String>) {
             }
         }
     }
+    // Every model is given the file before any is told: a paint the first
+    // tell runs at once would otherwise find the rest still reading.
+    let mut told = Vec::with_capacity(waiting.len());
     for (model, view) in waiting {
         // One since gone, or since given another source, wants none of it.
         let wanted = e.with(model, |m: &Model| {
@@ -201,8 +206,12 @@ fn arrived(e: &Engine, url: &str, got: Result<Arc<MeshFile>, String>) {
             true
         });
         if wanted.unwrap_or(false) {
-            item::repaint(e, view);
+            told.push((model, view));
         }
+    }
+    for (model, view) in told {
+        crate::arrival::tell(e, model);
+        item::repaint(e, view);
     }
     for answer in answers {
         answer(e, got.clone());

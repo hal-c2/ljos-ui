@@ -10,13 +10,15 @@ use crate::source::EngineSource;
 /// A view's scene, and which object each of its nodes is.
 pub(crate) type Built = qml::Built<ObjectId>;
 
-/// The scene of the view `view`, read now. Tracked.
+/// The scene of the view `view`, read now. Tracked. The tests' measure
+/// of what a view keeps; a view itself patches its scene (`view::sync`).
+#[cfg(test)]
 pub(crate) fn build(e: &Engine, view: ObjectId) -> ljos_3d::Scene {
     build_with_ids(e, view).scene
 }
 
-/// [`build`], with the scene node each object became: what a pick needs
-/// to say which object it hit.
+/// The scene of the view `view`, read now, with the scene node each object
+/// became: what a pick needs to say which object it hit.
 pub(crate) fn build_with_ids(e: &Engine, view: ObjectId) -> Built {
     qml::build(&EngineSource::new(e), view)
 }

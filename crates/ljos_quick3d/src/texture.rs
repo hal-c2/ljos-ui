@@ -293,6 +293,8 @@ fn image(e: &Engine, view: ObjectId, obj: ObjectId, url: &str) -> Option<Texture
     if url.is_empty() {
         return None;
     }
+    // The picture may come later than this read.
+    crate::arrival::wait(e, view, obj);
     let start = e
         .with(obj, |t: &Texture| {
             let mut loaded = t.loaded.borrow_mut();
@@ -365,6 +367,7 @@ fn image(e: &Engine, view: ObjectId, obj: ObjectId, url: &str) -> Option<Texture
         if let Some(err) = failed {
             e.warn(format!("QtQuick3D Texture: {wanted}: {err}"));
         }
+        crate::arrival::tell(e, obj);
         for view in views {
             item::repaint(e, view);
         }
