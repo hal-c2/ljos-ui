@@ -255,6 +255,10 @@ pub struct Span {
     pub frames: Option<Frames>,
     /// Clicks, moves or wheel notches given, for a driven window.
     pub clicks: Option<u32>,
+    /// When the measured time began and ended, so the 3D frames summed
+    /// for this span are those of the same time.
+    #[serde(skip)]
+    pub window: Option<crate::frames3d::Window>,
 }
 
 /// What of an install the running application had mapped.
@@ -419,6 +423,7 @@ fn span(
     } else {
         Err("not asked for".to_owned())
     };
+    let from_us = crate::frames3d::now_us();
     let start = Instant::now();
     let mut clicks = None;
     let mut inputs = Vec::new();
@@ -439,6 +444,7 @@ fn span(
         }
     }
     let seconds = start.elapsed().as_secs_f64();
+    let to_us = crate::frames3d::now_us();
     let cpu1 = w.cg.cpu_usec().unwrap_or(cpu0);
     let sw1 = procfs::thread_switches(pid);
     let woken = procfs::woken(&sw0, &sw1);
@@ -474,6 +480,7 @@ fn span(
             ..frames(&t.changed, mono0, seconds, &inputs)
         }),
         clicks,
+        window: Some(crate::frames3d::Window { from_us, to_us }),
         woken,
         thread_cpu_ms,
         busiest_thread,
@@ -1085,10 +1092,16 @@ fn run_once(
                 rect,
                 phases.instructions,
             );
-            idle_window = Some(crate::frames3d::Window {
-                from_us,
-                to_us: crate::frames3d::now_us(),
-            });
+            // The span's own time where it measured one; around it where
+            // it could not read the CPU, so the 3D frames are still summed.
+            idle_window =
+                out.idle
+                    .as_ref()
+                    .and_then(|s| s.window)
+                    .or(Some(crate::frames3d::Window {
+                        from_us,
+                        to_us: crate::frames3d::now_us(),
+                    }));
             if w.exited.is_none() {
                 out.idled = Some(memory(&w));
             }
@@ -1115,11 +1128,14 @@ fn run_once(
                 // The first span is the one every run has, comparable
                 // with runs of one round.
                 if round == 0 {
+                    load_window =
+                        load.as_ref()
+                            .and_then(|s| s.window)
+                            .or(Some(crate::frames3d::Window {
+                                from_us,
+                                to_us: crate::frames3d::now_us(),
+                            }));
                     out.load = load;
-                    load_window = Some(crate::frames3d::Window {
-                        from_us,
-                        to_us: crate::frames3d::now_us(),
-                    });
                 }
                 if w.exited.is_some() {
                     break;
