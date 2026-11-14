@@ -149,9 +149,9 @@ pub struct WebEngineView {
     pub is_full_screen: bool,
     #[qml(notify)]
     pub active_focus_on_press: bool,
-    #[qml(notify, object = "WebEngineView")]
+    #[qml(notify, object = "WebEngineView", write = Self::take_dev_tools_view)]
     pub dev_tools_view: Option<ObjectId>,
-    #[qml(notify, object = "WebEngineView")]
+    #[qml(notify, object = "WebEngineView", write = Self::take_inspected_view)]
     pub inspected_view: Option<ObjectId>,
     #[qml(skip)]
     run: Run,
@@ -190,6 +190,8 @@ struct Run {
     /// shown: those answered go when the next page starts loading, those
     /// still asked when they are answered or the view goes.
     asked: Vec<ObjectId>,
+    /// The view the browser's DevTools show in.
+    tools_shown: Option<ObjectId>,
 }
 
 impl fmt::Debug for WebEngineView {
@@ -258,6 +260,70 @@ impl WebEngineView {
             e.call_at(e.now(), move |e| navigate(e, me, &target));
         }
         Some(resolved)
+    }
+
+    fn take_dev_tools_view(cx: &Cx, tools: Option<ObjectId>) -> Option<Option<ObjectId>> {
+        let (e, page) = (cx.engine, cx.this);
+        let old = cx.with(|v: &Self| v.dev_tools_view).ok().flatten();
+        if old == tools || LINKING.get() {
+            return Some(tools);
+        }
+        // The other side of each link changes with this one, as Qt's
+        // does: what reads it next sees both.
+        LINKING.set(true);
+        let old = old.filter(|o| e.is_alive(*o));
+        if let Some(old) = old
+            && inspected_view(e, old) == Some(page)
+        {
+            let _ = e.set_internal(old, WebEngineView::INSPECTED_VIEW, None);
+        }
+        let mut before = None;
+        if let Some(tools) = tools.filter(|t| e.is_alive(*t)) {
+            before = inspected_view(e, tools).filter(|b| *b != page && e.is_alive(*b));
+            if let Some(before) = before
+                && dev_tools_view(e, before) == Some(tools)
+            {
+                let _ = e.set_internal(before, WebEngineView::DEV_TOOLS_VIEW, None);
+            }
+            let _ = e.set_internal(tools, WebEngineView::INSPECTED_VIEW, Some(page));
+        }
+        LINKING.set(false);
+        // The browsers follow once the write is in.
+        e.call_at(e.now(), move |e| {
+            retool(e, page);
+            before.into_iter().for_each(|b| retool(e, b));
+        });
+        Some(tools)
+    }
+
+    fn take_inspected_view(cx: &Cx, page: Option<ObjectId>) -> Option<Option<ObjectId>> {
+        let (e, tools) = (cx.engine, cx.this);
+        let old = cx.with(|v: &Self| v.inspected_view).ok().flatten();
+        if old == page || LINKING.get() {
+            return Some(page);
+        }
+        LINKING.set(true);
+        let old = old.filter(|o| e.is_alive(*o));
+        if let Some(old) = old
+            && dev_tools_view(e, old) == Some(tools)
+        {
+            let _ = e.set_internal(old, WebEngineView::DEV_TOOLS_VIEW, None);
+        }
+        if let Some(page) = page.filter(|p| e.is_alive(*p)) {
+            let before = dev_tools_view(e, page).filter(|b| *b != tools && e.is_alive(*b));
+            if let Some(before) = before
+                && inspected_view(e, before) == Some(page)
+            {
+                let _ = e.set_internal(before, WebEngineView::INSPECTED_VIEW, None);
+            }
+            let _ = e.set_internal(page, WebEngineView::DEV_TOOLS_VIEW, Some(tools));
+        }
+        LINKING.set(false);
+        e.call_at(e.now(), move |e| {
+            old.into_iter().for_each(|o| retool(e, o));
+            page.into_iter().for_each(|p| retool(e, p));
+        });
+        Some(page)
     }
 
     fn take_zoom(cx: &Cx, factor: f64) -> Option<f64> {
@@ -374,8 +440,16 @@ impl WebEngineView {
             let Ok(url) = e.get(me, WebEngineView::URL) else {
                 return;
             };
-            let source = format!("view-source:{}", url.0.as_str());
-            new_window(e, me, &source, NEW_VIEW_IN_TAB, (0.0, 0.0, 0.0, 0.0), true);
+            let source = format!("{VIEW_SOURCE}{}", url.0.as_str());
+            new_window(
+                e,
+                me,
+                &source,
+                NEW_VIEW_IN_TAB,
+                (0.0, 0.0, 0.0, 0.0),
+                true,
+                false,
+            );
             return;
         }
         let Some(b) = browser(e, me) else {
@@ -453,10 +527,19 @@ fn browser(e: &Engine, me: ObjectId) -> Option<Rc<dyn Browser>> {
         .flatten()
 }
 
+const VIEW_SOURCE: &str = "view-source:";
+
+/// What the DevTools front end calls itself, before the page it inspects.
+const DEV_TOOLS_TITLE: &str = "DevTools - ";
+
 /// The file a `file:` URL names, as the browser must be told it: an
 /// application whose files live under a root of their own (a test's
 /// sandbox) names them from that root, the browser from the machine's.
 fn to_browser_url(e: &Engine, url: &str) -> String {
+    // A page's source names the page as the page does.
+    if let Some(inner) = url.strip_prefix(VIEW_SOURCE) {
+        return format!("{VIEW_SOURCE}{}", to_browser_url(e, inner));
+    }
     let env = Platform::of(e).env();
     let Some(rest) = url.strip_prefix("file://") else {
         return url.to_owned();
@@ -471,6 +554,9 @@ fn to_browser_url(e: &Engine, url: &str) -> String {
 
 /// The URL the browser names, as the application names it.
 fn from_browser_url(e: &Engine, url: &str) -> String {
+    if let Some(inner) = url.strip_prefix(VIEW_SOURCE) {
+        return format!("{VIEW_SOURCE}{}", from_browser_url(e, inner));
+    }
     let env = Platform::of(e).env();
     if let Some(rest) = url.strip_prefix("file://")
         && let Ok(root) = env.real(std::path::Path::new("/"))
@@ -508,9 +594,95 @@ fn navigate(e: &Engine, me: ObjectId, url: &str) {
     match backend::start(e, me, start) {
         Ok(b) => {
             let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.browser = Some(b));
+            // A view given its DevTools view before it had a page.
+            retool(e, me);
         }
         Err(why) => refuse(e, me, url, &why),
     }
+}
+
+/// What a browser made for `view` by someone else (a page opening a new
+/// window, another view's DevTools) starts with; `None` when `view` is
+/// no view that can show it.
+pub(crate) fn start_for(e: &Engine, view: ObjectId) -> Option<backend::Start> {
+    e.with::<WebEngineView, _>(view, |_| ()).ok()?;
+    Some(start_of(e, view, ""))
+}
+
+/// `view` shows `browser` from now on, in place of what it showed.
+pub(crate) fn show_in(e: &Engine, view: ObjectId, browser: Rc<dyn Browser>) {
+    let old = e
+        .with_mut::<WebEngineView, _>(view, |v| v.run.browser.replace(browser))
+        .ok()
+        .flatten();
+    if let Some(old) = old {
+        old.close();
+    }
+    // A new browser shows no DevTools yet.
+    let _ = e.with_mut::<WebEngineView, _>(view, |v| v.run.tools_shown = None);
+    retool(e, view);
+}
+
+fn dev_tools_view(e: &Engine, page: ObjectId) -> Option<ObjectId> {
+    e.get(page, WebEngineView::DEV_TOOLS_VIEW).ok().flatten()
+}
+
+fn inspected_view(e: &Engine, tools: ObjectId) -> Option<ObjectId> {
+    e.get(tools, WebEngineView::INSPECTED_VIEW).ok().flatten()
+}
+
+thread_local! {
+    /// A link between a view and its DevTools view is being made: the
+    /// writes to the other side are the link's, not new ones.
+    static LINKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `page`'s DevTools show in its `devToolsView`, and only there: the
+/// front end that showed them before no longer reaches the page, but it
+/// stays in its view, as Qt's does.
+fn retool(e: &Engine, page: ObjectId) {
+    if !e.is_alive(page) {
+        return;
+    }
+    let want = dev_tools_view(e, page).filter(|t| *t != page && e.is_alive(*t));
+    let Some((Some(b), shown)) = e
+        .with::<WebEngineView, _>(page, |v| (v.run.browser.clone(), v.run.tools_shown))
+        .ok()
+    else {
+        return;
+    };
+    if shown == want {
+        return;
+    }
+    if shown.is_some() {
+        b.close_dev_tools();
+    }
+    let _ = e.with_mut::<WebEngineView, _>(page, |v| v.run.tools_shown = want);
+    if let Some(tools) = want
+        && let Some(url) = b.dev_tools_url()
+    {
+        // The front end is a page like any other, loaded as one.
+        let _ = e.set_internal(tools, WebEngineView::URL, Url(Atom::from(url.as_str())));
+    }
+}
+
+/// The page of `me` asks for a new window, and waits to hear where it
+/// opens: the view the handler of `newWindowRequested` opens it in there
+/// and then is given the window itself. One opened later is given its
+/// address only. The browser asks with its own URL.
+pub(crate) fn ask_new_window(
+    e: &Engine,
+    me: ObjectId,
+    url: &str,
+    destination: i32,
+    geometry: (f64, f64, f64, f64),
+    user_initiated: bool,
+) -> Option<ObjectId> {
+    if !e.is_alive(me) {
+        return None;
+    }
+    let url = from_browser_url(e, url);
+    new_window(e, me, &url, destination, geometry, user_initiated, true)
 }
 
 /// `WebEngineNavigationRequest.TypedNavigation`: a URL given to the view.
@@ -805,6 +977,14 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             let _ = e.with_mut::<WebEngineView, _>(me, |v| v.run.reporting = false);
         }
         Event::Title(title) => {
+            // DevTools name the page they inspect as the browser does; the
+            // view names it as the application does, as its url.
+            let title = match title.strip_prefix(DEV_TOOLS_TITLE) {
+                Some(page) if inspected_view(e, me).is_some() => {
+                    format!("{DEV_TOOLS_TITLE}{}", from_browser_url(e, page))
+                }
+                _ => title,
+            };
             let shown = e
                 .with_mut::<WebEngineView, _>(me, |v| {
                     (!v.run.blank).then(|| v.run.title.clone_from(&title))
@@ -876,7 +1056,9 @@ pub(crate) fn apply(e: &Engine, me: ObjectId, event: Event) {
             destination,
             geometry,
             user_initiated,
-        } => new_window(e, me, &url, destination, geometry, user_initiated),
+        } => {
+            new_window(e, me, &url, destination, geometry, user_initiated, false);
+        }
         Event::CloseRequested => {
             let _ = e.emit_by_name(me, "windowCloseRequested", &[]);
         }
@@ -1134,7 +1316,8 @@ fn new_window(
     destination: i32,
     (x, y, w, h): (f64, f64, f64, f64),
     user_initiated: bool,
-) {
+    waiting: bool,
+) -> Option<ObjectId> {
     let request = WebEngineNewWindowRequest {
         destination,
         requested_url: Url(Atom::from(url)),
@@ -1146,12 +1329,28 @@ fn new_window(
         },
         user_initiated,
         handled: false,
+        waiting,
+        opened_in: None,
     };
-    let Ok(request) = e.create_native(request, Some(me)) else {
-        return;
-    };
+    let request = e.create_native(request, Some(me)).ok()?;
     let _ = e.emit_by_name(me, "newWindowRequested", &[Value::Object(request)]);
+    let opened = e
+        .with_mut::<WebEngineNewWindowRequest, _>(request, |r| {
+            r.waiting = false;
+            r.opened_in.take()
+        })
+        .ok()
+        .flatten();
     e.destroy_at_turn_end(request);
+    match opened {
+        // The page's own view cannot be given a window while its page
+        // waits on it: it goes to the address instead.
+        Some(view) if view == me => {
+            open_request(e, me, url);
+            None
+        }
+        opened => opened.filter(|v| e.is_alive(*v)),
+    }
 }
 
 /// A value a page's script gave, as a QML script is handed it.
