@@ -44,21 +44,34 @@ seconds="${BENCH_3D_PROBE_SECONDS:-10}"
 # draws QtQuick3D on Wayland there, as the bench runs it.
 wayland="$("$root/scripts/cua-sandbox.sh" env | sed -n 's/^WAYLAND_DISPLAY=//p')"
 logs="$out/qml6"
+# This run's scenes only: the summary reads every log in it.
+rm -rf "$logs"
 mkdir -p "$logs"
 python3 - "$out/manifest.json" <<'PY' |
 import json, sys
 for app in json.load(open(sys.argv[1]))["apps"]:
-    print("\t".join([app["id"], app["file"], app.get("dir") or ".", *app.get("imports", [])]))
+    # The bench left qml6 out for it, and so does the probe (BENCH_QT's
+    # apps are not marked).
+    if not app.get("qt", True):
+        continue
+    # The app's environment as the bench gave it (a stand-in may read the
+    # example's files), its pairs apart from the imports.
+    env = "\x1f".join(f"{k}={v}" for k, v in sorted(app.get("env", {}).items()))
+    print("\t".join([app["id"], app["file"], app.get("dir") or ".", env or "-", *app.get("imports", [])]))
 PY
-  while IFS=$'\t' read -r id file dir imports; do
+  while IFS=$'\t' read -r id file dir env imports; do
     args=()
     for i in $imports; do args+=(-I "$i"); done
+    envs=()
+    [[ $env == - ]] || IFS=$'\x1f' read -r -a envs <<<"$env"
     echo "bench:3d: qml6 renderStats of $id for ${seconds}s" >&2
     # qml6 logs to the journal unless told otherwise; the probe's lines are
     # wanted, and a scene that fails to load says so in them.
     # Where the bench ran it: an example reads its downloaded assets from there.
-    (cd "$dir" && "$root/scripts/cua-sandbox.sh" exec env WAYLAND_DISPLAY="$wayland" QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=wayland \
-      QT_QUICK_CONTROLS_STYLE=Basic timeout "$seconds" qml6 ${args[@]+"${args[@]}"} \
+    # QSG_RHI_PROFILE asks Qt for the GPU timestamps lastCompletedGpuTime
+    # comes from, which it leaves off otherwise.
+    (cd "$dir" && "$root/scripts/cua-sandbox.sh" exec env WAYLAND_DISPLAY="$wayland" QT_FORCE_STDERR_LOGGING=1 QT_QPA_PLATFORM=wayland QSG_RHI_PROFILE=1 \
+      QT_QUICK_CONTROLS_STYLE=Basic ${envs[@]+"${envs[@]}"} timeout "$seconds" qml6 ${args[@]+"${args[@]}"} \
       "$root/bench/quick3d/renderstats-probe.qml" -- "$file" > "$logs/$id.log" 2>&1 < /dev/null) || true
   done
 
