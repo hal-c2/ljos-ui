@@ -571,6 +571,24 @@ fn ozone_platform(words: &[String]) -> Option<&'static str> {
     })
 }
 
+/// What a page cannot have when Chromium runs with no display, which it
+/// does with `--ozone-platform=headless` (the last such word wins). There
+/// it refuses a page its location and reading the clipboard by itself:
+/// the view is never asked, and even an answer kept from before is
+/// overruled. It asks about notifications, media and the rest as ever.
+fn headless_warning(words: &[String]) -> Option<String> {
+    let platform = words
+        .iter()
+        .rev()
+        .find_map(|w| w.strip_prefix("--ozone-platform="))?;
+    (platform == "headless").then(|| {
+        "the web engine runs with no display (--ozone-platform=headless): Chromium refuses \
+         pages their location and reading the clipboard without asking the view; run it \
+         with a Wayland or X11 display for those"
+            .to_owned()
+    })
+}
+
 fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     let layout = layout().as_ref().map_err(Clone::clone)?;
     #[cfg(target_os = "macos")]
@@ -591,6 +609,9 @@ fn initialize_cef(e: &Engine, first: &ProfileSpec) -> Result<Global, String> {
     }
     if let Some(platform) = ozone_platform(&words) {
         words.push(format!("--ozone-platform={platform}"));
+    }
+    if let Some(why) = headless_warning(&words) {
+        e.log(LogLevel::Warning, crate::CATEGORY, why);
     }
     // Chromium has one place for the HTTP caches of a process, given as
     // it starts: the one the first profile on disk names.
@@ -3238,6 +3259,39 @@ mod tests {
     fn the_notifications_script_calls_the_names_the_view_uses() {
         assert!(NOTIFICATIONS.contains(&format!("globalThis.{ASKING};")));
         assert!(NOTIFICATIONS.contains(&format!("\"{ANSWERED}\"")));
+    }
+
+    #[test]
+    fn an_engine_with_no_display_says_what_its_pages_are_refused() {
+        let words = |w: &[&str]| w.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        let warned = headless_warning(&words(&["ljos", "--ozone-platform=headless"]))
+            .expect("a warning with no display");
+        assert!(
+            warned.contains("location") && warned.contains("clipboard"),
+            "{warned}"
+        );
+        assert_eq!(
+            headless_warning(&words(&["ljos", "--ozone-platform=wayland"])),
+            None
+        );
+        assert_eq!(headless_warning(&words(&["ljos"])), None);
+        // The last word Chromium is given is the one it follows.
+        assert!(
+            headless_warning(&words(&[
+                "ljos",
+                "--ozone-platform=x11",
+                "--ozone-platform=headless"
+            ]))
+            .is_some()
+        );
+        assert_eq!(
+            headless_warning(&words(&[
+                "ljos",
+                "--ozone-platform=headless",
+                "--ozone-platform=x11"
+            ])),
+            None
+        );
     }
 
     #[test]
