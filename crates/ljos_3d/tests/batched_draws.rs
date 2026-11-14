@@ -4,6 +4,7 @@
 //! where it clicked. A camera that moves, even one that changes which batch
 //! is the nearer, writes none of their rows; a model that moves writes its
 //! own. A model no longer alike, or with a depth bias, is drawn on its own;
+//! of two alike in one place the later declared shows, as drawn apart;
 //! one that writes no depth stays between the models alike around it; and
 //! a batched model's colour draws no shadow map again.
 //!
@@ -280,6 +281,52 @@ fn models_alike_but_for_place_and_colour_are_one_draw() {
     );
     assert_within_a_level(&batched, &each, "a model writing no depth between");
     assert_eq!(counts.draw_calls, 3, "{counts:?}");
+
+    // Of two alike in one place with no bias, the later declared is drawn
+    // last and shows, batched or not, whichever slots they hold: red is
+    // declared after blue but takes the slot a hidden cube left before it.
+    let tie = |models: &[(Primitive, Vec3, Color, DepthDraw)]| {
+        let scene = small(models, None);
+        let hidden = scene
+            .walk()
+            .into_iter()
+            .find(|(_, node, _)| matches!(node.kind, NodeKind::Model(_)))
+            .map(|(id, _, _)| id)
+            .unwrap();
+        (scene, hidden)
+    };
+    let filler = (
+        Primitive::Cube,
+        Vec3::new(120.0, 0.0, 0.0),
+        GREEN,
+        DepthDraw::OpaqueOnly,
+    );
+    let blue = (
+        Primitive::Cube,
+        Vec3::new(0.0, 0.0, 0.0),
+        BLUE,
+        DepthDraw::OpaqueOnly,
+    );
+    let red = (blue.0, blue.1, RED, blue.3);
+    let mut held = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    frame(&gpu, &mut held, &tie(&[filler, blue]).0);
+    let (mut gone, hidden) = tie(&[filler, blue]);
+    gone.node_mut(hidden).unwrap().visible = false;
+    frame(&gpu, &mut held, &gone);
+    let (mut later, hidden) = tie(&[filler, blue, red]);
+    later.node_mut(hidden).unwrap().visible = false;
+    let (counts, batched) = frame(&gpu, &mut held, &later);
+    assert_eq!(
+        counts.draw_calls, 1,
+        "blue and red are one draw: {counts:?}"
+    );
+    gpu.renderer().set_batching(false);
+    let mut alone = Target::new(gpu.device(), &gpu.renderer(), SIZE);
+    let each = frame(&gpu, &mut alone, &later).1;
+    gpu.renderer().set_batching(true);
+    let [r, _, b, _] = batched.pixel(SIZE[0] / 2, SIZE[1] / 2);
+    assert!(r > b, "red, declared later, shows: {r} red, {b} blue");
+    assert_within_a_level(&batched, &each, "a tie in one place");
 
     // A batched model's colour is not its shadow's: changing it draws no
     // shadow map again.

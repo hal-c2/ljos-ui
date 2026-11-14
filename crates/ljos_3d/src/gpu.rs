@@ -1153,6 +1153,9 @@ struct Draw<'a> {
     /// Whether a depth bias orders it: drawn last of those at one depth,
     /// it is the one seen there.
     biased: bool,
+    /// Where it is in the scene's declaration order, which the depth sort
+    /// keeps among those at one depth.
+    order: u32,
     /// The model drawn, or the first of those drawn with it as one.
     node: NodeId,
     /// How many models it draws.
@@ -1260,16 +1263,18 @@ fn batched<'a>(
     if groups.len() == draws.len() {
         return draws;
     }
-    // A group is drawn where its nearest is; its rows are laid out by the
-    // models' slots, which a camera that moves changes neither within a
-    // batch nor between batches. The rows are then written again only when
-    // a model moves or a batch gains or loses one.
+    // A group is drawn where its nearest is; its rows are laid out in the
+    // scene's declaration order, which a camera that moves changes neither
+    // within a batch nor between batches. The rows are then written again
+    // only when a model moves or a batch gains or loses one. It is also the
+    // order the depth sort leaves models at one depth in, so of two alike in
+    // one place the later declared is drawn last and shows, batched or not.
     let nearest: Vec<usize> = groups.iter().map(|g| g[0]).collect();
     for group in &mut groups {
-        group.sort_by_key(|&i| draws[i].slot);
+        group.sort_by_key(|&i| draws[i].order);
     }
     let mut laid_out: Vec<usize> = (0..groups.len()).filter(|&g| groups[g].len() > 1).collect();
-    laid_out.sort_by_key(|&g| draws[groups[g][0]].slot);
+    laid_out.sort_by_key(|&g| draws[groups[g][0]].order);
     let mut first = vec![0; groups.len()];
     for g in laid_out {
         first[g] = rows.len() as u32;
@@ -2469,6 +2474,7 @@ impl Renderer {
                         + node.depth_bias.signum() * node.depth_bias * node.depth_bias,
                     probe: own_probe,
                     biased: node.depth_bias != 0.0,
+                    order: (opaque.len() + blended.len()) as u32,
                     node: *id,
                     models: 1,
                 };
