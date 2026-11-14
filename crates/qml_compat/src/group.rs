@@ -266,6 +266,14 @@ pub(crate) fn imported_dir(dir: &str, path: &str) -> String {
     normal(&join(dir, path.trim_end_matches('/')))
 }
 
+/// Whether a file in `dir` that imports `path` may import the directory
+/// `key`. A URL (`file:///…`) is the project's to resolve, against the
+/// places it reads, so it may be any directory: lowering a file again
+/// costs only time.
+pub(crate) fn may_import(dir: &str, path: &str, key: &str) -> bool {
+    path.contains(':') || imported_dir(dir, path) == key
+}
+
 fn join(dir: &str, name: &str) -> String {
     if dir.is_empty() {
         name.to_string()

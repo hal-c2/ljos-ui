@@ -167,7 +167,7 @@ impl Lowering {
                 let brings = alone.references.introduced.iter().any(|t| t == name);
                 let imports = || {
                     (alone.references.dirs.iter())
-                        .any(|path| group::imported_dir(other_dir, path) == dir)
+                        .any(|path| group::may_import(other_dir, path, dir))
                 };
                 other.as_str() != key
                     && ((other_dir == dir
@@ -193,7 +193,7 @@ impl Lowering {
             Changed::Dir(dir) => (self.alone.iter())
                 .filter(|(key, alone)| {
                     let at = key.rsplit_once('/').map_or("", |(d, _)| d);
-                    (alone.references.dirs.iter()).any(|path| group::imported_dir(at, path) == dir)
+                    (alone.references.dirs.iter()).any(|path| group::may_import(at, path, dir))
                 })
                 .map(|(key, _)| key.clone())
                 .collect(),
