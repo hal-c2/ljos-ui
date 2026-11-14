@@ -30,14 +30,18 @@ struct Model {
     mirror_at: vec4<f32>,
     mirror_min: vec4<f32>,
     mirror_max: vec4<f32>,
+    copies_global: mat4x4<f32>,
+    copies_back: mat4x4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> layer: Layer;
 @group(1) @binding(0) var<uniform> model: Model;
 @group(1) @binding(1) var<uniform> skin_joints: array<mat4x4<f32>, 256>;
 
+// lit.wgsl's `copy_place`.
 fn place(row0: vec4<f32>, row1: vec4<f32>, row2: vec4<f32>) -> mat4x4<f32> {
-    return transpose(mat4x4<f32>(row0, row1, row2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+    let entry = transpose(mat4x4<f32>(row0, row1, row2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
+    return model.copies_global * entry * model.copies_back;
 }
 
 @vertex

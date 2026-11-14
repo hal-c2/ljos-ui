@@ -18,12 +18,12 @@ use std::sync::{Arc, Weak};
 
 use bytemuck::{Pod, Zeroable};
 
+use crate::copies::{self, HeldCopies};
 use crate::custom::{CustomMaterial, Screen};
 use crate::gbuffer;
 use crate::geometry::CustomGeometry;
 use crate::gpu_extra::{self, InstanceRow, JOINT_SLOT, JointSlot, Rows};
 use crate::ibl::{self, Bound, Ibl};
-use crate::instancing::{Instancing, instance_worlds};
 use crate::maps::{self, GroupKey, Maps};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh::{Mesh, Topology};
@@ -139,6 +139,13 @@ struct ModelUniform {
     mirror_at: [f32; 4],
     mirror_min: [f32; 4],
     mirror_max: [f32; 4],
+    /// An instanced model's copies are each placed by their entry inside
+    /// these, the instancing's place in front and its inverse behind: the
+    /// rows then hold the table as it is and need writing only when it
+    /// changes, not when what holds it moves. Identities for a model drawn
+    /// once.
+    copies_global: [[f32; 4]; 4],
+    copies_back: [[f32; 4]; 4],
 }
 
 /// A reflection probe of this frame, as the models near it read it.
@@ -294,6 +301,8 @@ pub struct Target {
     model_buffer: wgpu::Buffer,
     /// Which model's uniforms are in which of those slots.
     model_slots: UniformSlots<NodeId>,
+    /// What is kept of the instanced models' copies between frames.
+    copies: HeldCopies,
     model_group: wgpu::BindGroup,
     model_capacity: u64,
     /// The copies every draw reads a range of; row 0 is the identity, a
@@ -348,9 +357,16 @@ struct Shadows {
 
 /// Everything a scene's shadow maps show: while it stays the same, so do
 /// they, and they are not drawn again.
-/// A caster as its shadow shows it: mesh, mesh revision, world, culling
-/// and copies.
-type CasterKey = (MeshKey, u64, [[f32; 4]; 4], CullMode, Copies);
+/// A caster as its shadow shows it: mesh, mesh revision, world, culling,
+/// copies, and what places the copies' rows.
+type CasterKey = (
+    MeshKey,
+    u64,
+    [[f32; 4]; 4],
+    CullMode,
+    Copies,
+    [[[f32; 4]; 4]; 2],
+);
 
 #[derive(PartialEq)]
 struct ShadowKey {
@@ -383,6 +399,8 @@ struct Caster {
     mesh: MeshKey,
     cull: CullMode,
     copies: Copies,
+    /// What its uniforms put in front of a copy's row and behind it.
+    places: (Mat4, Mat4),
     extra: bool,
     world: Mat4,
     centre: Vec3,
@@ -506,6 +524,7 @@ impl Target {
             joints,
             frame_written: None,
             model_slots: UniformSlots::default(),
+            copies: HeldCopies::default(),
             slots_written: Vec::new(),
             staging: Vec::new(),
             drawn: None,
@@ -815,7 +834,7 @@ fn outside(planes: &[[f32; 4]; 6], centre: Vec3, radius: f32) -> bool {
 
 /// The longest a unit vector becomes under `world`: what a bounding
 /// sphere's radius is scaled by.
-fn largest_scale(world: &Mat4) -> f32 {
+pub(crate) fn largest_scale(world: &Mat4) -> f32 {
     (0..3)
         .map(|c| {
             let v = world.0[c];
@@ -895,6 +914,8 @@ fn model_uniform(material: &Material, world: &Mat4) -> ModelUniform {
         mirror_at: [0.0; 4],
         mirror_min: [0.0; 4],
         mirror_max: [0.0; 4],
+        copies_global: Mat4::IDENTITY.0,
+        copies_back: Mat4::IDENTITY.0,
     };
     for (i, slot) in maps::slots(material).iter().enumerate() {
         let Some((texture, _)) = slot else {
@@ -1734,41 +1755,6 @@ fn bind_mesh(pass: &mut wgpu::RenderPass<'_>, mesh: &GpuMesh, rows: &wgpu::Buffe
     pass.set_index_buffer(mesh.indices.slice(..), wgpu::IndexFormat::Uint32);
 }
 
-/// Pushes the rows of an instanced model's copies onto `rows`, the
-/// farthest from the camera first if the instancing sorts them. A copy's
-/// alpha is 1 unless the copies blend.
-fn copy_rows(
-    scene: &Scene,
-    id: crate::scene::NodeId,
-    world: &Mat4,
-    instancing: &Instancing,
-    opaque: bool,
-    view: &Mat4,
-    rows: &mut Vec<InstanceRow>,
-) {
-    let global = instancing.global(scene, id, world);
-    let back = global.inverse().unwrap_or(Mat4::IDENTITY);
-    let first = rows.len();
-    let entries = instancing.drawn();
-    rows.extend(entries.iter().map(|e| {
-        let mut color = e.color;
-        if opaque {
-            color[3] = 1.0;
-        }
-        InstanceRow::new(&(global * e.transform * back), color, e.custom)
-    }));
-    if instancing.depth_sort {
-        let origin = world.translation();
-        let depth =
-            |r: &InstanceRow| -transform_point(view, transform_point(&r.matrix(), origin)).z;
-        rows[first..].sort_by(|a, b| depth(b).total_cmp(&depth(a)));
-    }
-    debug_assert_eq!(
-        instance_worlds(global, *world, entries).count(),
-        rows.len() - first
-    );
-}
-
 /// The way each side of a cube is looked through, and which way is up on
 /// it, in the order of the cube's layers.
 const CUBE_LOOKS: [([f32; 3], [f32; 3]); 6] = [
@@ -2080,6 +2066,7 @@ impl Renderer {
         let mut casters: Vec<Caster> = Vec::new();
         let mut uniforms: Vec<(u32, ModelUniform)> = Vec::new();
         target.model_slots.begin();
+        target.copies.begin();
         let mut bounds = Vec::new();
         let shadows = !shadowing.is_empty();
         // Row 0 and joint slot 0 are what a plain model reads.
@@ -2140,6 +2127,7 @@ impl Renderer {
                     _ => vec![sphere(&placed)],
                 };
                 let mut copies = Copies::ONE;
+                let mut places = (Mat4::IDENTITY, Mat4::IDENTITY);
                 // A custom material's shader writes its own alpha, so it has
                 // no share of the node's to take.
                 let mut transparent =
@@ -2149,23 +2137,47 @@ impl Renderer {
                     Some(instancing) => {
                         let first = rows.len();
                         transparent |= instancing.transparent;
-                        let opaque = !(transparent || model.material.blends());
-                        copy_rows(scene, *id, world, instancing, opaque, &view, &mut rows);
-                        if rows.len() == first {
+                        let global = instancing.global(scene, *id, world);
+                        let local = instancing.local(scene, *id, world, &global);
+                        // The spheres in the table's space: the mesh's
+                        // placed there as the node has it, to the bit while
+                        // only what is above moves, or the joints' taken
+                        // out of the scene.
+                        let in_table: Vec<(Vec3, f32)> = match &palette {
+                            Some(p) if !p.is_empty() => {
+                                let back = global.inverse().unwrap_or(Mat4::IDENTITY);
+                                let scale = largest_scale(&back);
+                                spheres
+                                    .iter()
+                                    .map(|&(c, r)| (transform_point(&back, c), r * scale))
+                                    .collect()
+                            }
+                            _ => vec![sphere(&local)],
+                        };
+                        let held = target.copies.push(
+                            &copies::Model {
+                                id: *id,
+                                instancing,
+                                global,
+                                spheres: &in_table,
+                                origin: local.translation(),
+                                opaque: !(transparent || model.material.blends()),
+                                view: instancing.depth_sort.then_some(&view),
+                            },
+                            &mut rows,
+                        );
+                        let Some(held) = held else {
                             continue;
-                        }
+                        };
                         copies.first = first as u32;
                         copies.count = (rows.len() - first) as u32;
-                        let places = rows[first..].iter().map(InstanceRow::matrix);
-                        let all = places.flat_map(|m| {
-                            spheres
-                                .iter()
-                                .map(move |&(c, r)| (transform_point(&m, c), r * largest_scale(&m)))
-                        });
-                        gpu_extra::union(all).unwrap_or_default()
+                        places = (held.global, held.back);
+                        held.sphere
                     }
                 };
                 let mut uniform = model_uniform(&model.material, &placed);
+                uniform.copies_global = places.0.0;
+                uniform.copies_back = places.1.0;
                 uniform.params2[3] = f32::from(u8::from(node.receives_shadows));
                 uniform.map_params[2] = opacity;
                 // Lit by its own shader, a copy's colour is part of its surface.
@@ -2219,6 +2231,7 @@ impl Renderer {
                         mesh: key,
                         cull: model.material.cull_mode(),
                         copies,
+                        places,
                         extra,
                         world: placed,
                         centre,
@@ -2361,6 +2374,7 @@ impl Renderer {
         draws.append(&mut reading);
         draws.append(&mut blended);
 
+        target.copies.end();
         target.instances.write(device, queue, &rows);
         if target.joints.write(device, queue, &joint_slots) {
             target.model_group = model_group(
@@ -2883,7 +2897,14 @@ impl Renderer {
                         MeshKey::Primitive(_) => 0,
                         MeshKey::Custom(id) => self.custom[&id].revision,
                     };
-                    (c.mesh, revision, c.world.0, c.cull, c.copies)
+                    (
+                        c.mesh,
+                        revision,
+                        c.world.0,
+                        c.cull,
+                        c.copies,
+                        [c.places.0.0, c.places.1.0],
+                    )
                 })
                 .collect(),
             instances: instances.to_vec(),
