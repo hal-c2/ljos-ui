@@ -30,12 +30,14 @@ Feature: What drawing a 3D scene costs
         View3D {
           id: view
           anchors.fill: parent
-          PerspectiveCamera { z: 400 }
+          PerspectiveCamera { z: 400; frustumCullingEnabled: true }
           DirectionalLight { castsShadow: true }
           Model { source: "#Cube"; materials: DefaultMaterial {
               diffuseMap: Texture { source: "checker.png" } } }
           Model { source: "#Sphere"; x: 120
                   materials: PrincipledMaterial { baseColor: "red" } }
+          // Behind the camera.
+          Model { source: "#Cube"; z: 1000; materials: DefaultMaterial { } }
         }
         RenderStatistics { id: stats; objectName: "stats" }
         Timer { interval: 100; repeat: true; running: true; onTriggered: stats.refresh() }
@@ -55,31 +57,15 @@ Feature: What drawing a 3D scene costs
       And the property "pipelineSwitches" of "stats" is at least 2
       And the property "bindGroupSets" of "stats" is at least 4
       And the property "modelsDrawn" of "stats" is 2
-      And the property "modelsCulled" of "stats" is 0
 
     Scenario: A model the camera does not see is left out
-      Given the QML:
-        """qml
-        import QtQuick
-        import QtQuick3D
-        import QtQuick3D.Helpers
-        Rectangle {
-          width: 300; height: 200; color: "black"
-          View3D {
-            anchors.fill: parent
-            PerspectiveCamera { z: 400; frustumCullingEnabled: true }
-            DirectionalLight { }
-            Model { source: "#Cube"; materials: DefaultMaterial { } }
-            Model { source: "#Cube"; z: 1000; materials: DefaultMaterial { } }
-          }
-          RenderStatistics { id: stats; objectName: "stats" }
-          Timer { interval: 100; repeat: true; running: true; onTriggered: stats.refresh() }
-        }
-        """
+      # A second "Given the QML:" would add a scene beside the Background's,
+      # and the counts are the frame's, every view of the window together;
+      # so the model left out is the Background's own.
       When 100 milliseconds pass
       Then the pixel at 5, 195 of the window is not "#123456"
       When 200 milliseconds pass
-      Then the property "modelsDrawn" of "stats" is 1
+      Then the property "modelsDrawn" of "stats" is 2
       And the property "modelsCulled" of "stats" is 1
 
   Rule: A frame says what was uploaded and made for it
