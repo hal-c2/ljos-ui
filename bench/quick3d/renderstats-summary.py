@@ -4,13 +4,16 @@ logged, one LOGS/<id>.log per scene, into OUT (JSON) and prints a table.
 
 The first two seconds are left out: they are the window opening and the
 scene's first frames. Each number is the median of the seconds after, for
-the first View3D; frame and CPU times are Qt's, in milliseconds."""
+the first View3D; frame and CPU times are Qt's, in milliseconds. A GPU time
+of 0 is one Qt did not measure (an adapter without timestamps), so a scene
+whose every second says 0 has none, not a GPU time of 0."""
 import json
 import os
 import statistics
 import sys
 
 SKIP = 2
+UNMEASURED_AT_ZERO = {"lastCompletedGpuTime"}
 SHOWN = [
     ("fps", "fps"),
     ("frameTime", "frame ms"),
@@ -45,6 +48,8 @@ def summarise(path):
     numbers = {}
     for name in sorted({k for l in first for k in l} - {"view", "second"}):
         values = [l[name] for l in first if isinstance(l.get(name), (int, float))]
+        if name in UNMEASURED_AT_ZERO:
+            values = [v for v in values if v > 0]
         if values:
             numbers[name] = statistics.median(values)
     return {"views": views, "seconds": len(first), "error": error, "median": numbers}

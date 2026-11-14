@@ -78,7 +78,8 @@ for line in os.environ["ROWS"].splitlines():
     standins = os.path.join(root, "corpus", "standins", cid)
     if os.path.isdir(standins):
         apps[-1]["imports"].append(standins)
-        for here, dirs, files in sorted(os.walk(standins)):
+        # Not sorted(os.walk(…)): that walks it all before `dirs` is pruned.
+        for here, dirs, files in os.walk(standins):
             dirs[:] = sorted(x for x in dirs if x != "downloaded")
             if "qmldir" in files:
                 module = re.search(r"^module\s+(\S+)", open(os.path.join(here, "qmldir")).read(), re.M)

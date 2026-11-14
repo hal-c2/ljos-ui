@@ -39,6 +39,11 @@ QtObject {
             return;
         }
         scene = component.createObject(null);
+        if (scene === null) {
+            console.log("renderstats-error " + component.errorString());
+            Qt.exit(2);
+            return;
+        }
         find(scene.contentItem !== undefined ? scene.contentItem : scene);
         for (const v of views) {
             if (v.renderStats.extendedDataCollectionEnabled !== undefined)
