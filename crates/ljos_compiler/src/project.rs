@@ -830,6 +830,11 @@ impl<O: TypeOracle> Project<O> {
                         project.add_declarations(&key, text);
                     }
                 }
+                // A qmldir names the directory's types, with a `module`
+                // line or without one, as `load_root` reads it.
+                if names.iter().any(|name| name == "qmldir") {
+                    project.module_dirs.insert(dir_key.clone());
+                }
                 let (described, kept) = described(dir, names);
                 resources.extend(kept.into_iter().filter(|(_, path)| path.is_file()));
                 resource_dirs.extend(described.iter().map(|m| (m.address(""), dir.clone())));
