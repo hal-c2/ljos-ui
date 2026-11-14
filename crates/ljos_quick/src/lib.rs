@@ -97,8 +97,8 @@ pub use animation::{
     Animation, AnimationController, Behavior, BehaviorTarget, ColorAnimation, Easing, EasingGroup,
     FrameAnimation, NumberAnimation, ParallelAnimation, PauseAnimation, PropertyAction,
     PropertyAnimation, RotationAnimation, ScriptAction, SequentialAnimation, SmoothedAnimation,
-    Way, between, curve_of, easing, running_animation_count, running_animations,
-    set_animation_frame_period, start_animation, stop_animation,
+    Way, between, curve_of, easing, frame_time_due, frames_only_while, running_animation_count,
+    running_animations, set_animation_frame_period, start_animation, stop_animation,
 };
 pub use animation::{
     Passage, Transition, run_passage, run_passage_beside, run_transition, run_transition_to,

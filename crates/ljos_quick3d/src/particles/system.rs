@@ -6,12 +6,12 @@ use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 use std::time::Instant;
 
-use ljos::item::FrameAnimation;
 use ljos::item::ljos_3d::math::{Mat4, Vec3};
 use ljos::item::ljos_3d::particles::{
     Affector, Aged, Counter, Emitter, EmitterState, Follower, Lines, Look, Seen, Table,
     burst as emit_burst, hidden_in, keep_up, look as seen_at, reset_state, run_emitter, run_trail,
 };
+use ljos::item::{FrameAnimation, frame_time_due, frames_only_while};
 use ljos::ljos_engine::{Prop, WriteKind};
 use ljos::prelude::*;
 
@@ -175,6 +175,12 @@ impl ParticleSystem3D {
         let log = e.create_native(ParticleSystem3DLogging::default(), Some(me))?;
         e.set_internal(me, ParticleSystem3D::LOGGING_DATA, Some(log))?;
         let clock = e.create_native(FrameAnimation::default(), Some(me))?;
+        // Its time is read by its step while it is shown, or by whatever
+        // else reads it. Hidden and read by nobody, the clock rides along
+        // with the frames others ask for and asks for none.
+        frames_only_while(e, clock, move |e| {
+            e.is_observed(me, ParticleSystem3D::TIME.index)
+        });
         cx.with_mut(|s: &mut ParticleSystem3D| {
             s.clock = Some(clock);
             s.declared = Some(declared);
@@ -202,6 +208,11 @@ impl ParticleSystem3D {
                         let _ = e.set_internal(me, ParticleSystem3D::TIME, 0);
                     }
                 }
+                // A clock that rode along without frames has run since its
+                // last one: that time is the system's before the clock stops.
+                if !(running && !paused) {
+                    bank(e, me, clock);
+                }
                 // A write of `paused` above comes back here with it false.
                 let _ = e.write(
                     clock,
@@ -228,6 +239,38 @@ fn tick(e: &Engine, me: ObjectId) {
         return;
     };
     let _ = e.set_internal(me, ParticleSystem3D::TIME, gone.floor() as i32);
+    if !e.is_observed(me, ParticleSystem3D::TIME.index) {
+        let _ = e.make_on_read_by(me, ParticleSystem3D::TIME.index, made_time);
+    }
+}
+
+/// Adds to the system's time what its clock has run since its last frame.
+/// Nought unless the clock runs.
+fn bank(e: &Engine, me: ObjectId, clock: ObjectId) {
+    let due = frame_time_due(e, clock) * 1000.0;
+    if due <= 0.0 {
+        return;
+    }
+    let Ok(gone) = e.with_mut(me, |s: &mut ParticleSystem3D| {
+        s.gone += due;
+        s.gone
+    }) else {
+        return;
+    };
+    let _ = e.set_internal(me, ParticleSystem3D::TIME, gone.floor() as i32);
+}
+
+/// The time of a system whose clock rides along without asking for frames:
+/// what it was at the clock's last frame and what has gone by since. A
+/// script that reads it while nothing else does sees it go on.
+fn made_time(e: &Engine, me: ObjectId, prop: PropIndex) -> Value {
+    // Read again, it is made again.
+    let _ = e.make_on_read_by(me, prop, made_time);
+    let Ok((gone, clock)) = e.with(me, |s: &ParticleSystem3D| (s.gone, s.clock)) else {
+        return Value::Int(0);
+    };
+    let due = clock.map_or(0.0, |c| frame_time_due(e, c)) * 1000.0;
+    Value::Int((gone + due).floor() as i32)
 }
 
 fn reset(e: &Engine, me: ObjectId) {
@@ -311,6 +354,29 @@ fn leave(e: &Engine, system: ObjectId, me: ObjectId, member: Member) {
     let _ = e.notify(system, ParticleSystem3D::LOGGING_DATA.index);
 }
 
+/// Whether its clock runs, so that its time is the clock's. Tracked: a
+/// clock that starts again while the system is hidden runs the step again,
+/// which makes the time from then on, frames or none.
+fn ticking(e: &Engine, me: ObjectId) -> bool {
+    let Some(clock) = e.with(me, |s: &ParticleSystem3D| s.clock).ok().flatten() else {
+        return false;
+    };
+    e.get(clock, FrameAnimation::RUNNING).unwrap_or(false)
+}
+
+/// Whether the system and each node it is in are visible. Tracked: shown
+/// again, the step runs.
+fn shown(e: &Engine, me: ObjectId) -> bool {
+    let mut at = Some(me);
+    while let Some(o) = at {
+        if !e.get(o, Node::VISIBLE).unwrap_or(true) {
+            return false;
+        }
+        at = space::parent_node(e, o);
+    }
+    true
+}
+
 /// The time without `startTime`: nought until `time` is another than it was
 /// declared with.
 fn time_of(e: &Engine, me: ObjectId) -> i32 {
@@ -365,6 +431,16 @@ struct KindRead {
 fn step(e: &Engine, me: ObjectId) {
     let started = Instant::now();
     let logging = e.get(me, ParticleSystem3D::LOGGING).unwrap_or(false);
+    // Hidden, it shows nothing: what it would have done by its time is
+    // worked out once it is shown. Its time, unread, asks for no frames,
+    // and is worked out when something reads it. Only a clock that runs
+    // owns the time: a stopped or paused system keeps what it was given.
+    if !logging && !shown(e, me) {
+        if ticking(e, me) {
+            let _ = e.make_on_read_by(me, ParticleSystem3D::TIME.index, made_time);
+        }
+        return;
+    }
     // Told when what is in the system changes.
     let _ = e.get(me, ParticleSystem3D::LOGGING_DATA);
     let t = time_of(e, me);

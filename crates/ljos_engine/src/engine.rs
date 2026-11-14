@@ -1672,10 +1672,17 @@ impl Engine {
             })) => Value::Object(object),
             // Not wired yet (still being created).
             Got::Alias(None) => Value::Undefined,
-            // The maker goes as it runs, so this reads on once.
+            // The maker goes as it runs, so this reads on once. One that
+            // gave itself again makes the value on every read: this read
+            // has what it made, and the next one is made again.
             Got::Due => {
                 self.make_if_due(obj, prop);
-                return self.try_read(obj, prop);
+                let again = self.take_maker(obj, prop);
+                let read = self.try_read(obj, prop);
+                if let Some(m) = again {
+                    self.give_maker_back(obj, prop, m);
+                }
+                return read;
             }
         };
         Ok(self.live(v))
