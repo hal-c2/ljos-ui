@@ -340,6 +340,46 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "1230"
     And the property "stayed" of "view" is true
 
+  # A page opening a window the view opens in another keeps hold of it:
+  # the page in the new view is the one the page opened, and can answer
+  # it through window.opener.
+  @api-QtWebEngine.WebEngineView.newWindowRequested @api-QtWebEngine.WebEngineNewWindowRequest.openIn
+  Scenario: A page opened in another view can reach the page that opened it
+    Given the text file "opener.html":
+      """
+      <!doctype html><html><head><title>waiting</title></head>
+      <body style="margin:0"><div onclick="window.open('popup.html')" style="height:100px; background:#ff0000"></div>
+      <script>addEventListener("message", m => document.title = m.data)</script></body></html>
+      """
+    And the text file "popup.html":
+      """
+      <!doctype html><html><head><title>popup</title></head><body><script>
+      if (window.opener) window.opener.postMessage("heard", "*"); else document.title = "no opener"
+      </script></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineView {
+          id: opener; width: 200; height: 100
+          url: Qt.resolvedUrl("opener.html")
+          onNewWindowRequested: request => request.openIn(popup)
+        }
+        WebEngineView { id: popup; y: 100; width: 200; height: 100 }
+        property string seen: opener.title + " " + popup.title + " "
+          + (popup.url.toString() === Qt.resolvedUrl("popup.html").toString())
+      }
+      """
+    When 2 seconds pass
+    And the user presses the pointer at 100, 50
+    And the user releases the pointer at 100, 50
+    And 2 seconds pass
+    Then the property "seen" of "root" is "heard popup true"
+
   @api-QtWebEngine.WebEngineView.triggerWebAction @api-QtWebEngine.WebEngineNewWindowRequest.requestedUrl
   Scenario: Viewing a page's source asks for a new window showing it
     Given the QML:
@@ -380,6 +420,87 @@ Feature: A web page in a WebEngineView
       """
     When 2 seconds pass
     Then the property "seen" of "view" is "view-source:"
+
+  # Chromium shows a page's source at the page's own address. The view
+  # keeps the address it was given, so its URL and its history tell the
+  # source from the page, as Qt's do (qml6 6.12).
+  @api-QtWebEngine.WebEngineView.url @api-QtWebEngine.WebEngineView.loadingChanged
+  Scenario: A view showing a page's source keeps view-source in its url
+    Given the web server serves the text file "served.html":
+      """
+      <!doctype html><html><head><title>Served Page</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property bool loaded: false
+        url: "view-source:$SERVER/served.html"
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
+          loaded = url.toString() === "view-source:$SERVER/served.html" }
+        property bool titled: title.startsWith("view-source:")
+        property string seen: loaded + " " + titled
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is "true true"
+
+  # A file of the application's is named from the application's root,
+  # its source too.
+  @api-QtWebEngine.WebEngineView.url
+  Scenario: A view showing a file's source names the file as the application does
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        url: "view-source:" + Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => { if (info.status === WebEngineView.LoadSucceededStatus)
+          seen = url.toString() === "view-source:" + Qt.resolvedUrl("page.html") }
+        property bool seen: false
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is true
+
+  # Chromium shows a page's source in place of the page in the history,
+  # as Qt does: back goes to the page before, and forward to the source.
+  @api-QtWebEngine.WebEngineView.url @api-QtWebEngine.WebEngineView.goBack
+  Scenario: Back from a page's source goes back through the view's history
+    Given the web server serves the text file "a.html":
+      """
+      <!doctype html><html><head><title>A</title></head><body></body></html>
+      """
+    And the web server serves the text file "b.html":
+      """
+      <!doctype html><html><head><title>B</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        property int step: 0
+        url: "$SERVER/a.html"
+        Timer { interval: 1000; repeat: true; running: view.step < 5; onTriggered: {
+          view.seen += (view.seen ? " " : "") + view.url.toString().replace("$SERVER", "S")
+          view.step += 1
+          if (view.step === 1) view.url = "$SERVER/b.html"
+          else if (view.step === 2) view.url = "view-source:$SERVER/b.html"
+          else if (view.step === 3) view.goBack()
+          else if (view.step === 4) view.goForward() } }
+      }
+      """
+    When 6 seconds pass
+    Then the property "seen" of "view" is "S/a.html S/b.html view-source:S/b.html S/a.html view-source:S/b.html"
 
   # A failed load is reported once and stays failed: the view does not
   # try the page again by itself, and a test waits for nothing more (a
@@ -888,3 +1009,56 @@ Feature: A web page in a WebEngineView
       | path     | failure                             |
       | refused  | -102 net::ERR_CONNECTION_REFUSED 2  |
       | loop     | -310 net::ERR_TOO_MANY_REDIRECTS 4  |
+
+  # Qt shows a different page of the DevTools front end from Chromium's,
+  # so only where the page comes from is checked.
+  @api-QtWebEngine.WebEngineView.devToolsView @api-QtWebEngine.WebEngineView.inspectedView
+  Scenario: A view given another for its DevTools shows them there
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineView {
+          id: page; width: 200; height: 100
+          url: Qt.resolvedUrl("page.html")
+          devToolsView: tools
+        }
+        WebEngineView { id: tools; y: 100; width: 200; height: 100 }
+        property string seen: (tools.inspectedView === page) + " "
+          + tools.url.toString().startsWith("devtools://devtools/") + " "
+          + (tools.title === "DevTools - " + page.url)
+      }
+      """
+    When 4 seconds pass
+    Then the property "seen" of "root" is "true true true"
+
+  @api-QtWebEngine.WebEngineView.devToolsView @api-QtWebEngine.WebEngineView.inspectedView
+  Scenario: A view told to inspect another is its DevTools view until let go
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 200
+        WebEngineView { id: page; width: 200; height: 100; url: Qt.resolvedUrl("page.html") }
+        WebEngineView { id: tools; y: 100; width: 200; height: 100; inspectedView: page }
+        function linked() { return (tools.inspectedView === page) + " " + (page.devToolsView === tools) }
+        property string before: ""
+        property string after: ""
+        Timer {
+          interval: 3000; running: true
+          onTriggered: {
+            root.before = root.linked() + " " + tools.url.toString().startsWith("devtools://devtools/")
+            page.devToolsView = null
+            root.after = root.linked()
+          }
+        }
+      }
+      """
+    When 4 seconds pass
+    Then the property "before" of "root" is "true true true"
+    And the property "after" of "root" is "false false"

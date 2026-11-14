@@ -207,6 +207,11 @@ pub trait Browser {
     /// The page is drawn again as it is, even with nothing on it changed:
     /// a load that ended has its picture.
     fn redraw(&self);
+    /// The address of the page's DevTools front end, for another view to
+    /// load: it inspects this page; `None` when it cannot.
+    fn dev_tools_url(&self) -> Option<String>;
+    /// The page's DevTools front end no longer reaches it.
+    fn close_dev_tools(&self);
     /// The browser goes: no event comes from it after this.
     fn close(&self);
 }

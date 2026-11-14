@@ -686,6 +686,13 @@ pub struct WebEngineNewWindowRequest {
     pub user_initiated: bool,
     #[qml(skip)]
     pub(crate) handled: bool,
+    /// The page waits for where its new window opens: the view named is
+    /// given the window itself, not just its address.
+    #[qml(skip)]
+    pub(crate) waiting: bool,
+    /// The view `openIn` named while the page waited.
+    #[qml(skip)]
+    pub(crate) opened_in: Option<ObjectId>,
 }
 
 #[qml_impl]
@@ -697,8 +704,16 @@ impl WebEngineNewWindowRequest {
             return Ok(());
         };
         let url = cx.get(Self::REQUESTED_URL)?;
-        cx.with_mut(|r: &mut Self| r.handled = true)?;
-        crate::view::open_request(cx.engine, view, url.0.as_str());
+        let waiting = cx.with_mut(|r: &mut Self| {
+            r.handled = true;
+            if r.waiting {
+                r.opened_in = Some(view);
+            }
+            r.waiting
+        })?;
+        if !waiting {
+            crate::view::open_request(cx.engine, view, url.0.as_str());
+        }
         Ok(())
     }
 }

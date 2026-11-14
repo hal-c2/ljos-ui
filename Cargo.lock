@@ -4968,6 +4968,7 @@ name = "ljos_webengine"
 version = "0.0.0"
 dependencies = [
  "cef",
+ "getrandom 0.4.3",
  "ljos_compiler",
  "ljos_controls",
  "ljos_engine",
@@ -4975,6 +4976,7 @@ dependencies = [
  "ljos_quick",
  "ljos_render",
  "serde_json",
+ "sha1_smol",
  "tempfile",
  "thiserror 2.0.21",
  "url",

@@ -22,7 +22,7 @@ use std::sync::{Arc, Condvar, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use ::cef::*;
-use ljos_engine::{Engine, LogLevel, WeakEngine};
+use ljos_engine::{Engine, LogLevel, ObjectId, WeakEngine};
 use ljos_platform::{Platform, Post, Reply};
 use ljos_render::{ImageHandle, PixelRect};
 use serde_json::{Value as Json, json};
@@ -35,6 +35,10 @@ use crate::types::{
     DEFERRED, DOCUMENT_CREATION, DOCUMENT_READY, ProfileSpec, Script, WebEngineProfile,
     permissions_policy,
 };
+
+mod inspector;
+
+use inspector::Inspector;
 
 /// The name of the helper executable CEF starts its other processes from.
 pub const HELPER: &str = if cfg!(windows) {
@@ -1078,6 +1082,21 @@ struct Shared {
     /// What makes the browser, while its profile's request context is not
     /// ready yet; what the view asks meanwhile is kept here.
     unborn: Mutex<Option<Unborn>>,
+    /// A browser CEF makes for the view, not made yet: what it gets once
+    /// it is (see [`adopt`]).
+    adopting: Mutex<Option<(Start, Made)>>,
+    /// The page's DevTools, while a view shows them.
+    inspector: Mutex<Option<Arc<Inspector>>>,
+}
+
+/// How the browser a view shows its pages in came to be.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Made {
+    /// The view asked for it: it starts on a blank page (see [`Boot`]).
+    Asked,
+    /// A page opened it for its new window, and shows what that page
+    /// asked for in it.
+    Opened,
 }
 
 /// A browser waiting for its profile (see [`Profile`]), or one that could
@@ -1541,6 +1560,8 @@ impl Shared {
                 ..Boot::default()
             }),
             unborn: Mutex::default(),
+            adopting: Mutex::default(),
+            inspector: Mutex::default(),
         }
     }
 
@@ -1552,6 +1573,32 @@ impl Shared {
             for m in messages {
                 host.send_dev_tools_message(Some(&m));
             }
+        }
+    }
+
+    /// What the page's DevTools front end sent, passed to the page.
+    fn pass_inspected(&self) {
+        // A browser waiting for its profile hears them once it is made.
+        if Self::lock(&self.browser).is_none() {
+            return;
+        }
+        let Some(inspector) = Self::lock(&self.inspector).clone() else {
+            return;
+        };
+        let messages = {
+            let mut dev = Self::lock(&self.dev);
+            inspector.take(|| {
+                dev.next_id += 1;
+                dev.next_id
+            })
+        };
+        self.send_dev(messages);
+    }
+
+    /// The page's DevTools front end, if any, goes.
+    fn close_inspector(&self) {
+        if let Some(inspector) = Self::lock(&self.inspector).take() {
+            inspector.close();
         }
     }
 
@@ -1702,6 +1749,31 @@ fn is_main(frame: Option<&mut Frame>) -> Option<String> {
     let frame = frame?;
     (frame.is_main() == 1).then(|| frame_url(frame))
 }
+
+/// The address of the page `browser` shows, given its main frame's. A
+/// page's source is shown in a frame at the page's own address; the
+/// history entry keeps the `view-source:` it was asked for, and so does
+/// the view's `url`, to tell the source from the page.
+// Qt 6.11: a load's `loadingChanged` still names the page's own address,
+// so only the view's address goes through here.
+fn shown_url(browser: Option<&Browser>, url: String) -> String {
+    let shown = browser
+        .and_then(|b| b.host())
+        .and_then(|h| h.visible_navigation_entry())
+        .map(|entry| CefString::from(&entry.display_url()).to_string());
+    match shown {
+        Some(shown)
+            if shown
+                .strip_prefix(VIEW_SOURCE)
+                .is_some_and(|inner| same_url(inner, &url)) =>
+        {
+            shown
+        }
+        _ => url,
+    }
+}
+
+const VIEW_SOURCE: &str = "view-source:";
 
 wrap_client! {
     struct PageClient { shared: Arc<Shared> }
@@ -1987,6 +2059,12 @@ wrap_load_handler! {
                 .and_then(|b| b.main_frame())
                 .map(|f| frame_url(&f))
                 .unwrap_or_default();
+            // Going from a page to its own source changes no frame's
+            // address, so Chromium may name the page before the history
+            // entry for its source is in; once loading stops it is.
+            let source = (is_loading == 0)
+                .then(|| shown_url(browser.as_deref(), url.clone()))
+                .filter(|shown| *shown != url);
             let none_told = Shared::lock(&self.shared.load).url.is_none();
             // The view was told the rejected load stopped before it began.
             let rejected = Shared::lock(&self.shared.rejected).is_some();
@@ -2001,6 +2079,9 @@ wrap_load_handler! {
             } else if is_loading == 0 && !none_told {
                 // Nothing said how it ended (a load within the document).
                 self.shared.ended(url, LoadStatus::Succeeded, 200, String::new(), 7);
+            }
+            if let Some(source) = source {
+                self.shared.sink.send(Ev::Url(source));
             }
             self.shared.sink.send(Ev::Navigation {
                 back: can_go_back != 0,
@@ -2110,12 +2191,12 @@ wrap_display_handler! {
     impl DisplayHandler {
         fn on_address_change(
             &self,
-            _browser: Option<&mut Browser>,
+            browser: Option<&mut Browser>,
             frame: Option<&mut Frame>,
             url: Option<&CefString>,
         ) {
             if !self.shared.booting() && is_main(frame).is_some() {
-                let url = string_of(url);
+                let url = shown_url(browser.as_deref(), string_of(url));
                 // A load within the document never passes
                 // `on_before_browse`: once the view's URL is there, the
                 // page going there again is the page's own and is asked.
@@ -2182,9 +2263,9 @@ wrap_life_span_handler! {
             target_disposition: WindowOpenDisposition,
             user_gesture: c_int,
             popup_features: Option<&PopupFeatures>,
-            _window_info: Option<&mut WindowInfo>,
-            _client: Option<&mut Option<Client>>,
-            _settings: Option<&mut BrowserSettings>,
+            window_info: Option<&mut WindowInfo>,
+            client: Option<&mut Option<Client>>,
+            settings: Option<&mut BrowserSettings>,
             _extra_info: Option<&mut Option<DictionaryValue>>,
             _no_javascript_access: Option<&mut c_int>,
         ) -> c_int {
@@ -2192,14 +2273,43 @@ wrap_life_span_handler! {
             let geometry = popup_features.map_or((0.0, 0.0, 0.0, 0.0), |f| {
                 (f.x as f64, f.y as f64, f.width as f64, f.height as f64)
             });
-            self.shared.sink.send(Ev::NewWindow {
-                url: string_of(target_url),
-                destination,
-                geometry,
-                user_initiated: user_gesture != 0,
-            });
-            // The view decides where it opens; CEF makes no window.
-            1
+            let url = string_of(target_url);
+            let user_initiated = user_gesture != 0;
+            // The view is asked there and then: a page opened in the
+            // view it names is the popup itself, which its opener can
+            // reach (`window.opener`), and only CEF can make that.
+            let Some(e) = engine_of(&self.shared) else {
+                self.shared.sink.send(Ev::NewWindow {
+                    url,
+                    destination,
+                    geometry,
+                    user_initiated,
+                });
+                return 1;
+            };
+            let me = self.shared.sink.view();
+            let opened =
+                crate::view::ask_new_window(&e, me, &url, destination, geometry, user_initiated)
+                    .and_then(|view| adopt(&e, view, Made::Opened).map(|a| (view, a)));
+            let (Some((view, adopted)), Some(window_info), Some(client), Some(settings)) =
+                (opened, window_info, client, settings)
+            else {
+                // Nobody opened it, or not then: CEF makes no window.
+                return 1;
+            };
+            *window_info = adopted.window;
+            *client = Some(adopted.client);
+            settings.windowless_frame_rate = adopted.settings.windowless_frame_rate;
+            settings.background_color = adopted.settings.background_color;
+            crate::view::show_in(&e, view, adopted.page);
+            0
+        }
+
+        fn on_after_created(&self, browser: Option<&mut Browser>) {
+            let adopting = Shared::lock(&self.shared.adopting).take();
+            if let (Some((start, made)), Some(browser)) = (adopting, browser) {
+                attach(&self.shared, browser.clone(), &start, made);
+            }
         }
 
         fn do_close(&self, _browser: Option<&mut Browser>) -> c_int {
@@ -2213,6 +2323,7 @@ wrap_life_span_handler! {
 
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
             refuse_asked(&self.shared);
+            self.shared.close_inspector();
             Shared::lock(&self.shared.observer).take();
             Shared::lock(&self.shared.browser).take();
         }
@@ -2550,6 +2661,20 @@ wrap_resource_request_handler! {
 wrap_dev_tools_message_observer! {
     struct PageDevTools { shared: Arc<Shared> }
     impl DevToolsMessageObserver {
+        fn on_dev_tools_message(
+            &self,
+            _browser: Option<&mut Browser>,
+            message: Option<&[u8]>,
+        ) -> c_int {
+            let inspector = Shared::lock(&self.shared.inspector).clone();
+            match (inspector, message) {
+                // An answer to the front end is its alone; the view hears
+                // its own answers, and every event, as it would without it.
+                (Some(inspector), Some(message)) => c_int::from(inspector.heard(message)),
+                _ => 0,
+            }
+        }
+
         fn on_dev_tools_method_result(
             &self,
             _browser: Option<&mut Browser>,
@@ -2573,6 +2698,17 @@ wrap_dev_tools_message_observer! {
                 .and_then(|r| serde_json::from_slice(r).ok())
                 .unwrap_or(Json::Null);
             dev_event(&self.shared, &string_of(method), &params);
+        }
+    }
+}
+
+wrap_task! {
+    struct PassInspected { shared: std::sync::Weak<Shared> }
+    impl Task {
+        fn execute(&self) {
+            if let Some(shared) = self.shared.upgrade() {
+                shared.pass_inspected();
+            }
         }
     }
 }
@@ -2860,21 +2996,7 @@ pub(crate) fn start(
 ) -> Result<std::rc::Rc<dyn Page>, String> {
     pump_into(e);
     let profile = with_global(e, &start.profile, |g| context_for(e, g, &start.profile))?;
-    let shared = Arc::new(Shared::new(
-        Keep::of(&start.profile),
-        sink,
-        Geometry {
-            width: start.width,
-            height: start.height,
-            scale: if start.scale > 0.0 { start.scale } else { 1.0 },
-        },
-        start.zoom,
-    ));
-    ENGINES.with(|engines| {
-        let mut engines = engines.borrow_mut();
-        engines.retain(|(s, _)| s.strong_count() > 0);
-        engines.push((Arc::downgrade(&shared), e.downgrade()));
-    });
+    let shared = shared_for(e, sink, &start);
     let unready = profile.as_ref().is_some_and(|(_, ready)| {
         let mut r = Shared::lock(ready);
         if !r.ready {
@@ -2902,13 +3024,7 @@ pub(crate) fn start(
         profile => make_browser(&shared, &start, profile.map(|(c, _)| c))?,
     }
     let page = std::rc::Rc::new(CefPage { shared });
-    with_global(e, &ProfileSpec::default(), |g| {
-        g.pages.retain(|p| p.strong_count() > 0);
-        g.pages.push(std::rc::Rc::downgrade(&page));
-        g.browsers
-            .retain(|b| Shared::lock(&b.browser).is_some() || Shared::lock(&b.unborn).is_some());
-        g.browsers.push(page.shared.clone());
-    })?;
+    register(e, &page)?;
     Ok(page)
 }
 
@@ -3001,20 +3117,7 @@ fn make_browser(
     mut context: Option<RequestContext>,
 ) -> Result<(), String> {
     let window = WindowInfo::default().set_as_windowless(Default::default());
-    let [r, g, b, a] = start.background;
-    let state = |on: bool| {
-        State::from(if on {
-            sys::cef_state_t::STATE_ENABLED
-        } else {
-            sys::cef_state_t::STATE_DISABLED
-        })
-    };
-    let settings = BrowserSettings {
-        windowless_frame_rate: 60,
-        background_color: (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | b as u32,
-        javascript: state(start.javascript),
-        ..Default::default()
-    };
+    let settings = settings_for(start);
     let mut client = PageClient::new(shared.clone());
     let browser = browser_host_create_browser_sync(
         Some(&window),
@@ -3025,15 +3128,62 @@ fn make_browser(
         context.as_mut(),
     )
     .ok_or_else(|| "CEF made no browser".to_owned())?;
-    let host = browser
-        .host()
-        .ok_or_else(|| "a browser with no host".to_owned())?;
+    if browser.host().is_none() {
+        return Err("a browser with no host".to_owned());
+    }
+    attach(shared, browser, start, Made::Asked);
+    Ok(())
+}
+
+/// A view's side of a browser, for the view `sink` tells.
+fn shared_for(e: &Engine, sink: Sink, start: &Start) -> Arc<Shared> {
+    let shared = Arc::new(Shared::new(
+        Keep::of(&start.profile),
+        sink,
+        Geometry {
+            width: start.width,
+            height: start.height,
+            scale: if start.scale > 0.0 { start.scale } else { 1.0 },
+        },
+        start.zoom,
+    ));
+    ENGINES.with(|engines| {
+        let mut engines = engines.borrow_mut();
+        engines.retain(|(s, _)| s.strong_count() > 0);
+        engines.push((Arc::downgrade(&shared), e.downgrade()));
+    });
+    shared
+}
+
+fn settings_for(start: &Start) -> BrowserSettings {
+    let [r, g, b, a] = start.background;
+    let state = |on: bool| {
+        State::from(if on {
+            sys::cef_state_t::STATE_ENABLED
+        } else {
+            sys::cef_state_t::STATE_DISABLED
+        })
+    };
+    BrowserSettings {
+        windowless_frame_rate: 60,
+        background_color: (a as u32) << 24 | (r as u32) << 16 | (g as u32) << 8 | b as u32,
+        javascript: state(start.javascript),
+        ..Default::default()
+    }
+}
+
+/// `browser` becomes the one `shared`'s view shows, with what every page
+/// of the view gets.
+fn attach(shared: &Arc<Shared>, browser: ::cef::Browser, start: &Start, made: Made) {
+    let Some(host) = browser.host() else {
+        return;
+    };
     let mut observer = PageDevTools::new(shared.clone());
     *Shared::lock(&shared.observer) = host.add_dev_tools_message_observer(Some(&mut observer));
     *Shared::lock(&shared.browser) = Some(browser);
 
-    // What every page of this view gets, before the first one loads.
     let mut out = Vec::new();
+    // What every page of this view gets, before the first one loads.
     {
         let mut dev = Shared::lock(&shared.dev);
         out.push(dev.call("Runtime.enable", json!({}), Pending::Ignore));
@@ -3057,8 +3207,11 @@ fn make_browser(
             out.push(dev.call("Emulation.setUserAgentOverride", params, Pending::Ignore));
         }
         // In before the view's first page, which waits for the blank one.
-        install_scripts(&mut dev, &start.scripts, false, &mut out);
+        install_scripts(&mut dev, &start.scripts, made != Made::Asked, &mut out);
         out.push(dev.call("Page.getFrameTree", json!({}), Pending::FrameTree));
+    }
+    if made == Made::Asked {
+        let mut dev = Shared::lock(&shared.dev);
         // A renderer answers this after all that came before it, so the
         // view's first page waits for it (see `Boot`).
         out.push(dev.call(
@@ -3097,7 +3250,56 @@ fn make_browser(
             });
         }
     });
-    Ok(())
+    // A DevTools front end that came first.
+    shared.pass_inspected();
+}
+
+/// `page` is closed with the others when the web engine shuts down.
+fn register(e: &Engine, page: &std::rc::Rc<CefPage>) -> Result<(), String> {
+    with_global(e, &ProfileSpec::default(), |g| {
+        g.pages.retain(|p| p.strong_count() > 0);
+        g.pages.push(std::rc::Rc::downgrade(page));
+        g.browsers.retain(|b| {
+            Shared::lock(&b.browser).is_some()
+                || Shared::lock(&b.unborn).is_some()
+                || Shared::lock(&b.adopting).is_some()
+        });
+        g.browsers.push(page.shared.clone());
+    })
+}
+
+/// What CEF is given to make a browser of its own (a page's new window)
+/// for a view, and the page that view shows it as.
+struct Adopted {
+    page: std::rc::Rc<dyn Page>,
+    window: WindowInfo,
+    client: Client,
+    settings: BrowserSettings,
+}
+
+/// A page of `view`'s for a browser CEF is about to make: once CEF has
+/// made it, the view shows it as it does one it asked for, but without
+/// the blank page first, which would be the one shown.
+fn adopt(e: &Engine, view: ObjectId, made: Made) -> Option<Adopted> {
+    let start = crate::view::start_for(e, view)?;
+    let shared = shared_for(e, Sink::new(e, view), &start);
+    {
+        let mut boot = Shared::lock(&shared.boot);
+        boot.told = true;
+        boot.loaded = true;
+        boot.behind = false;
+    }
+    let settings = settings_for(&start);
+    *Shared::lock(&shared.adopting) = Some((start, made));
+    let client = PageClient::new(shared.clone());
+    let page = std::rc::Rc::new(CefPage { shared });
+    register(e, &page).ok()?;
+    Some(Adopted {
+        page,
+        window: WindowInfo::default().set_as_windowless(Default::default()),
+        client,
+        settings,
+    })
 }
 
 impl CefPage {
@@ -3419,12 +3621,39 @@ impl Page for CefPage {
         self.shared.redraw();
     }
 
+    fn dev_tools_url(&self) -> Option<String> {
+        if self.shared.closing.load(Ordering::Relaxed) {
+            return None;
+        }
+        let mut held = Shared::lock(&self.shared.inspector);
+        if let Some(inspector) = &*held {
+            return Some(inspector.address());
+        }
+        // CEF shows its own DevTools in a window of their own when the
+        // browser is windowless: the front end is a page of the other
+        // view's instead, talking to this one through the inspector.
+        let shared = Arc::downgrade(&self.shared);
+        let inspector = Inspector::start(move || {
+            let mut task = PassInspected::new(shared.clone());
+            post_task(ThreadId::UI, Some(&mut task));
+        })
+        .ok()?;
+        let url = inspector.address();
+        *held = Some(inspector);
+        Some(url)
+    }
+
+    fn close_dev_tools(&self) {
+        self.shared.close_inspector();
+    }
+
     fn close(&self) {
         if self.shared.closing.swap(true, Ordering::Relaxed) {
             return;
         }
         refuse_asked(&self.shared);
         Shared::lock(&self.shared.unborn).take();
+        self.shared.close_inspector();
         if let Some(host) = self.host() {
             host.close_browser(1);
         }
