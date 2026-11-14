@@ -269,7 +269,7 @@ fn largest_scale(m: &Mat4) -> f32 {
         .fold(0.0, f32::max)
 }
 
-fn determinant3(m: &Mat4) -> f32 {
+pub(crate) fn determinant3(m: &Mat4) -> f32 {
     let [x, y, z] = [0, 1, 2].map(|c| vec([m.0[c][0], m.0[c][1], m.0[c][2]]));
     x.cross(y).dot(z)
 }

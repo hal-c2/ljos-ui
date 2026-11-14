@@ -203,20 +203,23 @@ impl<T: Pod + PartialEq> Rows<T> {
             self.buffer = Self::buffer(device, self.label, self.usage, self.capacity);
             self.written.clear();
         }
-        // From the first row that differs: copies move together, so a
-        // changed table rarely leaves a long unchanged tail worth skipping.
-        let first = rows
-            .iter()
-            .zip(&self.written)
-            .position(|(a, b)| a != b)
-            .unwrap_or(self.written.len().min(rows.len()));
-        if first < rows.len() {
+        // From the first row that differs to the last: one of a thousand
+        // models drawn as one that moves changes its own row alone.
+        let common = rows.len().min(self.written.len());
+        let differs = |&i: &usize| rows[i] != self.written[i];
+        let first = (0..common).find(differs).unwrap_or(common);
+        let end = if rows.len() > common {
+            rows.len()
+        } else {
+            (first..common).rev().find(differs).map_or(first, |i| i + 1)
+        };
+        if first < end {
             let offset = first as u64 * std::mem::size_of::<T>() as u64;
             crate::counted::write_buffer(
                 queue,
                 &self.buffer,
                 offset,
-                bytemuck::cast_slice(&rows[first..]),
+                bytemuck::cast_slice(&rows[first..end]),
             );
         }
         self.written.clear();
