@@ -16,6 +16,9 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 
 | Task | Command |
 |---|---|
+| First run after a clone (tools, submodules, Qt types; `--webengine` for CEF) | `mise run setup` |
+| Run a QML file with hot reload (default `bench/feed.qml`) | `mise run dev [file.qml] [ljos run args…]` |
+| Build / install the `ljos` CLI | `mise run build [--release]`, `mise run install [--root <dir>]` |
 | Format, clippy | `mise run check` |
 | Rust tests | `mise run test` |
 | Gherkin ledger | `mise run features` |
@@ -28,6 +31,7 @@ Ljós is a general-purpose Rust UI toolkit for malleable software: apps that peo
 | Build / run with QtWebEngine (CEF, fetched once into `$CEF_PATH`, default `<target>/cef`) | `mise run webengine:build`, `mise run webengine:run <file.qml>` |
 | MCP authoring server | `mise run mcp` (also configured in `.mcp.json`) |
 | Run an app off-screen (headless sway, own bus, cua-driver) | `mise run desktop:cua <file.qml> [args]`, `desktop:cua:exec <command…>`, `desktop:cua:call <tool> [json]`, `desktop:cua:stop` |
+| Every task and its arguments | `mise tasks`, `mise run <task> --help` |
 
 ## Conventions
 
