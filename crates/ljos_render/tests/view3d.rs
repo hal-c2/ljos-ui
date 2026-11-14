@@ -98,6 +98,21 @@ fn a_view_made_and_gone_again_and_again_keeps_one_picture_at_most() {
     }
 }
 
+#[test]
+fn the_views_of_one_frame_are_one_3d_frame() {
+    use ljos_render::ljos_3d::stats;
+    let Some(_turn) = gpu_turn() else { return };
+    let mut tree = RenderTree::new();
+    add_view(&mut tree, 1);
+    add_view(&mut tree, 2);
+    let mut r = VelloCpuReference::default();
+    let before = stats::snapshot().frames;
+    render(&mut r, &mut tree, 1);
+    let after = stats::snapshot();
+    assert_eq!(after.frames, before + 1, "one host frame, one 3D frame");
+    assert_eq!(after.last.views, 2, "both views are in it");
+}
+
 #[cfg(feature = "b0")]
 mod b0 {
     use egui::epaint::Shape;

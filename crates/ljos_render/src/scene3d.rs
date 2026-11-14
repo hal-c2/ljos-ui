@@ -130,6 +130,12 @@ mod readback {
             Some(image)
         }
 
+        /// Ends the 3D frame of the views this host frame drew: one frame
+        /// however many views it drew.
+        pub(crate) fn frame_drawn(&mut self) {
+            ljos_3d::stats::frame_end(0.0);
+        }
+
         /// Lets go of the pictures of views this frame did not draw.
         pub(crate) fn end_frame(&mut self) {
             let frame = self.frame;
@@ -158,6 +164,8 @@ impl Pictures {
     pub(crate) fn picture(&mut self, _: &View3dOp, _: [u32; 2]) -> Option<crate::ImageHandle> {
         None
     }
+
+    pub(crate) fn frame_drawn(&mut self) {}
 
     pub(crate) fn end_frame(&mut self) {}
 

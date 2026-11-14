@@ -231,7 +231,8 @@ pub fn add_sync_seconds(seconds: f64) {
     record().sync += seconds;
 }
 
-/// The host has submitted its frame, which took `submit_seconds`. When a
+/// The host has submitted its frame, which took `submit_seconds` beyond
+/// the submits already counted in it (an off-screen picture's). When a
 /// scene was drawn in it on this thread, what the frame cost becomes the
 /// record's last frame (and a line of `LJOS_3D_FRAMES`). Otherwise what
 /// was drawn is let go, since it was the host showing a picture it already
@@ -247,11 +248,12 @@ pub fn frame_end(submit_seconds: f64) -> Option<FrameCounters> {
             t.render_passes = 0;
             t.pipeline_switches = 0;
             t.bind_group_sets = 0;
+            t.submit_seconds = 0.0;
             return None;
         }
         Some(std::mem::replace(&mut *t, FrameCounters::ZERO))
     })?;
-    frame.submit_seconds = submit_seconds;
+    frame.submit_seconds += submit_seconds;
     let (index, gpu) = {
         let mut r = record();
         frame.sync_seconds = std::mem::take(&mut r.sync);
