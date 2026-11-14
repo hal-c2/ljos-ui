@@ -105,3 +105,28 @@ Item {
     set(&engine, root, "shown", "/b");
     assert_eq!(handed(), ["/b"]);
 }
+
+/// A state's binding that nothing reads through hands the setter each
+/// value too.
+#[test]
+fn a_states_binding_nothing_reads_hands_the_setter_each_value() {
+    let (_dir, engine, root) = app(&[(
+        "Main.qml",
+        r#"import QtQuick
+import Example
+Item {
+    id: root
+    property string wanted: "/a"
+    Follower { id: follower }
+    states: State {
+        name: "following"
+        when: true
+        PropertyChanges { follower.path: root.wanted }
+    }
+}
+"#,
+    )]);
+    assert_eq!(handed(), ["/a"]);
+    set(&engine, root, "wanted", "/b");
+    assert_eq!(handed(), ["/b"]);
+}

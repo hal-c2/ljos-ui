@@ -3168,6 +3168,13 @@ impl Engine {
         };
         let n = self.ensure_node(obj, prop)?;
         let g = &self.inner.graph;
+        // A `Binding` or a state's binding hands a `Cx` setter each value
+        // as a binding of the property's own does (`binding_installed`).
+        let runs_setter = matches!(
+            content,
+            OverrideContent::Binding(_) | OverrideContent::FallibleBinding(_)
+        ) && self.has_cx_setter(obj, prop)
+            && !self.in_deferred_contents(obj);
         let value = match content {
             OverrideContent::Value(v) => {
                 let v = self.for_slot(obj, prop, v);
@@ -3194,6 +3201,9 @@ impl Engine {
                 Push::Hold => g.push_hold(n, value)?,
             };
             self.sync_field(obj, prop, n);
+            if runs_setter {
+                g.set_eager(n, true)?;
+            }
             Ok::<_, EngineError>(id)
         })?;
         self.tell_given(obj, prop);
