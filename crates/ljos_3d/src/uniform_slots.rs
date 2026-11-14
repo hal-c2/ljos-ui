@@ -38,7 +38,9 @@ impl<K: Copy + Eq + Hash> Default for UniformSlots<K> {
 impl<K: Copy + Eq + Hash> UniformSlots<K> {
     /// Starts a frame: the slots of the last one stay with their models.
     pub(crate) fn begin(&mut self) {
-        self.held = std::mem::take(&mut self.placed);
+        // Swapped rather than taken, so that both keep their room.
+        std::mem::swap(&mut self.held, &mut self.placed);
+        self.placed.clear();
         self.taken.clear();
         for &slot in self.held.values() {
             let slot = slot as usize;
