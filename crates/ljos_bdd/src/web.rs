@@ -347,6 +347,10 @@ impl Refusing {
 /// the refusing port, or 404 for a name nobody served. The connection
 /// closes after it; `/held` is kept open, unanswered, until the server stops.
 fn answer(stream: TcpStream, files: &Files, refused: &str, held: &Arc<Held>) {
+    // A browser opens connections ahead of need and may never send on
+    // them; waiting on one for ever would stall every later request and
+    // the server's own stop.
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_secs(2)));
     let mut reader = BufReader::new(&stream);
     let mut line = String::new();
     if reader.read_line(&mut line).is_err() {
