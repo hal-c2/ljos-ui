@@ -364,6 +364,23 @@ fn a_directory_with_a_qmldir_leaves_qt_s_members_to_qt_without_the_tree() {
     assert!(!source.contains("App.platform"), "{source}");
 }
 
+/// A directory import needs no `module` line: a qmldir without one still
+/// names the directory's types.
+#[test]
+fn a_qmldir_with_no_module_line_leaves_qt_s_members_to_qt() {
+    let mut project = Project::new(Runtime::new());
+    project.add("Site/Application", BUTTON);
+    project.add(
+        "Main",
+        "import QtQuick\nimport \"Site\"\nItem { x: Qt.platform.os.length }\n",
+    );
+    project.set_compat(true);
+    project.add_qmldir("Site", "App 1.0 Application.qml\n");
+
+    let source = project.source("Main").expect("Main");
+    assert!(!source.contains("App.platform"), "{source}");
+}
+
 /// A qmldir told after a file that imports its directory by path was
 /// lowered may name the type that file brought in: it is lowered again.
 #[test]
