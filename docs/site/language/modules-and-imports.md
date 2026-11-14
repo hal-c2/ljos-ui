@@ -63,7 +63,7 @@ When resolving a relative URL with `Qt.resolvedUrl(path)` or loading an asset fr
 
 A QML singleton is a `.qml` file that begins with `pragma Singleton` and is registered with a `singleton` line in `qmldir` (or imported from a directory):
 
-```qml
+```qml file=Theme.qml group=theme
 // Theme.qml
 pragma Singleton
 pragma Scripts: JavaScript
@@ -79,7 +79,7 @@ Object {
 }
 ```
 
-```qml
+```qml group=theme
 // Main.qml
 pragma Scripts: JavaScript
 import Ljos.Ui
