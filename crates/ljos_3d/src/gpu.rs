@@ -25,7 +25,7 @@ use crate::gbuffer;
 use crate::geometry::CustomGeometry;
 use crate::gpu_extra::{self, InstanceRow, JOINT_SLOT, JointSlot, Rows};
 use crate::ibl::{self, Bound, Ibl};
-use crate::maps::{self, GroupKey, Maps};
+use crate::maps::{self, GroupId, Maps};
 use crate::math::{Mat4, Quat, Vec3};
 use crate::mesh::{Mesh, Topology};
 use crate::post::{self, Buffers, Chain, Pipes};
@@ -247,6 +247,8 @@ pub struct Renderer {
     probes: bool,
     /// Whether models alike are drawn as one ([`Renderer::set_batching`]).
     batching: bool,
+    /// The lists a frame's draws are made in, kept for the next frame's.
+    lists: Lists,
     mirrors: HashMap<u64, HeldMirror>,
     /// Sample counts both the picture's and the depth's format take,
     /// ascending; 1 always among them.
@@ -318,6 +320,9 @@ pub struct Target {
     /// model moving in a hundred uploads one slot, not a hundred.
     frame_written: Option<FrameUniform>,
     slots_written: Vec<ModelUniform>,
+    /// What the slots are to hold this frame, made in the room the last
+    /// frame's left: it and `slots_written` change places once written.
+    slots_next: Vec<ModelUniform>,
     /// Where runs of changed slots are laid out, the stride apart, before
     /// they are written; kept to save allocating each frame.
     staging: Vec<u8>,
@@ -529,6 +534,7 @@ impl Target {
             model_slots: UniformSlots::default(),
             copies: HeldCopies::default(),
             slots_written: Vec::new(),
+            slots_next: Vec::new(),
             staging: Vec::new(),
             drawn: None,
             drawn_models: 0,
@@ -1094,21 +1100,22 @@ fn pick_samples(counts: &[u32], wanted: u32) -> u32 {
         .unwrap_or(1)
 }
 
-/// Writes the slots whose uniforms differ from what the buffer holds, a
-/// run of neighbours in one write.
-fn write_slots(queue: &wgpu::Queue, target: &mut Target, uniforms: &[ModelUniform], stride: u64) {
+/// Writes the slots whose uniforms in `target.slots_next` differ from what
+/// the buffer holds, a run of neighbours in one write.
+fn write_slots(queue: &wgpu::Queue, target: &mut Target, stride: u64) {
     let size = std::mem::size_of::<ModelUniform>();
     let stride = stride as usize;
-    let written = &mut target.slots_written;
-    let changed = |i: usize, written: &[ModelUniform]| written.get(i) != Some(&uniforms[i]);
+    let uniforms = &target.slots_next;
+    let written = &target.slots_written;
+    let changed = |i: usize| written.get(i) != Some(&uniforms[i]);
     let mut i = 0;
     while i < uniforms.len() {
-        if !changed(i, written) {
+        if !changed(i) {
             i += 1;
             continue;
         }
         let start = i;
-        while i < uniforms.len() && changed(i, written) {
+        while i < uniforms.len() && changed(i) {
             i += 1;
         }
         let staging = &mut target.staging;
@@ -1124,8 +1131,9 @@ fn write_slots(queue: &wgpu::Queue, target: &mut Target, uniforms: &[ModelUnifor
             staging,
         );
     }
-    written.clear();
-    written.extend_from_slice(uniforms);
+    // What was written is what the buffer holds now, and what it held is
+    // the room the next frame's are made in.
+    std::mem::swap(&mut target.slots_written, &mut target.slots_next);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1134,14 +1142,18 @@ enum MeshKey {
     Custom(u64),
 }
 
-struct Draw<'a> {
+/// A model's draw, or that of models drawn as one. Small and copied: a
+/// frame's draws are made in the room the last frame's left, and put in
+/// their order by sorting keys ([`draw_key`]), not them.
+#[derive(Clone, Copy)]
+struct Draw {
     mesh: MeshKey,
-    /// A custom material and its pipeline, which bind in place of the
-    /// maps.
-    custom: Option<(&'a CustomMaterial, MaterialKey)>,
-    maps: GroupKey,
+    /// A custom material's pipeline, which binds in place of the maps.
+    custom: Option<Custom>,
+    maps: GroupId,
     key: PipelineKey,
-    uniform: ModelUniform,
+    /// Where its uniforms are in the frame's list of them.
+    uniform: u32,
     /// Where its uniforms are in the target's buffer.
     slot: u32,
     copies: Copies,
@@ -1164,6 +1176,112 @@ struct Draw<'a> {
     models: u32,
 }
 
+/// What a draw knows of its custom material.
+#[derive(Clone, Copy)]
+struct Custom {
+    key: MaterialKey,
+    /// Where the material is in the frame's list of them.
+    material: u32,
+    reads_depth: bool,
+}
+
+/// Which of a frame's runs of draws a draw is in, in the order they are
+/// drawn.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Pass {
+    /// What nothing is seen through, nearest first, as Qt has it: where
+    /// one does not hide, the farther is drawn over it.
+    Opaque,
+    /// What reads the picture, from the farthest in, before all that is
+    /// seen through however far each is, as Qt has it. Of two as far, the
+    /// opaque one goes first.
+    Reading { blends: bool },
+    /// What is seen through, from the farthest in: each blends over what
+    /// is behind it.
+    Blended,
+}
+
+impl Pass {
+    /// The run of a draw that `blends` or not and `reads` the picture or not.
+    fn of(blends: bool, reads: bool) -> Pass {
+        match (blends, reads) {
+            (false, false) => Pass::Opaque,
+            (blends, true) => Pass::Reading { blends },
+            (true, false) => Pass::Blended,
+        }
+    }
+}
+
+/// Where a draw goes among a frame's: by its run, then its depth, then
+/// where it is in the scene's declaration order, which keeps the tree's
+/// order where two are as far. No two draws have one key, so sorting the
+/// keys puts the draws where stable sorts of them by depth did, and the
+/// draws themselves, many times the size, are moved once.
+fn draw_key(pass: Pass, depth: f32, index: u32) -> u128 {
+    // The float's bits, turned so that as integers they are in
+    // `f32::total_cmp`'s order.
+    let bits = depth.to_bits();
+    let nearer = if bits & 0x8000_0000 != 0 {
+        !bits
+    } else {
+        bits | 0x8000_0000
+    };
+    let (run, depth, blends) = match pass {
+        Pass::Opaque => (0u8, nearer, false),
+        Pass::Reading { blends } => (1, !nearer, blends),
+        Pass::Blended => (2, !nearer, false),
+    };
+    (u128::from(run) << 96)
+        | (u128::from(depth) << 64)
+        | (u128::from(blends) << 32)
+        | u128::from(index)
+}
+
+/// Whether the draw `key` is of is in the first run, [`Pass::Opaque`].
+fn opaque_key(key: u128) -> bool {
+    key >> 96 == 0
+}
+
+/// Where in the scene's declaration order the draw `key` is of is.
+fn key_index(key: u128) -> usize {
+    key as u32 as usize
+}
+
+/// The lists a frame is drawn from, kept from frame to frame: of a
+/// thousand models, the draws and their uniforms are megabytes, which made
+/// again and grown each frame were most of what preparing one asked of the
+/// allocator.
+#[derive(Default)]
+struct Lists {
+    /// The frame's draws, in the scene's declaration order.
+    listed: Vec<Draw>,
+    /// Where each goes ([`draw_key`]).
+    keys: Vec<u128>,
+    /// The draws in the order they are drawn, those drawn as one in one.
+    draws: Vec<Draw>,
+    /// Every model's uniforms and slot, drawn or not, and those of the
+    /// models drawn as one.
+    uniforms: Vec<(u32, ModelUniform)>,
+    casters: Vec<Caster>,
+    bounds: Vec<(Vec3, f32)>,
+    rows: Vec<InstanceRow>,
+    joint_slots: Vec<JointSlot>,
+    batch: BatchRoom,
+}
+
+impl Lists {
+    fn clear(&mut self) {
+        self.listed.clear();
+        self.keys.clear();
+        self.draws.clear();
+        self.uniforms.clear();
+        self.casters.clear();
+        self.bounds.clear();
+        self.rows.clear();
+        self.joint_slots.clear();
+    }
+}
+
 /// What a slot in a target's model buffer holds the uniforms of: a model,
 /// or the models drawn as one with it.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1175,7 +1293,7 @@ enum UniformKey {
 /// What draws are drawn as one by: the same mesh, pipeline and maps, and
 /// uniforms the same but for where each model is and its colour, those
 /// hashed ([`unplaced`]).
-type BatchKey = (MeshKey, PipelineKey, GroupKey, u64);
+type BatchKey = (MeshKey, PipelineKey, GroupId, u64);
 
 /// A model's uniforms but for its place and colour, which a row of the
 /// instance buffer carries for the models drawn as one: the shader puts
@@ -1215,7 +1333,7 @@ fn shared(u: &ModelUniform) -> &[u8] {
 /// What a row cannot carry draws alone too: a model's own copies, a skin,
 /// morphs or vertex colours, a light probe of its own, a program reading
 /// its own uniforms.
-fn batch_key(draw: &Draw<'_>) -> Option<BatchKey> {
+fn batch_key(draw: &Draw, uniforms: &[(u32, ModelUniform)]) -> Option<BatchKey> {
     let alone = draw.custom.is_some()
         || draw.copies != Copies::ONE
         || draw.key.extra
@@ -1230,7 +1348,7 @@ fn batch_key(draw: &Draw<'_>) -> Option<BatchKey> {
     // hashed each frame, the lanes do not wait on each other, and a
     // collision only costs the comparison `batched` makes.
     let mut lanes = [0xcbf2_9ce4_8422_2325_u64; 4];
-    for chunk in shared(&draw.uniform).chunks(32) {
+    for chunk in shared(&uniforms[draw.uniform as usize].1).chunks(32) {
         for (lane, word) in lanes.iter_mut().zip(chunk.chunks(8)) {
             let word = u64::from_le_bytes(word.try_into().expect("eight bytes"));
             *lane = (*lane ^ word).wrapping_mul(0x0100_0000_01b3);
@@ -1240,56 +1358,89 @@ fn batch_key(draw: &Draw<'_>) -> Option<BatchKey> {
     Some((draw.mesh, draw.key, draw.maps, hash))
 }
 
-/// `draws` with those [`batch_key`] finds alike drawn as one, where the
+/// What [`batched`] works in, kept with the frame's lists.
+#[derive(Default)]
+struct BatchRoom {
+    batching: batch::Batching<BatchKey>,
+    keys: Vec<Option<BatchKey>>,
+    reach: Vec<batch::Reach>,
+    order: Vec<u32>,
+    /// The draws that are the firsts of their groups, and each group's
+    /// model first declared.
+    nearest: Vec<usize>,
+    leads: Vec<NodeId>,
+    /// The groups of more than one, in their models' declaration order,
+    /// and each group's first row.
+    laid_out: Vec<usize>,
+    first_row: Vec<u32>,
+}
+
+/// Draws those of `draws` [`batch_key`] finds alike as one, where the
 /// nearest of them is: each model's place and colour in a row of `rows`, and
-/// the uniforms they share in a slot of their own.
-fn batched<'a>(
-    mut draws: Vec<Draw<'a>>,
+/// the uniforms they share in a slot of their own, at the end of `uniforms`.
+fn batched(
+    draws: &mut Vec<Draw>,
     rows: &mut Vec<InstanceRow>,
     slots: &mut UniformSlots<UniformKey>,
     uniforms: &mut Vec<(u32, ModelUniform)>,
-) -> Vec<Draw<'a>> {
+    room: &mut BatchRoom,
+) {
+    let BatchRoom {
+        batching,
+        keys,
+        reach,
+        order,
+        nearest,
+        leads,
+        laid_out,
+        first_row,
+    } = room;
     // A batch is drawn where its nearest is, before what is drawn between
     // its models, and its rows are in their declaration order; the depth
     // test lets the one drawn last show where two are as deep. So no batch
     // reaches across a draw drawn alone, which may be the one seen there (a
     // depth bias says so without moving it, a draw that writes no depth is
     // seen by its order), nor turns round two models that may meet.
-    let keys: Vec<Option<BatchKey>> = draws.iter().map(batch_key).collect();
-    let alike = |a: usize, b: usize| {
-        keys[a] == keys[b] && shared(&draws[a].uniform) == shared(&draws[b].uniform)
-    };
-    let reach: Vec<batch::Reach> = draws.iter().map(|d| d.reach).collect();
-    let order: Vec<u32> = draws.iter().map(|d| d.order).collect();
-    let firsts = batch::firsts(&keys, alike, &reach, &order);
-    let keyed = keys
-        .iter()
-        .zip(&firsts)
-        .map(|(key, &first)| key.map(|key| (key, first)));
-    let mut groups = batch::groups(keyed, alike);
-    if groups.len() == draws.len() {
-        return draws;
+    keys.clear();
+    keys.extend(draws.iter().map(|d| batch_key(d, uniforms)));
+    let uniform = |i: usize| &uniforms[draws[i].uniform as usize].1;
+    let alike = |a: usize, b: usize| keys[a] == keys[b] && shared(uniform(a)) == shared(uniform(b));
+    reach.clear();
+    reach.extend(draws.iter().map(|d| d.reach));
+    order.clear();
+    order.extend(draws.iter().map(|d| d.order));
+    batching.firsts(keys, alike, reach, order);
+    batching.group();
+    let groups = batching.len();
+    if groups == draws.len() {
+        return;
     }
     // A group is drawn where its nearest is; its rows are laid out in the
     // scene's declaration order, which a camera that moves changes neither
     // within a batch nor between batches. The rows are then written again
     // only when a model moves or a batch gains or loses one. Two that may
     // meet and came in the other order are not in one batch (`firsts`).
-    let nearest: Vec<usize> = groups.iter().map(|g| g[0]).collect();
-    for group in &mut groups {
-        group.sort_by_key(|&i| draws[i].order);
+    // No two draws are declared at one place, so the sorts are exact.
+    nearest.clear();
+    leads.clear();
+    for g in 0..groups {
+        let members = batching.members(g);
+        nearest.push(members[0]);
+        members.sort_unstable_by_key(|&i| draws[i].order);
+        leads.push(draws[members[0]].node);
     }
-    let mut laid_out: Vec<usize> = (0..groups.len()).filter(|&g| groups[g].len() > 1).collect();
-    laid_out.sort_by_key(|&g| draws[groups[g][0]].order);
-    let mut first = vec![0; groups.len()];
-    for g in laid_out {
-        first[g] = rows.len() as u32;
-        rows.extend(groups[g].iter().map(|&i| {
-            let u = &draws[i].uniform;
+    laid_out.clear();
+    laid_out.extend((0..groups).filter(|&g| batching.members(g).len() > 1));
+    laid_out.sort_unstable_by_key(|&g| draws[batching.members(g)[0]].order);
+    first_row.clear();
+    first_row.resize(groups, 0);
+    for &g in laid_out.iter() {
+        first_row[g] = rows.len() as u32;
+        rows.extend(batching.members(g).iter().map(|&i| {
+            let u = &uniforms[draws[i].uniform as usize].1;
             InstanceRow::new(&Mat4(u.world), u.base, [0.0; 4])
         }));
     }
-    let leads: Vec<NodeId> = groups.iter().map(|g| draws[g[0]].node).collect();
     // A group's nearest is its first draw, so the groups' nearest come in
     // the draws' order: each draw kept is a group's, in place.
     let (mut at, mut g) = (0, 0);
@@ -1299,22 +1450,22 @@ fn batched<'a>(
         if !kept {
             return false;
         }
-        let group = &groups[g];
-        if group.len() > 1 {
-            draw.uniform = unplaced(&draw.uniform);
+        let count = batching.members(g).len();
+        if count > 1 {
+            let shared = unplaced(&uniforms[draw.uniform as usize].1);
             draw.slot = slots.slot(UniformKey::Batch(leads[g]));
-            uniforms.push((draw.slot, draw.uniform));
+            draw.uniform = uniforms.len() as u32;
+            uniforms.push((draw.slot, shared));
             draw.copies = Copies {
-                first: first[g],
-                count: group.len() as u32,
+                first: first_row[g],
+                count: count as u32,
                 joints: 0,
             };
-            draw.models = group.len() as u32;
+            draw.models = count as u32;
         }
         g += 1;
         true
     });
-    draws
 }
 
 /// Masks the lights scoped away from model `id` and adds the ambient of the
@@ -1518,6 +1669,7 @@ impl Renderer {
             // `use_adapter_formats`.
             probes: true,
             batching: true,
+            lists: Lists::default(),
             mirrors: HashMap::new(),
             // What WebGPU promises every device for these formats.
             sample_counts: vec![1, 4],
@@ -1854,12 +2006,7 @@ fn material_screen(material: &Material) -> Screen {
     }
 }
 
-fn screen_of(draw: &Draw<'_>) -> Screen {
-    draw.custom
-        .map_or(Screen::None, |(m, _)| m.program.screen())
-}
-
-fn surface_key(draw: &Draw<'_>) -> (Option<wgpu::Face>, bool, bool) {
+fn surface_key(draw: &Draw) -> (Option<wgpu::Face>, bool, bool) {
     let cull = match draw.key.cull {
         CullMode::Back => Some(wgpu::Face::Back),
         CullMode::Front => Some(wgpu::Face::Front),
@@ -1868,7 +2015,7 @@ fn surface_key(draw: &Draw<'_>) -> (Option<wgpu::Face>, bool, bool) {
     (cull, draw.key.extra, draw.custom.is_some())
 }
 
-fn writes_camera_depth(draw: &Draw<'_>) -> bool {
+fn writes_camera_depth(draw: &Draw) -> bool {
     draw.key.depth_write && draw.key.topology == Topology::Triangles
 }
 
@@ -2245,19 +2392,31 @@ impl Renderer {
         frame.ambient = [ambient[0], ambient[1], ambient[2], 0.0];
         frame.counts[0] = count as u32;
 
-        let mut opaque = Vec::new();
-        let mut blended = Vec::new();
+        // The lists are made in the room the last frame's left. A view
+        // drawn for this one is drawn before, so it has them back by now.
+        let mut lists = std::mem::take(&mut self.lists);
+        lists.clear();
         // Models the camera leaves out still cast shadows into what it
         // sees, so every model's uniforms are kept, drawn or not, by slot.
-        let mut casters: Vec<Caster> = Vec::new();
-        let mut uniforms: Vec<(u32, ModelUniform)> = Vec::new();
+        let Lists {
+            mut listed,
+            mut keys,
+            mut draws,
+            mut uniforms,
+            mut casters,
+            mut bounds,
+            mut rows,
+            mut joint_slots,
+            mut batch,
+        } = lists;
+        // The custom materials drawn, which the draws say where in.
+        let mut customs: Vec<&CustomMaterial> = Vec::new();
         target.model_slots.begin();
         target.copies.begin();
-        let mut bounds = Vec::new();
         let shadows = !shadowing.is_empty();
         // Row 0 and joint slot 0 are what a plain model reads.
-        let mut rows = vec![InstanceRow::IDENTITY];
-        let mut joint_slots: Vec<JointSlot> = vec![gpu_extra::joint_slot(&[])];
+        rows.push(InstanceRow::IDENTITY);
+        joint_slots.push(gpu_extra::joint_slot(&[]));
         if let Some((camera, _)) = camera {
             let planes = camera.frustum_culling().then(|| frustum(&view_proj));
             let faded = scene.faded();
@@ -2308,9 +2467,17 @@ impl Renderer {
                 };
                 // Each vertex is a blend of its joints' places, so it is
                 // within the spheres the joints carry the mesh's to.
-                let spheres: Vec<(Vec3, f32)> = match &palette {
-                    Some(p) if !p.is_empty() => p.iter().map(sphere).collect(),
-                    _ => vec![sphere(&placed)],
+                let one: [(Vec3, f32); 1];
+                let joints: Vec<(Vec3, f32)>;
+                let spheres: &[(Vec3, f32)] = match &palette {
+                    Some(p) if !p.is_empty() => {
+                        joints = p.iter().map(sphere).collect();
+                        &joints
+                    }
+                    _ => {
+                        one = [sphere(&placed)];
+                        &one
+                    }
                 };
                 // Of the shapes, all but the rectangle are closed round
                 // what their box holds, and show only their outside where
@@ -2426,6 +2593,7 @@ impl Renderer {
                     uniform.maps[3] = 1;
                 }
                 let slot = target.model_slots.slot(UniformKey::Model(*id));
+                let at = uniforms.len() as u32;
                 uniforms.push((slot, uniform));
                 // A segment or a point has no volume to shadow with.
                 let casts = node.casts_shadows && self.topology_of(key) == Topology::Triangles;
@@ -2457,9 +2625,10 @@ impl Renderer {
                     continue;
                 }
                 let custom = match &model.material {
-                    Material::Custom(m) => Some((
-                        m,
-                        MaterialKey {
+                    Material::Custom(m) => Some(Custom {
+                        material: customs.len() as u32,
+                        reads_depth: m.program.reads_depth(),
+                        key: MaterialKey {
                             program: m.program.id(),
                             cull: m.cull_mode,
                             // What reads hides as what is opaque does, blended or not.
@@ -2475,9 +2644,12 @@ impl Renderer {
                             topology: self.topology_of(key),
                             extra,
                         },
-                    )),
+                    }),
                     _ => None,
                 };
+                if let Material::Custom(m) = &model.material {
+                    customs.push(m);
+                }
                 let draw = Draw {
                     mesh: key,
                     custom,
@@ -2485,8 +2657,8 @@ impl Renderer {
                     key: PipelineKey {
                         cull: model.material.cull_mode(),
                         depth_write: custom
-                            .map_or(model.material.depth_draw().writes(blends), |(_, k)| {
-                                k.depth_write
+                            .map_or(model.material.depth_draw().writes(blends), |c| {
+                                c.key.depth_write
                             }),
                         samples,
                         extra,
@@ -2495,7 +2667,7 @@ impl Renderer {
                         blend: model.material.blend_mode(),
                         depth_test: environment.depth_test,
                     },
-                    uniform,
+                    uniform: at,
                     slot,
                     copies,
                     // Qt counts a bias times itself, and below nothing as nearer.
@@ -2504,15 +2676,12 @@ impl Renderer {
                     reach,
                     probe: own_probe,
                     biased: node.depth_bias != 0.0,
-                    order: (opaque.len() + blended.len()) as u32,
+                    order: listed.len() as u32,
                     node: *id,
                     models: 1,
                 };
-                if blends {
-                    blended.push(draw);
-                } else {
-                    opaque.push(draw);
-                }
+                keys.push(draw_key(Pass::of(blends, reads), draw.depth, draw.order));
+                listed.push(draw);
             }
         }
 
@@ -2563,30 +2732,24 @@ impl Renderer {
             target.frame_written = Some(frame);
         }
 
-        // Over what is opaque, from the farthest in: each blends over what
-        // is behind it. A stable sort keeps the tree's order where two are
-        // as far. What reads the picture goes before all that is seen
-        // through, however far each is, as Qt has it.
-        let (mut draws, mut reading): (Vec<_>, Vec<_>) = opaque
-            .into_iter()
-            .partition(|d| screen_of(d) == Screen::None);
-        let (mut read_blended, mut blended): (Vec<_>, Vec<_>) = blended
-            .into_iter()
-            .partition(|d| screen_of(d) != Screen::None);
-        reading.append(&mut read_blended);
-        // What nothing is seen through goes nearest first, as Qt has it: where
-        // one does not hide, the farther is drawn over it.
-        draws.sort_by(|a, b| a.depth.total_cmp(&b.depth));
+        // The draws go where their keys say, in their runs ([`Pass`]), and
+        // those nothing is seen through may then be drawn as one.
+        keys.sort_unstable();
+        let opaque = keys.partition_point(|&k| opaque_key(k));
+        draws.extend(keys[..opaque].iter().map(|&k| listed[key_index(k)]));
         // The shadow casters read the rows before the batches': a batched
         // model's colour is no reason to draw a shadow map again.
         let cast_rows = rows.len();
         if self.batching {
-            draws = batched(draws, &mut rows, &mut target.model_slots, &mut uniforms);
+            batched(
+                &mut draws,
+                &mut rows,
+                &mut target.model_slots,
+                &mut uniforms,
+                &mut batch,
+            );
         }
-        reading.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        blended.sort_by(|a, b| b.depth.total_cmp(&a.depth));
-        draws.append(&mut reading);
-        draws.append(&mut blended);
+        draws.extend(keys[opaque..].iter().map(|&k| listed[key_index(k)]));
 
         target.copies.end();
         target.instances.write(device, queue, &rows);
@@ -2612,26 +2775,22 @@ impl Renderer {
             target.slots_written.clear();
         }
         // A slot no model has this frame keeps what it holds.
-        let mut by_slot: Vec<ModelUniform> = (0..slots)
-            .map(|i| {
-                target
-                    .slots_written
-                    .get(i)
-                    .copied()
-                    .unwrap_or_else(ModelUniform::zeroed)
-            })
-            .collect();
-        for (slot, uniform) in uniforms {
-            by_slot[slot as usize] = uniform;
+        let next = &mut target.slots_next;
+        let kept = slots.min(target.slots_written.len());
+        next.clear();
+        next.extend_from_slice(&target.slots_written[..kept]);
+        next.resize(slots, ModelUniform::zeroed());
+        for &(slot, uniform) in &uniforms {
+            next[slot as usize] = uniform;
         }
-        write_slots(queue, target, &by_slot, self.model_stride);
+        write_slots(queue, target, self.model_stride);
         let (near, far) = camera.map_or((0.0, 1.0), |(c, _)| clip_planes(&c));
         let inverse_projection = proj.inverse().unwrap_or(Mat4::IDENTITY);
         // Materials read it while they draw, so it is drawn before the scene;
         // the post passes' own is drawn after, and only when they ask.
         let material_depth = draws
             .iter()
-            .any(|d| d.custom.is_some_and(|(m, _)| m.program.reads_depth()))
+            .any(|d| d.custom.is_some_and(|c| c.reads_depth))
             .then(|| {
                 target
                     .material_depth
@@ -2653,18 +2812,20 @@ impl Renderer {
                 self.mesh(device, p);
             }
             match draw.custom {
-                Some((material, key)) => {
+                Some(custom) => {
+                    let material = customs[custom.material as usize];
                     self.programs.material_pipeline(
                         device,
                         &material.program,
-                        key,
+                        custom.key,
                         [&self.frame_layout, &self.model_layout, &self.ibl.layout],
                         vertex_layout(),
                         DEPTH_FORMAT,
                     );
+                    let placed = &uniforms[draw.uniform as usize].1;
                     let header = Header {
-                        model: draw.uniform.world,
-                        normal: draw.uniform.normal,
+                        model: placed.world,
+                        normal: placed.normal,
                         view: view.0,
                         projection: proj.0,
                         inverse_projection: inverse_projection.0,
@@ -2837,7 +2998,7 @@ impl Renderer {
                 // for it, though it reads only the frame and the probe.
                 pass.set_pipeline(&self.skies[&(samples, format)]);
                 pass.set_bind_group(1, &target.model_group, &[0, 0]);
-                pass.set_bind_group(2, self.maps.group(&plain_maps), &[]);
+                pass.set_bind_group(2, self.maps.group(plain_maps), &[]);
                 pass.draw(0..3, 0..1);
             }
             let scene_probe = bound;
@@ -2854,7 +3015,7 @@ impl Renderer {
                     pass.set_bind_group(3, self.ibl.group(probe), &[]);
                     bound_probe = probe;
                 }
-                if let Some((_, key)) = draw.custom {
+                if let Some(Custom { key, .. }) = draw.custom {
                     // A program's pipeline and block are its own, so the
                     // next lit draw binds its own again.
                     pass.set_pipeline(self.programs.material(&key));
@@ -2867,9 +3028,9 @@ impl Renderer {
                         pass.set_pipeline(&self.pipelines[&draw.key]);
                         bound = Some(draw.key);
                     }
-                    if bound_maps != Some(&draw.maps) {
-                        pass.set_bind_group(2, self.maps.group(&draw.maps), &[]);
-                        bound_maps = Some(&draw.maps);
+                    if bound_maps != Some(draw.maps) {
+                        pass.set_bind_group(2, self.maps.group(draw.maps), &[]);
+                        bound_maps = Some(draw.maps);
                     }
                 }
                 let mesh = self.gpu_mesh(draw.mesh);
@@ -2894,7 +3055,7 @@ impl Renderer {
                 self.draw_depth(device, encoder, target, &draws, view_proj, &depth, true);
             }
             if surface_pass {
-                self.draw_surfaces(device, encoder, target, &draws, bound, &plain_maps);
+                self.draw_surfaces(device, encoder, target, &draws, bound, plain_maps);
             }
             Chain {
                 device,
@@ -2940,6 +3101,17 @@ impl Renderer {
             (draws.len() + usize::from(sky)) as u32,
             target.shadow_passes,
         );
+        self.lists = Lists {
+            listed,
+            keys,
+            draws,
+            uniforms,
+            casters,
+            bounds,
+            rows,
+            joint_slots,
+            batch,
+        };
         target.drawn = Some(scene.revision());
         true
     }
@@ -2952,7 +3124,7 @@ impl Renderer {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         target: &Target,
-        draws: &[Draw<'_>],
+        draws: &[Draw],
         view_proj: Mat4,
         depth: &wgpu::TextureView,
         timed: bool,
@@ -3033,9 +3205,9 @@ impl Renderer {
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         target: &mut Target,
-        draws: &[Draw<'_>],
+        draws: &[Draw],
         bound: Bound,
-        plain_maps: &GroupKey,
+        plain_maps: GroupId,
     ) {
         let size = target.size;
         let depth = target.post.view(device, post::DEPTH_KEY, size, post::DEPTH);
@@ -3087,7 +3259,7 @@ impl Renderer {
             let maps = if draw.custom.is_some() {
                 plain_maps
             } else {
-                &draw.maps
+                draw.maps
             };
             pass.set_bind_group(2, self.maps.group(maps), &[]);
             let mesh = self.gpu_mesh(draw.mesh);
@@ -3298,5 +3470,86 @@ mod tests {
         );
         // Partly in is in.
         assert!(!outside(&planes, Vec3::new(0.0, 0.0, 320.0), 50.0));
+    }
+
+    /// The order draws that blend or not and read the picture or not, at
+    /// those depths, were put in by stable sorts before there were keys.
+    fn sorted_as_before(draws: &[(bool, bool, f32)]) -> Vec<usize> {
+        let of = |blends: bool, reads: bool| {
+            (0..draws.len())
+                .filter(move |&i| draws[i].0 == blends && draws[i].1 == reads)
+                .collect::<Vec<_>>()
+        };
+        let depth = |i: &usize| draws[*i].2;
+        let mut opaque = of(false, false);
+        let mut reading = of(false, true);
+        reading.extend(of(true, true));
+        let mut blended = of(true, false);
+        opaque.sort_by(|a, b| depth(a).total_cmp(&depth(b)));
+        reading.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+        blended.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+        opaque.into_iter().chain(reading).chain(blended).collect()
+    }
+
+    #[test]
+    fn sorted_keys_put_the_draws_where_stable_sorts_by_depth_did() {
+        // Few depths, so many draws are as far as another, and the ends of
+        // a float's order among them.
+        let depths = [
+            0.0,
+            -0.0,
+            1.0,
+            -1.0,
+            2.5,
+            1e30,
+            -1e30,
+            f32::MIN_POSITIVE,
+            -f32::MIN_POSITIVE,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            f32::NAN,
+            -f32::NAN,
+        ];
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move || {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) as usize
+        };
+        for n in [0, 1, 2, 7, 64, 1000] {
+            let draws: Vec<(bool, bool, f32)> = (0..n)
+                .map(|_| {
+                    (
+                        next() % 2 == 0,
+                        next() % 3 == 0,
+                        depths[next() % depths.len()],
+                    )
+                })
+                .collect();
+            let mut keys: Vec<u128> = draws
+                .iter()
+                .enumerate()
+                .map(|(i, &(blends, reads, depth))| {
+                    draw_key(Pass::of(blends, reads), depth, i as u32)
+                })
+                .collect();
+            keys.sort_unstable();
+            let order: Vec<usize> = keys.iter().map(|&k| key_index(k)).collect();
+            assert_eq!(order, sorted_as_before(&draws), "{n} draws");
+            let opaque = draws.iter().filter(|d| !d.0 && !d.1).count();
+            assert_eq!(keys.partition_point(|&k| opaque_key(k)), opaque);
+        }
+    }
+
+    #[test]
+    fn a_draw_is_small_beside_a_models_uniforms() {
+        // A draw is copied once into its place each frame and the keys are
+        // what is sorted; a model's uniforms are where the frame keeps them.
+        let (draw, uniforms) = (size_of::<Draw>(), size_of::<ModelUniform>());
+        assert!(
+            draw * 2 <= uniforms,
+            "a draw is {draw} bytes, uniforms {uniforms}"
+        );
     }
 }

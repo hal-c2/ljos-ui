@@ -12,6 +12,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
+use rustc_hash::FxHashMap;
+
 use crate::scene::Material;
 use crate::texture::{Filter, PixelEncoding, Sampling, Texture, TexturePixels, Tiling};
 
@@ -48,6 +50,13 @@ struct Uploaded {
 
 /// What one material binds: per map, the texture and how it is read.
 pub(crate) type GroupKey = [Option<(TextureKey, Sampling)>; MAPS];
+
+/// A bind group of maps by where it is among those made, which a draw
+/// carries in place of its [`GroupKey`]: a thousand draws are compared,
+/// hashed and copied each frame, and the key is a dozen maps long. Good
+/// for the frame it is given in, as [`Maps::sweep`] runs before any draw.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(crate) struct GroupId(u32);
 
 /// The maps of `material` in binding order, each with whether it is a
 /// colour, and so sRGB.
@@ -97,7 +106,10 @@ pub(crate) struct Maps {
     no_sampler: wgpu::Sampler,
     textures: HashMap<TextureKey, Uploaded>,
     samplers: HashMap<Sampling, wgpu::Sampler>,
-    groups: HashMap<GroupKey, wgpu::BindGroup>,
+    /// Asked for each model each frame, by a key a dozen maps long.
+    groups: FxHashMap<GroupKey, GroupId>,
+    /// The bind groups and what they bind, where their ids say.
+    made: Vec<(GroupKey, wgpu::BindGroup)>,
     max_side: u32,
     /// What this renderer's maps upload, among other renderers'.
     reader: crate::uploads::Reader,
@@ -145,7 +157,8 @@ impl Maps {
             no_sampler,
             textures: HashMap::new(),
             samplers: HashMap::new(),
-            groups: HashMap::new(),
+            groups: FxHashMap::default(),
+            made: Vec::new(),
             max_side: device.limits().max_texture_dimension_2d,
             reader: crate::uploads::Reader::new(crate::uploads::Kind::Maps),
         }
@@ -158,7 +171,7 @@ impl Maps {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         material: &Material,
-    ) -> GroupKey {
+    ) -> GroupId {
         self.white(device, queue);
         let mut key: GroupKey = [None; MAPS];
         // Let go once the material's maps are up: it may read one image two
@@ -186,11 +199,18 @@ impl Maps {
             *slot = Some((k, texture.sampling));
         }
         crate::uploads::uploaded(&self.reader, up.iter().flatten().map(|t| &t.image));
-        if !self.groups.contains_key(&key) {
-            let group = self.make_group(device, &key);
-            self.groups.insert(key, group);
+        self.id(device, key)
+    }
+
+    /// The id of the group `key` binds, which is made unless it is there.
+    fn id(&mut self, device: &wgpu::Device, key: GroupKey) -> GroupId {
+        if let Some(&id) = self.groups.get(&key) {
+            return id;
         }
-        key
+        let id = GroupId(self.made.len() as u32);
+        self.made.push((key, self.make_group(device, &key)));
+        self.groups.insert(key, id);
+        id
     }
 
     /// One texture a custom material or an effect samples by its own
@@ -241,8 +261,8 @@ impl Maps {
             .clone()
     }
 
-    pub(crate) fn group(&self, key: &GroupKey) -> &wgpu::BindGroup {
-        &self.groups[key]
+    pub(crate) fn group(&self, id: GroupId) -> &wgpu::BindGroup {
+        &self.made[id.0 as usize].1
     }
 
     fn white(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -253,14 +273,9 @@ impl Maps {
     }
 
     /// The group of a material with no maps.
-    pub(crate) fn plain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> GroupKey {
+    pub(crate) fn plain(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) -> GroupId {
         self.white(device, queue);
-        let key = [None; MAPS];
-        if !self.groups.contains_key(&key) {
-            let group = self.make_group(device, &key);
-            self.groups.insert(key, group);
-        }
-        key
+        self.id(device, [None; MAPS])
     }
 
     /// Lets go of the textures whose image no scene holds any more, and of
@@ -270,8 +285,13 @@ impl Maps {
         self.textures.retain(|_, t| t.image.strong_count() > 0);
         if self.textures.len() != before {
             let textures = &self.textures;
+            self.made
+                .retain(|(k, _)| k.iter().flatten().all(|(t, _)| textures.contains_key(t)));
+            // No draw holds an id yet, so the groups kept are numbered
+            // again from the start.
+            self.groups.clear();
             self.groups
-                .retain(|k, _| k.iter().flatten().all(|(t, _)| textures.contains_key(t)));
+                .extend((self.made.iter().enumerate()).map(|(i, (k, _))| (*k, GroupId(i as u32))));
         }
     }
 
