@@ -14,7 +14,9 @@ use std::time::Duration;
 
 use common::*;
 use ljos_engine::{Engine, ObjectId, Value};
-use ljos_quick::{QuickScene, running_animation_count, set_animation_frame_period};
+use ljos_quick::{
+    QuickScene, frames_only_while, running_animation_count, set_animation_frame_period,
+};
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 
 /// More frames than any test here may take at one moment.
@@ -256,6 +258,50 @@ fn a_frame_animation_asks_for_every_frame_only_while_it_runs() {
     assert_eq!(rig.run_until(ms(2000)), 1);
     assert!(rig.idle(), "a stopped FrameAnimation asks for nothing");
     assert_eq!(rig.run_until(ms(60_000)), 0);
+}
+
+const FRAMES_AND_A_RUN: &str = r#"import QtQuick
+Item {
+  objectName: "root"
+  Rectangle { id: box; objectName: "box"; width: 10; height: 10 }
+  FrameAnimation { objectName: "frames"; running: true }
+  NumberAnimation { objectName: "anim"; target: box; property: "x"; from: 0; to: 100; duration: 100 }
+}
+"#;
+
+#[test]
+fn a_frame_animation_wanted_by_nobody_rides_along_and_asks_for_nothing() {
+    let mut rig = Rig::new(FRAMES_AND_A_RUN);
+    let wanted = Rc::new(std::cell::Cell::new(false));
+    let asked = Rc::clone(&wanted);
+    frames_only_while(&rig.e, rig.obj("frames"), move |_| asked.get());
+    rig.run_until(ms(100));
+    assert!(rig.idle(), "a FrameAnimation nobody wants asks for nothing");
+    let before = rig.num("frames", "currentFrame");
+
+    rig.call("anim", "start");
+    assert_eq!(rig.run_until(ms(300)), 11);
+    assert_eq!(
+        rig.num("frames", "currentFrame"),
+        before + 11.0,
+        "running, it is triggered by the frames others ask for"
+    );
+    assert!(rig.idle());
+
+    // Last triggered at 200 ms, when the run ended.
+    let elapsed = rig.num("frames", "elapsedTime");
+    wanted.set(true);
+    // What it wants is asked at each frame: something has to come.
+    rig.set("box", "x", Value::Real(5.0));
+    assert_eq!(
+        rig.run_until(ms(400)),
+        11,
+        "wanted, it asks for every frame"
+    );
+    assert!(
+        (rig.num("frames", "elapsedTime") - elapsed - 0.2).abs() < 1e-9,
+        "its time went on while it asked for nothing"
+    );
 }
 
 #[test]

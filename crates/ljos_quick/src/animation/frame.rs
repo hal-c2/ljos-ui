@@ -237,6 +237,25 @@ fn set_paused(engine: &Engine, me: ObjectId, paused: bool) {
     }
 }
 
+/// The `frameTime`, in seconds, that the next frame would give the
+/// `FrameAnimation` `me`: the time that has gone by for it since the frame
+/// it was last brought to. Nought while it is stopped, paused or frozen. A
+/// clock that rides along without asking for frames
+/// ([`driver::frames_only_while`]) tells by it where its time is now.
+pub fn frame_time_due(engine: &Engine, me: ObjectId) -> f64 {
+    if !driver::has_frames(engine, me) || engine.is_frozen(me) {
+        return 0.0;
+    }
+    let last = engine
+        .with::<FrameAnimation, _>(me, |f| f.last)
+        .ok()
+        .flatten();
+    match (last, driver::frame_now(engine)) {
+        (Some(last), Some(now)) => now.saturating_since(last).as_secs_f64(),
+        _ => 0.0,
+    }
+}
+
 /// One frame, at `now`: the counts go on and `triggered` is emitted.
 pub(crate) fn advance(engine: &Engine, me: ObjectId, now: Time) {
     let Ok(last) = engine.with_mut::<FrameAnimation, _>(me, |f| f.last.replace(now)) else {

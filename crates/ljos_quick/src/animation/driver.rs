@@ -53,12 +53,19 @@ pub(crate) struct Driver {
     /// What [`later`] was given, until the next frame.
     later: RefCell<Vec<Deferred>>,
     /// The `FrameAnimation`s that run and are not paused, in the order
-    /// they started: each wants every frame.
+    /// they started: each wants every frame, unless it is in `wants`.
     frames: RefCell<Vec<ObjectId>>,
+    /// What says, for the `FrameAnimation`s given to
+    /// [`frames_only_while`], whether they want the next frame.
+    wants: RefCell<FxHashMap<ObjectId, Wants>>,
 }
 
 /// Something to do in the next frame.
 type Deferred = Box<dyn FnOnce(&Engine)>;
+
+/// Whether a `FrameAnimation` wants the next frame; see
+/// [`frames_only_while`].
+type Wants = Rc<dyn Fn(&Engine) -> bool>;
 
 struct Run {
     anim: ObjectId,
@@ -348,12 +355,37 @@ pub(crate) fn has_frames(engine: &Engine, me: ObjectId) -> bool {
     driver(engine).frames.borrow().contains(&me)
 }
 
+/// From now on the `FrameAnimation` `me` asks for a frame only while
+/// `wants` says so. Running, it is still triggered on every frame that
+/// comes, with the time since the one before: a clock whose work nobody
+/// sees for now rides along with the frames others ask for, and is where
+/// its time says when it is seen again.
+pub fn frames_only_while(engine: &Engine, me: ObjectId, wants: impl Fn(&Engine) -> bool + 'static) {
+    let d = driver(engine);
+    let mut all = d.wants.borrow_mut();
+    all.retain(|o, _| engine.is_alive(*o));
+    all.insert(me, Rc::new(wants));
+}
+
 /// Whether a `FrameAnimation` wants the next frame.
 fn frames_want(engine: &Engine, d: &Driver) -> bool {
-    d.frames
-        .borrow()
-        .iter()
-        .any(|f| engine.is_alive(*f) && !engine.is_frozen(*f))
+    let asked: Vec<Wants> = {
+        let frames = d.frames.borrow();
+        let wants = d.wants.borrow();
+        let mut asked = Vec::new();
+        for f in frames.iter() {
+            if !engine.is_alive(*f) || engine.is_frozen(*f) {
+                continue;
+            }
+            match wants.get(f) {
+                None => return true,
+                Some(w) => asked.push(Rc::clone(w)),
+            }
+        }
+        asked
+    };
+    // Asked unborrowed: what decides reads the engine.
+    asked.iter().any(|w| engine.untrack(|| w(engine)))
 }
 
 /// Calls `f` at the start of the next frame, and asks for that frame.
@@ -651,6 +683,7 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
             for f in frames {
                 if !engine.is_alive(f) {
                     remove_frames(engine, f);
+                    d.wants.borrow_mut().remove(&f);
                 } else if !engine.is_frozen(f) && has_frames(engine, f) {
                     super::frame::advance(engine, f, now);
                 }

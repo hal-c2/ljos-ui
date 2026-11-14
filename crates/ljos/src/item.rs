@@ -130,7 +130,7 @@ pub use ljos_quick::{
 };
 /// Runs with QtQuick's animations but belongs to QtQuick3D: the module
 /// crate that has QtQuick3D registers it.
-pub use ljos_quick::{FrameAnimation, QuaternionAnimation};
+pub use ljos_quick::{FrameAnimation, QuaternionAnimation, frame_time_due, frames_only_while};
 pub use ljos_quick::{
     HoverMove, MouseButtons, PointerEvent, PointerId, PointerItem, PointerKind, PointerPortal,
     contains_point,
