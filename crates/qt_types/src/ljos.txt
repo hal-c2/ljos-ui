@@ -10833,6 +10833,7 @@ module QtQuick3D.Helpers
 		prop pipelinesCreated QtQml.int named readonly
 		prop modelsDrawn QtQml.int named readonly
 		prop modelsCulled QtQml.int named readonly
+		prop objectsRead QtQml.int named readonly
 		prop syncTime QtQml.real named readonly
 		prop renderPrepareTime QtQml.real named readonly
 		prop encodeTime QtQml.real named readonly
@@ -10857,6 +10858,7 @@ module QtQuick3D.Helpers
 		signal pipelinesCreatedChanged
 		signal modelsDrawnChanged
 		signal modelsCulledChanged
+		signal objectsReadChanged
 		signal syncTimeChanged
 		signal renderPrepareTimeChanged
 		signal encodeTimeChanged

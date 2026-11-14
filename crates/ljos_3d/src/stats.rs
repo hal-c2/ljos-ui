@@ -86,6 +86,10 @@ pub struct FrameCounters {
     pub models_drawn: u64,
     /// Models left out because the camera does not see them.
     pub models_culled: u64,
+    /// Objects of the scene read again since the frame before: none when
+    /// nothing in it changed, one for an object that changed, every one
+    /// of them for a scene read whole.
+    pub objects_read: u64,
     /// Seconds spent reading the QML scene into the renderer's since the
     /// frame before, on whichever thread did it.
     pub sync_seconds: f64,
@@ -117,6 +121,7 @@ impl FrameCounters {
         bind_groups_created: 0,
         models_drawn: 0,
         models_culled: 0,
+        objects_read: 0,
         sync_seconds: 0.0,
         prepare_seconds: 0.0,
         encode_seconds: 0.0,
@@ -141,6 +146,7 @@ impl FrameCounters {
         self.bind_groups_created += o.bind_groups_created;
         self.models_drawn += o.models_drawn;
         self.models_culled += o.models_culled;
+        self.objects_read += o.objects_read;
         self.sync_seconds += o.sync_seconds;
         self.prepare_seconds += o.prepare_seconds;
         self.encode_seconds += o.encode_seconds;
@@ -161,6 +167,8 @@ struct Record {
     /// Sync seconds not yet part of an ended frame: the scene is read on
     /// the engine's thread, which need not be the one that draws.
     sync: f64,
+    /// Likewise the objects read for it.
+    read: u64,
     #[cfg(not(target_arch = "wasm32"))]
     last: Option<std::time::Instant>,
 }
@@ -179,6 +187,7 @@ static RECORD: Mutex<Record> = Mutex::new(Record {
         total: FrameCounters::ZERO,
     },
     sync: 0.0,
+    read: 0,
     #[cfg(not(target_arch = "wasm32"))]
     last: None,
 });
@@ -231,6 +240,11 @@ pub fn add_sync_seconds(seconds: f64) {
     record().sync += seconds;
 }
 
+/// Objects of a QML scene read again, for the next frame ended to count.
+pub fn add_objects_read(objects: u64) {
+    record().read += objects;
+}
+
 /// The host has submitted its frame, which took `submit_seconds` beyond
 /// the submits already counted in it (an off-screen picture's). When a
 /// scene was drawn in it on this thread, what the frame cost becomes the
@@ -257,6 +271,7 @@ pub fn frame_end(submit_seconds: f64) -> Option<FrameCounters> {
     let (index, gpu) = {
         let mut r = record();
         frame.sync_seconds = std::mem::take(&mut r.sync);
+        frame.objects_read = std::mem::take(&mut r.read);
         r.stats.frames += 1;
         r.stats.last = frame;
         r.stats.total.add(&frame);
@@ -374,7 +389,7 @@ mod sink {
              \"buffer_writes\":{},\"buffer_write_bytes\":{},\"texture_uploads\":{},\
              \"texture_upload_bytes\":{},\"pipelines_created\":{},\"shader_modules_created\":{},\
              \"buffers_created\":{},\"textures_created\":{},\"bind_groups_created\":{},\
-             \"models_drawn\":{},\"models_culled\":{},\"sync_ms\":{:.4},\"prepare_ms\":{:.4},\
+             \"models_drawn\":{},\"models_culled\":{},\"objects_read\":{},\"sync_ms\":{:.4},\"prepare_ms\":{:.4},\
              \"encode_ms\":{:.4},\"submit_ms\":{:.4},\"gpu_ms\":",
             f.views,
             f.draw_calls,
@@ -393,6 +408,7 @@ mod sink {
             f.bind_groups_created,
             f.models_drawn,
             f.models_culled,
+            f.objects_read,
             ms(f.sync_seconds),
             ms(f.prepare_seconds),
             ms(f.encode_seconds),
