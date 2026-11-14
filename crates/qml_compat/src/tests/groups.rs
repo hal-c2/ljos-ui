@@ -163,6 +163,28 @@ fn a_file_in_ljoss_api_keeps_the_file_it_binds_qts_names_on() {
             Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
         ),
         (
+            "Dial { id: dial } Binding { dial.color: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { id: dial } PropertyChanges { dial { color: \"red\" } }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
+            "Dial { id: dial } Connections { target: dial; function onColorChanged() {} }",
+            Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
+        ),
+        (
+            "Dial { Connections { function onColorChanged() {} } }",
+            Some("binds `onColorChanged` on it, which Ljós's `Rectangle` calls `onFillChanged`"),
+        ),
+        // An inline component's ids are its own.
+        (
+            "Dial { id: dial } component Other: Item { Item { id: dial } } \
+             Binding { target: dial; property: \"color\"; value: \"red\" }",
+            Some("binds `color` on it, which Ljós's `Rectangle` calls `fill`"),
+        ),
+        (
             "Dial { id: dial } PropertyChanges { target: dial; angle: 2; explicit: true }",
             None,
         ),

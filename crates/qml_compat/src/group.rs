@@ -88,7 +88,7 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
         found: &mut found,
         ids: &named,
     }
-    .object(root);
+    .object(root, None);
     found.types.sort();
     found.types.dedup();
     found.files.sort();
@@ -100,7 +100,9 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
     found
 }
 
-/// Each `id` of the file and the last name of its object's type.
+/// Each `id` of a component of the file (the file's own, or an inline
+/// one's) and the last name of its object's type. An inline component is
+/// a scope of its own: its ids are not the file's, nor the file's its.
 fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, &'s str>) {
     let ty = object.type_name.parts.last().copied();
     for member in &object.members {
@@ -119,8 +121,10 @@ fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, &'s str>) {
                 }
             }
             QmlMember::Object(child) => ids(child, named),
-            QmlMember::InlineComponent(component) => ids(&component.object, named),
-            QmlMember::Function(_) | QmlMember::Signal(_) | QmlMember::Enum(_) => {}
+            QmlMember::InlineComponent(_)
+            | QmlMember::Function(_)
+            | QmlMember::Signal(_)
+            | QmlMember::Enum(_) => {}
         }
     }
 }
@@ -154,12 +158,14 @@ impl<'s> Walk<'_, 's> {
         }
     }
 
-    fn object(&mut self, object: &QmlObject<'_>) {
+    /// What `object` names, in the object of type `parent` when it is one's
+    /// child.
+    fn object(&mut self, object: &QmlObject<'_>, parent: Option<&str>) {
         let ty = object.type_name.parts.last().copied();
         if let Some(name) = ty {
             self.found.types.push(name.to_string());
         }
-        self.sets_on_target(object);
+        self.sets_on_target(object, parent);
         for member in &object.members {
             match member {
                 QmlMember::Object(child) => {
@@ -174,7 +180,7 @@ impl<'s> Walk<'_, 's> {
                     if let (Some(ty), Some(name)) = (ty, on.or(grouped)) {
                         self.bind(ty, name);
                     }
-                    self.object(child);
+                    self.object(child, ty);
                 }
                 QmlMember::Binding(binding) => {
                     if let (Some(ty), Some(name)) = (ty, binding.name.parts.first()) {
@@ -201,19 +207,29 @@ impl<'s> Walk<'_, 's> {
                 QmlMember::Function(function) => {
                     Strings(self.found).visit_function(function, ScopeFlags::Function);
                 }
-                QmlMember::InlineComponent(component) => self.object(&component.object),
+                QmlMember::InlineComponent(component) => {
+                    let mut named = BTreeMap::new();
+                    ids(&component.object, &mut named);
+                    Walk {
+                        found: &mut *self.found,
+                        ids: &named,
+                    }
+                    .object(&component.object, None);
+                }
                 QmlMember::Signal(_) | QmlMember::Enum(_) => {}
             }
         }
     }
 
     /// What a `PropertyChanges` or a `Binding` sets on the object its
-    /// `target` names, or a `PropertyChanges` on the object an id of a
-    /// binding's name does (`dial.color: "red"`): bound on that object's
-    /// type as a binding on it is.
-    fn sets_on_target(&mut self, object: &QmlObject<'_>) {
+    /// `target` names, on the object an id of a binding's name does
+    /// (`dial.color: "red"`) or on the one an id of a group names
+    /// (`dial { color: "red" }`), and the handlers a `Connections` has for
+    /// its `target`, else for its `parent`: bound on that object's type as
+    /// a binding on it is.
+    fn sets_on_target(&mut self, object: &QmlObject<'_>, parent: Option<&str>) {
         let kind = object.type_name.parts.last().copied();
-        if !matches!(kind, Some("PropertyChanges" | "Binding")) {
+        if !matches!(kind, Some("PropertyChanges" | "Binding" | "Connections")) {
             return;
         }
         let bindings = || {
@@ -222,9 +238,26 @@ impl<'s> Walk<'_, 's> {
                 _ => None,
             })
         };
-        let target = bindings()
-            .find(|b| b.name.as_simple() == Some("target"))
-            .and_then(|b| self.target(&b.value));
+        let named = bindings().find(|b| b.name.as_simple() == Some("target"));
+        let target = named.and_then(|b| self.target(&b.value));
+        if kind == Some("Connections") {
+            let Some(ty) = (if named.is_some() { target } else { parent }) else {
+                return;
+            };
+            for member in &object.members {
+                let name = match member {
+                    QmlMember::Function(function) => {
+                        function.id.as_ref().map(|id| id.name.as_str())
+                    }
+                    QmlMember::Binding(binding) => binding.name.as_simple(),
+                    _ => None,
+                };
+                if let Some(name) = name.filter(|name| is_handler(name)) {
+                    self.bind(ty, name);
+                }
+            }
+            return;
+        }
         if kind == Some("Binding") {
             let property = bindings()
                 .find(|b| b.name.as_simple() == Some("property"))
@@ -237,11 +270,13 @@ impl<'s> Walk<'_, 's> {
             if let (Some(ty), Some(name)) = (target, property) {
                 self.bind(ty, name.split('.').next().unwrap_or(name));
             }
-            return;
         }
         for binding in bindings() {
             match binding.name.parts.as_slice() {
-                [name] if !matches!(*name, "target" | "explicit" | "restoreEntryValues") => {
+                [name]
+                    if kind == Some("PropertyChanges")
+                        && !matches!(*name, "target" | "explicit" | "restoreEntryValues") =>
+                {
                     if let Some(ty) = target {
                         self.bind(ty, name);
                     }
@@ -254,6 +289,20 @@ impl<'s> Walk<'_, 's> {
                 _ => {}
             }
         }
+        for member in &object.members {
+            if let QmlMember::Object(group) = member
+                && let [id] = group.type_name.parts.as_slice()
+                && let Some(ty) = self.ids.get(*id).copied()
+            {
+                for inner in &group.members {
+                    if let QmlMember::Binding(binding) = inner
+                        && let Some(name) = binding.name.parts.first()
+                    {
+                        self.bind(ty, name);
+                    }
+                }
+            }
+        }
     }
 
     fn value(&mut self, value: &QmlBindingValue<'_>) {
@@ -262,10 +311,16 @@ impl<'s> Walk<'_, 's> {
                 Strings(self.found).visit_expression(expression);
             }
             QmlBindingValue::Statement(statement) => Strings(self.found).visit_statement(statement),
-            QmlBindingValue::Object(o) => self.object(o),
-            QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.object(o)),
+            QmlBindingValue::Object(o) => self.object(o, None),
+            QmlBindingValue::Objects(objects) => objects.iter().for_each(|o| self.object(o, None)),
         }
     }
+}
+
+/// Whether `name` is a signal handler's (`onColorChanged`).
+fn is_handler(name: &str) -> bool {
+    name.strip_prefix("on")
+        .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_uppercase()))
 }
 
 /// The `.qml` addresses and the type names a script holds.
