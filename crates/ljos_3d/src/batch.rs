@@ -235,8 +235,13 @@ impl Index {
             }
             // Two boxes that meet have a point in common, whose cell is
             // in both: a touch on a cell's edge too.
+            // Far out, the cells are i64's ends, which no span between
+            // holds.
             (lo[axis], hi[axis]) = (a.floor() as i64, b.floor() as i64);
-            if hi[axis] - lo[axis] > Self::ACROSS {
+            if hi[axis]
+                .checked_sub(lo[axis])
+                .is_none_or(|d| d > Self::ACROSS)
+            {
                 return None;
             }
         }
@@ -406,6 +411,19 @@ mod tests {
         let reach = [floor, cube(-50.0, 0.0), cube(-50.5, 0.0)];
         assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 1]);
         let keys = [Some('b'), Some('a'), Some('b')];
+        assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
+    }
+
+    #[test]
+    fn a_box_far_out_is_looked_at_for_every_draw() {
+        // Its cells are i64's ends, a span no subtraction holds.
+        let far = Reach::placed(
+            &Mat4::IDENTITY,
+            (Vec3::new(-1e30, -1.0, -1.0), Vec3::new(1e30, 1.0, 1.0)),
+            true,
+        );
+        let keys = [Some('a'), Some('b'), Some('a')];
+        let reach = [cube(-5.0, 0.0), far, cube(5.0, 0.0)];
         assert_eq!(firsts(&keys, |_, _| true, &reach, &[0, 1, 2]), [0, 1, 2]);
     }
 
