@@ -8,7 +8,10 @@ set -euo pipefail
 # bench/quick3d/renderstats-probe.qml, which logs Qt's own renderStats:
 # Qt's frames cannot be counted from outside. Run it with
 # LJOS_CUA_GPU=/dev/dri/renderD128 and a LJOS_CUA_HOME of its own to
-# measure on the GPU; without, both draw on llvmpipe. The corpus apps whose
+# measure on the GPU. Without it, qml6 draws on llvmpipe, while Ljós draws on
+# the processor with its 3D still on a GPU it can open; `--app-env
+# WGPU_BACKEND=gl --app-env LIBGL_ALWAYS_SOFTWARE=1` holds that to llvmpipe
+# too (docs/quick3d-perf.md). The corpus apps whose
 # build downloads assets need `mise run gallery:assets <id>` first.
 # BENCH_3D_PROBE_SECONDS (default 10) is how long the probe runs a scene;
 # 0 leaves the probe out. BENCH_QT (default: dice and the FX showroom, which
