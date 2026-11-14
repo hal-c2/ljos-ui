@@ -17,6 +17,7 @@ mise run bench                          # every app, both runtimes, both profile
 mise run bench rectangles samegame      # some apps
 mise run bench calqlatr --runtime ljos  # options after the ids go to `ljos bench`
 mise run bench:cross                    # can ljos be built for a small aarch64 board?
+mise run bench:3d                       # the QtQuick3D scenes, with what each 3D frame cost (docs/quick3d-perf.md)
 ```
 
 `ljos bench --help` lists every option.

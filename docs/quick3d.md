@@ -180,9 +180,12 @@ The bar is beating `qml6` running the same QML, on `mise run bench` (docs/BENCHM
 | `quick3d-spin.qml` | the same cube turned by a `NumberAnimation`: frame interval, CPU per frame |
 | `quick3d-shadows.qml` | a cube turning over a floor under a shadowed sun, spot and point light: every map drawn again each frame |
 | `quick3d-grid.qml` | a `Repeater3D` of 1 000 models, 4 lights, one moving: per-model cost, uniform upload |
-| `quick3d-overlay.qml` | a `View3D` under Controls (a slider driving a property): composition with 2D, input to repaint |
 | `quick3d-gltf.qml` (M6) | a glTF model through `RuntimeLoader`: load time, memory |
 | `quick3d-instances.qml` (M10) | 10 000 `#Cube` copies from a `RandomInstancing`, their parent turning: one instanced draw, the table written once |
+| `quick3d-post.qml` | a turning cube in an `ExtendedSceneEnvironment` with glow, depth of field, ambient occlusion and FXAA: post-processing on the GPU |
+| `quick3d-stress.qml` | 480 models, twelve lights (four casting shadows), large textures and blended materials under an orbiting camera |
+
+`mise run bench:3d` runs these and the corpus's 3D demos on both runtimes and adds what each 3D frame cost: draw calls, pipeline switches, uploads, the CPU parts and the GPU time. docs/quick3d-perf.md describes the counters and the measurements.
 
 **Budget.** Each row must be at or below `qml6`:
 - time and CPU to the first frame;
