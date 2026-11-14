@@ -55,6 +55,8 @@ pub struct Runtime {
     /// the session it needs to reach the service manager.
     pub env: Vec<(String, String)>,
     pub unset: Vec<String>,
+    /// Where the gate starts it; the launcher's own when `None`.
+    pub dir: Option<PathBuf>,
 }
 
 /// What every run shares.
@@ -934,6 +936,9 @@ fn run_once(
     }
     for k in &runtime.unset {
         command.arg("--unset").arg(k);
+    }
+    if let Some(dir) = &runtime.dir {
+        command.arg("--dir").arg(dir);
     }
     command
         .arg("--")

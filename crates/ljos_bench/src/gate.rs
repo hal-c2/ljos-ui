@@ -72,6 +72,7 @@ pub fn pass(
     fifo: &Path,
     env: &[(String, String)],
     unset: &[String],
+    dir: Option<&Path>,
     program: &OsString,
     args: &[OsString],
 ) -> std::io::Error {
@@ -85,6 +86,9 @@ pub fn pass(
     }
     let mut command = Command::new(program);
     command.args(args);
+    if let Some(dir) = dir {
+        command.current_dir(dir);
+    }
     for key in unset {
         command.env_remove(key);
     }

@@ -3,7 +3,9 @@
 # measures and `mise run bench:hot` records: bench/*.qml and the corpus
 # examples (by default all qml6 can run), each with its imports and
 # arguments. An example named that qml6 cannot run here is measured without
-# it ("qt": false).
+# it ("qt": false). Each example runs as `mise run gallery:run` runs it: with
+# its stand-ins (corpus/standins) and where its downloaded assets are
+# (`mise run gallery:assets <id>` first).
 # Needs target/debug/qml-compare (cargo build -p qml_compare).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,6 +35,7 @@ done <<< "$rows"
 ROWS="$rows" python3 - "$root" "$overlays" "$gallery" "$drive" "$manifest" ${ids[@]+"${ids[@]}"} <<'PY'
 import json, os, re, sys
 root, overlays, gallery, drive, manifest, *wanted = sys.argv[1:]
+assets = json.load(open(os.path.join(root, "corpus", "assets.json")))
 renders = None
 try:
     renders = {e["id"] for e in json.load(open(gallery)) if e.get("renders")}
@@ -67,6 +70,34 @@ for line in os.environ["ROWS"].splitlines():
     })
     if qt != "true":
         apps[-1]["qt"] = False
+    # As `mise run gallery:run` starts it: corpus/standins/<id> holds QML for the C++ of the
+    # example's own build, each module answering the import of its name (qml6 finds them by
+    # -I), and that QML may read the example's files.
+    standins = os.path.join(root, "corpus", "standins", cid)
+    if os.path.isdir(standins):
+        apps[-1]["imports"].append(standins)
+        for here, dirs, files in sorted(os.walk(standins)):
+            dirs[:] = sorted(x for x in dirs if x != "downloaded")
+            if "qmldir" in files:
+                module = re.search(r"^module\s+(\S+)", open(os.path.join(here, "qmldir")).read(), re.M)
+                if module:
+                    apps[-1]["ljos_args"] += ["--alias", f"{module.group(1)}={here}"]
+        apps[-1]["env"] = {"QML_XHR_ALLOW_FILE_READ": "1"}
+    # An example whose build downloads assets reads them by `file:content/…`, relative to where
+    # it runs: the example's directory, or for a stand-in's download one whose `content` is it.
+    if cid in assets:
+        downloaded = os.path.join(standins, "downloaded")
+        if os.path.isdir(downloaded):
+            here = os.path.join(os.path.dirname(manifest), "cwd", cid)
+            os.makedirs(here, exist_ok=True)
+            content = os.path.join(downloaded, "content")
+            link = os.path.join(here, "content")
+            if os.path.islink(link):
+                os.unlink(link)
+            os.symlink(content if os.path.isdir(content) else downloaded, link)
+            apps[-1]["dir"] = here
+        else:
+            apps[-1]["dir"] = d
     # The controls gallery:drive clicked, in its order, are clicked on every runtime; with
     # fewer than three (a game, a snippet of MouseAreas) gallery:drive used a grid, as the
     # bench does.

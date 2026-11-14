@@ -72,6 +72,15 @@ pub struct App {
     /// other runtimes alone.
     #[serde(default = "yes")]
     pub qt: bool,
+    /// The directory it runs in, on every runtime: an example whose own
+    /// build unpacks its assets reads them relative to where it runs
+    /// (`file:content/…`). By default the bench's own.
+    #[serde(default)]
+    pub dir: Option<PathBuf>,
+    /// More environment for it on every runtime, after the bench's own:
+    /// a stand-in for an example's C++ may need what its build set.
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
 }
 
 fn yes() -> bool {
@@ -102,6 +111,8 @@ impl App {
             clicks: Vec::new(),
             commands: BTreeMap::new(),
             qt: true,
+            dir: None,
+            env: BTreeMap::new(),
         }
     }
 }
@@ -165,12 +176,14 @@ pub fn runtime(name: &str, app: &App, programs: &Programs) -> Option<Runtime> {
         }
     };
     env.extend(programs.env.iter().cloned());
+    env.extend(app.env.iter().map(|(k, v)| (k.clone(), v.clone())));
     Some(Runtime {
         name: name.to_owned(),
         program,
         args,
         env,
         unset,
+        dir: app.dir.clone(),
     })
 }
 
