@@ -51,6 +51,25 @@ Feature: A web page in a WebEngineView
     And the property "loading" of "view" is false
     And the property "loadProgress" of "view" is 100
 
+  @api-QtWebEngine.WebEngineProfile.storageName @api-QtWebEngine.WebEngineProfile.offTheRecord
+  Scenario: The first page of a new profile kept on disk loads
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        profile: WebEngineProfile { storageName: "FirstPage"; offTheRecord: false }
+        url: Qt.resolvedUrl("page.html")
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status + ":" + info.errorCode
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is "0:0 2:200"
+    And the property "title" of "view" is "Fixture Page"
+
   @api-QtWebEngine.WebEngineView.url
   Scenario: A page is drawn where the view is
     Given the QML:
