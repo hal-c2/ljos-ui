@@ -3446,10 +3446,10 @@ pub(crate) fn shutdown() -> bool {
     for (context, origin, kind) in this_run.iter().chain(&every_time) {
         forget_answer(context, origin, *kind);
     }
-    // Forgotten now, as the profiles close and write what they keep.
-    for (_, journal) in &journals {
-        let _ = std::fs::remove_file(journal);
-    }
+    // The forgetting is on disk only once CEF has shut down and written
+    // the profiles' Preferences: until then a journal stays, so a run
+    // that ends sooner forgets the same answers again next time.
+    let journals: Vec<PathBuf> = journals.into_iter().map(|(_, path)| path).collect();
     drop(this_run);
     drop(every_time);
     for shared in &browsers {
@@ -3490,6 +3490,9 @@ pub(crate) fn shutdown() -> bool {
         do_message_loop_work();
     }
     ::cef::shutdown();
+    for journal in &journals {
+        let _ = std::fs::remove_file(journal);
+    }
     true
 }
 
