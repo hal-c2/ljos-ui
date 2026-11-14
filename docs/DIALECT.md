@@ -2011,8 +2011,9 @@ whose key is `Symbol.customMatcher`, the one symbol a script names
 `InvokeCustomMatcher` does: it is called with the subject and a hint,
 `"boolean"` where the pattern is the bare name and `"list"` where it is
 an extractor. `false` is no match; for the hint `"list"`, anything else
-must be iterable, or it is a `TypeError`, and its items are matched as
-an array pattern's. As an extractor, a function in place of the object
+must be an iterable object (an array, a `Set`, a generator, or a
+function with an iterator), or it is a `TypeError`, even a string, which
+is iterable but no object; its items are matched as an array pattern's. As an extractor, a function in place of the object
 is called with the subject and `"list"`, so a script's predicate can be
 one too; as a bare name it is called with the subject alone:
 
