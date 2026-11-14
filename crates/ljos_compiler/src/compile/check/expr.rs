@@ -3019,6 +3019,19 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         let list = self.arena.filter(ret, |arena, part| {
             !matches!(arena.kind(part), Kind::Boolean | Kind::Bool(_))
         });
+        // A matcher that gives only `true` or `false` has no list: `true`
+        // would be a `TypeError` where the extractor runs.
+        if list == Ty::NEVER {
+            let written = self.as_written(pattern.span());
+            self.report(
+                Code::TsAssignType,
+                format!(
+                    "`{written}` gives `true` or `false`, not a list to take apart: name it without `(…)`, or give a list where it matches"
+                ),
+                pattern.span(),
+            );
+            return Ty::ERROR;
+        }
         self.arena.or(list, Ty::UNDEFINED)
     }
 

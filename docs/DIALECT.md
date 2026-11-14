@@ -2012,8 +2012,9 @@ whose key is `Symbol.customMatcher`, the one symbol a script names
 `"boolean"` where the pattern is the bare name and `"list"` where it is
 an extractor. `false` is no match; for the hint `"list"`, anything else
 must be iterable, or it is a `TypeError`, and its items are matched as
-an array pattern's. A function in place of the object is called the same
-way, so a script's predicate can be an extractor too:
+an array pattern's. As an extractor, a function in place of the object
+is called with the subject and `"list"`, so a script's predicate can be
+one too; as a bare name it is called with the subject alone:
 
 ```ts
 const Point = {
@@ -2302,7 +2303,10 @@ constructors', and the proposal's possible future enhancements,
 relational patterns among them, are not in it.
 
 DECISION: an extractor follows `InvokeCustomMatcher` at the pin, with
-four choices of its own. The list is read into an array before its items
+five choices of its own. A function named bare is called with the
+subject alone, as before matchers came: a predicate with an optional
+second parameter would otherwise be given `"boolean"` for it, unseen by
+the checker or `tsc`. The list is read into an array before its items
 are tested, as the proposal's caching allows; an iterator read short is
 closed at once. The receiver is the matcher object, and the proposal's
 third argument, the receiver of a member path, is not passed, since a

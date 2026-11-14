@@ -2702,15 +2702,17 @@ const PRELUDE: &str = r##"
   const matcherOf = (p) =>
     (typeof p === "object" && p !== null) || typeof p === "function" ? p[Symbol.customMatcher] : undefined;
   // A pattern that is a name asks its custom matcher with the hint
-  // "boolean", or calls it when it is a function; otherwise it compares,
-  // and `Object.is` makes NaN match NaN and keeps 0 and -0 apart.
+  // "boolean", or calls it with the subject alone when it is a function,
+  // so a predicate's own optional parameters keep their defaults;
+  // otherwise it compares, and `Object.is` makes NaN match NaN and keeps
+  // 0 and -0 apart.
   Object.defineProperty(g, "$is", {
     value: (s, p) => {
       const type = primitive.get(p);
       if (type !== undefined) return typeof s === type;
       const f = matcherOf(p);
       if (f !== undefined) return !!f.call(p, s, "boolean");
-      return typeof p === "function" ? !!p(s, "boolean") : Object.is(s, p);
+      return typeof p === "function" ? !!p(s) : Object.is(s, p);
     },
   });
   // An extractor, `p(…)`: the list `p`'s matcher gives with the hint

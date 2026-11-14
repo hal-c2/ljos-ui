@@ -363,7 +363,7 @@ Feature: Choosing a value with match, and testing one with is
 
   Rule: An object's custom matcher decides what it matches, and an extractor takes apart the list it gives
 
-    Scenario: A custom matcher is asked with the hint "boolean", and what it gives is read as true or false
+    Scenario: A custom matcher is asked with the hint "boolean", a predicate is given the subject alone
       Given the QML:
         """qml
         import QtQuick
@@ -373,7 +373,7 @@ Feature: Choosing a value with match, and testing one with is
           Component.onCompleted: {
             const hints = [];
             const Even = { [Symbol.customMatcher](s, hint) { hints.push(hint); return s % 2 === 0 ? 1 : 0; } };
-            const isSmall = (s, hint) => { hints.push(hint); return s < 3; };
+            const isSmall = (s, strict = "own") => { hints.push(strict); return s < 3; };
             const a = match (4) { when Even: "even"; default: "odd"; };
             const b = 3 is Even;
             const c = match (2) { when isSmall: "small"; default: "big"; };
@@ -381,7 +381,7 @@ Feature: Choosing a value with match, and testing one with is
           }
         }
         """
-      Then the property "said" of "root" is "even false small boolean,boolean,boolean"
+      Then the property "said" of "root" is "even false small boolean,boolean,own"
 
     Scenario: An extractor matches the list its matcher gives with the hint "list", item by item
       Given the QML:
@@ -617,6 +617,30 @@ Feature: Choosing a value with match, and testing one with is
       Then the check reports:
         """
         Gauge.qml:9:20: error: `match` does not cover every case of `s`; for example, this case is not handled: `when { kind: "circle" }:` [ts-match-exhaustive]
+        1 files, 1 errors, 0 warnings
+        ljos: 1 errors
+        """
+
+    Scenario: A matcher that gives only true or false has no list, so it is no extractor
+      Given the file "Gauge.qml":
+        """qml
+        import Ljos.Ui
+        Item {
+          function isRow(v: unknown): v is number[] {
+            return Array.isArray(v);
+          }
+          function name(v: unknown): string {
+            return match (v) {
+              when isRow(let first): "row";
+              default: "other";
+            };
+          }
+        }
+        """
+      When the files are checked
+      Then the check reports:
+        """
+        Gauge.qml:8:20: error: `isRow` gives `true` or `false`, not a list to take apart: name it without `(…)`, or give a list where it matches [ts-assign-type]
         1 files, 1 errors, 0 warnings
         ljos: 1 errors
         """
