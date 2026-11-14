@@ -47,8 +47,9 @@ pub struct References {
     pub declares: Vec<String>,
     /// Per object, its type and the first name of each binding on it
     /// (`Dial`, `color`): what a file binds on the types it uses. A type
-    /// written qualified is there as written (`Kit.Dial`, an inline
-    /// component of `Kit.qml`) and by its last name (`Dial`, of a module).
+    /// written qualified by a file is there as written (`Kit.Dial`, an
+    /// inline component of `Kit.qml`); one qualified by a namespace the file
+    /// imports, by its last name (`Rectangle` of `QQ.Rectangle`).
     pub bound: Vec<(String, String)>,
     /// The inline components the file declares, which another file names
     /// qualified by this one's name (`Kit.Dial`).
@@ -90,18 +91,40 @@ fn declared(name: &str, has: impl Fn(&str) -> bool) -> bool {
         .any(|n| has(n))
 }
 
-/// A type as it is written (`Kit.Dial`).
-fn written(parts: &[&str]) -> Option<String> {
-    (!parts.is_empty()).then(|| parts.join("."))
+/// The namespaces a file imports a module or directory as (`QQ` of
+/// `import QtQuick as QQ`): a type qualified by one is that module's, named
+/// by its last name, and not an inline component of a file.
+type Aliases<'s> = BTreeSet<&'s str>;
+
+/// A type as the file names it: by its last name when a namespace it
+/// imports qualifies it (`Rectangle` of `QQ.Rectangle`), else as written
+/// (`Kit.Dial`, an inline component of `Kit.qml`).
+fn written(parts: &[&str], aliases: &Aliases<'_>) -> Option<String> {
+    match parts {
+        [] => None,
+        [first, .., last] if aliases.contains(first) => Some((*last).to_string()),
+        _ => Some(parts.join(".")),
+    }
 }
 
-/// The name of the file a type written qualified may be of (`Kit` of
-/// `Kit.Dial`), as a type's is; a module's qualifier ties nothing.
-fn qualifier<'s>(parts: &[&'s str]) -> Option<&'s str> {
+/// The name of the file a type written qualified is of (`Kit` of
+/// `Kit.Dial`), as a type's is; a namespace the file imports is not one.
+fn qualifier<'s>(parts: &[&'s str], aliases: &Aliases<'_>) -> Option<&'s str> {
     match parts {
-        [first, _, ..] if first.starts_with(|c: char| c.is_ascii_uppercase()) => Some(first),
+        [first, _, ..]
+            if first.starts_with(|c: char| c.is_ascii_uppercase()) && !aliases.contains(first) =>
+        {
+            Some(first)
+        }
         _ => None,
     }
+}
+
+/// The type names `parts` ties the file to: the file it qualifies
+/// (`Kit` of `Kit.Dial`), else its last name (`Rectangle` of
+/// `QQ.Rectangle`, `Button`).
+fn type_names<'s>(parts: &[&'s str], aliases: &Aliases<'_>) -> Option<&'s str> {
+    qualifier(parts, aliases).or_else(|| parts.last().copied())
 }
 
 /// What `source` names that may be a file of the project. A file that does
@@ -117,6 +140,12 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
     if parsed.panicked {
         return found;
     }
+    let aliases: Aliases<'_> = parsed
+        .document
+        .imports
+        .iter()
+        .filter_map(|import| import.alias.as_ref().map(|a| a.name.as_str()))
+        .collect();
     for import in &parsed.document.imports {
         match &import.source {
             QmlImportSource::Path(path) if !is_script(path) => {
@@ -137,9 +166,9 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
         })
         .collect();
     let mut named = BTreeMap::new();
-    ids(root, &mut named);
+    ids(root, &mut named, &aliases);
     let mut inline = BTreeMap::new();
-    inline_components(root, &mut inline);
+    inline_components(root, &mut inline, &aliases);
     found.components = inline
         .iter()
         .map(|(name, component)| Component {
@@ -156,6 +185,7 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
         found: &mut found,
         ids: &named,
         inline: &inline,
+        aliases: &aliases,
     }
     .object(root, None);
     found.types.sort();
@@ -172,8 +202,8 @@ pub(crate) fn references_in(parsed: &qml_syntax::Parsed<'_>) -> References {
 /// Each `id` of a component of the file (the file's own, or an inline
 /// one's) and its object's type as written. An inline component is a scope
 /// of its own: its ids are not the file's, nor the file's its.
-fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, String>) {
-    let ty = written(&object.type_name.parts);
+fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, String>, aliases: &Aliases<'_>) {
+    let ty = written(&object.type_name.parts, aliases);
     for member in &object.members {
         match member {
             QmlMember::Binding(binding) if binding.name.as_simple() == Some("id") => {
@@ -183,13 +213,13 @@ fn ids<'s>(object: &QmlObject<'s>, named: &mut BTreeMap<&'s str, String>) {
                     named.insert(id.name.as_str(), ty.clone());
                 }
             }
-            QmlMember::Binding(binding) => each_object(&binding.value, |o| ids(o, named)),
+            QmlMember::Binding(binding) => each_object(&binding.value, |o| ids(o, named, aliases)),
             QmlMember::Property(property) => {
                 if let Some(v) = &property.value {
-                    each_object(v, |o| ids(o, named));
+                    each_object(v, |o| ids(o, named, aliases));
                 }
             }
-            QmlMember::Object(child) => ids(child, named),
+            QmlMember::Object(child) => ids(child, named, aliases),
             QmlMember::InlineComponent(_)
             | QmlMember::Function(_)
             | QmlMember::Signal(_)
@@ -215,12 +245,16 @@ impl Inline<'_> {
 
 /// Each inline component of the file, wherever it is declared: one is
 /// named in the whole file, in the other inline components too.
-fn inline_components<'s>(object: &QmlObject<'s>, found: &mut BTreeMap<&'s str, Inline<'s>>) {
+fn inline_components<'s>(
+    object: &QmlObject<'s>,
+    found: &mut BTreeMap<&'s str, Inline<'s>>,
+    aliases: &Aliases<'_>,
+) {
     for member in &object.members {
         match member {
             QmlMember::InlineComponent(component) => {
                 let root = &component.object;
-                if let Some(base) = written(&root.type_name.parts) {
+                if let Some(base) = written(&root.type_name.parts, aliases) {
                     let declares = root
                         .members
                         .iter()
@@ -236,15 +270,15 @@ fn inline_components<'s>(object: &QmlObject<'s>, found: &mut BTreeMap<&'s str, I
                         .collect();
                     found.insert(component.name.name.as_str(), Inline { base, declares });
                 }
-                inline_components(root, found);
+                inline_components(root, found, aliases);
             }
-            QmlMember::Object(child) => inline_components(child, found),
+            QmlMember::Object(child) => inline_components(child, found, aliases),
             QmlMember::Binding(binding) => {
-                each_object(&binding.value, |o| inline_components(o, found))
+                each_object(&binding.value, |o| inline_components(o, found, aliases))
             }
             QmlMember::Property(property) => {
                 if let Some(v) = &property.value {
-                    each_object(v, |o| inline_components(o, found));
+                    each_object(v, |o| inline_components(o, found, aliases));
                 }
             }
             QmlMember::Function(_) | QmlMember::Signal(_) | QmlMember::Enum(_) => {}
@@ -265,6 +299,7 @@ struct Walk<'f, 's> {
     found: &'f mut References,
     ids: &'f BTreeMap<&'s str, String>,
     inline: &'f BTreeMap<&'s str, Inline<'s>>,
+    aliases: &'f Aliases<'s>,
 }
 
 impl<'f, 's> Walk<'f, 's> {
@@ -286,9 +321,6 @@ impl<'f, 's> Walk<'f, 's> {
             ty = &component.base;
         }
         self.found.bound.push((ty.to_string(), name.to_string()));
-        if let Some((_, last)) = ty.rsplit_once('.') {
-            self.found.bound.push((last.to_string(), name.to_string()));
-        }
     }
 
     /// The type of the object of the id `id`.
@@ -309,9 +341,9 @@ impl<'f, 's> Walk<'f, 's> {
     /// child.
     fn object(&mut self, object: &QmlObject<'_>, parent: Option<&str>) {
         let parts = &object.type_name.parts;
-        let written = written(parts);
+        let written = written(parts, self.aliases);
         let ty = written.as_deref();
-        for name in qualifier(parts).into_iter().chain(parts.last().copied()) {
+        if let Some(name) = type_names(parts, self.aliases) {
             self.found.types.push(name.to_string());
         }
         self.sets_on_target(object, parent);
@@ -347,7 +379,7 @@ impl<'f, 's> Walk<'f, 's> {
                         // `property Kit.Dial d`.
                         let written = type_name.name.to_string();
                         let parts: Vec<&str> = written.split('.').collect();
-                        for name in qualifier(&parts).into_iter().chain(parts.last().copied()) {
+                        if let Some(name) = type_names(&parts, self.aliases) {
                             self.found.types.push(name.to_string());
                         }
                     }
@@ -360,11 +392,12 @@ impl<'f, 's> Walk<'f, 's> {
                 }
                 QmlMember::InlineComponent(component) => {
                     let mut named = BTreeMap::new();
-                    ids(&component.object, &mut named);
+                    ids(&component.object, &mut named, self.aliases);
                     Walk {
                         found: &mut *self.found,
                         ids: &named,
                         inline: self.inline,
+                        aliases: self.aliases,
                     }
                     .object(&component.object, None);
                 }
