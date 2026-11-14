@@ -1,5 +1,6 @@
-//! What a frame of a scene is counted to cost (`ljos_3d::stats`), and
-//! that a scene a view already shows is not drawn again.
+//! What a frame of a scene is counted to cost (`ljos_3d::stats`), that a
+//! scene a view already shows is not drawn again, and that showing its
+//! picture again on a frame that draws no scene is not counted.
 //!
 //! One test, in a process of its own: the counts are the process's, and a
 //! second test drawing beside it would add to them.
@@ -26,6 +27,61 @@ fn frame(gpu: &Gpu, target: &mut Target, scene: &ljos_3d::Scene) -> bool {
     drew
 }
 
+/// A host's window: a pass of its own format that the renderer's picture
+/// is drawn into, as the egui host's paint callback draws it.
+struct Window {
+    texture: wgpu::Texture,
+}
+
+impl Window {
+    const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
+
+    fn new(gpu: &Gpu) -> Self {
+        // Made before the first frame, which then counts the blit pipeline.
+        gpu.renderer().prepare_blit(gpu.device(), Self::FORMAT);
+        let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
+            label: Some("window"),
+            size: wgpu::Extent3d {
+                width: WIDTH,
+                height: HEIGHT,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: Self::FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        Self { texture }
+    }
+
+    /// Draws `target`'s picture into the window, and submits.
+    fn show(&self, gpu: &Gpu, target: &Target) {
+        let view = self.texture.create_view(&Default::default());
+        let mut encoder = gpu
+            .device()
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("window"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            gpu.renderer().blit(&mut pass, Self::FORMAT, target);
+        }
+        gpu.queue().submit([encoder.finish()]);
+    }
+}
+
 #[test]
 fn a_frame_counts_what_it_drew_and_a_still_scene_is_drawn_once() {
     let gpu = match pollster::block_on(Gpu::new()) {
@@ -36,6 +92,7 @@ fn a_frame_counts_what_it_drew_and_a_still_scene_is_drawn_once() {
         }
     };
     let mut target = Target::new(gpu.device(), &gpu.renderer(), [WIDTH, HEIGHT]);
+    let window = Window::new(&gpu);
     let scene = lit_cube(grey());
 
     assert!(frame(&gpu, &mut target, &scene));
@@ -63,13 +120,33 @@ fn a_frame_counts_what_it_drew_and_a_still_scene_is_drawn_once() {
     assert_eq!(still.frames, 1);
     assert_eq!(still.last, f);
 
+    // A host whose 2D repaints shows the picture again with no scene
+    // drawn: that frame is not one, and its blit is not the next one's.
+    window.show(&gpu, &target);
+    assert_eq!(stats::frame_end(0.0), None);
+    assert_eq!(stats::snapshot().frames, 1);
+
     // The same scene built anew draws again, with what the first frame made.
     let again = lit_cube(grey());
     assert!(frame(&gpu, &mut target, &again));
     let second = stats::snapshot();
     assert_eq!(second.frames, 2);
     let s = second.last;
-    assert_eq!((s.draw_calls, s.vertices), (f.draw_calls, f.vertices));
+    assert_eq!(
+        (
+            s.draw_calls,
+            s.vertices,
+            s.pipeline_switches,
+            s.bind_group_sets
+        ),
+        (
+            f.draw_calls,
+            f.vertices,
+            f.pipeline_switches,
+            f.bind_group_sets
+        ),
+        "the blit of the frame that drew nothing is in no frame"
+    );
     assert_eq!(s.pipelines_created, 0, "{s:?}");
     assert_eq!(s.shader_modules_created, 0, "{s:?}");
     assert_eq!(s.texture_uploads, 0, "{s:?}");
