@@ -3246,22 +3246,30 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
 
     /// A destructuring default, which runs only where the value it stands
     /// in for is `undefined`: after it, a name it assigns is what it was
-    /// before or what the default gave it.
+    /// before or anything the default gave it. Every assignment in the
+    /// default joins, since one in a branch of `?:` may be the one that ran.
     fn default_value(&mut self, init: &Expression<'a>) {
         let assigned = self.assigned.len();
         let facts = self.facts.len();
         self.expr(init, None);
         let given: Vec<Fact<'a>> = self.assigned[assigned..].to_vec();
         let after = self.facts.split_off(facts);
-        let before: Vec<Ty> = given
-            .iter()
-            .map(|fact| self.fact(fact.key, fact.local).unwrap_or(fact.base))
-            .collect();
-        self.facts.extend(after);
-        for (fact, before) in given.into_iter().zip(before) {
-            let ty = self.arena.or(before, fact.ty);
-            self.facts.push(Fact { ty, ..fact });
+        let mut joined: Vec<Fact<'a>> = Vec::new();
+        for fact in given {
+            match joined
+                .iter_mut()
+                .find(|j| j.key == fact.key && j.local == fact.local)
+            {
+                Some(j) => j.ty = self.arena.or(j.ty, fact.ty),
+                None => {
+                    let before = self.fact(fact.key, fact.local).unwrap_or(fact.base);
+                    let ty = self.arena.or(before, fact.ty);
+                    joined.push(Fact { ty, ..fact });
+                }
+            }
         }
+        self.facts.extend(after);
+        self.facts.extend(joined);
     }
 
     fn constant_writes_maybe_default(&mut self, target: &AssignmentTargetMaybeDefault<'a>) {

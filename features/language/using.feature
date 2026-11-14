@@ -340,16 +340,19 @@ Feature: Disposing of a resource when its block ends, with using
             [n = (value = 2)] = [value.toFixed().length];
             let other: number | undefined = undefined;
             [n = (other = 2)] = [n];
-            return value.toFixed() + other.toFixed();
+            let either: number | undefined = 1;
+            [n = (n > 0 ? (either = undefined) : (either = 2), 0)] = [n];
+            return value.toFixed() + other.toFixed() + either.toFixed();
           }
         }
         """
       When the files are checked
       Then the check reports:
         """
-        Pool.qml:10:38: error: `other` may be undefined: compare it with `undefined` first [ts-assign-type]
-        1 files, 1 errors, 0 warnings
-        ljos: 1 errors
+        Pool.qml:12:38: error: `other` may be undefined: compare it with `undefined` first [ts-assign-type]
+        Pool.qml:12:56: error: `either` may be undefined: compare it with `undefined` first [ts-assign-type]
+        1 files, 2 errors, 0 warnings
+        ljos: 2 errors
         """
 
     Scenario: Nothing assigns to what a module imports
