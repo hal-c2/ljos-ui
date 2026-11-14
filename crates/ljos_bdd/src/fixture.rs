@@ -113,12 +113,37 @@ pub fn quadrants_png(width: u32, height: u32, colours: &[String]) -> Result<Vec<
             data.extend([r, g, b, a]);
         }
     }
+    rgba_png(width, height, &data)
+}
+
+/// A PNG of single-pixel squares of two colours, the first at the top left:
+/// as fine as a picture gets, so that how it reads drawn smaller shows
+/// whether its pixels were averaged.
+pub fn checkers_png(width: u32, height: u32, colours: &[String]) -> Result<Vec<u8>, String> {
+    let [first, second] = colours else {
+        return Err(format!("checkers take two colours, not {}", colours.len()));
+    };
+    if width == 0 || height == 0 {
+        return Err("an image has at least one pixel".to_owned());
+    }
+    let squares = [parse_colour(first)?, parse_colour(second)?];
+    let mut data = Vec::with_capacity(width as usize * height as usize * 4);
+    for y in 0..height {
+        for x in 0..width {
+            let [a, r, g, b] = squares[((x + y) % 2) as usize];
+            data.extend([r, g, b, a]);
+        }
+    }
+    rgba_png(width, height, &data)
+}
+
+fn rgba_png(width: u32, height: u32, data: &[u8]) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     let mut encoder = png::Encoder::new(Cursor::new(&mut out), width, height);
     encoder.set_depth(png::BitDepth::Eight);
     encoder.set_color(png::ColorType::Rgba);
     let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
-    writer.write_image_data(&data).map_err(|e| e.to_string())?;
+    writer.write_image_data(data).map_err(|e| e.to_string())?;
     writer.finish().map_err(|e| e.to_string())?;
     Ok(out)
 }
