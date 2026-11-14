@@ -15,6 +15,8 @@ use ljos_reactive::NodeId;
 use crate::engine::{Engine, store_in};
 use crate::error::EngineError;
 use crate::ids::{ObjectId, PropIndex};
+use crate::meta::PropertyAccess;
+use crate::types::TypeTag;
 use crate::value::Value;
 
 /// See [`Engine::make_on_read`], [`Engine::make_on_read_by`] and
@@ -23,7 +25,25 @@ pub(crate) enum Maker {
     Value(Box<dyn FnOnce(&Engine) -> Value>),
     By(MakeOnRead),
     Bind(BindOnRead),
+    Kept(KeepOnRead),
 }
+
+/// What the keeper of a property is told; see [`Engine::keep_on_read`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kept {
+    /// The property is about to be read: its value is to be brought up to
+    /// date now ([`Engine::give_unobserved`]).
+    Read,
+    /// Something has come to observe the property: a change handler, a
+    /// watch, or a binding that read it.
+    Observed,
+    /// A write or a binding gives the property its value: it is no longer
+    /// kept.
+    Given,
+}
+
+/// Keeps `prop` of `obj`; see [`Engine::keep_on_read`].
+pub type KeepOnRead = fn(&Engine, ObjectId, PropIndex, Kept);
 
 /// Makes the value of `prop` of `obj`; see [`Engine::make_on_read_by`].
 pub type MakeOnRead = fn(&Engine, ObjectId, PropIndex) -> Value;
@@ -57,6 +77,17 @@ impl Makers {
                 .list
                 .iter()
                 .any(|(p, m)| *p == prop && matches!(m, Maker::Bind(_)))
+    }
+
+    /// Whether `prop` is kept by someone else ([`Engine::keep_on_read`]).
+    pub(crate) fn keeps(&self, prop: PropIndex) -> Option<KeepOnRead> {
+        if self.mask & bit(prop) == 0 {
+            return None;
+        }
+        self.list.iter().find_map(|(p, m)| match m {
+            Maker::Kept(keep) if *p == prop => Some(*keep),
+            _ => None,
+        })
     }
 
     /// What the list holds, for [`Engine::object_memory`].
@@ -169,6 +200,111 @@ impl Engine {
         Ok(())
     }
 
+    /// Says that someone else keeps `prop` and brings its value up to date
+    /// only when it is asked, not each time it changes: an animation of a
+    /// property nothing observes does no work between reads. Before every
+    /// read `keep` is told [`Kept::Read`] and gives the value
+    /// ([`Engine::give_unobserved`]); it stays the keeper. A change handler
+    /// or a watch that comes to observe the property, or a binding that
+    /// reads it, tells it [`Kept::Observed`]: from then on
+    /// the keeper writes the property as it changes, and takes itself away
+    /// ([`Engine::stop_keeping`]). A write or a binding to the property
+    /// takes it away and tells it [`Kept::Given`].
+    pub fn keep_on_read(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+        keep: KeepOnRead,
+    ) -> Result<(), EngineError> {
+        let (obj, prop) = self.redirect(obj, prop);
+        let mut store = self.inner.store.borrow_mut();
+        let h = store
+            .objects
+            .get_mut(obj)
+            .ok_or_else(|| EngineError::dead(obj))?;
+        h.ext_mut().made_on_read.set(prop, Maker::Kept(keep));
+        Ok(())
+    }
+
+    /// Takes the keeper of `prop` away ([`Engine::keep_on_read`]) without
+    /// telling it: what holds the property is what was last given.
+    pub fn stop_keeping(&self, obj: ObjectId, prop: PropIndex) {
+        let (obj, prop) = self.redirect(obj, prop);
+        let kept = self.keeper(obj, prop).is_some();
+        if kept {
+            drop(self.take_maker(obj, prop));
+        }
+    }
+
+    /// The keeper of `prop`, if someone else keeps it.
+    fn keeper(&self, obj: ObjectId, prop: PropIndex) -> Option<KeepOnRead> {
+        let store = self.inner.store.borrow();
+        store
+            .objects
+            .get(obj)?
+            .ext
+            .as_ref()?
+            .made_on_read
+            .keeps(prop)
+    }
+
+    /// A change handler or a watch is about to observe `prop`: its keeper,
+    /// if it has one, is told.
+    pub(crate) fn tell_watched(&self, obj: ObjectId, prop: PropIndex) {
+        let (obj, prop) = self.redirect(obj, prop);
+        if let Some(keep) = self.keeper(obj, prop) {
+            self.untrack(|| keep(self, obj, prop, Kept::Observed));
+        }
+    }
+
+    /// Gives `prop` the value `v` of an animation's step, without a
+    /// change notification and without running what is queued: what
+    /// [`Kept::Read`] asks of a keeper, in the middle of whoever reads.
+    /// False, and nothing given, while anything observes or holds the
+    /// property, a journal is kept, or `v` is no number for a number
+    /// property: it is then written the usual way.
+    pub fn give_unobserved(&self, obj: ObjectId, prop: PropIndex, v: Value) -> bool {
+        if self.is_journaled() {
+            return false;
+        }
+        let (obj, prop) = self.redirect(obj, prop);
+        let node = {
+            let store = self.inner.store.borrow();
+            let Some(h) = store.objects.get(obj) else {
+                return false;
+            };
+            let Some(p) = h.meta.property(prop) else {
+                return false;
+            };
+            let plain = matches!(
+                (&p.ty, &v),
+                (TypeTag::Real, Value::Real(_)) | (TypeTag::Int, Value::Int(_))
+            ) && matches!(p.access, PropertyAccess::Dynamic { .. })
+                && p.given.is_none()
+                && p.change.is_none();
+            if !plain || h.read_without_node(prop) {
+                return false;
+            }
+            h.node(prop)
+        };
+        // A node, as an animation's write would make: what reads the
+        // property later finds it animated, not assigned.
+        let Ok(n) = node.map_or_else(|| self.ensure_node(obj, prop), Ok) else {
+            return false;
+        };
+        if !matches!(
+            self.inner.graph.give_animated_quietly(n, v.clone()),
+            Ok(true)
+        ) {
+            return false;
+        }
+        let mut store = self.inner.store.borrow_mut();
+        store
+            .objects
+            .get_mut(obj)
+            .is_some_and(|h| store_in(h, prop, &v).is_ok())
+    }
+
     /// Reads `prop` (tracked), or gives `None` while it is still to be
     /// bound by [`Engine::bind_on_read`]: the reader is then told when
     /// something is written to it, and works out the value itself.
@@ -278,6 +414,10 @@ impl Engine {
         // Dropped outside the borrow: dropping a closure may run anything.
         let maker = self.take_maker(obj, prop);
         let unbound = matches!(maker, Some(Maker::Bind(_)));
+        if let Some(Maker::Kept(keep)) = maker {
+            self.untrack(|| keep(self, obj, prop, Kept::Given));
+            return;
+        }
         drop(maker);
         // A reader that worked out what the binding would give
         // ([`Engine::read_unless_bound_on_read`]) is told it no longer
@@ -303,6 +443,19 @@ impl Engine {
             // Untracked: what the maker reads is not what the reader reads.
             Some(Maker::Value(make)) => self.untrack(|| make(self)),
             Some(Maker::By(make)) => self.untrack(|| make(self, obj, prop)),
+            Some(Maker::Kept(keep)) => {
+                // A tracked read is a binding's (or a painter's): it
+                // observes the property from now on.
+                let follows = self.inner.tracking.get() > 0;
+                // Untracked, as a maker is. It stays the keeper, back
+                // before it is told, so that it may then let go.
+                self.untrack(|| keep(self, obj, prop, Kept::Read));
+                self.give_maker_back(obj, prop, Maker::Kept(keep));
+                if follows {
+                    self.untrack(|| keep(self, obj, prop, Kept::Observed));
+                }
+                return;
+            }
             Some(Maker::Bind(bind)) => {
                 // Untracked: the binding's reads are not the reader's.
                 if let Err(err) = self.untrack(|| bind(self, obj, prop)) {

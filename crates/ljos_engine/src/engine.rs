@@ -3381,6 +3381,7 @@ impl Engine {
         prop: PropIndex,
         f: impl Fn(&Engine, &Value) + 'static,
     ) -> Result<NodeId, EngineError> {
+        self.tell_watched(obj, prop);
         let n = self.ensure_node(obj, prop)?;
         let scope = self.ensure_scope(obj)?;
         let weak = Rc::downgrade(&self.inner);

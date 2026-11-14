@@ -138,11 +138,13 @@ impl Engine {
                 .filter_map(|(i, s)| Some((SignalIndex(i as u32), s.notify_of?)))
                 .filter(|(_, p)| {
                     // A group is an object of its own, and what is made on
-                    // its first read must not be made by looking.
+                    // its first read must not be made by looking. What
+                    // someone else keeps is followed: its keeper is told,
+                    // and from then on writes it as it changes.
                     h.meta
                         .property(*p)
                         .is_some_and(|p| !p.flags.contains(PropertyFlags::GROUP))
-                        && !h.makes_on_read(*p)
+                        && (!h.makes_on_read(*p) || h.kept(*p))
                 })
                 .collect();
             (changes, leaves)
