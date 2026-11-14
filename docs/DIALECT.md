@@ -3385,7 +3385,11 @@ in Qt, and has its base's properties: `LocalDial { color: "red" }` binds
 unless the component declares `color` itself. The pass follows
 the file's root through the project's files it is built on, while they are
 lowered too, to the Qt type whose renames say so, and a property the file
-declares renames nothing. The reason names the file, the name and what
+declares renames nothing. Where two files beside it may be its root (two
+imported directories each have a `Dial.qml`), what either renames counts.
+A file left as it is that is built on the file (`Bridge.qml`, `Swatch {}`),
+through any number of such files, has its names: what is bound on it is
+bound on the file, unless one of them declares the name. The reason names the file, the name and what
 Ljós calls it: "`Main.qml` is left as it is and binds `color` on it, which
 Ljós's `Rectangle` calls `fill`: rename it there as this file is lowered".
 What that file's scripts set on the type is not read, nor a `target` that
