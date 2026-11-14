@@ -9,7 +9,9 @@ use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, MutexGuard, mpsc};
 use std::time::Duration;
 
-use ljos_secrets::{SecretError, SecretService, SecretStore};
+use std::collections::BTreeMap;
+
+use ljos_secrets::{ItemNames, SecretError, SecretService, SecretStore};
 use zbus::blocking::connection;
 use zbus::object_server::SignalEmitter;
 use zbus::zvariant::{ObjectPath, OwnedObjectPath, OwnedValue, Value};
@@ -361,19 +363,39 @@ impl Bus {
         })
     }
 
-    /// The Secret Service, keeping `keyring`, on this bus.
+    /// The Secret Service, keeping `keyring`, on this bus; the items it
+    /// keeps already, another client's, are served as the ones it writes.
     fn serve(&self, keyring: &Shared) -> zbus::blocking::Connection {
-        connection::Builder::address(self.address.as_str())
-            .and_then(|b| b.name(NAME))
-            .and_then(|b| b.serve_at(SERVICE_PATH, Service(Arc::clone(keyring))))
-            .and_then(|b| b.serve_at(COLLECTION_PATH, Collection(Arc::clone(keyring))))
-            .and_then(|b| b.serve_at(SESSION_PATH, Session(Arc::clone(keyring))))
+        let kept = lock(keyring).items.len();
+        (0..kept)
+            .fold(
+                connection::Builder::address(self.address.as_str())
+                    .and_then(|b| b.name(NAME))
+                    .and_then(|b| b.serve_at(SERVICE_PATH, Service(Arc::clone(keyring))))
+                    .and_then(|b| b.serve_at(COLLECTION_PATH, Collection(Arc::clone(keyring))))
+                    .and_then(|b| b.serve_at(SESSION_PATH, Session(Arc::clone(keyring)))),
+                |builder, id| {
+                    builder.and_then(|b| {
+                        b.serve_at(
+                            item_path(id),
+                            Item {
+                                id,
+                                keyring: Arc::clone(keyring),
+                            },
+                        )
+                    })
+                },
+            )
             .and_then(connection::Builder::build)
             .expect("the test's Secret Service")
     }
 
     fn store(&self) -> SecretStore {
         SecretStore::new(SecretService::at_address(self.address.clone()))
+    }
+
+    fn store_named(&self, names: impl ItemNames + 'static) -> SecretStore {
+        SecretStore::new(SecretService::at_address(self.address.clone()).with_names(names))
     }
 }
 
@@ -388,13 +410,22 @@ impl Drop for Bus {
 /// when it has not ended in time: a call with no answer fails the test
 /// instead of hanging the run.
 fn with_service(keyring: Keyring, test: impl FnOnce(SecretStore, Shared) + Send + 'static) {
+    with_service_as(keyring, |bus| bus.store(), test);
+}
+
+/// As [`with_service`], with the store `store` makes on the bus.
+fn with_service_as(
+    keyring: Keyring,
+    store: impl FnOnce(&Bus) -> SecretStore,
+    test: impl FnOnce(SecretStore, Shared) + Send + 'static,
+) {
     let Some(bus) = Bus::start() else {
         eprintln!("skipped: no dbus-daemon to start");
         return;
     };
     let keyring = Arc::new(Mutex::new(keyring));
     let _service = bus.serve(&keyring);
-    let store = bus.store();
+    let store = store(&bus);
     within(move || test(store, keyring));
     drop(bus);
 }
@@ -685,6 +716,124 @@ fn a_secret_service_that_goes_while_the_user_is_asked_is_unavailable() {
         assert_eq!(keyring.prompts, 1);
         assert!(keyring.kept().is_empty());
     });
+}
+
+/// Names another client of the Secret Service gave its items: an
+/// application's secrets, apart by key alone.
+#[derive(Debug)]
+struct ClientNames;
+
+impl ItemNames for ClientNames {
+    fn secret_service_attributes(&self, service: &str, key: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([
+            ("application".to_owned(), service.to_owned()),
+            ("account".to_owned(), key.to_owned()),
+        ])
+    }
+
+    fn secret_service_label(&self, service: &str, key: &str) -> String {
+        format!("{service} account {key}")
+    }
+}
+
+fn client_item(service: &str, key: &str, secret: &[u8]) -> Stored {
+    Stored {
+        label: format!("{service} account {key}"),
+        attributes: HashMap::from([
+            ("application".to_owned(), service.to_owned()),
+            ("account".to_owned(), key.to_owned()),
+        ]),
+        secret: secret.to_vec(),
+        content_type: "text/plain".to_owned(),
+        session: SESSION_PATH.to_owned(),
+    }
+}
+
+#[test]
+fn an_item_another_client_named_is_read_with_its_names() {
+    let keyring = Keyring {
+        items: vec![Some(client_item("org.example.app", "studio", b"token"))],
+        ..Keyring::default()
+    };
+    with_service_as(
+        keyring,
+        |bus| bus.store_named(ClientNames),
+        |store, _| {
+            assert_eq!(
+                read(&store, "org.example.app", "studio"),
+                Some(b"token".to_vec())
+            );
+            assert_eq!(read(&store, "org.example.app", "other"), None);
+        },
+    );
+}
+
+#[test]
+fn the_default_names_do_not_find_an_item_named_otherwise() {
+    let keyring = Keyring {
+        items: vec![Some(client_item("org.example.app", "studio", b"token"))],
+        ..Keyring::default()
+    };
+    with_service(keyring, |store, _| {
+        assert_eq!(read(&store, "org.example.app", "studio"), None);
+    });
+}
+
+#[test]
+fn a_secret_written_with_a_callers_names_replaces_the_clients_item() {
+    let keyring = Keyring {
+        items: vec![Some(client_item("org.example.app", "studio", b"old"))],
+        ..Keyring::default()
+    };
+    with_service_as(
+        keyring,
+        |bus| bus.store_named(ClientNames),
+        |store, keyring| {
+            store.write("org.example.app", "studio", b"new").unwrap();
+            {
+                let keyring = lock(&keyring);
+                let kept = keyring.kept();
+                assert_eq!(kept.len(), 1);
+                let expected = client_item("org.example.app", "studio", b"new");
+                assert_eq!(kept[0].attributes, expected.attributes);
+                assert_eq!(kept[0].label, expected.label);
+                assert_eq!(kept[0].secret, b"new");
+            }
+            assert_eq!(store.remove("org.example.app", "studio"), Ok(true));
+            assert!(lock(&keyring).kept().is_empty());
+        },
+    );
+}
+
+#[test]
+fn names_with_no_attributes_touch_no_item() {
+    #[derive(Debug)]
+    struct NoAttributes;
+    impl ItemNames for NoAttributes {
+        fn secret_service_attributes(&self, _: &str, _: &str) -> BTreeMap<String, String> {
+            BTreeMap::new()
+        }
+    }
+    let keyring = Keyring {
+        items: vec![Some(client_item("org.example.app", "studio", b"token"))],
+        ..Keyring::default()
+    };
+    with_service_as(
+        keyring,
+        |bus| bus.store_named(NoAttributes),
+        |store, keyring| {
+            let invalid = |e: &SecretError| matches!(e, SecretError::InvalidName { .. });
+            let removed = store.remove("org.example.app", "studio");
+            assert!(removed.as_ref().is_err_and(invalid), "{removed:?}");
+            let read = store.read("org.example.app", "studio");
+            assert!(read.as_ref().is_err_and(invalid), "{read:?}");
+            let written = store.write("org.example.app", "studio", b"x");
+            assert!(written.as_ref().is_err_and(invalid), "{written:?}");
+            let keyring = lock(&keyring);
+            assert_eq!(keyring.kept().len(), 1);
+            assert_eq!(keyring.algorithms.len(), 0, "no session was opened");
+        },
+    );
 }
 
 /// The desktop's own keyring. Opt in with `--ignored`: it asks the user's

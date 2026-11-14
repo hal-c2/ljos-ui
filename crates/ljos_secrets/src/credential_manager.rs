@@ -3,8 +3,10 @@
 //!
 //! A secret is the generic credential whose target is `<key>.<service>`
 //! and whose user name is the key, as Rust's `keyring` names them, so the
-//! same secret is found by either. Windows keeps it encrypted with the
-//! user's logon credentials, and lets it roam with the user's profile.
+//! same secret is found by either. [`CredentialManager::with_names`] gives
+//! the target and the user name of another client's credentials instead.
+//! Windows keeps it encrypted with the user's logon credentials, and lets
+//! it roam with the user's profile.
 //!
 //! Two names can come to one target: through a dot (service `b.c` with
 //! key `a`, and service `c` with key `a.b`, are both `a.b.c`), and through
@@ -12,10 +14,12 @@
 //! A credential keeps its target as it was written and its key as its user
 //! name, so one whose target or user name differs from this secret's, even
 //! only in case, is another secret: it is not read, replaced or removed
-//! for this one.
+//! for this one. With no user name ([`ItemNames::credential_user_name`]
+//! is `None`), the target alone names the secret.
 
 use std::ffi::c_void;
 use std::ptr;
+use std::sync::Arc;
 
 use windows_sys::Win32::Foundation::{
     ERROR_ACCESS_DENIED, ERROR_NO_SUCH_LOGON_SESSION, ERROR_NOT_FOUND, FILETIME, GetLastError,
@@ -25,12 +29,39 @@ use windows_sys::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW,
 };
 
-use crate::credential_names::{target, wide};
+use crate::credential_names::{names, wide};
+use crate::names::{DefaultNames, ItemNames};
 use crate::{Secret, SecretBackend, SecretError};
 
 /// The Credential Manager backend.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CredentialManager;
+#[derive(Debug, Clone)]
+pub struct CredentialManager {
+    names: Arc<dyn ItemNames>,
+}
+
+impl Default for CredentialManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl CredentialManager {
+    /// The user's credentials, named as Rust's `keyring` names them.
+    pub fn new() -> Self {
+        Self {
+            names: Arc::new(DefaultNames),
+        }
+    }
+
+    /// The same credentials, named by `names`'s
+    /// [target](ItemNames::credential_target) and
+    /// [user name](ItemNames::credential_user_name).
+    pub fn with_names(self, names: impl ItemNames + 'static) -> Self {
+        Self {
+            names: Arc::new(names),
+        }
+    }
+}
 
 fn last_error() -> SecretError {
     // SAFETY: reads the calling thread's last error, nothing else.
@@ -104,8 +135,8 @@ struct Found {
 }
 
 impl Found {
-    fn is_for(&self, target: &[u16], key: &str) -> bool {
-        crate::credential_names::is_for(&self.target_name, &self.user_name, target, key)
+    fn is_for(&self, target: &[u16], user: Option<&str>) -> bool {
+        crate::credential_names::is_for(&self.target_name, &self.user_name, target, user)
     }
 }
 
@@ -118,9 +149,9 @@ impl SecretBackend for CredentialManager {
                 max,
             });
         }
-        let mut target = target(service, key);
+        let (mut target, user) = names(&*self.names, service, key)?;
         if let Some(found) = existing(&target, false)?
-            && !found.is_for(&target, key)
+            && !found.is_for(&target, user.as_deref())
         {
             return Err(SecretError::Failed(format!(
                 "the Credential Manager keeps another secret where key {key:?} of \
@@ -128,7 +159,7 @@ impl SecretBackend for CredentialManager {
                  falls; it is left as it is"
             )));
         }
-        let mut user = wide(key);
+        let mut user = user.as_deref().map(wide);
         let credential = CREDENTIALW {
             Flags: 0,
             Type: CRED_TYPE_GENERIC,
@@ -146,7 +177,9 @@ impl SecretBackend for CredentialManager {
             AttributeCount: 0,
             Attributes: ptr::null_mut(),
             TargetAlias: ptr::null_mut(),
-            UserName: user.as_mut_ptr(),
+            UserName: user
+                .as_mut()
+                .map_or(ptr::null_mut(), |user| user.as_mut_ptr()),
         };
         // SAFETY: every pointer in `credential` is valid for the call.
         if unsafe { CredWriteW(&credential, 0) } == 0 {
@@ -156,16 +189,16 @@ impl SecretBackend for CredentialManager {
     }
 
     fn read(&self, service: &str, key: &str) -> Result<Option<Secret>, SecretError> {
-        let target = target(service, key);
+        let (target, user) = names(&*self.names, service, key)?;
         Ok(existing(&target, true)?
-            .filter(|found| found.is_for(&target, key))
+            .filter(|found| found.is_for(&target, user.as_deref()))
             .map(|found| found.secret))
     }
 
     fn remove(&self, service: &str, key: &str) -> Result<bool, SecretError> {
-        let target = target(service, key);
+        let (target, user) = names(&*self.names, service, key)?;
         match existing(&target, false)? {
-            Some(found) if found.is_for(&target, key) => {}
+            Some(found) if found.is_for(&target, user.as_deref()) => {}
             _ => return Ok(false),
         }
         // SAFETY: a NUL-terminated target.

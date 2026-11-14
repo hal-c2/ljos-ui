@@ -21,6 +21,11 @@
 //! in a dialog of the system's. Call the store from a thread of your own,
 //! never the Engine's, and hand what it answers back to the UI as a message.
 //!
+//! Each system's backend names an item as other programs do by default
+//! ([`DefaultNames`]); `with_names` on it, or [`SecretStore::system_named`],
+//! gives it the names of another client's items ([`ItemNames`]), so a
+//! program reads and writes the secrets that client keeps.
+//!
 //! [`MemorySecrets`] keeps secrets in the process, for tests and for hosts
 //! that want none kept; it can be told to act locked or absent.
 
@@ -31,6 +36,7 @@ mod credential_names;
 #[cfg(target_os = "macos")]
 mod keychain;
 mod memory;
+mod names;
 #[cfg(target_os = "linux")]
 mod secret_service;
 
@@ -41,6 +47,7 @@ pub use credential_manager::CredentialManager;
 #[cfg(target_os = "macos")]
 pub use keychain::Keychain;
 pub use memory::{MemorySecrets, MemoryState};
+pub use names::{DefaultNames, ItemNames};
 #[cfg(target_os = "linux")]
 pub use secret_service::SecretService;
 
@@ -61,10 +68,12 @@ pub enum SecretError {
     /// The store, or the user, refused this program the secret.
     #[error("the secure storage refused access")]
     Denied,
-    /// The service or the key cannot name a secret.
+    /// The service or the key cannot name a secret, or the [`ItemNames`]
+    /// give a name the store cannot find an item by.
     #[error("a secret's {name} {reason}")]
     InvalidName {
-        /// `"service"` or `"key"`.
+        /// `"service"` or `"key"`, or which of the item's names: such as
+        /// `"Secret Service attributes"` or `"Credential Manager target"`.
         name: &'static str,
         reason: &'static str,
     },
@@ -102,14 +111,23 @@ pub struct SecretStore {
 impl SecretStore {
     /// The store of the system the program runs on.
     pub fn system() -> Self {
+        Self::system_named(DefaultNames)
+    }
+
+    /// The store of the system the program runs on, its items named by
+    /// `names`: the names another client of that store gave them.
+    pub fn system_named(names: impl ItemNames + 'static) -> Self {
         #[cfg(target_os = "linux")]
-        let backend = SecretService::session();
+        let backend = SecretService::session().with_names(names);
         #[cfg(target_os = "macos")]
-        let backend = Keychain;
+        let backend = Keychain::new().with_names(names);
         #[cfg(target_os = "windows")]
-        let backend = CredentialManager;
+        let backend = CredentialManager::new().with_names(names);
         #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-        let backend = NoSecureStorage;
+        let backend = {
+            let _ = names;
+            NoSecureStorage
+        };
         Self::new(backend)
     }
 
