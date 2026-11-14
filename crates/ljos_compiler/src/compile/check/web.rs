@@ -1,5 +1,11 @@
 //! What a script has of the web's: `fetch` and the classes around it, with
-//! the types lib.dom gives them, in the subset docs/DIALECT.md §4.19 lists.
+//! the types lib.dom gives them, in the subset docs/DIALECT.md §4.19 lists;
+//! and ECMAScript's `DisposableStack` and `AsyncDisposableStack` (§4.22),
+//! with lib.esnext.disposable's.
+//!
+//! DECISION: a stack's `use` and `adopt` are generic, giving what they are
+//! given; the checker types them at the call (`Checker::stack_hold`), and
+//! the signatures here are only what the rest of a call is held to.
 //!
 //! DECISION: `Headers.entries()` is a readonly array of `[name, value]`
 //! pairs, each a readonly array of two strings: the subset has no tuples
@@ -119,7 +125,9 @@ pub(super) fn construct(arena: &mut Arena, class: Web) -> Option<Sig> {
             let init = headers_init(arena);
             sig(vec![optional("init", init)], made)
         }
-        Web::AbortController => sig(vec![], made),
+        Web::AbortController | Web::DisposableStack | Web::AsyncDisposableStack => {
+            sig(vec![], made)
+        }
         Web::Uint8Array => {
             let numbers = arena.array(Ty::NUMBER, true);
             let buffer = web(arena, Web::ArrayBuffer);
@@ -184,6 +192,7 @@ pub(super) fn member(arena: &mut Arena, receiver: Ty, class: Web, name: &str) ->
         (Web::DOMException, "code") => Some(Ty::NUMBER),
         (Web::ArrayBuffer | Web::Uint8Array, "byteLength") => Some(Ty::NUMBER),
         (Web::Uint8Array, "length") => Some(Ty::NUMBER),
+        (Web::DisposableStack | Web::AsyncDisposableStack, "disposed") => Some(Ty::BOOLEAN),
         _ => None,
     };
     if property.is_some() {
@@ -202,6 +211,12 @@ pub(super) fn member(arena: &mut Arena, receiver: Ty, class: Web, name: &str) ->
         (Web::Headers, "entries") => "entries",
         (Web::AbortController, "abort") => "abort",
         (Web::AbortSignal, "throwIfAborted") => "throwIfAborted",
+        (Web::DisposableStack | Web::AsyncDisposableStack, "use") => "use",
+        (Web::DisposableStack | Web::AsyncDisposableStack, "adopt") => "adopt",
+        (Web::DisposableStack | Web::AsyncDisposableStack, "defer") => "defer",
+        (Web::DisposableStack | Web::AsyncDisposableStack, "move") => "move",
+        (Web::DisposableStack, "dispose") => "dispose",
+        (Web::AsyncDisposableStack, "disposeAsync") => "disposeAsync",
         _ => return None,
     };
     Some(arena.intern(Kind::Method(receiver, Method::Web(class, found))))
@@ -247,8 +262,49 @@ pub(super) fn method_sig(arena: &mut Arena, class: Web, name: &str) -> Option<Si
         }
         (Web::AbortController, "abort") => sig(vec![optional("reason", Ty::UNKNOWN)], Ty::VOID),
         (Web::AbortSignal, "throwIfAborted") => sig(vec![], Ty::VOID),
+        (Web::DisposableStack | Web::AsyncDisposableStack, "use") => {
+            sig(vec![param("value", Ty::UNKNOWN)], Ty::UNKNOWN)
+        }
+        (Web::DisposableStack | Web::AsyncDisposableStack, "adopt") => {
+            let on_dispose = on_dispose(arena, class, Ty::UNKNOWN);
+            sig(
+                vec![param("value", Ty::UNKNOWN), param("onDispose", on_dispose)],
+                Ty::UNKNOWN,
+            )
+        }
+        (Web::DisposableStack | Web::AsyncDisposableStack, "defer") => {
+            let on_dispose = on_dispose(arena, class, Ty::NEVER);
+            sig(vec![param("onDispose", on_dispose)], Ty::VOID)
+        }
+        (Web::DisposableStack | Web::AsyncDisposableStack, "move") => {
+            let made = web(arena, class);
+            sig(vec![], made)
+        }
+        (Web::DisposableStack, "dispose") => sig(vec![], Ty::VOID),
+        (Web::AsyncDisposableStack, "disposeAsync") => {
+            let done = promise(arena, Ty::VOID);
+            sig(vec![], done)
+        }
         _ => return None,
     })
+}
+
+/// What a stack calls when it is disposed of: given `value` (none for
+/// `NEVER`, as `defer`'s is), and for an asynchronous stack it may give a
+/// promise it awaits.
+pub(super) fn on_dispose(arena: &mut Arena, class: Web, value: Ty) -> Ty {
+    let ret = if class == Web::AsyncDisposableStack {
+        let done = promise(arena, Ty::VOID);
+        arena.or(Ty::VOID, done)
+    } else {
+        Ty::VOID
+    };
+    let params = if value == Ty::NEVER {
+        vec![]
+    } else {
+        vec![param("value", value)]
+    };
+    arena.function(sig(params, ret))
 }
 
 /// What a promise of `value` has: `then`, `catch` and `finally`, whose

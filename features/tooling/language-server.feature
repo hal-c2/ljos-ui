@@ -84,6 +84,22 @@ Feature: An editor reads Ljós through `ljos lsp`
     When the language server opens "shape.lts"
     Then the language server publishes nothing for "shape.lts"
 
+  Scenario: An `.lts` module is told where a `using` declaration is given what cannot be disposed of
+    Given the file "pool.lts":
+      """ts
+      export function open(): number {
+        using none = undefined;
+        using stack = new DisposableStack();
+        using n = 1;
+        return stack.disposed ? 0 : 1;
+      }
+      """
+    When the language server opens "pool.lts"
+    Then the language server publishes for "pool.lts":
+      """
+      4:13: error: `using` disposes of what it is given, and this is a number with no `[Symbol.dispose]()` method: give an object with one, or `undefined` [ts-assign-type]
+      """
+
   Scenario: A change is checked as the editor has it, not as it is on disk
     Given the file "width.lts":
       """ts

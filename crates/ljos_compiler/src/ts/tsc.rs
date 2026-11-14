@@ -10,14 +10,15 @@ use std::{
 use super::TsError;
 
 /// The settings TypeScript checks with: the strict ones of
-/// docs/DIALECT.md §4, and no library but the language's own.
+/// docs/DIALECT.md §4, and no library but the language's own, with
+/// `using`'s disposables (§4.22).
 pub const COMPILER_OPTIONS: &str = r#"{
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "noImplicitAny": true,
     "allowImportingTsExtensions": true,
-    "lib": ["es2022"]
+    "lib": ["es2022", "esnext.disposable"]
   }"#;
 
 /// Where the modules TypeScript reads are, beside the files it checks.
