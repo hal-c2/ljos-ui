@@ -380,6 +380,31 @@ Feature: A web page in a WebEngineView
     Then the property "seen" of "view" is "0:0:0 2:200:7"
     And the property "title" of "view" is "Served Page"
 
+  # The profile is made for the view: its first page loads as soon as the
+  # profile can hold what the page keeps, not before, and does not fail.
+  @api-QtWebEngine.WebEngineView.profile @api-QtWebEngine.WebEngineProfile.offTheRecord
+  Scenario: The first page of a profile kept on disk loads
+    Given the web server serves the text file "served.html":
+      """
+      <!doctype html><html><head><title>Served Page</title></head><body></body></html>
+      """
+    And the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      WebEngineView {
+        id: view; objectName: "view"
+        width: 200; height: 100
+        property string seen: ""
+        profile: WebEngineProfile { storageName: "FirstPage"; offTheRecord: false }
+        url: "$SERVER/served.html"
+        onLoadingChanged: info => seen += (seen ? " " : "") + info.status + ":" + info.errorCode + ":" + info.errorDomain
+      }
+      """
+    When 2 seconds pass
+    Then the property "seen" of "view" is "0:0:0 2:200:7"
+    And the property "title" of "view" is "Served Page"
+
   Scenario: A page the server does not have fails with the status it replied
     Given the QML:
       """qml

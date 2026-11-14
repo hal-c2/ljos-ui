@@ -27,6 +27,20 @@ Feature: A view answers what a page asks permission for
       Notification.requestPermission().then(answer => document.title = answer)
       </script></body></html>
       """
+    And the web server serves the text file "policy.html":
+      """
+      <!doctype html>
+      <html><head><title>waiting</title></head><body><script>
+      const again = location.search === "?again"
+      navigator.geolocation.getCurrentPosition(asked, asked, { timeout: 1000 })
+      function asked() {
+        Notification.requestPermission().then(() => {
+          if (again) document.title = "asked twice"
+          else location.search = "again"
+        })
+      }
+      </script></body></html>
+      """
 
   @api-QtWebEngine.WebEngineView.permissionRequested @api-QtWebEngine.WebEnginePermission.grant @api-QtWebEngine.WebEnginePermission.deny @api-QtWebEngine.WebEnginePermission.permissionType @api-QtWebEngine.WebEnginePermission.origin @api-QtWebEngine.WebEnginePermission.isValid
   Scenario Outline: A page asking to show notifications hears the view's answer
@@ -243,6 +257,46 @@ Feature: A view answers what a page asks permission for
     When 2 seconds pass
     Then the property "title" of "view" is "granted granted"
     And the property "asked" of "view" is 1
+
+  # A profile whose policy is AskEveryTime keeps no answer: each view is
+  # asked, and remembers what it was told for every page it shows. One
+  # that stores answers is asked once, by the first view.
+  @api-QtWebEngine.WebEngineProfile.persistentPermissionsPolicy
+  Scenario Outline: A profile keeps the view's answer as long as its policy says
+    Given the QML:
+      """qml
+      import QtQuick
+      import QtWebEngine
+      Item {
+        id: root; objectName: "root"
+        width: 200; height: 100
+        property string asked: ""
+        function ask(who, permission) { asked += (asked ? " " : "") + who + permission.permissionType; permission.grant() }
+        WebEngineProfile {
+          id: shared; storageName: "<name>"; offTheRecord: false
+          persistentPermissionsPolicy: WebEngineProfile.<policy>
+        }
+        WebEngineView {
+          width: 100; height: 100; profile: shared; url: "$SERVER/policy.html"
+          onPermissionRequested: permission => root.ask("a", permission)
+          onTitleChanged: if (title === "asked twice") later.active = true
+        }
+        Loader {
+          id: later; x: 100; active: false
+          sourceComponent: WebEngineView {
+            width: 100; height: 100; profile: shared; url: "$SERVER/policy.html"
+            onPermissionRequested: permission => root.ask("b", permission)
+          }
+        }
+      }
+      """
+    When 8 seconds pass
+    Then the property "asked" of "root" is "<asked>"
+
+    Examples:
+      | name    | policy        | asked       |
+      | Asking  | AskEveryTime  | a8 a7 b8 b7 |
+      | Keeping | StoreInMemory | a8 a7       |
 
   @api-QtWebEngine.WebEnginePermission.origin
   Scenario: A page from a web server asks as its origin

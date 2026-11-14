@@ -359,7 +359,26 @@ fn profile_enums() -> Vec<(&'static str, Vec<(&'static str, i64)>)> {
                 ("ForcePersistentCookies", 2),
             ],
         ),
+        (
+            "PersistentPermissionsPolicy",
+            vec![
+                ("AskEveryTime", 0),
+                ("StoreInMemory", 1),
+                ("StoreOnDisk", 2),
+            ],
+        ),
     ]
+}
+
+/// `WebEngineProfile.PersistentPermissionsPolicy`: how long a profile
+/// keeps what a view answered a page.
+pub mod permissions_policy {
+    /// Nothing is kept: the page asks the view every time.
+    pub const ASK_EVERY_TIME: i32 = 0;
+    /// Kept while the application runs.
+    pub const STORE_IN_MEMORY: i32 = 1;
+    /// Kept on disk, for the next run too.
+    pub const STORE_ON_DISK: i32 = 2;
 }
 
 /// Where a view's pages keep what they keep (`WebEngineProfile`).
@@ -384,6 +403,8 @@ pub struct WebEngineProfile {
     pub persistent_cookies_policy: i32,
     #[qml(notify)]
     pub http_cache_maximum_size: i32,
+    #[qml(notify, enumeration = "PersistentPermissionsPolicy")]
+    pub persistent_permissions_policy: i32,
     #[qml(notify)]
     pub download_path: String,
     #[qml(notify)]
@@ -404,6 +425,7 @@ impl Default for WebEngineProfile {
             http_cache_type: 0,
             persistent_cookies_policy: 0,
             http_cache_maximum_size: 0,
+            persistent_permissions_policy: permissions_policy::STORE_ON_DISK,
             download_path: String::new(),
             spell_check_enabled: false,
         }
@@ -411,24 +433,56 @@ impl Default for WebEngineProfile {
 }
 
 /// What a backend is given of a profile.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ProfileSpec {
     /// Empty: kept in memory only.
     pub storage_name: String,
     pub off_the_record: bool,
+    /// Where the profile keeps what it keeps; empty for the engine's own
+    /// place, named after `storage_name`.
     pub storage_path: String,
+    /// Where its HTTP cache goes; empty for beside the storage.
+    pub cache_path: String,
+    /// A [`permissions_policy`], as the profile can keep it: one off the
+    /// record keeps nothing on disk.
+    pub permissions_policy: i32,
     pub user_agent: String,
     pub accept_language: String,
 }
 
+impl Default for ProfileSpec {
+    /// What the engine's default profile is: off the record.
+    fn default() -> Self {
+        ProfileSpec {
+            storage_name: String::new(),
+            off_the_record: true,
+            storage_path: String::new(),
+            cache_path: String::new(),
+            permissions_policy: permissions_policy::STORE_IN_MEMORY,
+            user_agent: String::new(),
+            accept_language: String::new(),
+        }
+    }
+}
+
 impl WebEngineProfile {
     pub(crate) fn spec(e: &Engine, me: ObjectId) -> ProfileSpec {
-        e.with::<Self, _>(me, |p| ProfileSpec {
-            storage_name: p.storage_name.clone(),
-            off_the_record: p.off_the_record || p.storage_name.is_empty(),
-            storage_path: p.persistent_storage_path.clone(),
-            user_agent: p.http_user_agent.clone(),
-            accept_language: p.http_accept_language.clone(),
+        e.with::<Self, _>(me, |p| {
+            let off_the_record = p.off_the_record || p.storage_name.is_empty();
+            ProfileSpec {
+                storage_name: p.storage_name.clone(),
+                off_the_record,
+                storage_path: p.persistent_storage_path.clone(),
+                cache_path: p.cache_path.clone(),
+                permissions_policy: if off_the_record {
+                    p.persistent_permissions_policy
+                        .min(permissions_policy::STORE_IN_MEMORY)
+                } else {
+                    p.persistent_permissions_policy
+                },
+                user_agent: p.http_user_agent.clone(),
+                accept_language: p.http_accept_language.clone(),
+            }
         })
         .unwrap_or_default()
     }
