@@ -14,12 +14,20 @@
 //! something happens (a part begins, a script is due, it ends). A paused
 //! run and an endless run nobody sees ask for nothing. With no runs the
 //! answer is `None`: nothing polls.
+//!
+//! A run that only moves numbers of its own that nothing observes (no
+//! binding, handler, painter or watch) rests: it is not stepped, and each
+//! property it moves is kept by the driver ([`Engine::keep_on_read`]), so
+//! a read finds where it would be by then. It wakes, and steps with the
+//! frames again, when something comes to observe one of them, when one is
+//! given a value of its own, and at its end, which a finite run asks one
+//! wake for.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::time::Duration;
 
-use ljos_engine::{Engine, ObjectId, PropIndex, Value};
+use ljos_engine::{Engine, Kept, ObjectId, PropIndex, Value};
 use ljos_reactive::WriteKind;
 use ljos_runtime::{FrameScheduler, Time, TimerId, TimerKind};
 use rustc_hash::FxHashMap;
@@ -58,6 +66,11 @@ pub(crate) struct Driver {
     /// What says, for the `FrameAnimation`s given to
     /// [`frames_only_while`], whether they want the next frame.
     wants: RefCell<FxHashMap<ObjectId, Wants>>,
+    /// A frame is asked for in which the resting runs look again whether
+    /// anything observes what they move ([`look_again`]).
+    looking: Cell<bool>,
+    /// Resting runs are being brought to the present for a read.
+    keeping: Cell<bool>,
 }
 
 /// Something to do in the next frame.
@@ -86,6 +99,14 @@ struct Run {
     want_complete: Cell<bool>,
     /// `stop()` on the way emits `finished` too.
     finishes_when_stopped: bool,
+    /// It rests ([`rest`]): no frame steps it, and the properties it moves
+    /// are kept on read.
+    resting: Cell<bool>,
+    /// Whether its timeline may rest at all ([`Timed::may_rest`]), asked
+    /// once.
+    may_rest: Cell<Option<bool>>,
+    /// While it rests, the properties it moves.
+    kept: RefCell<Vec<(ObjectId, PropIndex)>>,
     /// Something else runs it (a `Behavior`; later a `Transition`): it
     /// shows `running` and emits nothing.
     driven: bool,
@@ -127,6 +148,8 @@ impl Driver {
     /// Ends `run`. What its Animators show is written now: where they got
     /// to, as Qt does.
     fn remove(&self, engine: &Engine, run: &Rc<Run>) {
+        // What it moves holds where it got to, and is kept no longer.
+        wake(engine, self, run);
         run.cancelled.set(true);
         // Inside its own step (a script that stops it) the timeline is out:
         // the step releases it when it puts it back.
@@ -160,8 +183,17 @@ impl Driver {
 }
 
 impl Run {
-    /// Brings the timeline to `t`.
+    /// Brings the timeline to `t`. A resting run wakes first: what it
+    /// writes from here on is heard.
     fn step(&self, engine: &Engine, t: i64) {
+        if self.resting.get() {
+            wake(engine, &driver(engine), self);
+        }
+        self.step_with(engine, t, false);
+    }
+
+    /// Brings the timeline to `t`; `quiet`: for a read, telling nobody.
+    fn step_with(&self, engine: &Engine, t: i64, quiet: bool) {
         let Some(mut timeline) = self.timeline.borrow_mut().take() else {
             return;
         };
@@ -169,6 +201,7 @@ impl Run {
             engine,
             cancelled: &self.cancelled,
             scripts: true,
+            quiet,
         };
         timeline.advance(t, &cx);
         if self.cancelled.get() {
@@ -322,6 +355,9 @@ pub(crate) fn start_timeline(engine: &Engine, key: ObjectId, timeline: Timed, do
         driven: true,
         silent: true,
         done,
+        resting: Cell::new(false),
+        may_rest: Cell::new(None),
+        kept: RefCell::new(Vec::new()),
     });
     d.add(&run);
     run.follow_motion(engine, crate::system_prefs::reduced_motion_now(engine));
@@ -449,6 +485,9 @@ fn launch(
         driven,
         silent: false,
         done,
+        resting: Cell::new(false),
+        may_rest: Cell::new(None),
+        kept: RefCell::new(Vec::new()),
     });
     // Known to the driver before `running` says so: whoever follows
     // `running` must find the two agree.
@@ -465,8 +504,136 @@ fn launch(
         run.step(engine, 0);
     });
     settle(engine, d, &run);
+    rest(engine, &run);
     if !run.cancelled.get() {
         engine.request_wake();
+    }
+}
+
+/// Puts `run` to rest when nothing but a read sees what it moves: from
+/// then on it is not stepped, and each of those properties is kept on
+/// read ([`keep`]).
+fn rest(engine: &Engine, run: &Rc<Run>) {
+    if run.resting.get()
+        || run.cancelled.get()
+        || run.paused.get()
+        || run.finishing.get()
+        || engine.is_frozen(run.anim)
+    {
+        return;
+    }
+    let slots = {
+        let Ok(timeline) = run.timeline.try_borrow() else {
+            return;
+        };
+        let Some(timeline) = timeline.as_deref() else {
+            return;
+        };
+        let may = run.may_rest.get().unwrap_or_else(|| {
+            let may = timeline.may_rest();
+            run.may_rest.set(Some(may));
+            may
+        });
+        if !may || timeline.is_done() || !timeline.unwatched(engine) {
+            return;
+        }
+        let mut slots = Vec::new();
+        timeline.slots(&mut slots);
+        slots
+    };
+    for (obj, prop) in &slots {
+        let _ = engine.keep_on_read(*obj, *prop, keep);
+    }
+    *run.kept.borrow_mut() = slots;
+    run.resting.set(true);
+}
+
+/// Ends the rest of `run`: it steps with the frames again and writes as
+/// it goes. A resting run that moves one of the same properties wakes
+/// with it, as the property is kept no longer.
+fn wake(engine: &Engine, d: &Driver, run: &Run) {
+    if !run.resting.replace(false) {
+        return;
+    }
+    let kept = std::mem::take(&mut *run.kept.borrow_mut());
+    for (obj, prop) in &kept {
+        engine.stop_keeping(*obj, *prop);
+    }
+    let sharing: Vec<Rc<Run>> = d
+        .runs
+        .borrow()
+        .iter()
+        .filter(|r| r.resting.get() && r.kept.borrow().iter().any(|k| kept.contains(k)))
+        .cloned()
+        .collect();
+    for r in sharing {
+        wake(engine, d, &r);
+    }
+    engine.request_wake();
+}
+
+/// The resting runs that move `prop` of `obj`, in the order they started.
+fn resting_on(d: &Driver, obj: ObjectId, prop: PropIndex) -> Vec<Rc<Run>> {
+    d.runs
+        .borrow()
+        .iter()
+        .filter(|r| r.resting.get() && r.kept.borrow().contains(&(obj, prop)))
+        .cloned()
+        .collect()
+}
+
+/// The keeper of what resting runs move ([`Engine::keep_on_read`]).
+fn keep(engine: &Engine, obj: ObjectId, prop: PropIndex, kept: Kept) {
+    let d = driver(engine);
+    match kept {
+        Kept::Read => {
+            // A run brought to the present may read what another of its
+            // properties holds: that is where it is already.
+            if d.keeping.replace(true) {
+                return;
+            }
+            for run in resting_on(&d, obj, prop) {
+                bring_quietly(engine, &d, &run);
+            }
+            d.keeping.set(false);
+        }
+        Kept::Observed => look_again(engine, &d),
+        Kept::Given => {
+            for run in resting_on(&d, obj, prop) {
+                wake(engine, &d, &run);
+            }
+        }
+    }
+}
+
+/// Brings a resting run to the present for a read, telling nobody. Its
+/// end, and what it emits then, is the wake's at that moment.
+fn bring_quietly(engine: &Engine, d: &Driver, run: &Run) {
+    if run.paused.get() || run.cancelled.get() || engine.is_frozen(run.anim) {
+        return;
+    }
+    let (Some(now), Some(last)) = (d.now(engine), run.last.get()) else {
+        return;
+    };
+    if now <= last {
+        return;
+    }
+    run.follow_motion(engine, crate::system_prefs::reduced_motion_now(engine));
+    let t = run
+        .elapsed
+        .get()
+        .saturating_add(micros(now.saturating_since(last)));
+    run.elapsed.set(t);
+    run.last.set(Some(now));
+    run.step_with(engine, t, true);
+}
+
+/// Something came to observe a property a resting run moves: the next
+/// frame's [`tick`] looks again, once the observer is in place, and the
+/// run wakes in it.
+fn look_again(engine: &Engine, d: &Driver) {
+    if !d.looking.replace(true) {
+        later(engine, Box::new(|engine| driver(engine).looking.set(false)));
     }
 }
 
@@ -714,6 +881,12 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
             if engine.is_frozen(run.anim) {
                 continue;
             }
+            if run.resting.get() {
+                if !wakes_at(engine, run, now) {
+                    continue;
+                }
+                wake(engine, &d, run);
+            }
             run.follow_motion(engine, calm);
             let t = match run.last.replace(Some(now)) {
                 Some(last) => run
@@ -728,9 +901,26 @@ pub(crate) fn tick(engine: &Engine, now: Time) {
     });
     for run in &runs {
         settle(engine, &d, run);
+        rest(engine, run);
     }
     d.ticking.set(None);
     d.last_frame.set(Some((now, engine.now())));
+}
+
+/// Whether a resting run steps in the frame at `now`: it ends by then, or
+/// something has come to observe what it moves.
+fn wakes_at(engine: &Engine, run: &Run, now: Time) -> bool {
+    let last = *run.last.get().get_or_insert(now);
+    run.last.set(Some(last));
+    let t = run
+        .elapsed
+        .get()
+        .saturating_add(micros(now.saturating_since(last)));
+    run.timeline.borrow().as_deref().is_none_or(|timeline| {
+        timeline.is_done()
+            || (!timeline.is_endless() && t >= timeline.total())
+            || !timeline.unwatched(engine)
+    })
 }
 
 /// When the runs next need a frame, asked at the end of the frame at
@@ -769,6 +959,15 @@ pub(crate) fn next_wake(engine: &Engine, now: Time) -> Option<Time> {
         let Some(timeline) = timeline.as_ref() else {
             continue;
         };
+        if run.resting.get() {
+            // At rest it needs nothing until its end.
+            if !timeline.is_endless() {
+                let left = timeline.total().saturating_sub(run.elapsed.get());
+                let at = last + Duration::from_micros(u64::try_from(left).unwrap_or(0));
+                soonest = Some(soonest.map_or(at, |s| s.min(at)));
+            }
+            continue;
+        }
         if animating {
             continue;
         }
