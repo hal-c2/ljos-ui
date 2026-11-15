@@ -15,7 +15,8 @@ use std::time::Duration;
 use common::*;
 use ljos_engine::{Engine, ObjectId, Value};
 use ljos_quick::{
-    QuickScene, frames_only_while, running_animation_count, set_animation_frame_period,
+    AnimationPace, QuickScene, animation_paces, frames_only_while, running_animation_count,
+    set_animation_frame_period,
 };
 use ljos_runtime::{Clock as _, Time, VirtualClock};
 
@@ -301,6 +302,33 @@ fn a_frame_animation_wanted_by_nobody_rides_along_and_asks_for_nothing() {
     assert!(
         (rig.num("frames", "elapsedTime") - elapsed - 0.2).abs() < 1e-9,
         "its time went on while it asked for nothing"
+    );
+}
+
+#[test]
+fn a_frozen_frame_animation_goes_as_a_paused_one() {
+    let mut rig = Rig::new(FRAMES);
+    rig.call("frames", "start");
+    rig.run_until(ms(50));
+    let frames = rig.obj("frames");
+    assert_eq!(
+        animation_paces(&rig.e),
+        vec![(frames, AnimationPace::Stepping)]
+    );
+
+    rig.e.set_frozen(rig.root, true).unwrap();
+    rig.run_until(ms(100));
+    assert!(rig.idle(), "frozen, it asks for no frame");
+    assert_eq!(
+        animation_paces(&rig.e),
+        vec![(frames, AnimationPace::Paused)],
+        "what wakes the application says so too"
+    );
+
+    rig.e.set_frozen(rig.root, false).unwrap();
+    assert_eq!(
+        animation_paces(&rig.e),
+        vec![(frames, AnimationPace::Stepping)]
     );
 }
 

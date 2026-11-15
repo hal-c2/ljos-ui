@@ -231,6 +231,15 @@ impl ParticleSystem3D {
             });
         })?;
         e.effect_in(me, move |e| step(e, me))?;
+        // A binding it kept outside what it owns (on the root, or an
+        // affector's elsewhere) outlives it: kept still, every read of it
+        // would be worked out again for a time nobody makes any more.
+        e.connect_by_name(me, "destroyed", move |e, _| {
+            let held = e
+                .with(me, |s: &ParticleSystem3D| s.quiet.clone())
+                .unwrap_or_default();
+            let_go(e, me, &held);
+        })?;
         Ok(())
     }
 }
@@ -266,23 +275,25 @@ fn seen(e: &Engine, me: ObjectId) -> bool {
         let_go(e, me, &held);
         return true;
     };
-    // Another's to make on read (a resting animation's), it cannot be kept
-    // here as well.
+    // Kept here, and not given a value or a binding since (told `Given`),
+    // after which another may have come to keep it.
+    let ours = |o, p| held.contains(&(o, p)) && e.is_kept_by(o, p, follow_time);
+    // Another's to make on read (a resting animation's, another system's),
+    // it cannot be kept here as well.
     if chain
         .iter()
-        .any(|&(o, p)| !held.contains(&(o, p)) && e.is_made_on_read(o, p))
+        .any(|&(o, p)| e.is_made_on_read(o, p) && !ours(o, p))
     {
         let_go(e, me, &held);
         return true;
     }
     for &(o, p) in &held {
         if !chain.contains(&(o, p)) {
-            e.stop_keeping(o, p);
+            e.stop_keeping_by(o, p, follow_time);
         }
     }
     for &(o, p) in &chain {
-        // Kept still, or given a value or a binding since (told `Given`).
-        if !held.contains(&(o, p)) || !e.is_made_on_read(o, p) {
+        if !ours(o, p) {
             let _ = e.keep_on_read(o, p, follow_time);
         }
     }
@@ -293,13 +304,14 @@ fn seen(e: &Engine, me: ObjectId) -> bool {
 }
 
 /// Lets go of the bindings it kept (`seen`): they follow the time as it is
-/// written from now on.
+/// written from now on. One given a value since, and kept by another now,
+/// stays the other's.
 fn let_go(e: &Engine, me: ObjectId, held: &[(ObjectId, PropIndex)]) {
     if held.is_empty() {
         return;
     }
     for &(o, p) in held {
-        e.stop_keeping(o, p);
+        e.stop_keeping_by(o, p, follow_time);
     }
     let _ = e.with_mut(me, |s: &mut ParticleSystem3D| s.quiet.clear());
 }
