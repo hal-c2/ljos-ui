@@ -98,6 +98,9 @@ fi
 # Qt build runs where it unpacked its assets: those of a stand-in's download
 # are `content` of a directory of its own, the others are in the example's.
 if grep -q "^  \"$id\":" "$root/corpus/assets.json"; then
+  # Without them it runs all the same and draws another picture: a 3D view
+  # with no mesh is black, an Image with no file is empty.
+  python3 "$root/scripts/gallery-assets.py" --check "$id"
   # gallery:drive looks for the inspector's token where it started this.
   export LJOS_MCP_DIR="${LJOS_MCP_DIR:-$PWD}"
   if [ -d "$root/corpus/standins/$id/downloaded" ]; then
