@@ -300,6 +300,58 @@ pub(crate) fn profile_wait() -> std::time::Duration {
     }
 }
 
+/// Whether profiles made from now on are held unready (see
+/// [`hold_new_profiles`]).
+static HOLD_PROFILES: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// For tests: a profile kept on disk made while this is on stays unready
+/// after the web engine has readied its storage, until [`let_profile_go`] lets it
+/// go. CEF readies storage with work it does not announce, at no moment a
+/// test can name; held, a view of the profile waits for as long as the
+/// test says, and is shown when the test says. A held profile is no work
+/// of the web engine's: a view waiting for it keeps nothing awake, and its
+/// wait ends at the next turn something else asks for once it is over.
+/// Turning it off holds no later profile and lets none go.
+pub fn hold_new_profiles(hold: bool) {
+    HOLD_PROFILES.store(hold, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether a profile made now is held.
+#[cfg(feature = "cef")]
+pub(crate) fn holding_profiles() -> bool {
+    HOLD_PROFILES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether the web engine has readied the storage of the profile kept on
+/// disk named `storage_name`, held or not. Without a web engine it never has.
+pub fn profile_readied(storage_name: &str) -> bool {
+    #[cfg(feature = "cef")]
+    {
+        crate::cef::profile_readied(storage_name)
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        let _ = storage_name;
+        false
+    }
+}
+
+/// Lets go the profile kept on disk named `storage_name` if it is held and the web
+/// engine has readied it: it is ready now, and the views waiting for it
+/// are made. `false` when nothing was let go. Called on the Engine
+/// thread, which makes the views' browsers.
+pub fn let_profile_go(storage_name: &str) -> bool {
+    #[cfg(feature = "cef")]
+    {
+        crate::cef::let_profile_go(storage_name)
+    }
+    #[cfg(not(feature = "cef"))]
+    {
+        let _ = storage_name;
+        false
+    }
+}
+
 /// Why a view cannot show pages; `None` when it can.
 pub fn unavailable() -> Option<String> {
     #[cfg(feature = "cef")]

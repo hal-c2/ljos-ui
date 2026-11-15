@@ -43,7 +43,10 @@ mod view;
 
 use ljos_engine::{Engine, Version};
 
-pub use backend::{PROFILE_WAIT, set_profile_wait, shutdown, unavailable};
+pub use backend::{
+    PROFILE_WAIT, hold_new_profiles, let_profile_go, profile_readied, set_profile_wait, shutdown,
+    unavailable,
+};
 pub use types::{
     WebEngine, WebEngineDesktopMediaRequest, WebEngineLoadingInfo, WebEngineNavigationRequest,
     WebEngineNewWindowRequest, WebEnginePermission, WebEngineProfile, WebEngineScript,
