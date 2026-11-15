@@ -223,6 +223,14 @@ impl Engine {
             .get_mut(obj)
             .ok_or_else(|| EngineError::dead(obj))?;
         h.ext_mut().made_on_read.set(prop, Maker::Kept(keep));
+        drop(store);
+        // Another keeper out for a read is replaced: it is not put back,
+        // and it keeps the property no more.
+        for (o, p, k, gone) in self.inner.kept_in_hand.borrow_mut().iter_mut() {
+            if (*o, *p) == (obj, prop) && !std::ptr::fn_addr_eq(*k, keep) {
+                *gone = true;
+            }
+        }
         Ok(())
     }
 
@@ -246,13 +254,11 @@ impl Engine {
     /// Whether `keep` is the keeper of `prop` ([`Engine::keep_on_read`]),
     /// out for a read or not. A keeper that was told [`Kept::Given`] is not,
     /// and another may keep the property since: an animation started on it.
+    /// Nor is one another took the place of while it was out for a read.
     pub fn is_kept_by(&self, obj: ObjectId, prop: PropIndex, keep: KeepOnRead) -> bool {
         let (obj, prop) = self.redirect(obj, prop);
-        if self
-            .keeper(obj, prop)
-            .is_some_and(|k| std::ptr::fn_addr_eq(k, keep))
-        {
-            return true;
+        if let Some(k) = self.keeper(obj, prop) {
+            return std::ptr::fn_addr_eq(k, keep);
         }
         self.inner
             .kept_in_hand
