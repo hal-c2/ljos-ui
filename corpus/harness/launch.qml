@@ -32,7 +32,8 @@ QtObject {
             return
         }
         let entry = args[dashes + 1]
-        if (entry.indexOf(":") < 0) {
+        // A URL starts with its scheme; a path may hold a `:` of its own.
+        if (!/^[A-Za-z][A-Za-z0-9+.-]*:/.test(entry)) {
             if (!entry.startsWith("/")) {
                 fail("the entry " + entry + " is relative: give an absolute path or a URL")
                 return
