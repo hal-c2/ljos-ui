@@ -19,6 +19,8 @@ QtObject {
     property var args: Qt.application.arguments
     property int dashes: args.indexOf("--")
     property var made: null
+    // Held here so the garbage collector keeps a loading component.
+    property Component component: null
     property Window host: null
 
     function fail(text) {
@@ -41,19 +43,19 @@ QtObject {
             // `#` and `?` in a path would start a fragment or a query.
             entry = "file://" + encodeURI(entry).replace(/#/g, "%23").replace(/\?/g, "%3F")
         }
-        const component = Qt.createComponent(entry)
+        component = Qt.createComponent(entry)
         // A network entry is still loading when it is made.
         if (component.status === Component.Loading) {
             component.statusChanged.connect(() => {
                 if (component.status !== Component.Loading)
-                    start(entry, component)
+                    start(entry)
             })
         } else {
-            start(entry, component)
+            start(entry)
         }
     }
 
-    function start(entry, component) {
+    function start(entry) {
         if (component.status !== Component.Ready) {
             fail(component.errorString())
             return
