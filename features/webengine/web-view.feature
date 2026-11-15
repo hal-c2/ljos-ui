@@ -963,6 +963,9 @@ Feature: A web page in a WebEngineView
     When 2 seconds pass
     Then the property "seen" of "view" is "Fixture Page undefined"
 
+  # The view's first page waits for the blank one, and for its scripts to
+  # reach the renderer: one that began before they did says so, so a page
+  # that missed them names why.
   @api-QtWebEngine.WebEngineView.userScripts
   Scenario: A script given to the view runs in every page it loads
     Given the QML:
@@ -985,7 +988,8 @@ Feature: A web page in a WebEngineView
     When 2 seconds pass
     And the method "show" of "view" is called with "second.html"
     And 2 seconds pass
-    Then the property "seen" of "view" is "yes yes"
+    Then the log has no warning matching "before .* of its scripts reached the renderer"
+    And the property "seen" of "view" is "yes yes"
 
   @api-QtWebEngine.WebEngineView.javaScriptConsoleMessage
   Scenario: What the page writes to its console reaches the view with its level
