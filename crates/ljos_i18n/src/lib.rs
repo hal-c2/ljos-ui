@@ -2,6 +2,8 @@
 //!
 //! - [`Catalog`]: the translations of one language, keyed as Qt keys them.
 //! - [`ts`]: the translator-facing `.ts` XML, read and written (feature `ts`).
+//! - [`message`]: ICU MessageFormat, what `t` messages are written in.
+//! - [`po`]: `.po` catalogues of ICU messages, read and written (feature `po`).
 //! - [`Ljl`]: the binary runtime format, read in place from mapped bytes.
 //! - [`PluralForms`]: which numerus form a count selects.
 //! - [`I18n`]: catalogues, UI language and locale together; what `qsTr` asks.
@@ -16,7 +18,10 @@ pub mod datetime;
 pub mod i18n;
 pub mod ljl;
 pub mod locale;
+pub mod message;
 pub mod plural;
+#[cfg(feature = "po")]
+pub mod po;
 #[cfg(feature = "ts")]
 pub mod ts;
 pub mod tz;
@@ -26,6 +31,7 @@ pub use catalog::{Catalog, Entry, Messages, Translation};
 pub use collate::Collator;
 pub use i18n::I18n;
 pub use ljl::{Ljl, LjlError};
+pub use message::{Message, MessageError, Plurals, Value};
 pub use locale::{DataSizeFormat, LocaleInfo, SystemLocale};
 pub use plural::PluralForms;
 pub use tz::{LocalTime, TimeZone};

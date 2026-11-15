@@ -5,12 +5,16 @@
 //! and bumps them when a setter here says something changed, so this crate
 //! does not depend on the reactive graph and tools can use it too.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Write as _;
+use std::rc::Rc;
 
 use crate::{
     LocaleInfo, PluralForms,
     catalog::{Entry, Messages},
     locale,
+    message::{Message, Plurals, Value},
 };
 
 struct Installed {
@@ -18,8 +22,18 @@ struct Installed {
     /// names in the fallback chain.
     name: String,
     plural: PluralForms,
+    /// The language's CLDR categories, for ICU messages.
+    plurals: Plurals,
     messages: Box<dyn Messages>,
 }
+
+/// The language a `t` message is written in. Lingui's sources are
+/// English, and so are the plural forms a source message chooses among.
+const SOURCE_LANGUAGE: &str = "en";
+
+/// A message parsed once: `None` when it does not parse or names a value
+/// its source does not have, so it is warned about once and not used.
+type Parsed = Option<Rc<Message>>;
 
 /// The localisation state of one application.
 pub struct I18n {
@@ -30,6 +44,14 @@ pub struct I18n {
     locale: LocaleInfo,
     /// The catalogues the UI language selects, in lookup order.
     chain: Vec<usize>,
+    source_plurals: Plurals,
+    /// Translations of ICU messages, by catalogue and first form, parsed
+    /// the first time they are used.
+    parsed: RefCell<HashMap<(usize, u32), Parsed>>,
+    /// Source messages, by their text.
+    sources: RefCell<HashMap<Box<str>, Parsed>>,
+    /// Translations that are not used, said once each until taken.
+    warnings: RefCell<Vec<String>>,
 }
 
 impl Default for I18n {
@@ -96,6 +118,10 @@ impl I18n {
             ui_language: "en".to_owned(),
             locale: LocaleInfo::new("en_US"),
             chain: Vec::new(),
+            source_plurals: Plurals::for_language(SOURCE_LANGUAGE),
+            parsed: RefCell::default(),
+            sources: RefCell::default(),
+            warnings: RefCell::default(),
         }
     }
 
@@ -106,6 +132,7 @@ impl I18n {
         self.catalogs.push(Installed {
             name: canonical(language),
             plural: PluralForms::for_language(language),
+            plurals: Plurals::for_language(language),
             messages,
         });
         self.rechain();
@@ -117,6 +144,8 @@ impl I18n {
         let name = canonical(language);
         let before = self.catalogs.len();
         self.catalogs.retain(|c| c.name != name);
+        // The parsed translations are by position, which moved.
+        self.parsed.borrow_mut().clear();
         self.rechain();
         self.catalogs.len() != before
     }
@@ -211,6 +240,103 @@ impl I18n {
             form(catalog, catalog.messages.id(id)?, n)
         });
         self.with_count(found.unwrap_or(id), n)
+    }
+
+    /// A `t` message: `key` is its source message or its explicit id, and
+    /// `source` the message shown when no catalogue in the fallback chain
+    /// has a translation that can be used.
+    ///
+    /// A translation that does not parse, or that names a value the source
+    /// does not, is passed over for the next catalogue in the chain, and
+    /// said once in [`take_warnings`](Self::take_warnings). The source is
+    /// formatted with English plural rules; numbers are written in the
+    /// locale either way.
+    #[must_use]
+    pub fn message<'v>(
+        &self,
+        context: &str,
+        key: &str,
+        source: &str,
+        values: &dyn Fn(&str) -> Option<&'v Value>,
+    ) -> String {
+        let parsed = self.source(source);
+        for &i in &self.chain {
+            let catalog = &self.catalogs[i];
+            let Some(entry) = catalog.messages.message(context, key) else {
+                continue;
+            };
+            if let Some(translation) = self.translation(i, entry, key, parsed.as_deref()) {
+                return translation.format(values, &catalog.plurals, &self.locale);
+            }
+        }
+        match parsed {
+            Some(message) => message.format(values, &self.source_plurals, &self.locale),
+            None => source.to_owned(),
+        }
+    }
+
+    fn source(&self, source: &str) -> Parsed {
+        if let Some(found) = self.sources.borrow().get(source) {
+            return found.clone();
+        }
+        let parsed = Message::parse(source).ok().map(Rc::new);
+        self.sources
+            .borrow_mut()
+            .insert(source.into(), parsed.clone());
+        parsed
+    }
+
+    fn translation(&self, i: usize, entry: Entry, key: &str, source: Option<&Message>) -> Parsed {
+        if let Some(found) = self.parsed.borrow().get(&(i, entry.first)) {
+            return found.clone();
+        }
+        let catalog = &self.catalogs[i];
+        let text = catalog.messages.form(entry, 0).unwrap_or_default();
+        let problem = match Message::parse(text) {
+            Err(error) => Err(format!("the translation does not parse: {error}")),
+            Ok(message) => {
+                let known = source.map(Message::names).unwrap_or_default();
+                let unknown: Vec<_> = message
+                    .names()
+                    .into_iter()
+                    .filter(|name| !known.contains(name))
+                    .map(|name| format!("{{{name}}}"))
+                    .collect();
+                match unknown.as_slice() {
+                    [] => Ok(message),
+                    [one] => Err(format!(
+                        "the translation names {one}, which the message does not have"
+                    )),
+                    many => Err(format!(
+                        "the translation names {}, which the message does not have",
+                        many.join(", ")
+                    )),
+                }
+            }
+        };
+        let parsed = match problem {
+            Ok(message) => Some(Rc::new(message)),
+            Err(why) => {
+                let at = catalog
+                    .messages
+                    .origin(entry)
+                    .unwrap_or_else(|| catalog.messages.language().to_owned());
+                self.warnings
+                    .borrow_mut()
+                    .push(format!("{at}: {key:?}: {why}"));
+                None
+            }
+        };
+        self.parsed
+            .borrow_mut()
+            .insert((i, entry.first), parsed.clone());
+        parsed
+    }
+
+    /// What was said about translations that are not used since the last
+    /// call: one line per translation, each said once.
+    pub fn take_warnings(&self) -> Vec<String> {
+        std::mem::take(&mut *self.warnings.borrow_mut())
     }
 
     /// Puts the count where the text says `%n`, and in the locale's digits
@@ -359,6 +485,75 @@ mod tests {
         assert!(i.uninstall("is"));
         assert!(!i.has_catalog());
         assert_eq!(i.translate("Main", "Open", "", None), "Open");
+    }
+
+    fn messages() -> Box<Catalog> {
+        let mut c = Catalog::new("is");
+        c.set_file("is.po");
+        c.insert_message_at("", "Hello {name}", "Halló {name}", 4);
+        c.insert_message_at("", "Goodbye {name}", "Bless {nme}", 8);
+        c.insert_message_at("", "Broken {name}", "Bilað {name", 9);
+        c.insert_message(
+            "",
+            "{count, plural, one {# file} other {# files}}",
+            "{count, plural, one {# skrá} other {# skrár}}",
+        );
+        c.insert_message("menu", "Open", "Opna valmynd");
+        c.insert_message("", "nav.home", "Heim");
+        Box::new(c)
+    }
+
+    fn values<'a>(pairs: &'a [(&'a str, Value)]) -> impl Fn(&str) -> Option<&'a Value> {
+        move |name| pairs.iter().find(|(n, _)| *n == name).map(|(_, v)| v)
+    }
+
+    #[test]
+    fn messages_fall_back_from_region_to_language_to_source() {
+        let mut i = I18n::new();
+        i.install(messages());
+        let name = [("name", Value::text("Ada"))];
+        let hello = |i: &I18n| i.message("", "Hello {name}", "Hello {name}", &values(&name));
+        assert_eq!(hello(&i), "Hello Ada");
+        i.set_ui_language("is-IS");
+        assert_eq!(hello(&i), "Halló Ada");
+        assert_eq!(i.message("menu", "Open", "Open", &values(&[])), "Opna valmynd");
+        assert_eq!(i.message("", "Open", "Open", &values(&[])), "Open");
+        assert_eq!(i.message("", "nav.home", "Home", &values(&[])), "Heim");
+        assert_eq!(i.translate("", "Hello {name}", "", None), "Hello {name}");
+        let count = |n: f64| {
+            let v = [("count", Value::number(n))];
+            let source = "{count, plural, one {# file} other {# files}}";
+            i.message("", source, source, &values(&v))
+        };
+        assert_eq!(count(21.0), "21 skrá");
+        assert_eq!(count(3.0), "3 skrár");
+    }
+
+    #[test]
+    fn a_broken_translation_is_passed_over_and_said_once() {
+        let mut i = I18n::new();
+        i.install(messages());
+        i.set_ui_language("is");
+        let name = [("name", Value::text("Ada"))];
+        for _ in 0..2 {
+            assert_eq!(
+                i.message("", "Goodbye {name}", "Goodbye {name}", &values(&name)),
+                "Goodbye Ada"
+            );
+            assert_eq!(
+                i.message("", "Broken {name}", "Broken {name}", &values(&name)),
+                "Broken Ada"
+            );
+        }
+        let warnings = i.take_warnings();
+        assert_eq!(
+            warnings,
+            [
+                "is.po:8: \"Goodbye {name}\": the translation names {nme}, which the message does not have",
+                "is.po:9: \"Broken {name}\": the translation does not parse: expected `}` (at character 11)",
+            ]
+        );
+        assert!(i.take_warnings().is_empty());
     }
 
     #[test]
