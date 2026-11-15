@@ -1585,8 +1585,9 @@ pub struct SceneEnvironment {
     pub object3d: Object3D,
     #[qml(notify)]
     pub clear_color: Color,
-    /// Transparent, Color and SkyBox are drawn; SkyBoxCubeMap and
-    /// SkyMaterial are not built and draw as Transparent.
+    /// Transparent, Color and SkyBox are drawn. A cube map is not built,
+    /// so SkyBoxCubeMap draws the clear colour, as Qt does with no
+    /// skyBoxCubeMap; SkyMaterial is not built and draws as Transparent.
     #[qml(notify, enumeration = "BackgroundMode")]
     pub background_mode: i32,
     /// Linear by default, as the documentation says. TonemapModeCustom is

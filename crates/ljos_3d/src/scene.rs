@@ -906,7 +906,9 @@ pub enum Background {
     /// Qt's default: the 2D scene shows through where nothing is drawn.
     Transparent,
     Color(Color),
-    /// The light probe, around the scene; transparent without one.
+    /// The light probe, around the scene, seen through the camera: a view
+    /// with no camera shows none. A sky box with no probe is built as the
+    /// clear colour.
     SkyBox,
 }
 

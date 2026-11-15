@@ -2905,7 +2905,11 @@ impl Renderer {
         self.custom.retain(|_, c| c.source.strong_count() > 0);
 
         let plain_maps = self.maps.plain(device, queue);
-        let sky = environment.background == Background::SkyBox && bound != Bound::None;
+        // The sky box is the probe seen through the camera: a view with no
+        // camera has none, and the 2D scene shows through it.
+        let sky = environment.background == Background::SkyBox
+            && bound != Bound::None
+            && camera.is_some();
         if sky {
             self.sky(device, samples, format);
         }

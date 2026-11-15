@@ -671,13 +671,6 @@ pub(super) fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object
     if !s.is(env, T::SceneEnvironment) {
         return Environment::default();
     }
-    let background = match int(s, env, P::BackgroundMode, se::BACKGROUND_MODE) {
-        background::COLOR => Background::Color(color(s, env, P::ClearColor, se::CLEAR_COLOR)),
-        background::SKY_BOX => Background::SkyBox,
-        // A cube map and a sky material are not built: the 2D scene
-        // shows through.
-        _ => Background::Transparent,
-    };
     // SSAA and progressive antialiasing are not built: they draw as none.
     let msaa_samples =
         if int(s, env, P::AntialiasingMode, se::ANTIALIASING_MODE) == antialiasing::MSAA {
@@ -699,6 +692,17 @@ pub(super) fn environment<S: SceneSource>(s: &S, view: S::Object, env: S::Object
             orientation: vec3(s, env, P::ProbeOrientation, se::PROBE_ORIENTATION),
             skybox_blur: num(s, env, P::SkyboxBlurAmount, se::SKYBOX_BLUR_AMOUNT),
         });
+    let clear = || Background::Color(color(s, env, P::ClearColor, se::CLEAR_COLOR));
+    let background = match int(s, env, P::BackgroundMode, se::BACKGROUND_MODE) {
+        background::COLOR => clear(),
+        background::SKY_BOX if light_probe.is_some() => Background::SkyBox,
+        // Qt 6.11: a sky box with no picture to show, a SkyBox with no
+        // lightProbe or a SkyBoxCubeMap with no skyBoxCubeMap, is the clear
+        // colour. A cube map is not built, so a SkyBoxCubeMap always is.
+        background::SKY_BOX | background::SKY_BOX_CUBE_MAP => clear(),
+        // A sky material is not built: the 2D scene shows through.
+        _ => Background::Transparent,
+    };
     let tonemap = match int(s, env, P::TonemapMode, se::TONEMAP_MODE) {
         tonemap::NONE => Tonemap::None,
         tonemap::ACES => Tonemap::Aces,
