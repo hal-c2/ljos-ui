@@ -2120,6 +2120,8 @@ impl Renderer {
         if !processed {
             target.post.clear();
         }
+        // What this frame uploads is kept for other renderers from when it ends.
+        let _frame = crate::uploads::Frame::begin([self.maps.reader(), self.ibl.reader()]);
         self.maps.sweep();
         self.programs.sweep();
         self.ibl.sweep();
