@@ -85,8 +85,15 @@ impl Environment for LjosBackend {
         let since = std::time::Instant::now();
         // CEF readies storage on the Engine thread, in the work the view's
         // wait keeps asking for, which a finish waits for.
-        while !ljos_webengine::profile_readied(storage_name) {
-            if since.elapsed() >= PROFILE_READY_WAIT {
+        loop {
+            // Both read on one pass: storage readied during a finish that
+            // ran past the deadline is still too late.
+            let readied = ljos_webengine::profile_readied(storage_name);
+            let late = since.elapsed() >= PROFILE_READY_WAIT;
+            if readied && !late {
+                break;
+            }
+            if late {
                 return Err(failed(format!(
                     "the web engine had not readied the storage of profile {storage_name:?} after {} s{}",
                     PROFILE_READY_WAIT.as_secs(),
