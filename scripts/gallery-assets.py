@@ -4,6 +4,9 @@ that are in no repository.
 
 gallery-assets.py            which examples have such assets, and whether they are here
 gallery-assets.py <id>...    download and unpack those of each, and put them where its build does
+gallery-assets.py --check <id>...
+                             exit 1, naming what is missing, when an example's assets are not where
+                             its build puts them; an example with none passes
 
 corpus/assets.json says where they come from. `places` maps a directory of the example to one of
 the archive; `beside` puts each file of `listed` (a source of the example's that names them, one a
@@ -46,15 +49,33 @@ def link(directory, place, to):
             out.write(line + "\n")
 
 
-def listed(directory, spec, kept):
+def names(directory, spec):
     with open(os.path.join(directory, spec["listed"])) as source:
-        names = re.findall(r'^\s*"([^":]+\.\w+)",?\s*$', source.read(), re.M)
-    if not names:
+        found = re.findall(r'^\s*"([^":]+\.\w+)",?\s*$', source.read(), re.M)
+    if not found:
         sys.exit(f"{spec['listed']} names no files")
-    for index, name in enumerate(names):
+    return found
+
+
+def missing(eid, directory, spec):
+    """What of the example's assets is not where its build puts them. Its picture without them
+    is another one: a view with no mesh is black, and a run of it measures nothing it draws."""
+    if "listed" in spec:
+        places = [os.path.join(spec["beside"], name) for name in names(directory, spec)]
+    else:
+        places = list(spec.get("places", {}))
+    gone = [p for p in places if not os.path.exists(os.path.join(directory, p))]
+    if spec.get("standin") and not os.path.isdir(os.path.join(ROOT, "corpus", "standins", eid, "downloaded")):
+        gone.append(os.path.join("corpus", "standins", eid, "downloaded"))
+    return gone
+
+
+def listed(directory, spec, kept):
+    found = names(directory, spec)
+    for index, name in enumerate(found):
         file = os.path.join(kept, name)
         if not os.path.exists(file):
-            print(f"{index + 1} of {len(names)}, {name}", flush=True)
+            print(f"{index + 1} of {len(found)}, {name}", flush=True)
             fetch(urllib.parse.urljoin(spec["url"], urllib.parse.quote(name)), file)
         link(directory, os.path.join(spec["beside"], name), file)
 
@@ -88,6 +109,17 @@ def main():
             here = os.path.isdir(os.path.join(CACHE, eid))
             print(f"{eid}: {'here' if here else 'not here'} ({spec['url']})")
         return
+    if sys.argv[1] == "--check":
+        bad = False
+        for eid in sys.argv[2:]:
+            if eid not in assets:
+                continue
+            gone = missing(eid, os.path.join(QTDOC, examples[eid]["dir"]), assets[eid])
+            if gone:
+                bad = True
+                print(f"{eid}: {len(gone)} of its downloaded assets are missing, {gone[0]} first; "
+                      f"run `mise run gallery:assets {eid}` first", file=sys.stderr)
+        sys.exit(1 if bad else 0)
     for eid in sys.argv[1:]:
         if eid not in assets:
             sys.exit(f"no assets to download for {eid}")
