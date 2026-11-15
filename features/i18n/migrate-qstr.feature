@@ -162,3 +162,27 @@ Feature: ljos migrate writes qsTr as a tagged template
     When the author runs "ljos migrate --catalogue app_is.ts ."
     Then the command's output mentions "kept Main.qml"
     And the command's output mentions "kept Other.qml"
+
+  Scenario: One disambiguation two files translate differently keeps both files
+    Given the file "FileMenu.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open", "menu") }
+      """
+    And the file "Door.qml":
+      """qml
+      import QtQuick
+      Item { property string open: qsTr("Open", "menu") }
+      """
+    And the file "app_is.ts":
+      """xml
+      <TS version="2.1" language="is">
+      <context><name>FileMenu</name>
+        <message><source>Open</source><comment>menu</comment><translation>Opna</translation></message></context>
+      <context><name>Door</name>
+        <message><source>Open</source><comment>menu</comment><translation>Opnaðu</translation></message></context>
+      </TS>
+      """
+    When the author runs "ljos migrate --catalogue app_is.ts ."
+    Then the command's output mentions "kept FileMenu.qml"
+    And the command's output mentions "kept Door.qml"
