@@ -148,7 +148,13 @@ impl Driver {
     /// Ends `run`. What its Animators show is written now: where they got
     /// to, as Qt does.
     fn remove(&self, engine: &Engine, run: &Rc<Run>) {
-        // What it moves holds where it got to, and is kept no longer.
+        // What it moves holds where it got to, and is kept no longer. A
+        // resting run got further than it wrote: an interrupted or
+        // replaced one (`forget_driven`, a new start) has had no
+        // `catch_up`, and once the keeper is gone a read sees what is held.
+        if run.resting.get() {
+            bring_quietly(engine, self, run);
+        }
         wake(engine, self, run);
         run.cancelled.set(true);
         // Inside its own step (a script that stops it) the timeline is out:
