@@ -1029,7 +1029,8 @@ pub(crate) fn paces(engine: &Engine) -> Vec<(ObjectId, AnimationPace)> {
         .iter()
         .filter(|r| !r.cancelled.get())
         .map(|r| {
-            let pace = if r.paused.get() {
+            // Frozen, it steps no more than a paused one (`advance`).
+            let pace = if r.paused.get() || engine.is_frozen(r.anim) {
                 AnimationPace::Paused
             } else if r.resting.get() {
                 let timeline = r.timeline.borrow();
@@ -1056,9 +1057,14 @@ pub(crate) fn paces(engine: &Engine) -> Vec<(ObjectId, AnimationPace)> {
         .collect();
     let frames: Vec<ObjectId> = d.frames.borrow().clone();
     for f in frames {
+        if !engine.is_alive(f) {
+            continue;
+        }
         let wants = d.wants.borrow().get(&f).cloned();
+        // Frozen, it asks for no frame (`frames_want`), as if paused.
         // Asked unborrowed: what decides reads the engine.
         let pace = match wants {
+            _ if engine.is_frozen(f) => AnimationPace::Paused,
             Some(w) if !engine.untrack(|| w(engine)) => AnimationPace::RidingAlong,
             _ => AnimationPace::Stepping,
         };

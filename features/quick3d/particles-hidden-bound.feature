@@ -81,6 +81,20 @@ Feature: What is bound to the time of a hidden particle system
     Then the property "time" of "system" is at least 500
     And the property "duration" of "pull" is at least 101000
 
+  Scenario: A paused hidden system lets go of what is bound to its time
+    When 100 milliseconds pass
+    And the property "visible" of "holder" is set to false
+    And 200 milliseconds pass
+    And the property "paused" of "system" is set to true
+    And 500 milliseconds pass
+    And the method "look" of "root" is called
+    Then the property "looked" of "root" is at least 100600
+    And the property "looked" of "root" is at most 100700
+    And the application has nothing scheduled
+    When the property "time" of "system" is set to 1000
+    And the method "look" of "root" is called
+    Then the property "looked" of "root" is 102000
+
   Scenario: The inspector shows the clock of a hidden system riding along
     Given the inspector is connected
     When 100 milliseconds pass

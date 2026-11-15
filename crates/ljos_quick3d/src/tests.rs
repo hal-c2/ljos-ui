@@ -1182,3 +1182,56 @@ fn models_naming_one_file_share_its_meshes() {
     ids.dedup();
     assert_eq!(ids.len(), 2, "one geometry for each sub-mesh of the file");
 }
+
+#[test]
+fn a_destroyed_particle_system_lets_go_of_what_is_bound_to_its_time() {
+    let e = ljos::engine();
+    register(&e);
+    // Its clock runs on the picture's.
+    let pic = ljos::render::Picture::new(40, 40).settle(300);
+    pic.install(&e);
+    let mut project = ljos_compiler::Project::new(ljos::dev::EngineOracle::from_engine(&e));
+    project.add(
+        "Main",
+        r#"import QtQuick
+import QtQuick3D
+import QtQuick3D.Particles3D
+Item {
+    width: 40; height: 40
+    property QtObject system_: system
+    property real twice: system ? system.time * 2 : -1
+    View3D {
+        anchors.fill: parent
+        Node {
+            visible: false
+            ParticleSystem3D { id: system }
+        }
+    }
+}
+"#,
+    );
+    let compiled = ljos_compiler::compile_file(&project, "Main").expect("compiles");
+    let mut source = ljos::MapSource::new();
+    source.insert("Main", compiled.file);
+    e.set_component_source(source);
+    let root = e
+        .create_from_url("Main", None, Vec::new())
+        .expect("created");
+    // Read once, the binding reads the time; nothing shows it.
+    let _ = e.read_by_name(root, "twice");
+    let _scene = pic.scene(&e, root).expect("laid out");
+    let twice = e.property_index(root, "twice").expect("twice");
+    assert!(
+        e.is_made_on_read(root, twice),
+        "the hidden system keeps what only a binding of the root reads of its time"
+    );
+
+    let system = named(&e, root, "system_");
+    assert!(e.destroy(system));
+    e.process_deferred_deletes();
+    assert!(!e.is_alive(system));
+    assert!(
+        !e.is_made_on_read(root, twice),
+        "gone, the system keeps nothing"
+    );
+}
