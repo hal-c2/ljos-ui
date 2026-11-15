@@ -78,6 +78,12 @@ fn a_profile_keeps_its_data_and_cache_where_it_names() {
     );
 }
 
+/// `text` as a QML string literal, quotes and all: a path on Windows has
+/// backslashes, and one anywhere may have a quote.
+fn qml_string(text: &str) -> String {
+    format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
 /// Every path below `dir`.
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
@@ -182,20 +188,23 @@ fn a_later_profile_on_disk_is_kept_under_the_first_ones_place() {
 #[test]
 #[ignore = "the child of a_later_profile_on_disk_is_kept_under_the_first_ones_place"]
 fn child_loads_pages_in_two_named_profiles() {
-    let first = std::env::var("LJOS_TEST_FIRST").expect("where the first profile keeps its data");
-    let second =
-        std::env::var("LJOS_TEST_SECOND").expect("where the second profile asks to keep its data");
+    let first = qml_string(
+        &std::env::var("LJOS_TEST_FIRST").expect("where the first profile keeps its data"),
+    );
+    let second = qml_string(
+        &std::env::var("LJOS_TEST_SECOND").expect("where the second profile asks to keep its data"),
+    );
     let qml = format!(
         r#"import QtQuick
 import QtWebEngine
 Item {{
   WebEngineProfile {{
     id: first; storageName: "First"; offTheRecord: false
-    persistentStoragePath: "{first}"
+    persistentStoragePath: {first}
   }}
   WebEngineProfile {{
     id: second; storageName: "Second"; offTheRecord: false
-    persistentStoragePath: "{second}"
+    persistentStoragePath: {second}
   }}
   WebEngineView {{ objectName: "anon"; width: 100; height: 100; url: "$SERVER/page.html" }}
   WebEngineView {{ objectName: "one"; x: 100; width: 100; height: 100; profile: first; url: "$SERVER/page.html" }}
@@ -208,8 +217,9 @@ Item {{
 #[test]
 #[ignore = "the child of a_profile_keeps_its_data_and_cache_where_it_names"]
 fn child_loads_a_page_in_a_named_profile() {
-    let storage = std::env::var("LJOS_TEST_STORAGE").expect("where the profile keeps its data");
-    let cache = std::env::var("LJOS_TEST_CACHE").expect("where the profile caches");
+    let storage =
+        qml_string(&std::env::var("LJOS_TEST_STORAGE").expect("where the profile keeps its data"));
+    let cache = qml_string(&std::env::var("LJOS_TEST_CACHE").expect("where the profile caches"));
     let qml = format!(
         r#"import QtQuick
 import QtWebEngine
@@ -218,8 +228,8 @@ WebEngineView {{
   width: 200; height: 100
   profile: WebEngineProfile {{
     storageName: "named"; offTheRecord: false
-    persistentStoragePath: "{storage}"
-    cachePath: "{cache}"
+    persistentStoragePath: {storage}
+    cachePath: {cache}
   }}
   url: "$SERVER/page.html"
 }}"#
