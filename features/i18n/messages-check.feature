@@ -12,7 +12,7 @@ Feature: Checking translated text
 
   @backlog
   Scenario: qsTr in a file of Ljós's API names the tagged template
-    Given the file "Title.qml":
+    Given the file "Title.qml" without its indentation:
       """qml
       import Ljos.Ui
       import Ljos.Core
@@ -46,7 +46,7 @@ Feature: Checking translated text
       """
 
   Scenario: A form that is not written out cannot be translated
-    Given the file "Files.qml":
+    Given the file "Files.qml" without its indentation:
       """qml
       import Ljos.Ui
       import Ljos.Core
@@ -66,7 +66,7 @@ Feature: Checking translated text
 
   @backlog
   Scenario: A count and the words around it are one message
-    Given the file "Ago.qml":
+    Given the file "Ago.qml" without its indentation:
       """qml
       import Ljos.Ui
       import Ljos.Core
@@ -84,7 +84,7 @@ Feature: Checking translated text
       """
 
   Scenario: Forms without other are an error
-    Given the file "Role.qml":
+    Given the file "Role.qml" without its indentation:
       """qml
       import Ljos.Ui
       import Ljos.Core

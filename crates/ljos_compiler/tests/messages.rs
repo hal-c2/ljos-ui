@@ -42,7 +42,11 @@ Item {
         "{name} has {count, plural, one {# file} other {# files}}"
     );
     assert_eq!(message.placeholders, ["name", "count"]);
-    assert!(file.js.source.contains("__ljos_message("), "{}", file.js.source);
+    assert!(
+        file.js.source.contains("__ljos_message("),
+        "{}",
+        file.js.source
+    );
 }
 
 #[test]
@@ -59,7 +63,9 @@ Item {
     );
     let places: Vec<String> = diagnostics.iter().map(place).collect();
     assert!(
-        places.iter().any(|p| p.starts_with("6:66 a form of `plural`")),
+        places
+            .iter()
+            .any(|p| p.starts_with("6:66 a form of `plural`")),
         "{places:?}"
     );
 }
@@ -77,7 +83,9 @@ Item {
     );
     let places: Vec<String> = diagnostics.iter().map(place).collect();
     assert!(
-        places.iter().any(|p| p.starts_with("5:41 the forms of `select` need `other`")),
+        places
+            .iter()
+            .any(|p| p.starts_with("5:41 the forms of `select` need `other`")),
         "{places:?}"
     );
 }

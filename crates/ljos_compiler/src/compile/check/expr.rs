@@ -511,6 +511,50 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
     }
 
+    /// `plural`, `select` or `selectOrdinal` of `Ljos.Core`: its forms are
+    /// an ICU message's, keyed by number (`0:`) as well as by word, which
+    /// no object type has. The compiler holds how they are written
+    /// (`i18n-literal`, `i18n-other`); each value is checked here.
+    fn choice(&mut self, call: &CallExpression<'a>) -> Option<Ty> {
+        let Expression::Identifier(id) = &call.callee else {
+            return None;
+        };
+        let name = id.name.as_str();
+        if !matches!(name, "plural" | "select" | "selectOrdinal")
+            || self.module.is_some()
+            || self.local(name).is_some()
+        {
+            return None;
+        }
+        let resolution = self.c.lookup(name, id.span.start)?;
+        if !matches!(
+            resolution.target,
+            Some(Target::Global(qml_front::names::Global::Core))
+        ) || !resolution.roles.is_empty()
+        {
+            return None;
+        }
+        for (index, argument) in call.arguments.iter().enumerate() {
+            match argument
+                .as_expression()
+                .map(Expression::without_parentheses)
+            {
+                Some(Expression::ObjectExpression(forms)) if index == 1 => {
+                    for property in &forms.properties {
+                        if let ObjectPropertyKind::ObjectProperty(property) = property {
+                            self.expr(&property.value, None);
+                        }
+                    }
+                }
+                Some(expression) => {
+                    self.expr(expression, None);
+                }
+                None => {}
+            }
+        }
+        Some(Ty::STRING)
+    }
+
     /// What `Ljos.Core` gives a file that imports it, by name
     /// (docs/DIALECT.md §4.3).
     fn core_global(&mut self, name: &str) -> Ty {
@@ -595,7 +639,11 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
             "t" | "plural" | "select" | "selectOrdinal" | "msg" => self.arena.function(Sig {
                 params: Box::new([]),
                 rest: Some(Ty::UNKNOWN),
-                ret: if name == "msg" { Ty::UNKNOWN } else { Ty::STRING },
+                ret: if name == "msg" {
+                    Ty::UNKNOWN
+                } else {
+                    Ty::STRING
+                },
                 guard: None,
             }),
             "rgba" => colour(self, &["r", "g", "b"]),
@@ -1240,6 +1288,9 @@ impl<'a, O: TypeOracle> Checker<'_, '_, 'a, '_, O> {
         }
         if self.is_sugar(call, "$extract") {
             return self.extract(call);
+        }
+        if let Some(ty) = self.choice(call) {
+            return ty;
         }
         let (receiver, callee) = match &call.callee {
             Expression::StaticMemberExpression(m) => {
