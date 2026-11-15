@@ -18,12 +18,9 @@ Feature: ljos i18n extract writes the messages to a PO catalogue
       import Ljos.Ui
       import Ljos.Core
       Item {
-        property int count: 2
         property string name: "Ada"
         property string hello: t`Hello ${name}`
-        property string files: plural(count, { one: "# file", other: "# files" })
         property string open: t({ message: "Open", context: "menu", comment: "The File menu" })
-        property string home: t({ id: "nav.home", message: "Home" })
       }
       """
 
@@ -39,23 +36,46 @@ Feature: ljos i18n extract writes the messages to a PO catalogue
       "Language: is\n"
       "X-Generator: ljos i18n extract\n"
 
-      #: Main.qml:6
+      #: Main.qml:5
       msgid "Hello {name}"
       msgstr ""
 
       #. The File menu
-      #: Main.qml:8
+      #: Main.qml:6
       msgctxt "menu"
       msgid "Open"
       msgstr ""
+      """
+
+  Scenario: An id and a count are written the way a translator reads them
+    Given the file "Main.qml":
+      """qml
+      import Ljos.Ui
+      import Ljos.Core
+      Item {
+        property int count: 2
+        property string files: plural(count, { one: "# file", other: "# files" })
+        property string home: t({ id: "nav.home", message: "Home" })
+      }
+      """
+    When the author runs "ljos i18n extract . -o is.po --language is"
+    Then the file "is.po" is:
+      """po
+      msgid ""
+      msgstr ""
+      "MIME-Version: 1.0\n"
+      "Content-Type: text/plain; charset=UTF-8\n"
+      "Content-Transfer-Encoding: 8bit\n"
+      "Language: is\n"
+      "X-Generator: ljos i18n extract\n"
 
       #. js-lingui-explicit-id
       #. Default: Home
-      #: Main.qml:9
+      #: Main.qml:6
       msgid "nav.home"
       msgstr ""
 
-      #: Main.qml:7
+      #: Main.qml:5
       msgid "{count, plural, one {# file} other {# files}}"
       msgstr ""
       """
@@ -76,7 +96,7 @@ Feature: ljos i18n extract writes the messages to a PO catalogue
     When the author runs "ljos i18n extract . -o is.po"
     Then the command prints:
       """
-      is.po: 4 messages, 3 new, 1 translated, 1 obsolete
+      is.po: 2 messages, 1 new, 1 translated, 1 obsolete
       """
     And the file "is.po" is:
       """po
@@ -88,24 +108,14 @@ Feature: ljos i18n extract writes the messages to a PO catalogue
       "Language: is\n"
       "X-Generator: ljos i18n extract\n"
 
-      #: Main.qml:6
+      #: Main.qml:5
       msgid "Hello {name}"
       msgstr "Halló {name}"
 
       #. The File menu
-      #: Main.qml:8
+      #: Main.qml:6
       msgctxt "menu"
       msgid "Open"
-      msgstr ""
-
-      #. js-lingui-explicit-id
-      #. Default: Home
-      #: Main.qml:9
-      msgid "nav.home"
-      msgstr ""
-
-      #: Main.qml:7
-      msgid "{count, plural, one {# file} other {# files}}"
       msgstr ""
 
       #~ msgid "Save"
@@ -124,4 +134,4 @@ Feature: ljos i18n extract writes the messages to a PO catalogue
       """
     And the author runs "ljos i18n extract . -o is.po --check"
     Then the command exits with status 1
-    And the command's output mentions "is.po is behind the sources: 1 new, 4 gone"
+    And the command's output mentions "is.po is behind the sources: 1 new, 2 gone"
