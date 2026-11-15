@@ -964,20 +964,21 @@ fn an_animated_value_is_given_quietly_only_where_nothing_could_miss_it() {
 
     // A run that read `a` and is still going has no edge to it yet: a quiet
     // value would leave it with the old one and nothing to run it again.
-    let refused = Rc::new(Cell::new(None));
+    let refused = Rc::new(RefCell::new(None));
     let seen = refused.clone();
     let b = g.property(r, 10).unwrap();
     let sum = g
         .binding(r, 0, move |g| {
             let first = g.get(b);
-            if seen.get().is_none() {
-                seen.set(Some(g.give_animated_quietly(b, 20)));
+            if seen.borrow().is_none() {
+                let given = g.give_animated_quietly(b, 20);
+                *seen.borrow_mut() = Some(given);
             }
             first
         })
         .unwrap();
     g.get(sum);
-    assert_eq!(refused.get(), Some(Ok(false)));
+    assert_eq!(*refused.borrow(), Some(Ok(false)));
     assert_eq!(g.get(b), 10);
 
     // A noted property's owner is told of each change.
