@@ -375,6 +375,9 @@ impl Parser {
             self.at += 1;
             return Ok(Part::Arg(name));
         }
+        if self.peek().is_none() {
+            return self.error("expected `}`");
+        }
         self.expect(',')?;
         self.space();
         let kind = self.word();
@@ -482,21 +485,31 @@ impl Parser {
 }
 
 /// Writes text so that a message reads it back as that text: `'` doubled,
-/// `{` and `}` quoted, and `#` quoted where it would be a plural's value.
+/// and each run of `{`, `}` and (where it would be a plural's value) `#`
+/// quoted.
 #[must_use]
 pub fn escape(text: &str, in_plural: bool) -> String {
     let mut out = String::with_capacity(text.len());
+    // One quote per run: `'}''}'` would read as `}'}`, the `''` between
+    // two quotes being an apostrophe.
+    let mut quoted = false;
     for c in text.chars() {
-        match c {
-            '\'' => out.push_str("''"),
-            '{' | '}' => {
-                out.push('\'');
-                out.push(c);
-                out.push('\'');
-            }
-            '#' if in_plural => out.push_str("'#'"),
-            c => out.push(c),
+        let syntax = matches!(c, '{' | '}') || (in_plural && c == '#');
+        if syntax && !quoted {
+            out.push('\'');
+            quoted = true;
+        } else if !syntax && c != '\'' && quoted {
+            out.push('\'');
+            quoted = false;
         }
+        if c == '\'' {
+            out.push_str("''");
+        } else {
+            out.push(c);
+        }
+    }
+    if quoted {
+        out.push('\'');
     }
     out
 }
