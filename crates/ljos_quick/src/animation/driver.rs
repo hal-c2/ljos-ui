@@ -605,7 +605,10 @@ fn keep(engine: &Engine, obj: ObjectId, prop: PropIndex, kept: Kept) {
         }
         Kept::Observed => look_again(engine, &d),
         Kept::Given => {
+            // Brought to now first: a Behavior's retarget starts the next
+            // run from what the property holds.
             for run in resting_on(&d, obj, prop) {
+                bring_quietly(engine, &d, &run);
                 wake(engine, &d, &run);
             }
         }
