@@ -22,6 +22,7 @@
 mod builtins;
 mod controller;
 mod expr;
+mod messages;
 mod module;
 mod shadow;
 mod task;
@@ -108,9 +109,7 @@ pub(super) fn document<'a, O: TypeOracle>(
             continue;
         }
         let span = compiler.span(span);
-        compiler
-            .diagnostics
-            .push(Diagnostic::error(code, message, span));
+        compiler.diagnostics.push(diagnostic(code, message, span));
     }
 }
 
@@ -143,6 +142,15 @@ pub(super) fn module_findings<'a, O: TypeOracle>(
     checker.module_found
 }
 
+/// What the checker found, as a diagnostic: an error, but for what is
+/// only likely wrong.
+fn diagnostic(code: Code, message: String, span: ljos_ir::SourceSpan) -> Diagnostic {
+    match code {
+        Code::I18nConcat => Diagnostic::warning(code, message, span),
+        _ => Diagnostic::error(code, message, span),
+    }
+}
+
 /// Each module, with what was found in it at its own lines, once each.
 fn checked_modules(
     modules: &[Module<'_>],
@@ -169,7 +177,7 @@ fn checked_modules(
             let diagnostics = here
                 .into_iter()
                 .map(|(code, message, span)| {
-                    Diagnostic::error(code, message, lines.at(module.original, span))
+                    diagnostic(code, message, lines.at(module.original, span))
                 })
                 .collect();
             crate::CheckedModule {
@@ -327,6 +335,8 @@ pub(super) struct Checker<'c, 't, 'a, 'p, O: TypeOracle> {
     fresh: Vec<(u32, Ty)>,
     /// The file's Tasks whose `run` is typed, by object.
     tasks_typed: HashMap<usize, task::TaskSig>,
+    /// The sums `+` reads as part of a sum around them.
+    summed: Vec<Span>,
 }
 
 impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
@@ -360,6 +370,7 @@ impl<'c, 't, 'a, 'p, O: TypeOracle> Checker<'c, 't, 'a, 'p, O> {
             nested: 0,
             fresh: Vec::new(),
             tasks_typed: HashMap::new(),
+            summed: Vec::new(),
         }
     }
 

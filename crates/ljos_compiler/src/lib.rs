@@ -237,6 +237,10 @@ pub enum Code {
     I18nLiteral,
     /// The forms of `plural`, `select` or `selectOrdinal` with no `other`.
     I18nOther,
+    /// The checker: Qt's `qsTr` family in a file of Ljós's API.
+    QtTr,
+    /// The checker: a translated text joined to another value with `+`.
+    I18nConcat,
 }
 
 impl Code {
@@ -286,6 +290,8 @@ impl Code {
             Code::LtsGenerated => "lts-generated",
             Code::I18nLiteral => "i18n-literal",
             Code::I18nOther => "i18n-other",
+            Code::QtTr => "qt-tr",
+            Code::I18nConcat => "i18n-concat",
         }
     }
 }
