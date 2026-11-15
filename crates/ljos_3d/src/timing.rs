@@ -11,6 +11,12 @@
 //! later submit or poll, and the drawing after that reads it. Nothing
 //! waits for the GPU and nothing polls for it: a target drawn once keeps
 //! its last reading until it is drawn again.
+//!
+//! Only one drawing in [`TIMED_EVERY`] is timed. The timestamps, their
+//! resolve and the read back cost the processor at submit whether or not
+//! anything waits: on `ljos_shell`'s GL device, a quarter to two fifths of
+//! a millisecond a frame, more than the rest of the submit. A reading a
+//! few times a second tells a frame's GPU time as well as one a frame.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -51,6 +57,10 @@ pub fn timing_features(adapter: &wgpu::Adapter) -> wgpu::Features {
     adapter.features() & wgpu::Features::TIMESTAMP_QUERY
 }
 
+/// A target's drawings that are timed: the first, then one in every this
+/// many. At sixty frames a second, about four readings a second.
+pub const TIMED_EVERY: u32 = 16;
+
 /// The queries: the first shadow pass's start and the last's end, the
 /// scene pass's start and end, then the first post pass's start and the
 /// last's end.
@@ -78,8 +88,11 @@ pub(crate) struct Timer {
     resolve: wgpu::Buffer,
     reads: [Read; READS],
     /// The read the frame being recorded copies into; `None` between
-    /// frames, and for a frame that found every read in use.
+    /// frames, for a frame not timed, and for one that found every read
+    /// in use.
     this: Option<usize>,
+    /// Drawings begun, which say which are timed.
+    drawings: u32,
     /// Nanoseconds a timestamp tick is on this queue.
     period: f32,
     last: Option<Duration>,
@@ -138,6 +151,7 @@ impl Timer {
             ),
             reads: std::array::from_fn(read),
             this: None,
+            drawings: 0,
             period: 1.0,
             last: None,
             last_post: None,
@@ -148,7 +162,7 @@ impl Timer {
 
     /// A frame is about to be recorded, the last one's commands submitted:
     /// reads what has been mapped, asks for the last frame's readings to
-    /// be mapped, and picks where this frame's go.
+    /// be mapped, and picks where this frame's go if it is one timed.
     pub(crate) fn begin(&mut self, queue: &wgpu::Queue) {
         self.period = queue.get_timestamp_period();
         for read in &mut self.reads {
@@ -190,10 +204,17 @@ impl Timer {
                 _ => {}
             }
         }
-        self.this = self
-            .reads
-            .iter()
-            .position(|r| r.state.load(Ordering::Acquire) == FREE);
+        // u32::MAX + 1 is a multiple of TIMED_EVERY, so the count wraps in
+        // step.
+        let timed = self.drawings.is_multiple_of(TIMED_EVERY);
+        self.drawings = self.drawings.wrapping_add(1);
+        self.this = if timed {
+            self.reads
+                .iter()
+                .position(|r| r.state.load(Ordering::Acquire) == FREE)
+        } else {
+            None
+        };
     }
 
     /// Where shadow pass `i` of `n` writes its timestamps: the first its
