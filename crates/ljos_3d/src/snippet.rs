@@ -442,6 +442,79 @@ fn lit_failure(src: &str) -> Option<SnippetError> {
     None
 }
 
+/// How many tokens the expansion of one line may produce before the scan
+/// gives up on the snippet.
+const EXPANSION_BUDGET: usize = 4096;
+
+/// A `#define` the preprocessor keeps.
+struct Macro {
+    name: String,
+    takes_arguments: bool,
+    body: String,
+}
+
+impl Macro {
+    /// The macro `directive`, a `define` of `target`, makes.
+    fn defined(directive: &str, target: &str) -> Macro {
+        let after = directive["define".len()..].trim_start();
+        let after = &after[target.len().min(after.len())..];
+        let takes_arguments = after.starts_with('(');
+        let body = if takes_arguments {
+            after.find(')').map_or("", |i| &after[i + 1..])
+        } else {
+            after
+        };
+        Macro {
+            name: target.to_string(),
+            takes_arguments,
+            body: body.trim().to_string(),
+        }
+    }
+}
+
+/// A name defined or undefined in a branch that cannot be told, and the
+/// bodies it may have from there on; undefined has none.
+struct Unsure {
+    name: String,
+    bodies: Vec<String>,
+}
+
+/// Whether a token is one the precision scan reads.
+fn decides(t: &str) -> bool {
+    t == "precision"
+        || matches!(t, "lowp" | "mediump" | "highp" | "{" | "}")
+        || PER_LIGHT.contains(&t)
+}
+
+/// Whether `body`, expanded, could hold a token the precision scan reads;
+/// `seen` holds the names already followed, since macros may name each
+/// other.
+fn may_decide(body: &str, macros: &[Macro], unsure: &[Unsure], seen: &mut Vec<String>) -> bool {
+    tokens(body).into_iter().any(|t| {
+        if decides(t) {
+            return true;
+        }
+        if seen.iter().any(|s| s == t) {
+            return false;
+        }
+        seen.push(t.to_string());
+        let bodies = macros
+            .iter()
+            .filter(|m| m.name == t)
+            .map(|m| m.body.as_str())
+            .chain(
+                unsure
+                    .iter()
+                    .filter(|u| u.name == t)
+                    .flat_map(|u| u.bodies.iter().map(String::as_str)),
+            )
+            .collect::<Vec<_>>();
+        bodies
+            .into_iter()
+            .any(|b| may_decide(b, macros, unsure, seen))
+    })
+}
+
 /// `src` with the lines the preprocessor leaves out, and its directives,
 /// blanked, and the object-like macros it keeps expanded, so lines keep
 /// their numbers; `None` when a condition that cannot be told here guards a
@@ -456,22 +529,13 @@ fn preprocessed(src: &str) -> Option<String> {
         kept: Option<bool>,
         taken: Option<bool>,
     }
-    struct Macro {
-        name: String,
-        takes_arguments: bool,
-        body: String,
-    }
     let mut open: Vec<Branch> = Vec::new();
     let mut macros: Vec<Macro> = Vec::new();
-    // Names defined or undefined in a branch that cannot be told.
-    let mut unsure: Vec<String> = Vec::new();
+    let mut unsure: Vec<Unsure> = Vec::new();
     let mut out = String::with_capacity(src.len());
     // A directive continued onto the next line: the preprocessor joins
     // backslash-newline pairs first, so it is one directive.
     let mut continued: Option<String> = None;
-    let decides = |t: &str| {
-        t == "precision" || matches!(t, "lowp" | "mediump" | "highp") || PER_LIGHT.contains(&t)
-    };
     for line in src.split_inclusive('\n') {
         let text = line.trim_end_matches(['\n', '\r']);
         let newline = if line.ends_with('\n') { "\n" } else { "" };
@@ -486,8 +550,9 @@ fn preprocessed(src: &str) -> Option<String> {
             out.push_str(newline);
             let mut logical = continued.take().unwrap_or_default();
             if let Some(head) = text.strip_suffix('\\') {
+                // The pair is removed, not replaced, so a word split
+                // across it is one word.
                 logical.push_str(head);
-                logical.push(' ');
                 continued = Some(logical);
                 continue;
             }
@@ -497,7 +562,7 @@ fn preprocessed(src: &str) -> Option<String> {
             let name = words.first().copied().unwrap_or("");
             let rest = &words[words.len().min(1)..];
             let known = |n: &str| {
-                if unsure.iter().any(|u| u == n) {
+                if unsure.iter().any(|u| u.name == n) {
                     None
                 } else if macros.iter().any(|m| m.name == n) {
                     Some(true)
@@ -546,26 +611,32 @@ fn preprocessed(src: &str) -> Option<String> {
                     open.pop();
                 }
                 "define" | "undef" if target.is_empty() => {}
-                "define" | "undef" if kept.is_none() => unsure.push(target.to_string()),
+                "define" | "undef" if kept.is_none() => {
+                    // The name may be what it was or what this makes it.
+                    let at = match unsure.iter().position(|u| u.name == target) {
+                        Some(at) => at,
+                        None => {
+                            let was = macros.iter().find(|m| m.name == target);
+                            unsure.push(Unsure {
+                                name: target.to_string(),
+                                bodies: was.map(|m| m.body.clone()).into_iter().collect(),
+                            });
+                            unsure.len() - 1
+                        }
+                    };
+                    if name == "define" {
+                        unsure[at]
+                            .bodies
+                            .push(Macro::defined(directive, target).body);
+                    }
+                }
                 "define" | "undef" if kept == Some(true) => {
                     // Kept unconditionally, so what is known of the name
                     // from here on is this.
-                    unsure.retain(|u| u != target);
+                    unsure.retain(|u| u.name != target);
                     macros.retain(|m| m.name != target);
                     if name == "define" {
-                        let after = directive["define".len()..].trim_start();
-                        let after = &after[target.len().min(after.len())..];
-                        let takes_arguments = after.starts_with('(');
-                        let body = if takes_arguments {
-                            after.find(')').map_or("", |i| &after[i + 1..])
-                        } else {
-                            after
-                        };
-                        macros.push(Macro {
-                            name: target.to_string(),
-                            takes_arguments,
-                            body: body.trim().to_string(),
-                        });
+                        macros.push(Macro::defined(directive, target));
                     }
                 }
                 _ => {}
@@ -576,32 +647,55 @@ fn preprocessed(src: &str) -> Option<String> {
             out.push_str(newline);
             continue;
         }
-        // What the line is once the macros it uses are expanded; a macro
-        // may name itself, so this goes only so deep.
-        let mut words: Vec<&str> = tokens(text);
+        // What the line is once the macros it uses are expanded. As in the
+        // preprocessor, a macro is not expanded again inside its own
+        // expansion, so each token carries the macros it came out of.
+        let mut pending: Vec<(&str, Vec<usize>)> = tokens(text)
+            .into_iter()
+            .rev()
+            .map(|t| (t, Vec::new()))
+            .collect();
+        let mut words: Vec<&str> = Vec::new();
         let mut expanded = false;
-        for _ in 0..16 {
-            let mut changed = false;
-            let mut next = Vec::with_capacity(words.len());
-            for w in words {
-                match macros.iter().find(|m| m.name == w) {
-                    Some(m) if m.takes_arguments => {
-                        if tokens(&m.body).into_iter().any(decides) {
-                            return None;
-                        }
-                        next.push(w);
-                    }
-                    Some(m) => {
-                        next.extend(tokens(&m.body));
-                        changed = true;
-                    }
-                    None => next.push(w),
+        let mut produced = 0usize;
+        while let Some((w, from)) = pending.pop() {
+            if let Some(u) = unsure.iter().find(|u| u.name == w) {
+                // What the name is here cannot be told; it only matters
+                // when one of the things it may be could decide.
+                if u.bodies
+                    .iter()
+                    .any(|b| may_decide(b, &macros, &unsure, &mut Vec::new()))
+                {
+                    return None;
                 }
+                words.push(w);
+                continue;
             }
-            words = next;
-            expanded |= changed;
-            if !changed {
-                break;
+            match macros.iter().position(|m| m.name == w) {
+                Some(i) if from.contains(&i) => words.push(w),
+                Some(i) if macros[i].takes_arguments => {
+                    // Its arguments are not taken apart here, so its use is
+                    // left as written, which is only safe when its body
+                    // could not decide.
+                    if may_decide(&macros[i].body, &macros, &unsure, &mut Vec::new()) {
+                        return None;
+                    }
+                    words.push(w);
+                }
+                Some(i) => {
+                    let body = tokens(&macros[i].body);
+                    // Macros that each use the one before twice grow the
+                    // line exponentially, so past this it is not told.
+                    produced += body.len();
+                    if produced > EXPANSION_BUDGET {
+                        return None;
+                    }
+                    let mut inner = from.clone();
+                    inner.push(i);
+                    pending.extend(body.into_iter().rev().map(|t| (t, inner.clone())));
+                    expanded = true;
+                }
+                None => words.push(w),
             }
         }
         match kept {
@@ -1988,6 +2082,43 @@ mod tests {
             (
                 "#ifdef FOO\n#define P lowp\n#endif\nprecision P float;",
                 None,
+            ),
+            // A continuation joins without a space, as the preprocessor's does.
+            ("#define P lo\\\nwp\nprecision P float;", Some(4)),
+            // A macro that names itself is not expanded again in its own
+            // expansion, so it ends.
+            (
+                "#define x (x+x+x+x+x+x+x+x+x+x)\nfloat y = x;\nprecision lowp float;",
+                Some(4),
+            ),
+            // So many tokens that the scan gives up rather than grow.
+            (
+                &format!(
+                    "#define a0 x x\n{}float y = a13;\nprecision lowp float;",
+                    (1..=13)
+                        .map(|i| format!("#define a{i} a{p} a{p}\n", p = i - 1))
+                        .collect::<String>()
+                ),
+                None,
+            ),
+            // A macro redefined under a condition that cannot be told is not
+            // known where it is used, when it could decide.
+            (
+                "#define P lowp\n#if 1 + 0\n#undef P\n#define P highp\n#endif\nprecision P float;",
+                None,
+            ),
+            (
+                "#define N 1\n#ifdef FOO\n#undef N\n#define N 2\n#endif\nfloat y = N;\nprecision lowp float;",
+                Some(8),
+            ),
+            // A function-like macro whose body uses a macro that could decide.
+            (
+                "precision lowp float;\n#define RESET precision highp float;\n#define APPLY() RESET\nAPPLY()",
+                None,
+            ),
+            (
+                "precision lowp float;\n#define ONE 1.0\n#define SCALE(v) (v * ONE)\nfloat y = SCALE(2.0);",
+                Some(5),
             ),
             // A name Qt may define around the snippet cannot be told.
             (
