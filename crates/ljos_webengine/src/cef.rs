@@ -1234,8 +1234,9 @@ impl Unborn {
 struct Boot {
     /// Calls the renderer answers after what every page gets, not yet
     /// answered: one when the browser is made, and one more each time the
-    /// view's scripts change before its first page loads (a view setting
-    /// them in `Component.onCompleted`, after its `url` made the browser).
+    /// view's scripts change after the browser is made and before its
+    /// first page loads. Scripts set before the browser is made are in its
+    /// start, and are told before the first call.
     untold: usize,
     /// The blank page loaded.
     loaded: bool,
@@ -1243,6 +1244,9 @@ struct Boot {
     url: Option<String>,
     /// The blank page is still in the history behind the view's pages.
     behind: bool,
+    /// The view's first page began: a redirect before the blank page goes
+    /// is a later page.
+    begun: bool,
     /// The view's first page asked for the blank page to go.
     forgetting: bool,
     /// The view asked for a picture before there was one to draw: the
@@ -1253,6 +1257,16 @@ struct Boot {
 impl Boot {
     fn done(&self) -> bool {
         self.untold == 0 && self.loaded
+    }
+
+    /// Whether a main frame going to `url` is the view's first page, which
+    /// it is only once.
+    fn first_page_began(&mut self, url: &str) -> bool {
+        if !self.behind || self.begun || url == "about:blank" {
+            return false;
+        }
+        self.begun = true;
+        true
     }
 }
 
@@ -3003,15 +3017,12 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     }
 }
 
-/// The view's first page began in a renderer before `adding` of its
-/// scripts were in: they miss that page, and the log says where.
+/// A main frame began: if it is the view's first page and `adding` of
+/// its scripts were not in the renderer yet, they miss that page, and the
+/// log says where. Scripts set while a later page loads run from the next.
 fn scripts_missed(shared: &Shared, frame: &Json, adding: usize) {
-    if !Shared::lock(&shared.boot).behind {
-        // A later page: scripts set while it loads run from the next on.
-        return;
-    }
     let url = frame["url"].as_str().unwrap_or_default();
-    if url == "about:blank" {
+    if !Shared::lock(&shared.boot).first_page_began(url) || adding == 0 {
         return;
     }
     if let Some(e) = engine_of(shared) {
@@ -3038,9 +3049,7 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
                 dev.main_frame = Some(id.to_owned());
                 let adding = dev.adding;
                 drop(dev);
-                if adding > 0 {
-                    scripts_missed(shared, frame, adding);
-                }
+                scripts_missed(shared, frame, adding);
             }
         }
         "Runtime.executionContextCreated" => {
@@ -4380,7 +4389,7 @@ mod tests {
         // The browser is made with none; the blank page loads.
         install_before_first_page(&mut dev, &mut boot, &[], &mut out);
         boot.loaded = true;
-        // `Component.onCompleted` gives the view its script.
+        // The view is given its script after its browser is made.
         install_before_first_page(&mut dev, &mut boot, std::slice::from_ref(&script), &mut out);
         assert_eq!(
             out.iter().map(|m| method(m)).collect::<Vec<_>>(),
@@ -4401,6 +4410,21 @@ mod tests {
         install_before_first_page(&mut dev, &mut boot, &[script], &mut out);
         assert_eq!(boot.untold, 0);
         assert!(out.iter().all(|m| method(m) != "Runtime.evaluate"));
+    }
+
+    #[test]
+    fn only_the_views_first_page_is_its_first_page() {
+        let mut boot = Boot {
+            behind: true,
+            ..Boot::default()
+        };
+        assert!(!boot.first_page_began("about:blank"));
+        assert!(boot.first_page_began("file:///page.html"));
+        // A redirect before the blank page is forgotten.
+        assert!(!boot.first_page_began("file:///second.html"));
+        // A popup has no blank page behind it.
+        let mut adopted = Boot::default();
+        assert!(!adopted.first_page_began("file:///page.html"));
     }
 
     #[test]
