@@ -1213,7 +1213,13 @@ Feature: A web page in a WebEngineView
       """
       <!doctype html>
       <html><head><title>Stops</title>
-      <script>function go() { debugger; document.title = "went on" }</script>
+      <script>
+      function go() { debugger; document.title = "went on" }
+      function work() {
+        const w = new Worker(URL.createObjectURL(new Blob(["postMessage('worked')"])));
+        w.onmessage = e => document.title += ", " + e.data;
+      }
+      </script>
       </head><body></body></html>
       """
     And the QML:
@@ -1238,12 +1244,7 @@ Feature: A web page in a WebEngineView
           id: release; interval: 1500
           onTriggered: { root.stopped = page.title; page.devToolsView = null; work.start() }
         }
-        Timer {
-          id: work; interval: 1000
-          onTriggered: page.runJavaScript(
-            "const w = new Worker(URL.createObjectURL(new Blob([\"postMessage('worked')\"])));"
-            + "w.onmessage = e => document.title += ', ' + e.data")
-        }
+        Timer { id: work; interval: 1000; onTriggered: page.runJavaScript("work()") }
       }
       """
     When 10 seconds pass
