@@ -387,6 +387,9 @@ struct Writer {
     out: String,
     placeholders: Vec<Placeholder>,
     numbered: usize,
+    /// How many forms of `plural` or `selectOrdinal` the text is in,
+    /// where `#` is the count.
+    plurals: usize,
 }
 
 impl Writer {
@@ -404,7 +407,7 @@ impl Writer {
     }
 
     fn text(&mut self, text: &str) {
-        escape_into(&mut self.out, text);
+        escape_into(&mut self.out, text, self.plurals > 0);
     }
 
     /// The text of a template, its values placeholders.
@@ -491,7 +494,9 @@ impl Writer {
             call.arguments.len(),
         ) else {
             return Err(MessageError::shape(
-                format!("`{name}` takes a value and its forms: {name}(n, {{ one: \"…\", other: \"…\" }})"),
+                format!(
+                    "`{name}` takes a value and its forms: {name}(n, {{ one: \"…\", other: \"…\" }})"
+                ),
                 call.span,
             ));
         };
@@ -543,7 +548,9 @@ impl Writer {
                 ));
             }
             if kind == MacroKind::Select
-                && !key.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+                && !key
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '-')
             {
                 return Err(MessageError::shape(
                     format!("`{key}` is no key of `select`: a word"),
@@ -559,7 +566,11 @@ impl Writer {
             self.out.push(' ');
             self.out.push_str(&key);
             self.out.push_str(" {");
-            self.value(&property.value, &format!("a form of `{name}`"))?;
+            let counted = kind != MacroKind::Select;
+            self.plurals += usize::from(counted);
+            let value = self.value(&property.value, &format!("a form of `{name}`"));
+            self.plurals -= usize::from(counted);
+            value?;
             self.out.push('}');
             keys.push(key);
         }
@@ -597,42 +608,59 @@ fn shown(expression: &Expression<'_>) -> String {
 /// where it would start a quote, so "Don't" stays as it is.
 pub fn escape(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    escape_into(&mut out, text);
+    escape_into(&mut out, text, false);
     out
 }
 
-fn escape_into(out: &mut String, text: &str) {
-    // One quote per run of braces: `'}''}'` would read as `}'}`, the `''`
-    // between two quotes being an apostrophe.
-    let mut quoted = false;
-    let mut chars = text.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '{' | '}' => {
-                if !quoted {
-                    out.push('\'');
-                    quoted = true;
+fn escape_into(out: &mut String, text: &str, in_plural: bool) {
+    // As ICU quotes: one quote from the first brace to the last, so
+    // `Use {braces}` is `Use '{braces}'`, its apostrophes doubled.
+    let chars: Vec<char> = text.chars().collect();
+    let brace = |c: &char| matches!(c, '{' | '}');
+    let quoted = chars
+        .iter()
+        .position(brace)
+        .zip(chars.iter().rposition(brace));
+    let mut i = 0;
+    while i < chars.len() {
+        if let Some((first, last)) = quoted
+            && i == first
+        {
+            out.push('\'');
+            while i <= last {
+                if in_plural && chars[i..].starts_with(&['\'', '#', '\'']) {
+                    // A hash written as ICU writes one is a hash in the
+                    // quote too.
+                    out.push('#');
+                    i += 3;
+                    continue;
                 }
-                out.push(c);
+                if chars[i] == '\'' {
+                    out.push('\'');
+                }
+                out.push(chars[i]);
+                i += 1;
             }
-            '\'' if quoted => out.push_str("''"),
+            out.push('\'');
+            continue;
+        }
+        let c = chars[i];
+        if c == '\'' && in_plural && chars[i..].starts_with(&['\'', '#', '\'']) {
+            // In a form, `#` is the count and `'#'` a hash, as in ICU.
+            out.push_str("'#'");
+            i += 3;
+            continue;
+        }
+        match c {
             // At the end of a text a placeholder may follow, whose `{`
             // would make the apostrophe a quote.
-            '\'' => match chars.peek() {
+            '\'' => match chars.get(i + 1) {
                 Some('\'' | '{' | '}' | '#' | '|') | None => out.push_str("''"),
                 Some(_) => out.push('\''),
             },
-            c => {
-                if quoted {
-                    out.push('\'');
-                    quoted = false;
-                }
-                out.push(c);
-            }
+            c => out.push(c),
         }
-    }
-    if quoted {
-        out.push('\'');
+        i += 1;
     }
 }
 
@@ -711,11 +739,16 @@ mod tests {
     #[test]
     fn text_is_escaped_for_icu() {
         assert_eq!(message("t`Don't`"), "Don't");
-        assert_eq!(message("t`a {b} c`"), "a '{'b'}' c");
+        assert_eq!(message("t`a {b} c`"), "a '{b}' c");
+        assert_eq!(message("t`Use {braces}`"), "Use '{braces}'");
         assert_eq!(message("t`'${x}'`"), "''{x}''");
         assert_eq!(message("t`it''s`"), "it'''s");
         assert_eq!(escape("50% #1"), "50% #1");
-        assert_eq!(escape("}} {{x"), "'}}' '{{'x");
+        assert_eq!(escape("}} {{x"), "'}} {{'x");
+        assert_eq!(
+            message(r#"plural(n, { other: "'#' is #, {'#'}" })"#),
+            "{n, plural, other {'#' is #, '{#}'}}"
+        );
         assert_eq!(escape("{'}"), "'{''}'");
     }
 
@@ -730,7 +763,9 @@ mod tests {
             "{count, plural, =0 {No files} one {# file} other {# files}}"
         );
         assert_eq!(
-            message(r##"selectOrdinal(place, { one: "#st", two: "#nd", few: "#rd", other: "#th" })"##),
+            message(
+                r##"selectOrdinal(place, { one: "#st", two: "#nd", few: "#rd", other: "#th" })"##
+            ),
             "{place, selectordinal, one {#st} two {#nd} few {#rd} other {#th}}"
         );
         assert_eq!(
@@ -788,7 +823,10 @@ mod tests {
             error.message,
             "a form of `plural` is translated as written, so it is a string or a template, not `many`"
         );
-        assert_eq!(&source[error.span.start as usize..error.span.end as usize], "many");
+        assert_eq!(
+            &source[error.span.start as usize..error.span.end as usize],
+            "many"
+        );
     }
 
     #[test]
@@ -813,7 +851,11 @@ mod tests {
             r#"t({ context: "x" })"#,
             r#"t("a", "b")"#,
         ] {
-            assert_eq!(read(source).unwrap_err().kind, MessageErrorKind::Shape, "{source}");
+            assert_eq!(
+                read(source).unwrap_err().kind,
+                MessageErrorKind::Shape,
+                "{source}"
+            );
         }
         assert_eq!(
             read(r#"t({ message: "x", context: c })"#).unwrap_err().kind,

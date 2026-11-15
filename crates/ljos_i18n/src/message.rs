@@ -224,9 +224,8 @@ impl Context<'_, '_> {
                             .iter()
                             .find(|(s, _)| matches!(s, Selector::Exact(e) if *e == n))
                     });
-                    let category = value.map_or(PluralCategory::Other, |v| {
-                        self.rules.category(*ordinal, v)
-                    });
+                    let category =
+                        value.map_or(PluralCategory::Other, |v| self.rules.category(*ordinal, v));
                     let by = |c: PluralCategory| {
                         forms
                             .iter()
@@ -484,32 +483,30 @@ impl Parser {
     }
 }
 
-/// Writes text so that a message reads it back as that text: `'` doubled,
-/// and each run of `{`, `}` and (where it would be a plural's value) `#`
-/// quoted.
+/// Writes text so that a message reads it back as that text, as ICU
+/// quotes: one quote from the first `{` or `}` (or, where it would be a
+/// plural's value, `#`) to the last, its apostrophes doubled, and an
+/// apostrophe outside it doubled.
 #[must_use]
 pub fn escape(text: &str, in_plural: bool) -> String {
-    let mut out = String::with_capacity(text.len());
-    // One quote per run: `'}''}'` would read as `}'}`, the `''` between
-    // two quotes being an apostrophe.
-    let mut quoted = false;
-    for c in text.chars() {
-        let syntax = matches!(c, '{' | '}') || (in_plural && c == '#');
-        if syntax && !quoted {
+    let chars: Vec<char> = text.chars().collect();
+    let syntax = |c: &char| matches!(c, '{' | '}') || (in_plural && *c == '#');
+    let quoted = chars
+        .iter()
+        .position(syntax)
+        .zip(chars.iter().rposition(syntax));
+    let mut out = String::with_capacity(text.len() + 2);
+    for (i, c) in chars.iter().enumerate() {
+        if quoted.is_some_and(|(first, _)| i == first) {
             out.push('\'');
-            quoted = true;
-        } else if !syntax && c != '\'' && quoted {
+        }
+        if *c == '\'' {
             out.push('\'');
-            quoted = false;
         }
-        if c == '\'' {
-            out.push_str("''");
-        } else {
-            out.push(c);
+        out.push(*c);
+        if quoted.is_some_and(|(_, last)| i == last) {
+            out.push('\'');
         }
-    }
-    if quoted {
-        out.push('\'');
     }
     out
 }
@@ -653,12 +650,17 @@ mod tests {
         let role = "{role, select, admin {Admin} other {Member}}";
         assert_eq!(say(role, "en", &[("role", Value::text("admin"))]), "Admin");
         assert_eq!(say(role, "en", &[("role", Value::text("guest"))]), "Member");
-        let nested = "{name} has {n, plural, one {{g, select, f {her #} other {# file}}} other {# files}}";
+        let nested =
+            "{name} has {n, plural, one {{g, select, f {her #} other {# file}}} other {# files}}";
         assert_eq!(
             say(
                 nested,
                 "en",
-                &[("name", Value::text("Ada")), ("n", n(1.0)), ("g", Value::text("f"))]
+                &[
+                    ("name", Value::text("Ada")),
+                    ("n", n(1.0)),
+                    ("g", Value::text("f"))
+                ]
             ),
             "Ada has her 1"
         );
@@ -668,7 +670,10 @@ mod tests {
     fn names_are_every_value_read() {
         let m = Message::parse("{a} {n, plural, one {{b}} other {{c, select, x {} other {}}}}")
             .unwrap();
-        assert_eq!(m.names().into_iter().collect::<Vec<_>>(), ["a", "b", "c", "n"]);
+        assert_eq!(
+            m.names().into_iter().collect::<Vec<_>>(),
+            ["a", "b", "c", "n"]
+        );
     }
 
     #[test]
@@ -678,11 +683,20 @@ mod tests {
             ("a } b", "a `}` that no `{` opened"),
             ("{n, plural, one {x}}", "the forms of `n` need `other`"),
             ("{n, select, a {x}}", "the forms of `n` need `other`"),
-            ("{n, plural, lots {x} other {y}}", "`lots` is not a plural category"),
-            ("{n, plural, offset:1 other {y}}", "an `offset` is not supported"),
+            (
+                "{n, plural, lots {x} other {y}}",
+                "`lots` is not a plural category",
+            ),
+            (
+                "{n, plural, offset:1 other {y}}",
+                "an `offset` is not supported",
+            ),
             ("{d, date}", "`date` arguments are not supported"),
             ("{}", "an argument has no name"),
-            ("{n, plural, one {x} one {y} other {z}}", "the form `one` is there twice"),
+            (
+                "{n, plural, one {x} one {y} other {z}}",
+                "the form `one` is there twice",
+            ),
         ] {
             let error = Message::parse(text).unwrap_err();
             assert!(error.reason.starts_with(reason), "{text}: {error}");
