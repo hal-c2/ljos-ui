@@ -238,8 +238,15 @@ fn needs(source: &Source) -> Vec<String> {
     imports.chain(qmldir.depends.iter().cloned()).collect()
 }
 
+/// The major version Qt exports a module's types at when the module
+/// declares none (`Qt.labs.StyleKit.impl/DelegateContainer 254.0`, most
+/// plugins outside Qt): "every version", not a Qt release.
+const UNVERSIONED_MAJOR: u32 = 254;
+
 /// The newest version anything is exported at, which is the Qt the
-/// descriptions are from.
+/// descriptions are from. A module without a version of its own says
+/// nothing of which Qt it came with, so its exports are passed over: one
+/// such module among those read made the table say it was of Qt 254.0.
 fn newest(sources: &BTreeMap<String, Source>) -> (u32, u32) {
     let files = sources
         .values()
@@ -248,6 +255,7 @@ fn newest(sources: &BTreeMap<String, Source>) -> (u32, u32) {
     files
         .map(|file| file.version)
         .chain(classes.flat_map(|class| class.exports.values().copied()))
+        .filter(|(major, _)| *major != UNVERSIONED_MAJOR)
         .max()
         .unwrap_or_default()
 }
@@ -551,5 +559,33 @@ fn tidy(modules: &mut Modules) {
         module
             .classes
             .retain(|name, class| reached.contains(name) && class.semantics != Semantics::Sequence);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exporting(uri: &str, version: (u32, u32)) -> (String, Source) {
+        let class = Class {
+            exports: BTreeMap::from([((uri.to_string(), "T".to_string()), version)]),
+            ..Class::default()
+        };
+        let source = Source {
+            qmldir: Qmldir::default(),
+            classes: vec![class],
+            files: Vec::new(),
+        };
+        (uri.to_string(), source)
+    }
+
+    #[test]
+    fn a_module_without_a_version_does_not_say_which_qt_the_table_is_of() {
+        let sources = BTreeMap::from([
+            exporting("QtQuick", (6, 11)),
+            exporting("QtQml", (6, 8)),
+            exporting("Qt.labs.StyleKit.impl", (UNVERSIONED_MAJOR, 0)),
+        ]);
+        assert_eq!(newest(&sources), (6, 11));
     }
 }
