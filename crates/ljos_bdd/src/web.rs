@@ -60,40 +60,67 @@ pub struct WebServer {
 /// and the server's stopping, waiting behind it.
 #[derive(Debug, Default)]
 struct Open {
-    connections: Mutex<Vec<(TcpStream, JoinHandle<()>)>>,
+    /// A handle on each connection while it is answered, to end it when the
+    /// server stops; let go once answered, so the connection closes when
+    /// its answer (or [`Held`]) drops it.
+    answering: Mutex<HashMap<u64, TcpStream>>,
+    next: std::sync::atomic::AtomicU64,
+    threads: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl Open {
-    fn answer(&self, stream: TcpStream, files: &Files, refused: &str, held: &Arc<Held>) {
+    fn answer(self: &Arc<Self>, stream: TcpStream, files: &Files, refused: &str, held: &Arc<Held>) {
         let Ok(own) = stream.try_clone() else {
             return;
         };
-        let (files, refused, held) = (Arc::clone(files), refused.to_owned(), Arc::clone(held));
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        self.answering
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(id, own);
+        let (files, refused, held, open) = (
+            Arc::clone(files),
+            refused.to_owned(),
+            Arc::clone(held),
+            Arc::clone(self),
+        );
         let thread = std::thread::Builder::new()
             .name("ljos-bdd-web-answer".to_owned())
-            .spawn(move || answer(stream, &files, &refused, &held));
-        let mut connections = self
-            .connections
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        connections.retain(|(_, thread)| !thread.is_finished());
-        if let Ok(thread) = thread {
-            connections.push((own, thread));
+            .spawn(move || {
+                answer(stream, &files, &refused, &held);
+                open.answering
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&id);
+            });
+        let mut threads = self.threads.lock().unwrap_or_else(PoisonError::into_inner);
+        threads.retain(|thread| !thread.is_finished());
+        match thread {
+            Ok(thread) => threads.push(thread),
+            Err(_) => {
+                self.answering
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&id);
+            }
         }
     }
 
-    /// Ends every connection still open, a request read or not, and waits
-    /// for each thread to see it end.
+    /// Ends every connection still being answered, a request read or not,
+    /// and waits for each thread to see it end.
     fn close(&self) -> Option<Box<dyn std::any::Any + Send>> {
-        let connections = std::mem::take(
-            &mut *self
-                .connections
-                .lock()
-                .unwrap_or_else(PoisonError::into_inner),
-        );
-        let mut panic = None;
-        for (stream, thread) in connections {
+        for stream in self
+            .answering
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
             let _ = stream.shutdown(Shutdown::Both);
+        }
+        let threads =
+            std::mem::take(&mut *self.threads.lock().unwrap_or_else(PoisonError::into_inner));
+        let mut panic = None;
+        for thread in threads {
             if let Err(why) = thread.join() {
                 panic.get_or_insert(why);
             }
@@ -493,6 +520,25 @@ mod tests {
         assert!(
             matches!(read, Ok(0)) || read.is_err(),
             "the silent connection was ended: {read:?} {rest:?}"
+        );
+    }
+
+    #[test]
+    fn a_streamed_body_ends_without_another_request() {
+        let server = WebServer::start().unwrap();
+        server.stream_bytes("a.mp4", 1);
+        let mut stream = TcpStream::connect(("127.0.0.1", server.port)).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        write!(stream, "GET /a.mp4 HTTP/1.1\r\nHost: x\r\n\r\n").unwrap();
+        let mut reply = Vec::new();
+        let read = stream.read_to_end(&mut reply);
+        assert!(read.is_ok(), "the connection was not closed: {read:?}");
+        assert!(
+            reply.ends_with(b"0\r\n\r\n"),
+            "{}",
+            String::from_utf8_lossy(&reply)
         );
     }
 
