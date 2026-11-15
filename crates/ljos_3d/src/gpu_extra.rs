@@ -161,7 +161,7 @@ pub(crate) struct Rows<T> {
     usage: wgpu::BufferUsages,
 }
 
-impl<T: Pod + PartialEq> Rows<T> {
+impl<T: Pod> Rows<T> {
     pub(crate) fn new(
         device: &wgpu::Device,
         label: &'static str,
@@ -203,10 +203,20 @@ impl<T: Pod + PartialEq> Rows<T> {
             self.buffer = Self::buffer(device, self.label, self.usage, self.capacity);
             self.written.clear();
         }
+        // Compared as bytes, which is what the GPU is given: one memcmp for
+        // a frame that changed none, which most of a still scene's are.
+        let (new, old): (&[u8], &[u8]) = (
+            bytemuck::cast_slice(rows),
+            bytemuck::cast_slice(&self.written),
+        );
+        if new == old {
+            return grown;
+        }
         // From the first row that differs to the last: one of a thousand
         // models drawn as one that moves changes its own row alone.
+        let size = std::mem::size_of::<T>();
         let common = rows.len().min(self.written.len());
-        let differs = |&i: &usize| rows[i] != self.written[i];
+        let differs = |&i: &usize| new[i * size..][..size] != old[i * size..][..size];
         let first = (0..common).find(differs).unwrap_or(common);
         let end = if rows.len() > common {
             rows.len()
@@ -222,8 +232,15 @@ impl<T: Pod + PartialEq> Rows<T> {
                 bytemuck::cast_slice(&rows[first..end]),
             );
         }
-        self.written.clear();
-        self.written.extend_from_slice(rows);
+        // What was written is what is kept, without copying the rows that
+        // stayed.
+        self.written.truncate(rows.len());
+        let kept = end.min(self.written.len());
+        if first < kept {
+            self.written[first..kept].copy_from_slice(&rows[first..kept]);
+        }
+        let len = self.written.len();
+        self.written.extend_from_slice(&rows[len..]);
         grown
     }
 }
