@@ -38,18 +38,26 @@ Controller {
 import Ljos.Ui
 
 Rectangle {
+    id: page
     width: 480
     height: 240
     fill: size.compact ? "#f0e6d8" : "#d8e6f0"
 
     Breakpoint {
         id: size
-        width: 720
+        width: 400
+    }
+    Tap {
+        onTapped: page.width = page.width === 480 ? 320 : 480
+    }
+    Text {
+        anchors.centerIn: parent
+        text: `${page.width} wide, ${size.compact ? "compact" : "not compact"}: tap to resize`
     }
 }
 ```
 
-`compact` is a binding on the host's `width`, so it changes when the window does. Where a property follows from the host, a binding says it best. `updated` is for what a binding cannot say.
+`compact` is a binding on the host's `width`, so it changes when the window does, or, here, when a tap makes the page narrower than 400. Where a property follows from the host, a binding says it best. `updated` is for what a binding cannot say.
 
 ## Gestures in a Controller
 
@@ -119,6 +127,7 @@ import Ljos.Ui
 import "breakpoint.ts" as Size
 
 Rectangle {
+    id: page
     objectName: "page"
     width: 480
     height: 240
@@ -126,7 +135,14 @@ Rectangle {
 
     Size.Breakpoint {
         id: breakpoint
-        width: 720
+        width: 400
+    }
+    Tap {
+        onTapped: page.width = page.width === 480 ? 320 : 480
+    }
+    Text {
+        anchors.centerIn: parent
+        text: `${page.width} wide, ${breakpoint.compact ? "compact" : "not compact"}: tap to resize`
     }
 }
 ```
@@ -150,12 +166,18 @@ Rectangle {
     width: 320
     height: 240
     property int turns: 0
+    property int taps: 0
 
     Controller {
         onUpdated: root.turns = root.turns + 1
     }
+    Tap {
+        onTapped: root.taps = root.taps + 1
+    }
     Text {
-        text: "changed in " + root.turns + " turns"
+        text: root.taps + " taps, changed in " + root.turns + " turns"
     }
 }
 ```
+
+Each tap changes `taps`, a property of the host, so `turns` goes up by one. Writing `turns` changes the host as well, and does not run `updated` again.

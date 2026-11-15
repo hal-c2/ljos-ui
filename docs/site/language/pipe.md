@@ -160,7 +160,13 @@ Rectangle {
     width: 200
     height: 60
 
+    fill: "#e8eef8"
     property string shown: ""
+
+    Text {
+        anchors.centerIn: parent
+        text: shown === "" ? "Tap me" : shown
+    }
 
     Tap {
         onTapped: Sizes.doubled(Promise.resolve(12)).then(text => shown = text)

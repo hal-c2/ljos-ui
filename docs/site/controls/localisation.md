@@ -26,21 +26,23 @@ import Ljos.Layout
 import Ljos.Controls.Basic
 
 Column {
+    id: files
     padding: 12
     spacing: 8
     property int count: 3
 
     Label {
-        text: qsTr("%n file(s)", "", count)
+        text: qsTr("%n file(s)", "", files.count)
     }
 
     Button {
-        text: qsTr("Save")
+        text: qsTr("Add a file")
+        onClicked: files.count += 1
     }
 }
 ```
 
-With no catalogue loaded, the label reads `"3 file(s)"`. When an Icelandic catalogue is active, `count: 3` selects the plural form provided by the translator.
+With no catalogue loaded, the label reads `"3 file(s)"`, and `"4 file(s)"` after a press of the button. When an Icelandic catalogue is active, `count: 3` selects the plural form provided by the translator.
 
 Translators edit `.ts` catalogue files, the XML format that translation editors such as Linguist read and write. Ljós reads and writes them while preserving comments and source locations. Catalogue entries are keyed by context (the QML file stem or a `Translator` pragma), source text, and disambiguation. During development, Ljós reads and watches `.ts` files directly so translations hot-reload; at run time, it loads memory-mapped binary `.ljl` catalogues and walks a language fallback chain such as `is-IS` → `is` → `en`.
 

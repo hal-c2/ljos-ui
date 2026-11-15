@@ -240,7 +240,13 @@ Rectangle {
     width: 200
     height: 60
 
+    fill: "#e8eef8"
     property string action: ""
+
+    Text {
+        anchors.centerIn: parent
+        text: action === "" ? "Tap me" : `Next: ${action}`
+    }
 
     Tap {
         onTapped: action = Access.next("undetermined")

@@ -149,4 +149,4 @@ Write the run's return type, as the examples do: a run that returns what a funct
 
 ## On the web
 
-Apps built for the web do not have `Task` yet; it comes with `Controller` to ljos-web's runtime, with the same meaning.
+Apps built for the web have `Task`, and `Controller`, with the same meaning. A run that fetches uses the browser's `fetch`, so a request to another origin needs that server's leave, as [Fetching from the network](fetching.md#on-the-web) says.

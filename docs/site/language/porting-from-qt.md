@@ -56,6 +56,12 @@ Rectangle {
     color: "#336699"
     property int clicks: 0
 
+    Text {
+        anchors.centerIn: parent
+        color: "white"
+        text: "Clicked " + root.clicks + " times"
+    }
+
     MouseArea {
         anchors.fill: parent
         Accessible.role: Accessible.Button
@@ -76,6 +82,12 @@ Rectangle {
     height: 100
     fill: "#336699"
     property int clicks: 0
+
+    Text {
+        anchors.centerIn: parent
+        color: "white"
+        text: "Clicked " + root.clicks + " times"
+    }
 
     PointerArea {
         anchors.fill: parent

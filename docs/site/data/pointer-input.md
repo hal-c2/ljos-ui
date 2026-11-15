@@ -27,6 +27,10 @@ Item {
         width: 100
         height: 100
         onClicked: root.under++
+        Rectangle {
+            anchors.fill: parent
+            fill: "#b8c8e8"
+        }
     }
     PointerArea {
         Accessible.role: Accessible.Button
@@ -34,11 +38,19 @@ Item {
         width: 50
         height: 50
         onClicked: root.over++
+        Rectangle {
+            anchors.fill: parent
+            fill: "#28407a"
+        }
+    }
+    Text {
+        y: 110
+        text: `under ${root.under}, over ${root.over}`
     }
 }
 ```
 
-The second `PointerArea` sits on top of the first, so clicking inside `(0..50, 0..50)` increments `over`, while clicking elsewhere in the 100×100 square increments `under`.
+The second `PointerArea`, the dark square, sits on top of the first, so clicking inside `(0..50, 0..50)` increments `over`, while clicking elsewhere in the 100×100 square increments `under`; the line below counts both.
 
 `PointerArea` also provides `onPressed`, `onReleased`, `pressedButtons`, `acceptedButtons`, `containsMouse`, and `hoverEnabled`:
 

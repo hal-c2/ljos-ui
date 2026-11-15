@@ -13,7 +13,7 @@ After reading this page, you will be able to import built-in modules, local dire
 
 Every `.qml` file declares the modules, directories, and scripts it uses with `import` statements at the top of the file:
 
-```qml
+```qml group=imports
 import QtQuick
 import QtQuick.Controls as Controls
 import QtQuick.Templates as T
@@ -25,12 +25,49 @@ Item {
     width: 240
     height: 120
     property T.Control heldControl: actionButton
+    property int applied: 0
 
-    Controls.Button {
-        id: actionButton
-        text: "Apply"
-        focusPolicy: Controls.Button.ClickFocus
+    Column {
+        spacing: 8
+
+        Controls.Button {
+            id: actionButton
+            text: "Apply"
+            focusPolicy: Controls.Button.ClickFocus
+            onClicked: root.applied += 1
+        }
+
+        Badge {
+            text: Rules.label(root.applied)
+        }
     }
+}
+```
+
+`Badge` is `parts/Badge.qml`, a component of the imported directory:
+
+```qml file=parts/Badge.qml group=imports
+import QtQuick
+
+Rectangle {
+    property alias text: label.text
+    width: label.width + 16
+    height: label.height + 8
+    radius: 4
+    color: "#e8eef8"
+
+    Text {
+        id: label
+        anchors.centerIn: parent
+    }
+}
+```
+
+`Rules.label` is a function of `rules.js`:
+
+```javascript file=rules.js group=imports
+function label(count) {
+    return count === 0 ? "Not applied yet" : "Applied " + count + " times"
 }
 ```
 
