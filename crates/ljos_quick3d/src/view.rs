@@ -105,7 +105,8 @@ impl fmt::Debug for Kept {
 /// moves; these have not changed, and a material is some forty reads.
 #[derive(Default)]
 struct Materials {
-    /// What each material read: `None` for a kind drawn as the default.
+    /// What each material read: `None` leaves its parts out (snippets
+    /// that make no program).
     got: RefCell<HashMap<ObjectId, Option<Material>>>,
     /// Each material's reads, told rather than run when they change.
     effects: RefCell<HashMap<ObjectId, Effect>>,

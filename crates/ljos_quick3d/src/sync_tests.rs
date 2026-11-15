@@ -665,3 +665,52 @@ Item {
     write(&e, named(&e, root, "tinted_"), "tint", "blue");
     assert_eq!(custom_reads(&|| synced(&e, view)), (1, 1));
 }
+
+fn diffuse_mapped(s: &Scene) -> bool {
+    s.walk().iter().any(|(_, n, _)| match &n.kind {
+        NodeKind::Model(m) => {
+            matches!(&m.material, Material::Default(d) if d.diffuse_map.is_some())
+        }
+        _ => false,
+    })
+}
+
+/// A kept material whose texture is destroyed is run by the graph itself,
+/// not told: its models are read again and drawn without the map.
+#[test]
+fn a_kept_material_whose_texture_goes_is_read_again() {
+    let (e, _, root) = make(
+        &format!(
+            r##"
+Item {{
+    width: 100; height: 100
+    property QtObject view_: view
+    property QtObject map_: map
+    View3D {{
+        id: view
+        anchors.fill: parent
+        PerspectiveCamera {{ z: 300 }}
+        Model {{
+            source: "#Rectangle"
+            materials: DefaultMaterial {{
+                diffuseMap: Texture {{ id: map; source: "{}" }}
+            }}
+        }}
+    }}
+}}
+"##,
+            model_path("quadrants.png")
+        ),
+        false,
+    );
+    let view = named(&e, root, "view_");
+    synced(&e, view);
+    assert!(diffuse_mapped(&kept(&e, view)));
+    e.destroy(named(&e, root, "map_"));
+    // The graph runs the material's read itself when the texture goes:
+    // the paint reads only the model, which takes that read as it is.
+    e.process_deferred_deletes();
+    let (read, materials) = material_reads(|| synced(&e, view));
+    assert_eq!((read, materials), (1, 0));
+    assert!(!diffuse_mapped(&kept(&e, view)));
+}
