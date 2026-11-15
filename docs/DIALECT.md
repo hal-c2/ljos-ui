@@ -1517,7 +1517,9 @@ key is its context and its text, or its id.
   is grouped (ARCHITECTURE.md §15), so each keeps what it showed: 12345
   stays "12345 file(s)" for `%n` and "12,345 file(s)" for `%Ln`. Qt's
   source text has one form, so the rewrite writes `other`, and the
-  English catalogue's forms become a translation.
+  English catalogue's forms become a translation. Qt's count is a whole
+  number (2.7 shows "2 file(s)") and `String(n)` is not, so the rewrite is
+  made when the count is an `int`, and otherwise keeps the file.
 - `qsTr(text, "disambiguation")` → `t({ message: "text", context:
   "disambiguation" })`; `qsTranslate("Ctx", "x")` → `t({ message: "x",
   context: "Ctx" })`; `qsTrId("id")` → `t({ id: "id" })`;
@@ -1528,14 +1530,15 @@ key is its context and its text, or its id.
   them. A `.ts` message's key has a context Qt adds itself, the file's
   name for `qsTr`, which a `t` message does not have: `qsTr("Open")` in
   `FileMenu.qml` and in `Door.qml` are two messages there and one here.
-  When every context's translation of a text is the same, the rewrite is
-  `` t`Open` ``. When they differ, each file's call keeps its own as the
-  context, `t({ message: "Open", context: "FileMenu" })`, so no
-  translation is lost. Two calls that end with one context and one text
-  but have different translations (`qsTr("Open", "menu")`, whose
-  disambiguation becomes the context, and `qsTranslate("menu", "Open")`,
-  say) cannot both be kept;
-  migrate keeps their files as Qt's and names both calls. Without
+  A disambiguation, or `qsTranslate`'s context, is always the context of
+  `t`. For a call without one, when every file's translation of the text
+  is the same, the rewrite is `` t`Open` ``; when they differ, each file's
+  call takes its file's name as the context, `t({ message: "Open",
+  context: "FileMenu" })`, so no translation is lost. Calls that still end
+  with one context and one text but have different translations (the same
+  disambiguation in two files, or `qsTr("Open", "menu")` and
+  `qsTranslate("menu", "Open")`) cannot all be kept; migrate keeps their
+  files as Qt's and names every call. Without
   `--catalogue` there is no translation to lose, and the rewrite is the
   plain one.
 - `font.pixelSize` → `font.size`.
