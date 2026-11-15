@@ -73,6 +73,17 @@ impl TextureImage {
     pub fn new(pixels: impl TexturePixels + 'static) -> Self {
         TextureImage(Arc::new(pixels))
     }
+
+    /// Lets the pixels go if no renderer draws them: two seconds after a
+    /// renderer's frame ended without them. For pixels that are made again
+    /// when asked for, as a file's are: a scene holds the pictures of its
+    /// other states and of emitters that have not emitted, and those may
+    /// never be drawn. Once a renderer uploads them, they go as any upload's.
+    /// Without the `gpu` feature there is no renderer, and they are kept.
+    pub fn let_go_unless_drawn(&self) {
+        #[cfg(feature = "gpu")]
+        crate::uploads::unless_drawn(self);
+    }
 }
 
 impl PartialEq for TextureImage {

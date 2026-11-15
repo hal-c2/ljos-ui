@@ -23,6 +23,13 @@
 //! until the next is due, started the first time anything is kept: nothing
 //! is woken while nothing is due.
 //!
+//! Pixels no reader uploads go too, when a frame ended [`UNSHOWN`] ago and
+//! none uploaded them since, for images that say so
+//! ([`TextureImage::let_go_unless_drawn`]): a scene holds the pictures of
+//! its other states and of emitters that have not emitted, and the car
+//! configurator kept 57 MiB of them it never drew. A renderer that draws
+//! one later decodes it then, as it would the first time.
+//!
 //! A device made after the pixels went decodes them again: nothing can tell
 //! that one is coming. A shell makes one when a window drawn on the
 //! processor, whose views were drawn off-screen, moves to GL.
@@ -73,6 +80,18 @@ pub(crate) fn uploaded<'a>(reader: &Reader, images: impl IntoIterator<Item = &'a
     held::uploaded(reader, images);
 }
 
+/// Lets `image`'s pixels go if no renderer uploads them: see
+/// [`TextureImage::let_go_unless_drawn`].
+pub(crate) fn unless_drawn(image: &TextureImage) {
+    held::unless_drawn(image);
+}
+
+/// How long pixels no renderer uploaded are kept after a frame ends: the
+/// frame an image arrives in may be over before its view is drawn again
+/// to show it.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+pub(crate) const UNSHOWN: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// One renderer's frame, from [`Frame::begin`] until it is dropped. What
 /// its readers keep waits [`HOLD`] from its end, and what they lack is not
 /// let go while it draws: a frame on a slow device can take longer than
@@ -116,6 +135,8 @@ mod held {
 
     pub(super) fn frame_ended(_: &[u64]) {}
 
+    pub(super) fn unless_drawn(_: &TextureImage) {}
+
     pub(super) fn uploaded<'a>(_: &Reader, images: impl IntoIterator<Item = &'a TextureImage>) {
         for image in images {
             image.0.uploaded();
@@ -129,7 +150,7 @@ mod held {
     use std::sync::{Arc, Condvar, LazyLock, Mutex, MutexGuard, PoisonError, Weak};
     use std::time::Instant;
 
-    use super::{HOLD, Kind, Reader};
+    use super::{HOLD, Kind, Reader, UNSHOWN};
     use crate::texture::{TextureImage, TexturePixels};
 
     /// An image's pixels kept for the readers that have no copy yet.
@@ -161,6 +182,14 @@ mod held {
         }
     }
 
+    /// Pixels no reader has uploaded since they came.
+    struct Unshown {
+        /// When they go: [`UNSHOWN`] after a frame ended. `None` until one
+        /// does, as nothing could have drawn them before.
+        due: Option<Instant>,
+        image: Weak<dyn TexturePixels>,
+    }
+
     #[derive(Default)]
     struct Due {
         /// The live readers, by id.
@@ -175,6 +204,8 @@ mod held {
         /// The same, in the order they are due: [`HOLD`] is the same for
         /// all.
         order: VecDeque<(Instant, (u64, Kind))>,
+        /// What no reader has uploaded, by image id.
+        unshown: HashMap<u64, Unshown>,
         /// The thread that lets them go when due is running.
         running: bool,
     }
@@ -225,8 +256,19 @@ mod held {
             wrappers.iter().filter_map(Weak::upgrade).collect()
         }
 
-        /// Starts the clock of what `reader` kept in the frame that ends.
+        /// Starts the clock of what `reader` kept in the frame that ends,
+        /// and of what no reader has uploaded.
         fn frame_ended(&mut self, reader: u64, now: Instant) {
+            let mut unshown = false;
+            for u in self.unshown.values_mut() {
+                if u.due.is_none() {
+                    u.due = Some(now + UNSHOWN);
+                    unshown = true;
+                }
+            }
+            if unshown {
+                DUE.1.notify_one();
+            }
             let at = now + HOLD;
             let mut started = Vec::new();
             for (key, h) in &mut self.held {
@@ -250,7 +292,37 @@ mod held {
                 .filter(|(key, h)| h.due.is_some_and(|at| at <= now) && !self.awaited(key.1, &h.by))
                 .map(|(key, _)| *key)
                 .collect();
-            due.into_iter().flat_map(|key| self.take(key)).collect()
+            let mut images: Vec<_> = due.into_iter().flat_map(|key| self.take(key)).collect();
+            // A reader inside a frame may be about to upload them.
+            if self.drawing.is_empty() {
+                let unshown: Vec<_> = self
+                    .unshown
+                    .iter()
+                    .filter(|(_, u)| u.due.is_some_and(|at| at <= now))
+                    .map(|(id, _)| *id)
+                    .collect();
+                images.extend(
+                    unshown
+                        .into_iter()
+                        .filter_map(|id| self.unshown.remove(&id)?.image.upgrade()),
+                );
+            }
+            images
+        }
+
+        /// When the thread is next to let something go: what no reader has
+        /// uploaded waits while one draws, and goes when its frame ends.
+        fn next(&self) -> Option<Instant> {
+            let held = self.order.front().map(|(at, _)| *at);
+            let unshown = if self.drawing.is_empty() {
+                self.unshown.values().filter_map(|u| u.due).min()
+            } else {
+                None
+            };
+            match (held, unshown) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
         }
     }
 
@@ -264,6 +336,17 @@ mod held {
     fn let_go(images: Vec<Arc<dyn TexturePixels>>) {
         for image in images {
             image.uploaded();
+        }
+    }
+
+    /// Without the thread nothing is let go for not being drawn.
+    pub(super) fn unless_drawn(image: &TextureImage) {
+        let mut d = due();
+        if started(&mut d) {
+            d.unshown.entry(image.0.id()).or_insert_with(|| Unshown {
+                due: None,
+                image: Arc::downgrade(&image.0),
+            });
         }
     }
 
@@ -317,6 +400,10 @@ mod held {
                 d.drawing.remove(reader);
                 d.frame_ended(*reader, now);
             }
+            if d.drawing.is_empty() && !d.unshown.is_empty() {
+                // The thread waits for no frame now.
+                DUE.1.notify_one();
+            }
             d.take_due(now)
         };
         let_go(images);
@@ -345,6 +432,7 @@ mod held {
         now_go: &mut Vec<Arc<dyn TexturePixels>>,
     ) {
         let key = (image.0.id(), reader.kind);
+        d.unshown.remove(&key.0);
         let wrapper = Arc::downgrade(&image.0);
         let mut by = vec![reader.id];
         let mut due = None;
@@ -409,7 +497,7 @@ mod held {
             let images = {
                 let mut d = due();
                 loop {
-                    let Some(&(at, _)) = d.order.front() else {
+                    let Some(at) = d.next() else {
                         d = DUE.1.wait(d).unwrap_or_else(PoisonError::into_inner);
                         continue;
                     };
@@ -501,6 +589,38 @@ mod tests {
             "let go while a renderer that lacks them still draws its frame"
         );
         drop(outer);
+    }
+
+    /// Whether `w` lets its pixels go within a few seconds: another test's
+    /// frame may be open a while.
+    fn let_go_soon(w: &Wrapper) -> bool {
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while std::time::Instant::now() < until {
+            if w.let_go.load(Ordering::Relaxed) > 0 {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn pixels_no_reader_drew_are_not_let_go_while_one_draws() {
+        let maps = Reader::new(Kind::Maps);
+        let probes = Reader::new(Kind::Probes);
+        let (image, w) = wrapper(fresh_pixels_id(), &pixels());
+        unless_drawn(&image);
+        drop(Frame::begin([&maps, &probes]));
+        // A frame as slow as a slow device's first: it may draw them yet.
+        let drawing = Frame::begin([&maps, &probes]);
+        std::thread::sleep(UNSHOWN + std::time::Duration::from_millis(300));
+        assert_eq!(
+            w.let_go.load(Ordering::Relaxed),
+            0,
+            "let go while a renderer that may draw them draws its frame"
+        );
+        drop(drawing);
+        assert!(let_go_soon(&w), "kept after the frame ended without them");
     }
 
     #[test]

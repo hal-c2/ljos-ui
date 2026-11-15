@@ -336,3 +336,38 @@ fn an_image_let_go_and_drawn_by_another_device_later_is_decoded_for_it() {
     assert_eq!(decodes.load(Ordering::Relaxed), 1);
     assert!(pixels.let_go_soon(), "kept after the late upload");
 }
+
+/// A material that shows no image: a scene drawn while an image it holds
+/// shows nowhere, as one of its states or an emitter that has not emitted.
+fn plain() -> Material {
+    Material::Default(DefaultMaterial {
+        lighting: Lighting::None,
+        ..DefaultMaterial::default()
+    })
+}
+
+#[test]
+fn an_image_no_device_draws_lets_its_pixels_go() {
+    let Some(mut gpu) = offscreen() else { return };
+    let (map, pixels, decodes) = decoded(PixelEncoding::Srgb8Straight);
+    map.let_go_unless_drawn();
+    // The scene holds the map in a state it is not in.
+    gpu.render(&scene(plain(), None), SIDE, SIDE).unwrap();
+    assert!(pixels.let_go_soon(), "kept although nothing draws them");
+    // Shown at last: made again from the file.
+    gpu.render(&scene(mapped(&map), None), SIDE, SIDE).unwrap();
+    assert_eq!(decodes.load(Ordering::Relaxed), 1);
+}
+
+#[test]
+fn an_image_drawn_soon_after_it_came_is_decoded_once() {
+    let Some(mut gpu) = offscreen() else { return };
+    let (map, pixels, decodes) = decoded(PixelEncoding::Srgb8Straight);
+    map.let_go_unless_drawn();
+    // A frame drawn while the image arrived, then the one it is in.
+    gpu.render(&scene(plain(), None), SIDE, SIDE).unwrap();
+    assert!(pixels.resident(), "let go before a frame could draw them");
+    gpu.render(&scene(mapped(&map), None), SIDE, SIDE).unwrap();
+    assert_eq!(decodes.load(Ordering::Relaxed), 0, "decoded again");
+    assert!(!pixels.resident(), "kept after the upload");
+}
