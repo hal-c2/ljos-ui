@@ -535,6 +535,9 @@ impl Engine {
     /// keeper brings its value up to date. A keeper that hands the property
     /// over as it is read has given no value, so the one that keeps it now
     /// is asked in its place: else the read would get what was last stored.
+    /// A value the first gave before it handed the property over is the
+    /// new keeper's to replace: the one that keeps the property knows where
+    /// it is now, as after [`Engine::keep_on_read`] at any other time.
     fn read_kept(&self, obj: ObjectId, prop: PropIndex, mut keep: KeepOnRead) {
         // Keepers that hand the property to each other on every read would
         // never settle; past this many the read takes what is stored, and
