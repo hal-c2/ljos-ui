@@ -38,6 +38,20 @@ pub trait Messages {
     fn id(&self, id: &str) -> Option<Entry>;
     /// One form of a message this catalogue returned.
     fn form(&self, entry: Entry, index: usize) -> Option<&str>;
+    /// The translation of an ICU message (`t`), keyed by its context (`""`
+    /// for none) and its source message or explicit id. A separate table
+    /// from [`text`](Self::text): a `t` message is never looked for among
+    /// `qsTr`'s, nor the other way round.
+    fn message(&self, context: &str, key: &str) -> Option<Entry> {
+        let _ = (context, key);
+        None
+    }
+    /// Where a message this catalogue returned was read from (`is.po:12`),
+    /// for a warning about it.
+    fn origin(&self, entry: Entry) -> Option<String> {
+        let _ = entry;
+        None
+    }
 }
 
 /// What a message is translated to.
@@ -58,7 +72,12 @@ pub struct Catalog {
     // Nested so a lookup by three borrowed strings allocates nothing.
     texts: HashMap<Box<str>, HashMap<Box<str>, Comments>>,
     ids: HashMap<Box<str>, Entry>,
+    messages: HashMap<Box<str>, HashMap<Box<str>, Entry>>,
     forms: Vec<String>,
+    /// The file the catalogue was read from, and the line each message
+    /// starts on, by its first form.
+    file: Option<String>,
+    lines: HashMap<u32, u32>,
 }
 
 /// One message of a [`Catalog`], for writing it out.
@@ -131,7 +150,52 @@ impl Catalog {
         true
     }
 
-    /// How many messages the catalogue has, text ids included.
+    /// Adds the translation of an ICU message; the first one wins.
+    pub fn insert_message(&mut self, context: &str, key: &str, text: &str) -> bool {
+        if self.message(context, key).is_some() {
+            return false;
+        }
+        let entry = self.store(Translation::Text(text.to_owned()));
+        self.messages
+            .entry(context.into())
+            .or_default()
+            .insert(key.into(), entry);
+        true
+    }
+
+    /// [`insert_message`](Self::insert_message), remembering the line the
+    /// message starts on in the catalogue's file.
+    pub fn insert_message_at(&mut self, context: &str, key: &str, text: &str, line: u32) -> bool {
+        let first = u32::try_from(self.forms.len()).unwrap_or(u32::MAX);
+        let added = self.insert_message(context, key, text);
+        if added {
+            self.lines.insert(first, line);
+        }
+        added
+    }
+
+    /// Names the file the catalogue was read from, for warnings.
+    pub fn set_file(&mut self, file: &str) {
+        self.file = Some(file.to_owned());
+    }
+
+    /// Every ICU message, in `(context, key)` order.
+    #[must_use]
+    pub fn messages(&self) -> Vec<(&str, &str, Entry)> {
+        let mut out: Vec<_> = self
+            .messages
+            .iter()
+            .flat_map(|(context, keys)| {
+                keys.iter()
+                    .map(move |(key, entry)| (&**context, &**key, *entry))
+            })
+            .collect();
+        out.sort_by_key(|(context, key, _)| (*context, *key));
+        out
+    }
+
+    /// How many messages the catalogue has, text ids and ICU messages
+    /// included.
     #[must_use]
     pub fn len(&self) -> usize {
         let texts: usize = self
@@ -140,12 +204,13 @@ impl Catalog {
             .flat_map(HashMap::values)
             .map(Vec::len)
             .sum();
-        texts + self.ids.len()
+        let messages: usize = self.messages.values().map(HashMap::len).sum();
+        texts + self.ids.len() + messages
     }
 
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.texts.is_empty() && self.ids.is_empty()
+        self.len() == 0
     }
 
     /// Every message found by its text, in key order so that what is
@@ -209,6 +274,18 @@ impl Messages for Catalog {
             .get(entry.first as usize + index)
             .map(String::as_str)
     }
+
+    fn message(&self, context: &str, key: &str) -> Option<Entry> {
+        self.messages.get(context)?.get(key).copied()
+    }
+
+    fn origin(&self, entry: Entry) -> Option<String> {
+        let file = self.file.as_deref()?;
+        Some(match self.lines.get(&entry.first) {
+            Some(line) => format!("{file}:{line}"),
+            None => file.to_owned(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -257,6 +334,25 @@ mod tests {
         assert_eq!(e.forms(), 2);
         assert_eq!(c.form(e, 1), Some("%n skrár"));
         assert_eq!(c.form(e, 2), None);
+    }
+
+    #[test]
+    fn icu_messages_are_a_table_of_their_own() {
+        let mut c = Catalog::new("is");
+        c.set_file("is.po");
+        c.insert("", "Open", "", Translation::Text("Opna".into()));
+        assert!(c.insert_message_at("", "Open", "Opna skrá", 12));
+        assert!(c.insert_message("menu", "Open", "Opna valmynd"));
+        assert!(!c.insert_message("menu", "Open", "Opna"));
+        let e = c.message("", "Open").unwrap();
+        assert_eq!(c.form(e, 0), Some("Opna skrá"));
+        assert_eq!(c.origin(e).as_deref(), Some("is.po:12"));
+        let menu = c.message("menu", "Open").unwrap();
+        assert_eq!(c.origin(menu).as_deref(), Some("is.po"));
+        assert_eq!(c.message("", "Close"), None);
+        assert_eq!(c.form(c.text("", "Open", "").unwrap(), 0), Some("Opna"));
+        assert_eq!(c.len(), 3);
+        assert_eq!(c.messages().len(), 2);
     }
 
     #[test]

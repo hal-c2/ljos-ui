@@ -42,8 +42,11 @@ libc.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Time"] }
 
 [features]
-default = ["ts", "collation"]
+default = ["ts", "po", "collation"]
 ts = ["dep:quick-xml"]
+# `.po` catalogues of ICU messages. Plain text, so it links nothing; a
+# shipped app that loads `.ljl` can still leave the reader out.
+po = []
 # Text ordered by the locale's alphabet. Without it every locale orders
 # text as the `C` locale does, by its UTF-16 code units.
 collation = ["dep:icu_collator"]

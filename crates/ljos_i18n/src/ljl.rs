@@ -18,6 +18,13 @@
 //! strings  UTF-8, no terminators
 //! ```
 //!
+//! Flag bit 0 says the header goes on with `messages (count u32, offset
+//! u32)`, the ICU messages of `t`: `count × { hash u64, context, key,
+//! first form u32, form count u16, flags u16 }`, sorted by hash. A file
+//! without them has neither the bit nor the field, so a catalogue of
+//! `qsTr` messages is written as it always was, and a reader that predates
+//! the table skips it.
+//!
 //! A string is `(offset u32, length u32)` into the strings block. A lookup
 //! is a binary search for the key's hash, then a comparison of the key
 //! itself, so two messages whose hashes collide are both found.
@@ -33,6 +40,11 @@ const MAGIC: &[u8; 4] = b"LJL1";
 const HEADER: usize = 48;
 const TEXT_RECORD: usize = 40;
 const ID_RECORD: usize = 24;
+const MESSAGE_RECORD: usize = 32;
+/// The header with the messages table's field.
+const LONG_HEADER: usize = HEADER + 8;
+/// Bit 0 of the header's flags: there is a messages table.
+const HAS_MESSAGES: u32 = 1;
 const FORM_RECORD: usize = 8;
 /// Bit 0 of a record's flags.
 const NUMERUS: u16 = 1;
@@ -87,6 +99,7 @@ fn u64_at(bytes: &[u8], at: usize) -> Option<u64> {
 struct Tables {
     texts: (usize, usize),
     ids: (usize, usize),
+    messages: (usize, usize),
     forms: (usize, usize),
     strings: (usize, usize),
 }
@@ -114,9 +127,10 @@ impl<B: AsRef<[u8]>> Ljl<B> {
         &self.bytes
     }
 
-    /// How many messages the catalogue has, text ids included.
+    /// How many messages the catalogue has, text ids and ICU messages
+    /// included.
     pub const fn len(&self) -> usize {
-        self.tables.texts.0 + self.tables.ids.0
+        self.tables.texts.0 + self.tables.ids.0 + self.tables.messages.0
     }
 
     pub const fn is_empty(&self) -> bool {
@@ -186,12 +200,19 @@ fn check(bytes: &[u8]) -> Result<Tables, LjlError> {
             .map(|v| v as usize)
             .ok_or(cut.clone())
     };
-    // Field 0 is the flags word: none are defined yet, and a reader ignores
-    // the ones it does not know. Fields 1 and 2 are the language, checked
-    // below like any other string.
+    // Field 0 is the flags word; a reader ignores the bits it does not
+    // know. Fields 1 and 2 are the language, checked below like any other
+    // string.
+    let flags = u32_at(bytes, 4).ok_or(cut.clone())?;
+    let messages = if flags & HAS_MESSAGES == 0 {
+        (0, HEADER)
+    } else {
+        (field(11)?, field(12)?)
+    };
     let tables = Tables {
         texts: (field(3)?, field(4)?),
         ids: (field(5)?, field(6)?),
+        messages,
         forms: (field(7)?, field(8)?),
         strings: (field(9)?, field(10)?),
     };
@@ -204,6 +225,7 @@ fn check(bytes: &[u8]) -> Result<Tables, LjlError> {
     if !within(tables.texts, TEXT_RECORD)
         || !within(tables.ids, ID_RECORD)
         || !within(tables.forms, FORM_RECORD)
+        || !within(tables.messages, MESSAGE_RECORD)
     {
         return Err(LjlError::Damaged("a table reaches outside the file"));
     }
@@ -241,7 +263,10 @@ fn check(bytes: &[u8]) -> Result<Tables, LjlError> {
         (1..count)
             .all(|i| u64_at(bytes, offset + (i - 1) * record) <= u64_at(bytes, offset + i * record))
     };
-    if !sorted(tables.texts, TEXT_RECORD) || !sorted(tables.ids, ID_RECORD) {
+    if !sorted(tables.texts, TEXT_RECORD)
+        || !sorted(tables.ids, ID_RECORD)
+        || !sorted(tables.messages, MESSAGE_RECORD)
+    {
         return Err(LjlError::Damaged("the messages are not in hash order"));
     }
     for i in 0..tables.texts.0 {
@@ -255,6 +280,12 @@ fn check(bytes: &[u8]) -> Result<Tables, LjlError> {
         let at = tables.ids.1 + i * ID_RECORD;
         text(at + 8)?;
         forms_in(at + 16)?;
+    }
+    for i in 0..tables.messages.0 {
+        let at = tables.messages.1 + i * MESSAGE_RECORD;
+        text(at + 8)?;
+        text(at + 16)?;
+        forms_in(at + 24)?;
     }
     for i in 0..tables.forms.0 {
         text(tables.forms.1 + i * FORM_RECORD)?;
@@ -282,6 +313,13 @@ impl<B: AsRef<[u8]>> Messages for Ljl<B> {
         self.candidates(self.tables.ids, ID_RECORD, hash(&[id]))
             .find(|at| self.string(at + 8) == Some(id))
             .and_then(|at| self.entry(at + 16))
+    }
+
+    fn message(&self, context: &str, key: &str) -> Option<Entry> {
+        let wanted = hash(&[context, key]);
+        self.candidates(self.tables.messages, MESSAGE_RECORD, wanted)
+            .find(|at| self.string(at + 8) == Some(context) && self.string(at + 16) == Some(key))
+            .and_then(|at| self.entry(at + 24))
     }
 
     fn form(&self, entry: Entry, index: usize) -> Option<&str> {
@@ -376,27 +414,44 @@ pub fn write(catalog: &Catalog) -> Result<Vec<u8>, LjlError> {
         record.extend_from_slice(&entry(catalog, source, &mut strings, &mut forms)?);
         ids.push((h, record));
     }
+    let mut messages: Vec<(u64, Vec<u8>)> = Vec::new();
+    for (context, key, source) in catalog.messages() {
+        let mut record = Vec::with_capacity(MESSAGE_RECORD);
+        let h = hash(&[context, key]);
+        record.extend_from_slice(&h.to_le_bytes());
+        put(&mut record, strings.add(context)?);
+        put(&mut record, strings.add(key)?);
+        record.extend_from_slice(&entry(catalog, source, &mut strings, &mut forms)?);
+        messages.push((h, record));
+    }
     // Stable, so records with one hash keep the catalogue's key order.
     texts.sort_by_key(|(h, _)| *h);
     ids.sort_by_key(|(h, _)| *h);
+    messages.sort_by_key(|(h, _)| *h);
 
     let size = |n: usize| u32::try_from(n).map_err(|_| LjlError::TooLarge);
-    let texts_at = HEADER;
+    let long = !messages.is_empty();
+    let texts_at = if long { LONG_HEADER } else { HEADER };
     let ids_at = texts_at + texts.len() * TEXT_RECORD;
-    let forms_at = ids_at + ids.len() * ID_RECORD;
+    let messages_at = ids_at + ids.len() * ID_RECORD;
+    let forms_at = messages_at + messages.len() * MESSAGE_RECORD;
     let strings_at = forms_at + forms.len() * FORM_RECORD;
     let total = strings_at + strings.block.len();
     size(total)?;
 
     let mut out = Vec::with_capacity(total);
     out.extend_from_slice(MAGIC);
-    out.extend_from_slice(&0u32.to_le_bytes());
+    let flags = if long { HAS_MESSAGES } else { 0 };
+    out.extend_from_slice(&flags.to_le_bytes());
     put(&mut out, language);
     put(&mut out, (size(texts.len())?, size(texts_at)?));
     put(&mut out, (size(ids.len())?, size(ids_at)?));
     put(&mut out, (size(forms.len())?, size(forms_at)?));
     put(&mut out, (size(strings_at)?, size(strings.block.len())?));
-    for (_, record) in texts.iter().chain(&ids) {
+    if long {
+        put(&mut out, (size(messages.len())?, size(messages_at)?));
+    }
+    for (_, record) in texts.iter().chain(&ids).chain(&messages) {
         out.extend_from_slice(record);
     }
     for form in forms {
@@ -428,6 +483,8 @@ mod tests {
             Translation::Numerus(vec!["%n skrá".into(), "%n skrár".into()]),
         );
         c.insert_id("app-title", Translation::Text("Ljós".into()));
+        c.insert_message("", "Hello {name}", "Halló {name}");
+        c.insert_message("menu", "Open", "Opna valmynd");
         c
     }
 
@@ -449,6 +506,12 @@ mod tests {
                 );
             }
         }
+        for (context, key, entry) in source.messages() {
+            let found = ljl.message(context, key).unwrap();
+            assert_eq!(ljl.form(found, 0), source.form(entry, 0));
+        }
+        assert_eq!(ljl.message("", "Open"), None);
+        assert_eq!(ljl.text("", "Hello {name}", ""), None);
         let title = ljl.id("app-title").unwrap();
         assert_eq!(ljl.form(title, 0), Some("Ljós"));
         assert_eq!(ljl.text("Main", "Close", ""), None);
@@ -471,6 +534,15 @@ mod tests {
         let ljl = Ljl::open(bytes.as_slice()).unwrap();
         let e = ljl.text("Dialog", "Open", "").unwrap();
         assert_eq!(ljl.form(e, 0), Some("Opna"));
+    }
+
+    #[test]
+    fn a_catalogue_without_icu_messages_keeps_the_short_header() {
+        let mut c = Catalog::new("is");
+        c.insert("Main", "Open", "", Translation::Text("Opna".into()));
+        let bytes = write(&c).unwrap();
+        assert_eq!(u32_at(&bytes, 4), Some(0));
+        assert_eq!(u32_at(&bytes, 16), Some(HEADER as u32));
     }
 
     #[test]
@@ -527,6 +599,9 @@ mod tests {
                     }
                 }
                 if let Some(e) = ljl.id("app-title") {
+                    let _ = ljl.form(e, 0);
+                }
+                if let Some(e) = ljl.message("menu", "Open") {
                     let _ = ljl.form(e, 0);
                 }
             }
