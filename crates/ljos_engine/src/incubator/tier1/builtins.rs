@@ -190,6 +190,39 @@ pub(super) fn call(e: &Engine, f: Builtin, args: &[Value]) -> Option<Value> {
         }
         Builtin::TrNoop => Some(args.first().cloned().unwrap_or_default()),
         Builtin::TranslateNoop => Some(args.get(1).cloned().unwrap_or_default()),
+        Builtin::Message => {
+            let [message, context, key, names, values @ ..] = args else {
+                return None;
+            };
+            let names = text(names)?;
+            let names: Vec<&str> = if names.is_empty() {
+                Vec::new()
+            } else {
+                names.split(',').collect()
+            };
+            let values = values
+                .iter()
+                .map(|v| {
+                    Some(match prim(v)? {
+                        Prim::Number(n) => ljos_i18n::Value {
+                            text: number_to_string(n),
+                            number: Some(n),
+                        },
+                        Prim::String(s) => ljos_i18n::Value::text(s),
+                        other => ljos_i18n::Value::text(other.text()),
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let source = text(message)?;
+            let key = text(key)?;
+            Some(ops::string(e.message(
+                text(context)?,
+                if key.is_empty() { source } else { key },
+                source,
+                &names,
+                &values,
+            )))
+        }
         Builtin::Arg => {
             let [template, value] = args else {
                 return None;
