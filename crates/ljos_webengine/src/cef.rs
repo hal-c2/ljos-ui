@@ -1076,6 +1076,8 @@ struct Dev {
     worlds: HashSet<i32>,
     /// The `userScripts` now installed.
     installed: Vec<String>,
+    /// `userScripts` sent and not yet answered: not yet in the renderer.
+    adding: usize,
     /// The origin of every context scripts run in, in any frame.
     origins: HashMap<i64, String>,
 }
@@ -1230,8 +1232,11 @@ impl Unborn {
 /// hears nothing of that page.
 #[derive(Default)]
 struct Boot {
-    /// A renderer answered after what every page gets.
-    told: bool,
+    /// Calls the renderer answers after what every page gets, not yet
+    /// answered: one when the browser is made, and one more each time the
+    /// view's scripts change before its first page loads (a view setting
+    /// them in `Component.onCompleted`, after its `url` made the browser).
+    untold: usize,
     /// The blank page loaded.
     loaded: bool,
     /// Where the view asked to go before both: it goes there then.
@@ -1247,7 +1252,27 @@ struct Boot {
 
 impl Boot {
     fn done(&self) -> bool {
-        self.told && self.loaded
+        self.untold == 0 && self.loaded
+    }
+}
+
+/// Every new document gets `scripts`; while the view's first page still
+/// waits for the blank one, it waits for these too.
+fn install_before_first_page(
+    dev: &mut Dev,
+    boot: &mut Boot,
+    scripts: &[Script],
+    out: &mut Vec<Vec<u8>>,
+) {
+    install_scripts(dev, scripts, false, out);
+    if !boot.done() {
+        // A renderer answers this after all that came before it.
+        boot.untold += 1;
+        out.push(dev.call(
+            "Runtime.evaluate",
+            json!({ "expression": "0" }),
+            Pending::Boot,
+        ));
     }
 }
 
@@ -1620,12 +1645,12 @@ thread_local! {
 }
 
 /// The engine `shared`'s view lives in, while it does.
-fn engine_of(shared: &Arc<Shared>) -> Option<Engine> {
+fn engine_of(shared: &Shared) -> Option<Engine> {
     ENGINES.with(|engines| {
         engines
             .borrow()
             .iter()
-            .find(|(s, _)| std::ptr::eq(s.as_ptr(), Arc::as_ptr(shared)))
+            .find(|(s, _)| std::ptr::eq(s.as_ptr(), shared))
             .and_then(|(_, e)| e.upgrade())
     })
 }
@@ -2940,6 +2965,7 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
                 }
             }
             Some(Pending::AddScript) => {
+                dev.adding = dev.adding.saturating_sub(1);
                 if let Some(id) = result["identifier"].as_str() {
                     dev.installed.push(id.to_owned());
                 }
@@ -2970,10 +2996,34 @@ fn dev_result(shared: &Shared, id: i32, success: bool, result: Json) {
     }
     shared.send_dev(out);
     if booted {
-        shared.boot_step(|b| b.told = true);
+        shared.boot_step(|b| b.untold = b.untold.saturating_sub(1));
     }
     if let Some(origin) = heard {
         kept(shared, &origin, NOTIFICATIONS_KIND);
+    }
+}
+
+/// The view's first page began in a renderer before `adding` of its
+/// scripts were in: they miss that page, and the log says where.
+fn scripts_missed(shared: &Shared, frame: &Json, adding: usize) {
+    if !Shared::lock(&shared.boot).behind {
+        // A later page: scripts set while it loads run from the next on.
+        return;
+    }
+    let url = frame["url"].as_str().unwrap_or_default();
+    if url == "about:blank" {
+        return;
+    }
+    if let Some(e) = engine_of(shared) {
+        e.log(
+            LogLevel::Warning,
+            crate::CATEGORY,
+            format!(
+                "WebEngineView's first page {url} began (loader {}) before {adding} of its \
+                 scripts reached the renderer; they run from its next page on",
+                frame["loaderId"].as_str().unwrap_or("?")
+            ),
+        );
     }
 }
 
@@ -2986,6 +3036,11 @@ fn dev_event(shared: &Shared, method: &str, params: &Json) {
                 && let Some(id) = frame["id"].as_str()
             {
                 dev.main_frame = Some(id.to_owned());
+                let adding = dev.adding;
+                drop(dev);
+                if adding > 0 {
+                    scripts_missed(shared, frame, adding);
+                }
             }
         }
         "Runtime.executionContextCreated" => {
@@ -3177,6 +3232,7 @@ fn install_scripts(dev: &mut Dev, scripts: &[Script], now: bool, out: &mut Vec<V
             dev.world_for_new_documents(s.world, out);
             params["worldName"] = json!(world_name(s.world));
         }
+        dev.adding += 1;
         out.push(dev.call(
             "Page.addScriptToEvaluateOnNewDocument",
             params,
@@ -3428,19 +3484,23 @@ fn attach(shared: &Arc<Shared>, browser: ::cef::Browser, start: &Start, made: Ma
             let _ = shared.agent.set(params.clone());
             out.push(dev.call("Emulation.setUserAgentOverride", params, Pending::Ignore));
         }
-        // In before the view's first page, which waits for the blank one.
-        install_scripts(&mut dev, &start.scripts, made != Made::Asked, &mut out);
+        // A page opened in a new window is under way: its scripts run
+        // from now on.
+        if made == Made::Opened {
+            install_scripts(&mut dev, &start.scripts, true, &mut out);
+        }
         out.push(dev.call("Page.getFrameTree", json!({}), Pending::FrameTree));
     }
     if made == Made::Asked {
         let mut dev = Shared::lock(&shared.dev);
-        // A renderer answers this after all that came before it, so the
-        // view's first page waits for it (see `Boot`).
-        out.push(dev.call(
-            "Runtime.evaluate",
-            json!({ "expression": "0" }),
-            Pending::Boot,
-        ));
+        // In before the view's first page, which waits for the blank one
+        // and for the renderer to have these (see `Boot`).
+        install_before_first_page(
+            &mut dev,
+            &mut Shared::lock(&shared.boot),
+            &start.scripts,
+            &mut out,
+        );
         if !start.url.is_empty() {
             shared.started(&start.url);
             Shared::lock(&shared.boot).url = Some(start.url.clone());
@@ -3526,7 +3586,6 @@ fn adopt(e: &Engine, view: ObjectId, made: Made) -> Option<Adopted> {
     let shared = shared_for(e, Sink::new(e, view), &start);
     {
         let mut boot = Shared::lock(&shared.boot);
-        boot.told = true;
         boot.loaded = true;
         boot.behind = false;
     }
@@ -3739,10 +3798,10 @@ impl Page for CefPage {
             return;
         }
         let mut out = Vec::new();
-        install_scripts(
+        install_before_first_page(
             &mut Shared::lock(&self.shared.dev),
+            &mut Shared::lock(&self.shared.boot),
             scripts,
-            false,
             &mut out,
         );
         self.send_dev(out);
@@ -4305,6 +4364,43 @@ mod tests {
             height: 1,
         };
         assert_eq!(pixel_rect(&off, 4, 5), None);
+    }
+
+    #[test]
+    fn scripts_set_before_the_first_page_hold_it_until_the_renderer_has_them() {
+        let script = Script {
+            name: "mark".into(),
+            source: "window.marked = 'yes'".into(),
+            injection_point: DOCUMENT_CREATION,
+            world: 0,
+            sub_frames: false,
+        };
+        let method = |m: &[u8]| serde_json::from_slice::<Json>(m).unwrap()["method"].clone();
+        let (mut dev, mut boot, mut out) = (Dev::default(), Boot::default(), Vec::new());
+        // The browser is made with none; the blank page loads.
+        install_before_first_page(&mut dev, &mut boot, &[], &mut out);
+        boot.loaded = true;
+        // `Component.onCompleted` gives the view its script.
+        install_before_first_page(&mut dev, &mut boot, std::slice::from_ref(&script), &mut out);
+        assert_eq!(
+            out.iter().map(|m| method(m)).collect::<Vec<_>>(),
+            [
+                "Runtime.evaluate",
+                "Page.addScriptToEvaluateOnNewDocument",
+                "Runtime.evaluate"
+            ]
+        );
+        assert_eq!(dev.adding, 1);
+        // The first answer is not enough: the script is told after it.
+        boot.untold -= 1;
+        assert!(!boot.done());
+        boot.untold -= 1;
+        assert!(boot.done());
+        // Once the first page goes, scripts wait for no page.
+        out.clear();
+        install_before_first_page(&mut dev, &mut boot, &[script], &mut out);
+        assert_eq!(boot.untold, 0);
+        assert!(out.iter().all(|m| method(m) != "Runtime.evaluate"));
     }
 
     #[test]
