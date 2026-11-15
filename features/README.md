@@ -483,7 +483,8 @@ come after the QML. Showing it runs no frame: it is given the frames the applica
 ### Planned (backlog scenarios may use them; not built yet)
 
 `When the agent clicks the reference of the "role" named "name"` · `When the object "o" is destroyed` ·
-`Then the signal "s" of "o" has fired once`.
+`Then the signal "s" of "o" has fired once` · `Given the translation file "X.po":` + doc string (a PO
+catalogue, its language its `Language:` header; `features/i18n/messages.feature`).
 
 ## Adding a backend operation
 
