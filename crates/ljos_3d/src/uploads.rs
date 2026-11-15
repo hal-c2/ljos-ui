@@ -368,45 +368,6 @@ mod held {
         }
     }
 
-    #[cfg(test)]
-    mod tests {
-        use std::time::Duration;
-
-        use super::super::tests::{pixels, wrapper};
-        use super::*;
-        use crate::texture::fresh_pixels_id;
-
-        #[test]
-        fn a_texture_that_asks_late_has_a_frame_to_draw_the_pixels_in() {
-            let mut d = Due::default();
-            let id = fresh_pixels_id();
-            let shared = pixels();
-            let (early, _early_w) = wrapper(id, &shared);
-            let (late, _late_w) = wrapper(id, &shared);
-            let start = Instant::now();
-            d.ask(&early);
-            d.frame_ended(1, start);
-            // Another texture of the same source, made just before they go.
-            d.ask(&late);
-            assert!(
-                d.take_due(start + UNSHOWN + Duration::from_millis(1))
-                    .is_empty(),
-                "let go before a frame could draw the texture that just asked"
-            );
-            let ended = start + UNSHOWN;
-            d.frame_ended(1, ended);
-            assert!(
-                d.take_due(ended + UNSHOWN - Duration::from_millis(1))
-                    .is_empty()
-            );
-            assert_eq!(
-                d.take_due(ended + UNSHOWN).len(),
-                2,
-                "both wrappers go once a frame ended without them"
-            );
-        }
-    }
-
     pub(super) fn came(reader: &Reader) {
         due().readers.insert(reader.id, reader.kind);
     }
@@ -586,6 +547,45 @@ mod held {
                 }
             };
             let_go(images);
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use std::time::Duration;
+
+        use super::super::tests::{pixels, wrapper};
+        use super::*;
+        use crate::texture::fresh_pixels_id;
+
+        #[test]
+        fn a_texture_that_asks_late_has_a_frame_to_draw_the_pixels_in() {
+            let mut d = Due::default();
+            let id = fresh_pixels_id();
+            let shared = pixels();
+            let (early, _early_w) = wrapper(id, &shared);
+            let (late, _late_w) = wrapper(id, &shared);
+            let start = Instant::now();
+            d.ask(&early);
+            d.frame_ended(1, start);
+            // Another texture of the same source, made just before they go.
+            d.ask(&late);
+            assert!(
+                d.take_due(start + UNSHOWN + Duration::from_millis(1))
+                    .is_empty(),
+                "let go before a frame could draw the texture that just asked"
+            );
+            let ended = start + UNSHOWN;
+            d.frame_ended(1, ended);
+            assert!(
+                d.take_due(ended + UNSHOWN - Duration::from_millis(1))
+                    .is_empty()
+            );
+            assert_eq!(
+                d.take_due(ended + UNSHOWN).len(),
+                2,
+                "both wrappers go once a frame ended without them"
+            );
         }
     }
 }
