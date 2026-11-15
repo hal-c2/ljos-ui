@@ -44,6 +44,20 @@ On macOS CEF runs from an application bundle with helper applications, so `weben
 
 `docs/ARCHITECTURE.md` section 7.9 has the details.
 
+## Community
+
+Ljós strives to follow the [Community Software](https://community-software.org/) principles: we build it together, as peers, in the open. The [charter](https://community-software.org/#charter) has seven of them:
+
+1. [Everyone is welcome](https://community-software.org/#charter)
+2. [We are peers](https://community-software.org/#charter)
+3. [Every contribution counts](https://community-software.org/#charter)
+4. [Influence grows from participation](https://community-software.org/#charter)
+5. [Be kind to people, rigorous with ideas](https://community-software.org/#charter)
+6. [“No” and “not yet” are valid answers](https://community-software.org/#charter)
+7. [Look after yourself and each other](https://community-software.org/#charter)
+
+Code is one way to help. Testing, writing docs, design, translation and accessibility reviews count just as much, and questions from newcomers are welcome.
+
 ## Licence
 
 MIT
