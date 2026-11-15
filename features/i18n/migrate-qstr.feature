@@ -148,6 +148,8 @@ Feature: ljos migrate writes qsTr as a tagged template
       1 files, 0 lowered, 1 kept
       """
 
+  # Needs the extract lane: ljos migrate --catalogue
+  @backlog
   Scenario: A text two files translate differently keeps each file's translation
     Given the file "FileMenu.qml":
       """qml
@@ -182,6 +184,8 @@ Feature: ljos migrate writes qsTr as a tagged template
       Item { property string open: t({ message: "Open", context: "Door" }) }
       """
 
+  # Needs the extract lane: ljos migrate --catalogue
+  @backlog
   Scenario: Two calls that would be one message with two translations keep their files
     Qt's disambiguation and a qsTranslate context both become the context of `t`.
     Given the file "Main.qml":

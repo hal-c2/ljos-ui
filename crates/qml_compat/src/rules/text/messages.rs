@@ -5,7 +5,10 @@
 //!
 //! A call is written out by replacing only what lies between its values:
 //! each value stays where it is, so what the rest of the pass changes in
-//! it is changed all the same, and no line is added or removed.
+//! it is changed all the same, and no line is added or removed. A value
+//! the message says in another place, or twice (Qt's `%n` is the count
+//! beside `plural`'s, and `.arg`s fill `%2 of %1` out of order), is
+//! written there once every change is known ([`fill`]).
 //!
 //! `t`, `plural` and `msg` are `Ljos.Core`'s and come last in a lowered
 //! file, so the pass writes them only where each is no other name of the
@@ -51,6 +54,65 @@ pub(crate) struct Messages {
     handled: Vec<u32>,
     /// Where the names of Qt's functions are called.
     callees: Vec<u32>,
+    /// What the values written in another place are, and the changes they
+    /// are written in.
+    pub(crate) filled: Filled,
+}
+
+/// The values a file's messages say in another place than where they
+/// stand. A change's text has `\0{index}\0` where `copies[index]` goes; no
+/// other text the pass writes has a `\0`.
+#[derive(Debug, Default)]
+pub(crate) struct Filled {
+    copies: Vec<Range<usize>>,
+    /// The changes that write the messages.
+    written: Vec<Range<usize>>,
+}
+
+/// Writes each copied value with the changes made in it, and drops the
+/// changes left inside the text a message replaced, where the value was
+/// before it moved.
+pub(crate) fn fill(source: &str, changes: &mut Vec<Change>, filled: &Filled) {
+    if filled.copies.is_empty() {
+        return;
+    }
+    let own = |c: &Change| filled.written.contains(&c.range);
+    let texts: Vec<String> = filled
+        .copies
+        .iter()
+        .map(|copy| {
+            let inside: Vec<Change> = changes
+                .iter()
+                .filter(|c| !own(c) && copy.start <= c.range.start && c.range.end <= copy.end)
+                .map(|c| Change {
+                    range: c.range.start - copy.start..c.range.end - copy.start,
+                    replacement: c.replacement.clone(),
+                })
+                .collect();
+            qml_edit::splice(&source[copy.clone()], &inside)
+        })
+        .collect();
+    let replaced = |c: &Change| {
+        filled.written.iter().any(|w| {
+            if c.range.is_empty() {
+                w.start < c.range.start && c.range.start < w.end
+            } else {
+                w.start <= c.range.start && c.range.end <= w.end
+            }
+        })
+    };
+    changes.retain(|c| own(c) || !replaced(c));
+    for change in changes.iter_mut().filter(|c| c.replacement.contains('\0')) {
+        let mut out = String::with_capacity(change.replacement.len());
+        let mut pieces = change.replacement.split('\0');
+        out.push_str(pieces.next().unwrap_or_default());
+        while let (Some(index), Some(after)) = (pieces.next(), pieces.next()) {
+            let index: usize = index.parse().expect("a copy's marker is its index");
+            out.push_str(&texts[index]);
+            out.push_str(after);
+        }
+        change.replacement = out;
+    }
 }
 
 impl Messages {
@@ -93,13 +155,17 @@ impl Messages {
             return;
         }
         self.handled.push(at);
-        match chain.write(source) {
+        match chain.write(source, self.filled.copies.len()) {
             Ok(written) => {
                 for name in written.names {
                     if !self.names.iter().any(|(n, _)| *n == name) {
                         self.names.push((name, at as usize));
                     }
                 }
+                self.filled
+                    .written
+                    .extend(written.changes.iter().map(|c| c.range.clone()));
+                self.filled.copies.extend(written.copies);
                 self.changes.extend(written.changes);
             }
             Err(cause) => self.keep(cause, at),
@@ -164,7 +230,9 @@ impl<'c, 'a> Chain<'c, 'a> {
         }
     }
 
-    fn write(&self, source: &str) -> Result<Written, Message> {
+    /// The changes that write the call. Its copies are numbered from
+    /// `copied`, the copies written before it.
+    fn write(&self, source: &str, copied: usize) -> Result<Written, Message> {
         let arguments = &self.call.arguments;
         if arguments.iter().any(Argument::is_spread) {
             return Err(self.not_written());
@@ -190,6 +258,7 @@ impl<'c, 'a> Chain<'c, 'a> {
         let marked = self.name.contains("NoOp") || self.name.contains("NOOP");
         let mut message = Built {
             tag: if marked { "msg" } else { "t" },
+            copied,
             ..Built::default()
         };
         match form {
@@ -257,7 +326,10 @@ impl<'c, 'a> Chain<'c, 'a> {
         let described = context.is_some();
         // `` t`…` `` alone is a template; a descriptor or a `plural` holds a
         // string, or a template where values fill it.
-        let templated = !values.is_empty() || !(described || count.is_some());
+        let filled = parts
+            .iter()
+            .any(|p| matches!(p, Part::Value(_) | Part::Count));
+        let templated = filled || !(described || count.is_some());
         if described {
             message.text("({ message: ");
         }
@@ -268,18 +340,30 @@ impl<'c, 'a> Chain<'c, 'a> {
             message.text(", { other: ");
         }
         message.text(if templated { "`" } else { "\"" });
-        let mut values = values.iter();
         for part in &parts {
             match part {
                 Part::Text(t) if templated => message.text(&in_template(t)),
                 Part::Text(t) => message.text(&in_string(t)),
-                Part::Count => message.text("#"),
-                Part::Value => {
+                Part::Grouped => message.text("#"),
+                Part::Count | Part::Value(_) => {
+                    let value = match part {
+                        Part::Value(index) => &values[*index],
+                        _ => count.as_ref().expect("a count part has a count"),
+                    };
                     message.text("${");
-                    message.value(values.next().expect("parts counts the values").clone());
+                    message.value(value.clone());
                     message.text("}");
                 }
             }
+        }
+        if message
+            .copies
+            .iter()
+            .any(|copy| source[copy.clone()].contains('\n'))
+        {
+            return Err(Message::MovedLines {
+                name: self.name.to_owned(),
+            });
         }
         message.text(if templated { "`" } else { "\"" });
         if count.is_some() {
@@ -304,54 +388,112 @@ enum Form {
 #[derive(Debug, PartialEq)]
 enum Part {
     Text(String),
-    /// `%n` or `%Ln`: the count.
+    /// `%n`: the count as it is, `String(n)`.
     Count,
-    /// `%N`: the next `.arg`'s value.
-    Value,
+    /// `%Ln`: the count as the locale groups it, `plural`'s `#`.
+    Grouped,
+    /// A `%N` the `index`th `.arg` fills.
+    Value(usize),
 }
 
-/// The parts of `text`, or `None` where its `%N` are not each filled by
-/// one of `values` `.arg`s, in order. Without `.arg`s, `%N` is text.
-fn parts(text: &str, counted: bool, values: usize) -> Option<Vec<Part>> {
-    let mut parts = Vec::new();
-    let mut plain = String::new();
-    let mut next = 1;
+/// What Qt reads a `%` as.
+enum Mark<'t> {
+    Text(&'t str),
+    /// `%n` or `%Ln`.
+    Count { local: bool },
+    /// `%N` or `%LN`, `N` of one or two digits, and the text it is.
+    Number {
+        local: bool,
+        number: u32,
+        written: &'t str,
+    },
+}
+
+fn marks(text: &str, counted: bool) -> Vec<Mark<'_>> {
+    let mut marks = Vec::new();
     let mut rest = text;
     while let Some(at) = rest.find('%') {
-        plain.push_str(&rest[..at]);
-        let after = &rest[at + 1..];
-        let (local, after) = match after.strip_prefix('L') {
-            Some(after) => (true, after),
-            None => (false, after),
-        };
-        let digits = after.bytes().take_while(u8::is_ascii_digit).count().min(2);
-        let mut taken = 0;
-        if counted && after.starts_with('n') {
-            parts.push(Part::Text(std::mem::take(&mut plain)));
-            parts.push(Part::Count);
-            taken = 1;
-        } else if digits > 0 && values > 0 {
-            // `%L1` is a number in the locale's digits, which a value of
-            // `t` is not yet.
-            if local || after[..digits].parse::<usize>().ok()? != next {
-                return None;
-            }
-            next += 1;
-            parts.push(Part::Text(std::mem::take(&mut plain)));
-            parts.push(Part::Value);
-            taken = digits;
-        } else {
-            plain.push('%');
-            if local {
-                plain.push('L');
-            }
+        if at > 0 {
+            marks.push(Mark::Text(&rest[..at]));
         }
-        rest = &after[taken..];
+        let after = &rest[at + 1..];
+        let local = after.starts_with('L');
+        let body = if local { &after[1..] } else { after };
+        let digits = body.bytes().take_while(u8::is_ascii_digit).count().min(2);
+        if counted && body.starts_with('n') {
+            marks.push(Mark::Count { local });
+            rest = &body[1..];
+        } else if digits > 0 {
+            let end = at + 1 + usize::from(local) + digits;
+            marks.push(Mark::Number {
+                local,
+                number: body[..digits].parse().expect("digits"),
+                written: &rest[at..end],
+            });
+            rest = &rest[end..];
+        } else {
+            marks.push(Mark::Text("%"));
+            rest = after;
+        }
     }
-    plain.push_str(rest);
-    parts.push(Part::Text(plain));
-    parts.retain(|p| !matches!(p, Part::Text(t) if t.is_empty()));
-    (next - 1 == values).then_some(parts)
+    if !rest.is_empty() {
+        marks.push(Mark::Text(rest));
+    }
+    marks
+}
+
+/// The parts of `text` filled by `values` `.arg`s, as Qt fills them: each
+/// `.arg` the lowest-numbered `%N` left, wherever it stands, and every
+/// place that `%N` is. A `%N` no `.arg` fills is text. `None` where an
+/// `.arg` has no `%N` left, or fills a `%LN`, a number in the locale's
+/// digits, which a value of `t` is not yet.
+fn parts(text: &str, counted: bool, values: usize) -> Option<Vec<Part>> {
+    let marks = marks(text, counted);
+    let mut numbers: Vec<u32> = marks
+        .iter()
+        .filter_map(|m| match m {
+            Mark::Number { number, .. } => Some(*number),
+            _ => None,
+        })
+        .collect();
+    numbers.sort_unstable();
+    numbers.dedup();
+    // Qt's are `%1` to `%99`; what `%0` is to an `.arg` is not written down.
+    if values > numbers.len() || (values > 0 && numbers.first() == Some(&0)) {
+        return None;
+    }
+    let numbers = &numbers[..values];
+    let mut parts = Vec::new();
+    let mut plain = String::new();
+    let part = |parts: &mut Vec<Part>, plain: &mut String, part: Part| {
+        if !plain.is_empty() {
+            parts.push(Part::Text(std::mem::take(plain)));
+        }
+        parts.push(part);
+    };
+    for mark in marks {
+        match mark {
+            Mark::Text(text) => plain.push_str(text),
+            Mark::Count { local } => part(
+                &mut parts,
+                &mut plain,
+                if local { Part::Grouped } else { Part::Count },
+            ),
+            Mark::Number {
+                local,
+                number,
+                written,
+            } => match numbers.iter().position(|n| *n == number) {
+                Some(_) if local => return None,
+                Some(index) => part(&mut parts, &mut plain, Part::Value(index)),
+                None => plain.push_str(written),
+            },
+        }
+    }
+    if !plain.is_empty() {
+        parts.push(Part::Text(plain));
+    }
+    Some(parts)
 }
 
 /// What a call is written as: text, and values that stay where they are.
@@ -362,6 +504,12 @@ struct Built {
     untagged: bool,
     pieces: Vec<Piece>,
     uses: Vec<&'static str>,
+    /// The copies of the file's messages before this one.
+    copied: usize,
+    /// The values written in another place than where they stand.
+    copies: Vec<Range<usize>>,
+    /// Where the last value left where it stands ends.
+    end: usize,
 }
 
 enum Piece {
@@ -373,6 +521,7 @@ enum Piece {
 struct Written {
     changes: Vec<Change>,
     names: Vec<&'static str>,
+    copies: Vec<Range<usize>>,
 }
 
 impl Built {
@@ -383,8 +532,22 @@ impl Built {
         }
     }
 
+    /// The value at `at`: left where it stands if it is after the last
+    /// one left, and not left already; else written here once every
+    /// change is known.
     fn value(&mut self, at: Range<usize>) {
-        self.pieces.push(Piece::Value(at));
+        let left = self
+            .pieces
+            .iter()
+            .any(|p| matches!(p, Piece::Value(v) if *v == at));
+        if !left && at.start >= self.end {
+            self.end = at.end;
+            self.pieces.push(Piece::Value(at));
+        } else {
+            let marker = format!("\0{}\0", self.copied + self.copies.len());
+            self.copies.push(at);
+            self.text(&marker);
+        }
     }
 
     /// The changes that make `call`'s text the pieces. Each run of text
@@ -436,7 +599,11 @@ impl Built {
             replacement,
         });
         changes.retain(|c| !(c.range.is_empty() && c.replacement.is_empty()));
-        Written { changes, names }
+        Written {
+            changes,
+            names,
+            copies: self.copies,
+        }
     }
 }
 
@@ -470,6 +637,8 @@ fn in_template(text: &str) -> String {
             '$' if chars.peek() == Some(&'{') => out.push_str("\\$"),
             '\n' => out.push_str("\\n"),
             '\r' => out.push_str("\\r"),
+            // `\0` marks a copy ([`Filled`]).
+            '\0' => out.push_str("\\x00"),
             c => out.push(c),
         }
     }
@@ -487,6 +656,7 @@ fn in_string(text: &str) -> String {
             '\r' => out.push_str("\\r"),
             '\u{2028}' => out.push_str("\\u2028"),
             '\u{2029}' => out.push_str("\\u2029"),
+            '\0' => out.push_str("\\x00"),
             c => out.push(c),
         }
     }
@@ -502,26 +672,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn placeholders_in_order_are_values() {
+    fn each_arg_fills_the_lowest_numbered_mark_left() {
+        use Part::*;
         assert_eq!(
             parts("%1 of %2", false, 2),
-            Some(vec![
-                Part::Value,
-                Part::Text(" of ".into()),
-                Part::Value
-            ])
+            Some(vec![Value(0), Text(" of ".into()), Value(1)])
         );
-        assert_eq!(parts("%2 of %1", false, 2), None);
-        assert_eq!(parts("%1 and %1", false, 2), None);
+        assert_eq!(
+            parts("%2 of %1", false, 2),
+            Some(vec![Value(1), Text(" of ".into()), Value(0)])
+        );
+        assert_eq!(
+            parts("%1 and %1", false, 1),
+            Some(vec![Value(0), Text(" and ".into()), Value(0)])
+        );
+        assert_eq!(
+            parts("%3 then %7", false, 1),
+            Some(vec![Value(0), Text(" then %7".into())])
+        );
         assert_eq!(parts("%1", false, 2), None);
         assert_eq!(parts("%L1", false, 1), None);
         // Without `.arg`, `%1` is what the text says.
-        assert_eq!(parts("50%1", false, 0), Some(vec![Part::Text("50%1".into())]));
+        assert_eq!(parts("50%1", false, 0), Some(vec![Text("50%1".into())]));
         assert_eq!(
-            parts("%Ln file(s)", true, 0),
-            Some(vec![Part::Count, Part::Text(" file(s)".into())])
+            parts("%Ln of %n", true, 0),
+            Some(vec![Grouped, Text(" of ".into()), Count])
         );
-        assert_eq!(parts("%n", false, 0), Some(vec![Part::Text("%n".into())]));
+        assert_eq!(parts("%n", false, 0), Some(vec![Text("%n".into())]));
     }
 
     #[test]

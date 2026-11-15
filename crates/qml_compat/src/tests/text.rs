@@ -155,11 +155,11 @@ fn a_member_named_as_a_font_s_off_a_font_is_kept_as_it_is() {
 #[test]
 fn qs_tr_is_a_tagged_template() {
     let text = lowered(
-        "import QtQuick\nItem {\n    property int count: 3\n    property string name: \"Ada\"\n    property string open: qsTr(\"Open\")\n    property string of: qsTr(\"%1 of %2\").arg(name).arg(count)\n    property string files: qsTr(\"%n file(s)\", \"\", count)\n}\n",
+        "import QtQuick\nItem {\n    property int count: 3\n    property string name: \"Ada\"\n    property string open: qsTr(\"Open\")\n    property string of: qsTr(\"%1 of %2\").arg(name).arg(count)\n    property string back: qsTr(\"%2 of %1\").arg(name).arg(count)\n    property string files: qsTr(\"%n file(s)\", \"\", count)\n    property string grouped: qsTr(\"%Ln file(s)\", \"\", count)\n}\n",
     );
     assert_eq!(
         text,
-        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem {\n    property int count: 3\n    property string name: \"Ada\"\n    property string open: t`Open`\n    property string of: t`${name} of ${count}`\n    property string files: plural(count, { other: \"# file(s)\" })\n}\n"
+        "pragma Scripts: JavaScript; import Ljos.Ui; import Ljos.Core\nItem {\n    property int count: 3\n    property string name: \"Ada\"\n    property string open: t`Open`\n    property string of: t`${name} of ${count}`\n    property string back: t`${count} of ${name}`\n    property string files: plural(count, { other: `${count} file(s)` })\n    property string grouped: plural(count, { other: \"# file(s)\" })\n}\n"
     );
 }
 
@@ -196,12 +196,29 @@ fn a_message_s_values_keep_their_own_lowering_and_lines() {
 }
 
 #[test]
+fn a_value_written_in_another_place_keeps_its_own_lowering() {
+    // `.arg` fills the lowest-numbered `%N` left, so `r.color` moves
+    // after `b`, and is `r.fill` there too; `%n` says the count again.
+    let text = lowered(
+        "import QtQuick\nRectangle {\n    id: r\n    property string b: \"x\"\n    property string s: qsTr(\"%2 of %1, %1\").arg(r.color).arg(b)\n    property string n: qsTr(\"%1: %n\", \"\", r.width).arg(r.color)\n}\n",
+    );
+    for line in [
+        "s: t`${b} of ${r.fill}, ${r.fill}`",
+        "n: plural(r.width, { other: `${r.fill}: ${r.width}` })",
+    ] {
+        assert!(text.contains(line), "{line}\n{text}");
+    }
+    assert_eq!(text.lines().count(), 7, "{text}");
+}
+
+#[test]
 fn a_message_that_cannot_be_written_out_keeps_the_file() {
     for (source, why) in [
         ("property string key: \"Open\"; property string shown: qsTr(key)", "`qsTr` of a value that is not written out"),
-        ("property string shown: qsTr(\"%2 %1\").arg(1).arg(2)", "not each filled"),
-        ("property string shown: qsTr(\"%1\").arg(1).arg(2)", "not each filled"),
-        ("property string shown: qsTr(\"%L1\").arg(1)", "not each filled"),
+        ("property string shown: qsTr(\"%1 %2\").arg(1, 2)", "not of one value"),
+        ("property string shown: qsTr(\"%1\").arg(1).arg(2)", "no `%N` left"),
+        ("property string shown: qsTr(\"%L1\").arg(1)", "a `%LN`"),
+        ("property string shown: qsTr(\"%2 %1\").arg(1 +\n        1).arg(2)", "spans lines"),
         ("property string shown: qsTrId(\"a\").arg(1)", "`t({ id })`"),
         ("property string shown: qsTranslate(\"C\", \"x\", \"d\")", "one context"),
         ("property var f: qsTr", "read as a value"),

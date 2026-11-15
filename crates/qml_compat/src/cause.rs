@@ -312,8 +312,12 @@ pub enum Message {
     NotWrittenOut { name: String },
     /// The function read, not called.
     NotCalled { name: String },
-    /// Its `%N` are not each filled by one `.arg` of one value, in order.
+    /// An `.arg` that is not of one value, or has no `%N` left to fill, or
+    /// a `%LN`.
     Placeholders { name: String },
+    /// A value written in another place than where it stands, over
+    /// several lines.
+    MovedLines { name: String },
     /// `qsTrId` given a count or `.arg`.
     IdWithValues { name: String },
     /// `qsTranslate` given a disambiguation beside its context.
@@ -716,7 +720,11 @@ impl fmt::Display for Message {
             }
             Message::Placeholders { name } => write!(
                 f,
-                "the `%N` of `{name}` are not each filled by one `.arg` of one value, in order"
+                "an `.arg` of `{name}` is not of one value, has no `%N` left to fill, or fills a `%LN`"
+            ),
+            Message::MovedLines { name } => write!(
+                f,
+                "a value of `{name}` is written in another place than where it stands, and spans lines"
             ),
             Message::IdWithValues { name } => write!(
                 f,
