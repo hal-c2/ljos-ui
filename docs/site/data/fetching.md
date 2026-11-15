@@ -111,8 +111,12 @@ Text {
             try {
                 const reply = await fetch("slow.json", { signal })
                 root.text = `${reply.status}`
-            } catch {
-                root.text = signal.aborted ? "stopped" : "unreachable"
+            } catch (error) {
+                if (typeof error === "object" && error !== null && "name" in error && error.name === "AbortError") {
+                    root.text = "stopped"
+                } else {
+                    root.text = "unreachable"
+                }
             }
         }
         run()
@@ -123,7 +127,7 @@ Text {
 }
 ```
 
-The user's controller aborts as soon as the request is made, so the text reads "stopped".
+The user's controller aborts as soon as the request is made, so the fetch rejects with an `AbortError` and the text reads "stopped". The `catch` asks the error's `name`, not `signal.aborted`, so a request that could not be made reads "unreachable" even after an abort.
 
 ## What an error is
 
