@@ -58,15 +58,15 @@ On macOS CEF runs from an application bundle with helper applications, so `weben
 
 ## Community
 
-Ljós strives to follow the [Community Software](https://community-software.org/) principles: we build it together, as peers, in the open. The [charter](https://community-software.org/#charter) has seven of them:
+Ljós strives to follow the [Community Software](https://community-software.org/) principles: we build it together, as peers, in the open. Its [charter](https://community-software.org/#charter) has seven:
 
-1. [Everyone is welcome](https://community-software.org/#charter)
-2. [We are peers](https://community-software.org/#charter)
-3. [Every contribution counts](https://community-software.org/#charter)
-4. [Influence grows from participation](https://community-software.org/#charter)
-5. [Be kind to people, rigorous with ideas](https://community-software.org/#charter)
-6. [“No” and “not yet” are valid answers](https://community-software.org/#charter)
-7. [Look after yourself and each other](https://community-software.org/#charter)
+1. Everyone is welcome
+2. We are peers
+3. Every contribution counts
+4. Influence grows from participation
+5. Be kind to people, rigorous with ideas
+6. “No” and “not yet” are valid answers
+7. Look after yourself and each other
 
 Code is one way to help. Testing, writing docs, design, translation and accessibility reviews count just as much, and questions from newcomers are welcome.
 
