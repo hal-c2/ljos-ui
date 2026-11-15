@@ -27,6 +27,11 @@ const BACKLOG: usize = 4096;
 /// command, far under what would hurt to hold.
 const LARGEST: u64 = 64 << 20;
 
+/// The most an opening request may take: anyone on the machine can
+/// connect before showing it knows the address, so what it sends is
+/// bounded before then too.
+const OPENING: u64 = 16 << 10;
+
 /// RFC 6455's key suffix.
 const GUID: &str = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
@@ -62,7 +67,7 @@ struct Link {
 impl Inspector {
     /// Listens for the front end; `wake` has the browser's thread take
     /// what it sends (see [`Inspector::take`]).
-    pub(super) fn start(wake: impl Fn() + Send + 'static) -> io::Result<Arc<Self>> {
+    pub(super) fn start(wake: impl Fn() + Send + Sync + 'static) -> io::Result<Arc<Self>> {
         let listener = TcpListener::bind(("127.0.0.1", 0))?;
         let port = listener.local_addr()?.port();
         let mut bytes = [0u8; 16];
@@ -76,7 +81,7 @@ impl Inspector {
         let serving = Arc::clone(&me);
         std::thread::Builder::new()
             .name("ljos-devtools".to_owned())
-            .spawn(move || serving.serve(&listener, &wake))?;
+            .spawn(move || serving.serve(&listener, Arc::new(wake)))?;
         Ok(me)
     }
 
@@ -170,17 +175,24 @@ impl Inspector {
         }
     }
 
-    fn serve(&self, listener: &TcpListener, wake: &dyn Fn()) {
+    fn serve(self: &Arc<Self>, listener: &TcpListener, wake: Arc<dyn Fn() + Send + Sync>) {
         for stream in listener.incoming() {
             if self.stop.load(Ordering::Acquire) {
                 break;
             }
             let Ok(stream) = stream else { continue };
-            let Some(reader) = self.handshake(stream) else {
-                continue;
-            };
-            // One front end at a time: a new one is the one shown now.
-            self.converse(reader, wake);
+            // Each connection on its own thread, so one that is still
+            // talking, or never finishes asking, holds no later one up.
+            // One front end at a time: the newest is the one shown, and
+            // the one before is let go (see `converse`).
+            let (me, wake) = (Arc::clone(self), Arc::clone(&wake));
+            let _ = std::thread::Builder::new()
+                .name("ljos-devtools-in".to_owned())
+                .spawn(move || {
+                    if let Some(reader) = me.handshake(stream) {
+                        me.converse(reader, &*wake);
+                    }
+                });
         }
     }
 
@@ -190,15 +202,18 @@ impl Inspector {
         // A connection that never asks holds nobody up for long.
         stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
         let mut reader = BufReader::new(stream);
+        let mut opening = (&mut reader).take(OPENING);
         let mut line = String::new();
-        reader.read_line(&mut line).ok()?;
+        opening.read_line(&mut line).ok()?;
         let mut words = line.split_whitespace();
         let ours = words.next() == Some("GET")
             && words.next().and_then(|p| p.strip_prefix('/')) == Some(self.token.as_str());
         let (mut key, mut origin) = (None, None);
         loop {
             let mut header = String::new();
-            match reader.read_line(&mut header) {
+            // Past `OPENING` it reads as ended: a request that long is
+            // nobody's to answer.
+            match opening.read_line(&mut header) {
                 Ok(0) | Err(_) => return None,
                 Ok(_) if header.trim().is_empty() => break,
                 Ok(_) => {
@@ -245,6 +260,11 @@ impl Inspector {
         let (out, written) = sync_channel(BACKLOG);
         let serial = {
             let mut link = self.lock();
+            // `close` may have let the link go between the handshake and
+            // now: under the lock, it either has or will see this one.
+            if self.stop.load(Ordering::Acquire) {
+                return;
+            }
             if let Some(old) = link.socket.take() {
                 let _ = old.shutdown(Shutdown::Both);
             }

@@ -364,7 +364,9 @@ fn answer(stream: TcpStream, files: &Files, refused: &str, held: &Arc<Held>) {
     loop {
         let mut header = String::new();
         match reader.read_line(&mut header) {
-            Ok(0) | Err(_) => break,
+            // A connection that stops partway through its headers sent no
+            // request to answer.
+            Ok(0) | Err(_) => return,
             Ok(_) if header.trim().is_empty() => break,
             Ok(_) => {
                 if let Some((name, value)) = header.split_once(':') {

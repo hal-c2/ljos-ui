@@ -1085,6 +1085,9 @@ struct Shared {
     /// A browser CEF makes for the view, not made yet: what it gets once
     /// it is (see [`adopt`]).
     adopting: Mutex<Option<(Start, Made)>>,
+    /// The new windows this page opened in views that CEF has not made
+    /// yet, by CEF's popup id, with the address each was to show.
+    popups: Mutex<HashMap<c_int, (std::sync::Weak<Shared>, String)>>,
     /// The page's DevTools, while a view shows them.
     inspector: Mutex<Option<Arc<Inspector>>>,
 }
@@ -1561,6 +1564,7 @@ impl Shared {
             }),
             unborn: Mutex::default(),
             adopting: Mutex::default(),
+            popups: Mutex::default(),
             inspector: Mutex::default(),
         }
     }
@@ -2257,7 +2261,7 @@ wrap_life_span_handler! {
             &self,
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
-            _popup_id: c_int,
+            popup_id: c_int,
             target_url: Option<&CefString>,
             _target_frame_name: Option<&CefString>,
             target_disposition: WindowOpenDisposition,
@@ -2299,10 +2303,52 @@ wrap_life_span_handler! {
             };
             *window_info = adopted.window;
             *client = Some(adopted.client);
+            // CEF hands over the opener's settings: the popup gets its
+            // own view's, as a browser that view made would.
             settings.windowless_frame_rate = adopted.settings.windowless_frame_rate;
             settings.background_color = adopted.settings.background_color;
+            settings.javascript = adopted.settings.javascript;
+            {
+                let mut popups = Shared::lock(&self.shared.popups);
+                popups.retain(|_, (s, _)| {
+                    s.upgrade()
+                        .is_some_and(|s| Shared::lock(&s.adopting).is_some())
+                });
+                popups.insert(popup_id, (Arc::downgrade(&adopted.shared), url));
+            }
             crate::view::show_in(&e, view, adopted.page);
             0
+        }
+
+        fn on_before_popup_aborted(&self, _browser: Option<&mut Browser>, popup_id: c_int) {
+            // CEF did not make the window after all: the view that was to
+            // show it shows the page in a browser of its own instead, so it
+            // is not left with a page nothing will ever make.
+            let Some((adopted, url)) = Shared::lock(&self.shared.popups)
+                .remove(&popup_id)
+                .and_then(|(s, url)| s.upgrade().map(|s| (s, url)))
+            else {
+                return;
+            };
+            let Some((mut start, _)) = Shared::lock(&adopted.adopting).take() else {
+                return;
+            };
+            let Some(e) = engine_of(&adopted) else {
+                return;
+            };
+            if adopted.closing.load(Ordering::Relaxed) {
+                return;
+            }
+            *Shared::lock(&adopted.boot) = Boot {
+                behind: true,
+                ..Boot::default()
+            };
+            start.url = url.clone();
+            if let Err(why) = begin(&e, &adopted, start) {
+                adopted.started(&url);
+                Shared::lock(&adopted.boot).url = Some(url);
+                not_born(&adopted, &why);
+            }
         }
 
         fn on_after_created(&self, browser: Option<&mut Browser>) {
@@ -2989,18 +3035,22 @@ fn mouse_event(m: &PageMouse) -> MouseEvent {
     }
 }
 
-pub(crate) fn start(
-    e: &Engine,
-    sink: Sink,
-    mut start: Start,
-) -> Result<std::rc::Rc<dyn Page>, String> {
+pub(crate) fn start(e: &Engine, sink: Sink, start: Start) -> Result<std::rc::Rc<dyn Page>, String> {
     pump_into(e);
-    let profile = with_global(e, &start.profile, |g| context_for(e, g, &start.profile))?;
     let shared = shared_for(e, sink, &start);
+    begin(e, &shared, start)?;
+    let page = std::rc::Rc::new(CefPage { shared });
+    register(e, &page)?;
+    Ok(page)
+}
+
+/// `shared`'s browser is made, or waits for its profile to be ready.
+fn begin(e: &Engine, shared: &Arc<Shared>, mut start: Start) -> Result<(), String> {
+    let profile = with_global(e, &start.profile, |g| context_for(e, g, &start.profile))?;
     let unready = profile.as_ref().is_some_and(|(_, ready)| {
         let mut r = Shared::lock(ready);
         if !r.ready {
-            r.waiting.push(Arc::downgrade(&shared));
+            r.waiting.push(Arc::downgrade(shared));
         }
         !r.ready
     });
@@ -3021,11 +3071,9 @@ pub(crate) fn start(
             // CEF readies the context with work it does not announce.
             told_work();
         }
-        profile => make_browser(&shared, &start, profile.map(|(c, _)| c))?,
+        profile => make_browser(shared, &start, profile.map(|(c, _)| c))?,
     }
-    let page = std::rc::Rc::new(CefPage { shared });
-    register(e, &page)?;
-    Ok(page)
+    Ok(())
 }
 
 /// The view's browser is made, now that its profile is ready. One that
@@ -3272,6 +3320,7 @@ fn register(e: &Engine, page: &std::rc::Rc<CefPage>) -> Result<(), String> {
 /// for a view, and the page that view shows it as.
 struct Adopted {
     page: std::rc::Rc<dyn Page>,
+    shared: Arc<Shared>,
     window: WindowInfo,
     client: Client,
     settings: BrowserSettings,
@@ -3292,10 +3341,13 @@ fn adopt(e: &Engine, view: ObjectId, made: Made) -> Option<Adopted> {
     let settings = settings_for(&start);
     *Shared::lock(&shared.adopting) = Some((start, made));
     let client = PageClient::new(shared.clone());
-    let page = std::rc::Rc::new(CefPage { shared });
+    let page = std::rc::Rc::new(CefPage {
+        shared: shared.clone(),
+    });
     register(e, &page).ok()?;
     Some(Adopted {
         page,
+        shared,
         window: WindowInfo::default().set_as_windowless(Default::default()),
         client,
         settings,
