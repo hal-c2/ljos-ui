@@ -460,11 +460,32 @@ struct Made {
     textures: Vec<String>,
 }
 
-/// Text that makes no program. The objects that tried it hold it, so the
-/// next object of the same text is neither translated nor warned of
-/// again: a map's tiles of one broken file warn once, not once a tile.
+/// Text that makes no program, and why. The objects that tried it hold
+/// it, so the next object of the same text is not translated again, and
+/// an engine told of it once is not told again ([`Told`]): a map's tiles
+/// of one broken file warn once, not once a tile.
 #[derive(Debug)]
-struct Failed;
+struct Failed(snippet::SnippetError);
+
+/// The failures an engine has warned of. The failures are the thread's,
+/// shared by its engines, but each engine has its own warnings to tell.
+/// A weak reference keeps a failure's address from being reused while it
+/// is listed, so the address names it.
+#[derive(Default)]
+struct Told(RefCell<Vec<Weak<Failed>>>);
+
+impl Told {
+    /// Whether `failed` is new to this engine, which is told of it now.
+    fn first(&self, failed: &Arc<Failed>) -> bool {
+        let mut told = self.0.borrow_mut();
+        if told.iter().any(|t| t.as_ptr() == Arc::as_ptr(failed)) {
+            return false;
+        }
+        told.retain(|t| t.strong_count() > 0);
+        told.push(Arc::downgrade(failed));
+        true
+    }
+}
 
 /// What became of a program's text, while some object holds it.
 enum Shared {
@@ -490,14 +511,14 @@ thread_local! {
 
 /// The program `made` describes: one an object draws with already, or
 /// one `make` makes of its text. Text that makes none gives the failure
-/// to hold, with why the first time and nothing once that was told.
+/// to hold.
 fn made_of(
     made: Made,
     make: impl FnOnce(Option<&str>, Option<&str>) -> Result<Program, snippet::SnippetError>,
-) -> Result<Arc<Program>, (Arc<Failed>, Option<snippet::SnippetError>)> {
+) -> Result<Arc<Program>, Arc<Failed>> {
     let had = MADE.with_borrow(|m| match m.get(&made) {
         Some(Shared::Program(p)) => p.upgrade().map(Ok),
-        Some(Shared::Failed(f)) => f.upgrade().map(|f| Err((f, None))),
+        Some(Shared::Failed(f)) => f.upgrade().map(Err),
         None => None,
     });
     if let Some(had) = had {
@@ -512,9 +533,9 @@ fn made_of(
             (Ok(p), shared)
         }
         Err(err) => {
-            let f = Arc::new(Failed);
+            let f = Arc::new(Failed(err));
             let shared = Shared::Failed(Arc::downgrade(&f));
-            (Err((f, Some(err))), shared)
+            (Err(f), shared)
         }
     };
     MADE.with_borrow_mut(|m| {
@@ -527,7 +548,8 @@ fn made_of(
 }
 
 /// The program `key` names, made with `make` from the snippets' text the
-/// first time; a failure is warned of once, naming the file, and remembered.
+/// first time; a failure is warned of once an engine, naming the file,
+/// and remembered.
 fn program<T: QmlType>(
     e: &Engine,
     obj: ObjectId,
@@ -563,9 +585,11 @@ fn program<T: QmlType>(
             },
             make,
         )
-        .map_err(|(failed, err)| {
-            let why = err.map(|err| {
-                let file = match &err {
+        .map_err(|failed| {
+            let first = e.extension::<Told>().first(&failed);
+            let why = first.then(|| {
+                let err = &failed.0;
+                let file = match err {
                     snippet::SnippetError::Compile { stage, .. }
                     | snippet::SnippetError::Unsupported { stage, .. } => match *stage {
                         "vertex" if !key.vertex_code.is_empty() => "__vertexShaderCode".to_owned(),
