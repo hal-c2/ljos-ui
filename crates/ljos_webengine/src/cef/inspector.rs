@@ -8,7 +8,7 @@
 //! the page as the view's own DevTools messages do, under ids of the
 //! view's, so its answers come back to it and the view's to the view.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -74,8 +74,112 @@ struct Link {
     inbox: VecDeque<Vec<u8>>,
     /// The id the page answers with, and the one the front end asked with.
     asked: HashMap<i32, Json>,
-    /// A front end went since the browser's thread last looked.
-    ended: bool,
+    /// What the front end now connected changed on the page.
+    touched: BTreeSet<String>,
+    /// What front ends that went changed, for the browser's thread to undo
+    /// before it passes on anything the next one sent.
+    left: BTreeSet<String>,
+}
+
+/// What the front end sent since the browser's thread last looked.
+pub(super) struct Taken {
+    /// What front ends that went left changed: see [`undo`].
+    pub(super) left: BTreeSet<String>,
+    /// For the page, in order, after `left` is undone.
+    pub(super) messages: Vec<Vec<u8>>,
+}
+
+/// What a front end changes on the page and how it is put back, by the
+/// method it changes it with. Chromium's own front ends each have a
+/// session of their own, which takes what it changed with it as it
+/// detaches; this one shares the view's session, which stays.
+const UNDONE: [(&str, &[(&str, &str)]); 11] = [
+    (
+        "Overlay.",
+        &[
+            (
+                "Overlay.setInspectMode",
+                r#"{"mode":"none","highlightConfig":{}}"#,
+            ),
+            ("Overlay.hideHighlight", "{}"),
+        ],
+    ),
+    (
+        "Emulation.setDeviceMetricsOverride",
+        &[("Emulation.clearDeviceMetricsOverride", "{}")],
+    ),
+    (
+        "Emulation.setEmulatedMedia",
+        &[(
+            "Emulation.setEmulatedMedia",
+            r#"{"media":"","features":[]}"#,
+        )],
+    ),
+    (
+        "Emulation.setTouchEmulationEnabled",
+        &[("Emulation.setTouchEmulationEnabled", r#"{"enabled":false}"#)],
+    ),
+    (
+        "Emulation.setEmitTouchEventsForMouse",
+        &[(
+            "Emulation.setEmitTouchEventsForMouse",
+            r#"{"enabled":false}"#,
+        )],
+    ),
+    (
+        "Emulation.setCPUThrottlingRate",
+        &[("Emulation.setCPUThrottlingRate", r#"{"rate":1}"#)],
+    ),
+    (
+        "Emulation.setGeolocationOverride",
+        &[("Emulation.clearGeolocationOverride", "{}")],
+    ),
+    (
+        "Emulation.setScriptExecutionDisabled",
+        &[("Emulation.setScriptExecutionDisabled", r#"{"value":false}"#)],
+    ),
+    (
+        "Network.setCacheDisabled",
+        &[("Network.setCacheDisabled", r#"{"cacheDisabled":false}"#)],
+    ),
+    (
+        "Network.emulateNetworkConditions",
+        &[(
+            "Network.emulateNetworkConditions",
+            r#"{"offline":false,"latency":0,"downloadThroughput":-1,"uploadThroughput":-1}"#,
+        )],
+    ),
+    ("Debugger.", &[("Debugger.resume", "{}")]),
+];
+
+/// Methods that override the user agent: the view's own override, if it
+/// has one, is put back after them (by the caller, who knows it).
+pub(super) const AGENT: [&str; 2] = [
+    "Emulation.setUserAgentOverride",
+    "Network.setUserAgentOverride",
+];
+
+/// The calls that put back what a front end that went changed: what it
+/// set first, then every domain it turned on that the view does not keep
+/// on itself, so the page stops paying for events nobody hears.
+pub(super) fn undo(left: &BTreeSet<String>) -> Vec<(String, Json)> {
+    let mut out = Vec::new();
+    for (by, calls) in UNDONE {
+        if left.iter().any(|m| m.starts_with(by)) {
+            for (method, params) in calls {
+                let params = serde_json::from_str(params).unwrap_or_else(|_| json!({}));
+                out.push(((*method).to_owned(), params));
+            }
+        }
+    }
+    for method in left {
+        if let Some(domain) = method.strip_suffix(".enable")
+            && !KEPT_ON.contains(&format!("{domain}.disable").as_str())
+        {
+            out.push((format!("{domain}.disable"), json!({})));
+        }
+    }
+    out
 }
 
 impl Inspector {
@@ -122,12 +226,17 @@ impl Inspector {
 
     /// What the front end sent, as messages for the page: `next_id` gives
     /// each the id the page answers it with.
-    pub(super) fn take(&self, mut next_id: impl FnMut() -> i32) -> Vec<Vec<u8>> {
+    /// What front ends that went left is taken under the same lock, so
+    /// none of it is the next one's.
+    pub(super) fn take(&self, mut next_id: impl FnMut() -> i32) -> Taken {
         let mut link = self.lock();
         let inbox = std::mem::take(&mut link.inbox);
+        let left = std::mem::take(&mut link.left);
         let mut out = Vec::new();
         for message in inbox {
-            let Ok(mut message) = serde_json::from_slice::<Json>(&message) else {
+            // Anyone holding the address may send anything: only an object
+            // is a command.
+            let Ok(mut message @ Json::Object(_)) = serde_json::from_slice::<Json>(&message) else {
                 continue;
             };
             let theirs = message["id"].clone();
@@ -137,18 +246,24 @@ impl Inspector {
                 link.send(TEXT, serde_json::to_vec(&answer).unwrap_or_default());
                 continue;
             }
+            if !link.touched.contains(method) {
+                link.touched.insert(method.to_owned());
+            }
             let id = next_id();
             message["id"] = json!(id);
             link.asked.insert(id, theirs);
             out.push(serde_json::to_vec(&message).unwrap_or_default());
         }
-        out
+        Taken {
+            left,
+            messages: out,
+        }
     }
 
-    /// Whether a front end went since this was last asked: what it left
-    /// the page in is then for the browser's thread to undo.
-    pub(super) fn ended(&self) -> bool {
-        std::mem::take(&mut self.lock().ended)
+    /// What front ends that went left changed, once the inspector is
+    /// closed and nothing more is taken.
+    pub(super) fn left(&self) -> BTreeSet<String> {
+        std::mem::take(&mut self.lock().left)
     }
 
     /// A message from the page: the front end hears its events, and the
@@ -189,7 +304,7 @@ impl Inspector {
         if serial.is_some_and(|s| s != link.serial) {
             return;
         }
-        link.ended |= serial.is_some();
+        link.went();
         link.out = None;
         link.asked.clear();
         link.inbox.clear();
@@ -302,6 +417,9 @@ impl Inspector {
             if let Some(old) = link.socket.take() {
                 let _ = old.shutdown(Shutdown::Both);
             }
+            // The one replaced went: the next take undoes what it changed
+            // before anything this one sends.
+            link.went();
             link.serial += 1;
             link.out = Some(out);
             link.socket = Some(socket);
@@ -359,6 +477,12 @@ impl Read for Socket {
 }
 
 impl Link {
+    /// The front end connected now went: what it changed is to be undone.
+    fn went(&mut self) {
+        let touched = std::mem::take(&mut self.touched);
+        self.left.extend(touched);
+    }
+
     fn send(&mut self, op: u8, payload: Vec<u8>) {
         let Some(out) = &self.out else { return };
         if let Err(TrySendError::Full(_)) = out.try_send((op, payload)) {
@@ -529,7 +653,11 @@ mod tests {
                 .push_back(br#"{"id":8,"method":"Runtime.disable"}"#.to_vec());
         }
         let sent = inspector.take(|| 41);
-        assert_eq!(sent, vec![br#"{"id":41,"method":"DOM.enable"}"#.to_vec()]);
+        assert!(sent.left.is_empty());
+        assert_eq!(
+            sent.messages,
+            vec![br#"{"id":41,"method":"DOM.enable"}"#.to_vec()]
+        );
         // Turning off what the view needs is answered, not done.
         assert_eq!(
             written.try_recv().unwrap().1,
@@ -545,15 +673,61 @@ mod tests {
         // Events go to both.
         assert!(!inspector.heard(br#"{"method":"Page.loadEventFired"}"#));
         assert!(written.try_recv().is_ok());
-        // A front end that goes leaves the page to be released, once;
-        // closing the inspector is the browser thread's own doing.
-        assert!(!inspector.ended());
-        inspector.drop_link(None);
-        assert!(!inspector.ended());
+        // A front end that goes leaves what it changed to be undone, once,
+        // and before what the next one sends, in the same take.
         let serial = inspector.lock().serial;
         inspector.drop_link(Some(serial));
-        assert!(inspector.ended());
-        assert!(!inspector.ended());
+        let (out, _written) = sync_channel(8);
+        {
+            let mut link = inspector.lock();
+            link.out = Some(out);
+            link.inbox
+                .push_back(br#"{"id":1,"method":"Debugger.enable"}"#.to_vec());
+            // Not a command: let go, not indexed.
+            link.inbox.push_back(b"[]".to_vec());
+        }
+        let taken = inspector.take(|| 42);
+        assert_eq!(taken.left, BTreeSet::from(["DOM.enable".to_owned()]));
+        assert_eq!(taken.messages.len(), 1);
+        assert!(inspector.take(|| 43).left.is_empty());
+        // The inspector closing is the browser thread's own doing: what
+        // the one connected then changed is left for it too.
+        inspector.drop_link(None);
+        assert_eq!(
+            inspector.left(),
+            BTreeSet::from(["Debugger.enable".to_owned()])
+        );
+    }
+
+    #[test]
+    fn what_a_front_end_changed_is_put_back_after_it() {
+        let left = BTreeSet::from(
+            [
+                "Overlay.enable",
+                "Overlay.highlightNode",
+                "Emulation.setDeviceMetricsOverride",
+                "Network.setCacheDisabled",
+                "Debugger.enable",
+                "Debugger.setBreakpointByUrl",
+                "Runtime.enable",
+                "DOM.getDocument",
+            ]
+            .map(str::to_owned),
+        );
+        let undone: Vec<String> = undo(&left).into_iter().map(|(m, _)| m).collect();
+        assert_eq!(
+            undone,
+            [
+                "Overlay.setInspectMode",
+                "Overlay.hideHighlight",
+                "Emulation.clearDeviceMetricsOverride",
+                "Network.setCacheDisabled",
+                "Debugger.resume",
+                "Debugger.disable",
+                "Overlay.disable",
+            ]
+        );
+        assert!(undo(&BTreeSet::new()).is_empty());
     }
 
     #[test]

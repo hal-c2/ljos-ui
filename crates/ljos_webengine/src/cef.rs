@@ -14,7 +14,7 @@
 //! named for their number.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ffi::{CString, c_char, c_int};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1097,6 +1097,9 @@ struct Shared {
     profile: OnceLock<String>,
     /// The page's DevTools, while a view shows them.
     inspector: Mutex<Option<Arc<Inspector>>>,
+    /// The view's own user agent override, put back after a front end
+    /// that changed it goes.
+    agent: OnceLock<Json>,
 }
 
 /// How the browser a view shows its pages in came to be.
@@ -1574,6 +1577,7 @@ impl Shared {
             popups: Mutex::default(),
             profile: OnceLock::new(),
             inspector: Mutex::default(),
+            agent: OnceLock::new(),
         }
     }
 
@@ -1597,41 +1601,56 @@ impl Shared {
         let Some(inspector) = Self::lock(&self.inspector).clone() else {
             return;
         };
-        if inspector.ended() {
-            self.release_debugger();
-        }
-        let messages = {
+        let mut out = {
             let mut dev = Self::lock(&self.dev);
             inspector.take(|| {
                 dev.next_id += 1;
                 dev.next_id
             })
         };
+        // What one that went left is put back before what the next sent.
+        let mut messages = self.undo(&out.left);
+        messages.append(&mut out.messages);
         self.send_dev(messages);
     }
 
     /// The page's DevTools front end, if any, goes.
     fn close_inspector(&self) {
-        if let Some(inspector) = Self::lock(&self.inspector).take() {
+        // Let go before the page is told anything: CEF may answer at once,
+        // and the answer is passed on under this same lock.
+        let inspector = Self::lock(&self.inspector).take();
+        if let Some(inspector) = inspector {
             inspector.close();
+            let left = inspector.left();
             if !self.closing.load(Ordering::Relaxed) && Self::lock(&self.browser).is_some() {
-                self.release_debugger();
+                let out = self.undo(&left);
+                self.send_dev(out);
             }
         }
     }
 
-    /// A front end that went may have left the page stopped at one of its
-    /// breakpoints, with nobody to go on from it: the page goes on, and
-    /// breaks no more. The view's own domains stay on.
-    fn release_debugger(&self) {
-        let out = {
-            let mut dev = Self::lock(&self.dev);
-            vec![
-                dev.call("Debugger.resume", json!({}), Pending::Ignore),
-                dev.call("Debugger.disable", json!({}), Pending::Ignore),
-            ]
-        };
-        self.send_dev(out);
+    /// The calls that put back what front ends that went changed: a page
+    /// stopped at one's breakpoint goes on, its highlight and emulation
+    /// go, and the domains it turned on go off. The view's own stay on.
+    fn undo(&self, left: &BTreeSet<String>) -> Vec<Vec<u8>> {
+        if left.is_empty() {
+            return Vec::new();
+        }
+        let mut dev = Self::lock(&self.dev);
+        let mut out: Vec<Vec<u8>> = inspector::undo(left)
+            .into_iter()
+            .map(|(method, params)| dev.call(&method, params, Pending::Ignore))
+            .collect();
+        if left.iter().any(|m| inspector::AGENT.contains(&m.as_str())) {
+            // An empty agent is no override at all.
+            let agent = self
+                .agent
+                .get()
+                .cloned()
+                .unwrap_or_else(|| json!({ "userAgent": "" }));
+            out.push(dev.call("Emulation.setUserAgentOverride", agent, Pending::Ignore));
+        }
+        out
     }
 
     /// Whether the browser is still on its blank first page.
@@ -3293,6 +3312,7 @@ fn attach(shared: &Arc<Shared>, browser: ::cef::Browser, start: &Start, made: Ma
             if !p.accept_language.is_empty() {
                 params["acceptLanguage"] = json!(p.accept_language);
             }
+            let _ = shared.agent.set(params.clone());
             out.push(dev.call("Emulation.setUserAgentOverride", params, Pending::Ignore));
         }
         // In before the view's first page, which waits for the blank one.
@@ -3518,6 +3538,11 @@ impl Page for CefPage {
     }
 
     fn set_hidden(&self, hidden: bool) {
+        // A popup being adopted is shown as its start says once made.
+        if let Some((start, _)) = Shared::lock(&self.shared.adopting).as_mut() {
+            start.hidden = hidden;
+            return;
+        }
         if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
             u.start.hidden = hidden;
             return;
@@ -3538,6 +3563,10 @@ impl Page for CefPage {
     }
 
     fn set_muted(&self, muted: bool) {
+        if let Some((start, _)) = Shared::lock(&self.shared.adopting).as_mut() {
+            start.muted = muted;
+            return;
+        }
         if let Some(u) = Shared::lock(&self.shared.unborn).as_mut() {
             u.start.muted = muted;
             return;
@@ -3755,6 +3784,9 @@ impl Page for CefPage {
     }
 
     fn close_dev_tools(&self) {
+        // The view's word: what puts back what the front end changed is
+        // waited on, as the rest the view tells the browser is.
+        told_work();
         self.shared.close_inspector();
     }
 
