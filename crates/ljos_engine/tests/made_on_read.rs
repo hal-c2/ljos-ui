@@ -274,3 +274,33 @@ fn a_keeper_lets_go_only_of_what_it_keeps_itself() {
     h.engine.stop_keeping_by(item, k, another);
     assert!(!h.engine.is_made_on_read(item, k));
 }
+
+thread_local! {
+    static STILL_MINE: Cell<Option<bool>> = const { Cell::new(None) };
+}
+
+/// Hands the property it keeps to `another` as it is read, then lets go of
+/// it, as a keeper that no longer wants it would.
+fn handing_over(e: &Engine, me: ObjectId, prop: PropIndex, kept: Kept) {
+    if kept == Kept::Read {
+        e.keep_on_read(me, prop, another).unwrap();
+        STILL_MINE.with(|s| s.set(Some(e.is_kept_by(me, prop, handing_over))));
+        e.stop_keeping_by(me, prop, handing_over);
+    }
+}
+
+#[test]
+fn a_keeper_another_takes_the_place_of_as_it_is_read_keeps_nothing() {
+    let h = engine();
+    let item = h.load(KEPT);
+    let k = index(&h, item, "k");
+    STILL_MINE.with(|s| s.set(None));
+    h.engine.keep_on_read(item, k, handing_over).unwrap();
+    let _ = h.num(item, "k");
+    assert_eq!(STILL_MINE.with(Cell::get), Some(false));
+    assert!(
+        h.engine.is_kept_by(item, k, another),
+        "it stays the other's"
+    );
+    assert!(!h.engine.is_kept_by(item, k, handing_over));
+}
