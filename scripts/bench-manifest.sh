@@ -5,7 +5,11 @@
 # arguments. An example named that qml6 cannot run here is measured without
 # it ("qt": false). Each example runs as `mise run gallery:run` runs it: with
 # its stand-ins (corpus/standins) and where its downloaded assets are
-# (`mise run gallery:assets <id>` first).
+# (`mise run gallery:assets <id>` first; an example named without them is
+# refused, and left out of the default set). qml6 opens an example whose
+# own program calls functions of its root ("launcher" in corpus/examples.json)
+# through corpus/harness/launch.qml, which makes the same calls Ljós's
+# `--example` makes.
 # Needs target/debug/qml-compare (cargo build -p qml_compare).
 set -euo pipefail
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,9 +37,10 @@ while IFS=$'\t' read -r id dir _; do
 done <<< "$rows"
 
 ROWS="$rows" python3 - "$root" "$overlays" "$gallery" "$drive" "$manifest" ${ids[@]+"${ids[@]}"} <<'PY'
-import json, os, re, sys
+import json, os, re, subprocess, sys
 root, overlays, gallery, drive, manifest, *wanted = sys.argv[1:]
 assets = json.load(open(os.path.join(root, "corpus", "assets.json")))
+examples = {e["id"]: e for e in json.load(open(os.path.join(root, "corpus", "examples.json")))["examples"]}
 renders = None
 try:
     renders = {e["id"] for e in json.load(open(gallery)) if e.get("renders")}
@@ -58,6 +63,13 @@ for line in os.environ["ROWS"].splitlines():
     # Named examples are measured even where the last gallery run had no picture.
     if not wanted and renders is not None and cid not in renders:
         continue
+    # Measured without its downloaded assets, an example draws another picture (a 3D view with
+    # no mesh is black) and the numbers are of that one.
+    if cid in assets and subprocess.run(["python3", os.path.join(root, "scripts", "gallery-assets.py"), "--check", cid]).returncode:
+        if wanted:
+            sys.exit(1)
+        print(f"{cid}: left out, as its downloaded assets are not here", file=sys.stderr)
+        continue
     apps.append({
         "id": cid,
         "file": os.path.join(d, entry),
@@ -68,6 +80,12 @@ for line in os.environ["ROWS"].splitlines():
         # The example's directory is its project, as for the gallery.
         "ljos_args": ["--project", d, "--example", cid],
     })
+    # Its own program calls functions of its root once it is made; Ljós's `--example` makes the
+    # calls, and on qml6 corpus/harness/launch.qml does.
+    calls = examples.get(cid, {}).get("launcher", {}).get("calls", [])
+    if calls:
+        apps[-1]["qt_file"] = os.path.join(root, "corpus", "harness", "launch.qml")
+        apps[-1]["qt_args"] = ["--", apps[-1]["file"], *calls]
     # BENCH_QT names examples to measure on qml6 although corpus/examples.json says it cannot
     # run them: a newer Qt than the one that was written against may have the modules.
     if qt != "true" and cid not in os.environ.get("BENCH_QT", "").split():

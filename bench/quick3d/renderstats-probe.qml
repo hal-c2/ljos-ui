@@ -1,6 +1,9 @@
 // What Qt's own renderer says a 3D frame cost, for `mise run bench:3d`:
-// `qml6 renderstats-probe.qml -- <scene.qml>` opens the scene and once a
-// second logs a line `renderstats {…}` of every View3D's renderStats. Qt's
+// `qml6 renderstats-probe.qml -- <scene.qml> [call…]` opens the scene, calls
+// the functions of its root named after it, as an example's own program does
+// ("launcher" in corpus/examples.json; FX Material Showroom loads its 3D
+// screen only then), and once a second logs a line `renderstats {…}` of
+// every View3D's renderStats. Qt's
 // numbers cannot be read from outside the process, and the scene is not
 // changed for them: this file only loads it. Detailed counts (draw calls,
 // passes) are Qt's to collect only while extendedDataCollectionEnabled is
@@ -32,7 +35,8 @@ QtObject {
 
     Component.onCompleted: {
         const args = Qt.application.arguments;
-        const component = Qt.createComponent("file://" + args[args.length - 1]);
+        const dashes = args.indexOf("--");
+        const component = Qt.createComponent("file://" + args[dashes + 1]);
         if (component.status !== Component.Ready) {
             console.log("renderstats-error " + component.errorString());
             Qt.exit(2);
@@ -44,6 +48,15 @@ QtObject {
             Qt.exit(2);
             return;
         }
+        for (const call of args.slice(dashes + 2)) {
+            if (typeof scene[call] !== "function") {
+                console.log("renderstats-error the scene has no function " + call);
+                Qt.exit(2);
+                return;
+            }
+            scene[call]();
+        }
+        // A view the calls made (a Loader's) is there now; one made later is not counted.
         find(scene.contentItem !== undefined ? scene.contentItem : scene);
         for (const v of views) {
             if (v.renderStats.extendedDataCollectionEnabled !== undefined)

@@ -306,6 +306,29 @@ Feature: Measuring an application under a limit
         1
         """
 
+    # An example's own program may do more than load its file. FX Material
+    # Showroom's calls a function of its root once its assets are there, and
+    # until then the window shows a loading screen. Ljós makes the call under
+    # `--example`. qml6 opens a launcher that makes the same call, so both
+    # runtimes measure the same window.
+    Scenario: qml6 opens the file the manifest gives it for Qt, with its arguments
+      Given the file "app.sh":
+        """sh
+        #!/bin/sh
+        echo "$@" > opened
+        exec sleep 30
+        """
+      And the file "apps.json":
+        """json
+        {"apps": [{"id": "main", "file": "Main.qml", "qt_file": "launch.qml", "qt_args": ["--", "Main.qml", "loaded"]}]}
+        """
+      When the author runs "ljos bench --manifest apps.json --runtime qt --profile pi-zero --cpus 4 --cpu-list 0-3 --launcher launcher.sh --cgroup-root cg --qml6 app.sh --settle 0 --idle 0 --load 0 --startup-timeout 1 --out out"
+      Then the command exits with status 0
+      And the file "opened" is:
+        """
+        launch.qml -- Main.qml loaded
+        """
+
   Rule: A report compared with an earlier one says what moved by more than runs of one build do
 
     # The margins are the noise docs/BENCHMARKS.md describes: memory may
