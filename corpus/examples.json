@@ -68,6 +68,11 @@
     "height": 600
    },
    "volatile": "animation",
+   "launcher": {
+    "calls": [
+     "downloadComplete"
+    ]
+   },
    "qt": {
     "runnable": false,
     "reason": "needs QtQuick3D.Helpers and QtQuick3D.Effects, which are not installed"

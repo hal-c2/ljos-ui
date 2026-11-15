@@ -57,7 +57,9 @@ fn backends(id: &str) -> Option<fn(&Engine)> {
 /// The functions of its root object the launcher of the example `id` calls
 /// once the object is made, in order (in Qt, its `main`, by way of
 /// `QMetaObject::invokeMethod`). Its assets are `gallery:assets`'s, already
-/// there when the example starts.
+/// there when the example starts. `corpus/examples.json` says the same as
+/// `"launcher": {"calls": […]}`, for the tools that start the example on
+/// qml6 (`corpus/harness/launch.qml`).
 pub fn launcher_calls(id: &str) -> &'static [&'static str] {
     match id {
         "fx-material-showroom" => &["downloadComplete"],
@@ -141,6 +143,28 @@ mod tests {
         register(&engine, "clocks");
         assert_eq!(engine.type_dump(), before);
         assert!(!supported().contains(&"no-such-example"));
+    }
+
+    // qml6 gets the calls from the manifest, Ljós from here: if the two
+    // differ, the bench measures two windows and calls them one.
+    #[test]
+    fn the_manifest_lists_the_calls_the_launchers_make() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../corpus/examples.json");
+        let manifest: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).expect("corpus/examples.json"))
+                .expect("corpus/examples.json is JSON");
+        let examples = manifest["examples"].as_array().expect("examples");
+        let mut with_calls = 0;
+        for example in examples {
+            let id = example["id"].as_str().expect("an id");
+            let listed: Vec<&str> = example["launcher"]["calls"]
+                .as_array()
+                .map(|calls| calls.iter().map(|c| c.as_str().expect("a name")).collect())
+                .unwrap_or_default();
+            assert_eq!(listed, launcher_calls(id), "{id}'s launcher calls");
+            with_calls += usize::from(!listed.is_empty());
+        }
+        assert!(with_calls > 0, "no example lists its launcher's calls");
     }
 
     #[test]

@@ -25,5 +25,9 @@ ljos_xml = { path = "../../crates/ljos_xml" }
 # `Qt.labs.folderlistmodel`, which photosurface lists its pictures with.
 ljos_folderlistmodel = { path = "../../crates/ljos_folderlistmodel" }
 
+[dev-dependencies]
+# The cross-check of `launcher_calls` with corpus/examples.json.
+serde_json = { workspace = true }
+
 [lints]
 workspace = true
