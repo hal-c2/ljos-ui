@@ -10,7 +10,7 @@
 //! value at once when anything else observes the property
 //! ([`Engine::observers_of`]).
 
-use ljos_reactive::NodeId;
+use ljos_reactive::{NodeId, NodeKind, NodeState};
 
 use crate::engine::{Engine, store_in};
 use crate::error::EngineError;
@@ -390,6 +390,63 @@ impl Engine {
                 .iter()
                 .flat_map(|r| r.readers(prop))
                 .any(|r| g.is_current(r))
+    }
+
+    /// The bindings that follow `prop` when only bindings read it, each of
+    /// them read by nothing but bindings of the same: what would hold its
+    /// value, could be worked out again on a read instead
+    /// ([`Engine::work_out_again`]), and so need not hear of each change.
+    /// Empty when nothing observes `prop`. `None` when anything on the way
+    /// shows what it reads: an effect, a handler or a watch, an eager
+    /// binding, a property whose change its type is told of, or a reader
+    /// that is not a property's binding; also past a long or wide chain.
+    pub fn lazy_readers(
+        &self,
+        obj: ObjectId,
+        prop: PropIndex,
+    ) -> Option<Vec<(ObjectId, PropIndex)>> {
+        // What a hidden thing's bindings come to is a few; more is not
+        // worth the walk on every frame it is asked.
+        const MOST: usize = 64;
+        let g = &self.inner.graph;
+        let mut chain: Vec<(ObjectId, PropIndex)> = Vec::new();
+        let mut next = vec![self.redirect(obj, prop)];
+        while let Some((o, p)) = next.pop() {
+            for r in self.observers_of(o, p) {
+                if g.kind(r) != Some(NodeKind::Property) || g.is_eager(r) || g.is_noted(r) {
+                    return None;
+                }
+                let key = self.inner.store.borrow().node_keys.get(r).copied()?;
+                let at = (key.object, key.prop);
+                if chain.contains(&at) {
+                    continue;
+                }
+                if chain.len() == MOST {
+                    return None;
+                }
+                chain.push(at);
+                next.push(at);
+            }
+        }
+        Some(chain)
+    }
+
+    /// Has the binding of `prop` run again when it is next read, though
+    /// nothing it read was written: for what it reads that is made on read
+    /// ([`Engine::make_on_read_by`]) and has gone on since. False, and
+    /// nothing done, for a property with no binding, one whose binding is
+    /// running, or one a run still going has read (it would come back to
+    /// that run as a loop).
+    pub fn work_out_again(&self, obj: ObjectId, prop: PropIndex) -> bool {
+        let (obj, prop) = self.redirect(obj, prop);
+        let g = &self.inner.graph;
+        let Some(n) = self.node_if_any(obj, prop) else {
+            return false;
+        };
+        if !g.is_bound(n) || g.state(n) == Some(NodeState::Computing) || g.is_read_by_a_run(n) {
+            return false;
+        }
+        g.refresh(n).is_ok()
     }
 
     /// Takes the maker of `prop` away, if it has one.

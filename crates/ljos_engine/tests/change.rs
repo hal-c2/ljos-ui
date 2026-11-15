@@ -97,6 +97,17 @@ fn a_binding_is_told_when_its_source_changes_and_read_when_wanted() {
 }
 
 #[test]
+fn a_binding_on_a_property_with_a_change_hook_sees_what_it_reads() {
+    let (e, obj) = placed();
+    e.bind(obj, Placed::X.index, move |e| {
+        Value::Real(e.read(obj, Placed::SOURCE.index).to_number() * 2.0)
+    })
+    .unwrap();
+    assert_eq!(e.get(obj, Placed::X).unwrap(), 0.0);
+    assert_eq!(e.lazy_readers(obj, Placed::SOURCE.index), None);
+}
+
+#[test]
 fn a_member_of_a_group_is_told_on_the_object_that_holds_it() {
     let (e, obj) = placed();
     e.write_by_name(obj, "place.at", Value::Real(5.0)).unwrap();

@@ -134,3 +134,77 @@ fn a_value_given_unobserved_is_refused_while_something_observes_the_property() {
     assert!(!h.engine.give_unobserved(item, k, Value::Real(2.0)));
     assert_eq!(h.num(item, "seen"), 1.0);
 }
+
+const CHAIN: &str = "import QtQuick\nItem {\n  property real t: 0\n  property real a: t * 2\n  property real b: a + 1\n  property real alone: 5\n}";
+
+fn index(h: &support::Harness, item: ObjectId, name: &str) -> PropIndex {
+    h.engine.property_index(item, name).unwrap()
+}
+
+#[test]
+fn the_lazy_readers_of_a_property_are_the_bindings_read_by_nothing_else() {
+    let h = engine();
+    let item = h.load(CHAIN);
+    let (t, a, b) = (
+        index(&h, item, "t"),
+        index(&h, item, "a"),
+        index(&h, item, "b"),
+    );
+    assert_eq!(h.num(item, "b"), 1.0);
+    let mut readers = h.engine.lazy_readers(item, t).unwrap();
+    readers.sort();
+    assert_eq!(readers, [(item, a), (item, b)]);
+    // Read by nothing at all.
+    let alone = index(&h, item, "alone");
+    assert_eq!(h.engine.lazy_readers(item, alone), Some(Vec::new()));
+}
+
+#[test]
+fn a_watch_at_the_end_of_the_bindings_sees_what_they_read() {
+    let h = engine();
+    let item = h.load(CHAIN);
+    let (t, b) = (index(&h, item, "t"), index(&h, item, "b"));
+    assert_eq!(h.num(item, "b"), 1.0);
+    h.engine.watch(item, b, |_, _| {}).unwrap();
+    assert_eq!(h.engine.lazy_readers(item, t), None);
+}
+
+#[test]
+fn an_effect_that_reads_the_bindings_sees_what_they_read() {
+    let h = engine();
+    let item = h.load(CHAIN);
+    let (t, a) = (index(&h, item, "t"), index(&h, item, "a"));
+    h.engine
+        .effect_in(item, move |e| {
+            let _ = e.read(item, a);
+        })
+        .unwrap();
+    assert_eq!(h.engine.lazy_readers(item, t), None);
+}
+
+thread_local! {
+    static NOW: Cell<f64> = const { Cell::new(0.0) };
+}
+
+/// Gives the time of now on every read, as a clock nobody observes does.
+fn clock(e: &Engine, me: ObjectId, prop: PropIndex) -> Value {
+    let _ = e.make_on_read_by(me, prop, clock);
+    Value::Real(NOW.with(Cell::get))
+}
+
+#[test]
+fn a_binding_worked_out_again_reads_a_value_made_on_read_anew() {
+    let h = engine();
+    let item = h.load(CHAIN);
+    let (t, a) = (index(&h, item, "t"), index(&h, item, "a"));
+    h.set(item, "t", Value::Real(10.0));
+    assert_eq!(h.num(item, "a"), 20.0);
+    // From now on `t` is made when it is read, and nothing is told.
+    NOW.with(|n| n.set(30.0));
+    h.engine.make_on_read_by(item, t, clock).unwrap();
+    assert_eq!(h.num(item, "a"), 20.0);
+    assert!(h.engine.work_out_again(item, a));
+    assert_eq!(h.num(item, "a"), 60.0);
+    // A property with no binding has nothing to work out.
+    assert!(!h.engine.work_out_again(item, index(&h, item, "alone")));
+}
