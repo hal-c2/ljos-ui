@@ -223,13 +223,13 @@ impl SceneSource for EngineSource<'_> {
 
     fn matrices(&self, o: ObjectId, p: Prop3d) -> Vec<Mat4> {
         let e = self.e;
-        let index = match p {
-            Prop3d::InverseBindPoses if e.is::<Skin>(o) => Skin::INVERSE_BIND_POSES.index,
-            Prop3d::InverseBindPoses if e.is::<Model>(o) => Model::INVERSE_BIND_POSES.index,
-            _ => return Vec::new(),
-        };
-        match &e.read(o, index) {
-            Value::List(l) => l.iter().map(|m| crate::skin::matrix(e, m)).collect(),
+        match p {
+            Prop3d::InverseBindPoses if e.is::<Skin>(o) => {
+                crate::skin::poses(e, o, Skin::INVERSE_BIND_POSES.index, |s: &Skin| &s.poses)
+            }
+            Prop3d::InverseBindPoses if e.is::<Model>(o) => {
+                crate::skin::poses(e, o, Model::INVERSE_BIND_POSES.index, |m: &Model| &m.poses)
+            }
             _ => Vec::new(),
         }
     }
