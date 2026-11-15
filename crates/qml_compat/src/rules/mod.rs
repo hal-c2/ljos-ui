@@ -32,7 +32,7 @@ mod window;
 pub(crate) use gestures::gesture;
 pub use layout::LAYOUT_RENAMES;
 pub(crate) use layout::arrange;
-pub(crate) use text::font;
+pub(crate) use text::{font, messages};
 pub use text::font::FONT_RENAMES;
 
 use std::ops::Range;

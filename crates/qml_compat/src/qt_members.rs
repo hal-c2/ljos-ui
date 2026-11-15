@@ -443,6 +443,52 @@ impl Members {
         self.declared.push(name.to_owned());
     }
 
+    /// Whether the pass sees every name in sight of the file's scripts:
+    /// it knows the type of every object, and the file has no delegate.
+    pub(crate) fn sure(&self) -> bool {
+        !self.delegate && !self.unknown
+    }
+
+    /// What takes `name` in the file, if anything does: a property or a
+    /// member in sight, what `beside` says is beside the file, or a word
+    /// of `source` but where `own` says it is the lowering's own (or a
+    /// property's type).
+    pub(crate) fn hider(
+        &self,
+        source: &str,
+        name: &str,
+        beside: impl Fn(&str) -> Option<Hider>,
+        own: impl Fn(&usize) -> bool,
+    ) -> Option<Hider> {
+        let capitalised = name.starts_with(|c: char| c.is_ascii_uppercase());
+        if let Some(by) = beside(name) {
+            return Some(by);
+        }
+        if !capitalised {
+            if self.declared.iter().any(|d| d == name) {
+                return Some(Hider::Own);
+            }
+            if self.types.iter().any(|ty| {
+                ty.property(name).is_some() || ty.has_method(name) || ty.signal(name).is_some()
+            }) {
+                return Some(Hider::Member);
+            }
+            if self.delegate {
+                return Some(Hider::Role);
+            }
+            if self.unknown {
+                return Some(Hider::UnknownType);
+            }
+        }
+        let elsewhere = words(source, name).any(|at| {
+            // What a file of Qt reads off `Screen` is the attached
+            // `Screen` Ljos.Ui has as it is.
+            let read_off = name == SCREEN && source[at + name.len()..].starts_with('.');
+            !read_off && !own(&at) && !self.typed.iter().any(|t| t.contains(&at))
+        });
+        elsewhere.then_some(Hider::Word)
+    }
+
     /// `value` goes to a `color`: `Qt.red` there is the colour.
     pub(crate) fn colour(&mut self, value: Range<usize>) {
         self.colours.push(value);
@@ -464,37 +510,7 @@ impl Members {
             .filter_map(|u| u.lowered.as_ref().ok())
             .flat_map(|l| l.changes.iter().map(|(range, _)| range.clone()))
             .collect();
-        let hider = |name: &str| -> Option<Hider> {
-            let capitalised = name.starts_with(|c: char| c.is_ascii_uppercase());
-            if let Some(by) = beside(name) {
-                return Some(by);
-            }
-            if !capitalised {
-                if self.declared.iter().any(|d| d == name) {
-                    return Some(Hider::Own);
-                }
-                if self.types.iter().any(|ty| {
-                    ty.property(name).is_some() || ty.has_method(name) || ty.signal(name).is_some()
-                }) {
-                    return Some(Hider::Member);
-                }
-                if self.delegate {
-                    return Some(Hider::Role);
-                }
-                if self.unknown {
-                    return Some(Hider::UnknownType);
-                }
-            }
-            let elsewhere = words(source, name).any(|at| {
-                // What a file of Qt reads off `Screen` is the attached
-                // `Screen` Ljos.Ui has as it is.
-                let read_off = name == SCREEN && source[at + name.len()..].starts_with('.');
-                !read_off
-                    && !changed.iter().any(|c| c.contains(&at))
-                    && !self.typed.iter().any(|t| t.contains(&at))
-            });
-            elsewhere.then_some(Hider::Word)
-        };
+        let hider = |name: &str| self.hider(source, name, &beside, |at| changed.iter().any(|c| c.contains(at)));
         let mut changes = Vec::new();
         let mut core = false;
         for u in &self.uses {

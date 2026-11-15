@@ -153,6 +153,8 @@ pub enum Cause {
         name: String,
     },
     Font(Font),
+    /// A translated text the pass cannot write as Ljós's.
+    Message(Message),
     Loader(Loader),
     Animated(Animated),
     Row(Row),
@@ -299,6 +301,29 @@ pub enum Font {
     BoldBlock,
     /// `.bold` read or written in a script.
     BoldRead,
+}
+
+/// Why a translated text keeps a file (docs/DIALECT.md §4.13). `name` is
+/// Qt's function as written.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Message {
+    /// Its text, or its context, is a value: no catalogue holds it.
+    NotWrittenOut { name: String },
+    /// The function read, not called.
+    NotCalled { name: String },
+    /// Its `%N` are not each filled by one `.arg` of one value, in order.
+    Placeholders { name: String },
+    /// `qsTrId` given a count or `.arg`.
+    IdWithValues { name: String },
+    /// `qsTranslate` given a disambiguation beside its context.
+    TwoContexts { name: String },
+    /// A text marked for later, filled now.
+    MarkedFilled { name: String },
+    /// A counted text that says `#`, `{` or `}`, which `plural` reads.
+    CountedBraces { name: String },
+    /// The name the rewrite writes is another of the file's.
+    Taken { name: &'static str },
 }
 
 /// Why a `Loader` keeps a file.
@@ -603,6 +628,7 @@ impl fmt::Display for Cause {
                 write!(f, "a local is called `{name}`, as a member Ljós renames is")
             }
             Cause::Font(font) => font.fmt(f),
+            Cause::Message(message) => message.fmt(f),
             Cause::Loader(loader) => loader.fmt(f),
             Cause::Animated(animated) => animated.fmt(f),
             Cause::Row(row) => row.fmt(f),
@@ -676,6 +702,49 @@ impl fmt::Display for Font {
                 "`.bold` of a font is read or written, and Ljós's font has only a `weight`",
             ),
         }
+    }
+}
+
+impl fmt::Display for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Message::NotWrittenOut { name } => {
+                write!(f, "`{name}` of a value that is not written out")
+            }
+            Message::NotCalled { name } => {
+                write!(f, "`{name}` is read as a value, not called")
+            }
+            Message::Placeholders { name } => write!(
+                f,
+                "the `%N` of `{name}` are not each filled by one `.arg` of one value, in order"
+            ),
+            Message::IdWithValues { name } => write!(
+                f,
+                "`{name}` is given a count or `.arg`, which `t({{ id }})` does not say yet"
+            ),
+            Message::TwoContexts { name } => write!(
+                f,
+                "`{name}` has a disambiguation beside its context, and a message of `t` has one context"
+            ),
+            Message::MarkedFilled { name } => write!(
+                f,
+                "`{name}` marks a text for later and fills it now, which `msg` does not"
+            ),
+            Message::CountedBraces { name } => write!(
+                f,
+                "`{name}`'s counted text says `#`, `{{` or `}}`, which `plural` reads as its own"
+            ),
+            Message::Taken { name } => write!(
+                f,
+                "a translated text is `{name}` in Ljós's API, and `{name}` is another name of the file"
+            ),
+        }
+    }
+}
+
+impl From<Message> for Cause {
+    fn from(message: Message) -> Self {
+        Cause::Message(message)
     }
 }
 

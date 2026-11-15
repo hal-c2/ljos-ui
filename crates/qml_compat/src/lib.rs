@@ -53,10 +53,12 @@ use qml_syntax::{
 use qt_types::Type;
 use rows::{Delegate, Owns, Rows};
 use rules::states::animation::Animating;
-use rules::{arrange, font, gesture};
+use rules::{arrange, font, gesture, messages};
 
 pub use cause::Xhr;
-pub use cause::{Animated, Cause, Differs, Font, Hider, Layout, Loader, Owner, Row};
+pub use cause::{
+    Animated, Cause, Differs, Font, Hider, Layout, Loader, Message, Owner, Row,
+};
 pub use group::{Alone, References, group, references};
 pub use lowering::{Changed, Held, Lowering, Project, ProjectScript, ScriptEdit, rows_path};
 pub use migrated::migrated;
@@ -395,6 +397,12 @@ fn lower_parsed(
         animating: Animating::None,
         changed: Vec::new(),
         requests: Vec::new(),
+        messages: messages::Messages::default(),
+        quoted: parsed
+            .comments
+            .iter()
+            .map(|c| c.span.start as usize..c.span.end as usize)
+            .collect(),
     };
     let mut unqualified = Unqualified::default();
     unqualified.object(&parsed.document.root);
@@ -589,11 +597,50 @@ struct Pass<'s> {
     changed: Vec<(Option<String>, String)>,
     /// What writing requests as `fetch` edits ([`rules::network::request`]).
     requests: Vec<Range<usize>>,
+    /// The file's translated texts, written as Ljós's.
+    messages: messages::Messages,
+    /// Where the file's strings and comments are: a word there is no name.
+    quoted: Vec<Range<usize>>,
 }
 
 type Step = Result<(), Kept>;
 
 impl<'s> Pass<'s> {
+    /// Writes the file's translated texts as Ljós's, where `t`, `plural`
+    /// and `msg` would be `Ljos.Core`'s. DECISION: where the pass cannot
+    /// tell (an object of a type it does not know, or a delegate, whose
+    /// row's roles come first), they stay Qt's and still run, as `Qt`'s
+    /// members do; where the name is another of the file, the file is kept.
+    fn messages(&mut self, members: &qt_members::Members) -> Step {
+        let messages = std::mem::take(&mut self.messages);
+        if !members.sure() {
+            return Ok(());
+        }
+        if let Some(kept) = messages.kept {
+            return Err(kept);
+        }
+        let written: Vec<Range<usize>> = messages.changes.iter().map(|c| c.range.clone()).collect();
+        for &(name, at) in &messages.names {
+            let own = |at: &usize| {
+                written.iter().any(|r| r.contains(at)) || self.quoted.iter().any(|r| r.contains(at))
+            };
+            if members
+                .hider(self.source, name, |n| self.scope.may_be_beside(n), own)
+                .is_some()
+            {
+                return Err(Kept {
+                    cause: Message::Taken { name }.into(),
+                    at,
+                });
+            }
+        }
+        if !messages.names.is_empty() {
+            self.scope.modules.names(Ljos::Core);
+        }
+        self.changes.extend(messages.changes);
+        Ok(())
+    }
+
     /// Whether the file imports a Qt module the pass lowers, one whose
     /// import takes a line, and so has something to lower.
     fn document(&mut self, document: &QmlDocument<'_>) -> Result<bool, Kept> {
@@ -641,6 +688,7 @@ impl<'s> Pass<'s> {
         self.root_owns = self.owns(&document.root, root);
         self.object(&document.root, root, root, true)?;
         let members = std::mem::take(&mut self.members);
+        self.messages(&members)?;
         let settled = members.settle(self.source, |name| self.scope.may_be_beside(name))?;
         let lowered: Vec<Change> = settled
             .changes
@@ -2501,7 +2549,34 @@ impl Script<'_, '_> {
 }
 
 impl<'a> Visit<'a> for Script<'_, '_> {
+    fn visit_string_literal(&mut self, it: &oxc_ast::ast::StringLiteral<'a>) {
+        self.pass
+            .quoted
+            .push(it.span.start as usize..it.span.end as usize);
+    }
+
+    fn visit_template_element(&mut self, it: &oxc_ast::ast::TemplateElement<'a>) {
+        self.pass
+            .quoted
+            .push(it.span.start as usize..it.span.end as usize);
+    }
+
     fn visit_call_expression(&mut self, it: &CallExpression<'a>) {
+        // A `ListElement`'s value stays as written: its list stays a
+        // `ListModel`, which keeps a `qsTr` as Qt's does.
+        let rewrite = !matches!(
+            self.scope,
+            Ty::Exact(ty) | Ty::Derived(ty) if ty.name == "ListElement"
+        );
+        let source = self.pass.source;
+        let own = &self.own;
+        let scope = &self.pass.scope;
+        self.pass.messages.call(
+            source,
+            it,
+            rewrite,
+            |name, at| !own.binds(name, at) && scope.id(name).is_none(),
+        );
         // A member of `Qt` called is told of with its arguments: some are
         // lowered by them (`Qt.darker(c, 2)`, `Qt.locale()`).
         if let Expression::StaticMemberExpression(callee) = &it.callee
@@ -2727,6 +2802,12 @@ impl<'a> Visit<'a> for Script<'_, '_> {
                 }
             }
             return;
+        }
+        if messages::is_qt(name)
+            && !self.own.binds(name, it.span.start)
+            && self.pass.scope.id(name).is_none()
+        {
+            self.pass.messages.read(name, it.span.start);
         }
         let meaning = self.meaning(name, it.span.start);
         if matches!(meaning, Meaning::Type) {
