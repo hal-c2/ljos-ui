@@ -452,6 +452,8 @@ fn preprocessed(src: &str) -> Option<String> {
     }
     let mut open: Vec<Branch> = Vec::new();
     let mut defined: Vec<&str> = Vec::new();
+    // Names defined or undefined in a branch that cannot be told.
+    let mut unsure: Vec<&str> = Vec::new();
     let mut out = String::with_capacity(src.len());
     let mut directive = false;
     for line in src.split_inclusive('\n') {
@@ -472,7 +474,9 @@ fn preprocessed(src: &str) -> Option<String> {
             let name = words.first().copied().unwrap_or("");
             let rest = &words[words.len().min(1)..];
             let known = |n: &str| {
-                if defined.contains(&n) {
+                if unsure.contains(&n) {
+                    None
+                } else if defined.contains(&n) {
                     Some(true)
                 } else if n == "GL_ES" {
                     Some(false)
@@ -482,7 +486,9 @@ fn preprocessed(src: &str) -> Option<String> {
             };
             let told = |rest: &[&str]| -> Option<bool> {
                 match rest {
-                    [n] if n.bytes().all(|b| b.is_ascii_digit()) => Some(!n.trim_start_matches('0').is_empty()),
+                    [n] if n.bytes().all(|b| b.is_ascii_digit()) => {
+                        Some(!n.trim_start_matches('0').is_empty())
+                    }
                     ["defined", n] | ["defined", "(", n, ")"] => known(n),
                     ["!", "defined", n] | ["!", "defined", "(", n, ")"] => known(n).map(|d| !d),
                     _ => None,
@@ -515,6 +521,7 @@ fn preprocessed(src: &str) -> Option<String> {
                 "endif" => {
                     open.pop();
                 }
+                "define" | "undef" if kept.is_none() => unsure.extend(rest.first()),
                 "define" if kept == Some(true) => defined.extend(rest.first()),
                 "undef" if kept == Some(true) => defined.retain(|d| Some(d) != rest.first()),
                 _ => {}
@@ -1840,16 +1847,58 @@ mod tests {
         let light = "\nvoid DIRECTIONAL_LIGHT() { }\n";
         for (guarded, line) in [
             ("#ifndef GL_ES\nprecision mediump float;\n#endif", Some(4)),
-            ("#ifdef GL_ES\nprecision highp float;\n#else\nprecision lowp float;\n#endif", Some(6)),
+            (
+                "#ifdef GL_ES\nprecision highp float;\n#else\nprecision lowp float;\n#endif",
+                Some(6),
+            ),
             ("#if 1\nprecision lowp float;\n#endif", Some(4)),
-            ("#define LOW\n#ifdef LOW\nprecision lowp float;\n#endif", Some(5)),
-            ("#if defined(GL_ES)\n#elif 1\nprecision lowp float;\n#endif", Some(5)),
-            ("#define LOW\n#undef LOW\n#ifdef LOW\nprecision lowp float;\n#endif", None),
+            (
+                "#define LOW\n#ifdef LOW\nprecision lowp float;\n#endif",
+                Some(5),
+            ),
+            (
+                "#if defined(GL_ES)\n#elif 1\nprecision lowp float;\n#endif",
+                Some(5),
+            ),
+            (
+                "#define LOW\n#undef LOW\n#ifdef LOW\nprecision lowp float;\n#endif",
+                None,
+            ),
             ("#ifdef GL_ES\nprecision mediump float;\n#endif", None),
-            ("precision highp float;\n#if 0\nprecision lowp float;\n#endif", None),
+            (
+                "#ifdef GL_ES\nprecision lowp float;\n#else\nprecision highp float;\n#endif",
+                None,
+            ),
+            (
+                "#ifndef GL_ES\n#ifdef GL_ES\n#else\nprecision lowp float;\n#endif\n#endif",
+                Some(7),
+            ),
+            (
+                "#if 0\n#ifndef GL_ES\nprecision lowp float;\n#endif\n#endif",
+                None,
+            ),
+            // What is defined under a condition that cannot be told is not known.
+            (
+                "#ifdef FOO\n#define LOW\n#endif\n#ifdef LOW\nprecision lowp float;\n#endif",
+                None,
+            ),
+            (
+                "#define LOW\n#ifdef FOO\n#undef LOW\n#endif\n#ifdef LOW\nprecision lowp float;\n#endif",
+                None,
+            ),
+            (
+                "precision highp float;\n#if 0\nprecision lowp float;\n#endif",
+                None,
+            ),
             // A name Qt may define around the snippet cannot be told.
-            ("#ifdef QSHADER_VIEW_COUNT\nprecision lowp float;\n#endif", None),
-            ("precision lowp float;\n#if FOO > 1\nvoid POINT_LIGHT() { }\n#endif", None),
+            (
+                "#ifdef QSHADER_VIEW_COUNT\nprecision lowp float;\n#endif",
+                None,
+            ),
+            (
+                "precision lowp float;\n#if FOO > 1\nvoid POINT_LIGHT() { }\n#endif",
+                None,
+            ),
         ] {
             let src = format!("{guarded}{light}");
             let at = lit_failure(&src).map(|e| match e {
@@ -1859,7 +1908,10 @@ mod tests {
             assert_eq!(at, line, "{guarded}");
         }
         // A condition that cannot be told around the rest does not hide it.
-        assert!(fails("precision lowp float;\n#ifdef FOO\nint x;\n#endif\nvoid SPOT_LIGHT() { }").is_some());
+        assert!(
+            fails("precision lowp float;\n#ifdef FOO\nint x;\n#endif\nvoid SPOT_LIGHT() { }")
+                .is_some()
+        );
         let program = |shaded| {
             material(
                 None,
