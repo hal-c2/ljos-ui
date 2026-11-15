@@ -355,6 +355,8 @@ mod held {
             u.images.retain(|w| w.strong_count() > 0);
             if !u.images.iter().any(|w| Weak::ptr_eq(w, &wrapper)) {
                 u.images.push(wrapper);
+                // A texture that just asked has missed no frame yet.
+                u.due = None;
             }
         }
     }
@@ -665,6 +667,33 @@ mod tests {
             "kept because the wrapper that asked first went"
         );
         assert!(shared.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_texture_that_asks_late_has_a_frame_to_draw_the_pixels_in() {
+        let maps = Reader::new(Kind::Maps);
+        let probes = Reader::new(Kind::Probes);
+        let shared = pixels();
+        let id = fresh_pixels_id();
+        let (early, _early_w) = wrapper(id, &shared);
+        let (late, late_w) = wrapper(id, &shared);
+        unless_drawn(&early);
+        drop(Frame::begin([&maps, &probes]));
+        std::thread::sleep(UNSHOWN - std::time::Duration::from_millis(300));
+        // Another texture of the same source, made just before they go.
+        unless_drawn(&late);
+        std::thread::sleep(std::time::Duration::from_millis(600));
+        assert_eq!(
+            late_w.let_go.load(Ordering::Acquire),
+            0,
+            "let go before a frame could draw the texture that just asked"
+        );
+        drop(Frame::begin([&maps, &probes]));
+        assert!(
+            let_go_soon(&late_w),
+            "kept after a frame ended without them"
+        );
+        drop((early, late));
     }
 
     #[test]
