@@ -327,6 +327,14 @@ fn the_sprite_sheet(w: &mut LjosWorld, name: String) -> StepResult {
     w.each(|b| b.files()?.resource(&name, &bytes))
 }
 
+// A Lottie file of features/lottie/avatars, beside the QML under its own
+// name.
+#[given(regex = r#"^the Lottie file "([^"]+\.json)"$"#)]
+fn the_lottie_file(w: &mut LjosWorld, name: String) -> StepResult {
+    let bytes = feature_file("lottie/avatars", &name)?;
+    w.each(|b| b.files()?.resource(&name, &bytes))
+}
+
 // A glTF model of features/quick3d/models, beside the QML under its own
 // name.
 #[given(regex = r#"^the model file "([^"]+)"$"#)]
@@ -410,7 +418,7 @@ fn prefixed_streamed_bytes(
 }
 
 /// A file of `features/<dir>`, which the scenarios keep beside themselves.
-fn feature_file(dir: &str, name: &str) -> Result<Vec<u8>, String> {
+pub(super) fn feature_file(dir: &str, name: &str) -> Result<Vec<u8>, String> {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../features")
         .join(dir)
