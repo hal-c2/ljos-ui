@@ -61,6 +61,9 @@ def missing(eid, directory, spec):
     """What of the example's assets is not where its build puts them. Its picture without them
     is another one: a view with no mesh is black, and a run of it measures nothing it draws."""
     if "listed" in spec:
+        if not os.path.exists(os.path.join(directory, spec["listed"])):
+            # The example is not checked out: what names its assets is missing with them.
+            return [spec["listed"]]
         places = [os.path.join(spec["beside"], name) for name in names(directory, spec)]
     else:
         places = list(spec.get("places", {}))
