@@ -13,26 +13,38 @@ A script fetches as a web page does: `fetch`, `Request`, `Response`, `Headers`, 
 
 ## A request and its reply
 
-`fetch` takes an address and gives a promise of a `Response`. The body is read once, as text, JSON or bytes, each a promise of its own. What `json()` gives is `unknown`: the script narrows it before it reads a member.
+`fetch` takes an address and gives a promise of a `Response`. The body is read once, as text, JSON or bytes, each a promise of its own. What `json()` gives is `unknown`: the script narrows it before it reads a member. This example reads `activity.json`, a file beside it:
 
-```qml
+```json file=activity.json group=activity
+{"activity": "Walk to the lighthouse"}
+```
+
+```qml group=activity
 import Ljos.Ui
 import Ljos.Core
 
-Item {
+Text {
     id: root
-    property string activity: ""
+    width: 280
+    wrap: Text.WordWrap
+    text: "Loading"
 
     function load(): void {
         const run = async (): Promise<void> => {
-            const reply = await fetch("https://example.org/activity.json")
-            if (!reply.ok) {
-                root.activity = `${reply.status} ${reply.statusText}`
-                return
-            }
-            const given: unknown = await reply.json()
-            if (typeof given === "object" && given !== null && "activity" in given && typeof given.activity === "string") {
-                root.activity = given.activity
+            try {
+                const reply = await fetch("activity.json")
+                if (!reply.ok) {
+                    root.text = `${reply.status} ${reply.statusText}`
+                    return
+                }
+                const given: unknown = await reply.json()
+                if (typeof given === "object" && given !== null && "activity" in given && typeof given.activity === "string") {
+                    root.text = given.activity
+                }
+            } catch (error) {
+                if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+                    root.text = error.message
+                }
             }
         }
         run()
@@ -42,30 +54,36 @@ Item {
 }
 ```
 
+On ljos.dev, and in a browser, a relative address is read against the page, so the example shows "Walk to the lighthouse". On the desktop an address names a server, `https://…`: a relative one is not an address there, so the same example shows the message of the `TypeError` that `fetch` rejects with.
+
 A status the server sends, `404` or `500`, is a `Response` whose `ok` is `false`: `fetch` does not reject for it. `text()` gives the body as a string and `arrayBuffer()` as bytes; reading a body a second time rejects with a `TypeError`, and `bodyUsed` says it was read.
 
 ## Sending a body and headers
 
 The second argument says what is sent: `method`, `headers` and `body`. Headers are a `Headers`, an object of names or a list of pairs; a name is kept once, in lower case, and the values given for it are joined with `, `. Headers the platform owns, such as `Connection` or `Content-Length`, are not sent. A body of text is sent as `text/plain;charset=UTF-8` unless the headers say otherwise, and a `Uint8Array` or an `ArrayBuffer` is sent as it is.
 
+A `Request` holds the same two arguments, and `fetch(request)` sends it. This example makes one and shows what it would send, without sending it:
+
 ```qml
 import Ljos.Ui
 import Ljos.Core
 
-Item {
+Text {
     id: root
-    property string saved: ""
+    width: 280
+    text: ""
 
-    function save(name: string): void {
+    function describe(name: string): void {
         const headers = new Headers({ "Content-Type": "application/json" })
-        fetch("https://example.org/names", { method: "POST", headers, body: JSON.stringify({ name }) })
-            .then((reply: Response) => reply.text())
-            .then((text: string) => { root.saved = text })
+        const request = new Request("names", { method: "POST", headers, body: JSON.stringify({ name }) })
+        root.text = `${request.method} ${request.url}\ncontent-type: ${request.headers.get("content-type") ?? ""}`
     }
 
-    Component.onCompleted: save("Ada")
+    Component.onCompleted: describe("Ada")
 }
 ```
+
+It reads `POST names` and `content-type: application/json`: the header given wins over the one the body would set.
 
 ## Stopping a request, and deadlines
 
@@ -75,19 +93,20 @@ An `AbortController`'s `signal`, given as `signal`, stops the request when the c
 import Ljos.Ui
 import Ljos.Core
 
-Item {
+Text {
     id: root
-    property string state: "idle"
+    width: 200
+    text: "idle"
 
     function load(): void {
         const user = new AbortController()
         const signal = AbortSignal.any([user.signal, AbortSignal.timeout(5000)])
         const run = async (): Promise<void> => {
             try {
-                const reply = await fetch("https://example.org/slow", { signal })
-                root.state = `${reply.status}`
+                const reply = await fetch("slow.json", { signal })
+                root.text = `${reply.status}`
             } catch {
-                root.state = signal.aborted ? "stopped" : "unreachable"
+                root.text = signal.aborted ? "stopped" : "unreachable"
             }
         }
         run()
@@ -97,6 +116,8 @@ Item {
     Component.onCompleted: load()
 }
 ```
+
+The user's controller aborts as soon as the request is made, so the text reads "stopped".
 
 ## What an error is
 

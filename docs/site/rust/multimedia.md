@@ -63,13 +63,15 @@ To keep untrusted or malformed streams from exhausting memory, Ljós enforces tw
 
 For short UI sounds such as clicks, alerts and chimes, use `SoundEffect`. Unlike `MediaPlayer`, `SoundEffect` decodes the entire audio clip into memory when its `source` property is set and plays it directly from memory:
 
-```qml
+```qml files=beep.wav
 import QtQuick
 import QtMultimedia
 
-Item {
-    width: 120
+Rectangle {
+    width: 160
     height: 48
+    color: chime.playing ? "#ffd27a" : "#dde3f0"
+    property int played: 0
 
     // <!-- check: verify SoundEffect properties beyond source and status against sound-effect.feature -->
     SoundEffect {
@@ -77,11 +79,19 @@ Item {
         source: "beep.wav"
     }
 
+    Text {
+        anchors.centerIn: parent
+        text: parent.played === 0 ? "Play chime" : "Played " + parent.played
+    }
+
     MouseArea {
         Accessible.role: Accessible.Button
         Accessible.name: "Play chime"
         anchors.fill: parent
-        onClicked: chime.play()
+        onClicked: {
+            chime.play()
+            parent.played += 1
+        }
     }
 }
 ```

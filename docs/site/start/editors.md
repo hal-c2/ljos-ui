@@ -95,8 +95,9 @@ export function total(): number {
 import Ljos.Ui
 import "line.ts" as Line
 
-Item {
+Text {
     property int total: Line.total()
+    text: `A thin and a thick line are ${total} wide`
 }
 ```
 

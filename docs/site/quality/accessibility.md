@@ -114,7 +114,7 @@ export interface Row {
 - **`a11y-unnamed-dialog` (Warning, static and runtime):** Give every `Dialog` or modal `Popup` a `title` or `Accessible.name`.
 - **`a11y-live-status` (Hint, runtime):** Mark status lines or toasts with `Accessible.role: Accessible.StatusBar` (or `Accessible.AlertMessage` for urgent errors) so screen readers announce updates when the text changes.
 
-```qml
+```qml files=status-ok.svg,decorative-wave.svg
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts

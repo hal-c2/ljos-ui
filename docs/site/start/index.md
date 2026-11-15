@@ -26,12 +26,59 @@ You write the interface declaratively in QML, script it in TypeScript, and keep 
 
 An app built with Ljós can let the people who use it replace its whole interface. The app and its plugins keep the state and do the work, and contribute their pieces to named `Slot`s. A shell file lays those slots out. The app ships its own, and a `ShellLoader` shows the user's `shell.qml` in its place:
 
-```qml harness=shell
-ShellLoader {
-    id: shell
-    anchors.fill: parent
-    source: "shell.qml"
-    fallback: "AppShell.qml"
+```qml group=shell
+import Ljos.Ui
+import Ljos.Blocks
+
+Item {
+    width: 480
+    height: 320
+
+    ShellLoader {
+        id: shell
+        anchors.fill: parent
+        source: "shell.qml"
+        fallback: "AppShell.qml"
+    }
+
+    Contribution {
+        slot: "status"
+        Text {
+            text: shell.error === "" ? "Showing the user's shell" : `Showing the app's shell: ${shell.error}`
+        }
+    }
+}
+```
+
+The app's own `AppShell.qml` puts the status line at the top:
+
+```qml file=AppShell.qml group=shell
+import Ljos.Layout
+import Ljos.Blocks
+
+Column {
+    Slot {
+        name: "status"
+    }
+}
+```
+
+The user's `shell.qml` puts it in the middle of a tinted page:
+
+```qml file=shell.qml group=shell
+import Ljos.Ui
+import Ljos.Layout
+import Ljos.Blocks
+
+Rectangle {
+    fill: "#e8eef8"
+
+    Column {
+        anchors.centerIn: parent
+        Slot {
+            name: "status"
+        }
+    }
 }
 ```
 
@@ -55,8 +102,9 @@ export function only(tag: Tag): number {
 import Ljos.Ui
 import "filter.ts" as Logic
 
-Item {
+Text {
     property int shown: Logic.only("b")
+    text: `Logic.only("b") is ${shown}`
 }
 ```
 
